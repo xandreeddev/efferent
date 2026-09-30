@@ -1,4 +1,4 @@
-import { Clock, Effect, Option, Ref } from "effect"
+import { Clock, Effect, Option, Ref, Semaphore } from "effect"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
@@ -82,20 +82,23 @@ export const openLogSession = (
     const stored = yield* log.read
     const entries = yield* Ref.make(stored)
     const counter = yield* Ref.make(stored.filter((entry) => entry.runId === runId).length)
+    const writing = yield* Semaphore.make(1)
     const renderOptions = (all: ReadonlyArray<LogEntry>, stepContext: "tail" | "none"): RenderOptions => ({
       ...policy.render, stepContext, strategy: policy.strategy.id, currentTurn: currentTurnOf(all), currentRun: runId,
     })
-    const record = (bodies: ReadonlyArray<LogBody>, step: number) => Effect.gen(function* () {
-      if (bodies.length === 0) return []
+    // One record at a time: ids, the stored order and the session's order agree (a request is
+    // rebuilt from the stored entries up to its build's last one), and a refused append takes no id.
+    const record = (bodies: ReadonlyArray<LogBody>, step: number) => bodies.length === 0 ? Effect.succeed<ReadonlyArray<LogEntry>>([]) : writing.withPermits(1)(Effect.gen(function* () {
       const current = currentTurnOf(yield* Ref.get(entries))
       const turn = bodies.some((body) => body._tag === "TurnStarted") ? current + 1 : Math.max(current, 1)
       const at = yield* Clock.currentTimeMillis
-      const start = yield* Ref.getAndUpdate(counter, (value) => value + bodies.length)
+      const start = yield* Ref.get(counter)
       const appended = bodies.map((body, index): LogEntry => ({ id: entryId(runId, start + index), runId, turn, step, at, body }))
       yield* log.append(appended)
+      yield* Ref.set(counter, start + bodies.length)
       yield* Ref.update(entries, (all) => [...all, ...appended])
       return appended
-    })
+    }))
     /** Digest the given results with their tools' prompts, concurrently, recorded in target order; a failed digest keeps the view. */
     const digest = (targets: ReadonlyArray<LogEntry>, views: ToolViews, trigger: "write" | "compaction", step: number) =>
       Ref.get(entries).pipe(Effect.flatMap((all) => Option.match(Option.all([digester, latestUserMessage(all)]), {
@@ -151,6 +154,7 @@ export const openLogSession = (
     })
     return {
       strategy: policy.strategy,
+      renderRecipe: (stepContext) => Ref.get(entries).pipe(Effect.map((all) => renderOptions(all, stepContext))),
       turn: Ref.get(entries).pipe(Effect.map(currentTurnOf)),
       entries: Ref.get(entries),
       query: (query) => Ref.get(entries).pipe(Effect.map((all) => queryLog(all, query))),

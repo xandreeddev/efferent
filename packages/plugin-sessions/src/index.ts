@@ -1,3 +1,5 @@
 export { sessionsPlugin, SessionsPluginLive, default } from "./plugin.adapter.js"
 export { SessionsLive } from "./sessions.adapter.js"
-export { Ownership, SessionsConfig, sessionsDefaults, SessionsState, InboxSlot } from "./sessions-state.entity.js"
+export { processLiveness } from "./process-liveness.adapter.js"
+export { HeldTurn, HolderProcess, Ownership, SessionsConfig, sessionsDefaults, SessionsState, InboxSlot } from "./sessions-state.entity.js"
+export type { ProcessLiveness } from "./sessions-state.entity.js"

@@ -65,26 +65,61 @@ by the terminal editor.
 
 ## Harness sessions
 
-The `Harness` keeps its own sessions in the configured `SessionStore`.
-Composable agents keep theirs in a session log instead (see
-[Sessions](#sessions-one-log-per-session)).
+The `Harness` and composable agents share the configured `SessionLog` and
+`Sessions` lifecycle (see [Sessions](#sessions-one-log-per-session)). The
+historical `SessionStore` API is a deprecated event projection over that log;
+it owns no separate tables. A harness graph composes `sessionSqlitePlugin`
+(storage, compatibility projection and open admission) with `sessionsPlugin`
+(turn ownership). Process-owned CLI hosts configure the latter with
+`{ ownership: { mode: "process" } }`, under which a second process on the same
+host finds a live process's turn busy; hosts sharing a database across hosts
+use lease ownership. `Harness.make` requires `Sessions`: a graph without
+`sessionsPlugin` fails with `service.missing` naming it. In-turn events are
+written through the turn's `TurnWriter` to the `SessionLog` and read back
+through `SessionStore`, so a custom `SessionStore` must be the projection over
+that same log (`SessionStoreProjectionLive`); one that does not read what the
+writer wrote fails the turn with `session.store` instead of losing its events.
 
-- `create`, `resume`, `list`, and `fork` operate on the configured SessionStore.
-- `send` journals input and serializes runs; `steer` queues input for a loop's
-  next admission boundary; `continue` resumes the pending queue.
+- `create`, `resume`, `list`, and `fork` operate on the same session heads and
+  immutable fork boundaries as the unified log. `fork(id, through)` inherits
+  exactly the events up to `through` (and that turn's `turn.ended` when no
+  harness event comes between), its turns count on from every turn it
+  inherits, and `fork(id, -1)` inherits nothing. A cut within inherited history
+  copies that exact prefix while retaining the logical parent and turn counter.
+- `send` journals input, admits through `Sessions.begin` and writes through its
+  `TurnWriter` before ending the turn; `steer` queues input for a loop's
+  next admission boundary; `continue` resumes the pending queue. Input
+  submitted while a turn is ending is recorded on its own, and `busy` holds
+  until the turn's writer is released. A steer that another instance's turn
+  claimed is not begun again as a turn.
 - `use(Service, callback)` accesses a selected domain service while holding the
   session gate; resource disposal waits until the callback completes.
-- `interrupt` cancels the active fiber. The run settles once as cancelled.
+- `interrupt` cancels the active fiber. The run settles once as cancelled. A
+  turn closed elsewhere (cancelled or reaped by another instance) still gets
+  its run's settlement, `run.cancelled`, recorded outside the closed writer:
+  the durable ending takes precedence even if the loop returns successfully
+  without another write. `send` returns after a cancel and fails with
+  `turn.closed` after a reap.
 - `events(after)` replays durable events after an exclusive cursor, then follows
   the journal. Notifications can coalesce; journal entries are not dropped.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.
 - A reopened unfinished run is marked cancelled. Tools are never rerun merely
-  because a client reconnects. A fork requires a settled event boundary.
+  because a client reconnects. A run still held (by its lease, or by a process
+  that still runs) is left alone. A fork
+  requires a settled event boundary. A refused begin leaves the queued input
+  unclaimed so the caller can continue it once the session is free.
 
 Session plugins can require `SessionEnvironment` to access the workspace and
 current session record. `domainLoop` and `domainSession` bridge an existing domain
 event protocol to SDK lifecycle and replay; optional snapshots restore domain
-state when a session is forked.
+state when a session is forked. When the host provides a `ConversationStore`,
+`domainLoop` binds the domain session's writes to its conversation to the
+harness run through a token inherited by its fibers. A write from an earlier
+run fails with `StoreError` even while a later run is active; writes after the
+run ends or its external closure is noticed also fail. These
+writes are recorded beside the turn rather than through its writer, so a turn
+closed on another instance is noticed during execution at the writer's next
+commit. Settlement also checks the durable ending when the loop returns.
 
 The SQLite plugin uses WAL and transactional sequence allocation. The memory
 plugin uses a workspace-scoped append-only JSONL ledger. The default new data
@@ -133,8 +168,14 @@ Credential input stays outside the text renderer; only mask characters render.
 PKCE, callback state checks, a masked manual fallback, and scoped cancellation.
 
 A transcript mounts at most 60 blocks, keyed by durable IDs so streaming updates retain their native markdown renderers. Settling a message preserves its position. Durable event and transient delta batches
-update the UI at most once per batch. The terminal tests exercise 10,000 events
-and assert p95 input-to-frame time below 50 ms on the test machine. The PTY fixture checks rendering and shutdown. `python scripts/verify-tmux.py`
+update the UI at most once per batch.
+Transient text arriving before its durable run start is buffered for the selected
+session, up to 128 deltas. Assistant and tool blocks follow their logical turn
+order even when transient text precedes earlier durable blocks across batches;
+durable settlement remains authoritative. Session switches clear
+the buffer, and late deltas from settled runs or previous sessions are discarded.
+The terminal tests exercise 10,000 events and assert p95 input-to-frame time
+below 50 ms on the test machine. The PTY fixture checks rendering and shutdown. `python scripts/verify-tmux.py`
 launches the actual CLI in an isolated tmux server and checks first-run setup,
 model selection, slash filtering/completion, draft preservation, resizing, plugin edits and replacement, streamed output sampled across 50 deltas,
 tool expansion, cancellation, and clean exit without provider credentials.
@@ -278,6 +319,20 @@ skills, step context, completion) is the host's.
 **Defining the agent.** `Agent.define(config)` (from `@xandreed/sdk`) resolves
 the graph and activates its runtime plugins once, in the caller's scope.
 Session plugins, if any, are activated per turn with the turn's services.
+Session plugins requiring `RunContext`, `TurnEvents`, `TurnTasks`,
+`TurnMemory`, `TurnPrompt` or `TurnToolbox` activate after `TurnLive`, in a
+scope of their own, before the host's layer (which can use their services)
+and before the user's message is taken by memory: a context entry they
+record at activation (`TurnMemory.context`) waits for the message. Their
+dependent plugins activate in the same phase. They finalize once the turn's
+body and the host's layer are done, while the turn's services are still
+open. On success, work from the body, its finalizers, the host's finalizers and
+the plugins' finalizers settles at each dependency boundary before the final
+reply is recorded. Memory, registry and loop providers activate first: a plugin
+requiring the services of an already-open turn cannot also provide those
+foundations. Runtime plugins cannot require turn services. This lets a
+capability ship a session plugin that installs its reactions without coupling
+the loop to the capability's domain.
 Swapping a strategy is swapping one entry. The host builds one `Sessions`
 (see [Sessions](#sessions-one-log-per-session)) and gives the agent the same
 instance its own code uses, in `services`.
@@ -305,9 +360,11 @@ const agent = yield* Agent.define({
 turn and hands `use` a `Turn`: `userMessage`, `memory` (read-only), `events`,
 `tasks`, `tools` (`match`, `apply`, `select`, `activate`, `active`),
 `context(entry)`, `reply(text)`, `run(policy)`, `flush` and `write(op)`. The
-turn is scoped: subscriptions and tasks end with it. Tasks and background
-subscriptions are drained before the reply is recorded, exactly once, with a
-`failed` outcome when `use` fails or is interrupted.
+turn is scoped: subscriptions and tasks end with it. On success, tasks and
+background subscriptions settle before the reply is recorded. The reply is
+recorded exactly once, with a `failed` outcome when `use` fails, is interrupted,
+or finalizer work fails. On failure or interruption, the original cause is
+preserved and pending tasks are interrupted when the turn's scope closes.
 
 `input.turn` is either a turn the host already began (the `TurnWriter` from
 `Sessions.begin`: the host ends it, after its own closing records) or a
@@ -428,6 +485,60 @@ compaction); the `ResultDigester` runs the tool's own prompt for the latest
 `userMessage` (a log without one digests nothing); the outcome is
 logged once as a `ToolDigest` entry and never recomputed on replay.
 
+**Durable model requests.** Before each real provider step, the turn writes
+and flushes `request.prepared`. This protocol record carries the complete
+active tool declarations, tool choice, system text, public requested model
+configuration, prompt cache key, call policy, the memory strategy's render
+recipe/version and the build's memory cut (`through`, the last memory entry
+the build folded). Messages remain in their original memory events. Each
+header is self-contained, repeating the full system text and every active
+tool's declaration at every step: a deliberate storage trade-off, so that one
+header and the memory before it rebuild a request. A provider-defined tool's
+args are kept only as their key names and the SHA-256 of their canonical
+JSON, since they can carry credentials; a change of any value still
+diverges. A dispatch reads what storage holds (the history memory was opened
+over, then only the events stored since its last read, so a step's read
+grows with that step, not the session), folds the memory entries up to the
+cut with the saved recipe, and compares the resulting prompt and header with
+the actual Effect AI request. A memory write after the build (a reaction to
+`context.built`) is outside the cut: the next step sends it. Changes to the
+system text, messages, schemas, tool choice or described model settings fail
+with `request.diverged` before the provider runs; its message starts with the
+first part that differs (`context`, `system`, `messages`, `tools`,
+`toolChoice`, `model`, `cacheKey` or `callPolicy`). Prompt data is frozen; a
+stream fallback checks the same contract again, and a failed check fails the
+step, streamed or not, instead of falling back. Host-planned batches make no
+provider request and create no request header.
+
+`replayModelRequest(events, runId, step)` reconstructs one historical request
+from the memory up to its header's cut, excluding later responses. It uses
+recorded tool schemas and render options, so changing installed plugins does
+not rewrite historical requests, and fails with `request.diverged`
+(`context`) when the events do not rebuild the context the header was
+prepared from (a fork's own log without its parent's history). Retention must
+preserve `request.prepared` and the memory facts it references; removing
+optional `context.built`, trace content or usage diagnostics does not affect
+this contract. A host that redacts memory, or exports or streams session
+events, handles `request.prepared` the same way: it holds the full system
+text (step context included in `"system"` mode) and the tool declarations.
+Earlier logs without a header remain readable but cannot reconstruct this
+additional metadata.
+
+Effect AI models hide provider configuration inside adapters. Efferent's
+provider adapters and routers describe their public options with
+`describeModel(model, { provider, model, settings })`; hosts should do the
+same for custom models, preserving the descriptor when wrapping a model
+(`modelRequestDescriptorOf` reads it). An undescribed model is recorded as
+explicitly opaque: its prompt/tools are checked, but its private provider
+settings cannot be validated. Credentials never belong in `settings`.
+A model that reads its configuration per call, such as the settings-backed
+router, is `resolvingModel(model, resolve)`: each step resolves it once
+(`resolveModelRequest`), and the resolved model serves the step's header and
+every attempt of the step, so a model switch applies from the next step.
+The invariant covers the Effect AI request boundary; provider-specific HTTP
+serialization, retry/fallback routing and transport transformations remain
+adapter contracts. It does not claim to reproduce raw HTTP wire bytes.
+
 `ConversationMemory.open({ conversation, runId, log })` opens a strategy over
 the turn's `LogHandle` (the entries of earlier turns, and appends through the
 turn's writer). It reads what a strategy
@@ -540,7 +651,9 @@ and `RunContext` (which carries the turn's `session`). It provides:
 
 - `TurnMemory`: the session, the turn's `number`, `persistMessage` (the
   turn's TurnStarted, stored when the turn began, is shown to memory, then
-  `turn.started` is published; once), `context(entry)` and
+  `turn.started` is published; once), `context(entry)` (before
+  `persistMessage` it waits, and is recorded right after the message:
+  memory records nothing of the turn before its message, `turn.unstarted`),
   `persistReply(outcome)` (`turn.reply`, then `turn.ended` is published;
   once, and a no-op when the message was never persisted). The stored
   `turn.ended` is the writer's `end`, the turn's closing commit;
@@ -561,23 +674,44 @@ conversation)` builds the prompt-cache key.
 
 ```ts
 const body = Effect.gen(function* () {
-  yield* (yield* TurnMemory).persistMessage       // 3. the user's message
-  yield* openTurnTools                            // 4. inside the host layer: its services reach the handlers
-  return yield* use(yield* turnOf(runOptions))    // 5. the host's code
+  yield* (yield* TurnMemory).persistMessage       // 4. the user's message
+  yield* openTurnTools                            // 5. inside the host layer: its services reach the handlers
+  return yield* use(yield* turnOf(runOptions))    // 6. the host's code
 })
 body.pipe(
-  guardTurn,
+  Effect.tap(() => settleTurn),                   // body tasks finish before its scoped services close
   Effect.scoped,
-  Effect.provide(input.layer),                    // 2. built after RunContext, before TurnStarted
-  Effect.provide(TurnLive(turnInput)),            // 1. the writer first, then memory and RunContext
-  Effect.provide(agentContext),                   // the graph's services and the turn's
+  Effect.tap(() => settleTurn),                   // body finalizer work still has the host's services
+  provideHostLayer(Option.fromNullishOr(input.layer)), // 3. built before the message; closes after the body
+  Effect.tap(() => settleTurn),                   // host finalizer work still has its plugin dependencies
+  provideTurnPlugins,                            // 2. turn-dependent plugins close next
+  guardTurn,                                     // settle plugin finalizer work, then record the final outcome
+  Effect.provide(TurnLive(live), { local: true }), // 1. writer first; stays open throughout teardown
+  Effect.provideService(ConversationMemory, memory),
+  Effect.provideService(ToolRegistry, registry),
+  Effect.provideService(StepLoop, loop),
+  Effect.provide(context),                        // the graph's services and the turn's
+  untilClosed(writer),
 )
 ```
 
 The order matters. The message is persisted before the matcher runs, because
 the matcher reads the reference transcript and a decision's context hash
-includes its length. Anything built before `persistMessage` (the host's layer)
-sees only earlier turns. A host composing by hand uses the same pieces over a
+includes its length. Anything built before `persistMessage` (the
+turn-dependent plugins, the host's layer) sees only earlier turns. The
+body closes before the host's layer, which closes before the turn-dependent
+plugins. On success, tasks and background reactions settle before each
+dependency scope closes; work forked by its finalizers settles before the next
+scope closes. The outer `guardTurn` includes that teardown before recording
+one final reply: a finalizer task failure produces a failed reply, rather than
+following a completed reply. `TurnLive` remains open for that settlement and
+flush, then closes; an agent-owned writer ends afterward.
+
+Subscriptions owned by the body, host or turn-dependent plugin scopes have
+already closed when the final `turn.ended` event is published. An observer that
+needs the final outcome subscribes in the caller's outer scope, using
+`Scope.provide(observerScope)`, and uses services that remain open there.
+A host composing by hand uses the same pieces over a
 `stackPlugins` stack instead of a graph, and builds session plugins such as
 `MemoryDigestLive()` per turn over the turn's services. `turnConformance`
 checks a composition: the writer first, the message before the matcher's
@@ -609,6 +743,51 @@ background tasks. Two layers split the work:
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it.
 
+### Existing SQLite journals
+
+SQLite opens the unified `session_heads` and `session_log_events` tables. On
+the first open it imports existing `harness_sessions`/`harness_events` and
+`conversations`/`messages`/`checkpoints`/`run_outcomes` into those tables in one
+IMMEDIATE transaction. The original rows, event ids, message positions,
+checkpoints, timestamps and `user_version` are preserved. Corrupt legacy
+message rows retain their positions and are skipped by the compatibility
+reader, as before; a harness session or event row that does not decode is
+skipped and logged, and the rest of the source imports. A failed import rolls
+back all imported rows and can be retried after repairing the source.
+
+`SessionLogSqliteLive(path, { legacyPaths: [...] })` and the storage plugin's
+`legacyPaths` option import older files through read-only connections into the
+configured destination. An orphan historical message row (written under a
+harness id without a conversation row) joins the session stored under that id
+and keeps its owner; an orphan without one is created under the storage
+plugin's `SessionEnvironment.workspace` (standalone adapters may name
+`legacyOwner`, and otherwise isolate it under the compatibility owner).
+Existing sources are left intact; absent optional sources are skipped.
+Sessions are matched by id, not by the source's path: events a session
+already holds are not imported again, and removing or pruning a session
+leaves a tombstone, so a moved, renamed or copied source neither duplicates
+records nor brings a removed session back. An owner, identity or
+historical-position conflict refuses the whole source. Stop older application versions before migrating: the
+import is a snapshot, and subsequent writes by an old version are not mirrored.
+
+`SessionStoreProjectionLive` and `ConversationStoreProjectionLive` are the
+explicit deprecated compatibility surfaces. Both require the host's
+`SessionLog`; their writes append `harness.event` or `conversation.*` records
+with revision checks, and positional batches stay atomic. A read after a
+cursor and an append find their place by a binary search over the log's
+cursor, so they cost what they return rather than the history. The
+positional listing shows conversation sessions only (not harness or task
+sessions sharing the log) and reads an unknown outcome as none; over the
+SQLite log it is one query, and `prune` removes old conversations in one
+transaction, leaves tombstones and truncates the write-ahead log. The convenience
+`SessionStoreLive(path)` and `SqliteConversationStoreLive(path)` compose these
+projections over SQLite without creating the former storage tables. Math and
+Canvas compose the message projection over their harness log with
+`ConversationStoreProjectionLive({ legacy: { paths, owner } })`, which imports
+the host plugin's configured message database (its `file` option) into that
+log once; domain page/catalog/theme stores continue to own their product data. New hosts use `Sessions`, `TurnWriter` and
+`ConversationMemory` directly.
+
 ```ts
 const view = yield* sessions.create({ owner })                 // SessionView: header, turns, title, open, pending
 const address = { id: view.header.id, owner }                  // another owner's address finds nothing
@@ -630,11 +809,14 @@ the check holds across restarts. The writer (`TurnWriter`) is the turn's one
 way to write: `append`, `write(op)` in queue order, `transact(decide)`
 (check, then append: decided again with the events others wrote when
 someone commits first), `flush` (committed to storage), `end` (the closing
-commit; it returns how many inbox items wait) and `closed` (completes when
-someone else closed the turn). A writer whose scope closes unended ends the
-turn as failed, or interrupted. Outside a turn, `Sessions.transact(address,
+commit; it returns how many inbox items wait, and after a store failure a
+later end tries again) and `closed` (completes when someone else closed the
+turn). A writer whose scope closes unended ends the turn as failed, or
+interrupted, and so does a begin interrupted after its opening commit. Outside a turn, `Sessions.transact(address,
 decide)` is the same check-then-append (a page action, a setting); kinds only
-the framework writes are refused there (`RESERVED_KINDS`).
+the framework writes are refused there (`RESERVED_KINDS`; among them
+`request.prepared` holds each request's full system text and tool
+declarations, see durable model requests).
 
 **Ownership** is configured:
 
@@ -644,9 +826,20 @@ the framework writes are refused there (`RESERVED_KINDS`).
   the instances' clocks say. `renew: "none"` fixes the lease at begin,
   `"on-commit"` extends it with each write, `{ everyMs }` also renews from a
   keep-alive (which notices a remote cancel within `everyMs`).
-- `{ mode: "process" }`: one process holds its turns without expiry, and a
-  turn another process left open is closed as interrupted when this one
-  next touches the session.
+- `{ mode: "process" }`: a turn is held without expiry for as long as the
+  process that began it runs. The turn names its holder's host, pid and
+  start time: a turn left open by a process of this host that has stopped
+  is closed as interrupted when this one next touches the session, and a
+  live process's turn is busy to `begin` and shown open. A holder on another
+  host cannot be asked and
+  stays held, so several hosts over one log use a lease; a holder that
+  names no process (an older version) is reaped as before. How a process is
+  named and asked is `SessionsLive(config, { liveness })`'s. The default detects
+  a reused pid when it is the inspecting process's own pid and the recorded
+  start time differs. Other pids are checked only with `kill(pid, 0)` (EPERM
+  counts as running), so another live process reusing a holder's pid can keep
+  the turn held. Hosts needing stronger identity checks can supply `liveness`
+  or use lease ownership.
 
 A turn nobody holds any more reads as not open, and is closed as
 `interrupted` by the next `begin`, `cancel`, `deliver` or `drain`: never by
@@ -690,7 +883,10 @@ every waiting item in its start commit (its `userMessage` is their contents)
 and fails with `NothingPending` when there are none. An item is done when its
 turn ends completed, partial or cancelled; a failed or interrupted claim
 returns it, up to `inbox.attempts` (2), and then it is dropped
-(`inbox.dropped`). User messages never queue. `drain(address, run)` runs
+(`inbox.dropped`). A turn interrupted before it wrote anything through its
+writer (no `append`, `write` or `transact`) never tried its items: they wait
+again and no attempt is counted. A turn reaped because its holder stopped
+counts. User messages never queue. `drain(address, run)` runs
 inbox turns while items wait, the session is free and the host admits them,
 at most three. Whoever closes a turn and whoever delivers drains: the
 delivery either commits before the turn's closing commit (whose `pending`
@@ -717,6 +913,21 @@ the task's words:
 …the task's reply…
 </task-output>
 ```
+
+The runner's absolute deadline bounds admission, reads, delivery and parent
+reactions as well as the child model call. Execution stops `closingReserveMs`
+(2 s, at most half the budget) before it, leaving that time to store the
+child's result and ending, deliver it and close the parent's turn; work the
+deadline itself cuts is logged with the task and how long it ran. A
+finite-budget runner admits at most one parent reaction and interrupts it at
+the execution cutoff: a reaction cut after it recorded its answer
+(`turn.reply`) ends partial, so its notice is done and never answered twice,
+and one cut before ends interrupted, so the notice waits again. A parent turn
+admitted past the cutoff ends interrupted without reacting, and its notices
+wait with no attempt counted. A notice whose reaction cannot begin stays in
+the inbox; an undelivered result remains in the child for `reconcile`.
+Serverless hosts also leave invocation headroom for interrupted scope
+finalizers to close their writers.
 
 The first of a child's `task.result` and `task.cancelled` ends the task.
 `cancel` stops a waiting or running task (its turn is cancelled, nothing is

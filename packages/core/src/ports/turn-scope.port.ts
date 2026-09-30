@@ -6,6 +6,9 @@ import type { TurnWriter } from "./sessions.port.js"
 import type { LoopLimits } from "./step-loop.port.js"
 import type { RunTools } from "./tool-registry.port.js"
 import type { TurnOutcome } from "./turn.port.js"
+import type { LogEntry } from "../memory/memory-log.entity.js"
+import type { ModelRequestHeader } from "../turn/model-request.entity.js"
+import type { SessionLogEvent } from "../session/session-log.entity.js"
 
 /*
  * The turn as services. `TurnLive(input)` provides them, with RunContext,
@@ -22,10 +25,27 @@ export interface TurnContextEntry {
   readonly text: string
 }
 
+/** What storage holds of a turn's requests: what a dispatch is checked against. */
+export interface RequestSnapshot {
+  /** The memory entries, in log order (a fork's inherited history first), decoded from the stored memory events. */
+  readonly entries: ReadonlyArray<LogEntry>
+  /** This run's stored request headers (`request.prepared`), in log order. */
+  readonly requests: ReadonlyArray<SessionLogEvent>
+}
+
 /** The turn's memory session, and the records that open and close the turn. */
 export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
   readonly strategy: { readonly id: string; readonly version: string }
   readonly session: MemorySession
+  /** Record and flush a request's reconstruction header before dispatch. */
+  readonly prepareRequest: (header: ModelRequestHeader) => Effect.Effect<void, HarnessError>
+  /**
+   * Flush, then read what storage holds, never the memory session's state:
+   * the history memory was opened over (read once, at open), and this
+   * turn's events from its start, each read taking only the events stored
+   * after the last one read.
+   */
+  readonly requestSnapshot: Effect.Effect<RequestSnapshot, HarnessError>
   /** The turn's number; fails with `turn.unstarted` before `persistMessage`. */
   readonly number: Effect.Effect<number, HarnessError>
   /**
@@ -34,7 +54,11 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
    * layer, a matcher's history) sees only earlier turns.
    */
   readonly persistMessage: Effect.Effect<number, HarnessError>
-  /** Record a TurnContext entry. */
+  /**
+   * Record a TurnContext entry. Before `persistMessage` (a plugin or a host
+   * layer built with the turn) it waits, and is recorded right after the
+   * message: the turn's entries follow its TurnStarted.
+   */
   readonly context: (entry: TurnContextEntry) => Effect.Effect<void, HarnessError>
   /** Record TurnEnded, then publish `turn.ended`. Once; a no-op when the message was never persisted. */
   readonly persistReply: (outcome: TurnOutcome) => Effect.Effect<void, HarnessError>

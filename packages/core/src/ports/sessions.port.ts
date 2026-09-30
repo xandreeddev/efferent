@@ -52,9 +52,18 @@ export interface TurnWriter {
   readonly started: SessionLogEvent
   /** The session's events before this turn (a fork's parent first), of the given kinds: what memory is rebuilt from. */
   readonly history: (kinds: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
+  /**
+   * A fresh durable snapshot including this turn (a fork's inherited history first). Flush queued writes before reading.
+   * With `after`, only this session's own events stored after that seq: the inherited history precedes them all.
+   */
+  readonly snapshot: (kinds: ReadonlyArray<string>, after?: number) => Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
   /** Queue events; returns once queued. */
   readonly append: (drafts: ReadonlyArray<TurnDraft>) => Effect.Effect<void, HarnessError>
-  /** Run `op` in queue order (after everything queued before it). */
+  /**
+   * Run `op` in queue order (after everything queued before it). When
+   * someone else closes the turn meanwhile, `op` is interrupted and the
+   * write fails with `turn.closed`.
+   */
   readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | HarnessError>
   /**
    * Check, then append, atomically: `decide` sees the events others wrote
@@ -64,7 +73,16 @@ export interface TurnWriter {
   readonly transact: <A, E>(decide: (foreign: ReadonlyArray<SessionLogEvent>) => Effect.Effect<Decision<A>, E>) => Effect.Effect<Decided<A>, E | HarnessError>
   /** Wait until everything queued so far is stored. */
   readonly flush: Effect.Effect<void, HarnessError>
-  /** Store what is queued, then close the turn. Returns the inbox items waiting after it (drain them). */
+  /**
+   * Close the turn: `turn.ended` is committed after every write queued
+   * before it. It is admitted like a write (so it waits while one waits for
+   * room in a full queue); from then on `append`, `write` and `transact` are
+   * refused, and `flush` still waits for what is queued. Calls while it runs
+   * share its result. A stored end, or a turn closed elsewhere, is final;
+   * after any other failure (a store error) writes are admitted again and a
+   * later end, the scope's own at the latest, tries again. Returns how many
+   * inbox items wait.
+   */
   readonly end: (ending: TurnEnding) => Effect.Effect<{ readonly pending: number }, HarnessError>
   /** Completes when someone else closed the turn; never when it ends by `end`. */
   readonly closed: Effect.Effect<TurnClosed>

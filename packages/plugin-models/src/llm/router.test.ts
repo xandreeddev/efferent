@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel } from "effect/ai"
-import { Effect, Metric, Option, Stream } from "effect"
-import { ModelSelection, parseModelSelection } from "@xandreed/core"
-import { stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
+import { Effect, Layer, Metric, Option, Ref, Stream } from "effect"
+import { AuthStore, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, SettingsStore } from "@xandreed/core"
+import { LanguageModelLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
 
 const finish = {
   type: "finish",
@@ -200,5 +200,39 @@ describe("withFallbackRung", () => {
     )
     expect(out).toBe("fine")
     expect(calls).toEqual([{ model: "opencode:kimi-k2.6", isFallback: false }])
+  })
+})
+
+describe("LanguageModelLive's step resolution", () => {
+  test("a step reads the selection once: its description and its call keep it while the settings change", async () => {
+    const result = await Effect.runPromise(Effect.gen(function* () {
+      const loads = yield* Ref.make(0)
+      const selected = yield* Ref.make("opencode:glm-5.2")
+      const settings = Layer.succeed(SettingsStore, SettingsStore.of({
+        load: Ref.update(loads, (count) => count + 1).pipe(Effect.andThen(Ref.get(selected)), Effect.map((model) => new EngineSettings({ model: Option.some(model) }))),
+        setRole: () => Effect.void,
+        set: () => Effect.void,
+      }))
+      const auth = Layer.succeed(AuthStore, AuthStore.of({
+        all: Effect.succeed(new Map()),
+        get: () => Effect.succeed(Option.none()),
+        resolveKey: () => Effect.succeed(Option.none()),
+        set: () => Effect.void,
+        remove: () => Effect.void,
+      }))
+      const routed = yield* LanguageModel.LanguageModel.pipe(Effect.provide(LanguageModelLive.pipe(Layer.provide(Layer.merge(settings, auth)))))
+      const step = yield* resolveModelRequest(routed)
+      // Another terminal switches the model while the step is in flight.
+      yield* Ref.set(selected, "google:gemini-3.5-flash")
+      const planned = yield* modelRequestDescriptorOf(step)
+      const dispatched = yield* modelRequestDescriptorOf(step)
+      const called = yield* Effect.flip(step.generateText({ prompt: "hello" }))
+      return { loads: yield* Ref.get(loads), planned, dispatched, called: String(called) }
+    }))
+    expect(result.loads).toBe(1)
+    expect(Option.map(result.planned, (descriptor) => `${descriptor.provider}:${descriptor.model}`)).toEqual(Option.some("opencode:glm-5.2"))
+    expect(result.dispatched).toEqual(result.planned)
+    // The call asks for the step's provider (it has no credential here), not the newly selected one.
+    expect(result.called).toContain("no credential for opencode")
   })
 })

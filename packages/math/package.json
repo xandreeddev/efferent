@@ -19,6 +19,7 @@
     "@xandreed/plugin-telemetry": "workspace:*",
     "@xandreed/plugin-models": "workspace:*",
     "@xandreed/sdk": "workspace:*",
-    "@xandreed/runtime": "workspace:*"
+    "@xandreed/runtime": "workspace:*",
+    "@xandreed/plugin-sessions": "workspace:*"
   }
 }

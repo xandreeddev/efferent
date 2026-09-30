@@ -1,7 +1,8 @@
-import { Clock, Effect, Layer, Option, Schema } from "effect"
+import { Clock, Effect, Layer, Option, Ref, Schema } from "effect"
 import {
   ConversationId,
   HarnessError,
+  MemoryKindOf,
   SessionLogError,
   Sessions,
   TaskExecutor,
@@ -130,18 +131,69 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
   }).pipe(Effect.catchTag("InboxFull", (full) =>
     Effect.logWarning(`the inbox of ${parent.id} is full; task ${task.taskId} is delivered later`).pipe(Effect.as({ delivered: false, pending: full.pending }))))
 
+  /** The writer, noting when the reaction records its answer (the turn's `turn.reply`, as memory writes it). */
+  const noting = (writer: TurnWriter, answered: Ref.Ref<boolean>): TurnWriter => {
+    const note = (drafts: ReadonlyArray<{ readonly kind: string }>) => drafts.some((draft) => draft.kind === MemoryKindOf.TurnEnded) ? Ref.set(answered, true) : Effect.void
+    return {
+      ...writer,
+      append: (drafts) => note(drafts).pipe(Effect.andThen(writer.append(drafts))),
+      transact: (decide) => writer.transact((foreign) => decide(foreign).pipe(Effect.tap((decision) => note(decision.drafts)))),
+    }
+  }
+
+  /**
+   * The parent's reaction to what waits, within the budget. A turn opened
+   * too late to react is released: it ends interrupted having written
+   * nothing, so its items wait again with no attempt counted. A reaction cut
+   * by the deadline ends partial once it has recorded its answer (its items
+   * are done: answering again would answer twice), interrupted otherwise.
+   */
+  const reaction = (writer: TurnWriter, deadline: Option.Option<number>) => Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis
+    if (Option.isNone(deadline)) return yield* executor.react(writer)
+    const cut = { code: "task.deadline", message: "the runner's deadline ended the inbox reaction" }
+    if (deadline.value <= now) {
+      return yield* writer.end({ reason: "interrupted", failure: Option.some({ ...cut, message: "the runner's deadline passed before the inbox reaction began" }) })
+    }
+    const answered = yield* Ref.make(false)
+    const reacted = yield* executor.react(noting(writer, answered)).pipe(Effect.timeoutOption(deadline.value - now))
+    if (Option.isSome(reacted)) return
+    yield* writer.end({ reason: (yield* Ref.get(answered)) ? "partial" : "interrupted", failure: Option.some(cut) })
+  })
+
   /** Deliver the task if it finished and was not delivered, then let the parent react to what waits. */
-  const settle = (parent: SessionAddress, taskId: string) => Effect.gen(function* () {
+  const settle = (parent: SessionAddress, taskId: string, deadline: Option.Option<number>) => Effect.gen(function* () {
     const task = yield* taskOf(parent, taskId)
     if (!isFinished(task.status) || task.delivered) return
     const delivered = yield* deliverNotice(parent, task)
-    if (delivered.pending > 0) yield* sessions.drain(parent, executor.react)
+    const now = yield* Clock.currentTimeMillis
+    const remaining = Option.map(deadline, (at) => at - now)
+    if (delivered.pending === 0 || (Option.isSome(remaining) && remaining.value <= 0)) return
+    yield* sessions.drain(parent, (writer) => reaction(writer, deadline), Option.isSome(deadline) ? { maxTurns: 1 } : {})
   })
 
+  /**
+   * The task's work within the runner's deadline: execution (the child's
+   * turn, the parent's reaction) stops the closing reserve before it, so
+   * what follows has time to be stored; the deadline itself cuts the rest,
+   * with a warning of how long the work ran.
+   */
   const work = (parent: SessionAddress, taskId: ConversationId) => (deadline: Option.Option<number>): Effect.Effect<void> => Effect.gen(function* () {
-    const task = yield* taskOf(parent, taskId)
-    if (task.status === "pending") yield* runChild(parent, task, deadline)
-    yield* settle(parent, taskId)
+    const started = yield* Clock.currentTimeMillis
+    const executeBy = Option.map(deadline, (at) => at - Math.min(config.closingReserveMs, Math.floor(Math.max(0, at - started) / 2)))
+    const execution = Effect.gen(function* () {
+      const task = yield* taskOf(parent, taskId)
+      if (task.status === "pending") yield* runChild(parent, task, executeBy)
+      yield* settle(parent, taskId, executeBy)
+    })
+    yield* Option.match(deadline, {
+      onNone: () => execution,
+      onSome: (at) => execution.pipe(Effect.timeoutOption(Math.max(0, at - started)), Effect.flatMap(Option.match({
+        onSome: () => Effect.void,
+        onNone: () => Clock.currentTimeMillis.pipe(Effect.flatMap((now) =>
+          Effect.logWarning(`background task ${taskId} of ${parent.id} was cut by the runner's deadline after ${now - started} ms`))),
+      }))),
+    })
   }).pipe(
     Effect.catchCause((cause) => Effect.logWarning(`background task ${taskId} of ${parent.id} stopped`, cause)),
     Effect.withSpan("task.run", { attributes: { "task.id": taskId, "session.id": parent.id } }),

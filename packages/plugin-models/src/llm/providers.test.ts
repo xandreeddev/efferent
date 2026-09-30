@@ -1,9 +1,30 @@
 import { describe, expect, it } from "bun:test"
-import { OPENCODE_RESPONSES_API_URL, usesOpenCodeResponses } from "./providers.js"
+import { Effect, Option, Redacted } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, modelRequestDescriptorOf, parseModelSelection } from "@xandreed/core"
+import { buildProvider, OPENCODE_RESPONSES_API_URL, usesOpenCodeResponses } from "./providers.js"
 import { OPENAI_CODEX_API_URL, toOpenAiCodexRequestBody } from "./openAiCodex.js"
 import { isOpenAiCodexControlEvent, normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7 } from "./openAiCodexWebSocket.js"
 
 describe("OpenCode protocol routing", () => {
+  it("describes the SDK options captured at model construction, without credentials", async () => {
+    const descriptor = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection("opencode:gpt-5.6-luna"))
+      const built = yield* buildProvider(selection, undefined, Redacted.make("secret-test-key")).pipe(
+        Effect.provideService(CurrentPromptCacheKey, Option.some("original-lane")),
+        Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "max", maxOutputTokens: 32 })),
+      )
+      return yield* modelRequestDescriptorOf(built.svc).pipe(
+        Effect.provideService(CurrentPromptCacheKey, Option.some("later-lane")),
+        Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 64 })),
+      )
+    }).pipe(Effect.provide(FetchHttpClient.layer))))
+    expect(descriptor).toEqual(Option.some({
+      provider: "opencode", model: "gpt-5.6-luna",
+      settings: { prompt_cache_key: "original-lane", strictJsonSchema: false, max_output_tokens: 32, reasoning: { effort: "high" } },
+    }))
+    expect(JSON.stringify(descriptor)).not.toContain("secret-test-key")
+  })
   it("routes GPT 5.6 Luna through the Responses API", () => {
     expect(usesOpenCodeResponses("gpt-5.6-luna")).toBe(true)
     expect(OPENCODE_RESPONSES_API_URL).toBe("https://opencode.ai/zen/v1")

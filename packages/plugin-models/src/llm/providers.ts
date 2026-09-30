@@ -4,8 +4,8 @@ import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { Effect, Option, Redacted } from "effect"
 import type { Scope } from "effect"
-import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey } from "@xandreed/core"
-import type { Credential, ModelSelection } from "@xandreed/core"
+import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, modelRequestDescriptorOf } from "@xandreed/core"
+import type { Credential, ModelCallPolicy, ModelSelection } from "@xandreed/core"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { makeCompatLanguageModel } from "./compat.js"
 import { makeOpenAiCodexLanguageModel } from "./openAiCodex.js"
@@ -112,7 +112,34 @@ const missingKey = (selection: ModelSelection): AuthError =>
     message: `no credential for ${selection.provider} — add one to ~/.efferent/auth.json`,
   })
 
-export const buildProvider = (
+/** The OpenCode Responses options: what the model is built with, and what its descriptor records. */
+const openCodeResponsesConfig = (cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>) => ({
+  // UI tools contain genuinely optional fields. OpenAI strict
+  // schemas require every property, so use normal function
+  // calling and let Effect decode the domain schema.
+  strictJsonSchema: false,
+  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
+  ...Option.match(policy, {
+    onNone: () => ({}),
+    onSome: (value) => ({
+      ...(value.maxOutputTokens === undefined
+        ? {}
+        : { max_output_tokens: value.maxOutputTokens }),
+      reasoning: {
+        // The public-API SDK union has no none/xhigh/max —
+        // clamp to the nearest supported value (only the
+        // subscription dialect is probe-verified for `none`).
+        effort: value.effort === "xhigh" || value.effort === "max"
+          ? "high" as const
+          : value.effort === "none"
+            ? "low" as const
+            : value.effort,
+      },
+    }),
+  }),
+})
+
+const buildProviderService = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
@@ -130,31 +157,7 @@ export const buildProvider = (
             Effect.flatMap((client) =>
               OpenAiLanguageModel.make({
                 model: selection.modelId,
-                config: {
-                  // UI tools contain genuinely optional fields. OpenAI strict
-                  // schemas require every property, so use normal function
-                  // calling and let Effect decode the domain schema.
-                  strictJsonSchema: false,
-                  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
-                  ...Option.match(policy, {
-                    onNone: () => ({}),
-                    onSome: (value) => ({
-                      ...(value.maxOutputTokens === undefined
-                        ? {}
-                        : { max_output_tokens: value.maxOutputTokens }),
-                      reasoning: {
-                        // The public-API SDK union has no none/xhigh/max —
-                        // clamp to the nearest supported value (only the
-                        // codex dialect is probe-verified for `none`).
-                        effort: value.effort === "xhigh" || value.effort === "max"
-                          ? "high"
-                          : value.effort === "none"
-                            ? "low"
-                            : value.effort,
-                      },
-                    }),
-                  }),
-                },
+                config: openCodeResponsesConfig(cacheKey, policy),
               }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
             ),
             Effect.map((svc) => ({ svc, prependClaudeCode: false })),
@@ -237,3 +240,29 @@ export const buildProvider = (
     }),
   )
 }
+
+/** Preserve adapter descriptors and describe the public configuration of SDK-backed models. */
+export const buildProvider = (
+  selection: ModelSelection,
+  credential: Credential | undefined,
+  key: Redacted.Redacted<string> | undefined,
+): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key).pipe(
+  Effect.flatMap((built) => Effect.gen(function* () {
+      // SDK model configuration was captured at construction; preserve those exact values.
+      const cacheKey = yield* Effect.service(CurrentPromptCacheKey)
+      const policy = yield* Effect.service(CurrentModelCallPolicy)
+      const responses = selection.provider === "opencode" && usesOpenCodeResponses(selection.modelId)
+      const settings = selection.provider === "anthropic"
+        ? { systemPrelude: built.prependClaudeCode ? CLAUDE_CODE_SYSTEM : null }
+        : responses
+          ? openCodeResponsesConfig(cacheKey, policy)
+          : { prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent") }
+      const descriptor = { provider: selection.provider, model: selection.modelId, settings }
+      return {
+        ...built,
+        svc: describeModel(built.svc, modelRequestDescriptorOf(built.svc).pipe(Effect.map((existing) =>
+          Option.match(existing, { onNone: () => descriptor, onSome: (value) => ({ ...value, provider: selection.provider }) }),
+        ))),
+      }
+  })),
+)

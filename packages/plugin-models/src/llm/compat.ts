@@ -1,7 +1,8 @@
 import { AiError, LanguageModel, Tool } from "effect/ai"
 import type { Prompt } from "effect/ai"
 import { Effect, Result, Option, Stream } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
+import type { ModelCallPolicy } from "@xandreed/core"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
 import type { CompletionUsage } from "./sse.js"
 
@@ -261,6 +262,25 @@ export const fromChatCompletion = (
     ]
   })
 
+/** A request's public options, shared by the body and the model's descriptor:
+ *  the sampling temperature (sent before the messages) and the gateway
+ *  extensions (sent after them), as the wire has always ordered them. */
+const requestSettings = (config: CompatConfig, cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>): { readonly sampling: Json; readonly extensions: Json } => ({
+  sampling: config.temperature === undefined ? {} : { temperature: config.temperature },
+  extensions: config.standardOnly === true ? {} : {
+    ...Option.match(cacheKey, { onNone: () => ({}), onSome: (key) => ({ prompt_cache_key: key }) }),
+    ...(config.thinking === undefined ? thinkingParams(config.model) : { thinking: { type: config.thinking } }),
+    ...(config.reasoningEffort === undefined ? {} : { reasoning: { effort: config.reasoningEffort } }),
+    ...Option.match(policy, {
+      onNone: () => ({}),
+      onSome: (value) => ({
+        ...(value.maxOutputTokens === undefined ? {} : { max_tokens: value.maxOutputTokens }),
+        ...(config.thinking === "disabled" || config.reasoningEffort !== undefined ? {} : { reasoning_effort: value.effort }),
+      }),
+    }),
+  },
+})
+
 /** The one request shape both paths send; only `stream` differs (streaming
  *  additionally asks the gateway to attach usage to the final chunk). The
  *  engine's per-conversation cache identity rides as `prompt_cache_key` —
@@ -274,30 +294,17 @@ const chatRequestBody = (
   Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }).pipe(
     Effect.map(({ cacheKey, policy }) => {
       const tools = toChatTools(options.tools)
+      const settings = requestSettings(config, cacheKey, policy)
       return {
         model: config.model,
-        ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
+        ...settings.sampling,
         messages: toChatMessages(options.prompt),
         stream: streaming,
         ...(options.responseFormat.type === "json" ? { response_format: {
           type: "json_schema", json_schema: { name: options.responseFormat.objectName, strict: true, schema: strictJsonSchema(options.responseFormat.schema) },
         } } : {}),
         ...(streaming ? { stream_options: { include_usage: true } } : {}),
-        ...(config.standardOnly === true ? {} : {
-          ...Option.match(cacheKey, {
-            onNone: () => ({}),
-            onSome: (key) => ({ prompt_cache_key: key }),
-          }),
-          ...(config.thinking === undefined ? thinkingParams(config.model) : { thinking: { type: config.thinking } }),
-          ...(config.reasoningEffort === undefined ? {} : { reasoning: { effort: config.reasoningEffort } }),
-          ...Option.match(policy, {
-            onNone: () => ({}),
-            onSome: (value) => ({
-              ...(value.maxOutputTokens === undefined ? {} : { max_tokens: value.maxOutputTokens }),
-              ...(config.thinking === "disabled" || config.reasoningEffort !== undefined ? {} : { reasoning_effort: value.effort }),
-            }),
-          }),
-        }),
+        ...settings.extensions,
         ...(tools.length > 0 ? { tools, tool_choice: toToolChoice(options.toolChoice) } : {}),
       }
     }),
@@ -406,4 +413,11 @@ export const makeCompatLanguageModel = (
           return sseStreamParts({ moduleName: config.moduleName, body })
         }),
       ) as never,
-  })
+  }).pipe(Effect.map((model) => describeModel(model,
+    Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }).pipe(
+      Effect.map(({ cacheKey, policy }) => {
+        const settings = requestSettings(config, cacheKey, policy)
+        return { provider: config.moduleName, model: config.model, settings: { ...settings.sampling, ...settings.extensions } }
+      }),
+    ),
+  )))

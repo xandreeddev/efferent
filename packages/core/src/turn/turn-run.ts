@@ -1,6 +1,7 @@
 import { Context, Effect, Option } from "effect"
+import { LanguageModel } from "effect/ai"
 import { toolParametersSchema } from "../loop/toolSchema.js"
-import type { HarnessError } from "../harness/plugin.entity.js"
+import { HarnessError } from "../harness/plugin.entity.js"
 import { canonicalJson, estimateTokens, fingerprintOf } from "../memory/memory-log.entity.functions.js"
 import type { StepDirective, StepInfo } from "../ports/capability.port.js"
 import { StepLoop } from "../ports/step-loop.port.js"
@@ -11,6 +12,15 @@ import type { TurnPolicy } from "../ports/turn.port.js"
 import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
 import type { CompletionVerdict } from "./turn-event.entity.js"
+import { CurrentModelCallPolicy } from "../loop/modelPolicy.js"
+import {
+  checkModelRequest,
+  modelRequestDescriptorOf,
+  modelRequestHeaderOf,
+  modelRequestTools,
+  reconstructModelRequest,
+  resolveModelRequest,
+} from "./model-request.entity.functions.js"
 
 /** The turn services one run reads. */
 export type TurnRunServices = TurnMemory | TurnToolbox | TurnPrompt | TurnEvents | TurnTasks
@@ -49,6 +59,8 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
     const tasks = yield* TurnTasks
     const tools = yield* (yield* TurnToolbox).tools
     const session = memory.session
+    const runId = (yield* session.renderRecipe("none")).currentRun
+    const defaultModel = Context.getOption(runServices, LanguageModel.LanguageModel)
     const number = yield* memory.number
     const limits: LoopLimits = { ...defaultLimits, ...options.limits, ...policy.limits }
     const budget = policy.budgetTokens ?? options.budgetTokens ?? defaultBudgetTokens
@@ -71,6 +83,8 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       const reserved = estimateTokens(system) + schemaTokens(tools, info.activeTools)
       yield* session.maintain({ phase: "step", lastUsage: info.lastUsage, budgetTokens: Math.max(1, budget - reserved), views: tools.views })
       const built = yield* session.build({ stepContext: stepContext === "tail" ? "tail" : "none" })
+      const render = yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none")
+      // A reaction may record memory now: the header's cut (`through`) keeps it for the next step.
       yield* events.publish({
         _tag: "context.built", step: info.stepIndex, turn: number,
         strategy: session.strategy.id, strategyVersion: session.strategy.version,
@@ -79,9 +93,28 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
         compactions: built.compactions.length, activeTools: info.activeTools,
       })
       const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""
+      const finalSystem = [system, stepText].filter((part) => part.length > 0).join("\n\n")
+      // Resolved once for the step: the header describes the model every attempt of the step calls.
+      const model = yield* Option.match(Option.orElse(Option.map(choice, (value) => value.model), () => defaultModel), {
+        onNone: () => Effect.succeed(Option.none<LanguageModel.LanguageModel>()),
+        onSome: (chosen) => resolveModelRequest(chosen).pipe(Effect.map(Option.some)),
+      })
+      yield* memory.prepareRequest({
+        version: 1, runId, step: info.stepIndex,
+        strategyVersion: session.strategy.version,
+        system: finalSystem,
+        render,
+        through: built.through,
+        contextFingerprint: built.fingerprint,
+        tools: modelRequestTools(info.activeTools.flatMap((name) => tools.toolkit.tools[name] === undefined ? [] : [tools.toolkit.tools[name]])),
+        toolChoice: Option.getOrElse(directive.toolChoice, () => "auto"),
+        model: yield* Option.match(model, { onNone: () => Effect.succeed(Option.none()), onSome: modelRequestDescriptorOf }),
+        cacheKey: options.cacheKey ?? Option.none(),
+        callPolicy: yield* Effect.service(CurrentModelCallPolicy),
+      })
       return {
-        model: Option.map(choice, (value) => value.model),
-        system: [system, stepText].filter((part) => part.length > 0).join("\n\n"),
+        model,
+        system: finalSystem,
         messages: built.messages,
         toolChoice: directive.toolChoice,
       }
@@ -93,6 +126,19 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       limits,
       initial: Option.fromNullishOr(policy.initial),
       plan,
+      dispatch: (step, actual) => Effect.gen(function* () {
+        const stored = yield* memory.requestSnapshot
+        const header = yield* modelRequestHeaderOf(stored.requests, runId, step)
+        const expected = yield* reconstructModelRequest(header, stored.entries)
+        yield* checkModelRequest(expected, {
+          prompt: actual.prompt,
+          tools: modelRequestTools(actual.tools),
+          toolChoice: actual.toolChoice,
+          model: yield* modelRequestDescriptorOf(actual.model),
+          cacheKey: options.cacheKey ?? Option.none(),
+          callPolicy: yield* Effect.service(CurrentModelCallPolicy),
+        })
+      }),
       record: (step, tail) => session.recordTail(tail, tools.views, step),
       completion: (info) => policy.completion === undefined ? Effect.succeed(incomplete) : inRun(policy.completion(info)),
       steering: options.steering ?? Effect.succeed(Option.none()),

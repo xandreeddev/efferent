@@ -59,7 +59,7 @@ const streamingModel = (script: (call: number) => ReadonlyArray<unknown>) =>
   })
 
 const finish = (reason: "stop" | "tool-calls") => ({
-  type: "finish",
+  type: "finish" as const,
   reason,
   usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } },
 })
@@ -439,6 +439,29 @@ describe("runLoop steering (pendingInput)", () => {
 })
 
 describe("runLoop streaming", () => {
+  test("checks dispatch again before a streaming fallback and freezes prompt data", async () => {
+    const { checks, calls, frozen } = await Effect.runPromise(Effect.gen(function* () {
+      const checks = yield* Ref.make<ReadonlyArray<number>>([])
+      const calls = yield* Ref.make(0)
+      const frozen = yield* Ref.make(false)
+      const model = yield* LanguageModel.make({
+        generateText: (options) => Effect.gen(function* () {
+          yield* Ref.update(calls, (count) => count + 1)
+          yield* Ref.set(frozen, Object.isFrozen(options.prompt) && Object.isFrozen(options.prompt.content) && options.prompt.content.every(Object.isFrozen))
+          return [{ type: "text" as const, text: "done" }, finish("stop")]
+        }),
+        streamText: () => Stream.die("stream unavailable"),
+      })
+      yield* runLoop({
+        system: "sys", messages: [user("go")], toolkit: Toolkit.empty, streaming: true,
+        beforeDispatch: (step) => Ref.update(checks, (all) => [...all, step]),
+      }).pipe(Effect.provideService(LanguageModel.LanguageModel, model))
+      return { checks: yield* Ref.get(checks), calls: yield* Ref.get(calls), frozen: yield* Ref.get(frozen) }
+    }))
+    expect(checks).toEqual([0, 0])
+    expect(calls).toBe(1)
+    expect(frozen).toBe(true)
+  })
   const script = (call: number): ReadonlyArray<unknown> =>
     call === 0
       ? [

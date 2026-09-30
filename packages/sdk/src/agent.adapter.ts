@@ -14,8 +14,14 @@ import {
   Sessions,
   StepLoop,
   ToolRegistry,
+  RunContext,
+  settleTurn,
+  TurnEvents,
+  TurnTasks,
   TurnLive,
   TurnMemory,
+  TurnPrompt,
+  TurnToolbox,
   turnOf,
 } from "@xandreed/core"
 import type {
@@ -33,6 +39,7 @@ import type {
   TurnWriter,
 } from "@xandreed/core"
 import { activateGraph, graphFingerprint, resolveGraph } from "@xandreed/runtime"
+import type { PluginGraph, PluginNode } from "@xandreed/runtime"
 
 /** One plugin instance of an agent: the definition, its options and (optionally) an instance id. */
 export interface AgentPluginEntry {
@@ -74,9 +81,10 @@ export interface Agent {
    * Run one turn: one the host began (its `TurnWriter`; the host ends it),
    * or one begun and ended here through the `Sessions` in the turn's
    * services. The turn is scoped: its subscriptions and tasks end with it.
-   * Tasks and background subscriptions are drained before the reply is
-   * recorded, exactly once — failed when `use` fails or is interrupted —
-   * and everything is stored before the turn returns. A turn closed
+   * On success, tasks and background subscriptions settle as the scopes
+   * close in dependency order, before the reply is recorded exactly once.
+   * Failures and interruptions record a failed reply and cancel remaining
+   * scoped work; recorded events are stored before the turn returns. A turn closed
    * elsewhere (cancelled, reaped) fails with `turn.closed`. `use` runs in
    * the turn's scope with the turn's services (RunContext, TurnEvents,
    * TurnTasks and the input's `layer`) provided: the same instances the
@@ -135,6 +143,17 @@ const hostCapabilities = (capabilities: ReadonlyArray<Capability>) => definePlug
   layer: () => CapabilitiesLive(...capabilities),
 })
 
+/** Services that exist only after an admitted turn has its bus, memory and tools slot. */
+const builtInTurnKeys: ReadonlyArray<string> = [RunContext, TurnEvents, TurnTasks, TurnMemory, TurnPrompt, TurnToolbox].map((tag) => tag.key)
+
+/** Transitively defer subscribers and their dependants until TurnLive is built; strategy/registry plugins still build first. */
+const turnDependentNodes = (graph: PluginGraph): ReadonlyArray<PluginNode> => graph.nodes.reduce((late: ReadonlyArray<PluginNode>, node) => {
+  const dependencies = [...node.plugin.requires, ...(node.plugin.optional ?? [])]
+  const afterTurn = dependencies.some((key) => builtInTurnKeys.includes(key) || late.some((source) =>
+    source.plugin.provides.includes(key) || (source.plugin.contributes ?? []).includes(key)))
+  return afterTurn ? [...late, node] : late
+}, [])
+
 /**
  * Build the agent's plugin graph once. Runtime plugins are activated here,
  * in the caller's scope; session plugins (if any) are activated per turn with
@@ -161,12 +180,18 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   }
   const services = config.services ?? Context.empty()
   const turnKeys = (config.turnServices ?? []).map((tag) => tag.key)
-  const external = [SessionEnvironment.key, ...services.mapUnsafe.keys(), ...turnKeys]
+  const external = [SessionEnvironment.key, ...services.mapUnsafe.keys(), ...turnKeys, ...builtInTurnKeys]
   const graph = yield* resolveGraph(harness, plugins, external)
+  const late = turnDependentNodes(graph)
+  const invalidLate = late.find((node) => node.plugin.scope === "runtime" || node.plugin.provides.some((key) =>
+    ([ConversationMemory.key, ToolRegistry.key, StepLoop.key] as ReadonlyArray<string>).includes(key)))
+  if (invalidLate !== undefined) return yield* Effect.fail(failure("config.graph", `${invalidLate.entry.id}: a plugin requiring turn services must be session-scoped and cannot supply the turn's memory, registry or loop`))
+  const beforeTurn: PluginGraph = { ...graph, nodes: graph.nodes.filter((node) => !late.includes(node)) }
+  const afterTurn: PluginGraph = { ...graph, nodes: late }
   const workspace = config.workspace ?? "."
   const seed = Context.add(services, SessionEnvironment, { workspace })
-  const runtime = yield* activateGraph(graph, "runtime", Context.makeUnsafe<never>(seed.mapUnsafe), parent)
-  const perTurn = graph.nodes.some((node) => node.plugin.scope === "session")
+  const runtime = yield* activateGraph(beforeTurn, "runtime", Context.makeUnsafe<never>(seed.mapUnsafe), parent)
+  const perTurn = beforeTurn.nodes.some((node) => node.plugin.scope === "session")
 
   /**
    * One turn composed from the public pieces (`TurnLive`, `persistMessage`,
@@ -175,13 +200,20 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    * 1. TurnLive: the bus and tasks, with the writer as the first
    *    subscriber, then memory (the session's earlier memory events) and
    *    RunContext;
-   * 2. the host's layer, provided between TurnLive and the body: built after
-   *    RunContext and before memory takes the message, so it sees only
-   *    earlier turns;
-   * 3. the user's message taken by memory (TurnStarted, turn.started);
-   * 4. the tools opened inside the host's layer, so its services reach them;
-   * 5. `use`;
-   * 6. a turn begun here is ended here, with the outcome.
+   * 2. the turn-dependent plugins (those requiring the turn's services, and
+   *    their dependants), activated over TurnLive in a scope of their own;
+   * 3. the host's layer, built with their services, after RunContext and
+   *    before memory takes the message, so it sees only earlier turns (a
+   *    context entry recorded by 2 or 3 waits for the message);
+   * 4. the user's message taken by memory (TurnStarted, turn.started);
+   * 5. the tools opened inside the host's layer, so its services reach them;
+   * 6. `use`, then on success its tasks and background reactions settled;
+   * 7. the host's layer, then the plugins of 2 closed, while TurnLive is
+   *    still open: on success, what their finalizers publish or fork is
+   *    settled and stored before TurnLive closes;
+   * 8. on success finalizer work settled, then the final reply recorded (failed when
+   *    the body or its finalizer work failed), before TurnLive closes;
+   * 9. a turn begun here is ended here, with the outcome.
    */
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -191,7 +223,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     const absent = turnKeys.filter((key) => !input.services.mapUnsafe.has(key))
     if (absent.length > 0) return yield* Effect.fail(failure("service.missing", `The turn does not provide ${absent.join(", ")}`))
     const merged = Context.merge(runtime, input.services)
-    const context = perTurn ? yield* activateGraph(graph, "session", merged, scope) : merged
+    const context = perTurn ? yield* activateGraph(beforeTurn, "session", merged, scope) : merged
     const memory = yield* required(context, ConversationMemory)
     const registry = yield* required(context, ToolRegistry)
     const loop = yield* required(context, StepLoop)
@@ -217,10 +249,28 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       // Everything `use` does sees the turn's services: `yield* SomeHostTag` gets the per-turn instance.
       return yield* use(yield* turnOf(runOptions))
     })
+    // The turn-dependent plugins finalize before TurnLive closes. On success, the outer guard
+    // settles their finalizer work, then records the final outcome while the writer is open.
+    const provideTurnPlugins = <B, F, T>(effect: Effect.Effect<B, F, T>): Effect.Effect<B, F | HarnessError, unknown> => late.length === 0 ? effect : Effect.gen(function* () {
+      const liveContext = yield* Effect.context<never>()
+      return yield* Effect.scoped(Effect.gen(function* () {
+        const activated = yield* activateGraph(afterTurn, "session", Context.merge(context, liveContext), yield* Effect.scope)
+        return yield* effect.pipe(Effect.provide(activated))
+      }))
+    })
     const outcome = yield* body.pipe(
-      guardTurn,
+      // Work using the body's scoped services finishes before those services are finalized.
+      Effect.tap(() => settleTurn),
       Effect.scoped,
+      // The body's finalizers may fork work that still needs the host's services.
+      Effect.tap(() => settleTurn),
       provideHostLayer(Option.fromNullishOr(input.layer)),
+      // The host's finalizer work finishes while its plugin dependencies remain open.
+      Effect.tap(() => settleTurn),
+      provideTurnPlugins,
+      // Includes scope teardown even without turn-dependent plugins: a finalizer task's failure
+      // must fail the final outcome rather than follow an already recorded completed reply.
+      guardTurn,
       Effect.provide(TurnLive(live), { local: true }),
       Effect.provideService(ConversationMemory, memory),
       Effect.provideService(ToolRegistry, registry),

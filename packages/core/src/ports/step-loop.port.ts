@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
-import type { LanguageModel } from "effect/ai"
+import type { LanguageModel, Prompt, Tool } from "effect/ai"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
@@ -26,7 +26,7 @@ export interface Correctives {
 
 /** Everything one provider request needs, prepared by the turn. */
 export interface StepPlan {
-  /** None: the LanguageModel in the turn's services. */
+  /** The step's model, resolved once for the step (`resolveModelRequest`); None: the LanguageModel in the turn's services. */
   readonly model: Option.Option<LanguageModel.LanguageModel>
   readonly system: string
   readonly messages: ReadonlyArray<AgentMessage>
@@ -41,6 +41,11 @@ export interface StepRequest {
   /** A host-planned first batch, run as step zero without a provider call. */
   readonly initial: Option.Option<InitialBatch>
   readonly plan: (step: StepInfo) => Effect.Effect<StepPlan, HarnessError>
+  /**
+   * Validate an actual dispatch against a fresh durable derivation. Run immediately before each provider attempt,
+   * including a streaming fallback; a failed check fails the step (a streamed step does not fall back).
+   */
+  readonly dispatch: (step: number, request: ModelDispatch) => Effect.Effect<void, HarnessError>
   /** Persist a step's appended messages; returns their log entries. */
   readonly record: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
   readonly completion: (step: StepInfo) => Effect.Effect<CompletionVerdict, HarnessError>
@@ -49,6 +54,13 @@ export interface StepRequest {
   readonly events: TurnEventsService
   readonly tasks: TurnTasksService
   readonly cacheKey: Option.Option<string>
+}
+
+export interface ModelDispatch {
+  readonly prompt: Prompt.Prompt
+  readonly tools: ReadonlyArray<Tool.Any>
+  readonly toolChoice: unknown
+  readonly model: LanguageModel.LanguageModel
 }
 
 export interface RunResult {
@@ -66,6 +78,9 @@ export interface RunResult {
  * makes no provider call; a forced tool choice is honoured; a verdict
  * awaiting tasks joins them and is evaluated once more; no provider call
  * follows a complete verdict.
+ * Every real provider attempt runs `request.dispatch` immediately before
+ * invoking the model; a failed durable check prevents the call. Planned
+ * batches skip that hook because they make no provider request.
  */
 export class StepLoop extends Context.Service<StepLoop, {
   readonly id: string

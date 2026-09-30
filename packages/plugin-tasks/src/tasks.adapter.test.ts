@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Clock, Context, Deferred, Effect, Exit, FiberSet, Layer, Option, Ref, Scope } from "effect"
+import { Clock, Context, Deferred, Effect, Exit, FiberSet, Layer, Logger, Option, Queue, Ref, Scope } from "effect"
 import type { Layer as LayerType } from "effect"
 import { TestClock } from "effect/testing"
 import {
@@ -34,6 +34,7 @@ const kinds = (events: ReadonlyArray<SessionLogEvent>) => events.map((event) => 
  */
 const harness = (input: {
   readonly turn?: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, HarnessError>
+  readonly react?: (writer: TurnWriter) => Effect.Effect<void, HarnessError>
   readonly admission?: LayerType.Layer<TurnAdmission>
   readonly maxMs?: number
   readonly config?: Partial<TasksConfig>
@@ -48,7 +49,9 @@ const harness = (input: {
       yield* FiberSet.run(fibers, work(Option.map(Option.fromNullishOr(input.maxMs), (ms) => now + ms)))
     }),
   }))
-  const react = (writer: TurnWriter) => Ref.update(reactions, (all) => [...all, writer.admitted.userMessage.text])
+  const react = (writer: TurnWriter) => Ref.update(reactions, (all) => [...all, writer.admitted.userMessage.text]).pipe(
+    Effect.andThen(input.react?.(writer) ?? Effect.void),
+  )
   const executor = Layer.succeed(TaskExecutor, TaskExecutor.of({
     turn: input.turn ?? ((_writer, task) => Effect.succeed({ outcome: "completed", reply: Option.some(`found: ${task.instructions}`) })),
     react,
@@ -240,18 +243,122 @@ describe("limits, failures and budgets", () => {
     expect(yield* h.reactions).toEqual([`[Background task ${task.taskId} failed]\n<task-output>\n(no reply: no turns left today)\n</task-output>`])
   })))
 
-  test("a task past the runner's deadline ends interrupted", () => scenario(Effect.gen(function* () {
+  test("a task past its execution cutoff ends interrupted, and with no time left to react its notice waits for the parent", () => scenario(Effect.gen(function* () {
     const entered = yield* Deferred.make<void>()
     const h = yield* harness({ maxMs: 1_000, turn: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)) })
     const task = yield* h.tasks.start(h.parent, { instructions: "slow", mode: "spawn" })
     yield* Deferred.await(entered)
-    yield* TestClock.adjust("2 seconds")
+    // The closing reserve is at most half the budget: execution stops at 500 ms.
+    yield* TestClock.adjust("499 millis")
+    expect((yield* h.tasks.status(h.parent, task.taskId)).status).toBe("running")
+    yield* TestClock.adjust("1 millis")
     yield* h.idle
     const late = yield* h.tasks.status(h.parent, task.taskId)
     expect([late.status, Option.map(late.failure, (failure) => failure.code), late.delivered]).toEqual(["interrupted", Option.some("task.deadline"), true])
     const child = yield* h.sessions.read({ id: task.child, owner }, { kinds: ["turn.ended"] })
     expect(child.map((event) => event.data.reason)).toEqual(["interrupted"])
+    expect([yield* h.kinds(h.parent), (yield* h.sessions.get(h.parent)).pending, yield* h.reactions]).toEqual([["task.started", "inbox.queued"], 1, []])
+    expect(yield* h.tasks.reconcile(h.parent)).toEqual({ delivered: 0, started: 0 })
+    expect((yield* h.drain(h.parent)).turns).toBe(1)
+    expect((yield* h.reactions).length).toBe(1)
   })))
+
+  test("execution leaves the configured closing reserve of the runner's budget", () => scenario(Effect.gen(function* () {
+    const cutAfter = (config: Partial<TasksConfig>) => Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const h = yield* harness({ maxMs: 10_000, config, turn: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)) })
+      const task = yield* h.tasks.start(h.parent, { instructions: "slow", mode: "spawn" })
+      yield* Deferred.await(entered)
+      const reserve = config.closingReserveMs ?? tasksDefaults.closingReserveMs
+      yield* TestClock.adjust(`${10_000 - reserve - 1} millis`)
+      const before = (yield* h.tasks.status(h.parent, task.taskId)).status
+      yield* TestClock.adjust("1 millis")
+      yield* h.idle
+      return [before, (yield* h.tasks.status(h.parent, task.taskId)).status]
+    })
+    expect(yield* cutAfter({})).toEqual(["running", "interrupted"])
+    expect(yield* cutAfter({ closingReserveMs: 500 })).toEqual(["running", "interrupted"])
+  })))
+
+  test("the runner's deadline interrupts the parent's reaction and stores its ending; the notice waits for another", () => scenario(Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>()
+    const stopped = yield* Ref.make(false)
+    const h = yield* harness({ maxMs: 1_000, react: () => Deferred.succeed(entered, undefined).pipe(
+      Effect.andThen(Effect.never), Effect.ensuring(Ref.set(stopped, true)),
+    ) })
+    const task = yield* h.tasks.start(h.parent, { instructions: "quick child, slow parent", mode: "spawn" })
+    yield* Deferred.await(entered)
+    yield* TestClock.adjust("500 millis")
+    yield* h.idle
+    expect(yield* Ref.get(stopped)).toBe(true)
+    expect((yield* h.tasks.status(h.parent, task.taskId)).status).toBe("completed")
+    expect(Option.isNone((yield* h.sessions.get(h.parent)).open)).toBe(true)
+    expect((yield* h.sessions.read(h.parent, { kinds: ["turn.ended"] })).map((event) => [event.data.reason, event.data.failure])).toEqual([
+      ["interrupted", { code: "task.deadline", message: "the runner's deadline ended the inbox reaction" }],
+    ])
+    expect((yield* h.sessions.get(h.parent)).pending).toBe(1)
+  })))
+
+  test("a reaction cut after it recorded its answer is done: the parent does not answer twice", () => scenario(Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>()
+    const h = yield* harness({ maxMs: 1_000, react: (writer) => writer.append([{ kind: "turn.reply", data: { body: { outcome: "completed", reply: "noted" } } }]).pipe(
+      Effect.andThen(Deferred.succeed(entered, undefined)), Effect.andThen(Effect.never),
+    ) })
+    yield* h.tasks.start(h.parent, { instructions: "answered, then cut", mode: "spawn" })
+    yield* Deferred.await(entered)
+    yield* TestClock.adjust("500 millis")
+    yield* h.idle
+    expect((yield* h.sessions.read(h.parent, { kinds: ["turn.ended"] })).map((event) => event.data.reason)).toEqual(["partial"])
+    expect((yield* h.sessions.get(h.parent)).pending).toBe(0)
+    expect((yield* h.drain(h.parent)).turns).toBe(0)
+    expect((yield* h.reactions).length).toBe(1)
+  })))
+
+  test("a parent admission that returns past the cutoff releases its turn: the notices wait with no attempt used", () => scenario(Effect.gen(function* () {
+    const admitting = yield* Queue.unbounded<void>()
+    const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
+      admit: (turn, open) => turn.key.startsWith("task:") ? open
+        : open.pipe(Effect.tap(() => Queue.offer(admitting, undefined)), Effect.tap(() => Effect.sleep("600 millis"))),
+    }))
+    const h = yield* harness({ maxMs: 1_000, admission })
+    const late = Effect.gen(function* () {
+      yield* h.tasks.start(h.parent, { instructions: "admitted late", mode: "spawn" })
+      yield* Queue.take(admitting)
+      yield* TestClock.adjust("600 millis")
+      yield* h.idle
+    })
+    yield* late
+    yield* late
+    const ended = yield* h.sessions.read(h.parent, { kinds: ["turn.ended", "inbox.dropped"] })
+    expect(ended.map((event) => [event.kind, event.data.reason, (event.data.failure as { readonly message?: string } | null)?.message])).toEqual([
+      ["turn.ended", "interrupted", "the runner's deadline passed before the inbox reaction began"],
+      ["turn.ended", "interrupted", "the runner's deadline passed before the inbox reaction began"],
+    ])
+    expect([(yield* h.sessions.get(h.parent)).pending, yield* h.reactions]).toEqual([2, []])
+  })))
+
+  test("the runner's deadline bounds parent admission, leaves the delivered notice pending and says what it cut", () => {
+    const logged: Array<string> = []
+    const capture = Logger.layer([Logger.make((options) => logged.push([options.message].flat().join(" ")))])
+    return scenario(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const stopped = yield* Ref.make(false)
+      const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
+        admit: (turn, open) => turn.key.startsWith("task:") ? open
+          : Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never), Effect.ensuring(Ref.set(stopped, true))),
+      }))
+      const h = yield* harness({ maxMs: 1_000, admission })
+      const task = yield* h.tasks.start(h.parent, { instructions: "parent admission stalls", mode: "spawn" })
+      yield* Deferred.await(entered)
+      yield* TestClock.adjust("1 second")
+      yield* h.idle
+      expect(yield* Ref.get(stopped)).toBe(true)
+      expect([Option.isNone((yield* h.sessions.get(h.parent)).open), (yield* h.sessions.get(h.parent)).pending]).toEqual([true, 1])
+      expect((yield* h.tasks.status(h.parent, task.taskId)).delivered).toBe(true)
+      expect(yield* h.reactions).toEqual([])
+      expect(logged).toContain(`background task ${task.taskId} of ${h.parent.id} was cut by the runner's deadline after 1000 ms`)
+    }).pipe(Effect.provide(capture)))
+  })
 
   test("a long reply is cut, and cannot close the notice's frame", () => {
     const task: TaskView = {

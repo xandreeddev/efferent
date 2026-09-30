@@ -1,7 +1,8 @@
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Clock, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
-import { AuthStore, CurrentModelCallPolicy, formatModelSelection, parseModelSelection, SettingsStore } from "@xandreed/core"
+import type { Context } from "effect"
+import { AuthStore, CurrentModelCallPolicy, describeModel, formatModelSelection, HarnessError, parseModelSelection, resolvingModel, SettingsStore } from "@xandreed/core"
 import type { ModelSelection } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
@@ -16,7 +17,10 @@ import {
  * The routed `LanguageModel`: every call re-reads the settings selection and
  * resolves a key from the `AuthStore`, builds the provider's service for
  * exactly that call (`Effect.scoped`), and delegates — so a model switch or a
- * fresh login applies on the next turn with no rebuild. Each call rides the
+ * fresh login applies on the next turn with no rebuild. A turn's step
+ * resolves the selection once (`resolveModelRequest`): its request header
+ * and every attempt of the step, a stream's fallback included, use that
+ * selection, and a switch applies from the next step. Each call rides the
  * timeout + transient-retry + empty-response guards from `retry.ts`.
  */
 
@@ -127,7 +131,18 @@ const withConfiguredEffort = <A, E, R>(
             ),
           ),
     ),
-  )
+)
+
+/** Requested routing profile, before explicit fallback/retry policy chooses a transport attempt. */
+const describeSelection = (primary: ModelSelection, fallback: Option.Option<ModelSelection>, effort: EngineSettings["reasoningEffort"]) =>
+  Effect.service(CurrentModelCallPolicy).pipe(Effect.map((current) => ({
+    provider: primary.provider,
+    model: primary.modelId,
+    settings: {
+      fallback: Option.getOrElse(Option.map(fallback, formatModelSelection), () => null),
+      policy: Option.getOrElse(Option.orElse(current, () => Option.map(effort, (value) => ({ effort: value }))), () => null),
+    },
+  })))
 
 /** Build + call one provider generateText for an explicit selection.
  *  `isFallback` only labels telemetry — the fallback rung must be visible
@@ -376,6 +391,48 @@ export const streamWith = (
     }),
   )
 
+/** The persisted effort applies to a stream's whole run, unless a policy is already pinned. */
+const withConfiguredEffortStream = <A, E, R>(
+  stream: Stream.Stream<A, E, R>,
+  effort: EngineSettings["reasoningEffort"],
+): Stream.Stream<A, E, R> =>
+  Stream.unwrap(Effect.service(CurrentModelCallPolicy).pipe(Effect.map((current) =>
+    Option.isSome(current) || Option.isNone(effort)
+      ? stream
+      : stream.pipe(Stream.provideService(CurrentModelCallPolicy, Option.some({ effort: effort.value }))),
+  )))
+
+/** The routed model of one selection: its fallback rung, the persisted effort, described as requested. */
+const selectionModel = (
+  primary: ModelSelection,
+  fallback: Option.Option<ModelSelection>,
+  effort: EngineSettings["reasoningEffort"],
+  context: Context.Context<AuthStore>,
+  http: HttpClient.HttpClient,
+): LanguageModel.LanguageModel => {
+  const service = {
+    [LanguageModel.TypeId]: LanguageModel.TypeId,
+    generateText: (options: unknown) =>
+      withConfiguredEffort(
+        withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)),
+        effort,
+      ).pipe(
+        Effect.provide(context),
+        Effect.provideService(HttpClient.HttpClient, http),
+      ) as never,
+    generateObject: (() => Effect.fail(configError("generateObject is not wired on the new line yet"))) as never,
+    // No stream-level fallback rung: a pre-first-part stream failure
+    // already falls back to generateText in the engine loop, and THAT
+    // call rides this router's fallback — one rung, no double-hop.
+    streamText: ((options: unknown) =>
+      withConfiguredEffortStream(streamWith(primary, options), effort).pipe(
+        Stream.provideContext(context),
+        Stream.provideService(HttpClient.HttpClient, http),
+      )) as never,
+  } satisfies LanguageModel.LanguageModel
+  return describeModel(service, describeSelection(primary, fallback, effort))
+}
+
 /**
  * `LanguageModelLive` — the engine loop's `LanguageModel`, routed per call.
  * Requires `SettingsStore` + `AuthStore`; brings its own fetch-backed
@@ -386,54 +443,31 @@ export const LanguageModelLive = Layer.effect(
   Effect.gen(function* () {
     const context = yield* Effect.context<AuthStore | SettingsStore>()
     const http = yield* HttpClient.HttpClient
-
+    // One settings read: the model of the selection it finds.
+    const selected = currentSelection.pipe(
+      Effect.map(({ primary, fallback, effort }) => selectionModel(primary, fallback, effort, context, http)),
+      Effect.provide(context),
+    )
     const service: LanguageModel.LanguageModel = {
       [LanguageModel.TypeId]: LanguageModel.TypeId,
       generateText: (options: unknown) =>
-        currentSelection.pipe(
-          Effect.flatMap(({ effort, fallback, primary }) =>
-            withConfiguredEffort(
-              withFallbackRung(primary, fallback, (selection, isFallback) =>
-                generateWith(selection, options, isFallback),
-              ),
-              effort,
-            ),
-          ),
-          Effect.provide(context),
-          Effect.provideService(HttpClient.HttpClient, http),
-        ) as never,
+        selected.pipe(Effect.flatMap((model) => model.generateText(options as never))) as never,
       generateObject: (() =>
         Effect.fail(
           configError("generateObject is not wired on the new line yet"),
         )) as never,
-      // No stream-level fallback rung: a pre-first-part stream failure
-      // already falls back to generateText in the engine loop, and THAT
-      // call rides this router's fallback — one rung, no double-hop.
       streamText: ((options: unknown) =>
-        Stream.unwrap(
-          currentSelection.pipe(
-            Effect.flatMap(({ effort, primary }) =>
-              Effect.service(CurrentModelCallPolicy).pipe(
-                Effect.flatMap((current) => {
-                  const stream = streamWith(primary, options)
-                  // The persisted effort applies to the stream's whole run.
-                  return Effect.succeed(
-                    Option.isSome(current) || Option.isNone(effort)
-                      ? stream
-                      : stream.pipe(
-                          Stream.provideService(CurrentModelCallPolicy, Option.some({ effort: effort.value })),
-                        ),
-                  )
-                }),
-              ),
-            ),
-          ),
-        ).pipe(
-          Stream.provideContext(context),
-          Stream.provideService(HttpClient.HttpClient, http),
-        )) as never,
+        Stream.unwrap(selected.pipe(Effect.map((model) => model.streamText(options as never))))) as never,
     }
-    return service
+    const asHarness = (error: AiError.AiError) => new HarnessError({ code: "request.model", message: String(error) })
+    return resolvingModel(
+      describeModel(service, currentSelection.pipe(
+        Effect.flatMap(({ primary, fallback, effort }) => describeSelection(primary, fallback, effort)),
+        Effect.provide(context),
+        Effect.mapError(asHarness),
+      )),
+      selected.pipe(Effect.mapError(asHarness)),
+    )
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))
 
@@ -448,17 +482,6 @@ export const LanguageModelSelectionLive = (
   Effect.gen(function* () {
     const context = yield* Effect.context<AuthStore>()
     const http = yield* HttpClient.HttpClient
-    return {
-      [LanguageModel.TypeId]: LanguageModel.TypeId,
-      generateText: (options: unknown) => withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)).pipe(
-        Effect.provide(context),
-        Effect.provideService(HttpClient.HttpClient, http),
-      ) as never,
-      generateObject: (() => Effect.fail(configError("generateObject is not wired on the new line yet"))) as never,
-      streamText: ((options: unknown) => streamWith(primary, options).pipe(
-        Stream.provideContext(context),
-        Stream.provideService(HttpClient.HttpClient, http),
-      )) as never,
-    } satisfies LanguageModel.LanguageModel
+    return selectionModel(primary, fallback, Option.none(), context, http)
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))

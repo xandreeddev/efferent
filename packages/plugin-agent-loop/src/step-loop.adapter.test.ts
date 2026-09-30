@@ -39,6 +39,9 @@ const minimalLoop = StepLoop.of({
         onSome: (value) => Prompt.concat(Prompt.make([{ role: "system", content: value.system }]), Prompt.make(toPromptMessages(value.messages) as Prompt.RawInput)),
       })
       const toolChoice = Option.flatMap(plan, (value) => value.toolChoice)
+      if (Option.isSome(plan)) yield* request.dispatch(index, {
+        prompt, tools: Object.values(toolkit.tools), toolChoice: Option.getOrElse(toolChoice, () => "auto"), model: provider,
+      })
       // The tools declare no dependencies: the call needs no services (`Tool.Any` widens them to `any`).
       const generated: Effect.Effect<{ readonly content: ReadonlyArray<unknown> }, unknown> = provider.generateText({ prompt, toolkit, ...Option.match(toolChoice, { onNone: () => ({}), onSome: (choice) => ({ toolChoice: choice }) }) }) as never
       const response = yield* generated.pipe(

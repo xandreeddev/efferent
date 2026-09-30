@@ -1,9 +1,10 @@
+import { sessionsPlugin } from "@xandreed/plugin-sessions"
 import { join } from "node:path"
 import { Effect, Layer, Option, Schema } from "effect"
-import { AgentLoop, HarnessError, SessionStore, AuthStore, ConversationStore, defineAgent, definePlugin, SessionEnvironment, SettingsStore } from "@xandreed/core"
+import { AgentLoop, HarnessError, SessionLog, SessionStore, AuthStore, ConversationStore, defineAgent, definePlugin, SessionEnvironment, SettingsStore } from "@xandreed/core"
 import { domainLoop } from "@xandreed/sdk"
 import { modelsPlugin } from "@xandreed/plugin-models"
-import { sessionSqlitePlugin, SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
+import { sessionSqlitePlugin, ConversationStoreProjectionLive } from "@xandreed/plugin-session-sqlite"
 import { makeUiAgentSession, UiAgentExecutionProfile, UiAgentModels, UiAgentProfile, UiComponentCatalog, UiHost, UiPageEvent, UiPageStore, UiThemeStore } from "@xandreed/ui-agent"
 import profileJson from "@xandreed/ui-agent/profiles/streaming-ui-v1"
 import { DefaultUiHostLive } from "./adapters/default-ui-host.adapter.js"
@@ -12,12 +13,15 @@ import { SqliteUiComponentCatalogLive } from "./adapters/sqlite-ui-component-cat
 import { SqliteUiThemeStoreLive } from "./adapters/sqlite-ui-theme-store.adapter.js"
 import { uiAgentRuntimeLive } from "./adapters/ui-agent-runtime.adapter.js"
 
+/** The page, catalog and theme stores in `file`, and conversations over the harness's session log, into which `file`'s older messages are imported once. */
 export const canvasHostPlugin = definePlugin({
   id: "canvas/host", version: "1", scope: "runtime", config: Schema.Struct({ file: Schema.String }), defaults: { file: ".efferent/runtime/canvas.db" },
-  requires: [SessionEnvironment], provides: [ConversationStore, UiPageStore, UiComponentCatalog, UiThemeStore, UiHost],
+  requires: [SessionEnvironment, SessionLog], provides: [ConversationStore, UiPageStore, UiComponentCatalog, UiThemeStore, UiHost],
   layer: ({ file }) => Layer.unwrap(SessionEnvironment.pipe(Effect.map(({ workspace }) => {
     const path = join(workspace, file)
-    return Layer.mergeAll(SqliteConversationStoreLive(path), SqliteUiPageStoreLive(path), SqliteUiComponentCatalogLive(path), SqliteUiThemeStoreLive(path), DefaultUiHostLive)
+    return Layer.mergeAll(SqliteUiPageStoreLive(path), SqliteUiComponentCatalogLive(path), SqliteUiThemeStoreLive(path), DefaultUiHostLive).pipe(
+      Layer.provideMerge(ConversationStoreProjectionLive({ legacy: { paths: [path], owner: workspace } })),
+    )
   }))),
 })
 export const canvasProfilePlugin = definePlugin({
@@ -38,9 +42,10 @@ export const canvasLoopPlugin = definePlugin({
     })
   })),
 })
-export const canvasAgent = (workspace: string) => defineAgent({ id: "canvas", plugins: [sessionSqlitePlugin, modelsPlugin, canvasHostPlugin, canvasProfilePlugin, canvasLoopPlugin], config: {
+export const canvasAgent = (workspace: string) => defineAgent({ id: "canvas", plugins: [sessionSqlitePlugin, sessionsPlugin, modelsPlugin, canvasHostPlugin, canvasProfilePlugin, canvasLoopPlugin], config: {
   version: 1, profile: "canvas", profiles: { canvas: {} }, plugins: [
     { id: "sessions", use: sessionSqlitePlugin.id, options: { path: join(workspace, ".efferent/runtime/canvas-sessions.db") } },
+    { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
     { id: "models", use: modelsPlugin.id }, { id: "host", use: canvasHostPlugin.id }, { id: "profile", use: canvasProfilePlugin.id }, { id: "loop", use: canvasLoopPlugin.id },
   ],
 } })

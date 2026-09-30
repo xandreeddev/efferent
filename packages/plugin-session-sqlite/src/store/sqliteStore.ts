@@ -1,413 +1,145 @@
-import { Database } from "bun:sqlite"
-import { chmodSync, mkdirSync } from "node:fs"
-import { dirname } from "node:path"
-import { Effect, Result, Layer, Option, Schema } from "effect"
-import { AgentMessage, Checkpoint, ConversationId, ConversationStore, ConversationSummary, RunOutcomeRecord, StoredMessage, StoreError } from "@xandreed/core"
+import { Clock, Effect, Layer, Option, Result, Schema } from "effect"
+import { AgentMessage, Checkpoint, ConversationId, ConversationStore, ConversationSummary, HarnessError, RunOutcomeRecord, SessionLog, StoredMessage, StoreError } from "@xandreed/core"
+import type { SessionDraft, SessionHead, SessionLogEvent } from "@xandreed/core"
+import { compatibilityCommit, compatibilityHistory, compatibilityLast } from "../compatibility.adapter.js"
+import { makeSessionLogSqlite, sqliteLogInternals } from "../session-log.adapter.js"
+import type { ConversationOverview } from "../session-log.adapter.js"
 
-/**
- * The new line's conversation store: zero-config SQLite (bun:sqlite). Its own
- * database file — never the frozen line's `efferent.db` (different schema,
- * different lifecycle). Positions are assigned atomically in one INSERT
- * (`COALESCE(MAX(position)+1, 0)`), the durable identity contract.
- *
- * Durability posture: `PRAGMA user_version` records how many MIGRATIONS have
- * run — schema growth is an append to that array, never an edit; reads DECODE
- * rows (an undecodable row is skipped with a warning — one bad row must not
- * brick a conversation); fork is one transaction; the file is owner-only
- * (conversations absorb whatever tool output the model saw).
- */
-
-/** Ordered, append-only. Step 1 is idempotent (`IF NOT EXISTS`) because
- *  pre-versioning databases already carry the v1 schema at user_version 0. */
-const MIGRATIONS: ReadonlyArray<string> = [
-  `
-  CREATE TABLE IF NOT EXISTS conversations (
-    id TEXT PRIMARY KEY,
-    workspace_dir TEXT,
-    title TEXT,
-    created_at INTEGER NOT NULL
-  );
-  CREATE TABLE IF NOT EXISTS messages (
-    conversation_id TEXT NOT NULL,
-    position INTEGER NOT NULL,
-    content TEXT NOT NULL,
-    created_at INTEGER NOT NULL,
-    PRIMARY KEY (conversation_id, position)
-  );
-  CREATE TABLE IF NOT EXISTS checkpoints (
-    conversation_id TEXT NOT NULL,
-    message_position INTEGER NOT NULL,
-    summary TEXT NOT NULL,
-    created_at INTEGER NOT NULL
-  );
-  `,
-  `
-  CREATE INDEX IF NOT EXISTS checkpoints_by_conversation
-    ON checkpoints (conversation_id, message_position);
-  CREATE INDEX IF NOT EXISTS conversations_by_workspace
-    ON conversations (workspace_dir);
-  `,
-  `
-  CREATE TABLE IF NOT EXISTS run_outcomes (
-    conversation_id TEXT NOT NULL,
-    at INTEGER NOT NULL,
-    outcome TEXT NOT NULL,
-    reason TEXT NOT NULL
-  );
-  CREATE INDEX IF NOT EXISTS run_outcomes_by_conversation
-    ON run_outcomes (conversation_id, at);
-  `,
-]
-
-const migrate = (db: Database): void => {
-  const version = (db.query("PRAGMA user_version").get() as { user_version: number })
-    .user_version
-  MIGRATIONS.slice(version).forEach((step) => db.transaction(() => db.exec(step))())
-  db.exec(`PRAGMA user_version = ${MIGRATIONS.length}`)
+const MESSAGE = "conversation.message"
+const CHECKPOINT = "conversation.checkpoint"
+const TITLE = "conversation.title"
+const OUTCOME = "conversation.outcome"
+const failed = (error: unknown) => new StoreError({ message: error instanceof Error ? error.message : String(error) })
+const decodeMessage = Schema.decodeUnknownResult(Schema.fromJsonString(AgentMessage))
+// An unknown literal (a future outcome kind) reads as no outcome in the listing.
+const decodeListedOutcome = Schema.decodeUnknownResult(Schema.Struct({
+  outcome: Schema.Literals(["ok", "partial"]),
+  reason: Schema.Literals(["completed", "step-cap", "degenerate-loop"]),
+}))
+const draft = (kind: string, data: Readonly<Record<string, unknown>>): SessionDraft => ({ kind, data, turn: Option.none() })
+const positioned = (events: ReadonlyArray<SessionLogEvent>) => Effect.forEach(events.filter((event) => event.kind === MESSAGE), (event) => {
+  const decoded = decodeMessage(typeof event.data.content === "string" ? event.data.content : "")
+  return Result.match(decoded, {
+    onFailure: (issue) => Effect.logWarning(`conversation ${event.session}: skipping undecodable message at ${event.data.position}: ${String(issue)}`).pipe(Effect.as(Option.none<StoredMessage>())),
+    onSuccess: (message) => typeof event.data.position === "number" ? Effect.succeed(Option.some(new StoredMessage({ position: event.data.position, message }))) : Effect.succeed(Option.none<StoredMessage>()),
+  })
+}).pipe(Effect.map((rows) => rows.flatMap(Option.toArray)))
+/** The checkpoint covering the most messages; among equal ones, the newest. */
+const latestFold = (events: ReadonlyArray<SessionLogEvent>, upTo = Number.MAX_SAFE_INTEGER) => events
+  .filter((event) => event.kind === CHECKPOINT && Number(event.data.messagePosition) <= upTo)
+  .reduce((best, event) => Option.match(best, {
+    onNone: () => Option.some(event),
+    onSome: (current) => Number(event.data.messagePosition) >= Number(current.data.messagePosition) ? Option.some(event) : best,
+  }), Option.none<SessionLogEvent>())
+const summaryOf = (row: ConversationOverview) => {
+  const first = Option.flatMap(row.first, (data) => typeof data.content === "string" ? Result.getSuccess(decodeMessage(data.content)) : Option.none())
+  return new ConversationSummary({
+    id: row.id, createdAt: row.createdAt,
+    title: Option.flatMap(row.title, (data) => typeof data.title === "string" ? Option.some(data.title) : Option.none()),
+    firstPrompt: Option.flatMap(first, (message) => message.role === "user" ? Option.some(message.content.slice(0, 120)) : Option.none()),
+    lastOutcome: Option.flatMap(row.outcome, (data) => Result.getSuccess(decodeListedOutcome({ outcome: data.outcome, reason: data.reason }))),
+  })
 }
 
-/** Parse + validate in one step — reads never cast a blob into the entity. */
-const decodeMessage = Schema.decodeUnknownResult(Schema.fromJsonString(AgentMessage))
-
-const tryDb = <A>(run: () => A): Effect.Effect<A, StoreError> =>
-  Effect.try({
-    try: run,
-    catch: (e) => new StoreError({ message: String(e) }),
+/**
+ * @deprecated Positional conversation API projected over the host's unified SessionLog.
+ *
+ * Over this package's SQLite log it lists a workspace in one query and prunes
+ * in one transaction, and `legacy` imports the host's own older message file
+ * into it first (orphan rows without a session default to `owner`). Over any
+ * other log the listing reads each conversation's first message and latest
+ * title and outcome, pruning needs the host's `prune`, and `legacy` fails.
+ */
+export const ConversationStoreProjectionLive = (options: {
+  readonly prune?: (beforeEpochMs: number) => Effect.Effect<number, StoreError>
+  readonly legacy?: { readonly paths: ReadonlyArray<string>; readonly owner: string }
+} = {}): Layer.Layer<ConversationStore, StoreError, SessionLog> => Layer.effect(ConversationStore, Effect.gen(function* () {
+  const log = yield* SessionLog
+  const sqlite = sqliteLogInternals(log)
+  const legacy = Option.fromNullishOr(options.legacy)
+  if (Option.isSome(legacy)) yield* Option.match(sqlite, {
+    onNone: () => Effect.fail(new StoreError({ message: "importing an older conversation file requires the SQLite session log" })),
+    onSome: (internals) => internals.importLegacy(legacy.value.paths, Option.some(legacy.value.owner)).pipe(Effect.mapError(failed)),
   })
-
-/** Schema drift or disk corruption in ONE row degrades to a logged skip —
- *  the rest of the conversation stays loadable. */
-const salvageRows = (
-  rows: ReadonlyArray<{ content: string }>,
-  where: string,
-): Effect.Effect<ReadonlyArray<AgentMessage>> =>
-  Effect.forEach(rows, (row) =>
-    Result.match(decodeMessage(row.content), {
-      onFailure: (issue) =>
-        Effect.logWarning(`${where}: skipping undecodable message row: ${String(issue)}`).pipe(
-          Effect.as(Option.none<AgentMessage>()),
-        ),
-      onSuccess: (message) => Effect.succeed(Option.some(message)),
-    }),
-  ).pipe(Effect.map((decoded) => decoded.filter(Option.isSome).map((some) => some.value)))
-
-/** The positioned twin: an undecodable row is still skipped, but every row
- *  that decodes keeps ITS position — the loader never has to count. */
-const salvagePositioned = (
-  rows: ReadonlyArray<{ position: number; content: string }>,
-  where: string,
-): Effect.Effect<ReadonlyArray<StoredMessage>> =>
-  Effect.forEach(rows, (row) =>
-    Result.match(decodeMessage(row.content), {
-      onFailure: (issue) =>
-        Effect.logWarning(
-          `${where}: skipping undecodable message row at ${row.position}: ${String(issue)}`,
-        ).pipe(Effect.as(Option.none<StoredMessage>())),
-      onSuccess: (message) =>
-        Effect.succeed(Option.some(new StoredMessage({ position: row.position, message }))),
-    }),
-  ).pipe(Effect.map((decoded) => decoded.filter(Option.isSome).map((some) => some.value)))
-
-export const SqliteConversationStoreLive = (dbPath: string) =>
-  Layer.effect(
-    ConversationStore,
-    Effect.gen(function* () {
-      const db = yield* tryDb(() => {
-        mkdirSync(dirname(dbPath), { recursive: true })
-        const database = new Database(dbPath, { create: true })
-        // Owner-only BEFORE the WAL sidecars exist (they inherit this mode):
-        // tool output can carry anything the coder read, including secrets.
-        chmodSync(dbPath, 0o600)
-        // A second process on the same workspace db waits out the lock
-        // instead of dying on an instant SQLITE_BUSY.
-        database.exec("PRAGMA busy_timeout = 5000;")
-        database.exec("PRAGMA journal_mode = WAL;")
-        migrate(database)
-        return database
-      })
-      yield* Effect.addFinalizer(() => tryDb(() => db.close()).pipe(
-        Effect.catch((error) => Effect.logWarning(`conversation database cleanup failed: ${error.message}`)),
-      ))
-
-      const latestCheckpointRow = (
-        id: ConversationId,
-      ): Option.Option<{ message_position: number; summary: string; created_at: number }> =>
-        Option.fromNullishOr(
-          db
-            .query(
-              `SELECT message_position, summary, created_at FROM checkpoints
-               WHERE conversation_id = ? ORDER BY message_position DESC LIMIT 1`,
-            )
-            .get(id) as
-            | { message_position: number; summary: string; created_at: number }
-            | null,
-        )
-
-      return {
-        create: (workspaceDir?: string) =>
-          tryDb(() => {
-            const id = ConversationId.make(crypto.randomUUID())
-            db.query(
-              `INSERT INTO conversations (id, workspace_dir, title, created_at) VALUES (?, ?, NULL, ?)`,
-            ).run(id, workspaceDir ?? null, Date.now())
-            return id
-          }),
-
-        append: (id: ConversationId, message: AgentMessage) =>
-          tryDb(
-            () =>
-              (
-                db
-                  .query(
-                    `INSERT INTO messages (conversation_id, position, content, created_at)
-                     SELECT ?1, COALESCE(MAX(position) + 1, 0), ?2, ?3
-                     FROM messages WHERE conversation_id = ?1
-                     RETURNING position`,
-                  )
-                  .get(id, JSON.stringify(message), Date.now()) as { position: number }
-              ).position,
-          ),
-
-        // ONE transaction: a turn's assistant call and its tool results land
-        // together or not at all (an interrupt between two appends used to
-        // leave a tool call the next run could not send).
-        appendAll: (id: ConversationId, messages: ReadonlyArray<AgentMessage>) =>
-          tryDb(() =>
-            db.transaction(() =>
-              messages.map(
-                (message) =>
-                  (
-                    db
-                      .query(
-                        `INSERT INTO messages (conversation_id, position, content, created_at)
-                         SELECT ?1, COALESCE(MAX(position) + 1, 0), ?2, ?3
-                         FROM messages WHERE conversation_id = ?1
-                         RETURNING position`,
-                      )
-                      .get(id, JSON.stringify(message), Date.now()) as { position: number }
-                  ).position,
-              ),
-            )(),
-          ),
-
-        list: (id: ConversationId) =>
-          tryDb(
-            () =>
-              db
-                .query(
-                  `SELECT content FROM messages WHERE conversation_id = ? ORDER BY position ASC`,
-                )
-                .all(id) as ReadonlyArray<{ content: string }>,
-          ).pipe(Effect.flatMap((rows) => salvageRows(rows, `list ${id}`))),
-
-        listActive: (id: ConversationId) =>
-          tryDb(() => {
-            const fold = latestCheckpointRow(id)
-            const after = Option.match(fold, {
-              onNone: () => -1,
-              onSome: (c) => c.message_position,
-            })
-            return db
-              .query(
-                `SELECT position, content FROM messages
-                 WHERE conversation_id = ? AND position > ? ORDER BY position ASC`,
-              )
-              .all(id, after) as ReadonlyArray<{ position: number; content: string }>
-          }).pipe(Effect.flatMap((rows) => salvagePositioned(rows, `listActive ${id}`))),
-
-        checkpoint: (id: ConversationId, summary: string) =>
-          tryDb(() => {
-            db.query(
-              `INSERT INTO checkpoints (conversation_id, message_position, summary, created_at)
-               SELECT ?1, COALESCE(MAX(position), -1), ?2, ?3
-               FROM messages WHERE conversation_id = ?1`,
-            ).run(id, summary, Date.now())
-          }),
-
-        checkpointAt: (id: ConversationId, summary: string, messagePosition: number) =>
-          tryDb(() => {
-            db.query(
-              `INSERT INTO checkpoints (conversation_id, message_position, summary, created_at)
-               VALUES (?1, ?2, ?3, ?4)`,
-            ).run(id, messagePosition, summary, Date.now())
-          }),
-
-        latestCheckpoint: (id: ConversationId) =>
-          tryDb(() =>
-            Option.map(
-              latestCheckpointRow(id),
-              (row) =>
-                new Checkpoint({
-                  conversationId: id,
-                  messagePosition: row.message_position,
-                  summary: row.summary,
-                  createdAt: row.created_at,
-                }),
-            ),
-          ),
-
-        setTitle: (id: ConversationId, title: string) =>
-          tryDb(() => {
-            db.query(`UPDATE conversations SET title = ? WHERE id = ?`).run(title, id)
-          }),
-
-        recordOutcome: (id: ConversationId, outcome, reason) =>
-          tryDb(() => {
-            db.query(
-              `INSERT INTO run_outcomes (conversation_id, at, outcome, reason) VALUES (?, ?, ?, ?)`,
-            ).run(id, Date.now(), outcome, reason)
-          }),
-
-        latestOutcome: (id: ConversationId) =>
-          tryDb(() =>
-            Option.fromNullishOr(
-              db
-                .query(
-                  `SELECT at, outcome, reason FROM run_outcomes
-                   WHERE conversation_id = ? ORDER BY at DESC, rowid DESC LIMIT 1`,
-                )
-                .get(id) as { at: number; outcome: string; reason: string } | null,
-            ),
-          ).pipe(
-            Effect.flatMap((row) =>
-              Option.match(row, {
-                onNone: () => Effect.succeed(Option.none<RunOutcomeRecord>()),
-                onSome: (r) =>
-                  Schema.decodeUnknownEffect(RunOutcomeRecord)({ conversationId: id, ...r }).pipe(
-                    Effect.map(Option.some),
-                    Effect.mapError((issue) => new StoreError({ message: String(issue) })),
-                  ),
-              }),
-            ),
-          ),
-
-        prune: (beforeEpochMs: number) =>
-          tryDb(() => {
-            const removed = db.transaction(() => {
-              const ids = (
-                db
-                  .query(`SELECT id FROM conversations WHERE created_at < ?`)
-                  .all(beforeEpochMs) as ReadonlyArray<{ id: string }>
-              ).map((row) => row.id)
-              ids.forEach((id) => {
-                db.query(`DELETE FROM messages WHERE conversation_id = ?`).run(id)
-                db.query(`DELETE FROM checkpoints WHERE conversation_id = ?`).run(id)
-                db.query(`DELETE FROM conversations WHERE id = ?`).run(id)
-              })
-              return ids.length
-            })()
-            // Reclaim the deleted pages from the WAL — deletion without this
-            // shrinks nothing on disk.
-            db.exec("PRAGMA wal_checkpoint(TRUNCATE);")
-            return removed
-          }),
-
-        fork: (id: ConversationId, upToPosition?: number) =>
-          tryDb(() =>
-            Option.fromNullishOr(
-              db
-                .query(`SELECT workspace_dir, title FROM conversations WHERE id = ?`)
-                .get(id) as { workspace_dir: string | null; title: string | null } | null,
-            ),
-          ).pipe(
-            Effect.flatMap(
-              Option.match({
-                onNone: () =>
-                  Effect.fail(new StoreError({ message: `conversation ${id} not found` })),
-                onSome: (source) =>
-                  tryDb(() => {
-                    const forkId = ConversationId.make(crypto.randomUUID())
-                    const cap = upToPosition ?? Number.MAX_SAFE_INTEGER
-                    // One transaction: a crash mid-fork must not leave a
-                    // conversation row with half a trail and no checkpoint.
-                    db.transaction(() => {
-                      db.query(
-                        `INSERT INTO conversations (id, workspace_dir, title, created_at) VALUES (?, ?, ?, ?)`,
-                      ).run(
-                        forkId,
-                        source.workspace_dir,
-                        source.title === null ? null : `fork: ${source.title}`,
-                        Date.now(),
-                      )
-                      db.query(
-                        `INSERT INTO messages (conversation_id, position, content, created_at)
-                         SELECT ?2, position, content, created_at FROM messages
-                         WHERE conversation_id = ?1 AND position <= ?3`,
-                      ).run(id, forkId, cap)
-                      // The latest checkpoint WITHIN range rides along, so a
-                      // forked long session loads its active window exactly
-                      // like the source.
-                      db.query(
-                        `INSERT INTO checkpoints (conversation_id, message_position, summary, created_at)
-                         SELECT ?2, message_position, summary, created_at FROM checkpoints
-                         WHERE conversation_id = ?1 AND message_position <= ?3
-                         ORDER BY message_position DESC LIMIT 1`,
-                      ).run(id, forkId, cap)
-                    })()
-                    return forkId
-                  }),
-              }),
-            ),
-          ),
-
-        listByWorkspace: (workspaceDir: string) =>
-          tryDb(() =>
-            (
-              db
-                .query(
-                  `SELECT c.id, c.created_at, c.title,
-                          (SELECT m.content FROM messages m
-                           WHERE m.conversation_id = c.id ORDER BY m.position ASC LIMIT 1)
-                            AS first_content,
-                          (SELECT o.outcome FROM run_outcomes o
-                           WHERE o.conversation_id = c.id ORDER BY o.at DESC, o.rowid DESC LIMIT 1)
-                            AS last_outcome,
-                          (SELECT o.reason FROM run_outcomes o
-                           WHERE o.conversation_id = c.id ORDER BY o.at DESC, o.rowid DESC LIMIT 1)
-                            AS last_reason
-                   FROM conversations c WHERE c.workspace_dir = ?
-                   ORDER BY c.created_at DESC`,
-                )
-                .all(workspaceDir) as ReadonlyArray<{
-                id: string
-                created_at: number
-                title: string | null
-                first_content: string | null
-                last_outcome: string | null
-                last_reason: string | null
-              }>
-            ).map((row) => {
-              const first = Option.fromNullishOr(row.first_content).pipe(
-                Option.flatMap((content) => Result.getSuccess(decodeMessage(content))),
-                Option.flatMap((parsed) =>
-                  parsed.role === "user"
-                    ? Option.some(parsed.content.slice(0, 120))
-                    : Option.none<string>(),
-                ),
-              )
-              // The outcome columns decode through the summary's own schema
-              // — an unknown literal (a future outcome kind) reads as none.
-              const lastOutcome = Option.flatMap(
-                Option.all([Option.fromNullishOr(row.last_outcome), Option.fromNullishOr(row.last_reason)]),
-                ([outcome, reason]) =>
-                  Result.getSuccess(
-                    Schema.decodeUnknownResult(
-                      Schema.Struct({
-                        outcome: Schema.Literals(["ok", "partial"]),
-                        reason: Schema.Literals(["completed", "step-cap", "degenerate-loop"]),
-                      }),
-                    )({ outcome, reason }),
-                  ),
-              )
-              return new ConversationSummary({
-                id: ConversationId.make(row.id),
-                createdAt: row.created_at,
-                firstPrompt: first,
-                title: Option.fromNullishOr(row.title),
-                lastOutcome,
-              })
-            }),
-          ),
-      }
-    }),
+  /** A conversation nobody wrote to yet reads as empty. */
+  const orEmpty = <A>(read: Effect.Effect<A, HarnessError>, empty: A): Effect.Effect<A, StoreError> => read.pipe(
+    Effect.catchTag("HarnessError", (error) => error.code === "session.missing" ? Effect.succeed(empty) : Effect.fail(error)), Effect.mapError(failed),
   )
+  const read = (id: ConversationId) => orEmpty<ReadonlyArray<SessionLogEvent>>(compatibilityHistory(log, id, [MESSAGE, CHECKPOINT, TITLE, OUTCOME]), [])
+  const last = (id: ConversationId, kind: string, upTo?: number) => orEmpty(compatibilityLast(log, id, [kind], upTo), Option.none<SessionLogEvent>())
+  const checkpointOf = (id: ConversationId, events: ReadonlyArray<SessionLogEvent>) => Option.match(latestFold(events), {
+    onNone: () => Effect.succeed(Option.none<Checkpoint>()),
+    onSome: (latest) => Schema.decodeUnknownEffect(Checkpoint)({ conversationId: id, ...latest.data }).pipe(Effect.map(Option.some), Effect.mapError(failed)),
+  })
+  const ensure = (id: ConversationId) => log.head(id).pipe(Effect.catchTag("SessionMissing", () => Clock.currentTimeMillis.pipe(Effect.flatMap((createdAt) => log.create({
+    id, owner: "conversation-store", origin: "conversation", createdAt, meta: { projection: "conversation", workspace: "conversation-store" }, parent: Option.none(),
+  }).pipe(Effect.catchTag("SessionExists", () => log.head(id)))))), Effect.mapError(failed), Effect.asVoid)
+  const commit = <A>(id: ConversationId, plan: (head: SessionHead) => Effect.Effect<{ readonly drafts: ReadonlyArray<SessionDraft>; readonly result: A }, StoreError>) => ensure(id).pipe(
+    Effect.andThen(compatibilityCommit(log, id, (head) => plan(head).pipe(Effect.mapError((error) => new HarnessError({ code: "conversation.store", message: error.message }))))), Effect.map((done) => done.result), Effect.mapError(failed),
+  )
+  /** The latest message position at the planned head (-1 before the first): found by a search, never by reading the history. */
+  const lastPosition = (id: ConversationId, head: SessionHead) => last(id, MESSAGE, head.seq).pipe(Effect.map(Option.match({ onNone: () => -1, onSome: (event) => Number(event.data.position) })))
+  const appendAll = (id: ConversationId, messages: ReadonlyArray<AgentMessage>): Effect.Effect<ReadonlyArray<number>, StoreError> => messages.length === 0 ? Effect.succeed<ReadonlyArray<number>>([]) : commit(id, (head) => lastPosition(id, head).pipe(Effect.map((previous) => {
+    const positions = messages.map((_, index) => previous + index + 1)
+    return { drafts: messages.map((message, index) => draft(MESSAGE, { position: positions[index], content: JSON.stringify(message) })), result: positions }
+  })))
+  const checkpointAt = (id: ConversationId, summary: string, messagePosition: number) => commit(id, () => Clock.currentTimeMillis.pipe(Effect.map((createdAt) => ({
+    drafts: [draft(CHECKPOINT, { summary, messagePosition, createdAt })], result: undefined,
+  }))))
+  const latestOutcome = (id: ConversationId) => last(id, OUTCOME).pipe(Effect.flatMap(Option.match({
+    onNone: () => Effect.succeed(Option.none<RunOutcomeRecord>()),
+    onSome: (latest) => Schema.decodeUnknownEffect(RunOutcomeRecord)({ conversationId: id, ...latest.data }).pipe(Effect.map(Option.some), Effect.mapError(failed)),
+  })))
+  /** Without the SQLite log: the owner's conversation sessions, each read for its first message and its latest title and outcome. */
+  const overviews = (owner: string): Effect.Effect<ReadonlyArray<ConversationOverview>, StoreError> => log.list({ owner, limit: Number.MAX_SAFE_INTEGER, before: Option.none(), parent: Option.none() }).pipe(
+    Effect.mapError(failed),
+    Effect.map((heads) => heads.filter((head) => head.header.origin === "conversation").sort((a, b) => b.header.createdAt - a.header.createdAt || (a.header.id < b.header.id ? 1 : -1))),
+    Effect.flatMap((heads) => Effect.forEach(heads, (head) => Effect.gen(function* () {
+      const first = yield* log.read(head.header.id, { after: 0, limit: Option.some(1), kinds: [MESSAGE] }).pipe(Effect.mapError(failed))
+      const title = yield* last(head.header.id, TITLE)
+      const outcome = yield* last(head.header.id, OUTCOME)
+      return { id: head.header.id, createdAt: head.header.createdAt, first: Option.map(Option.fromNullishOr(first[0]), (event) => event.data), title: Option.map(title, (event) => event.data), outcome: Option.map(outcome, (event) => event.data) }
+    }))),
+  )
+  return ConversationStore.of({
+    create: (workspace = "conversation-store") => Clock.currentTimeMillis.pipe(Effect.flatMap((createdAt) => log.create({
+      id: ConversationId.make(crypto.randomUUID()), owner: workspace, origin: "conversation", createdAt, meta: { workspace, projection: "conversation" }, parent: Option.none(),
+    })), Effect.map((head) => head.header.id), Effect.mapError(failed)),
+    append: (id, message) => appendAll(id, [message]).pipe(Effect.map((positions) => positions[0] ?? 0)), appendAll,
+    list: (id) => read(id).pipe(Effect.flatMap(positioned), Effect.map((rows) => rows.map((row) => row.message))),
+    listActive: (id) => read(id).pipe(Effect.flatMap((events) => Effect.all([positioned(events), checkpointOf(id, events)])), Effect.map(([rows, checkpoint]) => rows.filter((row) => row.position > Option.match(checkpoint, { onNone: () => -1, onSome: (fold) => fold.messagePosition })))),
+    checkpoint: (id, summary) => commit(id, (head) => Effect.gen(function* () {
+      const messagePosition = yield* lastPosition(id, head)
+      return { drafts: [draft(CHECKPOINT, { summary, messagePosition, createdAt: yield* Clock.currentTimeMillis })], result: undefined }
+    })), checkpointAt,
+    latestCheckpoint: (id) => read(id).pipe(Effect.flatMap((events) => checkpointOf(id, events))),
+    setTitle: (id, title) => commit(id, () => Effect.succeed({ drafts: [draft(TITLE, { title })], result: undefined })),
+    recordOutcome: (id, outcome, reason) => commit(id, () => Clock.currentTimeMillis.pipe(Effect.map((at) => ({ drafts: [draft(OUTCOME, { at, outcome, reason })], result: undefined })))), latestOutcome,
+    listByWorkspace: (workspace) => Option.match(sqlite, {
+      onNone: () => overviews(workspace),
+      onSome: (internals) => internals.conversations(workspace).pipe(Effect.mapError(failed)),
+    }).pipe(Effect.map((rows) => rows.map(summaryOf))),
+    fork: (id, upToPosition = Number.MAX_SAFE_INTEGER) => Effect.gen(function* () {
+      const source = yield* log.head(id).pipe(Effect.mapError((error) => new StoreError({ message: `conversation ${id} not found: ${String(error)}` })))
+      const records = yield* read(id)
+      const messages = records.filter((event) => event.kind === MESSAGE && Number(event.data.position) <= upToPosition)
+      const checkpoint = latestFold(records, upToPosition)
+      const title = records.filter((event) => event.kind === TITLE).at(-1)?.data.title
+      const created = yield* log.create({ id: ConversationId.make(crypto.randomUUID()), owner: source.header.owner, origin: "conversation", createdAt: yield* Clock.currentTimeMillis,
+        meta: { ...source.header.meta, forkedFrom: id, projection: "conversation" }, parent: Option.none() }).pipe(Effect.mapError(failed))
+      yield* commit(created.header.id, () => Effect.succeed({ drafts: [...messages.map((event) => draft(event.kind, event.data)), ...Option.toArray(Option.map(checkpoint, (fold) => draft(fold.kind, fold.data))), ...(typeof title === "string" ? [draft(TITLE, { title: `fork: ${title}` })] : [])], result: undefined })).pipe(
+        Effect.onError(() => log.remove(created.header.id).pipe(Effect.ignore)),
+      )
+      return created.header.id
+    }).pipe(Effect.uninterruptible),
+    prune: options.prune ?? ((before) => Option.match(sqlite, {
+      onNone: () => Effect.fail(new StoreError({ message: "pruning requires the storage host's explicit retention adapter" })),
+      onSome: (internals) => internals.prune(before).pipe(Effect.mapError(failed)),
+    })),
+  })
+}))
+
+/** @deprecated Convenience host composition: the projection over one SQLite session log, opened once. */
+export const SqliteConversationStoreLive = (dbPath: string): Layer.Layer<ConversationStore, StoreError> => Layer.unwrap(
+  makeSessionLogSqlite(dbPath).pipe(Effect.mapError(failed), Effect.map((log) => ConversationStoreProjectionLive().pipe(Layer.provide(Layer.succeed(SessionLog, log))))),
+)

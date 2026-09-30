@@ -19,6 +19,7 @@
     "@xandreed/plugin-models": "workspace:*",
     "@xandreed/sdk": "workspace:*",
     "@xandreed/runtime": "workspace:*",
-    "@effect/platform-bun": "4.0.0-rc.118"
+    "@effect/platform-bun": "4.0.0-rc.118",
+    "@xandreed/plugin-sessions": "workspace:*"
   }
 }

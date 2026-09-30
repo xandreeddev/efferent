@@ -69,26 +69,54 @@ by the terminal editor.
 
 ## Sessions
 
-- `create`, `resume`, `list`, and `fork` operate on the configured SessionStore.
-- `send` journals input and serializes runs; `steer` queues input for a loop's
-  next admission boundary; `continue` resumes the pending queue.
+The harness and composable agents share `SessionLog` and `Sessions`. The
+deprecated `SessionStore` and `ConversationStore` APIs are projections over
+that journal. Compose the SQLite storage plugin with `sessionsPlugin`; CLI
+hosts use process ownership (a live process's turn is busy to another process
+on the same host), while hosts sharing a database across machines use leases.
+Without `sessionsPlugin`, `Harness.make` fails with `service.missing` naming it;
+a custom `SessionStore` must be the projection over the same `SessionLog`, or
+the turn fails with `session.store`.
+
+- `create`, `resume`, `list`, and `fork` use the unified session heads and
+  immutable history boundaries. A fork cut within inherited history keeps
+  the exact prefix, logical parent and inherited turn counter.
+- `send` journals input, admits through `Sessions.begin` and writes through
+  `TurnWriter` before ending the turn; `steer` queues input for a loop's
+  next admission boundary; `continue` resumes the pending queue. Input
+  submitted while a turn is ending is still queued.
 - `use(Service, callback)` accesses a selected domain service while holding the
   session gate; resource disposal waits until the callback completes.
-- `interrupt` cancels the active fiber. The run settles once as cancelled.
+- `interrupt` cancels the active fiber. The run settles once as cancelled, and
+  so does a turn cancelled or reaped by another instance, even if its loop
+  returns successfully without another write.
 - `events(after)` replays durable events after an exclusive cursor, then follows
   the journal. Notifications can coalesce; journal entries are not dropped.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.
 - A reopened unfinished run is marked cancelled. Tools are never rerun merely
-  because a client reconnects. A fork requires a settled event boundary.
+  because a client reconnects. A run still held, by its lease or by a process
+  that still runs, is left alone. A fork
+  requires a settled event boundary. Refused admission leaves input unclaimed.
 
 Session plugins can require `SessionEnvironment` to access the workspace and
 current session record. `domainLoop` and `domainSession` bridge an existing domain
 event protocol to SDK lifecycle and replay; optional snapshots restore domain
-state when a session is forked.
+state when a session is forked. Conversation writes carry their originating
+run's token: a detached write from an earlier run stays refused even during a
+later run. During execution, external closure is noticed at the writer's next
+commit; settlement also checks the durable ending when the loop returns.
 
 The SQLite plugin uses WAL and transactional sequence allocation. The memory
 plugin uses a workspace-scoped append-only JSONL ledger. The default new data
-namespace is `.efferent/runtime`; historical data is retained without migration.
+namespace is `.efferent/runtime`. Existing SQLite journal tables are imported
+once into the unified tables while preserving the originals. `legacyPaths`
+imports separate older files through read-only connections. Sessions are
+matched by id, not by path: a moved or copied source neither duplicates
+records nor brings back removed or pruned sessions, and orphan message rows
+join the session stored under their id. Undecodable rows are skipped and
+logged; conflicting owners or positions refuse the entire source. Stop older
+application versions before migrating, because subsequent old-version writes
+are not mirrored.
 The models plugin reads existing model settings and credentials as fallbacks by
 default. Explicit plugin options and current credentials win. Set its
 `inheritPrevious` option to `false` to use an independent setup; new logins and
@@ -123,7 +151,9 @@ Credential input stays outside the text renderer; only mask characters render.
 PKCE, callback state checks, a masked manual fallback, and scoped cancellation.
 
 A transcript mounts at most 60 blocks. Durable event and transient delta batches
-update the UI at most once per batch. The terminal tests exercise 10,000 events
+update the UI at most once per batch. Assistant and tool blocks follow logical
+turn order across batches, including text buffered before the durable run start;
+durable settlement remains authoritative. The terminal tests exercise 10,000 events
 and assert p95 input-to-frame time below 50 ms on the test machine. The PTY fixture checks rendering and shutdown. `python scripts/verify-tmux.py`
 launches the actual CLI in an isolated tmux server and checks first-run setup,
 model selection, draft preservation, resizing, plugin edits, streamed output,
@@ -157,8 +187,18 @@ in-memory and a SQLite log) and reads and writes sessions only through
 `@xandreed/plugin-sessions`, as `Agent.turn` does. One turn is open per
 session at a time; a second message is refused, a retried one is found by
 its key. Turns are owned by a lease judged by the storage's clock (several
-instances) or by the process (one). Reading or following a session never
-runs anything.
+instances) or by the process that began them, for as long as it runs (one
+host). Reading or following a session never runs anything.
+
+`Agent.turn` closes the body scope, the host's layer, then the plugins that
+depend on turn services. On success, tasks and background reactions settle
+between these dependency boundaries while `TurnLive` remains open. A completed
+reply is recorded only after finalizer work settles; a finalizer task failure
+produces a failed reply. Failure or interruption preserves the cause, and
+closing the turn's scope interrupts pending tasks. Subscriptions in those
+closing scopes cannot observe the final outcome: register an outcome observer
+in the caller's outer scope with `Scope.provide(observerScope)` and services
+that remain open there.
 
 A background task (`@xandreed/plugin-tasks`) is one turn of a child session,
 a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`.

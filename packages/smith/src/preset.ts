@@ -1,3 +1,4 @@
+import { sessionsPlugin } from "@xandreed/plugin-sessions"
 import { smithWorkerPlugin, smithWorkflowPlugin } from "./workflow.plugin.js"
 import { join } from "node:path"
 import { Effect } from "effect"
@@ -29,7 +30,7 @@ export const smithAgent = (
   approve: (description: string) => Effect.Effect<boolean, HarnessError> = () => Effect.succeed(false),
 ) => defineAgent({
   id: "smith",
-  plugins: [approvalPlugin(approve), sessionSqlitePlugin, modelsPlugin, memoryPlugin, contextPlugin,
+  plugins: [approvalPlugin(approve), sessionSqlitePlugin, sessionsPlugin, modelsPlugin, memoryPlugin, contextPlugin,
     workspacePolicyPlugin, mcpPlugin, toolsLocalPlugin, agentLoopPlugin, telemetryPlugin, smithWorkerPlugin, smithWorkflowPlugin],
   config: {
     version: 1,
@@ -38,6 +39,7 @@ export const smithAgent = (
     plugins: [
       { id: "approval", use: "efferent/approval-host" },
       { id: "sessions", use: sessionSqlitePlugin.id, options: { path: join(workspace, ".efferent/runtime/sessions.db") } },
+      { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
       { id: "models", use: modelsPlugin.id },
       { id: "memory", use: memoryPlugin.id },
       { id: "context", use: contextPlugin.id },

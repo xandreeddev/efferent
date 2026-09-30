@@ -26,6 +26,7 @@
     "@xandreed/plugin-policy-workspace": "workspace:*",
     "@xandreed/sdk": "workspace:*",
     "@xandreed/plugin-context": "workspace:*",
-    "@xandreed/plugin-memory": "workspace:*"
+    "@xandreed/plugin-memory": "workspace:*",
+    "@xandreed/plugin-sessions": "workspace:*"
   }
 }

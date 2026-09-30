@@ -43,7 +43,13 @@ export const TasksConfig = Schema.Struct({
   tools: Schema.Boolean,
   /** A longer result reaches the parent cut to this many characters. */
   replyChars: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 100_000 })),
+  /**
+   * Of a runner's finite budget, the time execution leaves for what follows
+   * it: the child's result and ending, the delivery and the parent's
+   * closing commits (several store round trips). At most half the budget.
+   */
+  closingReserveMs: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 600_000 })),
 })
 export type TasksConfig = typeof TasksConfig.Type
 
-export const tasksDefaults: TasksConfig = { maxRunning: 2, tools: false, replyChars: 12_000 }
+export const tasksDefaults: TasksConfig = { maxRunning: 2, tools: false, replyChars: 12_000, closingReserveMs: 2_000 }

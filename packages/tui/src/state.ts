@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import type { SessionRecord } from "@xandreed/core"
+import type { ConversationId, SessionRecord } from "@xandreed/core"
 import { emptyTranscript, projectDelta, projectEvent } from "./projection.js"
 import type { EventBody, SessionEvent } from "@xandreed/core"
 import type { EventRenderers } from "./projection.js"
@@ -24,6 +24,10 @@ export type Overlay = { readonly onClose?: () => void } & (
 export const createTuiState = (initial: SessionRecord, theme: ThemeName = "dark", renderers: EventRenderers = {}) => {
   const [session, setSession] = createSignal(initial)
   const [transcript, setTranscript] = createSignal(emptyTranscript)
+  // Journal reads and transient batches can arrive in either order. Retain only
+  // the latest 128 early text deltas until their durable start is observed.
+  const [earlyDeltas, setEarlyDeltas] = createSignal<ReadonlyArray<EventBody>>([])
+  const [observedRuns, setObservedRuns] = createSignal<ReadonlySet<string>>(new Set())
   const [overlay, setOverlaySignal] = createSignal<Overlay>({ kind: "none" })
   const [selection, setSelection] = createSignal(0)
   const [notice, setNotice] = createSignal("")
@@ -35,17 +39,49 @@ export const createTuiState = (initial: SessionRecord, theme: ThemeName = "dark"
   const [search, setSearch] = createSignal("")
   const [expanded, setExpanded] = createSignal<ReadonlySet<string>>(new Set())
   const setOverlay = (value: Overlay) => { if (value.kind === "none") overlay().onClose?.(); setSelection(0); setOverlaySignal(value) }
+  const applyEvent = (state: typeof emptyTranscript, event: SessionEvent) => {
+    if (event.sessionId !== session().id || event.seq <= state.seq) return state
+    const next = projectEvent(state, event, renderers)
+    const runId = event.runId
+    if (runId && ["run.started", "run.completed", "run.failed", "run.cancelled"].includes(event.name)) {
+      setObservedRuns((runs) => new Set([...runs, runId]))
+      // A settled run's early text is superseded by its durable blocks.
+      if (event.name !== "run.started") setEarlyDeltas((deltas) => deltas.filter((delta) => delta.runId !== runId))
+    }
+    return next
+  }
+  /**
+   * Replay the running run's early deltas after the whole durable batch, so
+   * settlement in that batch remains authoritative. The projection orders
+   * turns even when earlier durable blocks arrive in a later batch.
+   */
+  const replayEarly = (state: typeof emptyTranscript) => {
+    const waiting = state.runId === "" ? [] : earlyDeltas().filter((delta) => delta.runId === state.runId)
+    if (waiting.length === 0) return state
+    setEarlyDeltas((deltas) => deltas.filter((delta) => delta.runId !== state.runId))
+    return waiting.reduce(projectDelta, state)
+  }
+  const applyDelta = (state: typeof emptyTranscript, event: EventBody) => {
+    if (event.name !== "assistant.delta" || event.data.channel !== "text" || !event.runId) return state
+    if (event.runId === state.runId) return projectDelta(state, event)
+    if (!observedRuns().has(event.runId)) setEarlyDeltas((waiting) => [...waiting, event].slice(-128))
+    return state
+  }
+  const applyDeltas = (events: ReadonlyArray<EventBody>, source: ConversationId) => {
+    if (source !== session().id) return
+    setTranscript((state) => events.reduce(applyDelta, state))
+  }
   return {
     session, transcript, overlay, selection, setSelection, notice, setNotice, model, setModel, themeName, setTheme,
     draft, restoreDraft: (text: string) => setDraft((previous) => ({ text, revision: previous.revision + 1 })),
     following, setFollowing, windowEnd, setWindowEnd, search, setSearch, expanded,
     toggle: (id: string) => setExpanded((all) => all.has(id) ? new Set([...all].filter((key) => key !== id)) : new Set([...all, id])),
     setOverlay,
-    selectSession: (record: SessionRecord) => { setSession(record); setTranscript(emptyTranscript); setFollowing(true); setOverlay({ kind: "none" }) },
-    event: (event: SessionEvent) => setTranscript((state) => projectEvent(state, event, renderers)),
-    events: (events: ReadonlyArray<SessionEvent>) => setTranscript((state) => events.reduce((current, event) => projectEvent(current, event, renderers), state)),
-    delta: (event: EventBody) => setTranscript((state) => projectDelta(state, event)),
-    deltas: (events: ReadonlyArray<EventBody>) => setTranscript((state) => events.reduce(projectDelta, state)),
+    selectSession: (record: SessionRecord) => { setSession(record); setTranscript(emptyTranscript); setEarlyDeltas([]); setObservedRuns(new Set<string>()); setFollowing(true); setOverlay({ kind: "none" }) },
+    event: (event: SessionEvent) => setTranscript((state) => replayEarly(applyEvent(state, event))),
+    events: (events: ReadonlyArray<SessionEvent>) => setTranscript((state) => replayEarly(events.reduce(applyEvent, state))),
+    delta: (event: EventBody, source: ConversationId = session().id) => applyDeltas([event], source),
+    deltas: (events: ReadonlyArray<EventBody>, source: ConversationId = session().id) => applyDeltas(events, source),
   }
 }
 export type TuiState = ReturnType<typeof createTuiState>

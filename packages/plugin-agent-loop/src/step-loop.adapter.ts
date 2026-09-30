@@ -117,6 +117,7 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
     stepDirective: (view) => isPlanned(view.stepIndex)
       ? Effect.succeed({ toolChoice: Option.none<LoopToolChoice>() })
       : planFor(view).pipe(Effect.map((plan) => ({ toolChoice: plan.toolChoice })), Effect.orDie),
+    beforeDispatch: (step, actual) => request.dispatch(step, actual).pipe(Effect.orDie),
     isComplete,
     pendingInput: () => request.steering.pipe(Effect.orDie),
     onTail: (messages) => Effect.gen(function* () {

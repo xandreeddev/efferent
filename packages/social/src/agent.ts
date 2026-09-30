@@ -1,3 +1,4 @@
+import { sessionsPlugin } from "@xandreed/plugin-sessions"
 import { join } from "node:path"
 import { LanguageModel } from "effect/ai"
 import { Effect, Layer, Option, Schema } from "effect"
@@ -37,9 +38,10 @@ export const socialLoopPlugin = definePlugin({
     }).pipe(Effect.mapError((error) => new HarnessError({ code: "social.run", message: String(error) }))) })
   })),
 })
-export const socialAgent = (workspace: string) => defineAgent({ id: "social", plugins: [sessionSqlitePlugin, modelsPlugin, socialHostPlugin, socialLoopPlugin], config: {
+export const socialAgent = (workspace: string) => defineAgent({ id: "social", plugins: [sessionSqlitePlugin, sessionsPlugin, modelsPlugin, socialHostPlugin, socialLoopPlugin], config: {
   version: 1, profile: "social", profiles: { social: {} }, system: socialAgentSystemPrompt(), plugins: [
     { id: "sessions", use: sessionSqlitePlugin.id, options: { path: join(workspace, ".efferent/runtime/social-sessions.db") } },
+    { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
     { id: "models", use: modelsPlugin.id }, { id: "host", use: socialHostPlugin.id }, { id: "loop", use: socialLoopPlugin.id },
   ],
 } })
