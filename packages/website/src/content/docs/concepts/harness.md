@@ -100,10 +100,13 @@ The SQLite plugin uses WAL and transactional sequence allocation. The memory
 plugin uses a workspace-scoped append-only JSONL ledger. The default new data
 namespace is `.efferent/runtime`. Existing SQLite journal tables are imported
 once into the unified tables while preserving the originals. `legacyPaths`
-imports separate older files through read-only connections; import markers
-prevent duplicates and resurrection after pruning. Conflicting owners or
-positions refuse the entire source. Stop older application versions before
-migrating, because subsequent old-version writes are not mirrored.
+imports separate older files through read-only connections. Sessions are
+matched by id, not by path: a moved or copied source neither duplicates
+records nor brings back removed or pruned sessions, and orphan message rows
+join the session stored under their id. Undecodable rows are skipped and
+logged; conflicting owners or positions refuse the entire source. Stop older
+application versions before migrating, because subsequent old-version writes
+are not mirrored.
 The models plugin reads existing model settings and credentials as fallbacks by
 default. Explicit plugin options and current credentials win. Set its
 `inheritPrevious` option to `false` to use an independent setup; new logins and

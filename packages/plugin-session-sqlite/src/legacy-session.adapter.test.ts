@@ -1,11 +1,12 @@
 import { Database } from "bun:sqlite"
 import { afterEach, describe, expect, test } from "bun:test"
-import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs"
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Logger, Option } from "effect"
 import { ConversationId, ConversationStore, SessionLog, SessionStore } from "@xandreed/core"
 import { SessionStoreProjectionLive } from "./compatibility.adapter.js"
+import { importLegacySessions } from "./legacy-session.adapter.js"
 import { SessionLogSqliteLive } from "./session-log.adapter.js"
 import { ConversationStoreProjectionLive } from "./store/sqliteStore.js"
 
@@ -71,47 +72,111 @@ describe("legacy journals migrate into the unified session log", () => {
     raw.close()
   })
 
-  test("concurrent initialization imports a separate source once and leaves it byte-for-byte unchanged", async () => {
+  test("an import waiting on another's transaction finds its marker there and imports nothing again", async () => {
     const dir = directory()
     const source = join(dir, "old.db")
     const destination = join(dir, "sessions.db")
     seed(source)
     chmodSync(source, 0o400)
     const before = readFileSync(source)
-    const read = Effect.gen(function* () {
+    await withStores(destination, Effect.void)
+    // This connection imports the source and keeps its transaction open…
+    const holder = new Database(destination)
+    holder.exec("BEGIN IMMEDIATE")
+    const legacy = new Database(source, { readonly: true })
+    expect(Option.isNone(importLegacySessions(holder, legacy, realpathSync(source)).refused)).toBe(true)
+    legacy.close()
+    // …while a second process opens the same destination with the same source.
+    const child = Bun.spawn([process.execPath, "-e", `
+      import { Effect, Layer } from "effect"
+      import { SessionLogSqliteLive } from ${JSON.stringify(join(import.meta.dir, "session-log.adapter.ts"))}
+      console.log("opening")
+      await Effect.runPromise(Effect.scoped(Layer.build(SessionLogSqliteLive(process.env.DESTINATION, { legacyPaths: [process.env.SOURCE] }))))
+      console.log("opened")
+    `], { cwd: import.meta.dir, env: { ...process.env, DESTINATION: destination, SOURCE: source }, stdout: "pipe", stderr: "pipe" })
+    const reader = child.stdout.getReader()
+    const started = await reader.read()
+    expect(new TextDecoder().decode(started.value)).toContain("opening")
+    await Bun.sleep(300)
+    // The second import is blocked on the held transaction, not finished beside it.
+    expect(child.exitCode).toBe(null)
+    holder.exec("COMMIT")
+    holder.close()
+    const exit = await child.exited
+    const rest = await reader.read()
+    expect({ exit, stderr: await new Response(child.stderr).text() }).toEqual({ exit: 0, stderr: "" })
+    expect(new TextDecoder().decode(rest.value)).toContain("opened")
+    expect(readFileSync(source)).toEqual(before)
+    expect(statSync(source).mode & 0o777).toBe(0o400)
+    await withStores(destination, Effect.gen(function* () {
       const log = yield* SessionLog
       expect((yield* log.head(harnessId)).seq).toBe(2)
       expect((yield* log.read(conversationId, { after: 0, kinds: [], limit: Option.none() })).map((event) => event.seq)).toEqual([1, 2, 3, 4, 5, 6])
-    })
-    await Promise.all([withStores(destination, read, [source, join(dir, ".", "old.db")]), withStores(destination, read, [source])])
-    expect(readFileSync(source)).toEqual(before)
-    expect(statSync(source).mode & 0o777).toBe(0o400)
-    await withStores(destination, read, [source])
+    }), [source, join(dir, ".", "old.db")])
     const raw = new Database(destination, { readonly: true })
     expect(raw.query("SELECT count(*) AS count FROM session_log_imports").get()).toEqual({ count: 2 })
     raw.close()
   })
 
-  test("a failed import rolls back every imported row and can be retried after repairing the source", async () => {
+  test("a failed import rolls back the rows it already wrote and can be retried", async () => {
     const dir = directory()
     const source = join(dir, "old.db")
     const destination = join(dir, "sessions.db")
     seed(source)
-    const damaged = new Database(source)
-    damaged.exec("DROP TABLE messages")
-    damaged.close()
+    await withStores(destination, Effect.void)
+    // The harness session is written first; the conversation's first event then fails.
+    const armed = new Database(destination)
+    armed.exec(`CREATE TRIGGER fail_conversation BEFORE INSERT ON session_log_events WHEN NEW.session_id = '${conversationId}' BEGIN SELECT RAISE(ABORT, 'injected write failure'); END`)
+    armed.close()
     const failure = await withStores(destination, Effect.succeed("opened"), [source]).then(() => "unexpected success", (error: unknown) => String(error))
-    expect(failure).toContain("no such table: messages")
-    const destinationDb = new Database(destination, { readonly: true })
+    expect(failure).toContain("injected write failure")
+    const destinationDb = new Database(destination)
     expect(destinationDb.query("SELECT count(*) AS count FROM session_heads").get()).toEqual({ count: 0 })
+    expect(destinationDb.query("SELECT count(*) AS count FROM session_log_events").get()).toEqual({ count: 0 })
     expect(destinationDb.query("SELECT count(*) AS count FROM session_log_imports WHERE source != 'local'").get()).toEqual({ count: 0 })
+    destinationDb.exec("DROP TRIGGER fail_conversation")
     destinationDb.close()
-    const repaired = new Database(source)
-    repaired.exec("CREATE TABLE messages (conversation_id TEXT NOT NULL, position INTEGER NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL)")
-    repaired.close()
     await withStores(destination, Effect.gen(function* () {
       expect((yield* (yield* SessionStore).read(harnessId, -1)).length).toBe(2)
+      expect((yield* (yield* ConversationStore).list(conversationId)).length).toBe(2)
     }), [source])
+  })
+
+  test("a removed session stays removed when its source is found at another path", async () => {
+    const base = directory()
+    const first = join(base, "first")
+    mkdirSync(first)
+    seed(join(first, "old.db"))
+    await withStores(join(first, "sessions.db"), Effect.gen(function* () {
+      const log = yield* SessionLog
+      yield* log.remove(conversationId)
+      yield* log.remove(harnessId)
+    }), [join(first, "old.db")])
+    const moved = join(base, "moved")
+    renameSync(first, moved)
+    copyFileSync(join(moved, "old.db"), join(moved, "copy.db"))
+    await withStores(join(moved, "sessions.db"), Effect.gen(function* () {
+      const log = yield* SessionLog
+      expect((yield* Effect.result(log.head(conversationId)))._tag).toBe("Failure")
+      expect((yield* Effect.result(log.head(harnessId)))._tag).toBe("Failure")
+    }), [join(moved, "old.db"), join(moved, "copy.db")])
+  })
+
+  test("an undecodable legacy row is skipped and reported while the rest of the source imports", async () => {
+    const path = join(directory(), "sessions.db")
+    seed(path)
+    const legacy = new Database(path)
+    legacy.query("INSERT INTO harness_events VALUES (?, 2, 'NOT JSON')").run(harnessId)
+    legacy.query("INSERT INTO harness_sessions VALUES ('broken', '/workspace', '{\"id\":1}')").run()
+    legacy.close()
+    const logged: Array<string> = []
+    const capture = Logger.make(({ message }) => { logged.push(String(message)) })
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      expect((yield* (yield* SessionStore).read(harnessId, -1)).map((event) => event.seq)).toEqual([0, 1])
+      expect((yield* (yield* ConversationStore).list(conversationId)).length).toBe(2)
+    }).pipe(Effect.provide(Layer.merge(SessionStoreProjectionLive, ConversationStoreProjectionLive()).pipe(Layer.provideMerge(SessionLogSqliteLive(path)))))).pipe(Effect.provide(Logger.layer([capture]))))
+    expect(logged.some((line) => line.includes(`harness event ${harnessId}#2`))).toBe(true)
+    expect(logged.some((line) => line.includes("harness session broken"))).toBe(true)
   })
 
   test("removing migrated sessions cannot resurrect them on reopening", async () => {
@@ -212,7 +277,7 @@ describe("legacy journals migrate into the unified session log", () => {
     }))
   })
 
-  test("orphan source messages cannot borrow a destination owner's identity", async () => {
+  test("orphan source messages join their stored session and keep its owner", async () => {
     const dir = directory()
     const source = join(dir, "old.db")
     const destination = join(dir, "sessions.db")
@@ -223,18 +288,37 @@ describe("legacy journals migrate into the unified session log", () => {
     await withStores(destination, Effect.gen(function* () {
       yield* (yield* SessionLog).create({ id: conversationId, owner: "/different-workspace", origin: "harness", createdAt: 100, meta: {}, parent: Option.none() })
     }))
-    const failure = await withStores(destination, Effect.void, [source], "/workspace").then(() => "unexpected success", (error: unknown) => String(error))
-    expect(failure).toContain("conflicting legacy identity")
     await withStores(destination, Effect.gen(function* () {
-      expect((yield* (yield* SessionLog).head(conversationId)).seq).toBe(0)
-    }))
-    await withStores(destination, Effect.gen(function* () {
-      const log = yield* SessionLog
-      yield* log.remove(conversationId)
-      yield* log.create({ id: conversationId, owner: "/workspace", origin: "harness", createdAt: 100, meta: {}, parent: Option.none() })
-    }))
-    await withStores(destination, Effect.gen(function* () {
+      expect((yield* (yield* SessionLog).head(conversationId)).header.owner).toBe("/different-workspace")
       expect((yield* (yield* ConversationStore).list(conversationId)).map((message) => message.content)).toEqual(["old prompt", "newer prompt"])
     }), [source], "/workspace")
+  })
+
+  test("moving a migrated workspace reopens it without importing anything twice", async () => {
+    const base = directory()
+    const workspace = join(base, "workspace")
+    mkdirSync(workspace)
+    // The destination holds the historical harness tables; the domain host
+    // wrote its messages under the harness id in a separate file.
+    seed(join(workspace, "sessions.db"))
+    const harnessTables = new Database(join(workspace, "sessions.db"))
+    harnessTables.exec("DELETE FROM conversations; DELETE FROM messages; DELETE FROM checkpoints; DELETE FROM run_outcomes;")
+    harnessTables.close()
+    seed(join(workspace, "old.db"))
+    const messageTables = new Database(join(workspace, "old.db"))
+    messageTables.exec("DELETE FROM harness_events; DELETE FROM harness_sessions;")
+    messageTables.query("INSERT INTO messages VALUES (?, 0, ?, 110)").run(harnessId, JSON.stringify({ role: "user", content: "domain prompt" }))
+    messageTables.close()
+    const opened = (at: string) => Effect.gen(function* () {
+      const log = yield* SessionLog
+      expect((yield* log.head(harnessId)).header.owner).toBe("/workspace")
+      expect((yield* (yield* ConversationStore).list(harnessId)).map((message) => message.content)).toEqual(["domain prompt"])
+      expect((yield* log.head(conversationId)).seq).toBe(6)
+      return at
+    })
+    expect(await withStores(join(workspace, "sessions.db"), opened("before"), [join(workspace, "old.db")], "/workspace")).toBe("before")
+    const moved = join(base, "moved")
+    renameSync(workspace, moved)
+    expect(await withStores(join(moved, "sessions.db"), opened("after"), [join(moved, "old.db")], "/moved")).toBe("after")
   })
 })

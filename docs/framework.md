@@ -706,20 +706,23 @@ the first open it imports existing `harness_sessions`/`harness_events` and
 IMMEDIATE transaction. The original rows, event ids, message positions,
 checkpoints, timestamps and `user_version` are preserved. Corrupt legacy
 message rows retain their positions and are skipped by the compatibility
-reader, as before. A failed import rolls back all imported rows and can be
-retried after repairing the source.
+reader, as before; a harness session or event row that does not decode is
+skipped and logged, and the rest of the source imports. A failed import rolls
+back all imported rows and can be retried after repairing the source.
 
 `SessionLogSqliteLive(path, { legacyPaths: [...] })` and the storage plugin's
 `legacyPaths` option import older files through read-only connections into the
-configured destination. The storage plugin binds orphan historical message
-rows to its `SessionEnvironment.workspace`; standalone adapters may name
-`legacyOwner` explicitly, and otherwise isolate unknown orphans under the
-compatibility owner. An orphan never borrows an existing destination owner's
-identity. Existing sources are left intact; absent optional
-sources are skipped. Canonical file paths identify import sources, and import
-markers survive removal of sessions so reopening cannot duplicate or
-resurrect old records. An owner, identity or historical-position conflict
-refuses the whole source; equivalent source copies are deduplicated. Stop older application versions before migrating: the
+configured destination. An orphan historical message row (written under a
+harness id without a conversation row) joins the session stored under that id
+and keeps its owner; an orphan without one is created under the storage
+plugin's `SessionEnvironment.workspace` (standalone adapters may name
+`legacyOwner`, and otherwise isolate it under the compatibility owner).
+Existing sources are left intact; absent optional sources are skipped.
+Sessions are matched by id, not by the source's path: events a session
+already holds are not imported again, and removing or pruning a session
+leaves a tombstone, so a moved, renamed or copied source neither duplicates
+records nor brings a removed session back. An owner, identity or
+historical-position conflict refuses the whole source. Stop older application versions before migrating: the
 import is a snapshot, and subsequent writes by an old version are not mirrored.
 
 `SessionStoreProjectionLive` and `ConversationStoreProjectionLive` are the
