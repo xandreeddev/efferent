@@ -604,6 +604,34 @@ describe("Agent.turn", () => {
     expect(calls).toBe(0)
   })
 
+  test("a dispatch check reads from storage only the turn's events, each once", async () => {
+    const { reads, started, stored } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const reads = yield* Ref.make<ReadonlyArray<{ readonly after: number; readonly count: number }>>([])
+      const counted = Layer.effect(SessionLog, Effect.gen(function* () {
+        const inner = yield* SessionLog
+        return SessionLog.of({
+          ...inner,
+          read: (id, query) => inner.read(id, query).pipe(Effect.tap((events) => query.kinds.includes("request.prepared")
+            ? Ref.update(reads, (all) => [...all, { after: query.after, count: events.length }])
+            : Effect.void)),
+        })
+      })).pipe(Layer.provide(SessionLogMemoryLive))
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* sessionOver(counted)
+      const { model } = yield* scripted([...lookupThenDeliver, ...lookupThenDeliver])
+      yield* agent.turn(inputFor(journal, "run-1", "find alpha", model), answer())
+      yield* Ref.set(reads, [])
+      yield* agent.turn(inputFor(journal, "run-2", "find alpha again", model), answer())
+      const second = (yield* journal.stored).filter((event) => Option.contains(event.turn, 2))
+      return { reads: yield* Ref.get(reads), started: second[0]?.seq ?? 0, stored: second.length }
+    })))
+    // One read per step: the first from the turn's start (memory has the history), then after the last event seen.
+    expect(reads).toHaveLength(3)
+    expect(reads[0]?.after).toBe(started - 1)
+    expect(reads.every((read, index) => index === 0 || read.after >= reads[index - 1]!.after + reads[index - 1]!.count)).toBe(true)
+    expect(reads.reduce((sum, read) => sum + read.count, 0)).toBeLessThanOrEqual(stored)
+  })
+
   test("a memory write reacting to context.built reaches the next step instead of failing this one", async () => {
     const { outcome, seen } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const noteOnBuild = definePlugin({

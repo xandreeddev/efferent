@@ -464,16 +464,18 @@ tool's declaration at every step: a deliberate storage trade-off, so that one
 header and the memory before it rebuild a request. A provider-defined tool's
 args are kept only as their key names and the SHA-256 of their canonical
 JSON, since they can carry credentials; a change of any value still
-diverges. A dispatch reads a fresh durable snapshot, folds the memory entries
-up to the cut with the saved recipe, and compares the resulting prompt and
-header with the actual Effect AI request. A memory write after the build (a
-reaction to `context.built`) is outside the cut: the next step sends it.
-Changes to the system text, messages, schemas, tool choice or described model
-settings fail with `request.diverged` before the provider runs; its message
-starts with the first part that differs (`context`, `system`, `messages`,
-`tools`, `toolChoice`, `model`, `cacheKey` or `callPolicy`). Prompt data is
-frozen; a stream fallback checks the same contract again. Host-planned
-batches make no provider request and create no request header.
+diverges. A dispatch reads what storage holds (the history memory was opened
+over, then only the events stored since its last read, so a step's read
+grows with that step, not the session), folds the memory entries up to the
+cut with the saved recipe, and compares the resulting prompt and header with
+the actual Effect AI request. A memory write after the build (a reaction to
+`context.built`) is outside the cut: the next step sends it. Changes to the
+system text, messages, schemas, tool choice or described model settings fail
+with `request.diverged` before the provider runs; its message starts with the
+first part that differs (`context`, `system`, `messages`, `tools`,
+`toolChoice`, `model`, `cacheKey` or `callPolicy`). Prompt data is frozen; a
+stream fallback checks the same contract again. Host-planned batches make no
+provider request and create no request header.
 
 `replayModelRequest(events, runId, step)` reconstructs one historical request
 from the memory up to its header's cut, excluding later responses. It uses

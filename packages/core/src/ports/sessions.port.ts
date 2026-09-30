@@ -52,8 +52,11 @@ export interface TurnWriter {
   readonly started: SessionLogEvent
   /** The session's events before this turn (a fork's parent first), of the given kinds: what memory is rebuilt from. */
   readonly history: (kinds: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
-  /** A fresh durable snapshot including this turn (a fork's inherited history first). Flush queued writes before reading. */
-  readonly snapshot: (kinds: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
+  /**
+   * A fresh durable snapshot including this turn (a fork's inherited history first). Flush queued writes before reading.
+   * With `after`, only this session's own events stored after that seq: the inherited history precedes them all.
+   */
+  readonly snapshot: (kinds: ReadonlyArray<string>, after?: number) => Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
   /** Queue events; returns once queued. */
   readonly append: (drafts: ReadonlyArray<TurnDraft>) => Effect.Effect<void, HarnessError>
   /**

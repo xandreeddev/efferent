@@ -313,7 +313,9 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     admitted,
     started: input.started,
     history: (kinds) => historyOf(log, input.header, input.started, kinds),
-    snapshot: (kinds) => flush.pipe(Effect.andThen(historyOf(log, input.header, input.started, kinds, true))),
+    snapshot: (kinds, after) => flush.pipe(Effect.andThen(after === undefined
+      ? historyOf(log, input.header, input.started, kinds, true)
+      : log.read(id, { after, limit: Option.none(), kinds }).pipe(Effect.mapError((error) => harness("session.log", error._tag))))),
     append: (drafts) => admission.withPermits(1)(refuseIfFailed.pipe(Effect.andThen(refuseIfSealed), Effect.andThen(drafts.length === 0 ? Effect.void : offer({ _tag: "Append", drafts })))),
     write: <A, E>(op: Effect.Effect<A, E>) => Effect.gen(function* () {
       const result = yield* Deferred.make<A, E | HarnessError>()

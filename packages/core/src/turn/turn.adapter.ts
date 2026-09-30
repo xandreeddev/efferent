@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Ref, Schema, Scope } from "effect"
+import { Context, Effect, Layer, Option, Ref, Schema, Scope, Semaphore } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { fingerprintOf } from "../memory/memory-log.entity.functions.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
@@ -15,7 +15,8 @@ import { ToolRegistry } from "../ports/tool-registry.port.js"
 import type { RunTools } from "../ports/tool-registry.port.js"
 import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
 import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js"
-import type { TurnLiveInput } from "../ports/turn-scope.port.js"
+import type { RequestSnapshot, TurnLiveInput } from "../ports/turn-scope.port.js"
+import type { SessionLogEvent } from "../session/session-log.entity.js"
 import { renderSections } from "./prompt-sections.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
 import type { TurnEvent } from "./turn-event.entity.js"
@@ -61,12 +62,15 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const tasks = yield* makeTurnTasks(scope)
   // The writer is the first subscriber: every stored event is queued before any reaction runs.
   yield* events.subscribe(storedDraft(admitted.turn), (draft) => draft instanceof HarnessError ? Effect.fail(draft) : writer.append([draft]))
+  // What memory was opened over, as stored: the base of every request snapshot.
+  const history = yield* Ref.make(Option.none<ReadonlyArray<LogEntry>>())
+  const decoded = (stored: ReadonlyArray<SessionLogEvent>) =>
+    entriesOfEvents(stored).pipe(Effect.mapError((error) => failure("memory.log", `undecodable memory events: ${error.message}`)))
+  const readHistory = writer.history(MEMORY_KINDS).pipe(Effect.flatMap(decoded))
   // Memory's log is the session's memory events before this turn; what it records goes to the
   // same queue. Its TurnStarted is the turn's own `turn.started`, stored when the turn began.
   const log: LogHandle = {
-    read: writer.history(MEMORY_KINDS).pipe(
-      Effect.flatMap((stored) => entriesOfEvents(stored).pipe(Effect.mapError((error) => failure("memory.log", `undecodable memory events: ${error.message}`)))),
-    ),
+    read: readHistory.pipe(Effect.tap((entries) => Ref.set(history, Option.some(entries)))),
     append: (entries) => Effect.gen(function* () {
       const started = entries.filter((entry) => entry.body._tag === "TurnStarted")
       // The stored message is entry `<runId>:0` of turn N: memory must number it the same.
@@ -99,6 +103,29 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     write: writer.write,
   })
 
+  // The request snapshot: the history memory was opened over, then the turn's stored events,
+  // each read taking only what was stored after the last event it saw.
+  const requestKinds = [...MEMORY_KINDS, "request.prepared"]
+  const snapshots = yield* Semaphore.make(1)
+  const snapshot = yield* Ref.make(Option.none<RequestSnapshot & { readonly cursor: number }>())
+  const requestSnapshot: Effect.Effect<RequestSnapshot, HarnessError> = snapshots.withPermits(1)(Effect.gen(function* () {
+    const known = yield* Option.match(yield* Ref.get(snapshot), {
+      onNone: () => Ref.get(history).pipe(
+        Effect.flatMap(Option.match({ onNone: () => readHistory, onSome: Effect.succeed })),
+        Effect.map((entries) => ({ entries, requests: [], cursor: writer.started.seq - 1 })),
+      ),
+      onSome: Effect.succeed,
+    })
+    const stored = yield* writer.snapshot(requestKinds, known.cursor)
+    const next = {
+      entries: [...known.entries, ...(yield* decoded(stored.filter((event) => MEMORY_KINDS.includes(event.kind))))],
+      requests: [...known.requests, ...stored.filter((event) => event.kind === "request.prepared" && event.data.runId === admitted.runId)],
+      cursor: stored.reduce((last, event) => Math.max(last, event.seq), known.cursor),
+    }
+    yield* Ref.set(snapshot, Option.some(next))
+    return { entries: next.entries, requests: next.requests }
+  }))
+
   const claimed = yield* Ref.make(false)
   const started = yield* Ref.make(Option.none<number>())
   const replied = yield* Ref.make(false)
@@ -111,7 +138,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       Effect.flatMap((data) => writer.append([{ kind: "request.prepared", data }])),
       Effect.andThen(writer.flush),
     ),
-    requestSnapshot: writer.snapshot([...MEMORY_KINDS, "request.prepared"]),
+    requestSnapshot,
     number: Ref.get(started).pipe(Effect.flatMap(Option.match({
       onNone: () => Effect.fail(failure("turn.unstarted", "The user's message is not persisted yet")),
       onSome: (number) => Effect.succeed(number),

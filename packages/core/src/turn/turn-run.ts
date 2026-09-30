@@ -14,8 +14,6 @@ import type { TurnRunOptions } from "../ports/turn-scope.port.js"
 import type { CompletionVerdict } from "./turn-event.entity.js"
 import { CurrentModelCallPolicy } from "../loop/modelPolicy.js"
 import { checkModelRequest, modelRequestDescriptorOf, modelRequestHeaderOf, modelRequestTools, reconstructModelRequest } from "./model-request.entity.functions.js"
-import { entriesOfEvents } from "../session/session-event.entity.functions.js"
-import { MEMORY_KINDS } from "../session/session-event.entity.js"
 
 /** The turn services one run reads. */
 export type TurnRunServices = TurnMemory | TurnToolbox | TurnPrompt | TurnEvents | TurnTasks
@@ -119,11 +117,8 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       plan,
       dispatch: (step, actual) => Effect.gen(function* () {
         const stored = yield* memory.requestSnapshot
-        const header = yield* modelRequestHeaderOf(stored, runId, step)
-        const entries = yield* entriesOfEvents(stored.filter((event) => MEMORY_KINDS.includes(event.kind))).pipe(
-          Effect.mapError((error) => new HarnessError({ code: "request.memory", message: error.message })),
-        )
-        const expected = yield* reconstructModelRequest(header, entries)
+        const header = yield* modelRequestHeaderOf(stored.requests, runId, step)
+        const expected = yield* reconstructModelRequest(header, stored.entries)
         yield* checkModelRequest(expected, {
           prompt: actual.prompt,
           tools: modelRequestTools(actual.tools),
