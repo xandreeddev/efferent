@@ -15,7 +15,7 @@ import { ToolRegistry } from "../ports/tool-registry.port.js"
 import type { RunTools } from "../ports/tool-registry.port.js"
 import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
 import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js"
-import type { RequestSnapshot, TurnLiveInput } from "../ports/turn-scope.port.js"
+import type { RequestSnapshot, TurnContextEntry, TurnLiveInput } from "../ports/turn-scope.port.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
 import { renderSections } from "./prompt-sections.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
@@ -34,6 +34,13 @@ const storedDraft = (turn: number) => (event: TurnEvent): Option.Option<TurnDraf
     ? Option.some(failure("events.reserved", `${event.name} is the framework's kind`))
     : Option.map(draftOfTurnEvent(turn, event), (draft): TurnDraft => ({ kind: draft.kind, data: draft.data }))
 
+const contextBody = (entry: TurnContextEntry) => ({ _tag: "TurnContext" as const, sectionId: entry.id, version: entry.version, text: entry.text })
+
+/** Where the turn's message stands: not taken by memory yet (with the context entries waiting for it), or taken as turn `number`. */
+type MessageState =
+  | { readonly _tag: "Waiting"; readonly early: ReadonlyArray<TurnContextEntry> }
+  | { readonly _tag: "Taken"; readonly number: number }
+
 /**
  * One admitted turn's services, over the turn's writer, built in this order:
  * the event bus and the tasks, with the writer as the bus's FIRST
@@ -42,7 +49,8 @@ const storedDraft = (turn: number) => (event: TurnEvent): Option.Option<TurnDraf
  * this layer is built (a digester or summarizer there is used), and
  * RunContext. It also holds the tools slot (`TurnToolbox`) and the prompt
  * state (`TurnPrompt`). The message was stored when the turn began; memory
- * takes it at `TurnMemory.persistMessage`. Tasks run in the layer's scope:
+ * takes it at `TurnMemory.persistMessage`, and records nothing before it
+ * (`TurnMemory.context` waits for it). Tasks run in the layer's scope:
  * they are interrupted when it closes.
  */
 export const TurnLive = (input: TurnLiveInput): Layer.Layer<
@@ -62,6 +70,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const tasks = yield* makeTurnTasks(scope)
   // The writer is the first subscriber: every stored event is queued before any reaction runs.
   yield* events.subscribe(storedDraft(admitted.turn), (draft) => draft instanceof HarnessError ? Effect.fail(draft) : writer.append([draft]))
+  const message = yield* Ref.make<MessageState>({ _tag: "Waiting", early: [] })
   // What memory was opened over, as stored: the base of every request snapshot.
   const history = yield* Ref.make(Option.none<ReadonlyArray<LogEntry>>())
   const decoded = (stored: ReadonlyArray<SessionLogEvent>) =>
@@ -72,6 +81,10 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const log: LogHandle = {
     read: readHistory.pipe(Effect.tap((entries) => Ref.set(history, Option.some(entries)))),
     append: (entries) => Effect.gen(function* () {
+      // Nothing of the turn precedes its message: an entry recorded before it would take the message's number.
+      if ((yield* Ref.get(message))._tag === "Waiting" && entries.some((entry) => entry.body._tag !== "TurnStarted")) {
+        return yield* Effect.fail(failure("turn.unstarted", "memory records nothing before the turn's message is taken (persistMessage); TurnMemory.context waits for it"))
+      }
       const started = entries.filter((entry) => entry.body._tag === "TurnStarted")
       // The stored message is entry `<runId>:0` of turn N: memory must number it the same.
       if (started.some((entry) => entry.turn !== admitted.turn || entry.id !== writer.started.data.entry)) {
@@ -127,8 +140,8 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   }))
 
   const claimed = yield* Ref.make(false)
-  const started = yield* Ref.make(Option.none<number>())
   const replied = yield* Ref.make(false)
+  const taken = Ref.get(message).pipe(Effect.map((state) => state._tag === "Taken" ? Option.some(state.number) : Option.none()))
   const turnMemory = TurnMemory.of({
     ...reader,
     strategy: session.strategy,
@@ -139,7 +152,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       Effect.andThen(writer.flush),
     ),
     requestSnapshot,
-    number: Ref.get(started).pipe(Effect.flatMap(Option.match({
+    number: taken.pipe(Effect.flatMap(Option.match({
       onNone: () => Effect.fail(failure("turn.unstarted", "The user's message is not persisted yet")),
       onSome: (number) => Effect.succeed(number),
     }))),
@@ -147,13 +160,18 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       if (yield* Ref.getAndSet(claimed, true)) return yield* Effect.fail(failure("turn.persisted", "The user's message is already persisted"))
       const number = admitted.turn
       yield* session.record([{ _tag: "TurnStarted", userMessage: admitted.userMessage }], 0)
-      yield* Ref.set(started, Option.some(number))
+      const early = yield* Ref.modify(message, (state): [ReadonlyArray<TurnContextEntry>, MessageState] =>
+        [state._tag === "Waiting" ? state.early : [], { _tag: "Taken", number }])
+      yield* early.length === 0 ? Effect.void : session.record(early.map(contextBody), 0)
       yield* events.publish({ _tag: "turn.started", runId: admitted.runId, turn: number, userMessage: admitted.userMessage })
       return number
     }),
-    context: (entry) => session.record([{ _tag: "TurnContext", sectionId: entry.id, version: entry.version, text: entry.text }], 0).pipe(Effect.asVoid),
+    context: (entry) => Ref.modify(message, (state): [boolean, MessageState] =>
+      state._tag === "Waiting" ? [false, { _tag: "Waiting", early: [...state.early, entry] }] : [true, state]).pipe(
+      Effect.flatMap((now) => now ? session.record([contextBody(entry)], 0).pipe(Effect.asVoid) : Effect.void),
+    ),
     persistReply: (outcome) => Effect.gen(function* () {
-      const number = yield* Ref.get(started)
+      const number = yield* taken
       if (Option.isNone(number) || (yield* Ref.getAndSet(replied, true))) return
       yield* session.record([{ _tag: "TurnEnded", outcome: outcome.outcome, reply: outcome.reply }], 0)
       yield* events.publish({ _tag: "turn.ended", runId: admitted.runId, turn: number.value, outcome: outcome.outcome, reply: outcome.reply })

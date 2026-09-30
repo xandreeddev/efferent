@@ -54,7 +54,11 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
    * layer, a matcher's history) sees only earlier turns.
    */
   readonly persistMessage: Effect.Effect<number, HarnessError>
-  /** Record a TurnContext entry. */
+  /**
+   * Record a TurnContext entry. Before `persistMessage` (a plugin or a host
+   * layer built with the turn) it waits, and is recorded right after the
+   * message: the turn's entries follow its TurnStarted.
+   */
   readonly context: (entry: TurnContextEntry) => Effect.Effect<void, HarnessError>
   /** Record TurnEnded, then publish `turn.ended`. Once; a no-op when the message was never persisted. */
   readonly persistReply: (outcome: TurnOutcome) => Effect.Effect<void, HarnessError>

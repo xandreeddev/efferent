@@ -295,10 +295,12 @@ skills, step context, completion) is the host's.
 the graph and activates its runtime plugins once, in the caller's scope.
 Session plugins, if any, are activated per turn with the turn's services.
 Session plugins requiring `RunContext`, `TurnEvents`, `TurnTasks`,
-`TurnMemory`, `TurnPrompt` or `TurnToolbox` activate after `TurnLive` and
-before the user's message is taken by memory. Their dependent plugins
-activate in the same phase, and all subscriptions/resources finalize with
-that turn. Memory, registry and loop providers activate first: a plugin
+`TurnMemory`, `TurnPrompt` or `TurnToolbox` activate after `TurnLive`,
+before the host's layer (which can use their services) and before the
+user's message is taken by memory: a context entry they record at
+activation (`TurnMemory.context`) waits for the message. Their dependent
+plugins activate in the same phase, and all subscriptions/resources finalize
+with that turn. Memory, registry and loop providers activate first: a plugin
 requiring the services of an already-open turn cannot also provide those
 foundations. Runtime plugins cannot require turn services. This lets a
 capability ship a session plugin that installs its reactions without coupling
@@ -615,7 +617,9 @@ and `RunContext` (which carries the turn's `session`). It provides:
 
 - `TurnMemory`: the session, the turn's `number`, `persistMessage` (the
   turn's TurnStarted, stored when the turn began, is shown to memory, then
-  `turn.started` is published; once), `context(entry)` and
+  `turn.started` is published; once), `context(entry)` (before
+  `persistMessage` it waits, and is recorded right after the message:
+  memory records nothing of the turn before its message, `turn.unstarted`),
   `persistReply(outcome)` (`turn.reply`, then `turn.ended` is published;
   once, and a no-op when the message was never persisted). The stored
   `turn.ended` is the writer's `end`, the turn's closing commit;

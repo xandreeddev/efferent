@@ -40,7 +40,7 @@ import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { Agent } from "./agent.adapter.js"
 import type { AgentConfig, AgentPluginEntry } from "./agent.adapter.js"
-import { Tally } from "./testing.port.js"
+import { Stamp, Tally } from "./testing.port.js"
 
 /* ── the host's definitions: thin tools with views, skills and sections ── */
 
@@ -654,6 +654,46 @@ describe("Agent.turn", () => {
     expect(seen).toHaveLength(3)
     expect(seen[0]!.prompt).not.toContain("BUILT NOTE 0")
     expect(seen[1]!.prompt).toContain("BUILT NOTE 0")
+  })
+
+  test("a turn-dependent plugin's context recorded at activation follows the turn's message", async () => {
+    const { seen, sections } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const noting = definePlugin({
+        id: "test/note-at-activation", version: "1", scope: "session", config: Schema.Struct({}), defaults: {},
+        requires: [TurnMemory], provides: [],
+        layer: () => Layer.effectDiscard(TurnMemory.pipe(Effect.flatMap((memory) => memory.context({ id: "note", version: "1", text: "PLUGIN NOTE" })))),
+      })
+      const agent = yield* define(memoryWindowPlugin, { plugins: [noting] })
+      const journal = yield* inMemorySession
+      const { seen, model } = yield* scripted([stop("one"), stop("two")])
+      yield* Effect.forEach(["run-1", "run-2"], (runId) => agent.turn(inputFor(journal, runId, `hello ${runId}`, model), (turn) =>
+        turn.run({}).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })))))
+      const events = yield* journal.stored
+      return { seen: yield* Ref.get(seen), sections: named(events, "memory.section").map((event) => [event.data.entry, Option.getOrNull(event.turn)]) }
+    })))
+    expect(sections).toEqual([["run-1:1", 1], ["run-2:1", 2]])
+    expect(seen.map((request) => request.prompt.includes("PLUGIN NOTE"))).toEqual([true, true])
+  })
+
+  test("the host's layer is built with the turn-dependent plugins' services", async () => {
+    const reply = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const stamping = definePlugin({
+        id: "test/stamp", version: "1", scope: "session", config: Schema.Struct({}), defaults: {},
+        requires: [RunContext], provides: [Stamp],
+        layer: () => Layer.effect(Stamp, RunContext.pipe(Effect.map((run) => ({ label: `stamped ${run.runId}` })))),
+      })
+      const hostLayer = Layer.effect(Tally, Effect.gen(function* () {
+        const stamp = yield* Stamp
+        return { runId: stamp.label, seen: yield* Ref.make<ReadonlyArray<string>>([]) }
+      }))
+      const agent = yield* define(memoryWindowPlugin, { plugins: [stamping] })
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      const outcome = yield* agent.turn({ ...inputFor(journal, "run-1", "hello", model), layer: hostLayer }, () =>
+        Tally.pipe(Effect.map((tally): TurnOutcome => ({ outcome: "completed", reply: Option.some(tally.runId) }))))
+      return outcome.reply
+    })))
+    expect(reply).toEqual(Option.some("stamped run-1"))
   })
 
   test("durable request replay refuses events that do not rebuild the request's context", async () => {
