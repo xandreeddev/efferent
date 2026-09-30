@@ -5,7 +5,7 @@ import { HttpClient, HttpClientRequest } from "effect/http"
 import { Effect, Option, Redacted } from "effect"
 import type { Scope } from "effect"
 import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, modelRequestDescriptorOf } from "@xandreed/core"
-import type { Credential, ModelSelection } from "@xandreed/core"
+import type { Credential, ModelCallPolicy, ModelSelection } from "@xandreed/core"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { makeCompatLanguageModel } from "./compat.js"
 import { makeOpenAiCodexLanguageModel } from "./openAiCodex.js"
@@ -112,6 +112,33 @@ const missingKey = (selection: ModelSelection): AuthError =>
     message: `no credential for ${selection.provider} — add one to ~/.efferent/auth.json`,
   })
 
+/** The OpenCode Responses options: what the model is built with, and what its descriptor records. */
+const openCodeResponsesConfig = (cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>) => ({
+  // UI tools contain genuinely optional fields. OpenAI strict
+  // schemas require every property, so use normal function
+  // calling and let Effect decode the domain schema.
+  strictJsonSchema: false,
+  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
+  ...Option.match(policy, {
+    onNone: () => ({}),
+    onSome: (value) => ({
+      ...(value.maxOutputTokens === undefined
+        ? {}
+        : { max_output_tokens: value.maxOutputTokens }),
+      reasoning: {
+        // The public-API SDK union has no none/xhigh/max —
+        // clamp to the nearest supported value (only the
+        // subscription dialect is probe-verified for `none`).
+        effort: value.effort === "xhigh" || value.effort === "max"
+          ? "high" as const
+          : value.effort === "none"
+            ? "low" as const
+            : value.effort,
+      },
+    }),
+  }),
+})
+
 const buildProviderService = (
   selection: ModelSelection,
   credential: Credential | undefined,
@@ -130,31 +157,7 @@ const buildProviderService = (
             Effect.flatMap((client) =>
               OpenAiLanguageModel.make({
                 model: selection.modelId,
-                config: {
-                  // UI tools contain genuinely optional fields. OpenAI strict
-                  // schemas require every property, so use normal function
-                  // calling and let Effect decode the domain schema.
-                  strictJsonSchema: false,
-                  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
-                  ...Option.match(policy, {
-                    onNone: () => ({}),
-                    onSome: (value) => ({
-                      ...(value.maxOutputTokens === undefined
-                        ? {}
-                        : { max_output_tokens: value.maxOutputTokens }),
-                      reasoning: {
-                        // The public-API SDK union has no none/xhigh/max —
-                        // clamp to the nearest supported value (only the
-                        // codex dialect is probe-verified for `none`).
-                        effort: value.effort === "xhigh" || value.effort === "max"
-                          ? "high"
-                          : value.effort === "none"
-                            ? "low"
-                            : value.effort,
-                      },
-                    }),
-                  }),
-                },
+                config: openCodeResponsesConfig(cacheKey, policy),
               }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
             ),
             Effect.map((svc) => ({ svc, prependClaudeCode: false })),
@@ -251,19 +254,9 @@ export const buildProvider = (
       const responses = selection.provider === "opencode" && usesOpenCodeResponses(selection.modelId)
       const settings = selection.provider === "anthropic"
         ? { systemPrelude: built.prependClaudeCode ? CLAUDE_CODE_SYSTEM : null }
-        : {
-          prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
-          ...(responses ? {
-            strictJsonSchema: false,
-            ...Option.match(policy, {
-              onNone: () => ({}),
-              onSome: (value) => ({
-                ...(value.maxOutputTokens === undefined ? {} : { max_output_tokens: value.maxOutputTokens }),
-                reasoning: { effort: value.effort === "xhigh" || value.effort === "max" ? "high" : value.effort === "none" ? "low" : value.effort },
-              }),
-            }),
-          } : {}),
-        }
+        : responses
+          ? openCodeResponsesConfig(cacheKey, policy)
+          : { prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent") }
       const descriptor = { provider: selection.provider, model: selection.modelId, settings }
       return {
         ...built,
