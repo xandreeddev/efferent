@@ -721,9 +721,10 @@ the check holds across restarts. The writer (`TurnWriter`) is the turn's one
 way to write: `append`, `write(op)` in queue order, `transact(decide)`
 (check, then append: decided again with the events others wrote when
 someone commits first), `flush` (committed to storage), `end` (the closing
-commit; it returns how many inbox items wait) and `closed` (completes when
-someone else closed the turn). A writer whose scope closes unended ends the
-turn as failed, or interrupted. Outside a turn, `Sessions.transact(address,
+commit; it returns how many inbox items wait, and after a store failure a
+later end tries again) and `closed` (completes when someone else closed the
+turn). A writer whose scope closes unended ends the turn as failed, or
+interrupted, and so does a begin interrupted after its opening commit. Outside a turn, `Sessions.transact(address,
 decide)` is the same check-then-append (a page action, a setting); kinds only
 the framework writes are refused there (`RESERVED_KINDS`).
 
