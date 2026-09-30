@@ -142,8 +142,13 @@ Credential input stays outside the text renderer; only mask characters render.
 PKCE, callback state checks, a masked manual fallback, and scoped cancellation.
 
 A transcript mounts at most 60 blocks, keyed by durable IDs so streaming updates retain their native markdown renderers. Settling a message preserves its position. Durable event and transient delta batches
-update the UI at most once per batch. The terminal tests exercise 10,000 events
-and assert p95 input-to-frame time below 50 ms on the test machine. The PTY fixture checks rendering and shutdown. `python scripts/verify-tmux.py`
+update the UI at most once per batch.
+Transient text arriving before its durable run start is buffered for the selected
+session, up to 128 deltas. The matching start replays it before later durable
+events in that batch; settlement remains authoritative. Session switches clear
+the buffer, and late deltas from settled runs or previous sessions are discarded.
+The terminal tests exercise 10,000 events and assert p95 input-to-frame time
+below 50 ms on the test machine. The PTY fixture checks rendering and shutdown. `python scripts/verify-tmux.py`
 launches the actual CLI in an isolated tmux server and checks first-run setup,
 model selection, slash filtering/completion, draft preservation, resizing, plugin edits and replacement, streamed output sampled across 50 deltas,
 tool expansion, cancellation, and clean exit without provider credentials.

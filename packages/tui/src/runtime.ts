@@ -1,7 +1,7 @@
 import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
-import { Cause, Deferred, Effect, Fiber, Option, Ref, Stream } from "effect"
+import { Cause, Deferred, Effect, Fiber, Option, Ref, Semaphore, Stream } from "effect"
 import type { Harness, HarnessError, SessionHandle } from "@xandreed/sdk"
 import { App } from "./App.js"
 import { createTuiState, errorMessage } from "./state.js"
@@ -34,6 +34,7 @@ export const runTui = (options: {
   state.setModel(options.model ?? "")
   const selected = yield* Ref.make(options.session)
   const follower = yield* Ref.make(Option.none<Fiber.Fiber<void, HarnessError>>())
+  const attaching = yield* Semaphore.make(1)
   const done = yield* Deferred.make<void>()
   const report = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.catchCause((cause) => Effect.sync(() => {
     const failure = Cause.findErrorOption(cause)
@@ -41,15 +42,15 @@ export const runTui = (options: {
     state.setNotice(errorMessage(cause))
   })))
   const launch = <A, E>(effect: Effect.Effect<A, E>) => { Effect.runForkWith(rt)(Effect.forkIn(report(effect), scope)) }
-  const attach = (session: SessionHandle) => Effect.gen(function* () {
+  const attach = (session: SessionHandle) => attaching.withPermits(1)(Effect.gen(function* () {
     yield* Ref.get(follower).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid) })))
     yield* Ref.set(selected, session)
     yield* Effect.sync(() => state.selectSession(session.record))
     const events = session.events().pipe(Stream.groupedWithin(64, "16 millis"), Stream.runForEach((events) => Effect.sync(() => state.events(events))))
-    const deltas = session.transient.pipe(Stream.groupedWithin(64, "16 millis"), Stream.runForEach((events) => Effect.sync(() => state.deltas(events))))
+    const deltas = session.transient.pipe(Stream.groupedWithin(64, "16 millis"), Stream.runForEach((events) => Effect.sync(() => state.deltas(events, session.record.id))))
     const fiber = yield* Effect.forkIn(Effect.all([events, deltas], { concurrency: "unbounded", discard: true }), scope)
     yield* Ref.set(follower, Option.some(fiber))
-  })
+  }))
   yield* attach(options.session)
   const closeOverlay = () => state.setOverlay({ kind: "none" })
   const commands: ReadonlyArray<TuiCommand> = [

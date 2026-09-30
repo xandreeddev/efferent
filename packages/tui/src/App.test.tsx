@@ -13,7 +13,13 @@ const boot = async (width = 80, height = 24) => {
   const ui = await testRender(() => createComponent(App, { state, actions: { commands: [{ name: "model", description: "Choose a model" }, { name: "plugins", description: "Configure or replace plugins" }, { name: "plan", description: "Plan a task" }], submit: (text) => { sent.push(text) }, palette: () => state.setOverlay({ kind: "menu", title: "Commands", rows: [{ label: "/plugins", detail: "Configure plugins", select: () => state.setOverlay({ kind: "text", title: "Plugins", text: "loop · memory" }) }] }), interrupt: () => {}, quit: () => {} } }), { width, height })
   cleanups.push(() => ui.renderer.destroy())
   const frame = async () => { await ui.renderOnce(); return ui.captureCharFrame() }
-  return { state, ui, sent, frame }
+  const frameContaining = async (text: string, remaining = 40): Promise<string> => {
+    const rendered = await frame()
+    if (rendered.includes(text) || remaining === 0) return rendered
+    await Bun.sleep(25)
+    return frameContaining(text, remaining - 1)
+  }
+  return { state, ui, sent, frame, frameContaining }
 }
 
 describe("Efferent terminal client", () => {
@@ -87,6 +93,33 @@ describe("Efferent terminal client", () => {
     expect(await tui.frame()).toContain("Stable prefix settled")
     expect(tui.ui.renderer.root.findDescendantById("markdown:stream:0:assistant")).toBe(renderer)
     expect(tui.state.transcript().blocks.map((block) => block.kind)).toEqual(["assistant", "tool"])
+  })
+  test("a first delta arriving before its durable start appears in the live frame", async () => {
+    const tui = await boot()
+    tui.state.delta({ name: "assistant.delta", runId: "early", data: { channel: "text", turnIndex: 0, delta: "Waiting for cancellation" } })
+    expect(await tui.frame()).not.toContain("Waiting for cancellation")
+    tui.state.event({ version: 1, id: "start", sessionId: tui.state.session().id, seq: 0, at: 0, name: "run.started", runId: "early", data: {} })
+    expect(tui.state.transcript().blocks.map((block) => block.text)).toEqual(["Waiting for cancellation"])
+    expect(await tui.frameContaining("Waiting for cancellation")).toContain("Waiting for cancellation")
+    expect(tui.state.transcript().status).toBe("Working")
+  })
+  test("early batched deltas replay in order and durable text settles the same renderer", async () => {
+    const tui = await boot()
+    const sessionId = tui.state.session().id
+    tui.state.deltas(["Waiting ", "for ", "cancellation"].map((delta) => ({ name: "assistant.delta", runId: "early", data: { channel: "text", turnIndex: 0, delta } })))
+    tui.state.events([{ version: 1, id: "start", sessionId, seq: 0, at: 0, name: "run.started", runId: "early", data: {} }])
+    expect(tui.state.transcript().blocks.map((block) => block.text)).toEqual(["Waiting for cancellation"])
+    expect(await tui.frameContaining("Waiting for cancellation")).toContain("Waiting for cancellation")
+    const renderer = tui.ui.renderer.root.findDescendantById("markdown:early:0:assistant")
+    tui.state.events([
+      { version: 1, id: "settled", sessionId, seq: 1, at: 1, name: "loop.event", runId: "early", data: { type: "assistant_message", turnIndex: 0, text: "Settled response" } },
+      { version: 1, id: "completed", sessionId, seq: 2, at: 2, name: "run.completed", runId: "early", data: { text: "Settled response", outcome: "completed" } },
+    ])
+    expect(await tui.frameContaining("Settled response")).toContain("Settled response")
+    expect(await tui.frame()).not.toContain("Waiting for cancellation")
+    expect(tui.ui.renderer.root.findDescendantById("markdown:early:0:assistant")).toBe(renderer)
+    expect(tui.state.transcript().blocks).toHaveLength(1)
+    expect(tui.state.transcript().status).toBe("Ready")
   })
   test("multiline paste remains one editable submission", async () => {
     const tui = await boot()
