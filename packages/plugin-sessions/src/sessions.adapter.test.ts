@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
-import type { BeginTurn, SessionAddress, SessionLogEvent } from "@xandreed/core"
+import type { BeginTurn, SessionAddress, SessionLogEvent, TurnWriter } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
@@ -554,6 +554,22 @@ describe("the inbox", () => {
     expect((yield* sessions!.read(address, { kinds: ["inbox.dropped"] })).map((event) => event.data.id)).toEqual(["t1"])
   })))
 
+  test("an inbox turn interrupted before it wrote anything did not try its items: no attempt is counted", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* sessions!.deliver(address, item("t1"))
+    const interrupted = { reason: "interrupted", failure: Option.some({ code: "host.deadline", message: "out of time" }) } as const
+    const untried = (writer: TurnWriter) => writer.end(interrupted).pipe(Effect.asVoid)
+    const tried = (writer: TurnWriter) => writer.append([{ kind: "answer.published", data: { text: "half" } }]).pipe(Effect.andThen(writer.end(interrupted)), Effect.asVoid)
+    yield* Effect.forEach([1, 2, 3], () => sessions!.drain(address, untried, { maxTurns: 1 }), { discard: true })
+    expect((yield* sessions!.get(address)).pending).toBe(1)
+    yield* sessions!.drain(address, tried, { maxTurns: 1 })
+    expect((yield* sessions!.get(address)).pending).toBe(1)
+    yield* sessions!.drain(address, tried, { maxTurns: 1 })
+    expect((yield* sessions!.get(address)).pending).toBe(0)
+    expect((yield* sessions!.read(address, { kinds: ["inbox.dropped"] })).map((event) => [Option.getOrNull(event.turn), event.data.id])).toEqual([[5, "t1"]])
+  })))
+
   test("a user's message and an inbox turn race: exactly one begins", () => withLog((log) => Effect.gen(function* () {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
@@ -659,6 +675,7 @@ describe("admission", () => {
     yield* Fiber.interrupt(beginning)
     expect(Option.isNone((yield* sessions.get(address)).open)).toBe(true)
     expect((yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "interrupted"]])
+    expect((yield* sessions.get(address)).pending).toBe(1)
     yield* Ref.set(stalling, false)
     expect((yield* Effect.scoped(sessions.begin(address, say("next")))).admitted.turn).toBe(2)
   })))

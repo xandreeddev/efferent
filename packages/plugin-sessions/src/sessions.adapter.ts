@@ -116,7 +116,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   const reaped = (head: SessionHead, state: SessionsState) => Effect.gen(function* () {
     if (Option.isNone(state.open) || Option.isSome(yield* heldTurn(head, state, ownership, holder))) return { drafts: [] as ReadonlyArray<SessionDraft>, state }
     const turn = state.open.value.turn
-    const after = closedState(state, "interrupted", config.inbox.attempts)
+    // A reaped turn counts as an attempt: its holder may have stopped on the items.
+    const after = closedState(state, "interrupted", config.inbox.attempts, true)
     const closing = yield* turnEndedDraft(turn, { reason: "interrupted", failure: Option.some({ code: "turn.lease", message: "the turn's holder stopped writing" }) })
       .pipe(Effect.mapError(storage("session.encode")))
     const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: { id, reason: "attempts" } }))
@@ -144,7 +145,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   const unhanded = (address: SessionAddress, turn: number, exit: Exit.Exit<unknown, unknown>) => guarded(address, (_head, state) => Effect.gen(function* () {
     if (!Option.exists(state.open, (open) => open.turn === turn && open.holder === instance)) return { drafts: [], next: Option.none<SessionsState>(), result: undefined }
     const reason = Exit.hasInterrupts(exit) ? "interrupted" as const : "failed" as const
-    const after = closedState(state, reason, config.inbox.attempts)
+    const after = closedState(state, reason, config.inbox.attempts, false)
     const closing = yield* turnEndedDraft(turn, { reason, failure: Option.some({ code: "turn.unended", message: "the turn's scope closed before it ended" }) })
       .pipe(Effect.mapError(storage("session.encode")))
     const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: { id, reason: "attempts" } }))
@@ -312,7 +313,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     })).pipe(Effect.map((done) => ({ result: done.result, events: Option.match(done.committed, { onNone: () => [], onSome: (committed) => committed.events }) }))),
     cancel: (address, turn) => guarded(address, (_head, state) => Effect.gen(function* () {
       if (!Option.exists(state.open, (open) => open.turn === turn)) return { drafts: [], next: Option.none<SessionsState>(), result: { cancelled: false, pending: pendingOf(state).length } }
-      const after = closedState(state, "cancelled", config.inbox.attempts)
+      const after = closedState(state, "cancelled", config.inbox.attempts, true)
       const closing = yield* turnEndedDraft(turn, { reason: "cancelled", failure: Option.none() }).pipe(Effect.mapError(storage("session.encode")))
       return { drafts: [closing], next: Option.some(after.state), result: { cancelled: true, pending: pendingOf(after.state).length } }
     })).pipe(Effect.tap((done) => done.result.cancelled ? closeLocal(address.id, "cancelled", Option.some(turn)) : Effect.void), Effect.map((done) => done.result)),

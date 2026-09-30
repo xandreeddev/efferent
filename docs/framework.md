@@ -788,7 +788,10 @@ every waiting item in its start commit (its `userMessage` is their contents)
 and fails with `NothingPending` when there are none. An item is done when its
 turn ends completed, partial or cancelled; a failed or interrupted claim
 returns it, up to `inbox.attempts` (2), and then it is dropped
-(`inbox.dropped`). User messages never queue. `drain(address, run)` runs
+(`inbox.dropped`). A turn interrupted before it wrote anything through its
+writer (no `append`, `write` or `transact`) never tried its items: they wait
+again and no attempt is counted. A turn reaped because its holder stopped
+counts. User messages never queue. `drain(address, run)` runs
 inbox turns while items wait, the session is free and the host admits them,
 at most three. Whoever closes a turn and whoever delivers drains: the
 delivery either commits before the turn's closing commit (whose `pending`

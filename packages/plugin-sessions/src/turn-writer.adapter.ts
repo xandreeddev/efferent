@@ -88,6 +88,8 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   const failed = yield* Ref.make(Option.none<HarnessError>())
   const ended = yield* Ref.make(false)
   const sealed = yield* Ref.make(false)
+  /** Whether the turn wrote anything (an append, a write, a transact): only then has it tried the inbox items it took. */
+  const tried = yield* Ref.make(false)
   const admission = yield* Semaphore.make(1)
   const ending = yield* Ref.make(Option.none<Deferred.Deferred<{ readonly pending: number }, HarnessError>>())
   /** Every queued caller's refusal, until its item settles: what a close fails. */
@@ -212,7 +214,8 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     Effect.forever,
   ), scope)
 
-  const offer = (item: Item): Effect.Effect<void, HarnessError> => Queue.offer(queue, item).pipe(
+  const offer = (item: Item): Effect.Effect<void, HarnessError> => (item._tag === "Append" ? Ref.set(tried, true) : Effect.void).pipe(
+    Effect.andThen(Queue.offer(queue, item)),
     Effect.flatMap((accepted) => accepted ? Effect.void : Effect.fail(harness("turn.closed", `turn ${admitted.turn}'s scope closed`))),
   )
 
@@ -231,14 +234,15 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     )
   }))
 
-  const admit = <A, E>(result: Deferred.Deferred<A, E | HarnessError>, item: Item) => admission.withPermits(1)(
-    refuseIfFailed.pipe(Effect.andThen(refuseIfSealed), Effect.andThen(enqueue(result, item))),
+  /** Admit an item unless the writer failed or is ending; one the turn `tries` with (a write, a transact) marks the turn as having tried. */
+  const admit = <A, E>(result: Deferred.Deferred<A, E | HarnessError>, item: Item, tries: boolean) => admission.withPermits(1)(
+    refuseIfFailed.pipe(Effect.andThen(refuseIfSealed), Effect.andThen(tries ? Ref.set(tried, true) : Effect.void), Effect.andThen(enqueue(result, item))),
   )
 
   /** Queue `commit` and wait for its result, in queue order. */
-  const inOrder = <A, E>(commit: Effect.Effect<A, E | HarnessError>): Effect.Effect<A, E | HarnessError> => Effect.gen(function* () {
+  const inOrder = <A, E>(commit: Effect.Effect<A, E | HarnessError>, tries: boolean): Effect.Effect<A, E | HarnessError> => Effect.gen(function* () {
     const result = yield* Deferred.make<A, E | HarnessError>()
-    yield* admit(result, { _tag: "Commit", commit: Effect.exit(commit).pipe(Effect.flatMap((exit) => Deferred.done(result, exit)), Effect.asVoid) })
+    yield* admit(result, { _tag: "Commit", commit: Effect.exit(commit).pipe(Effect.flatMap((exit) => Deferred.done(result, exit)), Effect.asVoid) }, tries)
     return yield* Deferred.await(result)
   })
 
@@ -247,7 +251,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
 
   const endNow = (ending: TurnEnding): Effect.Effect<{ readonly pending: number }, HarnessError> => Effect.gen(function* () {
     const done = yield* commitPlan((at) => Effect.gen(function* () {
-      const after = closedState(at.state, ending.reason, config.inbox.attempts)
+      const after = closedState(at.state, ending.reason, config.inbox.attempts, yield* Ref.get(tried))
       const closing = yield* turnEndedDraft(admitted.turn, ending).pipe(Effect.mapError((error) => harness("session.encode", error.message)))
       const dropped = after.dropped.map((item): TurnDraft => ({ kind: "inbox.dropped", data: { id: item, reason: "attempts" } }))
       return { drafts: [{ kind: closing.kind, data: closing.data }, ...dropped], next: after.state, result: pendingOf(after.state).length }
@@ -289,7 +293,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   if (ownership.mode === "lease" && typeof ownership.renew === "object") {
     const renew = inOrder(commitPlan((at) => Effect.gen(function* () {
       return { drafts: [], next: renewed(at.state, yield* storageNow, true), result: undefined }
-    }), { renew: false })).pipe(Effect.ignore)
+    }), { renew: false }), false).pipe(Effect.ignore)
     yield* Effect.forkIn(renew.pipe(Effect.repeat(Schedule.spaced(`${ownership.renew.everyMs} millis`)), Effect.asVoid), scope)
   }
 
@@ -317,11 +321,11 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
         refuseIfFailed.pipe(Effect.andThen(op)),
         Deferred.await(closed).pipe(Effect.flatMap((note) => Effect.fail(harness("turn.closed", `turn ${admitted.turn} was ${note.reason}`)))),
       )).pipe(Effect.flatMap((exit) => Deferred.done(result, exit)), Effect.asVoid)
-      yield* admit(result, { _tag: "Run", run })
+      yield* admit(result, { _tag: "Run", run }, true)
       return yield* Deferred.await(result)
     }),
     transact: <A, E>(decide: (others: ReadonlyArray<SessionLogEvent>) => Effect.Effect<Decision<A>, E>) =>
-      inOrder(commitPlan((at, others) => decide(others).pipe(Effect.map((decision): Plan<A> => ({ drafts: decision.drafts, next: at.state, result: decision.result }))), { renew: true })),
+      inOrder(commitPlan((at, others) => decide(others).pipe(Effect.map((decision): Plan<A> => ({ drafts: decision.drafts, next: at.state, result: decision.result }))), { renew: true }), true),
     flush,
     end,
     closed: Deferred.await(closed),

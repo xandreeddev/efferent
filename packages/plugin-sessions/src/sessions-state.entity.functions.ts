@@ -75,18 +75,21 @@ const finished = (reason: TurnEndReason): boolean => reason === "completed" || r
 
 /**
  * Close the open turn. Returns the state after it and the inbox items it
- * dropped (taken by too many turns that did not finish them).
+ * dropped (taken by too many turns that did not finish them). A turn that
+ * did not try its items — interrupted before it wrote anything — returns
+ * them to wait without counting an attempt.
  */
-export const closedState = (state: State, reason: TurnEndReason, maxAttempts: number): { readonly state: State; readonly dropped: ReadonlyArray<string> } => {
+export const closedState = (state: State, reason: TurnEndReason, maxAttempts: number, tried: boolean): { readonly state: State; readonly dropped: ReadonlyArray<string> } => {
   const turn = Option.map(state.open, (open) => open.turn)
   const taken = (slot: InboxSlot): boolean => Option.isSome(slot.claimedBy) && Option.contains(turn, slot.claimedBy.value)
-  const exhausted = (slot: InboxSlot): boolean => slot.attempts + 1 >= maxAttempts
+  const counted = tried || reason !== "interrupted"
+  const exhausted = (slot: InboxSlot): boolean => counted && slot.attempts + 1 >= maxAttempts
   return {
     state: {
       ...state,
       open: Option.none(),
       inbox: state.inbox.flatMap((slot): ReadonlyArray<InboxSlot> => !taken(slot) ? [slot]
-        : finished(reason) || exhausted(slot) ? [] : [{ ...slot, attempts: slot.attempts + 1, claimedBy: Option.none() }]),
+        : finished(reason) || exhausted(slot) ? [] : [{ ...slot, attempts: counted ? slot.attempts + 1 : slot.attempts, claimedBy: Option.none() }]),
     },
     dropped: finished(reason) ? [] : state.inbox.filter((slot) => taken(slot) && exhausted(slot)).map((slot) => slot.id),
   }
