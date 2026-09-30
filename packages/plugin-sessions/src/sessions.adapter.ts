@@ -1,4 +1,4 @@
-import { Clock, Effect, Layer, Option, PubSub, Ref, Stream } from "effect"
+import { Clock, Effect, Exit, Layer, Option, PubSub, Ref, Scope, Stream } from "effect"
 import {
   canonicalJson,
   ConversationId,
@@ -78,15 +78,20 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
     head.header.owner === address.owner ? Effect.succeed(head) : Effect.fail(new SessionMissing({ session: address.id }))))
   const viewFrom = (head: SessionHead) => stateFrom(head).pipe(Effect.map((state) => viewOf(head, state, ownership, instance)))
 
-  /** Plan from the head and commit it, against the revision planned from; after a conflict, plan again. */
-  const guarded = <A, E>(address: SessionAddress, plan: (head: SessionHead, state: SessionsState) => Effect.Effect<GuardedPlan<A>, E>) => {
+  /**
+   * Plan from the head and commit it, against the revision planned from;
+   * after a conflict, plan again. The commit is not interrupted half way,
+   * and `stored` runs with it: an interruption waits for the store's answer
+   * and for what must follow a stored commit.
+   */
+  const guarded = <A, E>(address: SessionAddress, plan: (head: SessionHead, state: SessionsState) => Effect.Effect<GuardedPlan<A>, E>, stored: (result: A) => Effect.Effect<void> = () => Effect.void) => {
     const attempt = (tries: number): Effect.Effect<Guarded<A>, E | SessionMissing | SessionLogError> => Effect.gen(function* () {
       const head = yield* owned(address)
       const planned = yield* plan(head, yield* stateFrom(head))
       if (planned.drafts.length === 0 && Option.isNone(planned.next)) return { result: planned.result, head, committed: Option.none() }
-      const outcome = yield* Effect.result(log.commit(address.id, {
+      const outcome = yield* Effect.uninterruptible(Effect.result(log.commit(address.id, {
         expect: head.revision, notAfter: Option.none(), events: planned.drafts, state: Option.map(planned.next, stateJson),
-      }))
+      })).pipe(Effect.tap((result) => result._tag === "Success" ? stored(planned.result) : Effect.void)))
       if (outcome._tag === "Success") {
         yield* wake(address.id)
         return { result: planned.result, head, committed: Option.some(outcome.success) }
@@ -130,12 +135,31 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
     })))),
   )
 
-  const begin = (address: SessionAddress, input: BeginTurn) => Effect.gen(function* () {
+  /** Close a turn this instance opened whose begin never handed it to a writer (interrupted after its commit). */
+  const unhanded = (address: SessionAddress, turn: number, exit: Exit.Exit<unknown, unknown>) => guarded(address, (_head, state) => Effect.gen(function* () {
+    if (!Option.exists(state.open, (open) => open.turn === turn && open.holder === instance)) return { drafts: [], next: Option.none<SessionsState>(), result: undefined }
+    const reason = Exit.hasInterrupts(exit) ? "interrupted" as const : "failed" as const
+    const after = closedState(state, reason, config.inbox.attempts)
+    const closing = yield* turnEndedDraft(turn, { reason, failure: Option.some({ code: "turn.unended", message: "the turn's scope closed before it ended" }) })
+      .pipe(Effect.mapError(storage("session.encode")))
+    const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: { id, reason: "attempts" } }))
+    return { drafts: [closing, ...dropped], next: Option.some(after.state), result: undefined }
+  })).pipe(Effect.timeout("10 seconds"), Effect.ignore)
+
+  /**
+   * Open a turn. Everything after the opening commit runs uninterruptibly
+   * until the writer (and its finalizer) exists; what may wait — the host's
+   * admission, the reads — stays interruptible, and a turn committed under
+   * an admission that is then interrupted is closed by the scope.
+   */
+  const begin = (address: SessionAddress, input: BeginTurn) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
     const scope = yield* Effect.scope
     const at = yield* Clock.currentTimeMillis
     const toAdmit = { session: address, origin: input._tag === "User" ? "user" as const : "inbox" as const, runId: input.runId, key: input._tag === "User" ? input.key : input.runId }
+    const unowned = yield* Ref.make(Option.none<number>())
+    yield* Scope.addFinalizerExit(scope, (exit) => Ref.get(unowned).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (turn) => unhanded(address, turn, exit) }))))
     // Only the opening commit is admitted: the writer's later commits run outside the host's admission.
-    const begun = yield* admission.admit(toAdmit, guarded(address, (head, stored) => Effect.gen(function* () {
+    const begun = yield* restore(admission.admit(toAdmit, guarded(address, (head, stored) => Effect.gen(function* () {
       const reap = yield* reaped(head, stored)
       const state = reap.state
       if (input._tag === "User") {
@@ -175,7 +199,7 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
         command: input._tag === "User" ? input.command : {}, claimed,
       }
       return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next } }
-    })))
+    }), (opened) => Ref.set(unowned, Option.some(opened.admitted.turn)))))
     const committed = yield* Option.match(begun.committed, {
       onNone: () => Effect.fail(new SessionLogError({ code: "session.begin", message: "the turn was not committed" })),
       onSome: Effect.succeed,
@@ -190,9 +214,10 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
       position: { revision: committed.revision, seq: committed.seq, state: begun.result.next, storageAt: committed.at },
       wake: wake(address.id),
     }, scope)
+    yield* Ref.set(unowned, Option.none())
     yield* Ref.update(writers, (all) => new Map([...all, [address.id, { ...open, turn: begun.result.admitted.turn }]]))
     return open.writer
-  })
+  }))
 
   /** Close this instance's writer of a session, if it holds `turn` (or any turn). */
   const closeLocal = (id: string, reason: "cancelled" | "removed", turn: Option.Option<number>) => Ref.get(writers).pipe(Effect.flatMap((all) =>

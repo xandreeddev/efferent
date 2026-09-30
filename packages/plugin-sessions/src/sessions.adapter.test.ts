@@ -553,4 +553,24 @@ describe("admission", () => {
     expect((yield* sessions.drain(address, () => Effect.void)).turns).toBe(1)
     expect((yield* Ref.get(admitted)).map((entry) => entry.split(":")[0])).toEqual(["user", "inbox"])
   })))
+
+  test("a begin interrupted after its opening commit still closes the turn it opened", () => withLog((log) => Effect.gen(function* () {
+    const committed = yield* Deferred.make<void>()
+    const stalling = yield* Ref.make(true)
+    const stalls = Layer.succeed(TurnAdmission, TurnAdmission.of({
+      admit: (_turn, open) => open.pipe(Effect.tap(() => Ref.get(stalling).pipe(Effect.flatMap((stall) => stall
+        ? Deferred.succeed(committed, undefined).pipe(Effect.andThen(Effect.never))
+        : Effect.void)))),
+    }))
+    const sessions = yield* Effect.service(Sessions).pipe(Effect.provide(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), stalls)))))
+    const address = yield* created(sessions)
+    yield* sessions.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    const beginning = yield* Effect.forkChild(Effect.scoped(sessions.begin(address, { _tag: "Inbox", runId: "run-late" })))
+    yield* Deferred.await(committed)
+    yield* Fiber.interrupt(beginning)
+    expect(Option.isNone((yield* sessions.get(address)).open)).toBe(true)
+    expect((yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "interrupted"]])
+    yield* Ref.set(stalling, false)
+    expect((yield* Effect.scoped(sessions.begin(address, say("next")))).admitted.turn).toBe(2)
+  })))
 })
