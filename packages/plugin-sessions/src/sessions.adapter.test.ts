@@ -101,7 +101,8 @@ describe("one turn at a time", () => {
     const first = yield* Effect.forkChild(writer.end({ reason: "completed", failure: Option.none() }))
     yield* Deferred.await(entered)
     const second = yield* Effect.forkChild(writer.end({ reason: "failed", failure: Option.none() }))
-    expect((yield* Effect.flip(writer.append([{ kind: "late", data: {} }]))).code).toBe("turn.closed")
+    const late = yield* Effect.flip(writer.append([{ kind: "late", data: {} }]))
+    expect([late.code, late.message]).toEqual(["turn.closed", "turn 1 is ending"])
     expect((yield* Effect.flip(writer.write(Ref.set(changed, true)))).code).toBe("turn.closed")
     const refused = yield* Effect.flip(writer.transact(() => Effect.succeed({ drafts: [{ kind: "late", data: {} }], result: undefined })))
     expect(refused.code).toBe("turn.closed")
@@ -109,7 +110,8 @@ describe("one turn at a time", () => {
     expect(yield* Fiber.join(first)).toEqual({ pending: 0 })
     expect(yield* Fiber.join(second)).toEqual({ pending: 0 })
     expect(yield* writer.end({ reason: "completed", failure: Option.none() })).toEqual({ pending: 0 })
-    expect((yield* Effect.flip(writer.write(Ref.set(changed, true)))).code).toBe("turn.closed")
+    const after = yield* Effect.flip(writer.write(Ref.set(changed, true)))
+    expect([after.code, after.message]).toEqual(["turn.closed", "turn 1 has ended"])
     expect(yield* Ref.get(changed)).toBe(false)
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "answer.published@1", "turn.ended@1"])
   })))
@@ -139,6 +141,25 @@ describe("one turn at a time", () => {
     expect((yield* Effect.scoped(sessions!.begin(address, say("three")))).admitted.turn).toBe(3)
     expect((yield* sessions!.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "completed"], [2, "failed"], [3, "failed"]])
     expect(yield* all(sessions!, address)).toContain("after.refusal@1")
+  })))
+
+  test("an end interrupted while it waits for room in the queue leaves the writer open to a later end", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, writer: { capacity: 1, batch: 1 } })
+    const address = yield* created(sessions!)
+    const writer = yield* sessions!.begin(address, say("full"))
+    const entered = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const running = yield* Effect.forkChild(writer.write(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)))))
+    yield* Deferred.await(entered)
+    yield* writer.append([{ kind: "queued", data: {} }])
+    const ending = yield* Effect.forkChild(writer.end({ reason: "completed", failure: Option.none() }))
+    yield* Effect.yieldNow
+    yield* Fiber.interrupt(ending)
+    yield* Deferred.succeed(release, undefined)
+    yield* Fiber.join(running)
+    yield* writer.append([{ kind: "after", data: {} }])
+    expect(yield* writer.end({ reason: "completed", failure: Option.none() })).toEqual({ pending: 0 })
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "queued@1", "after@1", "turn.ended@1"])
   })))
 
   test("closing a blocked writer with a full queue settles running and queued callers", () => withLog((log) => Effect.gen(function* () {
@@ -304,6 +325,30 @@ describe("cancel and removal", () => {
     const results = [yield* Fiber.join(running), yield* Fiber.join(queued)]
     expect(results.map((result) => result._tag === "Failure" ? result.failure.code : "success")).toEqual(["turn.closed", "turn.closed"])
     yield* Deferred.await(interrupted)
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "turn.ended@1"])
+  })))
+
+  test("a local cancel settles callers queued behind a commit that hangs", () => withLog((inner) => Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>()
+    const log = SessionLog.of({
+      ...inner,
+      commit: (id, commit) => commit.events.some((event) => event.kind === "stuck")
+        ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))
+        : inner.commit(id, commit),
+    })
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    const scope = yield* Scope.make()
+    const writer = yield* sessions!.begin(address, say("hung")).pipe(Scope.provide(scope))
+    yield* writer.append([{ kind: "stuck", data: {} }])
+    yield* Deferred.await(entered)
+    const deciding = yield* Effect.forkChild(Effect.result(writer.transact(() => Effect.succeed({ drafts: [{ kind: "decided", data: {} }], result: undefined }))))
+    const flushing = yield* Effect.forkChild(Effect.result(writer.flush))
+    yield* Effect.yieldNow
+    expect((yield* sessions!.cancel(address, 1)).cancelled).toBe(true)
+    const results = [yield* Fiber.join(deciding), yield* Fiber.join(flushing)]
+    expect(results.map((result) => result._tag === "Failure" ? result.failure.code : "success")).toEqual(["turn.closed", "turn.closed"])
+    yield* Scope.close(scope, Exit.void)
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "turn.ended@1"])
   })))
 

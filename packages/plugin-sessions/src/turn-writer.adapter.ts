@@ -1,4 +1,4 @@
-import { Clock, Deferred, Effect, Exit, Option, Queue, Ref, Schedule, Scope, Semaphore } from "effect"
+import { Clock, Deferred, Effect, Exit, HashSet, Option, Queue, Ref, Schedule, Scope, Semaphore } from "effect"
 import { HarnessError, turnEndedDraft, TurnClosed } from "@xandreed/core"
 import type {
   AdmittedTurn,
@@ -90,21 +90,23 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   const sealed = yield* Ref.make(false)
   const admission = yield* Semaphore.make(1)
   const ending = yield* Ref.make(Option.none<Deferred.Deferred<{ readonly pending: number }, HarnessError>>())
-  const waiting = yield* Ref.make<ReadonlySet<(error: HarnessError) => Effect.Effect<void>>>(new Set())
+  /** Every queued caller's refusal, until its item settles: what a close fails. */
+  const waiting = yield* Ref.make(HashSet.empty<(error: HarnessError) => Effect.Effect<void>>())
   const closed = yield* Deferred.make<TurnClosed>()
   const foreign = yield* Ref.make<ReadonlyArray<SessionLogEvent>>([])
   const position = yield* Ref.make<Position>({ ...input.position, localAt: yield* Clock.currentTimeMillis })
 
+  const refuseWaiting = (error: HarnessError) => Ref.get(waiting).pipe(Effect.flatMap((all) => Effect.forEach(all, (refuse) => refuse(error), { discard: true })))
   const close = (reason: TurnClosed["reason"]): Effect.Effect<void> => Effect.gen(function* () {
     if (yield* Ref.get(ended)) return
     const error = harness("turn.closed", `turn ${admitted.turn} was ${reason}`)
     yield* Ref.update(failed, Option.orElse(() => Option.some(error)))
     yield* Deferred.succeed(closed, new TurnClosed({ session: id, turn: admitted.turn, reason }))
-    yield* Effect.forEach(yield* Ref.get(waiting), (refuse) => refuse(error), { discard: true })
+    yield* refuseWaiting(error)
   })
   const refuseIfFailed = Ref.get(failed).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: Effect.fail })))
-  const refuseIfEnded = Ref.get(ended).pipe(Effect.flatMap((done) => done ? Effect.fail(harness("turn.closed", `turn ${admitted.turn} has ended`)) : Effect.void))
-  const refuseIfSealed = Ref.get(sealed).pipe(Effect.flatMap((done) => done ? Effect.fail(harness("turn.closed", `turn ${admitted.turn} is ending`)) : Effect.void))
+  const refuseIfSealed = Effect.all([Ref.get(sealed), Ref.get(ended)]).pipe(Effect.flatMap(([closing, done]) => !closing ? Effect.void
+    : Effect.fail(harness("turn.closed", done ? `turn ${admitted.turn} has ended` : `turn ${admitted.turn} is ending`))))
 
   /** The storage clock now, from the last reading plus this instance's elapsed time. */
   const storageNow = Effect.gen(function* () {
@@ -156,7 +158,6 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   const commitPlan = <A, E>(plan: (at: Position, others: ReadonlyArray<SessionLogEvent>) => Effect.Effect<Plan<A>, E>, options: { readonly renew: boolean }): Effect.Effect<Decided<A>, E | HarnessError> => {
     const attempt = (tries: number): Effect.Effect<Decided<A>, E | HarnessError> => Effect.gen(function* () {
       yield* refuseIfFailed
-      yield* refuseIfEnded
       const at = yield* Ref.get(position)
       const decided = yield* plan(at, yield* Ref.get(foreign))
       const now = yield* storageNow
@@ -215,13 +216,17 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     Effect.flatMap((accepted) => accepted ? Effect.void : Effect.fail(harness("turn.closed", `turn ${admitted.turn}'s scope closed`))),
   )
 
-  /** Keep every result reachable until it settles, including an item already taken by the consumer. */
+  /**
+   * Keep every result reachable until it settles, including an item already
+   * taken by the consumer. A caller interrupted before its item is queued is
+   * only forgotten: nobody else awaits its result.
+   */
   const enqueue = <A, E>(result: Deferred.Deferred<A, E | HarnessError>, item: Item): Effect.Effect<void, HarnessError> => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
     const refuse = (error: HarnessError) => Deferred.fail(result, error).pipe(Effect.asVoid)
-    const settled = Ref.update(waiting, (all) => new Set([...all].filter((entry) => entry !== refuse)))
-    yield* Ref.update(waiting, (all) => new Set([...all, refuse]))
+    const settled = Ref.update(waiting, HashSet.remove(refuse))
+    yield* Ref.update(waiting, HashSet.add(refuse))
     yield* restore(offer({ _tag: "Tracked", item, settled })).pipe(
-      Effect.onInterrupt(() => refuse(harness("turn.closed", `turn ${admitted.turn}'s scope closed`)).pipe(Effect.andThen(settled))),
+      Effect.onInterrupt(() => settled),
       Effect.tapError((error) => refuse(error).pipe(Effect.andThen(settled))),
     )
   }))
@@ -294,10 +299,10 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       reason: Exit.hasInterrupts(exit) ? "interrupted" : "failed",
       failure: Option.some({ code: "turn.unended", message: "the turn's scope closed before it ended" }),
     }).pipe(Effect.timeout("10 seconds"), Effect.ignore)), Effect.ensuring(Effect.gen(function* () {
-      yield* Ref.set(sealed, true)
-      yield* Ref.update(failed, Option.orElse(() => Option.some(harness("turn.closed", `turn ${admitted.turn}'s scope closed`))))
+      const error = harness("turn.closed", `turn ${admitted.turn}'s scope closed`)
+      yield* Ref.update(failed, Option.orElse(() => Option.some(error)))
       yield* Queue.shutdown(queue)
-      yield* Effect.forEach(yield* Ref.get(waiting), (refuse) => refuse(harness("turn.closed", `turn ${admitted.turn}'s scope closed`)), { discard: true })
+      yield* refuseWaiting(error)
     }))))
 
   const writer: TurnWriter = {
@@ -309,7 +314,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     write: <A, E>(op: Effect.Effect<A, E>) => Effect.gen(function* () {
       const result = yield* Deferred.make<A, E | HarnessError>()
       const run = Effect.exit(Effect.raceFirst(
-        refuseIfFailed.pipe(Effect.andThen(refuseIfEnded), Effect.andThen(op)),
+        refuseIfFailed.pipe(Effect.andThen(op)),
         Deferred.await(closed).pipe(Effect.flatMap((note) => Effect.fail(harness("turn.closed", `turn ${admitted.turn} was ${note.reason}`)))),
       )).pipe(Effect.flatMap((exit) => Deferred.done(result, exit)), Effect.asVoid)
       yield* admit(result, { _tag: "Run", run })
