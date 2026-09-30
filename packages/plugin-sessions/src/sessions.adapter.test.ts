@@ -106,6 +106,33 @@ describe("one turn at a time", () => {
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "answer.published@1", "turn.ended@1"])
   })))
 
+  test("an end the store refuses is tried again, by a later end or by the scope's own", () => withLog((inner) => Effect.gen(function* () {
+    const refusals = yield* Ref.make(0)
+    const log = SessionLog.of({
+      ...inner,
+      commit: (id, commit) => Ref.modify(refusals, (left) => commit.events.some((event) => event.kind === "turn.ended") && left > 0 ? [true, left - 1] : [false, left]).pipe(
+        Effect.flatMap((refused) => refused ? Effect.fail(new SessionLogError({ code: "store.busy", message: "try again" })) : inner.commit(id, commit))),
+    })
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* Effect.scoped(Effect.gen(function* () {
+      const writer = yield* sessions!.begin(address, say("one"))
+      yield* Ref.set(refusals, 1)
+      expect((yield* Effect.flip(writer.end({ reason: "completed", failure: Option.none() }))).code).toBe("session.log")
+      yield* writer.append([{ kind: "after.refusal", data: {} }])
+      expect(yield* writer.end({ reason: "completed", failure: Option.none() })).toEqual({ pending: 0 })
+    }))
+    const scope = yield* Scope.make()
+    const writer = yield* sessions!.begin(address, say("two")).pipe(Scope.provide(scope))
+    yield* Ref.set(refusals, 1)
+    expect((yield* Effect.flip(writer.end({ reason: "completed", failure: Option.none() }))).code).toBe("session.log")
+    yield* Scope.close(scope, Exit.void)
+    expect(Option.isNone((yield* sessions!.get(address)).open)).toBe(true)
+    expect((yield* Effect.scoped(sessions!.begin(address, say("three")))).admitted.turn).toBe(3)
+    expect((yield* sessions!.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "completed"], [2, "failed"], [3, "failed"]])
+    expect(yield* all(sessions!, address)).toContain("after.refusal@1")
+  })))
+
   test("closing a blocked writer with a full queue settles running and queued callers", () => withLog((log) => Effect.gen(function* () {
     const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, writer: { capacity: 1, batch: 1 } })
     const address = yield* created(sessions!)
@@ -254,6 +281,25 @@ describe("cancel and removal", () => {
     yield* writer.append([{ kind: "after", data: {} }])
     expect((yield* Effect.flip(writer.flush)).code).toBe("turn.closed")
     expect((yield* writer.closed).reason).toBe("cancelled")
+  })))
+
+  test("a turn closed elsewhere closes its writer even when the others' events cannot be read", () => withLog((inner) => Effect.gen(function* () {
+    const unavailable = yield* Ref.make(false)
+    const log = SessionLog.of({
+      ...inner,
+      read: (id, query) => Ref.get(unavailable).pipe(Effect.flatMap((down) => down && query.after > 0
+        ? Effect.fail(new SessionLogError({ code: "read.unavailable", message: "history unavailable" }))
+        : inner.read(id, query))),
+    })
+    const [holder, other] = yield* instancesOver(log, sessionsDefaults, sessionsDefaults)
+    const address = yield* created(holder!)
+    const writer = yield* holder!.begin(address, say("elsewhere"))
+    expect((yield* other!.cancel(address, 1)).cancelled).toBe(true)
+    yield* Ref.set(unavailable, true)
+    yield* writer.append([{ kind: "after", data: {} }])
+    expect((yield* Effect.flip(writer.flush)).code).toBe("turn.closed")
+    expect((yield* writer.closed).reason).toBe("interrupted")
+    expect((yield* Effect.flip(writer.append([{ kind: "later", data: {} }]))).code).toBe("turn.closed")
   })))
 
   test("a cancel naming an earlier turn does nothing", () => withLog((log) => Effect.gen(function* () {

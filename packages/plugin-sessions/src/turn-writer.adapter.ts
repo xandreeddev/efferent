@@ -125,18 +125,25 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   const reasonIn = (events: ReadonlyArray<SessionLogEvent>): TurnClosed["reason"] =>
     events.some((event) => event.kind === "turn.ended" && Option.contains(event.turn, admitted.turn) && event.data.reason === "cancelled") ? "cancelled" : "interrupted"
 
-  /** After a conflict: take the others' events and go on while the turn is ours, or close. */
+  /**
+   * After a conflict: take the others' events and go on while the turn is
+   * ours, or close. A turn taken from us closes even when the others' events
+   * cannot be read (as interrupted, its reason unknown).
+   */
   const rebase = (seen: Position): Effect.Effect<boolean, HarnessError> => Effect.gen(function* () {
-    const head = yield* log.head(id).pipe(Effect.catchTag("SessionMissing", () => close("removed").pipe(Effect.andThen(Effect.fail(harness("turn.closed", "the session was removed"))))))
+    const removed = () => close("removed").pipe(Effect.andThen(Effect.fail(harness("turn.closed", "the session was removed"))))
+    const head = yield* log.head(id).pipe(Effect.catchTag("SessionMissing", removed))
     const state = yield* stateOf(head).pipe(Effect.mapError((error) => harness("session.state", error.message)))
-    const events = (yield* log.read(id, { after: seen.seq, limit: Option.none(), kinds: [] }).pipe(
-      Effect.catchTag("SessionMissing", () => close("removed").pipe(Effect.andThen(Effect.fail(harness("turn.closed", "the session was removed"))))),
-    )).filter((event) => event.seq <= head.seq)
+    const since = log.read(id, { after: seen.seq, limit: Option.none(), kinds: [] }).pipe(
+      Effect.catchTag("SessionMissing", removed),
+      Effect.map((events) => events.filter((event) => event.seq <= head.seq)),
+    )
     const ours = Option.exists(state.open, (open) => open.turn === admitted.turn && open.holder === input.instance)
     if (!ours) {
-      yield* close(reasonIn(events))
+      yield* close(reasonIn(yield* since.pipe(Effect.catchTag("SessionLogError", () => Effect.succeed([])))))
       return false
     }
+    const events = yield* since
     yield* Ref.update(foreign, (all) => [...all, ...events])
     yield* Ref.set(position, { revision: head.revision, seq: head.seq, state, storageAt: head.now, localAt: yield* Clock.currentTimeMillis })
     return true
@@ -244,7 +251,19 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     return { pending: done.result }
   })
 
-  /** The first end seals admission before it is offered; every later end awaits that same commit. */
+  /** Admission reopens: no end is under way, and a later one tries again. */
+  const reopen = Ref.set(ending, Option.none()).pipe(Effect.andThen(Ref.set(sealed, false)))
+
+  /**
+   * Settle an end's shared result. A stored end, or a turn closed elsewhere,
+   * is final; after any other failure (a store error, contention) admission
+   * reopens first, so a later end (the scope's own, at the latest) tries again.
+   */
+  const settleEnd = (done: Deferred.Deferred<{ readonly pending: number }, HarnessError>, exit: Exit.Exit<{ readonly pending: number }, HarnessError>) =>
+    (Exit.isSuccess(exit) || Option.exists(Exit.findErrorOption(exit), (error) => error.code === "turn.closed") ? Effect.void : reopen).pipe(
+      Effect.andThen(Deferred.done(done, exit)), Effect.asVoid)
+
+  /** The first end seals admission before it is offered; every end while it runs awaits that same commit. */
   const end = (value: TurnEnding): Effect.Effect<{ readonly pending: number }, HarnessError> => Effect.gen(function* () {
     const result = yield* admission.withPermits(1)(Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
       const current = yield* Ref.get(ending)
@@ -253,8 +272,8 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       const done = yield* Deferred.make<{ readonly pending: number }, HarnessError>()
       yield* Ref.set(sealed, true)
       yield* Ref.set(ending, Option.some(done))
-      yield* restore(enqueue(done, { _tag: "Commit", commit: Effect.exit(endNow(value)).pipe(Effect.flatMap((exit) => Deferred.done(done, exit)), Effect.asVoid) })).pipe(
-        Effect.onInterrupt(() => Ref.set(ending, Option.none()).pipe(Effect.andThen(Ref.set(sealed, false)))),
+      yield* restore(enqueue(done, { _tag: "Commit", commit: Effect.exit(endNow(value)).pipe(Effect.flatMap((exit) => settleEnd(done, exit))) })).pipe(
+        Effect.onInterrupt(() => reopen),
       )
       return done
     })))
