@@ -58,6 +58,20 @@ describe("terminal stream ordering", () => {
     expect(state.transcript().blocks.map((block) => block.text)).toEqual(["selected"])
   })
 
+  test("early deltas of a later turn replay after the earlier turns in the same durable batch", () => {
+    const state = createTuiState(record())
+    state.deltas([{ name: "assistant.delta", runId: "run", data: { channel: "text", turnIndex: 1, delta: "streaming turn one" } }])
+    state.events([
+      durable(0, "input.queued", "run", { id: "input", text: "question" }),
+      durable(1, "run.started"),
+      durable(2, "loop.event", "run", { type: "assistant_message", turnIndex: 0, text: "turn zero" }),
+      durable(3, "loop.event", "run", { type: "tool_start", turnIndex: 0, toolCallId: "call", toolName: "read", args: {} }),
+    ])
+    expect(state.transcript().blocks.map((block) => [block.id, block.text])).toEqual([
+      ["input", "question"], ["run:0:assistant", "turn zero"], ["run:tool:call:0", "read"], ["run:1:assistant", "streaming turn one"],
+    ])
+  })
+
   test("future-run buffering retains at most the newest 128 deltas in order", () => {
     const state = createTuiState(record())
     state.deltas(Array.from({ length: 200 }, (_, index) => delta(`${index},`)))

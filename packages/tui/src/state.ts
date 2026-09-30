@@ -45,12 +45,21 @@ export const createTuiState = (initial: SessionRecord, theme: ThemeName = "dark"
     const runId = event.runId
     if (runId && ["run.started", "run.completed", "run.failed", "run.cancelled"].includes(event.name)) {
       setObservedRuns((runs) => new Set([...runs, runId]))
-      const waiting = earlyDeltas().filter((delta) => delta.runId === runId)
-      setEarlyDeltas((deltas) => deltas.filter((delta) => delta.runId !== runId))
-      // Replay inside the durable fold: later settlement in this same batch wins.
-      return event.name === "run.started" ? waiting.reduce(projectDelta, next) : next
+      // A settled run's early text is superseded by its durable blocks.
+      if (event.name !== "run.started") setEarlyDeltas((deltas) => deltas.filter((delta) => delta.runId !== runId))
     }
     return next
+  }
+  /**
+   * Replay the running run's early deltas after the whole durable batch, so
+   * they follow the blocks of its earlier turns in the same batch; a run the
+   * batch also settled has dropped them already.
+   */
+  const replayEarly = (state: typeof emptyTranscript) => {
+    const waiting = state.runId === "" ? [] : earlyDeltas().filter((delta) => delta.runId === state.runId)
+    if (waiting.length === 0) return state
+    setEarlyDeltas((deltas) => deltas.filter((delta) => delta.runId !== state.runId))
+    return waiting.reduce(projectDelta, state)
   }
   const applyDelta = (state: typeof emptyTranscript, event: EventBody) => {
     if (event.name !== "assistant.delta" || event.data.channel !== "text" || !event.runId) return state
@@ -69,8 +78,8 @@ export const createTuiState = (initial: SessionRecord, theme: ThemeName = "dark"
     toggle: (id: string) => setExpanded((all) => all.has(id) ? new Set([...all].filter((key) => key !== id)) : new Set([...all, id])),
     setOverlay,
     selectSession: (record: SessionRecord) => { setSession(record); setTranscript(emptyTranscript); setEarlyDeltas([]); setObservedRuns(new Set<string>()); setFollowing(true); setOverlay({ kind: "none" }) },
-    event: (event: SessionEvent) => setTranscript((state) => applyEvent(state, event)),
-    events: (events: ReadonlyArray<SessionEvent>) => setTranscript((state) => events.reduce(applyEvent, state)),
+    event: (event: SessionEvent) => setTranscript((state) => replayEarly(applyEvent(state, event))),
+    events: (events: ReadonlyArray<SessionEvent>) => setTranscript((state) => replayEarly(events.reduce(applyEvent, state))),
     delta: (event: EventBody, source: ConversationId = session().id) => applyDeltas([event], source),
     deltas: (events: ReadonlyArray<EventBody>, source: ConversationId = session().id) => applyDeltas(events, source),
   }
