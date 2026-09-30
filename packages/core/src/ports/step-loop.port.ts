@@ -26,7 +26,7 @@ export interface Correctives {
 
 /** Everything one provider request needs, prepared by the turn. */
 export interface StepPlan {
-  /** None: the LanguageModel in the turn's services. */
+  /** The step's model, resolved once for the step (`resolveModelRequest`); None: the LanguageModel in the turn's services. */
   readonly model: Option.Option<LanguageModel.LanguageModel>
   readonly system: string
   readonly messages: ReadonlyArray<AgentMessage>

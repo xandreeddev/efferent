@@ -496,7 +496,6 @@ text (step context included in `"system"` mode) and the tool declarations.
 Earlier logs without a header remain readable but cannot reconstruct this
 additional metadata.
 
-
 Effect AI models hide provider configuration inside adapters. Efferent's
 provider adapters and routers describe their public options with
 `describeModel(model, { provider, model, settings })`; hosts should do the
@@ -504,6 +503,10 @@ same for custom models, preserving the descriptor when wrapping a model
 (`modelRequestDescriptorOf` reads it). An undescribed model is recorded as
 explicitly opaque: its prompt/tools are checked, but its private provider
 settings cannot be validated. Credentials never belong in `settings`.
+A model that reads its configuration per call, such as the settings-backed
+router, is `resolvingModel(model, resolve)`: each step resolves it once
+(`resolveModelRequest`), and the resolved model serves the step's header and
+every attempt of the step, so a model switch applies from the next step.
 The invariant covers the Effect AI request boundary; provider-specific HTTP
 serialization, retry/fallback routing and transport transformations remain
 adapter contracts. It does not claim to reproduce raw HTTP wire bytes.

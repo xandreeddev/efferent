@@ -13,7 +13,14 @@ import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
 import type { CompletionVerdict } from "./turn-event.entity.js"
 import { CurrentModelCallPolicy } from "../loop/modelPolicy.js"
-import { checkModelRequest, modelRequestDescriptorOf, modelRequestHeaderOf, modelRequestTools, reconstructModelRequest } from "./model-request.entity.functions.js"
+import {
+  checkModelRequest,
+  modelRequestDescriptorOf,
+  modelRequestHeaderOf,
+  modelRequestTools,
+  reconstructModelRequest,
+  resolveModelRequest,
+} from "./model-request.entity.functions.js"
 
 /** The turn services one run reads. */
 export type TurnRunServices = TurnMemory | TurnToolbox | TurnPrompt | TurnEvents | TurnTasks
@@ -87,7 +94,11 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       })
       const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""
       const finalSystem = [system, stepText].filter((part) => part.length > 0).join("\n\n")
-      const model = Option.orElse(Option.map(choice, (value) => value.model), () => defaultModel)
+      // Resolved once for the step: the header describes the model every attempt of the step calls.
+      const model = yield* Option.match(Option.orElse(Option.map(choice, (value) => value.model), () => defaultModel), {
+        onNone: () => Effect.succeed(Option.none<LanguageModel.LanguageModel>()),
+        onSome: (chosen) => resolveModelRequest(chosen).pipe(Effect.map(Option.some)),
+      })
       yield* memory.prepareRequest({
         version: 1, runId, step: info.stepIndex,
         strategyVersion: session.strategy.version,
@@ -102,7 +113,7 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
         callPolicy: yield* Effect.service(CurrentModelCallPolicy),
       })
       return {
-        model: Option.map(choice, (value) => value.model),
+        model,
         system: finalSystem,
         messages: built.messages,
         toolChoice: directive.toolChoice,

@@ -13,6 +13,7 @@ import { ModelRequestDescriptor, ModelRequestHeader } from "./model-request.enti
 import type { ModelRequestTool } from "./model-request.entity.js"
 
 const descriptorKey = "efferent/model-request-descriptor" as const
+const resolverKey = "efferent/model-request-resolver" as const
 
 /** Attach inspectable public configuration to an otherwise opaque Effect AI model. */
 export const describeModel = (
@@ -33,6 +34,26 @@ export const modelRequestDescriptorOf = (model: LanguageModel.LanguageModel): Ef
       Effect.mapError((error) => error instanceof HarnessError ? error : new HarnessError({ code: "request.descriptor", message: error.message })),
     )
     : Effect.succeed(Option.none())
+}
+
+/**
+ * A model that reads its configuration per call (a settings-backed router)
+ * resolves it once per step: the model `resolve` returns serves the step's
+ * header and every provider attempt of the step (a stream's fallback
+ * included), so a configuration change applies from the next step.
+ */
+export const resolvingModel = (
+  model: LanguageModel.LanguageModel,
+  resolve: Effect.Effect<LanguageModel.LanguageModel, HarnessError>,
+): LanguageModel.LanguageModel => {
+  const resolving = { ...model, [resolverKey]: resolve }
+  return resolving
+}
+
+/** The model one step uses: a resolving model's resolution, any other model itself. */
+export const resolveModelRequest = (model: LanguageModel.LanguageModel): Effect.Effect<LanguageModel.LanguageModel, HarnessError> => {
+  const candidate = resolverKey in model ? model[resolverKey] : undefined
+  return Effect.isEffect(candidate) ? candidate as Effect.Effect<LanguageModel.LanguageModel, HarnessError> : Effect.succeed(model)
 }
 
 type Words = readonly [number, number, number, number, number, number, number, number]
