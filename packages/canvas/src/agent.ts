@@ -13,12 +13,15 @@ import { SqliteUiComponentCatalogLive } from "./adapters/sqlite-ui-component-cat
 import { SqliteUiThemeStoreLive } from "./adapters/sqlite-ui-theme-store.adapter.js"
 import { uiAgentRuntimeLive } from "./adapters/ui-agent-runtime.adapter.js"
 
+/** The page, catalog and theme stores in `file`, and conversations over the harness's session log, into which `file`'s older messages are imported once. */
 export const canvasHostPlugin = definePlugin({
   id: "canvas/host", version: "1", scope: "runtime", config: Schema.Struct({ file: Schema.String }), defaults: { file: ".efferent/runtime/canvas.db" },
   requires: [SessionEnvironment, SessionLog], provides: [ConversationStore, UiPageStore, UiComponentCatalog, UiThemeStore, UiHost],
   layer: ({ file }) => Layer.unwrap(SessionEnvironment.pipe(Effect.map(({ workspace }) => {
     const path = join(workspace, file)
-    return Layer.mergeAll(ConversationStoreProjectionLive(), SqliteUiPageStoreLive(path), SqliteUiComponentCatalogLive(path), SqliteUiThemeStoreLive(path), DefaultUiHostLive)
+    return Layer.mergeAll(SqliteUiPageStoreLive(path), SqliteUiComponentCatalogLive(path), SqliteUiThemeStoreLive(path), DefaultUiHostLive).pipe(
+      Layer.provideMerge(ConversationStoreProjectionLive({ legacy: { paths: [path], owner: workspace } })),
+    )
   }))),
 })
 export const canvasProfilePlugin = definePlugin({
@@ -41,8 +44,8 @@ export const canvasLoopPlugin = definePlugin({
 })
 export const canvasAgent = (workspace: string) => defineAgent({ id: "canvas", plugins: [sessionSqlitePlugin, sessionsPlugin, modelsPlugin, canvasHostPlugin, canvasProfilePlugin, canvasLoopPlugin], config: {
   version: 1, profile: "canvas", profiles: { canvas: {} }, plugins: [
-    { id: "sessions", use: sessionSqlitePlugin.id, options: { path: join(workspace, ".efferent/runtime/canvas-sessions.db"), legacyPaths: [join(workspace, ".efferent/runtime/canvas.db")] } },
-      { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
+    { id: "sessions", use: sessionSqlitePlugin.id, options: { path: join(workspace, ".efferent/runtime/canvas-sessions.db") } },
+    { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
     { id: "models", use: modelsPlugin.id }, { id: "host", use: canvasHostPlugin.id }, { id: "profile", use: canvasProfilePlugin.id }, { id: "loop", use: canvasLoopPlugin.id },
   ],
 } })

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "efferent math \u2014 a standalone math-practice product: the tutor agent authors self-contained exercises through render_math; the server grades every answer instantly against the exercise's own key.",
+  "description": "efferent math — a standalone math-practice product: the tutor agent authors self-contained exercises through render_math; the server grades every answer instantly against the exercise's own key.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"

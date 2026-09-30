@@ -76,13 +76,16 @@ export interface ConversationOverview {
 
 /**
  * What this package's compatibility projections use of a SQLite log beyond
- * the SessionLog contract: set-based reads and retention in one transaction.
+ * the SessionLog contract: set-based reads, retention in one transaction,
+ * and importing a host's own older file.
  */
 export interface SqliteLogInternals {
   /** The owner's conversation sessions (origin `conversation`), newest first, in one query. */
   readonly conversations: (owner: string) => Effect.Effect<ReadonlyArray<ConversationOverview>, SessionLogError>
   /** Remove the conversation sessions created before `before` in one transaction, then reclaim the space; returns how many. */
   readonly prune: (before: number) => Effect.Effect<number, SessionLogError>
+  /** Import older files through read-only connections (absent ones are skipped); orphan rows without a session default to `owner`. */
+  readonly importLegacy: (paths: ReadonlyArray<string>, owner: Option.Option<string>) => Effect.Effect<void, SessionLogError>
 }
 
 const internals = new WeakMap<SessionLog["Service"], SqliteLogInternals>()
@@ -148,7 +151,11 @@ export const makeSessionLogSqlite = (path: string, options: { readonly legacyPat
     const destination = yield* operation(() => realpathSync(path))
     const sources = yield* operation(() => [...new Set(paths.filter(existsSync).map((source) => realpathSync(source)))].filter((source) => source !== destination))
     yield* Effect.forEach(sources, (source) => Effect.acquireUseRelease(
-      operation(() => new Database(source, { readonly: true, strict: true })),
+      operation(() => {
+        const legacy = new Database(source, { readonly: true, strict: true })
+        legacy.exec("PRAGMA busy_timeout = 5000")
+        return legacy
+      }),
       (legacy) => imported(legacy, source, owner),
       (legacy) => Effect.sync(() => legacy.close()),
     ), { discard: true })
@@ -247,6 +254,7 @@ export const makeSessionLogSqlite = (path: string, options: { readonly legacyPat
       db.exec("PRAGMA wal_checkpoint(TRUNCATE);")
       return removed
     }))),
+    importLegacy,
   })
   return log
 })

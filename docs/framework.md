@@ -756,9 +756,10 @@ SQLite log it is one query, and `prune` removes old conversations in one
 transaction, leaves tombstones and truncates the write-ahead log. The convenience
 `SessionStoreLive(path)` and `SqliteConversationStoreLive(path)` compose these
 projections over SQLite without creating the former storage tables. Math and
-Canvas compose the message projection over their harness log and import their
-older message database through `legacyPaths`; domain page/catalog/theme stores
-continue to own their product data. New hosts use `Sessions`, `TurnWriter` and
+Canvas compose the message projection over their harness log with
+`ConversationStoreProjectionLive({ legacy: { paths, owner } })`, which imports
+the host plugin's configured message database (its `file` option) into that
+log once; domain page/catalog/theme stores continue to own their product data. New hosts use `Sessions`, `TurnWriter` and
 `ConversationMemory` directly.
 
 ```ts

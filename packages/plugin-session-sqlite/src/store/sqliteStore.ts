@@ -45,15 +45,22 @@ const summaryOf = (row: ConversationOverview) => {
  * @deprecated Positional conversation API projected over the host's unified SessionLog.
  *
  * Over this package's SQLite log it lists a workspace in one query and prunes
- * in one transaction. Over any other log the listing reads each
- * conversation's first message and latest title and outcome, and pruning
- * needs the host's `prune`.
+ * in one transaction, and `legacy` imports the host's own older message file
+ * into it first (orphan rows without a session default to `owner`). Over any
+ * other log the listing reads each conversation's first message and latest
+ * title and outcome, pruning needs the host's `prune`, and `legacy` fails.
  */
 export const ConversationStoreProjectionLive = (options: {
   readonly prune?: (beforeEpochMs: number) => Effect.Effect<number, StoreError>
-} = {}): Layer.Layer<ConversationStore, never, SessionLog> => Layer.effect(ConversationStore, Effect.gen(function* () {
+  readonly legacy?: { readonly paths: ReadonlyArray<string>; readonly owner: string }
+} = {}): Layer.Layer<ConversationStore, StoreError, SessionLog> => Layer.effect(ConversationStore, Effect.gen(function* () {
   const log = yield* SessionLog
   const sqlite = sqliteLogInternals(log)
+  const legacy = Option.fromNullishOr(options.legacy)
+  if (Option.isSome(legacy)) yield* Option.match(sqlite, {
+    onNone: () => Effect.fail(new StoreError({ message: "importing an older conversation file requires the SQLite session log" })),
+    onSome: (internals) => internals.importLegacy(legacy.value.paths, Option.some(legacy.value.owner)).pipe(Effect.mapError(failed)),
+  })
   /** A conversation nobody wrote to yet reads as empty. */
   const orEmpty = <A>(read: Effect.Effect<A, HarnessError>, empty: A): Effect.Effect<A, StoreError> => read.pipe(
     Effect.catchTag("HarnessError", (error) => error.code === "session.missing" ? Effect.succeed(empty) : Effect.fail(error)), Effect.mapError(failed),
