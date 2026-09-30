@@ -64,4 +64,21 @@ describe("the compatibility projections read what they return, not the history",
       expect(Option.getOrThrow(yield* store.latestCheckpoint(id)).messagePosition).toBe(HISTORY + 1)
     }))
   })
+
+  test("over another log, the listing reads each conversation's first message and latest title and outcome, and no harness session", async () => {
+    await withCounted((seen) => Effect.gen(function* () {
+      const store = yield* ConversationStore
+      const id = yield* store.create("/workspace")
+      yield* store.appendAll(id, Array.from({ length: 500 }, (_, index): AgentMessage => ({ role: "user", content: `m${index}` })))
+      yield* store.setTitle(id, "old title")
+      yield* store.setTitle(id, "new title")
+      yield* store.recordOutcome(id, "partial", "step-cap")
+      yield* (yield* SessionStore).create("/workspace", "custom")
+      seen.events = 0
+      const listed = yield* store.listByWorkspace("/workspace")
+      expect(listed.map((summary) => [summary.id, Option.getOrNull(summary.title), Option.getOrNull(summary.firstPrompt), Option.getOrNull(summary.lastOutcome)]))
+        .toEqual([[id, "new title", "m0", { outcome: "partial", reason: "step-cap" }]])
+      expect(seen.events).toBeLessThan(60)
+    }))
+  })
 })
