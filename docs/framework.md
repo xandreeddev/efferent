@@ -109,7 +109,12 @@ writer wrote fails the turn with `session.store` instead of losing its events.
 Session plugins can require `SessionEnvironment` to access the workspace and
 current session record. `domainLoop` and `domainSession` bridge an existing domain
 event protocol to SDK lifecycle and replay; optional snapshots restore domain
-state when a session is forked.
+state when a session is forked. When the host provides a `ConversationStore`,
+`domainLoop` binds the domain session's writes to its conversation to the
+harness run: a write after the run is over (ended, interrupted, or its turn
+closed elsewhere once the harness noticed) fails with `StoreError`. These
+writes are recorded beside the turn rather than through its writer, so a turn
+closed on another instance is noticed at the writer's next commit, not before.
 
 The SQLite plugin uses WAL and transactional sequence allocation. The memory
 plugin uses a workspace-scoped append-only JSONL ledger. The default new data
