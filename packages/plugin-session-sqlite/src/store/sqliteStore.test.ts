@@ -181,7 +181,7 @@ describe("SqliteConversationStoreLive", () => {
     )
   })
 
-  test("open stamps user_version, creates the v2 indices, and is owner-only", async () => {
+  test("open creates only unified log tables and indices, preserves legacy user_version, and is owner-only", async () => {
     const dbPath = freshDbPath()
     await withStoreAt(
       dbPath,
@@ -194,14 +194,15 @@ describe("SqliteConversationStoreLive", () => {
     const raw = new Database(dbPath)
     const version = (raw.query("PRAGMA user_version").get() as { user_version: number })
       .user_version
-    expect(version).toBeGreaterThanOrEqual(2)
+    expect(version).toBe(0)
     const indices = (
       raw
         .query(`SELECT name FROM sqlite_master WHERE type = 'index' AND name NOT LIKE 'sqlite_%'`)
         .all() as ReadonlyArray<{ name: string }>
     ).map((row) => row.name)
-    expect(indices).toContain("checkpoints_by_conversation")
-    expect(indices).toContain("conversations_by_workspace")
+    expect(indices).toContain("session_heads_owner")
+    expect(indices).toContain("session_log_events_kind")
+    expect(raw.query("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('conversations', 'messages', 'harness_sessions', 'harness_events')").all()).toEqual([])
     raw.close()
     // Re-opening an already-migrated db is a no-op (idempotent step 1,
     // slice past the recorded version) — the store still works.
@@ -251,10 +252,11 @@ describe("SqliteConversationStoreLive", () => {
           const raw = new Database(dbPath)
           raw
             .query(
-              `INSERT INTO messages (conversation_id, position, content, created_at)
-               VALUES (?, 1, 'NOT VALID JSON {', ?)`,
+              `INSERT INTO session_log_events (session_id, seq, turn, kind, at, data)
+               VALUES (?, 2, NULL, 'conversation.message', ?, '{"position":1,"content":"NOT VALID JSON {"}')`,
             )
             .run(id, Date.now())
+          raw.query("UPDATE session_heads SET seq = 2, revision = revision + 1 WHERE id = ?").run(id)
           raw.close()
         })
         yield* store.append(id, user("good-2"))

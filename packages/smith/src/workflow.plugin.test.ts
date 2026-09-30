@@ -1,3 +1,4 @@
+import { sessionsPlugin } from "@xandreed/plugin-sessions"
 import { describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -23,11 +24,12 @@ describe("composable Smith workflows", () => {
     }) })
     const config = (mode: "spec" | "lock" | "forge"): HarnessConfig => ({ version: 1, plugins: [
       { id: "sessions", use: sessionSqlitePlugin.id, options: { path: join(directory, ".efferent/runtime/sessions.db") } },
+      { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
       { id: "approval", use: "efferent/approval-host" }, { id: "worker", use: worker.id },
       { id: "workflow", use: smithWorkflowPlugin.id, options: { mode, testCommand: "grep -qx accepted result.txt" } },
     ] })
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const harness = yield* Harness.make({ workspace: directory, config: config("spec"), plugins: [sessionSqlitePlugin, approvalPlugin(() => Effect.succeed(true)), worker, smithWorkflowPlugin] })
+      const harness = yield* Harness.make({ workspace: directory, config: config("spec"), plugins: [sessionSqlitePlugin, sessionsPlugin, approvalPlugin(() => Effect.succeed(true)), worker, smithWorkflowPlugin] })
       const session = yield* harness.create()
       yield* session.send("make the result")
       yield* harness.reconfigure(config("lock"))
@@ -53,11 +55,12 @@ describe("composable Smith workflows", () => {
     }) })
     const config = (mode: "spec" | "lock" | "forge"): HarnessConfig => ({ version: 1, plugins: [
       { id: "sessions", use: sessionSqlitePlugin.id, options: { path: join(directory, "sessions.db") } },
+      { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
       { id: "approval", use: "efferent/approval-host" }, { id: "worker", use: worker.id },
       { id: "workflow", use: smithWorkflowPlugin.id, options: { mode } },
     ] })
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const harness = yield* Harness.make({ workspace: directory, config: config("spec"), plugins: [sessionSqlitePlugin, approvalPlugin(), worker, smithWorkflowPlugin] })
+      const harness = yield* Harness.make({ workspace: directory, config: config("spec"), plugins: [sessionSqlitePlugin, sessionsPlugin, approvalPlugin(), worker, smithWorkflowPlugin] })
       const session = yield* harness.create()
       yield* session.send("a tested feature")
       yield* harness.reconfigure(config("lock"))

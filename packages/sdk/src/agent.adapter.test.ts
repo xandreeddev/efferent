@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
-import { LanguageModel, Tool } from "effect/ai"
+import { LanguageModel, Tool, Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import {
   ConversationId,
   CurrentPromptCacheKey,
+  describeModel,
   DecisionRecord,
   defineCapability,
   defineHostEvent,
@@ -16,18 +17,21 @@ import {
   IntentMatcher,
   onTool,
   RunContext,
+  replayModelRequest,
   SessionLog,
   SessionLogError,
   SessionLogMemoryLive,
   Sessions,
+  StepLoop,
   subscribeAll,
   TurnAdmissionOpen,
+  TurnEvents,
   UserMessage,
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
 import type { LogEntry, Plugin, SessionLogEvent, Turn, TurnOutcome, TurnPolicy } from "@xandreed/core"
-import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
+import { runSteps, stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -517,5 +521,84 @@ describe("Agent.turn", () => {
       return { runtime: yield* Ref.get(runtimeBuilds), session: yield* Ref.get(sessionBuilds) }
     })))
     expect(counts).toEqual({ runtime: 1, session: 3 })
+  })
+
+  test("session lifecycle plugins subscribe after TurnLive and finalize after each turn", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const plugin = definePlugin({
+        id: "test/lifecycle", version: "1", scope: "session", config: Schema.Struct({}), defaults: {},
+        requires: [RunContext, TurnEvents], provides: [],
+        layer: () => Layer.effectDiscard(Effect.gen(function* () {
+          const run = yield* RunContext
+          const events = yield* TurnEvents
+          yield* Ref.update(seen, (all) => [...all, `open:${run.runId}`])
+          yield* events.subscribe((event) => event._tag === "turn.started" ? Option.some(event) : Option.none(),
+            () => Ref.update(seen, (all) => [...all, `started:${run.runId}`]))
+          yield* Effect.addFinalizer(() => Ref.update(seen, (all) => [...all, `close:${run.runId}`]))
+        })),
+      })
+      const agent = yield* define(memoryWindowPlugin, { plugins: [plugin] })
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      yield* Effect.forEach(["run-1", "run-2"], (runId) => agent.turn(inputFor(journal, runId, "hello", model), (turn) => turn.reply("hello")))
+      return yield* Ref.get(seen)
+    })))
+    expect(observed).toEqual(["open:run-1", "started:run-1", "close:run-1", "open:run-2", "started:run-2", "close:run-2"])
+  })
+
+  test("durable request replay uses its original memory position after later turns", async () => {
+    const { seen, requests, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { seen, model } = yield* scripted(lookupThenDeliver)
+      const described = describeModel(model, { provider: "scripted", model: "fixture-v1", settings: { temperature: 0.25 } })
+      yield* agent.turn(inputFor(journal, "run-1", "find alpha", described), answer())
+      yield* agent.turn(inputFor(journal, "run-2", "later", described), (turn) => turn.reply("later response"))
+      const events = yield* journal.stored
+      // Diagnostics are deliberately absent: reconstruction depends on protocol and memory facts.
+      const retained = events.filter((event) => event.kind !== "context.built" && event.kind !== "step.usage")
+      const requests = yield* Effect.forEach([0, 1, 2], (step) => replayModelRequest(retained, "run-1", step))
+      return { seen: yield* Ref.get(seen), requests, events }
+    })))
+    expect(requests.map((request) => JSON.stringify(request.prompt.content))).toEqual(seen.map((request) => request.prompt))
+    expect(requests.map((request) => request.tools.map((tool) => tool.name))).toEqual(seen.map((request) => [...request.tools]))
+    expect(requests[0]?.model).toEqual(Option.some({ provider: "scripted", model: "fixture-v1", settings: { temperature: 0.25 } }))
+    expect(named(events, "request.prepared")).toHaveLength(3)
+    expect(requests[0]?.prompt.content.some((message) => JSON.stringify(message).includes("later response"))).toBe(false)
+  })
+
+  test.each(["messages", "tools", "model", "tool-choice"] as const)("a changed %s request fails before the provider dispatch", async (changed) => {
+    const { result, calls } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { seen, model } = yield* scripted([stop("should not run")])
+      const original = describeModel(model, { provider: "scripted", model: "fixture-v1", settings: { temperature: 0.25 } })
+      const changedModel = describeModel(model, { provider: "scripted", model: "fixture-v2", settings: { temperature: 0.75 } })
+      const alteredLoop = definePlugin({
+        id: "test/altered-loop", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {}, provides: [StepLoop],
+        layer: () => Layer.succeed(StepLoop, {
+          id: "altered", version: "1", run: (request) => runSteps({
+            ...request,
+            ...(changed === "tools" ? { tools: { ...request.tools, toolkit: Toolkit.make(...Object.values(request.tools.toolkit.tools).map((tool) =>
+              tool.name === "lookup" ? tool.setParameters(Schema.Struct({ query: Schema.Int })) : tool)) } } : {}),
+            plan: (info) => request.plan(info).pipe(Effect.map((plan) => ({
+              ...plan,
+              ...(changed === "messages" ? { messages: [{ role: "user" as const, content: "unrecorded input" }] } : {}),
+              ...(changed === "model" ? { model: Option.some(changedModel) } : {}),
+              ...(changed === "tool-choice" ? { toolChoice: Option.some({ tool: "lookup" }) } : {}),
+            }))),
+          }),
+        }),
+      })
+      const agent = yield* Agent.define({
+        plugins: [memoryWindowPlugin, toolDiscoveryPlugin, alteredLoop], capabilities: [host],
+        turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 1 },
+      })
+      const journal = yield* inMemorySession
+      const result = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "find alpha", original), answer()))
+      return { result, calls: (yield* Ref.get(seen)).length }
+    })))
+    expect(result._tag).toBe("Failure")
+    expect(result._tag === "Failure" ? result.failure.code : "success").toBe("request.diverged")
+    expect(calls).toBe(0)
   })
 })

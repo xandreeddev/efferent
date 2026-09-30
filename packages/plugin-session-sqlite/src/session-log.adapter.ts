@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite"
 import { mkdir } from "node:fs/promises"
+import { chmodSync, existsSync, realpathSync } from "node:fs"
 import { dirname } from "node:path"
 import { Clock, Effect, Layer, Option, Schema } from "effect"
 import {
@@ -13,6 +14,7 @@ import {
   SessionMissing,
 } from "@xandreed/core"
 import type { JsonObject, SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "@xandreed/core"
+import { importLegacySessions } from "./legacy-session.adapter.js"
 
 interface HeadRow {
   readonly id: string
@@ -70,18 +72,20 @@ type Outcome =
   | { readonly _tag: "Expired" }
 
 /**
- * The session log in one SQLite file (beside the harness's own tables):
- * `session_heads` and `session_log_events`, removal cascading to events and
+ * The authoritative session journal in one SQLite file: `session_heads`
+ * and `session_log_events`. Legacy tables remain preserved, read only after
+ * their import. Removal cascades to events and
  * children. A commit is one IMMEDIATE transaction that checks the revision
  * and the clock before it writes; the clock is the process's.
  */
-export const SessionLogSqliteLive = (path: string): Layer.Layer<SessionLog, SessionLogError> => Layer.effect(SessionLog, Effect.gen(function* () {
+export const SessionLogSqliteLive = (path: string, options: { readonly legacyPaths?: ReadonlyArray<string>; readonly legacyOwner?: string } = {}): Layer.Layer<SessionLog, SessionLogError> => Layer.effect(SessionLog, Effect.gen(function* () {
   yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: failure("store.open") })
   const db = yield* Effect.acquireRelease(
     Effect.try({ try: () => new Database(path, { create: true, strict: true }), catch: failure("store.open") }),
     (database) => Effect.sync(() => database.close()),
   )
   const operation = <A>(work: () => A) => Effect.try({ try: work, catch: failure("store.io") })
+  yield* operation(() => chmodSync(path, 0o600))
   yield* operation(() => db.exec(`
     PRAGMA journal_mode = WAL;
     PRAGMA busy_timeout = 5000;
@@ -97,6 +101,18 @@ export const SessionLogSqliteLive = (path: string): Layer.Layer<SessionLog, Sess
       kind TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id, seq));
     CREATE INDEX IF NOT EXISTS session_log_events_kind ON session_log_events(session_id, kind, seq);
   `))
+  const imported = (source: Database, sourceId: string) => operation(() => importLegacySessions(db, source, sourceId, Option.fromNullishOr(options.legacyOwner))).pipe(Effect.flatMap(Option.match({
+    onNone: () => Effect.void,
+    onSome: (message) => Effect.fail(new SessionLogError({ code: "store.legacy-conflict", message })),
+  })))
+  yield* imported(db, "local")
+  const destination = yield* operation(() => realpathSync(path))
+  const sources = yield* operation(() => [...new Set((options.legacyPaths ?? []).filter(existsSync).map((source) => realpathSync(source)))].filter((source) => source !== destination))
+  yield* Effect.forEach(sources, (source) => Effect.acquireUseRelease(
+    operation(() => new Database(source, { readonly: true, strict: true })),
+    (legacy) => imported(legacy, source),
+    (legacy) => Effect.sync(() => legacy.close()),
+  ))
   const headRow = (id: string) => db.query<HeadRow, [string]>("SELECT * FROM session_heads WHERE id = ?").get(id)
 
   return SessionLog.of({

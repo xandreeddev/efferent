@@ -116,6 +116,40 @@ export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck>
       yield* expect("json", event !== undefined && canonicalJson(event.data) === canonicalJson(rich), `data came back as ${JSON.stringify(event?.data)}`)
       yield* expect("json", canonicalJson((yield* log.head(id)).state) === canonicalJson(rich), "the state came back different")
     })),
+    check("input and returned JSON are detached from stored heads and events", "json-isolation", (owner) => Effect.gen(function* () {
+      const id = yield* freshId
+      const header = headerOf(id, owner)
+      const expectedMeta = canonicalJson(header.meta)
+      const created = yield* log.create(header)
+      Reflect.set(header.meta, "changed", "input")
+      Reflect.set(created.header.meta, "changed", "create")
+      Reflect.set(created.state, "changed", "create")
+      yield* expect("json-isolation", canonicalJson((yield* log.head(id)).state) === "{}", "a returned create state changed the new session")
+      const value = { nested: { text: "original" }, list: ["original"] }
+      const expected = canonicalJson(value)
+      const committed = yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [draft("fact", value)], state: Option.some(value) })
+      value.nested.text = "input"
+      value.list[0] = "input"
+      const head = yield* log.head(id)
+      const listed = yield* log.list({ owner, limit: 10, before: Option.none(), parent: Option.none() })
+      const events = yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
+      const change = (json: JsonObject) => {
+        Reflect.set(json, "changed", "output")
+        if (typeof json.nested === "object" && json.nested !== null) Reflect.set(json.nested, "text", "output")
+        if (typeof json.list === "object" && json.list !== null) Reflect.set(json.list, "0", "output")
+      }
+      change(head.header.meta)
+      change(head.state)
+      listed.forEach((entry) => { change(entry.header.meta); change(entry.state) })
+      committed.events.forEach((event) => change(event.data))
+      events.forEach((event) => change(event.data))
+      const again = yield* log.head(id)
+      const reread = yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
+      yield* expect("json-isolation", again.revision === 1 && again.seq === 1, "mutating a returned value moved the head")
+      yield* expect("json-isolation", canonicalJson(again.header.meta) === expectedMeta, "input, create, head or list metadata changed the stored header")
+      yield* expect("json-isolation", canonicalJson(again.state) === expected, "input, head or list state changed the stored state")
+      yield* expect("json-isolation", reread.length === 1 && canonicalJson(reread[0]!.data) === expected, "input, commit or read data changed the stored event")
+    })),
     check("reads return events after a position, ascending, filtered by kind and limited", "read", (owner) => Effect.gen(function* () {
       const id = yield* freshId
       yield* log.create(headerOf(id, owner))

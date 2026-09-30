@@ -64,6 +64,7 @@ export const MEMORY_KINDS: ReadonlyArray<string> = ["turn.started", ...Object.va
 export const TURN_EVENT_KINDS: ReadonlyArray<string> = [
   "step.started", "step.ended", "step.usage", "tool.started", "tool.completed",
   "completion.evaluated", "context.built", "decision.recorded",
+  "request.prepared",
 ]
 
 /** The inbox and the session's own records. */

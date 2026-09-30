@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { SessionLog, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import { SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, SessionAddress, SessionLogEvent } from "@xandreed/core"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
@@ -74,6 +74,57 @@ describe("one turn at a time", () => {
     const events = yield* sessions!.read(address, { kinds: ["turn.ended"] })
     expect(events.map((event) => event.data.reason)).toEqual(["failed"])
     expect(Option.isNone((yield* sessions!.get(address)).open)).toBe(true)
+  })))
+
+  test("an end seals all writes before its commit completes, and repeated ends share one commit", () => withLog((inner) => Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const log = SessionLog.of({
+      ...inner,
+      commit: (id, commit) => commit.events.some((event) => event.kind === "turn.ended")
+        ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(inner.commit(id, commit)))
+        : inner.commit(id, commit),
+    })
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    const writer = yield* sessions!.begin(address, say("one"))
+    const changed = yield* Ref.make(false)
+    yield* writer.append([{ kind: "answer.published", data: { text: "before the end" } }])
+    const first = yield* Effect.forkChild(writer.end({ reason: "completed", failure: Option.none() }))
+    yield* Deferred.await(entered)
+    const second = yield* Effect.forkChild(writer.end({ reason: "failed", failure: Option.none() }))
+    expect((yield* Effect.flip(writer.append([{ kind: "late", data: {} }]))).code).toBe("turn.closed")
+    expect((yield* Effect.flip(writer.write(Ref.set(changed, true)))).code).toBe("turn.closed")
+    const refused = yield* Effect.flip(writer.transact(() => Effect.succeed({ drafts: [{ kind: "late", data: {} }], result: undefined })))
+    expect(refused.code).toBe("turn.closed")
+    yield* Deferred.succeed(release, undefined)
+    expect(yield* Fiber.join(first)).toEqual({ pending: 0 })
+    expect(yield* Fiber.join(second)).toEqual({ pending: 0 })
+    expect(yield* writer.end({ reason: "completed", failure: Option.none() })).toEqual({ pending: 0 })
+    expect((yield* Effect.flip(writer.write(Ref.set(changed, true)))).code).toBe("turn.closed")
+    expect(yield* Ref.get(changed)).toBe(false)
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "answer.published@1", "turn.ended@1"])
+  })))
+
+  test("closing a blocked writer with a full queue settles running and queued callers", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, writer: { capacity: 1, batch: 1 } })
+    const address = yield* created(sessions!)
+    const scope = yield* Scope.make()
+    const writer = yield* sessions!.begin(address, say("blocked")).pipe(Scope.provide(scope))
+    const entered = yield* Deferred.make<void>()
+    const running = yield* Effect.forkChild(Effect.result(writer.write(Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)))))
+    yield* Deferred.await(entered)
+    const queued = yield* Effect.forkChild(Effect.result(writer.flush))
+    yield* Effect.yieldNow
+    const ending = yield* Effect.forkChild(Effect.result(writer.end({ reason: "completed", failure: Option.none() })))
+    yield* Effect.yieldNow
+    const closing = yield* Effect.forkChild(Scope.close(scope, Exit.void))
+    yield* TestClock.adjust("10 seconds")
+    yield* Fiber.join(closing)
+    const results = [yield* Fiber.join(running), yield* Fiber.join(queued), yield* Fiber.join(ending)]
+    expect(results.map((result) => result._tag === "Failure" ? result.failure.code : "success")).toEqual(["turn.closed", "turn.closed", "turn.closed"])
+    expect((yield* Effect.flip(writer.flush)).code).toBe("turn.closed")
+    expect((yield* Effect.flip(writer.end({ reason: "completed", failure: Option.none() }))).code).toBe("turn.closed")
   })))
 })
 
@@ -166,6 +217,25 @@ describe("leases", () => {
 })
 
 describe("cancel and removal", () => {
+  test("a local cancel interrupts a running write and settles its queued callers", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    const writer = yield* sessions!.begin(address, say("blocked"))
+    const entered = yield* Deferred.make<void>()
+    const interrupted = yield* Deferred.make<void>()
+    const running = yield* Effect.forkChild(Effect.result(writer.write(
+      Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never), Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined))),
+    )))
+    yield* Deferred.await(entered)
+    const queued = yield* Effect.forkChild(Effect.result(writer.flush))
+    yield* Effect.yieldNow
+    yield* sessions!.cancel(address, writer.admitted.turn)
+    const results = [yield* Fiber.join(running), yield* Fiber.join(queued)]
+    expect(results.map((result) => result._tag === "Failure" ? result.failure.code : "success")).toEqual(["turn.closed", "turn.closed"])
+    yield* Deferred.await(interrupted)
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "turn.ended@1"])
+  })))
+
   test("a cancel on the holder's instance closes its writer at once", () => withLog((log) => Effect.gen(function* () {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
@@ -230,6 +300,46 @@ describe("check, then append", () => {
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "canvas.frozen"])
     const unconflicted = yield* sessions!.begin({ ...address, id: (yield* created(sessions!)).id }, say("another page")).pipe(Effect.flatMap((other) => other.transact(plan)))
     expect([unconflicted.result, unconflicted.events.map((event) => event.kind)]).toEqual(["planned", ["canvas.planned"]])
+  })))
+
+  test("a failed rebase read refuses the commit and a retry still sees the missing foreign facts", () => withLog((inner) => Effect.gen(function* () {
+    const unavailable = yield* Ref.make(true)
+    const log = SessionLog.of({
+      ...inner,
+      read: (id, query) => Ref.get(unavailable).pipe(Effect.flatMap((down) => down && query.after > 0
+        ? Effect.fail(new SessionLogError({ code: "read.unavailable", message: "history unavailable" }))
+        : inner.read(id, query))),
+    })
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    const writer = yield* sessions!.begin(address, say("show a page"))
+    yield* sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "canvas.frozen", data: { page: "p1" } }], result: undefined }))
+    expect((yield* Effect.flip(writer.transact(plan))).code).toBe("session.log")
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "canvas.frozen"])
+    yield* Ref.set(unavailable, false)
+    expect((yield* writer.transact(plan)).result).toBe("refused: the page is frozen")
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "canvas.frozen"])
+  })))
+
+  test("a rebase takes only its head's events so a concurrent later event is observed once", () => withLog((inner) => Effect.gen(function* () {
+    const injected = yield* Ref.make(false)
+    const log = SessionLog.of({
+      ...inner,
+      read: (id, query) => Effect.gen(function* () {
+        if (query.after > 0 && !(yield* Ref.modify(injected, (seen) => [seen, true]))) {
+          const head = yield* inner.head(id)
+          yield* inner.commit(id, { expect: head.revision, notAfter: Option.none(), state: Option.none(), events: [{ kind: "canvas.updated", turn: Option.none(), data: {} }] }).pipe(Effect.orDie)
+        }
+        return yield* inner.read(id, query)
+      }),
+    })
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    const writer = yield* sessions!.begin(address, say("show a page"))
+    yield* sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "canvas.frozen", data: {} }], result: undefined }))
+    const seen = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([])
+    yield* writer.transact((foreign) => Ref.update(seen, (snapshots) => [...snapshots, foreign.map((event) => event.kind)]).pipe(Effect.andThen(plan(foreign))))
+    expect(yield* Ref.get(seen)).toEqual([[], ["canvas.frozen"], ["canvas.frozen", "canvas.updated"]])
   })))
 
   test("a host may not record under the framework's kinds", () => withLog((log) => Effect.gen(function* () {
@@ -352,6 +462,9 @@ describe("forks", () => {
     expect(writer.admitted.turn).toBe(3)
     const history = yield* writer.history([])
     expect(kinds(history)).toEqual(["turn.started@1", "answer.published@1", "turn.ended@1", "turn.started@2", "answer.published@2", "turn.ended@2"])
+    yield* writer.append([{ kind: "answer.published", data: { text: "child answer" } }])
+    expect(kinds(yield* writer.snapshot(["answer.published"]))).toEqual(["answer.published@1", "answer.published@2", "answer.published@3"])
+    expect(kinds(yield* writer.history(["answer.published"]))).toEqual(["answer.published@1", "answer.published@2"])
     const spawned = yield* sessions!.fork(address, { origin: "task", inherit: false })
     const fresh = yield* Effect.scoped(sessions!.begin({ id: spawned.header.id, owner }, say("from nothing")).pipe(Effect.flatMap((other) => other.history([]))))
     expect([spawned.turns, fresh.length]).toEqual([0, 0])

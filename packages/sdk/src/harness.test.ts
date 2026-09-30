@@ -1,9 +1,10 @@
+import { sessionsPlugin } from "@xandreed/plugin-sessions"
 import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Deferred, Effect, Fiber, Layer, Schema, Stream } from "effect"
-import { AgentLoop, definePlugin, HarnessError, Memory } from "@xandreed/core"
+import { Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
+import { AgentLoop, definePlugin, HarnessError, Memory, SessionLog, Sessions } from "@xandreed/core"
 import type { HarnessConfig, LoopInput } from "@xandreed/core"
 import { sessionSqlitePlugin } from "@xandreed/plugin-session-sqlite"
 import { memoryPlugin } from "@xandreed/plugin-memory"
@@ -16,6 +17,7 @@ const loop = (id: string, run: (input: LoopInput) => Effect.Effect<{ text: strin
 const echo = loop("echo", (input) => input.publish({ name: "answer", runId: input.runId, data: { text: input.userMessage.text } }).pipe(Effect.as({ text: input.userMessage.text, outcome: "completed" as const })))
 const config = (directory: string, use = "echo"): HarnessConfig => ({ version: 1, plugins: [
   { id: "store", use: sessionSqlitePlugin.id, options: { path: join(directory, "sessions.db") } },
+  { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
   { id: "loop", use },
 ] })
 
@@ -26,7 +28,7 @@ describe("durable SDK sessions", () => {
       const entered = yield* Deferred.make<void>()
       const release = yield* Deferred.make<void>()
       const held = loop("held", () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.as({ text: "old", outcome: "completed" as const })))
-      const harness = yield* Harness.make({ workspace: directory, config: config(directory, "held"), plugins: [sessionSqlitePlugin, held, echo] })
+      const harness = yield* Harness.make({ workspace: directory, config: config(directory, "held"), plugins: [sessionSqlitePlugin, sessionsPlugin, held, echo] })
       const session = yield* harness.create()
       const running = yield* Effect.forkChild(session.send("first"))
       yield* Deferred.await(entered)
@@ -42,11 +44,11 @@ describe("durable SDK sessions", () => {
     const directory = workspace()
     const other = workspace()
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const first = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, echo] })
+      const first = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
       const original = yield* first.create()
       yield* original.send("private workspace")
       const through = (yield* original.history).at(-1)!.seq
-      const second = yield* Harness.make({ workspace: other, config: config(directory), plugins: [sessionSqlitePlugin, echo] })
+      const second = yield* Harness.make({ workspace: other, config: config(directory), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
       expect((yield* Effect.result(second.resume(original.record.id)))._tag).toBe("Failure")
       expect((yield* Effect.result(second.fork(original.record.id, through)))._tag).toBe("Failure")
       expect(yield* second.list).toHaveLength(0)
@@ -56,7 +58,7 @@ describe("durable SDK sessions", () => {
   test("replays settled events, resumes and forks without rerunning work", async () => {
     const directory = workspace()
     const id = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const harness = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, echo] })
+      const harness = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
       const session = yield* harness.create()
       yield* session.send("hello")
       const trail = yield* session.history
@@ -67,7 +69,7 @@ describe("durable SDK sessions", () => {
       return session.record.id
     })))
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const harness = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, echo] })
+      const harness = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
       const session = yield* harness.resume(id)
       expect((yield* session.history).filter((event) => event.name === "answer")).toHaveLength(1)
       yield* session.send("again")
@@ -78,7 +80,7 @@ describe("durable SDK sessions", () => {
     const directory = workspace()
     const slow = loop("slow", () => Effect.never)
     const id = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const harness = yield* Harness.make({ workspace: directory, config: config(directory, "slow"), plugins: [sessionSqlitePlugin, slow] })
+      const harness = yield* Harness.make({ workspace: directory, config: config(directory, "slow"), plugins: [sessionSqlitePlugin, sessionsPlugin, slow] })
       const session = yield* harness.create()
       const sending = yield* Effect.forkChild(session.send("first"))
       yield* Effect.repeat(session.busy, { until: (busy) => busy })
@@ -90,7 +92,7 @@ describe("durable SDK sessions", () => {
       return session.record.id
     })))
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const harness = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, echo] })
+      const harness = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
       const session = yield* harness.resume(id)
       expect((yield* session.pending).map((input) => input.text)).toEqual(["keep this"])
       yield* session.continue
@@ -101,7 +103,7 @@ describe("durable SDK sessions", () => {
     const directory = workspace()
     const flood = loop("flood", (input) => Effect.forEach(Array.from({ length: 1200 }, (_, n) => n), (n) => input.publish({ name: "item", data: { n } })).pipe(Effect.as({ text: "done", outcome: "completed" as const })))
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const harness = yield* Harness.make({ workspace: directory, config: config(directory, "flood"), plugins: [sessionSqlitePlugin, flood] })
+      const harness = yield* Harness.make({ workspace: directory, config: config(directory, "flood"), plugins: [sessionSqlitePlugin, sessionsPlugin, flood] })
       const session = yield* harness.create()
       const collector = yield* Effect.forkChild(session.events().pipe(Stream.filter((event) => event.name === "item"), Stream.take(1200), Stream.runCollect))
       yield* session.send("go")
@@ -121,15 +123,94 @@ describe("durable SDK sessions", () => {
     })) })
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const first = config(directory)
-      const harness = yield* Harness.make({ workspace: directory, config: first, plugins: [sessionSqlitePlugin, echo, memoryPlugin] })
+      const harness = yield* Harness.make({ workspace: directory, config: first, plugins: [sessionSqlitePlugin, sessionsPlugin, echo, memoryPlugin] })
       const session = yield* harness.create()
       yield* session.send("before")
-      expect(yield* harness.reconfigure({ ...first, plugins: [...first.plugins!.filter((entry) => entry.id !== "loop"), { id: "loop", use: customLoop.id }, { id: "memory", use: customMemory.id }] }, [sessionSqlitePlugin, echo, customLoop, customMemory, memoryPlugin])).toBe("applied")
+      expect(yield* harness.reconfigure({ ...first, plugins: [...first.plugins!.filter((entry) => entry.id !== "loop"), { id: "loop", use: customLoop.id }, { id: "memory", use: customMemory.id }] }, [sessionSqlitePlugin, sessionsPlugin, echo, customLoop, customMemory, memoryPlugin])).toBe("applied")
       yield* session.send("after")
       expect((yield* session.history).filter((event) => event.name === "run.completed").at(-1)?.data.text).toBe("custom memory")
       expect((yield* Effect.result(harness.reconfigure({ version: 1, plugins: [{ id: "bad", use: "missing" }] })))._tag).toBe("Failure")
       expect(yield* harness.reconfigure((yield* harness.graph).config)).toBe("applied")
       yield* session.send("still works")
+    })))
+  })
+
+  test("resumed handles refresh claimed input before continuing and accept later work", async () => {
+    const directory = workspace()
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const first = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
+      const session = yield* first.create()
+      yield* session.steer("shared queued input")
+      const second = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
+      const resumed = yield* second.resume(session.record.id)
+      expect((yield* resumed.pending).map((input) => input.text)).toEqual(["shared queued input"])
+      yield* session.continue
+      yield* resumed.continue
+      expect(yield* resumed.pending).toEqual([])
+      yield* resumed.send("later work")
+      const events = yield* resumed.history
+      expect(events.filter((event) => event.name === "answer").map((event) => event.data.text)).toEqual(["shared queued input", "later work"])
+      expect(events.filter((event) => event.name === "run.started")).toHaveLength(2)
+    })))
+  })
+
+  test("two harness instances share Sessions ownership and a rejected begin leaves input unclaimed", async () => {
+    const directory = workspace()
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const held = loop("held", () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.as({ text: "first", outcome: "completed" as const })))
+      const leased: HarnessConfig = { ...config(directory, "held"), plugins: config(directory, "held").plugins!.map((entry) => entry.id === "session-service" ? { ...entry, options: { ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } } } : entry) }
+      const first = yield* Harness.make({ workspace: directory, config: leased, plugins: [sessionSqlitePlugin, sessionsPlugin, held] })
+      const session = yield* first.create()
+      const other = yield* Harness.make({ workspace: directory, config: { ...leased, plugins: leased.plugins!.map((entry) => entry.id === "loop" ? { ...entry, use: "echo" } : entry) }, plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
+      const sending = yield* Effect.forkChild(session.send("first"))
+      yield* Deferred.await(entered)
+      const resumed = yield* other.resume(session.record.id)
+      expect((yield* resumed.history).filter((event) => event.name === "run.cancelled")).toEqual([])
+      const busy = yield* Effect.flip(resumed.send("second"))
+      expect(busy.code).toBe("session.busy")
+      expect((yield* resumed.pending).map((input) => input.text)).toEqual(["second"])
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(sending)
+      yield* resumed.continue
+      const log = yield* resumed.use(SessionLog, Effect.succeed)
+      const sessions = yield* resumed.use(Sessions, Effect.succeed)
+      const events = yield* log.read(session.record.id, { after: 0, kinds: [], limit: Option.none() })
+      expect(events.filter((event) => event.kind === "turn.started").map((event) => Option.getOrThrow(event.turn))).toEqual([1, 2])
+      expect(events.filter((event) => event.kind === "turn.ended").map((event) => event.data.reason)).toEqual(["completed", "completed"])
+      expect(Option.isNone((yield* sessions.get({ id: session.record.id, owner: directory })).open)).toBe(true)
+      expect(events.filter((event) => event.kind === "harness.event" && Option.isSome(event.turn)).length).toBeGreaterThan(0)
+    })))
+  })
+
+  test("concurrent handles consume one queued input only once", async () => {
+    const directory = workspace()
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const held = loop("held", (input) => Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+        Effect.andThen(input.publish({ name: "answer", runId: input.runId, data: { text: input.userMessage.text } })),
+        Effect.as({ text: "shared", outcome: "completed" as const }),
+      ))
+      const leased: HarnessConfig = { ...config(directory, "held"), plugins: config(directory, "held").plugins!.map((entry) => entry.id === "session-service" ? { ...entry, options: { ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } } } : entry) }
+      const first = yield* Harness.make({ workspace: directory, config: leased, plugins: [sessionSqlitePlugin, sessionsPlugin, held] })
+      const session = yield* first.create()
+      yield* session.steer("shared")
+      const second = yield* Harness.make({ workspace: directory, config: leased, plugins: [sessionSqlitePlugin, sessionsPlugin, held] })
+      const resumed = yield* second.resume(session.record.id)
+      const consuming = yield* Effect.forkChild(Effect.all([session.continue, resumed.continue], { concurrency: 2 }))
+      yield* Deferred.await(entered)
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(consuming)
+      const events = yield* resumed.history
+      expect(events.filter((event) => event.name === "answer")).toHaveLength(1)
+      expect(events.filter((event) => event.name === "run.started")).toHaveLength(1)
+      yield* session.continue
+      yield* resumed.continue
+      expect(yield* session.pending).toEqual([])
+      expect(yield* resumed.pending).toEqual([])
     })))
   })
 })

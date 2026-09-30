@@ -4,6 +4,7 @@ import { Context, Effect, Option, Ref, Schema, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { Failure } from "../domain/failure.entity.js"
+import { HarnessError } from "../harness/plugin.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { CurrentAgentStep } from "../loop/stepContext.js"
 import { entryId } from "../memory/memory-log.entity.functions.js"
@@ -43,6 +44,8 @@ interface Scenario {
   readonly maxSteps?: number
   readonly completion?: (step: number, tasks: TurnTasksService) => Effect.Effect<CompletionVerdict>
   readonly before?: (tasks: TurnTasksService) => Effect.Effect<void>
+  readonly dispatch?: (step: number) => Effect.Effect<void, HarnessError>
+  readonly providerCall?: Effect.Effect<void>
 }
 
 interface Observed {
@@ -50,6 +53,7 @@ interface Observed {
   readonly events: ReadonlyArray<TurnEvent>
   readonly providerCalls: ReadonlyArray<unknown>
   readonly recorded: ReadonlyArray<LogEntry>
+  readonly dispatches: ReadonlyArray<number>
 }
 
 const incomplete: CompletionVerdict = { complete: false, awaiting: [], facts: {} }
@@ -62,8 +66,10 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
   const seen = yield* Ref.make<ReadonlyArray<TurnEvent>>([])
   yield* events.subscribe(Option.some, (event: TurnEvent) => Ref.update(seen, (all) => [...all, event]))
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([])
+  const dispatches = yield* Ref.make<ReadonlyArray<number>>([])
   const model = yield* LanguageModel.make({
     generateText: (options) => Ref.modify(calls, (all): [number, ReadonlyArray<unknown>] => [all.length, [...all, options.toolChoice]]).pipe(
+      Effect.tap(() => scenario.providerCall ?? Effect.void),
       Effect.map((index) => [...(scenario.script[index] ?? textReply("done"))]),
     ),
     streamText: () => Stream.die("the conformance provider does not stream"),
@@ -112,6 +118,7 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: false, requireCompletion: false },
     initial: Option.fromNullishOr(scenario.initial),
     plan: () => Effect.succeed({ model: Option.none(), system: "conformance", messages: [{ role: "user", content: "go" }], toolChoice: Option.fromNullishOr(scenario.toolChoice) }),
+    dispatch: (step) => Ref.update(dispatches, (all) => [...all, step]).pipe(Effect.andThen(scenario.dispatch?.(step) ?? Effect.void)),
     record,
     completion: (info) => scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete),
     steering: Effect.succeed(Option.none()),
@@ -121,7 +128,7 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     cacheKey: Option.none(),
   }
   const result = yield* loop.run(request)
-  return { result, events: yield* Ref.get(seen), providerCalls: yield* Ref.get(calls), recorded: yield* Ref.get(recorded) }
+  return { result, events: yield* Ref.get(seen), providerCalls: yield* Ref.get(calls), recorded: yield* Ref.get(recorded), dispatches: yield* Ref.get(dispatches) }
 }).pipe(Effect.mapError((error) => new ConformanceFailure({ check: "run", message: error.message }))))
 
 const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> =>
@@ -138,6 +145,24 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * after completion, and the step cap.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
+  {
+    name: "validates every real request immediately before dispatch, excluding planned batches",
+    run: Effect.gen(function* () {
+      const { dispatches, providerCalls } = yield* observe(loop, { initial: { calls: [{ name: Probe.name, params: { n: 2 } }], skills: [] }, script: [textReply("done")] })
+      yield* expect("dispatch", dispatches.join() === "1" && providerCalls.length === 1, `dispatches ${dispatches.join()}, ${providerCalls.length} provider calls`)
+    }),
+  },
+  {
+    name: "a failed durable request check prevents the provider call",
+    run: Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      const result = yield* Effect.result(observe(loop, {
+        script: [textReply("must not run")], providerCall: Ref.update(calls, (count) => count + 1),
+        dispatch: () => Effect.fail(new HarnessError({ code: "request.diverged", message: "fixture request changed" })),
+      }))
+      yield* expect("dispatch", result._tag === "Failure" && (yield* Ref.get(calls)) === 0, "a rejected request reached the provider")
+    }),
+  },
   {
     name: "orders step.started < tool.* < step.ended < completion.evaluated within every step",
     run: Effect.gen(function* () {

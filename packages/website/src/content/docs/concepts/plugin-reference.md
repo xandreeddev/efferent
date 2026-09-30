@@ -34,15 +34,16 @@ Requires: none
 
 Scope: **runtime** · API 2 · Version 0.8.0-next.0
 
-Provides: `efferent/SessionStore`
+Provides: `efferent/SessionLog`, `efferent/SessionStore`, `efferent/TurnAdmission`
 
-Requires: none
+Requires: `efferent/SessionEnvironment`
 
 ### Defaults
 
 ```json
 {
-  "path": ".efferent/runtime/sessions.db"
+  "path": ".efferent/runtime/sessions.db",
+  "legacyPaths": []
 }
 ```
 
@@ -55,10 +56,180 @@ Requires: none
   "properties": {
     "path": {
       "type": "string"
+    },
+    "legacyPaths": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
     }
   },
   "required": [
-    "path"
+    "path",
+    "legacyPaths"
+  ],
+  "additionalProperties": true
+}
+```
+
+## @xandreed/plugin-sessions
+
+Scope: **runtime** · API 2 · Version 0.8.0-next.0
+
+Provides: `efferent/Sessions`
+
+Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
+
+### Defaults
+
+```json
+{
+  "ownership": {
+    "mode": "lease",
+    "ttlMs": 60000,
+    "renew": "on-commit"
+  },
+  "titleChars": 80,
+  "inbox": {
+    "maxPending": 20,
+    "attempts": 2
+  },
+  "writer": {
+    "capacity": 1024,
+    "batch": 64
+  },
+  "retries": 8
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "ownership": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "lease"
+              ]
+            },
+            "ttlMs": {
+              "type": "integer",
+              "minimum": 1000
+            },
+            "renew": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "on-commit"
+                  ]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "everyMs": {
+                      "type": "integer",
+                      "minimum": 100
+                    }
+                  },
+                  "required": [
+                    "everyMs"
+                  ],
+                  "additionalProperties": true
+                }
+              ]
+            }
+          },
+          "required": [
+            "mode",
+            "ttlMs",
+            "renew"
+          ],
+          "additionalProperties": true
+        },
+        {
+          "type": "object",
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": [
+                "process"
+              ]
+            }
+          },
+          "required": [
+            "mode"
+          ],
+          "additionalProperties": true
+        }
+      ]
+    },
+    "titleChars": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500
+    },
+    "inbox": {
+      "type": "object",
+      "properties": {
+        "maxPending": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
+      },
+      "required": [
+        "maxPending",
+        "attempts"
+      ],
+      "additionalProperties": true
+    },
+    "writer": {
+      "type": "object",
+      "properties": {
+        "capacity": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "batch": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        }
+      },
+      "required": [
+        "capacity",
+        "batch"
+      ],
+      "additionalProperties": true
+    },
+    "retries": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64
+    }
+  },
+  "required": [
+    "ownership",
+    "titleChars",
+    "inbox",
+    "writer",
+    "retries"
   ],
   "additionalProperties": true
 }

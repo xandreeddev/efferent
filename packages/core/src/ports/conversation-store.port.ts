@@ -43,6 +43,9 @@ export class StoredMessage extends Schema.Class<StoredMessage>("StoredMessage")(
 }) {}
 
 /**
+ * @deprecated Positional compatibility projection over SessionLog. New composable
+ * hosts use Sessions, TurnWriter and ConversationMemory directly.
+ *
  * The conversation persistence port. Positions are the durable identity:
  * `append` assigns a monotonic, immutable absolute position per conversation,
  * and UIs key their blocks on it so a live-streamed block and a later

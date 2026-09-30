@@ -34,6 +34,7 @@ const kinds = (events: ReadonlyArray<SessionLogEvent>) => events.map((event) => 
  */
 const harness = (input: {
   readonly turn?: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, HarnessError>
+  readonly react?: (writer: TurnWriter) => Effect.Effect<void, HarnessError>
   readonly admission?: LayerType.Layer<TurnAdmission>
   readonly maxMs?: number
   readonly config?: Partial<TasksConfig>
@@ -48,7 +49,9 @@ const harness = (input: {
       yield* FiberSet.run(fibers, work(Option.map(Option.fromNullishOr(input.maxMs), (ms) => now + ms)))
     }),
   }))
-  const react = (writer: TurnWriter) => Ref.update(reactions, (all) => [...all, writer.admitted.userMessage.text])
+  const react = (writer: TurnWriter) => Ref.update(reactions, (all) => [...all, writer.admitted.userMessage.text]).pipe(
+    Effect.andThen(input.react?.(writer) ?? Effect.void),
+  )
   const executor = Layer.succeed(TaskExecutor, TaskExecutor.of({
     turn: input.turn ?? ((_writer, task) => Effect.succeed({ outcome: "completed", reply: Option.some(`found: ${task.instructions}`) })),
     react,
@@ -248,9 +251,47 @@ describe("limits, failures and budgets", () => {
     yield* TestClock.adjust("2 seconds")
     yield* h.idle
     const late = yield* h.tasks.status(h.parent, task.taskId)
-    expect([late.status, Option.map(late.failure, (failure) => failure.code), late.delivered]).toEqual(["interrupted", Option.some("task.deadline"), true])
+    expect([late.status, Option.map(late.failure, (failure) => failure.code), late.delivered]).toEqual(["interrupted", Option.some("task.deadline"), false])
     const child = yield* h.sessions.read({ id: task.child, owner }, { kinds: ["turn.ended"] })
     expect(child.map((event) => event.data.reason)).toEqual(["interrupted"])
+    expect(yield* h.tasks.reconcile(h.parent)).toEqual({ delivered: 1, started: 0 })
+    expect((yield* h.tasks.status(h.parent, task.taskId)).delivered).toBe(true)
+  })))
+
+  test("the runner's deadline interrupts the parent's reaction and stores its ending", () => scenario(Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>()
+    const stopped = yield* Ref.make(false)
+    const h = yield* harness({ maxMs: 1_000, react: () => Deferred.succeed(entered, undefined).pipe(
+      Effect.andThen(Effect.never), Effect.ensuring(Ref.set(stopped, true)),
+    ) })
+    const task = yield* h.tasks.start(h.parent, { instructions: "quick child, slow parent", mode: "spawn" })
+    yield* Deferred.await(entered)
+    yield* TestClock.adjust("1 second")
+    yield* h.idle
+    expect(yield* Ref.get(stopped)).toBe(true)
+    expect((yield* h.tasks.status(h.parent, task.taskId)).status).toBe("completed")
+    expect(Option.isNone((yield* h.sessions.get(h.parent)).open)).toBe(true)
+    expect((yield* h.sessions.read(h.parent, { kinds: ["turn.ended"] })).map((event) => [event.data.reason, event.data.failure])).toEqual([
+      ["interrupted", { code: "task.deadline", message: "the runner's deadline ended the inbox reaction" }],
+    ])
+  })))
+
+  test("the runner's deadline bounds parent admission and leaves the delivered notice pending", () => scenario(Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>()
+    const stopped = yield* Ref.make(false)
+    const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
+      admit: (turn, open) => turn.key.startsWith("task:") ? open
+        : Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never), Effect.ensuring(Ref.set(stopped, true))),
+    }))
+    const h = yield* harness({ maxMs: 1_000, admission })
+    const task = yield* h.tasks.start(h.parent, { instructions: "parent admission stalls", mode: "spawn" })
+    yield* Deferred.await(entered)
+    yield* TestClock.adjust("1 second")
+    yield* h.idle
+    expect(yield* Ref.get(stopped)).toBe(true)
+    expect([Option.isNone((yield* h.sessions.get(h.parent)).open), (yield* h.sessions.get(h.parent)).pending]).toEqual([true, 1])
+    expect((yield* h.tasks.status(h.parent, task.taskId)).delivered).toBe(true)
+    expect(yield* h.reactions).toEqual([])
   })))
 
   test("a long reply is cut, and cannot close the notice's frame", () => {

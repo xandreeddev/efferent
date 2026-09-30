@@ -17,6 +17,8 @@ import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } fr
 import type { TaskResult as Result, TaskStarted as Started, TasksConfig } from "./task-records.entity.js"
 
 const OUTCOME_KINDS = [TASK_RESULT, TASK_CANCELLED]
+/** Leave time inside the runner's budget for the result and turn-ending commits. */
+const CLOSING_RESERVE_MS = 100
 
 const encodeFailure = (error: { readonly message: string }) => new SessionLogError({ code: "tasks.encode", message: error.message })
 const startedJson = (started: Started) => Schema.encodeEffect(TaskStarted)(started).pipe(Effect.map((data): JsonObject => data), Effect.mapError(encodeFailure))
@@ -131,17 +133,36 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     Effect.logWarning(`the inbox of ${parent.id} is full; task ${task.taskId} is delivered later`).pipe(Effect.as({ delivered: false, pending: full.pending }))))
 
   /** Deliver the task if it finished and was not delivered, then let the parent react to what waits. */
-  const settle = (parent: SessionAddress, taskId: string) => Effect.gen(function* () {
+  const settle = (parent: SessionAddress, taskId: string, deadline: Option.Option<number>) => Effect.gen(function* () {
     const task = yield* taskOf(parent, taskId)
     if (!isFinished(task.status) || task.delivered) return
     const delivered = yield* deliverNotice(parent, task)
-    if (delivered.pending > 0) yield* sessions.drain(parent, executor.react)
+    const now = yield* Clock.currentTimeMillis
+    const remaining = Option.map(deadline, (at) => at - now)
+    if (delivered.pending === 0 || (Option.isSome(remaining) && remaining.value <= 0)) return
+    yield* sessions.drain(parent, (writer) => Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis
+      const reaction = Option.match(deadline, {
+        onNone: () => executor.react(writer).pipe(Effect.as(true)),
+        onSome: (at) => at <= now ? Effect.succeed(false)
+          : executor.react(writer).pipe(Effect.timeoutOption(at - now), Effect.map(Option.isSome)),
+      })
+      if (!(yield* reaction)) yield* writer.end({ reason: "interrupted", failure: Option.some({ code: "task.deadline", message: "the runner's deadline ended the inbox reaction" }) })
+    }), Option.isSome(deadline) ? { maxTurns: 1 } : {})
   })
 
   const work = (parent: SessionAddress, taskId: ConversationId) => (deadline: Option.Option<number>): Effect.Effect<void> => Effect.gen(function* () {
-    const task = yield* taskOf(parent, taskId)
-    if (task.status === "pending") yield* runChild(parent, task, deadline)
-    yield* settle(parent, taskId)
+    const now = yield* Clock.currentTimeMillis
+    const executeBy = Option.map(deadline, (at) => Math.max(now, at - CLOSING_RESERVE_MS))
+    const execution = Effect.gen(function* () {
+      const task = yield* taskOf(parent, taskId)
+      if (task.status === "pending") yield* runChild(parent, task, executeBy)
+      yield* settle(parent, taskId, executeBy)
+    })
+    yield* Option.match(deadline, {
+      onNone: () => execution,
+      onSome: (at) => execution.pipe(Effect.timeoutOption(Math.max(0, at - now)), Effect.asVoid),
+    })
   }).pipe(
     Effect.catchCause((cause) => Effect.logWarning(`background task ${taskId} of ${parent.id} stopped`, cause)),
     Effect.withSpan("task.run", { attributes: { "task.id": taskId, "session.id": parent.id } }),

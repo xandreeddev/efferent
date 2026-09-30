@@ -181,7 +181,7 @@ with tempfile.TemporaryDirectory(prefix='efferent-tmux-') as temporary:
         wait_for('Cancelled')
         capture('cancelled')
         database = sqlite3.connect(workspace / '.efferent/runtime/sessions.db')
-        events = [json.loads(row[0]) for row in database.execute('select body from harness_events order by rowid')]
+        events = [json.loads(row[0])['event'] for row in database.execute("select data from session_log_events where kind = 'harness.event' order by rowid")]
         assert sum(e['name']=='run.cancelled' for e in events) == 1
         assert not any(e['name']=='run.failed' for e in events)
         assert any(e['name']=='input.queued' and e['data']['text']=='multiline\nmessage' for e in events)

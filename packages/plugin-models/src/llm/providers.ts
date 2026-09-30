@@ -4,7 +4,7 @@ import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { Effect, Option, Redacted } from "effect"
 import type { Scope } from "effect"
-import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey } from "@xandreed/core"
+import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, modelRequestDescriptorOf } from "@xandreed/core"
 import type { Credential, ModelSelection } from "@xandreed/core"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { makeCompatLanguageModel } from "./compat.js"
@@ -112,7 +112,7 @@ const missingKey = (selection: ModelSelection): AuthError =>
     message: `no credential for ${selection.provider} — add one to ~/.efferent/auth.json`,
   })
 
-export const buildProvider = (
+const buildProviderService = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
@@ -237,3 +237,39 @@ export const buildProvider = (
     }),
   )
 }
+
+/** Preserve adapter descriptors and describe the public configuration of SDK-backed models. */
+export const buildProvider = (
+  selection: ModelSelection,
+  credential: Credential | undefined,
+  key: Redacted.Redacted<string> | undefined,
+): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key).pipe(
+  Effect.flatMap((built) => Effect.gen(function* () {
+      // SDK model configuration was captured at construction; preserve those exact values.
+      const cacheKey = yield* Effect.service(CurrentPromptCacheKey)
+      const policy = yield* Effect.service(CurrentModelCallPolicy)
+      const responses = selection.provider === "opencode" && usesOpenCodeResponses(selection.modelId)
+      const settings = selection.provider === "anthropic"
+        ? { systemPrelude: built.prependClaudeCode ? CLAUDE_CODE_SYSTEM : null }
+        : {
+          prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
+          ...(responses ? {
+            strictJsonSchema: false,
+            ...Option.match(policy, {
+              onNone: () => ({}),
+              onSome: (value) => ({
+                ...(value.maxOutputTokens === undefined ? {} : { max_output_tokens: value.maxOutputTokens }),
+                reasoning: { effort: value.effort === "xhigh" || value.effort === "max" ? "high" : value.effort === "none" ? "low" : value.effort },
+              }),
+            }),
+          } : {}),
+        }
+      const descriptor = { provider: selection.provider, model: selection.modelId, settings }
+      return {
+        ...built,
+        svc: describeModel(built.svc, modelRequestDescriptorOf(built.svc).pipe(Effect.map((existing) =>
+          Option.match(existing, { onNone: () => descriptor, onSome: (value) => ({ ...value, provider: selection.provider }) }),
+        ))),
+      }
+  })),
+)

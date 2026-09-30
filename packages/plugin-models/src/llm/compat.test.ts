@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
 import { Deferred, Effect, Fiber, Option, Schema } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, Failure } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, Failure, modelRequestDescriptorOf } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel, thinkingParams } from "./compat.js"
 
 const completion = (body: unknown, status = 200): typeof fetch =>
@@ -39,6 +39,30 @@ const Echo = Tool.make("echo", {
 })
 
 describe("makeCompatLanguageModel", () => {
+  test("its request descriptor matches the public options sent on the wire", async () => {
+    const { calls, impl } = capture()
+    const descriptor = await Effect.runPromise(Effect.gen(function* () {
+      const svc = yield* makeCompatLanguageModel({
+        moduleName: "Test", model: "kimi-k2-code", chatUrl: "https://gw.example/chat/completions",
+        apiKey: "secret-test-key", temperature: 0.25, fetchImpl: impl,
+      })
+      const descriptor = yield* modelRequestDescriptorOf(svc)
+      yield* svc.generateText({ prompt: "hello" })
+      return descriptor
+    }).pipe(
+      Effect.provideService(CurrentPromptCacheKey, Option.some("lane:test")),
+      Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "high", maxOutputTokens: 32 })),
+    ))
+    expect(Option.isSome(descriptor)).toBe(true)
+    if (Option.isSome(descriptor)) {
+      const sent = calls[0]!.body as Record<string, unknown>
+      expect(descriptor.value).toEqual({
+        provider: "Test", model: "kimi-k2-code",
+        settings: Object.fromEntries(Object.entries(sent).filter(([key]) => !["messages", "model", "stream"].includes(key))),
+      })
+      expect(JSON.stringify(descriptor.value)).not.toContain("secret-test-key")
+    }
+  })
   test("sends chat-completions shape: system + messages + tools + bearer key", async () => {
     const { calls, impl } = capture()
     const result = await Effect.runPromise(

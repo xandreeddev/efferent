@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { Database } from "bun:sqlite"
 import { existsSync, readFileSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
 import { FactoryRun, makeScriptedImplementor } from "@xandreed/foundry"
-import { SpecDoc } from "@xandreed/core"
+import { ConversationStore, SpecDoc } from "@xandreed/core"
+import { SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
 import { runForgeSessionWith } from "../forge/session.js"
 import {
   bootTestTui,
@@ -469,28 +469,17 @@ describe("the smith TUI — frame-level regressions", () => {
 
   test(":resume lists previous sessions and REPLAYS one into the live transcript", async () => {
     const tui = await boot()
-    // Seed a finished conversation straight into the workspace db — the same
-    // rows the store writes.
-    const db = new Database(join(tui.cwd, ".efferent", "smith.db"))
-    const cid = "00000000-0000-4000-8000-00000000fee1"
-    db.query(
-      "INSERT INTO conversations (id, workspace_dir, title, created_at) VALUES (?, ?, ?, ?)",
-    ).run(cid, tui.cwd, "the fibonacci helper", Date.now() - 120_000)
-    db.query(
-      "INSERT INTO messages (conversation_id, position, content, created_at) VALUES (?, ?, ?, ?)",
-    ).run(cid, 0, JSON.stringify({ role: "user", content: "write a fibonacci helper" }), 1)
-    db.query(
-      "INSERT INTO messages (conversation_id, position, content, created_at) VALUES (?, ?, ?, ?)",
-    ).run(
-      cid,
-      1,
-      JSON.stringify({
-        role: "assistant",
-        content: [{ type: "text", text: "Drafted the fibonacci spec with two checks." }],
-      }),
-      2,
-    )
-    db.close()
+    // Seed through the public projection: the transcript has the same durable
+    // positions as a conversation written by the running host.
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const store = yield* ConversationStore
+      const id = yield* store.create(tui.cwd)
+      yield* store.setTitle(id, "the fibonacci helper")
+      yield* store.appendAll(id, [
+        { role: "user", content: "write a fibonacci helper" },
+        { role: "assistant", content: [{ type: "text", text: "Drafted the fibonacci spec with two checks." }] },
+      ])
+    }).pipe(Effect.provide(SqliteConversationStoreLive(join(tui.cwd, ".efferent", "smith.db"))))))
 
     // :new refreshes the dashboard — the seeded session appears.
     await tui.setup.mockInput.typeText(":new")

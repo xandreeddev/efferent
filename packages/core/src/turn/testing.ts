@@ -35,6 +35,7 @@ export const recordingTurnWriter = (input: {
     admitted: { session: { id: session, owner: "test" }, turn, runId: input.runId, key: input.runId, origin: "user", userMessage, command: {}, claimed: [] },
     started,
     history: (kinds) => Effect.succeed(history.filter((event) => kinds.length === 0 || kinds.includes(event.kind))),
+    snapshot: (kinds) => Ref.get(stored).pipe(Effect.map((events) => events.filter((event) => kinds.length === 0 || kinds.includes(event.kind)))),
     append,
     write: (op) => op,
     transact: (decide) => decide([]).pipe(Effect.flatMap((decision) => append(decision.drafts).pipe(Effect.as({ result: decision.result, events: [] })))),

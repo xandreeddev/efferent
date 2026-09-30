@@ -1,7 +1,7 @@
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Clock, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
-import { AuthStore, CurrentModelCallPolicy, formatModelSelection, parseModelSelection, SettingsStore } from "@xandreed/core"
+import { AuthStore, CurrentModelCallPolicy, describeModel, formatModelSelection, HarnessError, parseModelSelection, SettingsStore } from "@xandreed/core"
 import type { ModelSelection } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
@@ -127,7 +127,18 @@ const withConfiguredEffort = <A, E, R>(
             ),
           ),
     ),
-  )
+)
+
+/** Requested routing profile, before explicit fallback/retry policy chooses a transport attempt. */
+const describeSelection = (primary: ModelSelection, fallback: Option.Option<ModelSelection>, effort: EngineSettings["reasoningEffort"]) =>
+  Effect.service(CurrentModelCallPolicy).pipe(Effect.map((current) => ({
+    provider: primary.provider,
+    model: primary.modelId,
+    settings: {
+      fallback: Option.getOrElse(Option.map(fallback, formatModelSelection), () => null),
+      policy: Option.getOrElse(Option.orElse(current, () => Option.map(effort, (value) => ({ effort: value }))), () => null),
+    },
+  })))
 
 /** Build + call one provider generateText for an explicit selection.
  *  `isFallback` only labels telemetry — the fallback rung must be visible
@@ -433,7 +444,11 @@ export const LanguageModelLive = Layer.effect(
           Stream.provideService(HttpClient.HttpClient, http),
         )) as never,
     }
-    return service
+    return describeModel(service, currentSelection.pipe(
+      Effect.flatMap(({ primary, fallback, effort }) => describeSelection(primary, fallback, effort)),
+      Effect.provide(context),
+      Effect.mapError((error) => new HarnessError({ code: "request.model", message: String(error) })),
+    ))
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))
 
@@ -448,7 +463,7 @@ export const LanguageModelSelectionLive = (
   Effect.gen(function* () {
     const context = yield* Effect.context<AuthStore>()
     const http = yield* HttpClient.HttpClient
-    return {
+    const service = {
       [LanguageModel.TypeId]: LanguageModel.TypeId,
       generateText: (options: unknown) => withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)).pipe(
         Effect.provide(context),
@@ -460,5 +475,6 @@ export const LanguageModelSelectionLive = (
         Stream.provideService(HttpClient.HttpClient, http),
       )) as never,
     } satisfies LanguageModel.LanguageModel
+    return describeModel(service, describeSelection(primary, fallback, Option.none()))
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))

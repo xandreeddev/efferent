@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Option, Ref, Scope } from "effect"
+import { Context, Effect, Layer, Option, Ref, Schema, Scope } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { fingerprintOf } from "../memory/memory-log.entity.functions.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
@@ -19,6 +19,7 @@ import type { TurnLiveInput } from "../ports/turn-scope.port.js"
 import { renderSections } from "./prompt-sections.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
 import type { TurnEvent } from "./turn-event.entity.js"
+import { ModelRequestHeader } from "./model-request.entity.js"
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
 
@@ -105,6 +106,12 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     ...reader,
     strategy: session.strategy,
     session,
+    prepareRequest: (header) => Schema.encodeEffect(ModelRequestHeader)(header).pipe(
+      Effect.mapError((error) => failure("request.encode", error.message)),
+      Effect.flatMap((data) => writer.append([{ kind: "request.prepared", data }])),
+      Effect.andThen(writer.flush),
+    ),
+    requestSnapshot: writer.snapshot([...MEMORY_KINDS, "request.prepared"]),
     number: Ref.get(started).pipe(Effect.flatMap(Option.match({
       onNone: () => Effect.fail(failure("turn.unstarted", "The user's message is not persisted yet")),
       onSome: (number) => Effect.succeed(number),

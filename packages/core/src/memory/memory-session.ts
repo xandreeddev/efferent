@@ -151,6 +151,7 @@ export const openLogSession = (
     })
     return {
       strategy: policy.strategy,
+      renderRecipe: (stepContext) => Ref.get(entries).pipe(Effect.map((all) => renderOptions(all, stepContext))),
       turn: Ref.get(entries).pipe(Effect.map(currentTurnOf)),
       entries: Ref.get(entries),
       query: (query) => Ref.get(entries).pipe(Effect.map((all) => queryLog(all, query))),

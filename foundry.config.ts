@@ -124,6 +124,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "name": "canvas",
             "path": "packages/canvas/src/**",
             "canImport": [
+                  "plugin-sessions",
                   "surface",
                   "ui-agent",
                   "core",
@@ -131,7 +132,7 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "plugin-telemetry",
                   "plugin-models"
             ],
-            "externals": ["@xandreed/sdk", "@xandreed/runtime",
+            "externals": ["@xandreed/plugin-sessions","@xandreed/sdk", "@xandreed/runtime",
                   "effect",
                   "@effect/",
                   "effect/",
@@ -215,6 +216,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "name": "math",
             "path": "packages/math/src/**",
             "canImport": [
+                  "plugin-sessions",
                   "surface",
                   "core",
                   "plugin-agent-loop",
@@ -223,7 +225,7 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "plugin-telemetry",
                   "plugin-models"
             ],
-            "externals": ["@xandreed/sdk", "@xandreed/runtime",
+            "externals": ["@xandreed/plugin-sessions","@xandreed/sdk", "@xandreed/runtime",
                   "effect",
                   "fast-check",
                   "@effect/",
@@ -604,6 +606,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "name": "smith",
             "path": "packages/smith/src/**",
             "canImport": [
+                  "plugin-sessions",
                   "foundry",
                   "core",
                   "plugin-agent-loop",
@@ -617,7 +620,7 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "plugin-context",
                   "plugin-memory"
             ],
-            "externals": [
+            "externals": ["@xandreed/plugin-sessions",
                   "effect",
                   "@effect/",
                   "effect/",
@@ -645,12 +648,13 @@ const config: typeof GateSuiteConfig.Encoded = {
             "name": "social",
             "path": "packages/social/src/**",
             "canImport": [
+                  "plugin-sessions",
                   "core",
                   "plugin-agent-loop",
                   "plugin-telemetry",
                   "plugin-models"
             ],
-            "externals": ["@xandreed/sdk", "@xandreed/runtime", "@xandreed/plugin-session-sqlite",
+            "externals": ["@xandreed/plugin-sessions","@xandreed/sdk", "@xandreed/runtime", "@xandreed/plugin-session-sqlite",
                   "effect",
                   "@effect/",
                   "effect/",

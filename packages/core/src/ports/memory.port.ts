@@ -6,6 +6,7 @@ import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogQuery } from "../memory/memory-log.entity.functions.js"
 import type { ArtifactRef, BuiltContext, EntryId, LogBody, LogEntry, Subject } from "../memory/memory-log.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
+import type { MemoryRenderRecipe } from "../turn/model-request.entity.js"
 
 /** A conversation's memory log for one turn: the entries stored before it, and one atomic append. */
 export interface LogHandle {
@@ -81,6 +82,8 @@ export interface MaintainSignal {
 
 export interface MemorySession extends MemoryReader {
   readonly strategy: { readonly id: string; readonly version: string }
+  /** The pure render recipe of this session, saved with every outgoing request for version-independent replay. */
+  readonly renderRecipe: (stepContext: "tail" | "none") => Effect.Effect<MemoryRenderRecipe>
   readonly record: (bodies: ReadonlyArray<LogBody>, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
   /** The loop's appended messages → Message and ToolResult entries (views, and digests the strategy asks for, at write time). */
   readonly recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>

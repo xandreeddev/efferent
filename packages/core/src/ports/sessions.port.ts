@@ -52,6 +52,8 @@ export interface TurnWriter {
   readonly started: SessionLogEvent
   /** The session's events before this turn (a fork's parent first), of the given kinds: what memory is rebuilt from. */
   readonly history: (kinds: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
+  /** A fresh durable snapshot including this turn (a fork's inherited history first). Flush queued writes before reading. */
+  readonly snapshot: (kinds: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
   /** Queue events; returns once queued. */
   readonly append: (drafts: ReadonlyArray<TurnDraft>) => Effect.Effect<void, HarnessError>
   /** Run `op` in queue order (after everything queued before it). */
@@ -64,7 +66,7 @@ export interface TurnWriter {
   readonly transact: <A, E>(decide: (foreign: ReadonlyArray<SessionLogEvent>) => Effect.Effect<Decision<A>, E>) => Effect.Effect<Decided<A>, E | HarnessError>
   /** Wait until everything queued so far is stored. */
   readonly flush: Effect.Effect<void, HarnessError>
-  /** Store what is queued, then close the turn. Returns the inbox items waiting after it (drain them). */
+  /** Seal write admission immediately, store already queued writes, then close the turn. Repeated calls share the first result. Returns pending inbox items. */
   readonly end: (ending: TurnEnding) => Effect.Effect<{ readonly pending: number }, HarnessError>
   /** Completes when someone else closed the turn; never when it ends by `end`. */
   readonly closed: Effect.Effect<TurnClosed>

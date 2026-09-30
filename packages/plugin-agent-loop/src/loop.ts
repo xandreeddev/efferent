@@ -1,13 +1,14 @@
 import { AiError, LanguageModel, Prompt } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
 import { Cause, Effect, Exit, Match, Metric, Option, Ref, Stream } from "effect"
-import { foldStreamParts } from "@xandreed/core"
+import { foldStreamParts, freezeModelRequest } from "@xandreed/core"
 import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import type { AgentMessage, AgentResult } from "@xandreed/core"
 import { addUsage, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
+import type { ModelDispatch } from "@xandreed/core"
 import { extractModel, extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core"
 
 /**
@@ -48,6 +49,8 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
     readonly model: LanguageModel.LanguageModel
     readonly system: Prompt.Prompt
   }, AiError.AiError, R>
+  /** Validate independently reconstructed durable input immediately before a provider dispatch. */
+  readonly beforeDispatch?: (step: number, request: ModelDispatch) => Effect.Effect<void, never, R>
   readonly system: string | Prompt.Prompt
   /** The READ side of memory: when present, each provider step sends these
    * messages instead of the loop's own buffer. Persistence still flows through
@@ -305,6 +308,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         // appended, so the declared tool list only ever grows at its end.
         const selectedTools = Object.fromEntries(active.flatMap((name) => Object.hasOwn(toolkit.tools, name) ? [[name, toolkit.tools[name]] as const] : [])) as Tools
         const toolNames = Object.keys(selectedTools)
+        const planned = state.turnIndex === 0 && options.initialStep !== undefined
         const stepView: StepView = { stepIndex: state.turnIndex, activeTools: toolNames, lastUsage: state.lastUsage }
         yield* Effect.annotateCurrentSpan({ "engine.tools.active": toolNames })
 
@@ -318,7 +322,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           ? Prompt.make([{ role: "system", content: baseSystem }])
           : baseSystem
         const visible = options.render === undefined ? state.messages : yield* options.render(stepView).pipe(Effect.provide(eventContext))
-        const prompt = Prompt.concat(instructions, Prompt.make(toPromptMessages(visible) as never))
+        const prompt = freezeModelRequest(Prompt.concat(instructions, Prompt.make(toPromptMessages(visible) as never)))
         const directive = options.stepDirective === undefined ? Option.none<LoopToolChoice>() : (yield* options.stepDirective(stepView).pipe(Effect.provide(eventContext))).toolChoice
 
         if (options.captureTraceContent === true)
@@ -347,20 +351,25 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             )
           }) as never,
         }
-        const callOptions = {
+        const callOptions = Object.freeze({
           prompt,
           toolkit: instrumented,
           concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY,
           ...Option.match(directive, { onNone: () => ({}), onSome: (toolChoice) => ({ toolChoice: toolChoice as never }) }),
-        }
+        })
+
+        const dispatchModel = Option.isSome(prepared) ? prepared.value.model : yield* LanguageModel.LanguageModel
+        const beforeDispatch = options.beforeDispatch === undefined ? Effect.void : options.beforeDispatch(state.turnIndex, {
+          prompt, tools: Object.values(selectedTools), toolChoice: Option.getOrElse(directive, () => "auto"), model: dispatchModel,
+        }).pipe(Effect.provide(eventContext))
 
         /** Both paths land on the SAME settled shape — after this point the
          *  turn body is identical code, streamed or not. */
         // Tools declare no dependencies (handlers carry their own context), so a
         // model call needs the model alone; `Tool.Any` would widen it to `any`.
-        const generated = (Option.isSome(prepared)
-          ? prepared.value.model.generateText(callOptions)
-          : LanguageModel.generateText(callOptions)) as Effect.Effect<LanguageModel.GenerateTextResponse<Tools, "opaque">, AiError.AiError, LanguageModel.LanguageModel>
+        const generated = (planned ? LanguageModel.generateText(callOptions) : beforeDispatch.pipe(Effect.andThen(Effect.suspend(() =>
+          dispatchModel.generateText(callOptions),
+        )))) as Effect.Effect<LanguageModel.GenerateTextResponse<Tools, "opaque">, AiError.AiError, LanguageModel.LanguageModel>
         const settled = (streamingHealthy: boolean) =>
           generated.pipe(
             Effect.map((res) => ({
@@ -381,9 +390,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const streamed = Effect.gen(function* () {
           const partSeen = yield* Ref.make(false)
           const folded = yield* foldStreamParts(
-            ((Option.isSome(prepared)
-              ? prepared.value.model.streamText(callOptions)
-              : LanguageModel.streamText(callOptions)) as Stream.Stream<unknown, AiError.AiError, LanguageModel.LanguageModel>).pipe(
+            (Stream.unwrap(beforeDispatch.pipe(Effect.map(() => dispatchModel.streamText(callOptions)))) as Stream.Stream<unknown, AiError.AiError, LanguageModel.LanguageModel>).pipe(
               Stream.tap(() => Ref.set(partSeen, true)),
             ),
             (delta) =>
@@ -429,7 +436,6 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           })
         })
 
-        const planned = state.turnIndex === 0 && options.initialStep !== undefined
         const initial = Effect.gen(function* () {
           const provider = yield* LanguageModel.make({
             generateText: () => Effect.succeed([...(options.initialStep ?? []).map((call, index) => ({

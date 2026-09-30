@@ -6,6 +6,7 @@ import type { HarnessError } from "../harness/plugin.entity.js"
 import type { EventBody, MemoryEntry, SessionEvent, SessionRecord } from "../harness/session.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 
+/** @deprecated Historical event vocabulary; live adapters project it over SessionLog. New hosts use Sessions and TurnWriter. */
 export class SessionStore extends Context.Service<SessionStore, {
   readonly create: (workspace: string, profile: string) => Effect.Effect<SessionRecord, HarnessError>
   readonly get: (id: ConversationId) => Effect.Effect<SessionRecord, HarnessError>

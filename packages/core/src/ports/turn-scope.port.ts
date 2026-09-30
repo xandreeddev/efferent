@@ -6,6 +6,8 @@ import type { TurnWriter } from "./sessions.port.js"
 import type { LoopLimits } from "./step-loop.port.js"
 import type { RunTools } from "./tool-registry.port.js"
 import type { TurnOutcome } from "./turn.port.js"
+import type { ModelRequestHeader } from "../turn/model-request.entity.js"
+import type { SessionLogEvent } from "../session/session-log.entity.js"
 
 /*
  * The turn as services. `TurnLive(input)` provides them, with RunContext,
@@ -26,6 +28,10 @@ export interface TurnContextEntry {
 export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
   readonly strategy: { readonly id: string; readonly version: string }
   readonly session: MemorySession
+  /** Record and flush a request's reconstruction header before dispatch. */
+  readonly prepareRequest: (header: ModelRequestHeader) => Effect.Effect<void, HarnessError>
+  /** Fresh durable memory and request protocol events, including this turn. */
+  readonly requestSnapshot: Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
   /** The turn's number; fails with `turn.unstarted` before `persistMessage`. */
   readonly number: Effect.Effect<number, HarnessError>
   /**

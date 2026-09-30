@@ -132,6 +132,9 @@
       "@xandreed/plugin-session-sqlite": [
         "packages/plugin-session-sqlite/src/index.ts"
       ],
+      "@xandreed/plugin-sessions": [
+        "packages/plugin-sessions/src/index.ts"
+      ],
       "@xandreed/plugin-memory": [
         "packages/plugin-memory/src/index.ts"
       ],

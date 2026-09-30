@@ -69,8 +69,15 @@ by the terminal editor.
 
 ## Sessions
 
-- `create`, `resume`, `list`, and `fork` operate on the configured SessionStore.
-- `send` journals input and serializes runs; `steer` queues input for a loop's
+The harness and composable agents share `SessionLog` and `Sessions`. The
+deprecated `SessionStore` and `ConversationStore` APIs are projections over
+that journal. Compose the SQLite storage plugin with `sessionsPlugin`; CLI
+hosts use process ownership, while concurrent hosts use leases.
+
+- `create`, `resume`, `list`, and `fork` use the unified session heads and
+  immutable history boundaries.
+- `send` journals input, admits through `Sessions.begin` and writes through
+  `TurnWriter` before ending the turn; `steer` queues input for a loop's
   next admission boundary; `continue` resumes the pending queue.
 - `use(Service, callback)` accesses a selected domain service while holding the
   session gate; resource disposal waits until the callback completes.
@@ -79,7 +86,8 @@ by the terminal editor.
   the journal. Notifications can coalesce; journal entries are not dropped.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.
 - A reopened unfinished run is marked cancelled. Tools are never rerun merely
-  because a client reconnects. A fork requires a settled event boundary.
+  because a client reconnects. A currently leased run is left alone. A fork
+  requires a settled event boundary. Refused admission leaves input unclaimed.
 
 Session plugins can require `SessionEnvironment` to access the workspace and
 current session record. `domainLoop` and `domainSession` bridge an existing domain
@@ -88,7 +96,12 @@ state when a session is forked.
 
 The SQLite plugin uses WAL and transactional sequence allocation. The memory
 plugin uses a workspace-scoped append-only JSONL ledger. The default new data
-namespace is `.efferent/runtime`; historical data is retained without migration.
+namespace is `.efferent/runtime`. Existing SQLite journal tables are imported
+once into the unified tables while preserving the originals. `legacyPaths`
+imports separate older files through read-only connections; import markers
+prevent duplicates and resurrection after pruning. Conflicting owners or
+positions refuse the entire source. Stop older application versions before
+migrating, because subsequent old-version writes are not mirrored.
 The models plugin reads existing model settings and credentials as fallbacks by
 default. Explicit plugin options and current credentials win. Set its
 `inheritPrevious` option to `false` to use an independent setup; new logins and

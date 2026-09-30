@@ -65,12 +65,19 @@ by the terminal editor.
 
 ## Harness sessions
 
-The `Harness` keeps its own sessions in the configured `SessionStore`.
-Composable agents keep theirs in a session log instead (see
-[Sessions](#sessions-one-log-per-session)).
+The `Harness` and composable agents share the configured `SessionLog` and
+`Sessions` lifecycle (see [Sessions](#sessions-one-log-per-session)). The
+historical `SessionStore` API is a deprecated event projection over that log;
+it owns no separate tables. A harness graph composes `sessionSqlitePlugin`
+(storage, compatibility projection and open admission) with `sessionsPlugin`
+(turn ownership). Process-owned CLI hosts configure the latter with
+`{ ownership: { mode: "process" } }`; hosts sharing a database across concurrent
+instances use lease ownership.
 
-- `create`, `resume`, `list`, and `fork` operate on the configured SessionStore.
-- `send` journals input and serializes runs; `steer` queues input for a loop's
+- `create`, `resume`, `list`, and `fork` operate on the same session heads and
+  immutable fork boundaries as the unified log.
+- `send` journals input, admits through `Sessions.begin` and writes through its
+  `TurnWriter` before ending the turn; `steer` queues input for a loop's
   next admission boundary; `continue` resumes the pending queue.
 - `use(Service, callback)` accesses a selected domain service while holding the
   session gate; resource disposal waits until the callback completes.
@@ -79,7 +86,9 @@ Composable agents keep theirs in a session log instead (see
   the journal. Notifications can coalesce; journal entries are not dropped.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.
 - A reopened unfinished run is marked cancelled. Tools are never rerun merely
-  because a client reconnects. A fork requires a settled event boundary.
+  because a client reconnects. A currently leased run is left alone. A fork
+  requires a settled event boundary. A refused begin leaves the queued input
+  unclaimed so the caller can continue it once the session is free.
 
 Session plugins can require `SessionEnvironment` to access the workspace and
 current session record. `domainLoop` and `domainSession` bridge an existing domain
@@ -278,6 +287,15 @@ skills, step context, completion) is the host's.
 **Defining the agent.** `Agent.define(config)` (from `@xandreed/sdk`) resolves
 the graph and activates its runtime plugins once, in the caller's scope.
 Session plugins, if any, are activated per turn with the turn's services.
+Session plugins requiring `RunContext`, `TurnEvents`, `TurnTasks`,
+`TurnMemory`, `TurnPrompt` or `TurnToolbox` activate after `TurnLive` and
+before the user's message is taken by memory. Their dependent plugins
+activate in the same phase, and all subscriptions/resources finalize with
+that turn. Memory, registry and loop providers activate first: a plugin
+requiring the services of an already-open turn cannot also provide those
+foundations. Runtime plugins cannot require turn services. This lets a
+capability ship a session plugin that installs its reactions without coupling
+the loop to the capability's domain.
 Swapping a strategy is swapping one entry. The host builds one `Sessions`
 (see [Sessions](#sessions-one-log-per-session)) and gives the agent the same
 instance its own code uses, in `services`.
@@ -427,6 +445,37 @@ in the summary. The strategy decides when (on write above a size, or at
 compaction); the `ResultDigester` runs the tool's own prompt for the latest
 `userMessage` (a log without one digests nothing); the outcome is
 logged once as a `ToolDigest` entry and never recomputed on replay.
+
+**Durable model requests.** Before each real provider step, the turn writes
+and flushes `request.prepared`. This protocol record carries the complete
+active tool declarations, tool choice, system text, public requested model
+configuration, prompt cache key, call policy and the memory strategy's render
+recipe/version. Messages remain in their original memory events. A dispatch
+reads a fresh durable snapshot, folds those memory facts with the saved
+recipe, and compares the resulting prompt and header with the actual Effect
+AI request. Changes to messages, schemas, tool choice or described model
+settings fail with `request.diverged` before the provider runs. Prompt data
+is frozen; a stream fallback checks the same contract again. Host-planned
+batches make no provider request and create no request header.
+
+`replayModelRequest(events, runId, step)` reconstructs one historical request
+at its header's position, excluding later responses. It uses recorded tool
+schemas and render options, so changing installed plugins does not rewrite
+historical requests. Retention must preserve `request.prepared` and the
+memory facts it references; removing optional `context.built`, trace content
+or usage diagnostics does not affect this contract. Earlier logs without a
+header remain readable but cannot reconstruct this additional metadata.
+
+Effect AI models hide provider configuration inside adapters. Efferent's
+provider adapters and routers describe their public options with
+`describeModel(model, { provider, model, settings })`; hosts should do the
+same for custom models, preserving the descriptor when wrapping a model
+(`modelRequestDescriptorOf` reads it). An undescribed model is recorded as
+explicitly opaque: its prompt/tools are checked, but its private provider
+settings cannot be validated. Credentials never belong in `settings`.
+The invariant covers the Effect AI request boundary; provider-specific HTTP
+serialization, retry/fallback routing and transport transformations remain
+adapter contracts. It does not claim to reproduce raw HTTP wire bytes.
 
 `ConversationMemory.open({ conversation, runId, log })` opens a strategy over
 the turn's `LogHandle` (the entries of earlier turns, and appends through the
@@ -609,6 +658,41 @@ background tasks. Two layers split the work:
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it.
 
+### Existing SQLite journals
+
+SQLite opens the unified `session_heads` and `session_log_events` tables. On
+the first open it imports existing `harness_sessions`/`harness_events` and
+`conversations`/`messages`/`checkpoints`/`run_outcomes` into those tables in one
+IMMEDIATE transaction. The original rows, event ids, message positions,
+checkpoints, timestamps and `user_version` are preserved. Corrupt legacy
+message rows retain their positions and are skipped by the compatibility
+reader, as before. A failed import rolls back all imported rows and can be
+retried after repairing the source.
+
+`SessionLogSqliteLive(path, { legacyPaths: [...] })` and the storage plugin's
+`legacyPaths` option import older files through read-only connections into the
+configured destination. The storage plugin binds orphan historical message
+rows to its `SessionEnvironment.workspace`; standalone adapters may name
+`legacyOwner` explicitly, and otherwise isolate unknown orphans under the
+compatibility owner. An orphan never borrows an existing destination owner's
+identity. Existing sources are left intact; absent optional
+sources are skipped. Canonical file paths identify import sources, and import
+markers survive removal of sessions so reopening cannot duplicate or
+resurrect old records. An owner, identity or historical-position conflict
+refuses the whole source; equivalent source copies are deduplicated. Stop older application versions before migrating: the
+import is a snapshot, and subsequent writes by an old version are not mirrored.
+
+`SessionStoreProjectionLive` and `ConversationStoreProjectionLive` are the
+explicit deprecated compatibility surfaces. Both require the host's
+`SessionLog`; their writes append `harness.event` or `conversation.*` records
+with revision checks, and positional batches stay atomic. The convenience
+`SessionStoreLive(path)` and `SqliteConversationStoreLive(path)` compose these
+projections over SQLite without creating the former storage tables. Math and
+Canvas compose the message projection over their harness log and import their
+older message database through `legacyPaths`; domain page/catalog/theme stores
+continue to own their product data. New hosts use `Sessions`, `TurnWriter` and
+`ConversationMemory` directly.
+
 ```ts
 const view = yield* sessions.create({ owner })                 // SessionView: header, turns, title, open, pending
 const address = { id: view.header.id, owner }                  // another owner's address finds nothing
@@ -717,6 +801,15 @@ the task's words:
 …the task's reply…
 </task-output>
 ```
+
+The runner's absolute deadline bounds admission, reads, delivery and parent
+reactions as well as the child model call. Execution leaves a short reserve
+inside that budget to store results and endings. A finite-budget runner admits
+at most one parent reaction, interrupts it at the execution cutoff and records
+an interrupted ending. A notice whose reaction cannot begin stays in the inbox;
+an undelivered result remains in the child for `reconcile`. Serverless hosts
+also leave invocation headroom for interrupted scope finalizers to close their
+writers.
 
 The first of a child's `task.result` and `task.cancelled` ends the task.
 `cancel` stops a waiting or running task (its turn is cancelled, nothing is

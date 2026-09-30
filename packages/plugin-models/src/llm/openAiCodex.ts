@@ -2,7 +2,7 @@ import { AiError, LanguageModel } from "effect/ai"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { Effect, Result, Option, Redacted, Stream } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, foldStreamParts } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, foldStreamParts } from "@xandreed/core"
 import { OpenAiCodexWebSocketHttpClient } from "./openAiCodexWebSocket.js"
 
 export const OPENAI_CODEX_API_URL = "https://chatgpt.com/backend-api/codex"
@@ -176,7 +176,7 @@ export const makeOpenAiCodexLanguageModel = (args: {
             streaming.streamText(options as never).pipe(
               Stream.mapError((error) => mapOpenAiCodexError(args.model, error)),
             )) as LanguageModel.LanguageModel["streamText"]
-          return {
+          const model = {
             ...streaming,
             streamText,
             generateText: ((options: unknown) =>
@@ -184,6 +184,15 @@ export const makeOpenAiCodexLanguageModel = (args: {
                 Effect.map((turn) => new LanguageModel.GenerateTextResponse(turn.content as never)),
               )) as never,
           } satisfies LanguageModel.LanguageModel
+          return describeModel(model, {
+            provider: "openai-codex", model: args.model,
+            settings: {
+              strictJsonSchema: false, store: false, stream: true,
+              prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
+              text: { verbosity: "low" },
+              ...Option.match(policy, { onNone: () => ({}), onSome: (value) => ({ reasoning: { effort: value.effort, summary: "auto" } }) }),
+            },
+          })
         }),
       ),
     ),

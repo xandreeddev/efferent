@@ -1,3 +1,4 @@
+import { sessionsPlugin } from "@xandreed/plugin-sessions"
 import { describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
@@ -17,7 +18,7 @@ describe("domain session bridge", () => {
       result: (event) => event.type === "done" ? Option.some({ text: event.text, outcome: "completed" }) : Option.none(),
     })) })
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const harness = yield* Harness.make({ workspace: directory, config: { version: 1, plugins: [{ id: "store", use: sessionSqlitePlugin.id, options: { path: join(directory, "sessions.db") } }, { id: "loop", use: plugin.id }] }, plugins: [sessionSqlitePlugin, plugin] })
+      const harness = yield* Harness.make({ workspace: directory, config: { version: 1, plugins: [{ id: "store", use: sessionSqlitePlugin.id, options: { path: join(directory, "sessions.db") } }, { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } }, { id: "loop", use: plugin.id }] }, plugins: [sessionSqlitePlugin, sessionsPlugin, plugin] })
       const handle = yield* harness.create()
       yield* handle.send("hello")
       const view = domainSession<Event>(handle, (value) => Option.some(value as Event), (message) => ({ type: "error", message }))

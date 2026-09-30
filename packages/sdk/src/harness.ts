@@ -1,12 +1,18 @@
-import { Cause, Context, Effect, Exit, Fiber, Option, PubSub, Ref, Scope, Stream, Semaphore } from "effect"
-import { AgentLoop, HarnessError, SessionEnvironment, SessionStore, TurnHooks, UserMessage } from "@xandreed/core"
-import type { ConversationId, EventBody, HarnessConfig, Plugin, SessionHandle, SessionRecord } from "@xandreed/core"
+import { Cause, Clock, Context, Effect, Exit, Fiber, Option, PubSub, Ref, Scope, Stream, Semaphore } from "effect"
+import { AgentLoop, HarnessError, SessionEnvironment, SessionStore, Sessions, TurnHooks, UserMessage } from "@xandreed/core"
+import type { ConversationId, EventBody, HarnessConfig, Plugin, SessionEvent, SessionHandle, SessionRecord, TurnWriter } from "@xandreed/core"
 import { activateGraph, graphFingerprint, resolveGraph } from "@xandreed/runtime"
 import type { PluginGraph } from "@xandreed/runtime"
 
 interface PendingInput { readonly id: string; readonly text: string; readonly kind: "turn" | "steer" }
 interface TurnResult { readonly text: string; readonly outcome: "completed" | "partial" }
 const failure = (code: string, message: string) => new HarnessError({ code, message })
+const pendingOf = (events: ReadonlyArray<SessionEvent>): ReadonlyArray<PendingInput> => events.reduce((queue, event) => {
+  if (event.name === "input.queued" && typeof event.data.id === "string" && typeof event.data.text === "string") {
+    return [...queue, { id: event.data.id, text: event.data.text, kind: event.data.kind === "steer" ? "steer" as const : "turn" as const }]
+  }
+  return event.name === "input.claimed" ? queue.filter((input) => input.id !== event.data.id) : queue
+}, [] as ReadonlyArray<PendingInput>)
 const service = <I, A>(context: Context.Context<never>, tag: Context.Service<I, A>): Effect.Effect<A, HarnessError> => Option.match(Context.getOption(context, tag), {
   onNone: () => Effect.fail(failure("service.missing", `The profile does not provide ${tag.key}`)),
   onSome: Effect.succeed,
@@ -24,29 +30,29 @@ export const makeHarness = (options: {
   const seed = Context.make(SessionEnvironment, { workspace: options.workspace })
   const runtime = yield* activateGraph(initial, "runtime", Context.makeUnsafe(seed.mapUnsafe), parent)
   const store = yield* service(runtime, SessionStore)
+  const sessions = yield* service(runtime, Sessions)
   const handles = yield* Ref.make<ReadonlyMap<ConversationId, SessionHandle>>(new Map())
 
   const open = (record: SessionRecord): Effect.Effect<SessionHandle, HarnessError> => Effect.gen(function* () {
     const existing = (yield* Ref.get(handles)).get(record.id)
     if (existing !== undefined) return existing
     const journal = yield* store.read(record.id, -1)
+    const durable = yield* sessions.get({ id: record.id, owner: options.workspace }).pipe(Effect.mapError((error) => failure("session.log", String(error))))
     const abandoned = journal.reduce((runs, event) => {
       if (event.runId === undefined) return runs
       return event.name === "run.started" ? [...runs, event.runId]
         : ["run.completed", "run.cancelled", "run.failed"].includes(event.name) ? runs.filter((id) => id !== event.runId) : runs
     }, [] as ReadonlyArray<string>)
-    yield* Effect.forEach(abandoned, (runId) => store.append(record.id, { name: "run.cancelled", runId, data: { reason: "process interrupted before settlement; tool effects may be incomplete" } }))
-    const pending = yield* Ref.make(journal.reduce((queue, event) => {
-      if (event.name === "input.queued" && typeof event.data.id === "string" && typeof event.data.text === "string") {
-        return [...queue, { id: event.data.id, text: event.data.text, kind: event.data.kind === "steer" ? "steer" as const : "turn" as const }]
-      }
-      return event.name === "input.claimed" ? queue.filter((input) => input.id !== event.data.id) : queue
-    }, [] as ReadonlyArray<PendingInput>))
+    yield* Effect.forEach(abandoned.filter((runId) => !Option.exists(durable.open, (open) => open.runId === runId)), (runId) => store.append(record.id, { name: "run.cancelled", runId, data: { reason: "process interrupted before settlement; tool effects may be incomplete" } }))
+    const pending = yield* Ref.make(pendingOf(journal))
     const notifications = yield* PubSub.sliding<void>(1)
     const transientHub = yield* PubSub.sliding<EventBody>(128)
     const running = yield* Ref.make(Option.none<Fiber.Fiber<TurnResult, HarnessError>>())
     const busy = yield* Ref.make(false)
     const closed = yield* Ref.make(false)
+    const writing = yield* Ref.make(Option.none<TurnWriter>())
+    const position = yield* Ref.make(-1)
+    const publishing = yield* Semaphore.make(1)
     const gate = yield* Semaphore.make(1)
     const acquire = (graph: PluginGraph) => Effect.gen(function* () {
       const scope = yield* Scope.make()
@@ -58,7 +64,17 @@ export const makeHarness = (options: {
       return { context, scope, graph, fingerprint: graphFingerprint(graph) }
     })
     const mounted = yield* Ref.make(yield* acquire(yield* Ref.get(graphRef)))
-    const publish = (body: EventBody) => store.append(record.id, body).pipe(Effect.tap(() => PubSub.publish(notifications, undefined)))
+    const publishUnlocked = (body: EventBody) => Ref.get(writing).pipe(Effect.flatMap(Option.match({
+      onNone: () => store.append(record.id, body),
+      onSome: (writer) => writer.transact((foreign) => Effect.gen(function* () {
+        const foreignPosition = foreign.reduce((max, entry) => entry.kind === "harness.event" && typeof entry.data.event === "object" && entry.data.event !== null && "seq" in entry.data.event && typeof entry.data.event.seq === "number" ? Math.max(max, entry.data.event.seq) : max, -1)
+        const seq = Math.max(yield* Ref.get(position), foreignPosition) + 1
+        const event: SessionEvent = { ...body, version: 1, id: yield* Effect.sync(() => crypto.randomUUID()), sessionId: record.id, seq, at: yield* Clock.currentTimeMillis }
+        return { drafts: [{ kind: "harness.event", data: { event } }], result: event }
+      })).pipe(Effect.map((done) => done.result), Effect.tap((event) => Ref.set(position, event.seq))),
+    })), Effect.tap(() => PubSub.publish(notifications, undefined)))
+    const publish = (body: EventBody) => publishing.withPermits(1)(publishUnlocked(body))
+    const refreshPending = publishing.withPermits(1)(store.read(record.id, -1).pipe(Effect.flatMap((events) => Ref.set(pending, pendingOf(events)))))
     const assertOpen = Ref.get(closed).pipe(Effect.flatMap((value) => value ? Effect.fail(failure("session.closed", "Session is closed")) : Effect.void))
     const refresh = Effect.gen(function* () {
       if (yield* Ref.get(busy)) return
@@ -74,16 +90,32 @@ export const makeHarness = (options: {
       Effect.andThen(Ref.update(pending, (queue) => queue.filter((item) => item.id !== input.id))),
     )
     const steering = Effect.gen(function* () {
+      yield* refreshPending
       const inputs = (yield* Ref.get(pending)).filter((input) => input.kind === "steer")
       yield* Effect.forEach(inputs, claim)
       return inputs.length === 0 ? Option.none<string>() : Option.some(inputs.map((input) => input.text).join("\n\n"))
     })
-    const run = (input: PendingInput) => Effect.gen(function* () {
+    const run = (input: PendingInput) => Effect.scoped(Effect.gen(function* () {
       yield* refresh
       const current = yield* Ref.get(mounted)
       const loop = yield* service(current.context, AgentLoop)
       const hooks = Context.getOption(current.context, TurnHooks)
       const runId = crypto.randomUUID()
+      const begun = yield* Effect.result(sessions.begin({ id: record.id, owner: options.workspace }, {
+        _tag: "User", userMessage: new UserMessage({ text: input.text }), runId, key: input.id, command: { kind: input.kind },
+      }))
+      if (begun._tag === "Failure") {
+        if (begun.failure._tag === "TurnDuplicate") {
+          // Another instance already admitted this exact input between our read and begin.
+          yield* claim(input)
+          return true
+        }
+        return yield* Effect.fail(failure(begun.failure._tag === "SessionBusy" ? "session.busy" : "session.begin", `The turn could not begin (${begun.failure._tag})`))
+      }
+      const writer = begun.success
+      yield* Ref.set(position, (yield* store.read(record.id, -1)).at(-1)?.seq ?? -1)
+      yield* Ref.set(writing, Option.some(writer))
+      yield* Effect.addFinalizer(() => Ref.set(writing, Option.none()))
       yield* claim(input)
       yield* publish({ name: "run.started", runId, data: { config: current.fingerprint } })
       // Queued input is never blank (see `enqueue`), so it is a valid user message.
@@ -97,7 +129,7 @@ export const makeHarness = (options: {
         const result = yield* loop.run(prepared)
         if (Option.isSome(hooks)) yield* hooks.value.after(prepared)
         return result
-      }).pipe(Effect.interruptible)
+      }).pipe(Effect.interruptible, Effect.raceFirst(writer.closed.pipe(Effect.flatMap((ended) => Effect.fail(failure("turn.closed", `The turn was ${ended.reason}`))))))
       yield* Ref.set(busy, true)
       const fiber = yield* Effect.forkIn(task, parent)
       yield* Ref.set(running, Option.some(fiber))
@@ -108,15 +140,18 @@ export const makeHarness = (options: {
         ? publish({ name: "run.completed", runId, data: { ...exit.value } })
         : publish({ name: Cause.hasInterruptsOnly(exit.cause) ? "run.cancelled" : "run.failed", runId,
           data: { message: Cause.hasInterruptsOnly(exit.cause) ? "Cancelled; unfinished tool effects are not replayed" : Cause.pretty(exit.cause) } })
+      yield* writer.end({ reason: Exit.isSuccess(exit) ? exit.value.outcome : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed",
+        failure: Exit.isSuccess(exit) ? Option.none() : Option.some({ code: "run.failed", message: Cause.pretty(exit.cause) }) })
       yield* Ref.set(running, Option.none())
       yield* Ref.set(busy, false)
       if (Exit.isFailure(exit) && !Cause.hasInterruptsOnly(exit.cause)) return yield* Effect.fail(failure("run.failed", Cause.pretty(exit.cause)))
       return Exit.isSuccess(exit)
-    }).pipe(Effect.uninterruptible)
+    })).pipe(Effect.uninterruptible)
     /** Runs queued inputs in order until the queue is empty, the harness closes or a run says stop. */
     const runPending = (): Effect.Effect<void, Effect.Error<ReturnType<typeof run>>, Effect.Services<ReturnType<typeof run>>> =>
       Effect.gen(function* () {
         if (yield* Ref.get(closed)) return
+        yield* refreshPending
         const next = (yield* Ref.get(pending))[0]
         if (next !== undefined && (yield* run(next))) yield* runPending()
       })
@@ -125,8 +160,7 @@ export const makeHarness = (options: {
       yield* assertOpen
       if (text.trim().length === 0) return yield* Effect.fail(failure("input.empty", "Enter a message"))
       const input = { id: crypto.randomUUID(), text, kind }
-      yield* publish({ name: "input.queued", data: input })
-      yield* Ref.update(pending, (queue) => [...queue, input])
+      yield* publishing.withPermits(1)(publishUnlocked({ name: "input.queued", data: input }).pipe(Effect.andThen(Ref.update(pending, (queue) => [...queue, input]))))
     })
     const interrupt = Ref.get(running).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid) })))
     const close = Ref.getAndSet(closed, true).pipe(Effect.flatMap((already) => already ? Effect.void : Effect.gen(function* () {

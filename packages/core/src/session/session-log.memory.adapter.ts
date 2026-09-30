@@ -2,7 +2,7 @@ import { Clock, Effect, Layer, Option, Ref } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import { SessionLog } from "../ports/session-log.port.js"
 import { LeaseExpired, RevisionConflict, SessionExists, SessionMissing } from "./session-log.entity.js"
-import type { JsonObject, SessionCommitted, SessionHead, SessionLogEvent } from "./session-log.entity.js"
+import type { JsonObject, SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "./session-log.entity.js"
 
 /** A head as stored (its `now` is added when read) and the session's events. */
 interface Stored {
@@ -14,6 +14,16 @@ type Store = ReadonlyMap<string, Stored>
 
 /** Stored JSON is a copy: what a caller later mutates never reaches the log. */
 const stored = (value: JsonObject): JsonObject => JSON.parse(JSON.stringify(value)) as JsonObject
+
+const copyHeader = (header: SessionHeader): SessionHeader => ({
+  ...header, meta: stored(header.meta), parent: Option.map(header.parent, (parent) => ({ ...parent })),
+})
+const copyHead = (head: Omit<SessionHead, "now">, now: number): SessionHead => ({
+  ...head, header: copyHeader(head.header), state: stored(head.state), now,
+})
+const copyEvent = (event: SessionLogEvent): SessionLogEvent => ({
+  ...event, turn: Option.map(event.turn, (turn) => turn), data: stored(event.data),
+})
 
 /** Every session under `ids`, their children, and theirs. */
 const withDescendants = (all: Store, ids: ReadonlySet<string>): ReadonlySet<string> => {
@@ -38,13 +48,13 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
     create: (header) => now.pipe(Effect.flatMap((at) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
       if (all.has(header.id)) return [Effect.fail(new SessionExists({ session: header.id })), all]
       if (Option.isSome(header.parent) && !all.has(header.parent.value.id)) return [Effect.fail(missing(header.parent.value.id)), all]
-      const head = { header: { ...header, meta: stored(header.meta) }, seq: 0, revision: 0, state: {}, updatedAt: at }
-      return [Effect.succeed({ ...head, now: at }), new Map([...all, [header.id, { head, events: [] }]])]
+      const head = { header: copyHeader(header), seq: 0, revision: 0, state: {}, updatedAt: at }
+      return [Effect.succeed(copyHead(head, at)), new Map([...all, [header.id, { head, events: [] }]])]
     })), Effect.flatten),
     head: (id) => Effect.gen(function* () {
       const at = yield* now
       const session = (yield* Ref.get(store)).get(id)
-      return session === undefined ? yield* Effect.fail(missing(id)) : { ...session.head, now: at }
+      return session === undefined ? yield* Effect.fail(missing(id)) : copyHead(session.head, at)
     }),
     list: (query) => Effect.gen(function* () {
       const at = yield* now
@@ -56,13 +66,13 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
         }))
         .filter(Option.match(query.before, { onNone: () => () => true, onSome: olderThan }))
         .sort((left, right) => right.updatedAt - left.updatedAt || (right.header.id < left.header.id ? -1 : right.header.id > left.header.id ? 1 : 0))
-      return heads.slice(0, Math.max(0, query.limit)).map((head) => ({ ...head, now: at }))
+      return heads.slice(0, Math.max(0, query.limit)).map((head) => copyHead(head, at))
     }),
     read: (id, query) => Ref.get(store).pipe(Effect.flatMap((all) => {
       const session = all.get(id)
       if (session === undefined) return Effect.fail(missing(id))
       const events = session.events.filter((event) => event.seq > query.after && (query.kinds.length === 0 || query.kinds.includes(event.kind)))
-      return Effect.succeed(Option.match(query.limit, { onNone: () => events, onSome: (limit) => events.slice(0, Math.max(0, limit)) }))
+      return Effect.succeed(Option.match(query.limit, { onNone: () => events, onSome: (limit) => events.slice(0, Math.max(0, limit)) }).map(copyEvent))
     })),
     commit: (id, commit) => now.pipe(Effect.flatMap((at) => Ref.modify(store, (all): readonly [Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing>, Store] => {
       const session = all.get(id)
@@ -74,7 +84,7 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
         return [Effect.fail(new LeaseExpired({ session: id, notAfter: commit.notAfter.value, now: at })), all]
       }
       const events = commit.events.map((draft, index): SessionLogEvent => ({
-        session: id, seq: session.head.seq + index + 1, turn: draft.turn, kind: draft.kind, at, data: stored(draft.data),
+        session: id, seq: session.head.seq + index + 1, turn: Option.map(draft.turn, (turn) => turn), kind: draft.kind, at, data: stored(draft.data),
       }))
       const head = {
         ...session.head,
@@ -84,7 +94,7 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
         updatedAt: at,
       }
       return [
-        Effect.succeed({ revision: head.revision, seq: head.seq, events, at }),
+        Effect.succeed({ revision: head.revision, seq: head.seq, events: events.map(copyEvent), at }),
         new Map([...all, [id, { head, events: [...session.events, ...events] }]]),
       ]
     })), Effect.flatten),
