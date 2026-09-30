@@ -24,7 +24,6 @@ import type {
   AdmittedTurn,
   BeginTurn,
   InboxItem,
-  OpenTurn,
   SessionAddress,
   SessionCommitted,
   SessionDraft,
@@ -33,8 +32,10 @@ import type {
   TurnDraft,
   TurnWriter,
 } from "@xandreed/core"
+import { processLiveness } from "./process-liveness.adapter.js"
 import { closedState, heldTurn, pendingOf, stateJson, stateOf, titleOf, viewOf } from "./sessions-state.entity.functions.js"
-import type { SessionsConfig, SessionsState } from "./sessions-state.entity.js"
+import type { Holder } from "./sessions-state.entity.functions.js"
+import type { HeldTurn, ProcessLiveness, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 import { makeTurnWriter } from "./turn-writer.adapter.js"
 import type { OpenWriter } from "./turn-writer.adapter.js"
 
@@ -61,13 +62,17 @@ const standalone = (drafts: ReadonlyArray<TurnDraft>): ReadonlyArray<SessionDraf
  * the inbox) is kept in the head and changed only by guarded commits, with
  * the events that justify it, so every instance over the same log agrees.
  * Turns are written by their `TurnWriter`; everything else here is one
- * compare-and-swap loop that plans again after a conflict.
+ * compare-and-swap loop that plans again after a conflict. Under process
+ * ownership, `liveness` names this process in the turns it holds and tells
+ * whether another's still runs (by default, by host, pid and `kill(pid, 0)`).
  */
-export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, never, SessionLog | TurnAdmission> => Layer.effect(Sessions, Effect.gen(function* () {
+export const SessionsLive = (config: SessionsConfig, options?: { readonly liveness?: ProcessLiveness }): Layer.Layer<Sessions, never, SessionLog | TurnAdmission> => Layer.effect(Sessions, Effect.gen(function* () {
   const log = yield* SessionLog
   const admission = yield* TurnAdmission
   const ownership = config.ownership
   const instance = yield* Effect.sync(() => crypto.randomUUID())
+  const liveness = options?.liveness ?? processLiveness
+  const holder: Holder = { instance, liveness, process: ownership.mode === "process" ? yield* liveness.current : Option.none() }
   const signals = yield* PubSub.unbounded<string>()
   const writers = yield* Ref.make(new Map<string, OpenWriter & { readonly turn: number }>())
   const wake = (id: string) => PubSub.publish(signals, id).pipe(Effect.asVoid)
@@ -76,7 +81,7 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
   const stateFrom = (head: SessionHead) => stateOf(head).pipe(Effect.mapError(storage("session.state")))
   const owned = (address: SessionAddress) => log.head(address.id).pipe(Effect.flatMap((head) =>
     head.header.owner === address.owner ? Effect.succeed(head) : Effect.fail(new SessionMissing({ session: address.id }))))
-  const viewFrom = (head: SessionHead) => stateFrom(head).pipe(Effect.map((state) => viewOf(head, state, ownership, instance)))
+  const viewFrom = (head: SessionHead) => stateFrom(head).pipe(Effect.flatMap((state) => viewOf(head, state, ownership, holder)))
 
   /**
    * Plan from the head and commit it, against the revision planned from;
@@ -109,7 +114,7 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
 
   /** An open turn nobody holds any more (its lease ran out, or its process is gone) is closed as interrupted. */
   const reaped = (head: SessionHead, state: SessionsState) => Effect.gen(function* () {
-    if (Option.isNone(state.open) || Option.isSome(heldTurn(head, state, ownership, instance))) return { drafts: [] as ReadonlyArray<SessionDraft>, state }
+    if (Option.isNone(state.open) || Option.isSome(yield* heldTurn(head, state, ownership, holder))) return { drafts: [] as ReadonlyArray<SessionDraft>, state }
     const turn = state.open.value.turn
     const after = closedState(state, "interrupted", config.inbox.attempts)
     const closing = yield* turnEndedDraft(turn, { reason: "interrupted", failure: Option.some({ code: "turn.lease", message: "the turn's holder stopped writing" }) })
@@ -179,9 +184,10 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
       const userMessage = input._tag === "User" ? input.userMessage : new UserMessage({ text: claimed.map((item) => item.content).join("\n\n") })
       const turn = state.turns + 1
       const key = input._tag === "User" ? input.key : input.runId
-      const open: OpenTurn = {
+      const open: HeldTurn = {
         turn, runId: input.runId, key, origin: input._tag === "User" ? "user" : "inbox", holder: instance,
         expiresAt: ownership.mode === "lease" ? Option.some(head.now + ownership.ttlMs) : Option.none(),
+        process: holder.process,
       }
       const next: SessionsState = {
         ...state,
@@ -299,7 +305,7 @@ export const SessionsLive = (config: SessionsConfig): Layer.Layer<Sessions, neve
     changes: (address) => Stream.fromPubSub(signals).pipe(Stream.filter((id) => id === address.id), Stream.map(() => undefined)),
     lookup: (address, key) => owned(address).pipe(Effect.flatMap(() => keyed(address.id, key)), Effect.map(Option.map((found) => found.turn))),
     transact: (address, decide) => guarded(address, (head, state) => Effect.gen(function* () {
-      const decision = yield* decide(viewOf(head, state, ownership, instance))
+      const decision = yield* decide(yield* viewOf(head, state, ownership, holder))
       const reserved = decision.drafts.find((draft) => RESERVED_KINDS.includes(draft.kind))
       if (reserved !== undefined) return yield* Effect.fail(new ReservedKind({ kind: reserved.kind }))
       return { drafts: standalone(decision.drafts), next: Option.none<SessionsState>(), result: decision.result }

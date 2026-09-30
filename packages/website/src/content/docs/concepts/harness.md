@@ -72,7 +72,8 @@ by the terminal editor.
 The harness and composable agents share `SessionLog` and `Sessions`. The
 deprecated `SessionStore` and `ConversationStore` APIs are projections over
 that journal. Compose the SQLite storage plugin with `sessionsPlugin`; CLI
-hosts use process ownership, while concurrent hosts use leases.
+hosts use process ownership (a live process's turn is busy to another process
+on the same host), while hosts sharing a database across machines use leases.
 
 - `create`, `resume`, `list`, and `fork` use the unified session heads and
   immutable history boundaries.
@@ -86,7 +87,8 @@ hosts use process ownership, while concurrent hosts use leases.
   the journal. Notifications can coalesce; journal entries are not dropped.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.
 - A reopened unfinished run is marked cancelled. Tools are never rerun merely
-  because a client reconnects. A currently leased run is left alone. A fork
+  because a client reconnects. A run still held, by its lease or by a process
+  that still runs, is left alone. A fork
   requires a settled event boundary. Refused admission leaves input unclaimed.
 
 Session plugins can require `SessionEnvironment` to access the workspace and
@@ -170,8 +172,8 @@ in-memory and a SQLite log) and reads and writes sessions only through
 `@xandreed/plugin-sessions`, as `Agent.turn` does. One turn is open per
 session at a time; a second message is refused, a retried one is found by
 its key. Turns are owned by a lease judged by the storage's clock (several
-instances) or by the process (one). Reading or following a session never
-runs anything.
+instances) or by the process that began them, for as long as it runs (one
+host). Reading or following a session never runs anything.
 
 A background task (`@xandreed/plugin-tasks`) is one turn of a child session,
 a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`.

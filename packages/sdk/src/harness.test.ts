@@ -184,6 +184,35 @@ describe("durable SDK sessions", () => {
     })))
   })
 
+  test("under process ownership, a second instance neither cancels nor steals a live process's turn", async () => {
+    const directory = workspace()
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const held = loop("held", (input) => Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)),
+        Effect.andThen(input.publish({ name: "answer", runId: input.runId, data: { text: input.userMessage.text } })),
+        Effect.as({ text: "first", outcome: "completed" as const }),
+      ))
+      const first = yield* Harness.make({ workspace: directory, config: config(directory, "held"), plugins: [sessionSqlitePlugin, sessionsPlugin, held] })
+      const session = yield* first.create()
+      const sending = yield* Effect.forkChild(session.send("first"))
+      yield* Deferred.await(entered)
+      const other = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
+      const resumed = yield* other.resume(session.record.id)
+      expect((yield* resumed.history).filter((event) => event.name === "run.cancelled")).toEqual([])
+      expect((yield* Effect.flip(resumed.send("second"))).code).toBe("session.busy")
+      expect((yield* resumed.pending).map((input) => input.text)).toEqual(["second"])
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(sending)
+      yield* resumed.continue
+      const log = yield* resumed.use(SessionLog, Effect.succeed)
+      const events = yield* log.read(session.record.id, { after: 0, kinds: [], limit: Option.none() })
+      expect(events.filter((event) => event.kind === "turn.ended").map((event) => [Option.getOrThrow(event.turn), event.data.reason])).toEqual([[1, "completed"], [2, "completed"]])
+      expect((yield* resumed.history).filter((event) => event.name === "answer").map((event) => event.data.text)).toEqual(["first", "second"])
+    })))
+  })
+
   test("concurrent handles consume one queued input only once", async () => {
     const directory = workspace()
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {

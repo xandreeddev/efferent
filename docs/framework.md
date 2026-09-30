@@ -71,8 +71,9 @@ historical `SessionStore` API is a deprecated event projection over that log;
 it owns no separate tables. A harness graph composes `sessionSqlitePlugin`
 (storage, compatibility projection and open admission) with `sessionsPlugin`
 (turn ownership). Process-owned CLI hosts configure the latter with
-`{ ownership: { mode: "process" } }`; hosts sharing a database across concurrent
-instances use lease ownership.
+`{ ownership: { mode: "process" } }`, under which a second process on the same
+host finds a live process's turn busy; hosts sharing a database across hosts
+use lease ownership.
 
 - `create`, `resume`, `list`, and `fork` operate on the same session heads and
   immutable fork boundaries as the unified log.
@@ -86,7 +87,8 @@ instances use lease ownership.
   the journal. Notifications can coalesce; journal entries are not dropped.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.
 - A reopened unfinished run is marked cancelled. Tools are never rerun merely
-  because a client reconnects. A currently leased run is left alone. A fork
+  because a client reconnects. A run still held (by its lease, or by a process
+  that still runs) is left alone. A fork
   requires a settled event boundary. A refused begin leaves the queued input
   unclaimed so the caller can continue it once the session is free.
 
@@ -733,9 +735,16 @@ the framework writes are refused there (`RESERVED_KINDS`).
   the instances' clocks say. `renew: "none"` fixes the lease at begin,
   `"on-commit"` extends it with each write, `{ everyMs }` also renews from a
   keep-alive (which notices a remote cancel within `everyMs`).
-- `{ mode: "process" }`: one process holds its turns without expiry, and a
-  turn another process left open is closed as interrupted when this one
-  next touches the session.
+- `{ mode: "process" }`: a turn is held without expiry for as long as the
+  process that began it runs. The turn names its holder's host, pid and
+  start time: a turn left open by a process of this host that has stopped
+  (or whose pid a later process now has) is closed as interrupted when this
+  one next touches the session, and a live process's turn is busy to
+  `begin` and shown open. A holder on another host cannot be asked and
+  stays held, so several hosts over one log use a lease; a holder that
+  names no process (an older version) is reaped as before. How a process is
+  named and asked is `SessionsLive(config, { liveness })`'s; by default,
+  `kill(pid, 0)` (EPERM counts as running).
 
 A turn nobody holds any more reads as not open, and is closed as
 `interrupted` by the next `begin`, `cancel`, `deliver` or `drain`: never by

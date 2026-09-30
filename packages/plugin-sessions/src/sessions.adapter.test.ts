@@ -3,9 +3,10 @@ import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } fro
 import { TestClock } from "effect/testing"
 import { SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, SessionAddress, SessionLogEvent } from "@xandreed/core"
+import { processLiveness } from "./process-liveness.adapter.js"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
-import type { SessionsConfig } from "./sessions-state.entity.js"
+import type { HolderProcess, SessionsConfig } from "./sessions-state.entity.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
 type Service = Context.Service.Shape<typeof Sessions>
@@ -17,6 +18,13 @@ const say = (text: string, key = text, command: Record<string, unknown> = {}): B
 /** Sessions instances over one shared log: as if on several servers. */
 const instancesOver = (log: Log, ...configs: ReadonlyArray<SessionsConfig>) => Effect.forEach(configs, (config) =>
   Effect.service(Sessions).pipe(Effect.provide(SessionsLive(config).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))))
+
+const processMode: SessionsConfig = { ...sessionsDefaults, ownership: { mode: "process" } }
+
+/** A process-owned instance over the log as if in a process of its own: `self` names it, `running` are the pids its host runs. */
+const processOver = (log: Log, self: Option.Option<HolderProcess>, running: ReadonlyArray<number>) => Effect.service(Sessions).pipe(Effect.provide(
+  SessionsLive(processMode, { liveness: { current: Effect.succeed(self), alive: (pid) => Effect.succeed(running.includes(pid)) } }).pipe(
+    Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)))))
 
 const withLog = <A, E>(body: (log: Log) => Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(Effect.scoped(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive), Effect.flatMap(body))).pipe(Effect.provide(TestClock.layer())))
@@ -209,15 +217,51 @@ describe("leases", () => {
     expect((yield* Fiber.join(noticed)).reason).toBe("cancelled")
   })))
 
-  test("under process ownership, a turn another process left open is reaped at the first touch", () => withLog((log) => Effect.gen(function* () {
-    const processMode: SessionsConfig = { ...sessionsDefaults, ownership: { mode: "process" } }
-    const [crashed, restarted] = yield* instancesOver(log, processMode, processMode)
-    const address = yield* created(crashed!)
-    yield* crashed!.begin(address, say("before the crash"))
-    const next = yield* restarted!.begin(address, say("after the restart"))
-    expect(next.admitted.turn).toBe(2)
-    const ended = yield* restarted!.read(address, { kinds: ["turn.ended"] })
-    expect(ended.map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "interrupted"]])
+  test("under process ownership, a turn whose process stopped is reaped at the first touch, as is one that names no process", () => withLog((log) => Effect.gen(function* () {
+    const crashed = yield* processOver(log, Option.some({ host: "h1", pid: 101, startedAt: 1 }), [202])
+    const restarted = yield* processOver(log, Option.some({ host: "h1", pid: 202, startedAt: 2 }), [202])
+    const address = yield* created(crashed)
+    yield* crashed.begin(address, say("before the crash"))
+    expect(Option.isNone((yield* restarted.get(address)).open)).toBe(true)
+    expect((yield* restarted.begin(address, say("after the restart"))).admitted.turn).toBe(2)
+    // The pid came back after a restart: a process that started later is not the one that holds the turn.
+    const reborn = yield* processOver(log, Option.some({ host: "h1", pid: 202, startedAt: 3 }), [202])
+    expect((yield* reborn.begin(address, say("pid reused"))).admitted.turn).toBe(3)
+    // A holder that names no process (an older version, or a runtime without one) holds nothing for the others.
+    const unnamed = yield* processOver(log, Option.none(), [])
+    const other = yield* created(unnamed)
+    yield* unnamed.begin(other, say("unnamed"))
+    expect((yield* reborn.begin(other, say("after it"))).admitted.turn).toBe(2)
+    const ended = yield* restarted.read(address, { kinds: ["turn.ended"] })
+    expect(ended.map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "interrupted"], [2, "interrupted"]])
+  })))
+
+  test("under process ownership, a turn whose process runs is held: busy to begin, shown open and never reaped", () => withLog((log) => Effect.gen(function* () {
+    const holder = yield* processOver(log, Option.some({ host: "h1", pid: 101, startedAt: 1 }), [101, 202])
+    const others = [
+      yield* processOver(log, Option.some({ host: "h1", pid: 202, startedAt: 2 }), [101, 202]),
+      // Another instance of the same process: held while this process runs.
+      yield* processOver(log, Option.some({ host: "h1", pid: 101, startedAt: 1 }), []),
+      // Another host cannot ask whether the process runs: held.
+      yield* processOver(log, Option.some({ host: "h2", pid: 303, startedAt: 3 }), []),
+    ]
+    const address = yield* created(holder)
+    const writer = yield* holder.begin(address, say("still running"))
+    yield* Effect.forEach(others, (other, index) => Effect.gen(function* () {
+      expect(Option.map((yield* other.get(address)).open, (open) => open.turn)).toEqual(Option.some(1))
+      const busy = yield* Effect.flip(other.begin(address, say(`second ${index}`)))
+      expect([busy._tag, busy._tag === "SessionBusy" ? busy.turn : null]).toEqual(["SessionBusy", 1])
+      yield* other.deliver(address, { id: `i${index}`, source: {}, content: "a notice" })
+    }), { discard: true })
+    yield* writer.append([{ kind: "answer.published", data: {} }])
+    expect((yield* writer.end({ reason: "completed", failure: Option.none() })).pending).toBe(3)
+    expect(yield* all(holder, address)).toEqual(["turn.started@1", "inbox.queued", "inbox.queued", "inbox.queued", "answer.published@1", "turn.ended@1"])
+  })))
+
+  test("the default liveness names this process and asks the host whether a pid runs", () => Effect.runPromise(Effect.gen(function* () {
+    const current = Option.getOrThrow(yield* processLiveness.current)
+    expect([current.pid, current.host.length > 0, current.startedAt <= Date.now()]).toEqual([process.pid, true, true])
+    expect(yield* Effect.forEach([process.pid, 0, 2 ** 30], processLiveness.alive)).toEqual([true, false, false])
   })))
 
   test("expiry is judged by the storage clock, even when it is far from the instance's", () => withLog((inner) => Effect.gen(function* () {
