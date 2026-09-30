@@ -167,7 +167,9 @@ export const SessionStoreProjectionLive = Layer.effect(SessionStore, Effect.gen(
       const created = yield* log.create({
         id: ConversationId.make(crypto.randomUUID()), owner: parent.header.owner, origin: parent.header.origin,
         createdAt: yield* Clock.currentTimeMillis, meta: { ...parent.header.meta, legacyParent: id },
-        parent: inheritedCut ? Option.none() : Option.some({ id, through: Option.match(boundary, { onNone: () => 0, onSome: (event) => event.seq }), turnAtFork }),
+        // An inherited cut is copied below. Keep its logical parent and turn counter,
+        // with an empty inherited prefix so the copied records are not read twice.
+        parent: Option.some({ id, through: inheritedCut ? 0 : Option.match(boundary, { onNone: () => 0, onSome: (event) => event.seq }), turnAtFork }),
       }).pipe(Effect.mapError(storageFailure))
       if (copied.length > 0) yield* compatibilityCommit(log, created.header.id, () => Effect.succeed({ drafts: copied.map((event) => ({ kind: event.kind, turn: Option.none(), data: event.data })), result: undefined })).pipe(
         Effect.onError(() => log.remove(created.header.id).pipe(Effect.ignore)),

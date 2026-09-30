@@ -52,8 +52,8 @@ export const createTuiState = (initial: SessionRecord, theme: ThemeName = "dark"
   }
   /**
    * Replay the running run's early deltas after the whole durable batch, so
-   * they follow the blocks of its earlier turns in the same batch; a run the
-   * batch also settled has dropped them already.
+   * settlement in that batch remains authoritative. The projection orders
+   * turns even when earlier durable blocks arrive in a later batch.
    */
   const replayEarly = (state: typeof emptyTranscript) => {
     const waiting = state.runId === "" ? [] : earlyDeltas().filter((delta) => delta.runId === state.runId)

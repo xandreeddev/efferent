@@ -3,7 +3,7 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Deferred, Effect, Exit, Layer, Option, Schema } from "effect"
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Schema } from "effect"
 import { AgentLoop, ConversationStore, definePlugin, makeSession, SessionLog, SessionStore, SessionEnvironment } from "@xandreed/core"
 import { ConversationStoreProjectionLive, sessionSqlitePlugin } from "@xandreed/plugin-session-sqlite"
 import { Harness } from "./harness.js"
@@ -52,6 +52,55 @@ describe("domain session bridge", () => {
       const late = yield* Deferred.await(lateWrite)
       expect(Exit.isFailure(late) ? String(late.cause) : "recorded").toContain("turn is over")
       expect((yield* handle.use(ConversationStore, (store) => store.list(handle.record.id))).map((message) => message.role === "user" ? message.content : "")).toEqual(["hello"])
+    })).pipe(Effect.ensuring(Effect.sync(() => rmSync(directory, { recursive: true, force: true })))))
+  })
+
+  test("a previous run's detached conversation writes stay refused while the next run is active", async () => {
+    const directory = mkdtempSync(join(tmpdir(), "efferent-domain-"))
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const later = yield* Deferred.make<void>()
+      const lateWrites = yield* Deferred.make<ReadonlyArray<Exit.Exit<unknown, unknown>>>()
+      const nextEntered = yield* Deferred.make<void>()
+      const nextRelease = yield* Deferred.make<void>()
+      const conversations = definePlugin({ id: "test/conversations", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {}, requires: [SessionLog], provides: [ConversationStore], layer: () => ConversationStoreProjectionLive() })
+      const plugin = definePlugin({ id: "test/writing-domain", version: "1", config: Schema.Struct({}), defaults: {}, requires: [SessionStore, SessionEnvironment, ConversationStore], provides: [AgentLoop], layer: () => Layer.effect(AgentLoop, domainLoop({
+        create: (conversationId) => makeSession<Event, ConversationStore>({ conversationId, onError: (message) => ({ type: "error", message }), runTurn: (text, publish) => Effect.gen(function* () {
+          const store = yield* ConversationStore
+          yield* store.append(conversationId, { role: "user", content: text })
+          if (text === "first") {
+            // These effects run in the first turn's detached fiber after a second turn begins.
+            yield* Effect.forkDetach(Deferred.await(later).pipe(Effect.andThen(Effect.all([
+              Effect.exit(store.append(conversationId, { role: "user", content: "late" })),
+              Effect.exit(store.appendAll(conversationId, [{ role: "user", content: "late batch" }])),
+              Effect.exit(store.checkpoint(conversationId, "late checkpoint")),
+              Effect.exit(store.checkpointAt(conversationId, "late positioned checkpoint", 0)),
+              Effect.exit(store.setTitle(conversationId, "late title")),
+              Effect.exit(store.recordOutcome(conversationId, "ok", "completed")),
+            ])), Effect.flatMap((exits) => Deferred.succeed(lateWrites, exits))))
+          } else {
+            yield* Deferred.succeed(nextEntered, undefined)
+            yield* Deferred.await(nextRelease)
+            yield* store.append(conversationId, { role: "user", content: "current turn remains writable" })
+          }
+          yield* publish({ type: "done", text })
+        }) }),
+        result: (event) => event.type === "done" ? Option.some({ text: event.text, outcome: "completed" }) : Option.none(),
+      })) })
+      const harness = yield* Harness.make({ workspace: directory, config: { version: 1, plugins: [{ id: "store", use: sessionSqlitePlugin.id, options: { path: join(directory, "sessions.db") } }, { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } }, { id: "conversations", use: conversations.id }, { id: "loop", use: plugin.id }] }, plugins: [sessionSqlitePlugin, sessionsPlugin, conversations, plugin] })
+      const handle = yield* harness.create()
+      yield* handle.send("first")
+      const sending = yield* Effect.forkChild(handle.send("second"))
+      yield* Deferred.await(nextEntered)
+      yield* Deferred.succeed(later, undefined)
+      const late = yield* Deferred.await(lateWrites)
+      expect(late.length).toBe(6)
+      expect(late.every(Exit.isFailure)).toBe(true)
+      expect(late.every((exit) => Exit.isFailure(exit) && String(exit.cause).includes("turn is over"))).toBe(true)
+      yield* Deferred.succeed(nextRelease, undefined)
+      yield* Fiber.join(sending)
+      expect((yield* handle.use(ConversationStore, (store) => store.list(handle.record.id))).map((message) => message.role === "user" ? message.content : "")).toEqual(["first", "second", "current turn remains writable"])
+      const records = yield* handle.use(SessionLog, (log) => log.read(handle.record.id, { after: 0, kinds: ["conversation.message", "conversation.checkpoint", "conversation.title", "conversation.outcome"], limit: Option.none() }))
+      expect(records.map((entry) => entry.kind)).toEqual(["conversation.message", "conversation.message", "conversation.message"])
     })).pipe(Effect.ensuring(Effect.sync(() => rmSync(directory, { recursive: true, force: true })))))
   })
 })

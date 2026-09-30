@@ -272,6 +272,21 @@ describe("harness fork boundaries", () => {
     expect(started.map((event) => Option.getOrNull(event.turn))).toEqual([2, 3])
   })))
 
+  test("a fork at an inherited-only boundary keeps its turn counter and exactly one copy of its prefix", () => forked((harness, session) => Effect.gen(function* () {
+    const history = yield* session.history
+    const through = history.at(-1)!.seq
+    const branch = yield* harness.fork(session.record.id, through)
+    const grandchild = yield* harness.fork(branch.record.id, through)
+    expect(yield* grandchild.history).toEqual(history.map((event) => ({ ...event, sessionId: grandchild.record.id })))
+    const sessions = yield* grandchild.use(Sessions, Effect.succeed)
+    expect((yield* sessions.get({ id: grandchild.record.id, owner: grandchild.record.workspace })).turns).toBe(1)
+    yield* grandchild.send("own turn")
+    const log = yield* grandchild.use(SessionLog, Effect.succeed)
+    const started = yield* log.read(grandchild.record.id, { after: 0, kinds: ["turn.started"], limit: Option.none() })
+    expect(started.map((event) => Option.getOrNull(event.turn))).toEqual([2])
+    expect((yield* grandchild.history).filter((event) => event.name === "answer").map((event) => event.data.text)).toEqual(["hello", "own turn"])
+  })))
+
   test("a fork before the first event inherits nothing, not even a grandparent's history", () => forked((harness, session) => Effect.gen(function* () {
     const branch = yield* harness.fork(session.record.id, (yield* session.history).at(-1)!.seq)
     const empty = yield* harness.fork(branch.record.id, -1)
@@ -306,6 +321,34 @@ describe("harness turns closed elsewhere or ending", () => {
       yield* session.send("next")
       const forked = yield* first.fork(session.record.id, (yield* session.history).at(-1)!.seq)
       expect((yield* forked.history).filter((event) => event.name === "run.completed").map((event) => event.data.text)).toEqual(["next"])
+    })))
+  })
+
+  test("a remote cancellation wins over a loop that returns successfully without another write", async () => {
+    const directory = workspace()
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const held = loop("held", () => Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)), Effect.as({ text: "late answer", outcome: "completed" as const }),
+      ))
+      const first = yield* Harness.make({ workspace: directory, config: leased(directory, "held"), plugins: [sessionSqlitePlugin, sessionsPlugin, held] })
+      const session = yield* first.create()
+      const sending = yield* Effect.forkChild(session.send("first"))
+      yield* Deferred.await(entered)
+      yield* session.steer("later input")
+      const other = yield* Harness.make({ workspace: directory, config: leased(directory, "echo"), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
+      const resumed = yield* other.resume(session.record.id)
+      const sessions = yield* resumed.use(Sessions, Effect.succeed)
+      const address = { id: session.record.id, owner: directory }
+      expect((yield* sessions.cancel(address, (yield* sessions.get(address)).turns)).cancelled).toBe(true)
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(sending)
+      expect((yield* session.history).filter((event) => event.name.startsWith("run.")).map((event) => event.name)).toEqual(["run.started", "run.cancelled"])
+      expect((yield* session.pending).map((input) => input.text)).toEqual(["later input"])
+      expect(yield* session.busy).toBe(false)
+      const ended = yield* sessions.read(address, { kinds: ["turn.ended"] })
+      expect(ended.map((event) => event.data.reason)).toEqual(["cancelled"])
     })))
   })
 

@@ -1,7 +1,6 @@
 import { expect, test } from "bun:test"
 import { LanguageModel, Prompt, Tool } from "effect/ai"
-import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
-import type { Scope } from "effect"
+import { Clock, Context, Effect, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
 import { join } from "node:path"
 import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, LogEntry, onTool, RunContext, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
 import type { Turn, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
@@ -199,6 +198,8 @@ export const runGolden = (
   yield* sessions.create({ owner: address.owner, id: conversation })
   const requests = yield* Ref.make<ReadonlyArray<unknown>>([])
   const turns = yield* Ref.make<ReadonlyArray<Observed>>([])
+  // These observers own no body services and observe the final outcome after body/host teardown.
+  const observerScope = yield* Effect.scope
 
   const input = (runId: string, text: string, model: LanguageModel.LanguageModel) => ({
     turn: { session: address, userMessage: new UserMessage({ text }), runId },
@@ -214,7 +215,7 @@ export const runGolden = (
       yield* turn.events.subscribe(Option.some, (event: TurnEvent) => Effect.gen(function* () {
         yield* Ref.update(events, (all) => [...all, event._tag === "host" ? `host:${event.name}` : event._tag])
         if (event._tag === "context.built") yield* Ref.update(built, (all) => [...all, event])
-      }))
+      })).pipe(Scope.provide(observerScope))
       return yield* use(turn).pipe(Effect.ensuring(turn.memory.entries.pipe(Effect.flatMap((all) => Ref.set(entries, all.length)))))
     })
     const exit = yield* Effect.result(agent.turn(turnInput, observed))

@@ -12,6 +12,9 @@ export interface TranscriptBlock {
   readonly text: string
   readonly detail: string
   readonly status: "pending" | "running" | "complete" | "failed" | "cancelled"
+  /** Native loop blocks carry their exact run and step; custom renderers may omit them. */
+  readonly runId?: string
+  readonly turnIndex?: number
 }
 export interface Transcript {
   readonly blocks: ReadonlyArray<TranscriptBlock>
@@ -28,6 +31,19 @@ const toolLabel = (name: unknown, args: unknown): string => {
   return `${String(name ?? "tool")}${typeof subject === "string" ? ` · ${subject.replace(/\s+/g, " ").slice(0, 100)}` : ""}`
 }
 const add = (state: Transcript, block: TranscriptBlock): Transcript => ({ ...state, blocks: [...state.blocks, block] })
+const nativeTurn = (event: EventBody) => event.runId && typeof event.data.turnIndex === "number" && Number.isInteger(event.data.turnIndex) && event.data.turnIndex >= 0
+  ? { runId: event.runId, turnIndex: event.data.turnIndex } : {}
+// Transient text may precede durable blocks from earlier turns across batches.
+// Keep each run's assistant before its tools, and its turns in logical order.
+const addTurnBlock = (state: Transcript, event: EventBody, block: TranscriptBlock): Transcript => {
+  const runId = event.runId
+  const turn = event.data.turnIndex
+  if (!runId || typeof turn !== "number" || !Number.isInteger(turn) || turn < 0) return add(state, block)
+  const index = state.blocks.findIndex((candidate) => candidate.runId === runId && typeof candidate.turnIndex === "number" && (
+    candidate.turnIndex > turn || (candidate.turnIndex === turn && block.kind === "assistant" && candidate.kind === "tool")
+  ))
+  return index < 0 ? add(state, block) : { ...state, blocks: [...state.blocks.slice(0, index), block, ...state.blocks.slice(index)] }
+}
 
 export type EventRenderer = (event: SessionEvent) => ReadonlyArray<TranscriptBlock>
 export type EventRenderers = Readonly<Record<string, EventRenderer>>
@@ -45,15 +61,16 @@ export const projectEvent = (state: Transcript, event: SessionEvent, renderers: 
     if (data.type === "assistant_message") {
       const id = `${event.runId}:${data.turnIndex}:assistant`
       const text = String(data.text ?? "")
-      const settled: TranscriptBlock = { id, kind: "assistant", text, detail: String(data.reasoning ?? ""), status: "complete" }
-      return { ...next, tokens: typeof data.usage === "object" && data.usage !== null && "inputTokens" in data.usage ? Number(data.usage.inputTokens) : next.tokens,
-        blocks: text.length === 0 ? next.blocks.filter((block) => block.id !== id) : next.blocks.some((block) => block.id === id) ? next.blocks.map((block) => block.id === id ? settled : block) : [...next.blocks, settled] }
+      const settled: TranscriptBlock = { id, kind: "assistant", text, detail: String(data.reasoning ?? ""), status: "complete", ...nativeTurn(event) }
+      const updated = text.length === 0 ? { ...next, blocks: next.blocks.filter((block) => block.id !== id) }
+        : next.blocks.some((block) => block.id === id) ? { ...next, blocks: next.blocks.map((block) => block.id === id ? settled : block) } : addTurnBlock(next, event, settled)
+      return { ...updated, tokens: typeof data.usage === "object" && data.usage !== null && "inputTokens" in data.usage ? Number(data.usage.inputTokens) : next.tokens }
     }
     if (data.type === "tool_start" || data.type === "tool_end") {
       const id = `${event.runId}:tool:${String(data.toolCallId ?? data.toolName)}:${data.turnIndex}`
       const existing = next.blocks.find((block) => block.id === id)
-      const block: TranscriptBlock = { id, kind: "tool", text: existing?.text ?? toolLabel(data.toolName, data.args), detail: data.type === "tool_start" ? stringify(data.args) : `${existing?.detail ? `Arguments\n${existing.detail}\n\n` : ""}Result\n${stringify(data.result)}`, status: data.type === "tool_start" ? "running" : data.ok === false ? "failed" : "complete" }
-      return existing === undefined ? add(next, block) : { ...next, blocks: next.blocks.map((item) => item.id === id ? block : item) }
+      const block: TranscriptBlock = { id, kind: "tool", text: existing?.text ?? toolLabel(data.toolName, data.args), detail: data.type === "tool_start" ? stringify(data.args) : `${existing?.detail ? `Arguments\n${existing.detail}\n\n` : ""}Result\n${stringify(data.result)}`, status: data.type === "tool_start" ? "running" : data.ok === false ? "failed" : "complete", ...nativeTurn(event) }
+      return existing === undefined ? addTurnBlock(next, event, block) : { ...next, blocks: next.blocks.map((item) => item.id === id ? block : item) }
     }
   }
   if (["run.completed", "run.failed", "run.cancelled"].includes(event.name)) {
@@ -76,6 +93,6 @@ export const projectDelta = (state: Transcript, event: EventBody): Transcript =>
   const id = `${event.runId}:${event.data.turnIndex}:assistant`
   const existing = state.blocks.find((block) => block.id === id)
   if (existing?.status === "complete") return state
-  const block: TranscriptBlock = { id, kind: "assistant", text: `${existing?.text ?? ""}${String(event.data.delta ?? "")}`, detail: "", status: "running" }
-  return existing === undefined ? add(state, block) : { ...state, blocks: state.blocks.map((item) => item.id === id ? block : item) }
+  const block: TranscriptBlock = { id, kind: "assistant", text: `${existing?.text ?? ""}${String(event.data.delta ?? "")}`, detail: "", status: "running", ...nativeTurn(event) }
+  return existing === undefined ? addTurnBlock(state, event, block) : { ...state, blocks: state.blocks.map((item) => item.id === id ? block : item) }
 }

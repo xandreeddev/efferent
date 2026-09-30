@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { LanguageModel, Tool, Toolkit } from "effect/ai"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
-import type { Scope } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
 import {
   ConversationId,
   CurrentPromptCacheKey,
@@ -724,6 +723,118 @@ describe("Agent.turn", () => {
     expect(kinds.at(-1)).toBe("turn.ended")
     expect(kinds).toContain("plugin.closed")
     expect(kinds).toContain("plugin.task")
+  })
+
+  test.each([false, true])("host finalizer tasks settle before the reply with turn-dependent plugins (%p)", async (late) => {
+    const { outcome, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const closing = definePlugin({
+        id: "test/host-dependency", version: "1", scope: "session", config: Schema.Struct({}), defaults: {},
+        requires: [RunContext], provides: [], layer: () => Layer.empty,
+      })
+      const hostLayer = Layer.effectDiscard(Effect.gen(function* () {
+        const tasks = yield* TurnTasks
+        const events = yield* TurnEvents
+        yield* Effect.addFinalizer(() => tasks.fork("host-closing", Effect.sleep("20 millis").pipe(
+          Effect.andThen(events.publish({ _tag: "host", name: "host.task", data: {} })),
+        )))
+      }))
+      const agent = yield* define(memoryWindowPlugin, { plugins: late ? [closing] : [] })
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      const outcome = yield* agent.turn({ ...inputFor(journal, "run-1", "hello", model), layer: hostLayer }, (turn) => turn.reply("hello"))
+      return { outcome, events: yield* journal.stored }
+    })))
+    const names = events.map((event) => event.kind)
+    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("hello") })
+    expect(names.indexOf("host.task")).toBeGreaterThan(-1)
+    expect(names.indexOf("host.task")).toBeLessThan(names.indexOf("turn.reply"))
+    expect(named(events, "turn.reply").map(body)).toEqual([{ outcome: "completed", reply: "hello" }])
+    expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual(["completed"])
+  })
+
+  test.each([false, true])("a failed host finalizer task records only a failed reply with turn-dependent plugins (%p)", async (late) => {
+    const { result, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const closing = definePlugin({
+        id: "test/host-dependency", version: "1", scope: "session", config: Schema.Struct({}), defaults: {},
+        requires: [RunContext], provides: [], layer: () => Layer.empty,
+      })
+      const hostLayer = Layer.effectDiscard(TurnTasks.pipe(Effect.flatMap((tasks) => Effect.addFinalizer(() =>
+        tasks.fork("host-closing", Effect.sleep("20 millis").pipe(Effect.andThen(Effect.fail(new HarnessError({ code: "host.cleanup", message: "cleanup failed" }))))),
+      ))))
+      const agent = yield* define(memoryWindowPlugin, { plugins: late ? [closing] : [] })
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      const result = yield* Effect.result(agent.turn({ ...inputFor(journal, "run-1", "hello", model), layer: hostLayer }, (turn) => turn.reply("hello")))
+      return { result, events: yield* journal.stored }
+    })))
+    expect(result._tag === "Failure" ? result.failure.code : "success").toBe("host.cleanup")
+    expect(named(events, "turn.reply").map(body)).toEqual([{ outcome: "failed", reply: null }])
+    expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual(["failed"])
+  })
+
+  test("a failed turn-dependent plugin finalizer task records only a failed reply", async () => {
+    const { result, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const closing = definePlugin({
+        id: "test/failing-closing", version: "1", scope: "session", config: Schema.Struct({}), defaults: {},
+        requires: [TurnTasks], provides: [],
+        layer: () => Layer.effectDiscard(TurnTasks.pipe(Effect.flatMap((tasks) => Effect.addFinalizer(() =>
+          tasks.fork("plugin-closing", Effect.sleep("20 millis").pipe(Effect.andThen(Effect.fail(new HarnessError({ code: "plugin.cleanup", message: "cleanup failed" }))))),
+        )))),
+      })
+      const agent = yield* define(memoryWindowPlugin, { plugins: [closing] })
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      const result = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "hello", model), (turn) => turn.reply("hello")))
+      return { result, events: yield* journal.stored }
+    })))
+    expect(result._tag === "Failure" ? result.failure.code : "success").toBe("plugin.cleanup")
+    expect(named(events, "turn.reply").map(body)).toEqual([{ outcome: "failed", reply: null }])
+    expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual(["failed"])
+  })
+
+  test.each([false, true])("body, host and plugin scopes close in order before the final outcome (%p)", async (fails) => {
+    const { order, result, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const note = (label: string) => Ref.update(seen, (all) => [...all, label])
+      const observerScope = yield* Effect.scope
+      const closing = definePlugin({
+        id: "test/scoped-closing", version: "1", scope: "session", config: Schema.Struct({}), defaults: {},
+        requires: [RunContext], provides: [Stamp],
+        layer: () => Layer.effect(Stamp, Effect.gen(function* () {
+          yield* Effect.addFinalizer(() => note("plugin.closed"))
+          return { label: "open" }
+        })),
+      })
+      const hostLayer = Layer.effectDiscard(Effect.gen(function* () {
+        yield* Stamp
+        const tasks = yield* TurnTasks
+        const events = yield* TurnEvents
+        yield* Effect.addFinalizer(() => note("host.closed").pipe(
+          Effect.andThen(events.publish({ _tag: "host", name: "host.closed", data: {} })),
+          Effect.andThen(tasks.fork("host-closing", Effect.sleep("10 millis").pipe(
+            Effect.andThen(note("host.task")),
+            Effect.andThen(fails ? Effect.fail(new HarnessError({ code: "host.cleanup", message: "cleanup failed" })) : Effect.void),
+          ))),
+          Effect.orDie,
+        ))
+      }))
+      const agent = yield* define(memoryWindowPlugin, { plugins: [closing] })
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      const result = yield* Effect.result(agent.turn({ ...inputFor(journal, "run-1", "hello", model), layer: hostLayer }, (turn) => Effect.gen(function* () {
+        yield* turn.events.subscribe((event) => event._tag === "turn.ended" ? Option.some(event) : Option.none(),
+          (event) => note(`outcome:${event.outcome}`)).pipe(Scope.provide(observerScope))
+        yield* turn.events.subscribe((event) => event._tag === "host" && event.name === "host.closed" ? Option.some(event) : Option.none(),
+          () => note("body.subscription.after-close"))
+        yield* Effect.addFinalizer(() => note("body.closed"))
+        return yield* turn.reply("hello")
+      })))
+      return { order: yield* Ref.get(seen), result, events: yield* journal.stored }
+    })))
+    expect(order).toEqual(["body.closed", "host.closed", "host.task", "plugin.closed", `outcome:${fails ? "failed" : "completed"}`])
+    expect(result._tag === "Failure" ? result.failure.code : "completed").toBe(fails ? "host.cleanup" : "completed")
+    expect(named(events, "turn.reply").map((event) => body(event)?.outcome)).toEqual([fails ? "failed" : "completed"])
+    expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual([fails ? "failed" : "completed"])
   })
 
   test("durable request replay refuses events that do not rebuild the request's context", async () => {

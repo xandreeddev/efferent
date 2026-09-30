@@ -78,4 +78,38 @@ describe("terminal stream ordering", () => {
     state.event(durable(0, "run.started"))
     expect(state.transcript().blocks.map((block) => block.text)).toEqual([Array.from({ length: 128 }, (_, index) => `${index + 72},`).join("")])
   })
+
+  test.each([true, false])("earlier turns arriving across durable batches precede streaming text (early=%s)", (early) => {
+    const state = createTuiState(record())
+    const later = { name: "assistant.delta", runId: "run", data: { channel: "text", turnIndex: 1, delta: "streaming turn one" } }
+    if (early) state.delta(later)
+    state.events([durable(0, "input.queued", "run", { id: "input", text: "question" }), durable(1, "run.started")])
+    if (!early) state.delta(later)
+    state.events([durable(2, "loop.event", "run", { type: "assistant_message", turnIndex: 0, text: "turn zero" })])
+    state.events([durable(3, "loop.event", "run", { type: "tool_start", turnIndex: 0, toolCallId: "call", toolName: "read", args: {} })])
+    expect(state.transcript().blocks.map((block) => block.id)).toEqual(["input", "run:0:assistant", "run:tool:call:0", "run:1:assistant"])
+    state.events([durable(4, "loop.event", "run", { type: "assistant_message", turnIndex: 1, text: "final turn one" })])
+    expect(state.transcript().blocks.map((block) => block.text)).toEqual(["question", "turn zero", "read", "final turn one"])
+  })
+
+  test("assistant text arriving after its tools keeps tool order and earlier runs intact", () => {
+    const state = createTuiState(record())
+    state.events([durable(0, "run.started", "previous"), durable(1, "run.completed", "previous", { text: "previous reply" }), durable(2, "run.started")])
+    state.events([durable(3, "loop.event", "run", { type: "tool_start", turnIndex: 0, toolCallId: "a", toolName: "first", args: {} }), durable(4, "loop.event", "run", { type: "tool_start", turnIndex: 0, toolCallId: "b", toolName: "second", args: {} })])
+    state.delta(delta("assistant"))
+    expect(state.transcript().blocks.map((block) => block.text)).toEqual(["previous reply", "assistant", "first", "second"])
+  })
+
+  test("run ids containing tool separators keep earlier run blocks intact", () => {
+    const state = createTuiState(record())
+    state.events([
+      durable(0, "run.started", "run:tool"),
+      durable(1, "loop.event", "run:tool", { type: "assistant_message", turnIndex: 3, text: "previous assistant" }),
+      durable(2, "loop.event", "run:tool", { type: "tool_end", turnIndex: 3, toolCallId: "previous", toolName: "previous tool", result: {} }),
+      durable(3, "run.completed", "run:tool", { text: "previous reply" }),
+      durable(4, "run.started", "run"),
+    ])
+    state.delta(delta("current assistant"))
+    expect(state.transcript().blocks.map((block) => block.text)).toEqual(["previous assistant", "previous tool", "previous reply", "current assistant"])
+  })
 })

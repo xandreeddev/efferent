@@ -81,4 +81,27 @@ describe("the compatibility projections read what they return, not the history",
       expect(seen.events).toBeLessThan(60)
     }))
   })
+
+  test("copying an inherited fork prefix retains its logical parent and turn number without replaying the prefix twice", async () => {
+    await withCounted(() => Effect.gen(function* () {
+      const store = yield* SessionStore
+      const log = yield* SessionLog
+      const root = yield* store.create("/workspace", "custom")
+      const event = (seq: number, name: string) => ({ version: 1, id: `run-event-${seq}`, sessionId: root.id, seq, at: 0, name, runId: "run", data: {} })
+      yield* log.commit(root.id, { expect: 0, notAfter: Option.none(), state: Option.none(), events: [
+        { kind: "turn.started", turn: Option.some(1), data: {} },
+        { kind: "harness.event", turn: Option.some(1), data: { event: event(0, "run.started") } },
+        { kind: "harness.event", turn: Option.some(1), data: { event: event(1, "run.completed") } },
+        { kind: "turn.ended", turn: Option.some(1), data: {} },
+      ] })
+      const branch = yield* store.fork(root.id, 1)
+      const copied = yield* store.fork(branch.id, 1)
+      expect((yield* log.head(copied.id)).header.parent).toEqual(Option.some({ id: branch.id, through: 0, turnAtFork: 1 }))
+      expect((yield* store.read(copied.id, -1)).map((entry) => entry.name)).toEqual(["run.started", "run.completed"])
+      expect((yield* store.append(copied.id, { name: "own", data: {} })).seq).toBe(2)
+      const empty = yield* store.fork(branch.id, -1)
+      expect((yield* log.head(empty.id)).header.parent).toEqual(Option.some({ id: branch.id, through: 0, turnAtFork: 0 }))
+      expect(yield* store.read(empty.id, -1)).toEqual([])
+    }))
+  })
 })

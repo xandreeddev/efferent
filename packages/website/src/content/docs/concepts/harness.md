@@ -79,7 +79,8 @@ a custom `SessionStore` must be the projection over the same `SessionLog`, or
 the turn fails with `session.store`.
 
 - `create`, `resume`, `list`, and `fork` use the unified session heads and
-  immutable history boundaries.
+  immutable history boundaries. A fork cut within inherited history keeps
+  the exact prefix, logical parent and inherited turn counter.
 - `send` journals input, admits through `Sessions.begin` and writes through
   `TurnWriter` before ending the turn; `steer` queues input for a loop's
   next admission boundary; `continue` resumes the pending queue. Input
@@ -87,7 +88,8 @@ the turn fails with `session.store`.
 - `use(Service, callback)` accesses a selected domain service while holding the
   session gate; resource disposal waits until the callback completes.
 - `interrupt` cancels the active fiber. The run settles once as cancelled, and
-  so does a turn cancelled or reaped by another instance.
+  so does a turn cancelled or reaped by another instance, even if its loop
+  returns successfully without another write.
 - `events(after)` replays durable events after an exclusive cursor, then follows
   the journal. Notifications can coalesce; journal entries are not dropped.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.
@@ -99,7 +101,10 @@ the turn fails with `session.store`.
 Session plugins can require `SessionEnvironment` to access the workspace and
 current session record. `domainLoop` and `domainSession` bridge an existing domain
 event protocol to SDK lifecycle and replay; optional snapshots restore domain
-state when a session is forked.
+state when a session is forked. Conversation writes carry their originating
+run's token: a detached write from an earlier run stays refused even during a
+later run. During execution, external closure is noticed at the writer's next
+commit; settlement also checks the durable ending when the loop returns.
 
 The SQLite plugin uses WAL and transactional sequence allocation. The memory
 plugin uses a workspace-scoped append-only JSONL ledger. The default new data
@@ -146,7 +151,9 @@ Credential input stays outside the text renderer; only mask characters render.
 PKCE, callback state checks, a masked manual fallback, and scoped cancellation.
 
 A transcript mounts at most 60 blocks. Durable event and transient delta batches
-update the UI at most once per batch. The terminal tests exercise 10,000 events
+update the UI at most once per batch. Assistant and tool blocks follow logical
+turn order across batches, including text buffered before the durable run start;
+durable settlement remains authoritative. The terminal tests exercise 10,000 events
 and assert p95 input-to-frame time below 50 ms on the test machine. The PTY fixture checks rendering and shutdown. `python scripts/verify-tmux.py`
 launches the actual CLI in an isolated tmux server and checks first-run setup,
 model selection, draft preservation, resizing, plugin edits, streamed output,
@@ -182,6 +189,16 @@ session at a time; a second message is refused, a retried one is found by
 its key. Turns are owned by a lease judged by the storage's clock (several
 instances) or by the process that began them, for as long as it runs (one
 host). Reading or following a session never runs anything.
+
+`Agent.turn` closes the body scope, the host's layer, then the plugins that
+depend on turn services. On success, tasks and background reactions settle
+between these dependency boundaries while `TurnLive` remains open. A completed
+reply is recorded only after finalizer work settles; a finalizer task failure
+produces a failed reply. Failure or interruption preserves the cause, and
+closing the turn's scope interrupts pending tasks. Subscriptions in those
+closing scopes cannot observe the final outcome: register an outcome observer
+in the caller's outer scope with `Scope.provide(observerScope)` and services
+that remain open there.
 
 A background task (`@xandreed/plugin-tasks`) is one turn of a child session,
 a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`.

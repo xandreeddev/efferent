@@ -1,4 +1,4 @@
-import { Context, Effect, Exit, Option, Schema } from "effect"
+import { Context, Effect, Option, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import {
   cacheKeyOf,
@@ -206,11 +206,13 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    *    context entry recorded by 2 or 3 waits for the message);
    * 4. the user's message taken by memory (TurnStarted, turn.started);
    * 5. the tools opened inside the host's layer, so its services reach them;
-   * 6. `use`, guarded: the tasks joined, the reply recorded;
+   * 6. `use`, then its tasks and background reactions settled;
    * 7. the host's layer, then the plugins of 2 closed, while TurnLive is
    *    still open: what their finalizers publish or fork is settled and
    *    stored before TurnLive closes;
-   * 8. a turn begun here is ended here, with the outcome.
+   * 8. finalizer work settled, then the final reply recorded (failed when
+   *    the body or its finalizer work failed), before TurnLive closes;
+   * 9. a turn begun here is ended here, with the outcome.
    */
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -246,28 +248,28 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       // Everything `use` does sees the turn's services: `yield* SomeHostTag` gets the per-turn instance.
       return yield* use(yield* turnOf(runOptions))
     })
-    // The turn-dependent plugins finalize in their own scope, before TurnLive closes and before the
-    // turn ends: their finalizers still publish (stored) and fork tasks, settled and flushed here.
+    // The turn-dependent plugins finalize before TurnLive closes. The outer guard settles their
+    // finalizer work alongside the host's, then records the final outcome while the writer is open.
     const provideTurnPlugins = <B, F, T>(effect: Effect.Effect<B, F, T>): Effect.Effect<B, F | HarnessError, unknown> => late.length === 0 ? effect : Effect.gen(function* () {
       const liveContext = yield* Effect.context<never>()
-      const flush = RunContext.pipe(Effect.flatMap((run) => run.flush))
       return yield* Effect.scoped(Effect.gen(function* () {
         const activated = yield* activateGraph(afterTurn, "session", Context.merge(context, liveContext), yield* Effect.scope)
         return yield* effect.pipe(Effect.provide(activated))
-      })).pipe(
-        Effect.onExit(Exit.match({
-          onSuccess: () => Effect.void,
-          // The turn already failed: what the finalizers wrote is stored if it can be, keeping the cause.
-          onFailure: () => TurnEvents.pipe(Effect.flatMap((events) => events.drain), Effect.andThen(flush), Effect.catchCause(() => Effect.void)),
-        })),
-        Effect.tap(() => settleTurn.pipe(Effect.andThen(flush))),
-      )
+      }))
     })
     const outcome = yield* body.pipe(
-      guardTurn,
+      // Work using the body's scoped services finishes before those services are finalized.
+      Effect.tap(() => settleTurn),
       Effect.scoped,
+      // The body's finalizers may fork work that still needs the host's services.
+      Effect.tap(() => settleTurn),
       provideHostLayer(Option.fromNullishOr(input.layer)),
+      // The host's finalizer work finishes while its plugin dependencies remain open.
+      Effect.tap(() => settleTurn),
       provideTurnPlugins,
+      // Includes scope teardown even without turn-dependent plugins: a finalizer task's failure
+      // must fail the final outcome rather than follow an already recorded completed reply.
+      guardTurn,
       Effect.provide(TurnLive(live), { local: true }),
       Effect.provideService(ConversationMemory, memory),
       Effect.provideService(ToolRegistry, registry),

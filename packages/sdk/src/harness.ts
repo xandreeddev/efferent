@@ -180,24 +180,28 @@ export const makeHarness = (options: {
       const exit = yield* Fiber.await(fiber)
       yield* Ref.set(running, Option.none())
       const elsewhere = yield* endedElsewhere(writer)
-      const cancelled = Exit.isFailure(exit) && (Cause.hasInterruptsOnly(exit.cause) || Option.isSome(elsewhere))
+      const completed = Exit.isSuccess(exit) && Option.isNone(elsewhere)
+      const cancelled = Option.isSome(elsewhere) || (Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause))
+      const message = Option.match(elsewhere, {
+        onNone: () => Exit.isFailure(exit)
+          ? Cause.hasInterruptsOnly(exit.cause) ? "Cancelled; unfinished tool effects are not replayed" : Cause.pretty(exit.cause)
+          : "",
+        onSome: (reason) => `The turn was ${reason} elsewhere; unfinished tool effects are not replayed`,
+      })
       // The settlement is the run's, not the turn's output: it is recorded even when the turn was
       // closed elsewhere (a cancel or reap from another instance), except when the session is gone.
       if (!Option.contains(elsewhere, "removed")) {
-        yield* publishing.withPermits(1)(publishUnlocked(Exit.isSuccess(exit)
+        yield* publishing.withPermits(1)(publishUnlocked(completed && Exit.isSuccess(exit)
           ? { name: "run.completed", runId, data: { ...exit.value } }
-          : { name: cancelled ? "run.cancelled" : "run.failed", runId, data: { message: Option.match(elsewhere, {
-            onNone: () => Cause.hasInterruptsOnly(exit.cause) ? "Cancelled; unfinished tool effects are not replayed" : Cause.pretty(exit.cause),
-            onSome: (reason) => `The turn was ${reason} elsewhere; unfinished tool effects are not replayed`,
-          }) } }, true))
+          : { name: cancelled ? "run.cancelled" : "run.failed", runId, data: { message } }, true))
       }
-      yield* writer.end({ reason: Exit.isSuccess(exit) ? exit.value.outcome : cancelled ? "cancelled" : "failed",
-        failure: Exit.isSuccess(exit) ? Option.none() : Option.some({ code: "run.failed", message: Cause.pretty(exit.cause) }) }).pipe(
+      yield* writer.end({ reason: completed && Exit.isSuccess(exit) ? exit.value.outcome : cancelled ? "cancelled" : "failed",
+        failure: completed ? Option.none() : Option.some({ code: "run.failed", message }) }).pipe(
         Effect.catchTag("HarnessError", (error) => isClosed(error) ? Effect.void : Effect.fail(error)),
       )
       if (Option.isSome(elsewhere) && elsewhere.value !== "cancelled") return yield* Effect.fail(failure("turn.closed", `The turn was ${elsewhere.value} elsewhere`))
       if (Exit.isFailure(exit) && !cancelled) return yield* Effect.fail(failure("run.failed", Cause.pretty(exit.cause)))
-      return Exit.isSuccess(exit)
+      return completed
     })).pipe(Effect.uninterruptible)
     /** Runs queued inputs in order until the queue is empty, the harness closes or a run says stop. */
     const runPending = (): Effect.Effect<void, Effect.Error<ReturnType<typeof run>>, Effect.Services<ReturnType<typeof run>>> =>
