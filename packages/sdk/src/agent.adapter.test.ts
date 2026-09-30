@@ -745,4 +745,40 @@ describe("Agent.turn", () => {
     expect(complete._tag).toBe("Success")
     expect(partial._tag === "Failure" ? [partial.failure.code, partial.failure.message.split(":")[0]] : "success").toEqual(["request.diverged", "context"])
   })
+
+  test.each([false, true])("a failed dispatch check fails the step, streamed (%p) or not, without a fallback call or a second check", async (streaming) => {
+    const { result, checks, calls } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const checks = yield* Ref.make(0)
+      const calls = yield* Ref.make(0)
+      const model = yield* LanguageModel.make({
+        generateText: () => Ref.update(calls, (count) => count + 1).pipe(Effect.as(stop("done") as never)),
+        streamText: () => Stream.unwrap(Ref.update(calls, (count) => count + 1).pipe(Effect.as(Stream.fromIterable([
+          { type: "text-start", id: "t" }, { type: "text-delta", id: "t", delta: "done" }, { type: "text-end", id: "t" },
+          { type: "finish", reason: "stop", usage },
+        ] as never)))),
+      })
+      const checkedLoop = definePlugin({
+        id: "test/checked-loop", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {}, provides: [StepLoop],
+        layer: () => Layer.succeed(StepLoop, {
+          id: "checked", version: "1", run: (request) => runSteps({
+            ...request,
+            // A store read that fails once: the check never passed, so no provider may run.
+            dispatch: () => Ref.updateAndGet(checks, (count) => count + 1).pipe(Effect.flatMap((count) => count === 1
+              ? Effect.fail(new HarnessError({ code: "session.log", message: "store unavailable" }))
+              : Effect.void)),
+          }),
+        }),
+      })
+      const agent = yield* Agent.define({
+        plugins: [memoryWindowPlugin, toolDiscoveryPlugin, checkedLoop], capabilities: [host],
+        turnServices: [LanguageModel.LanguageModel], limits: { streaming, maxSteps: 2 },
+      })
+      const journal = yield* inMemorySession
+      const result = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "hello", model), (turn) =>
+        turn.run({}).pipe(Effect.map((run): TurnOutcome => ({ outcome: run.outcome, reply: Option.some(run.text) })))))
+      return { result, checks: yield* Ref.get(checks), calls: yield* Ref.get(calls) }
+    })))
+    expect(result._tag === "Failure" ? result.failure.code : "success").toBe("session.log")
+    expect({ checks, calls }).toEqual({ checks: 1, calls: 0 })
+  })
 })

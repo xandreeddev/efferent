@@ -41,7 +41,10 @@ export interface StepRequest {
   /** A host-planned first batch, run as step zero without a provider call. */
   readonly initial: Option.Option<InitialBatch>
   readonly plan: (step: StepInfo) => Effect.Effect<StepPlan, HarnessError>
-  /** Validate an actual dispatch against a fresh durable derivation. Run immediately before each provider attempt, including a streaming fallback. */
+  /**
+   * Validate an actual dispatch against a fresh durable derivation. Run immediately before each provider attempt,
+   * including a streaming fallback; a failed check fails the step (a streamed step does not fall back).
+   */
   readonly dispatch: (step: number, request: ModelDispatch) => Effect.Effect<void, HarnessError>
   /** Persist a step's appended messages; returns their log entries. */
   readonly record: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>

@@ -387,10 +387,14 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         // gateway) falls back to generateText for the rest of the run;
         // after the first part, failures ride the existing turn handling
         // (tool handlers may already have run — a replay would duplicate).
+        // The dispatch check runs first, outside that fallback: a failed
+        // check fails the step, it is no stream failure (the fallback's own
+        // call is checked again).
         const streamed = Effect.gen(function* () {
+          yield* beforeDispatch
           const partSeen = yield* Ref.make(false)
           const folded = yield* foldStreamParts(
-            (Stream.unwrap(beforeDispatch.pipe(Effect.map(() => dispatchModel.streamText(callOptions)))) as Stream.Stream<unknown, AiError.AiError, LanguageModel.LanguageModel>).pipe(
+            (Stream.unwrap(Effect.sync(() => dispatchModel.streamText(callOptions))) as Stream.Stream<unknown, AiError.AiError, LanguageModel.LanguageModel>).pipe(
               Stream.tap(() => Ref.set(partSeen, true)),
             ),
             (delta) =>

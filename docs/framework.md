@@ -478,7 +478,8 @@ system text, messages, schemas, tool choice or described model settings fail
 with `request.diverged` before the provider runs; its message starts with the
 first part that differs (`context`, `system`, `messages`, `tools`,
 `toolChoice`, `model`, `cacheKey` or `callPolicy`). Prompt data is frozen; a
-stream fallback checks the same contract again. Host-planned batches make no
+stream fallback checks the same contract again, and a failed check fails the
+step, streamed or not, instead of falling back. Host-planned batches make no
 provider request and create no request header.
 
 `replayModelRequest(events, runId, step)` reconstructs one historical request
