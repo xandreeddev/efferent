@@ -820,13 +820,19 @@ the task's words:
 ```
 
 The runner's absolute deadline bounds admission, reads, delivery and parent
-reactions as well as the child model call. Execution leaves a short reserve
-inside that budget to store results and endings. A finite-budget runner admits
-at most one parent reaction, interrupts it at the execution cutoff and records
-an interrupted ending. A notice whose reaction cannot begin stays in the inbox;
-an undelivered result remains in the child for `reconcile`. Serverless hosts
-also leave invocation headroom for interrupted scope finalizers to close their
-writers.
+reactions as well as the child model call. Execution stops `closingReserveMs`
+(2 s, at most half the budget) before it, leaving that time to store the
+child's result and ending, deliver it and close the parent's turn; work the
+deadline itself cuts is logged with the task and how long it ran. A
+finite-budget runner admits at most one parent reaction and interrupts it at
+the execution cutoff: a reaction cut after it recorded its answer
+(`turn.reply`) ends partial, so its notice is done and never answered twice,
+and one cut before ends interrupted, so the notice waits again. A parent turn
+admitted past the cutoff ends interrupted without reacting, and its notices
+wait with no attempt counted. A notice whose reaction cannot begin stays in
+the inbox; an undelivered result remains in the child for `reconcile`.
+Serverless hosts also leave invocation headroom for interrupted scope
+finalizers to close their writers.
 
 The first of a child's `task.result` and `task.cancelled` ends the task.
 `cancel` stops a waiting or running task (its turn is cancelled, nothing is
