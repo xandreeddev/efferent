@@ -8,6 +8,7 @@ const storageFailure = (error: { readonly _tag: string; readonly message?: strin
 const eventOf = Schema.decodeUnknownEffect(SessionEvent)
 const decodeFailure = (error: unknown) => new HarnessError({ code: "session.decode", message: String(error) })
 const HARNESS = "harness.event"
+const SETTLED = ["run.completed", "run.failed", "run.cancelled"]
 
 /** A harness record's own position (its harness seq); a malformed one sorts last, so its decoding fails where it is read. */
 const harnessSeqOf = (event: SessionLogEvent): number => {
@@ -15,12 +16,13 @@ const harnessSeqOf = (event: SessionLogEvent): number => {
   return typeof inner === "object" && inner !== null && "seq" in inner && typeof inner.seq === "number" ? inner.seq : Number.POSITIVE_INFINITY
 }
 
-/** Read inherited records at their immutable fork boundary, then the child's own records. */
+/** Read inherited records at their immutable fork boundary, then the child's own records. A fork at `through <= 0` inherits nothing. */
 export const compatibilityHistory = (log: Log, id: ConversationId, kinds: ReadonlyArray<string>): Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError> => Effect.gen(function* () {
   const head = yield* log.head(id).pipe(Effect.mapError(storageFailure))
   const inherited = yield* Option.match(head.header.parent, {
     onNone: () => Effect.succeed<ReadonlyArray<SessionLogEvent>>([]),
-    onSome: (parent) => compatibilityHistory(log, parent.id, kinds).pipe(Effect.map((events) => events.filter((event) => event.session !== parent.id || event.seq <= parent.through))),
+    onSome: (parent) => parent.through <= 0 ? Effect.succeed<ReadonlyArray<SessionLogEvent>>([])
+      : compatibilityHistory(log, parent.id, kinds).pipe(Effect.map((events) => events.filter((event) => event.session !== parent.id || event.seq <= parent.through))),
   })
   const own = yield* log.read(id, { after: 0, limit: Option.none(), kinds }).pipe(Effect.mapError(storageFailure))
   return [...inherited, ...own]
@@ -53,7 +55,7 @@ export const compatibilityLast = (log: Log, id: ConversationId, kinds: ReadonlyA
   if (cursor > 0) return yield* nextOf(log, id, kinds, cursor - 1, bound)
   return yield* Option.match(head.header.parent, {
     onNone: () => Effect.succeed(Option.none<SessionLogEvent>()),
-    onSome: (parent) => compatibilityLast(log, parent.id, kinds, parent.through),
+    onSome: (parent) => parent.through <= 0 ? Effect.succeed(Option.none<SessionLogEvent>()) : compatibilityLast(log, parent.id, kinds, parent.through),
   })
 })
 
@@ -73,7 +75,7 @@ const harnessAfter = (log: Log, id: ConversationId, after: number, upTo = Number
   // An own record at or before `after` means every inherited one is too.
   const inherited = cursor > 0 ? [] : yield* Option.match(head.header.parent, {
     onNone: () => Effect.succeed<ReadonlyArray<SessionLogEvent>>([]),
-    onSome: (parent) => harnessAfter(log, parent.id, after, parent.through),
+    onSome: (parent) => parent.through <= 0 ? Effect.succeed<ReadonlyArray<SessionLogEvent>>([]) : harnessAfter(log, parent.id, after, parent.through),
   })
   return [...inherited, ...own]
 })
@@ -118,6 +120,8 @@ export const harnessHistory = (log: Log, id: ConversationId, after = -1): Effect
 
 export const harnessEvent = (id: ConversationId, body: EventBody, seq: number, at: number): SessionEvent => ({ ...body, version: 1, id: crypto.randomUUID(), sessionId: id, seq, at })
 
+const isHarness = (event: SessionLogEvent) => event.kind === HARNESS
+
 /**
  * @deprecated Historical harness vocabulary projected over SessionLog.
  * It owns no tables and can be removed once custom AgentLoop hosts use the
@@ -145,21 +149,25 @@ export const SessionStoreProjectionLive = Layer.effect(SessionStore, Effect.gen(
       const parent = yield* log.head(id).pipe(Effect.mapError(storageFailure))
       const events = (yield* harnessHistory(log, id)).filter((event) => event.seq <= through)
       const open = events.reduce((runs, event) => event.runId === undefined ? runs : event.name === "run.started" ? [...runs, event.runId]
-        : ["run.completed", "run.failed", "run.cancelled"].includes(event.name) ? runs.filter((run) => run !== event.runId) : runs, [] as ReadonlyArray<string>)
+        : SETTLED.includes(event.name) ? runs.filter((run) => run !== event.runId) : runs, [] as ReadonlyArray<string>)
       if (open.length > 0) return yield* Effect.fail(new HarnessError({ code: "session.fork-boundary", message: "Fork at a settled turn boundary" }))
+      // One coordinate space: the journal in order, a fork's inherited records first.
       const journal = yield* compatibilityHistory(log, id, [])
-      const selected = journal.filter((event) => event.kind === "harness.event" && typeof event.data.event === "object" && event.data.event !== null && "seq" in event.data.event && typeof event.data.event.seq === "number" && event.data.event.seq <= through)
-      const selectedLast = selected.at(-1)
-      const selectedEnd = selectedLast === undefined ? undefined : journal.find((event) => event.session === selectedLast.session && event.kind === "turn.ended" && event.seq > selectedLast.seq && Option.isSome(selectedLast.turn) && Option.contains(event.turn, selectedLast.turn.value))
-      const cut = selectedEnd?.seq ?? selectedLast?.seq ?? 0
-      const inheritedCut = selectedLast !== undefined && selectedLast.session !== id
-      const boundaryIndex = selectedLast === undefined ? -1 : journal.indexOf(selectedEnd ?? selectedLast)
-      const copied = inheritedCut ? journal.slice(0, boundaryIndex + 1).filter((event) => event.kind === "harness.event" || event.kind.startsWith("conversation.")) : []
-      const endings = journal.filter((event) => event.kind === "turn.ended" && event.seq <= cut)
+      const lastIndex = journal.findLastIndex((event) => isHarness(event) && harnessSeqOf(event) <= through)
+      // The cut is exactly the requested record, or its turn's end when no harness record comes between them.
+      const endIndex = Option.flatMap(Option.fromNullishOr(journal[lastIndex]), (last) => Option.flatMap(Option.fromNullishOr(journal.slice(lastIndex + 1).find((event) =>
+        isHarness(event) || (event.kind === "turn.ended" && event.session === last.session && Option.isSome(last.turn) && Option.contains(event.turn, last.turn.value)))), (next) => isHarness(next) ? Option.none() : Option.some(journal.indexOf(next))))
+      const boundaryIndex = Option.getOrElse(endIndex, () => lastIndex)
+      const inherited = journal.slice(0, boundaryIndex + 1)
+      const boundary = Option.fromNullishOr(journal[boundaryIndex])
+      const inheritedCut = Option.exists(boundary, (event) => event.session !== id)
+      const copied = inheritedCut ? inherited.filter((event) => isHarness(event) || event.kind.startsWith("conversation.")) : []
+      // The turns the child starts after: every turn it inherits, counted in the lineage's one numbering.
+      const turnAtFork = inherited.reduce((turns, event) => Option.match(event.turn, { onNone: () => turns, onSome: (turn) => Math.max(turns, turn) }), 0)
       const created = yield* log.create({
         id: ConversationId.make(crypto.randomUUID()), owner: parent.header.owner, origin: parent.header.origin,
         createdAt: yield* Clock.currentTimeMillis, meta: { ...parent.header.meta, legacyParent: id },
-        parent: inheritedCut ? Option.none() : Option.some({ id, through: cut, turnAtFork: Option.flatMap(Option.fromNullishOr(endings.at(-1)), (event) => event.turn).pipe(Option.getOrElse(() => 0)) }),
+        parent: inheritedCut ? Option.none() : Option.some({ id, through: Option.match(boundary, { onNone: () => 0, onSome: (event) => event.seq }), turnAtFork }),
       }).pipe(Effect.mapError(storageFailure))
       if (copied.length > 0) yield* compatibilityCommit(log, created.header.id, () => Effect.succeed({ drafts: copied.map((event) => ({ kind: event.kind, turn: Option.none(), data: event.data })), result: undefined })).pipe(
         Effect.onError(() => log.remove(created.header.id).pipe(Effect.ignore)),

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Deferred, Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
 import { AgentLoop, definePlugin, HarnessError, Memory, SessionLog, Sessions } from "@xandreed/core"
-import type { HarnessConfig, LoopInput } from "@xandreed/core"
+import type { HarnessConfig, LoopInput, SessionHandle, SessionLogError, SessionMissing } from "@xandreed/core"
 import { sessionSqlitePlugin } from "@xandreed/plugin-session-sqlite"
 import { memoryPlugin } from "@xandreed/plugin-memory"
 import { Harness } from "./harness.js"
@@ -242,4 +242,39 @@ describe("durable SDK sessions", () => {
       expect(yield* resumed.pending).toEqual([])
     })))
   })
+})
+
+describe("harness fork boundaries", () => {
+  const forked = (use: (harness: Harness, session: SessionHandle) => Effect.Effect<void, HarnessError | SessionMissing | SessionLogError>) => {
+    const directory = workspace()
+    return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const harness = yield* Harness.make({ workspace: directory, config: config(directory), plugins: [sessionSqlitePlugin, sessionsPlugin, echo] })
+      const session = yield* harness.create()
+      yield* session.send("hello")
+      yield* use(harness, session)
+    })))
+  }
+
+  test("a fork cuts exactly at the requested event, not at its turn's end", () => forked((harness, session) => Effect.gen(function* () {
+    const claimed = (yield* session.history).find((event) => event.name === "input.claimed")!.seq
+    const atClaim = yield* harness.fork(session.record.id, claimed)
+    expect((yield* atClaim.history).map((event) => `${event.seq}:${event.name}`)).toEqual(["0:input.queued", "1:input.claimed"])
+  })))
+
+  test("a fork of a fork counts the turns it inherits, so its own turns never reuse their numbers", () => forked((harness, session) => Effect.gen(function* () {
+    const branch = yield* harness.fork(session.record.id, (yield* session.history).at(-1)!.seq)
+    yield* branch.steer("queued only")
+    const grandchild = yield* harness.fork(branch.record.id, (yield* branch.history).at(-1)!.seq)
+    const log = yield* grandchild.use(SessionLog, Effect.succeed)
+    expect(Option.map((yield* log.head(grandchild.record.id)).header.parent, (parent) => parent.turnAtFork)).toEqual(Option.some(1))
+    yield* grandchild.send("own turn")
+    const started = yield* log.read(grandchild.record.id, { after: 0, kinds: ["turn.started"], limit: Option.none() })
+    expect(started.map((event) => Option.getOrNull(event.turn))).toEqual([2, 3])
+  })))
+
+  test("a fork before the first event inherits nothing, not even a grandparent's history", () => forked((harness, session) => Effect.gen(function* () {
+    const branch = yield* harness.fork(session.record.id, (yield* session.history).at(-1)!.seq)
+    const empty = yield* harness.fork(branch.record.id, -1)
+    expect(yield* empty.history).toEqual([])
+  })))
 })

@@ -76,7 +76,10 @@ host finds a live process's turn busy; hosts sharing a database across hosts
 use lease ownership.
 
 - `create`, `resume`, `list`, and `fork` operate on the same session heads and
-  immutable fork boundaries as the unified log.
+  immutable fork boundaries as the unified log. `fork(id, through)` inherits
+  exactly the events up to `through` (and that turn's `turn.ended` when no
+  harness event comes between), its turns count on from every turn it
+  inherits, and `fork(id, -1)` inherits nothing.
 - `send` journals input, admits through `Sessions.begin` and writes through its
   `TurnWriter` before ending the turn; `steer` queues input for a loop's
   next admission boundary; `continue` resumes the pending queue.
