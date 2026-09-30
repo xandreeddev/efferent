@@ -1,6 +1,7 @@
-import type { JourneyExpectation, JourneyObservation, JourneyScore } from "./journey.entity.js"
+import { Effect, Schema } from "effect"
+import { LegacyJourney, type Journey, type JourneyInput, type JourneyExpectation, type JourneyObservation, type JourneyScore } from "./journey.entity.js"
 
-export const scoreJourneyTurn = (expected: JourneyExpectation, observed: JourneyObservation, locale: string): JourneyScore => {
+export const scoreJourneyTurn = (expected: JourneyExpectation, observed: JourneyObservation): JourneyScore => {
   const missing = (label: string, required: ReadonlyArray<string>, actual: ReadonlyArray<string>) => required.filter((value) => !actual.includes(value)).map((value) => `Missing ${label}: ${value}`)
   const failures = [
     ...(expected.maxAgentSteps === undefined || (observed.agentSteps !== undefined && observed.agentSteps <= expected.maxAgentSteps) ? [] : ["Agent step ceiling exceeded or unobserved"]),
@@ -18,7 +19,7 @@ export const scoreJourneyTurn = (expected: JourneyExpectation, observed: Journey
     ...expected.requiredText.filter((text) => !observed.text.includes(text)).map((text) => `Missing text: ${text}`),
     ...expected.forbiddenText.filter((text) => observed.text.includes(text)).map((text) => `Forbidden text: ${text}`),
     ...(expected.outcome === observed.outcome ? [] : [`Expected outcome ${expected.outcome}, received ${observed.outcome}`]),
-    ...(locale === observed.locale ? [] : [`Expected locale ${locale}, received ${observed.locale}`]),
+    ...(expected.locale === observed.locale ? [] : [`Expected locale ${expected.locale}, received ${observed.locale}`]),
     ...(observed.evidence.length > 0 ? [] : ["No observable journey evidence"]),
   ]
   return { passed: failures.length === 0, failures }
@@ -34,3 +35,17 @@ export const scoreSelection = (expected: ReadonlyArray<string>, predicted: Reado
   const f2 = precision + recall === 0 ? 0 : 5 * precision * recall / (4 * precision + recall)
   return { precision, recall, f2, forbidden: forbidden.filter((value) => actual.has(value)), exact: target.size === actual.size && truePositive === target.size }
 }
+
+/** An explicit projection prevents reference labels or descriptions from reaching execution. */
+export const journeyInput = (journey: Journey): JourneyInput => ({
+  id: journey.id, persona: journey.persona, hostLocale: journey.hostLocale, fixture: journey.fixture,
+})
+
+/** Preserve the old same-language assumption only when importing a historical declaration. */
+export const decodeLegacyJourney = (input: unknown) => Schema.decodeUnknownEffect(LegacyJourney)(input).pipe(
+  Effect.map(({ expectedLocale, ...journey }): Journey => ({
+    ...journey,
+    hostLocale: expectedLocale,
+    turns: journey.turns.map((turn) => ({ ...turn, expected: { ...turn.expected, locale: expectedLocale } })),
+  })),
+)

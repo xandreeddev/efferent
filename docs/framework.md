@@ -186,6 +186,16 @@ The model picker uses the configured model catalog. Ctrl+O expands tool details.
 For typed datasets, reusable evaluators, task/journey composition and native prompt
 examples, see [Composable evaluations](composable-evaluations.md).
 
+Journey execution separates inputs from labels. A `Journey` declares `hostLocale`
+for initial session setup and `turns[].expected.locale` for each turn's outcome.
+`JourneyDriver.open` receives only `JourneyInput` (id, persona, host locale and
+fixture); `perform` receives only `JourneyAction`. The runner retains expectations
+for scoring. Drivers report the observed turn locale, not the initial host locale.
+Historical declarations with `expectedLocale` require explicit `decodeLegacyJourney`
+conversion; new execution never reads an expected answer to initialize its session.
+Typed `Dataset<Input, Reference>` cases can supply both focused tasks and journeys,
+with reference labels available only to evaluators.
+
 `@xandreed/evals` exports `scenario`, `runPack`, `evaluate`, campaign persistence,
 statistics, evidence checks and baseline comparison. A scenario supplies its
 own scoped fixture, actions, checks and judges. `evaluate` accepts arbitrary

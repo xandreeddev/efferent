@@ -6,7 +6,7 @@ export const JourneyAction = Schema.Union(
   Schema.Struct({ type: Schema.Literal("click"), target: Schema.String }),
   Schema.Struct({ type: Schema.Literals(["cancel", "reconnect", "reopen"]) })],
 )
-export const JourneyExpectation = Schema.Struct({
+const expectationFields = {
   requiredTools: Schema.Array(Schema.String),
   forbiddenTools: Schema.Array(Schema.String),
   recipes: Schema.Array(Schema.String),
@@ -23,19 +23,37 @@ export const JourneyExpectation = Schema.Struct({
   requiredToolArguments: Schema.optional(Schema.Array(Schema.Struct({ name: Schema.String, arguments: Schema.Record(Schema.String, Schema.Unknown) }))),
   minAgentSteps: Schema.optional(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
   maxNewRuns: Schema.optional(Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
-})
+}
+export const JourneyExpectation = Schema.Struct({ locale: Schema.String, ...expectationFields })
 export const JourneyTurn = Schema.Struct({ action: JourneyAction, expected: JourneyExpectation })
-export const Journey = Schema.Struct({
+export const JourneyInput = Schema.Struct({
+  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  persona: Schema.Struct({ id: Schema.String, category: Schema.String, authenticated: Schema.Boolean }),
+  hostLocale: Schema.String,
+  fixture: Schema.String,
+})
+export type JourneyInput = typeof JourneyInput.Type
+export type JourneyAction = typeof JourneyAction.Type
+const journeyFields = {
   id: Schema.Trimmed.check(Schema.isNonEmpty()),
   persona: Schema.Struct({ id: Schema.String, category: Schema.String, authenticated: Schema.Boolean }),
   tier: Schema.Union([Schema.Literals(["blocking", "quality", "exploratory"]), Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 3 })))]),
   coverage: Schema.optional(Schema.Struct({ tools: Schema.Array(Schema.String), recipes: Schema.Array(Schema.String) })),
   evaluators: Schema.optional(Schema.Array(Schema.Struct({ id: Schema.String, version: Schema.String, scope: Schema.Literals(["turn", "journey"]) }))),
   tierReason: Schema.String,
-  expectedLocale: Schema.String,
   description: Schema.String,
   fixture: Schema.String,
+}
+export const Journey = Schema.Struct({
+  ...journeyFields,
+  hostLocale: Schema.String,
   turns: Schema.Array(JourneyTurn).pipe(Schema.check(Schema.isMinLength(1))),
+})
+/** Historical declarations must be migrated explicitly, never used to initialize a driver. */
+export const LegacyJourney = Schema.Struct({
+  ...journeyFields,
+  expectedLocale: Schema.String,
+  turns: Schema.Array(Schema.Struct({ action: JourneyAction, expected: Schema.Struct(expectationFields) })).pipe(Schema.check(Schema.isMinLength(1))),
 })
 export type Journey = typeof Journey.Type
 export type JourneyTurn = typeof JourneyTurn.Type

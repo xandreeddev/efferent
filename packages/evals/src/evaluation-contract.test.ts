@@ -8,8 +8,8 @@ import { scoreJourneyTurn } from "./journey.entity.functions.js"
 import type { Journey, JourneyExpectation } from "./journey.entity.js"
 import type { Evaluator } from "./assessment.usecase.js"
 
-const expected: JourneyExpectation = { requiredTools: ["read"], forbiddenTools: ["write"], recipes: ["lookup"], components: [], outcome: "answered", requiredText: [], forbiddenText: [], maxAgentSteps: 3 }
-const journey: Journey = { id: "read", tier: 0, tierReason: "critical", persona: { id: "guest", category: "anonymous", authenticated: false }, expectedLocale: "en", description: "read", fixture: "v1", turns: [{ action: { type: "message", text: "read" }, expected }] }
+const expected: JourneyExpectation = { locale: "en", requiredTools: ["read"], forbiddenTools: ["write"], recipes: ["lookup"], components: [], outcome: "answered", requiredText: [], forbiddenText: [], maxAgentSteps: 3 }
+const journey: Journey = { id: "read", tier: 0, tierReason: "critical", persona: { id: "guest", category: "anonymous", authenticated: false }, hostLocale: "en", description: "read", fixture: "v1", turns: [{ action: { type: "message", text: "read" }, expected }] }
 const tool = { name: "read", invocationId: "call-1", stepId: "step-1" }
 const evidence = { required: ["a", "b", "c", "d"].map((id) => ({ id, description: id })), tools: [tool], evidenceRefs: ["answer"] }
 const actions = ["matched", "matched", "partial", "missing"].map((status, index) => ({ actionId: ["a", "b", "c", "d"][index]!, status: status as "matched" | "partial" | "missing", tools: index < 3 ? [tool] : [], evidenceRefs: ["answer"], reason: "Observed answer" }))
@@ -45,9 +45,9 @@ describe("evaluation contracts", () => {
   })
   it("fails missing step measurements and wrong arguments", () => {
     const observed = { text: "ok", locale: "en", tools: ["read"], recipes: ["lookup"], components: [], outcome: "answered", evidence: ["file"], costUsd: 0, latencyMs: 1 }
-    expect(scoreJourneyTurn(expected, observed, "en").passed).toBe(false)
-    expect(scoreJourneyTurn(expected, { ...observed, agentSteps: 3 }, "en").passed).toBe(true)
-    expect(scoreJourneyTurn({ ...expected, requiredToolArguments: [{ name: "read", arguments: { id: "a" } }] }, { ...observed, agentSteps: 1, toolCalls: [{ name: "read", arguments: { id: "b" } }] }, "en").passed).toBe(false)
+    expect(scoreJourneyTurn(expected, observed).passed).toBe(false)
+    expect(scoreJourneyTurn(expected, { ...observed, agentSteps: 3 }).passed).toBe(true)
+    expect(scoreJourneyTurn({ ...expected, requiredToolArguments: [{ name: "read", arguments: { id: "a" } }] }, { ...observed, agentSteps: 1, toolCalls: [{ name: "read", arguments: { id: "b" } }] }).passed).toBe(false)
   })
   it("exposes comments without manufacturing unavailable scores", () => {
     const result = { version: 2 as const, evaluator: "x", evaluatorVersion: "1", status: "scored" as const, metrics: [{ kind: "boolean" as const, name: "x", value: true, comment: "specific" }], reason: Option.some("shared"), references: [], startedAt: 0, endedAt: 1, usage: { inputTokens: Option.none<number>(), outputTokens: Option.none<number>(), costUsd: Option.none<number>() }, metadata: {} }

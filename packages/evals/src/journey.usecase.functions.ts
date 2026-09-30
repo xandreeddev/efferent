@@ -1,6 +1,6 @@
 import { Cause, Effect, Option, Ref, Schema } from "effect"
 import { Journey, JourneyError, type JourneyObservation, type JourneyTrial } from "./journey.entity.js"
-import { scoreJourneyTurn } from "./journey.entity.functions.js"
+import { journeyInput, scoreJourneyTurn } from "./journey.entity.functions.js"
 import { JourneyDriver, JourneyEvidence } from "./ports/journey.port.js"
 
 /** Persist every trial before aggregation. Driver timeouts interrupt their
@@ -11,14 +11,14 @@ export const runJourney = (input: Journey, metadata: Pick<JourneyTrial, "id" | "
   const evidence = yield* JourneyEvidence
   const observed = yield* Ref.make<ReadonlyArray<JourneyObservation>>([])
   const execution = yield* restore(Effect.scoped(Effect.gen(function* () {
-    const session = yield* driver.open(journey).pipe(Effect.timeoutOrElse({ duration: "30 seconds", orElse: () => Effect.fail((() => new JourneyError({ message: "Journey initialization exceeded its deadline" }))()) }))
-    yield* Effect.forEach(journey.turns, (turn) => session.perform(turn).pipe(
+    const session = yield* driver.open(journeyInput(journey)).pipe(Effect.timeoutOrElse({ duration: "30 seconds", orElse: () => Effect.fail((() => new JourneyError({ message: "Journey initialization exceeded its deadline" }))()) }))
+    yield* Effect.forEach(journey.turns, (turn) => session.perform(turn.action).pipe(
       Effect.timeoutOrElse({ duration: "90 seconds", orElse: () => Effect.fail((() => new JourneyError({ message: "Journey turn exceeded its deadline" }))()) }),
       Effect.tap((result) => Ref.update(observed, (prior) => [...prior, result])),
     ))
   }))).pipe(Effect.exit)
   const observations = yield* Ref.get(observed)
-  const scores = observations.map((observation, index) => scoreJourneyTurn(journey.turns[index]!.expected, observation, journey.expectedLocale))
+  const scores = observations.map((observation, index) => scoreJourneyTurn(journey.turns[index]!.expected, observation))
   const trial: JourneyTrial = {
     ...metadata, journeyId: journey.id, observations, scores,
     passed: execution._tag === "Success" && scores.length === journey.turns.length && scores.every((score) => score.passed),
