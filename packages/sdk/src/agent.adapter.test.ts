@@ -157,7 +157,7 @@ const answer = (policy: TurnPolicy = {}) => (turn: Turn): Effect.Effect<TurnOutc
   const delivered = yield* Ref.make(Option.none<string>())
   yield* subscribeAll(turn.events, [onTool(Deliver, ({ input }) => Ref.set(delivered, Option.some(input.text)))])
   yield* turn.tools.select(turn.userMessage)
-  const result = yield* turn.run({
+  const result = yield* turn.loop({
     step: (step) => Effect.succeed({ context: Option.some(`step ${step.stepIndex}`), toolChoice: Option.none() }),
     completion: () => Ref.get(delivered).pipe(Effect.map((text) => ({ complete: Option.isSome(text), awaiting: [], facts: {} }))),
     limits: { requireCompletion: true },
@@ -332,7 +332,7 @@ describe("Agent.turn", () => {
         yield* subscribeAll(turn.events, [onTool(Lookup, ({ result }) => Ref.set(known, result.items.map((item) => item.id)))])
         yield* turn.tools.select(turn.userMessage)
         yield* turn.tools.activate(["delivery"])
-        const result = yield* turn.run({
+        const result = yield* turn.loop({
           step: () => Ref.get(known).pipe(Effect.map((ids) => ({ context: Option.some(`KNOWN [${ids.join(", ")}]`), toolChoice: Option.none() }))),
           stepContext: "system",
         })
@@ -391,7 +391,7 @@ describe("Agent.turn", () => {
           yield* turn.tasks.fork("tally", Tally.pipe(Effect.flatMap((same) => tallied(same, "task"))))
           yield* turn.tasks.await(["tally"])
           yield* turn.tools.select(turn.userMessage)
-          yield* turn.run({})
+          yield* turn.loop({})
           return { outcome: "completed" as const, reply: Option.some((yield* Ref.get(tally.seen)).join(",")) }
         }))
         return Option.getOrElse(outcome.reply, () => "")
@@ -667,7 +667,7 @@ describe("Agent.turn", () => {
       const journal = yield* inMemorySession
       const { seen, model } = yield* scripted([stop("one"), stop("two")])
       yield* Effect.forEach(["run-1", "run-2"], (runId) => agent.turn(inputFor(journal, runId, `hello ${runId}`, model), (turn) =>
-        turn.run({}).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })))))
+        turn.loop({}).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })))))
       const events = yield* journal.stored
       return { seen: yield* Ref.get(seen), sections: named(events, "memory.section").map((event) => [event.data.entry, Option.getOrNull(event.turn)]) }
     })))
@@ -844,7 +844,7 @@ describe("Agent.turn", () => {
       const { model } = yield* scripted([...lookupThenDeliver, stop("later")])
       yield* agent.turn(inputFor(journal, "run-1", "find alpha", model), answer())
       yield* agent.turn(inputFor(journal, "run-2", "later", model), (turn) =>
-        turn.run({}).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+        turn.loop({}).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
       const events = yield* journal.stored
       // A fork's own log without its parent's history: the second turn's events alone.
       const own = events.filter((event) => Option.contains(event.turn, 2))
@@ -886,7 +886,7 @@ describe("Agent.turn", () => {
       })
       const journal = yield* inMemorySession
       const result = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "hello", model), (turn) =>
-        turn.run({}).pipe(Effect.map((run): TurnOutcome => ({ outcome: run.outcome, reply: Option.some(run.text) })))))
+        turn.loop({}).pipe(Effect.map((run): TurnOutcome => ({ outcome: run.outcome, reply: Option.some(run.text) })))))
       return { result, checks: yield* Ref.get(checks), calls: yield* Ref.get(calls) }
     })))
     expect(result._tag === "Failure" ? result.failure.code : "success").toBe("session.log")

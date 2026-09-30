@@ -234,7 +234,7 @@ export const runGolden = (
     const delivered = yield* Ref.make(Option.none<string>())
     yield* subscribeAll(turn.events, [onTool(Deliver, ({ input: params }) => Ref.set(delivered, Option.some(params.text)))])
     yield* turn.tools.select(turn.userMessage)
-    const result = yield* turn.run({
+    const result = yield* turn.loop({
       completion: () => Ref.get(delivered).pipe(Effect.map((text) => ({ complete: Option.isSome(text), awaiting: [], facts: {} }))),
       limits: { requireCompletion: true },
       ...policy,
