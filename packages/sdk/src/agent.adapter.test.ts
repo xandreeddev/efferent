@@ -27,6 +27,7 @@ import {
   TurnAdmissionOpen,
   TurnEvents,
   TurnMemory,
+  TurnTasks,
   UserMessage,
   UtilityCompletion,
   UtilityLlm,
@@ -694,6 +695,35 @@ describe("Agent.turn", () => {
       return outcome.reply
     })))
     expect(reply).toEqual(Option.some("stamped run-1"))
+  })
+
+  test("a turn-dependent plugin finalizes while the turn's services are open: what it publishes and forks then is stored before the end", async () => {
+    const { kinds, finalized } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const finalized = yield* Ref.make("not run")
+      const closing = definePlugin({
+        id: "test/closing", version: "1", scope: "session", config: Schema.Struct({}), defaults: {},
+        requires: [RunContext, TurnEvents, TurnTasks], provides: [],
+        layer: () => Layer.effectDiscard(Effect.gen(function* () {
+          const run = yield* RunContext
+          const events = yield* TurnEvents
+          const tasks = yield* TurnTasks
+          yield* Effect.addFinalizer(() => Effect.gen(function* () {
+            yield* events.publish({ _tag: "host", name: "plugin.closed", data: {} })
+            yield* tasks.fork("closing", events.publish({ _tag: "host", name: "plugin.task", data: {} }))
+            yield* run.flush
+          }).pipe(Effect.exit, Effect.flatMap((exit) => Ref.set(finalized, exit._tag))))
+        })),
+      })
+      const agent = yield* define(memoryWindowPlugin, { plugins: [closing] })
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      yield* agent.turn(inputFor(journal, "run-1", "hello", model), (turn) => turn.reply("hello"))
+      return { kinds: (yield* journal.stored).map((event) => event.kind), finalized: yield* Ref.get(finalized) }
+    })))
+    expect(finalized).toBe("Success")
+    expect(kinds.at(-1)).toBe("turn.ended")
+    expect(kinds).toContain("plugin.closed")
+    expect(kinds).toContain("plugin.task")
   })
 
   test("durable request replay refuses events that do not rebuild the request's context", async () => {

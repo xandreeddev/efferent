@@ -295,12 +295,14 @@ skills, step context, completion) is the host's.
 the graph and activates its runtime plugins once, in the caller's scope.
 Session plugins, if any, are activated per turn with the turn's services.
 Session plugins requiring `RunContext`, `TurnEvents`, `TurnTasks`,
-`TurnMemory`, `TurnPrompt` or `TurnToolbox` activate after `TurnLive`,
-before the host's layer (which can use their services) and before the
-user's message is taken by memory: a context entry they record at
-activation (`TurnMemory.context`) waits for the message. Their dependent
-plugins activate in the same phase, and all subscriptions/resources finalize
-with that turn. Memory, registry and loop providers activate first: a plugin
+`TurnMemory`, `TurnPrompt` or `TurnToolbox` activate after `TurnLive`, in a
+scope of their own, before the host's layer (which can use their services)
+and before the user's message is taken by memory: a context entry they
+record at activation (`TurnMemory.context`) waits for the message. Their
+dependent plugins activate in the same phase. They finalize once the turn's
+body and the host's layer are done, while the turn's services are still
+open: what their finalizers publish or fork is settled and stored before the
+turn ends. Memory, registry and loop providers activate first: a plugin
 requiring the services of an already-open turn cannot also provide those
 foundations. Runtime plugins cannot require turn services. This lets a
 capability ship a session plugin that installs its reactions without coupling
@@ -640,14 +642,15 @@ conversation)` builds the prompt-cache key.
 
 ```ts
 const body = Effect.gen(function* () {
-  yield* (yield* TurnMemory).persistMessage       // 3. the user's message
-  yield* openTurnTools                            // 4. inside the host layer: its services reach the handlers
-  return yield* use(yield* turnOf(runOptions))    // 5. the host's code
+  yield* (yield* TurnMemory).persistMessage       // 4. the user's message
+  yield* openTurnTools                            // 5. inside the host layer: its services reach the handlers
+  return yield* use(yield* turnOf(runOptions))    // 6. the host's code
 })
 body.pipe(
   guardTurn,
   Effect.scoped,
-  Effect.provide(input.layer),                    // 2. built after RunContext, before TurnStarted
+  Effect.provide(input.layer),                    // 3. built after RunContext, before TurnStarted
+  turnDependentPlugins,                           // 2. their own scope: closed, settled and flushed after 3
   Effect.provide(TurnLive(turnInput)),            // 1. the writer first, then memory and RunContext
   Effect.provide(agentContext),                   // the graph's services and the turn's
 )
@@ -655,8 +658,11 @@ body.pipe(
 
 The order matters. The message is persisted before the matcher runs, because
 the matcher reads the reference transcript and a decision's context hash
-includes its length. Anything built before `persistMessage` (the host's layer)
-sees only earlier turns. A host composing by hand uses the same pieces over a
+includes its length. Anything built before `persistMessage` (the
+turn-dependent plugins, the host's layer) sees only earlier turns. The
+turn-dependent plugins close after the host's layer and before `TurnLive`:
+what their finalizers publish or fork is settled and stored before the turn
+ends. A host composing by hand uses the same pieces over a
 `stackPlugins` stack instead of a graph, and builds session plugins such as
 `MemoryDigestLive()` per turn over the turn's services. `turnConformance`
 checks a composition: the writer first, the message before the matcher's

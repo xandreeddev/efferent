@@ -1,4 +1,4 @@
-import { Context, Effect, Option, Schema } from "effect"
+import { Context, Effect, Exit, Option, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import {
   cacheKeyOf,
@@ -15,6 +15,7 @@ import {
   StepLoop,
   ToolRegistry,
   RunContext,
+  settleTurn,
   TurnEvents,
   TurnTasks,
   TurnLive,
@@ -198,13 +199,18 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    * 1. TurnLive: the bus and tasks, with the writer as the first
    *    subscriber, then memory (the session's earlier memory events) and
    *    RunContext;
-   * 2. the host's layer, provided between TurnLive and the body: built after
-   *    RunContext and before memory takes the message, so it sees only
-   *    earlier turns;
-   * 3. the user's message taken by memory (TurnStarted, turn.started);
-   * 4. the tools opened inside the host's layer, so its services reach them;
-   * 5. `use`;
-   * 6. a turn begun here is ended here, with the outcome.
+   * 2. the turn-dependent plugins (those requiring the turn's services, and
+   *    their dependants), activated over TurnLive in a scope of their own;
+   * 3. the host's layer, built with their services, after RunContext and
+   *    before memory takes the message, so it sees only earlier turns (a
+   *    context entry recorded by 2 or 3 waits for the message);
+   * 4. the user's message taken by memory (TurnStarted, turn.started);
+   * 5. the tools opened inside the host's layer, so its services reach them;
+   * 6. `use`, guarded: the tasks joined, the reply recorded;
+   * 7. the host's layer, then the plugins of 2 closed, while TurnLive is
+   *    still open: what their finalizers publish or fork is settled and
+   *    stored before TurnLive closes;
+   * 8. a turn begun here is ended here, with the outcome.
    */
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -240,10 +246,22 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       // Everything `use` does sees the turn's services: `yield* SomeHostTag` gets the per-turn instance.
       return yield* use(yield* turnOf(runOptions))
     })
+    // The turn-dependent plugins finalize in their own scope, before TurnLive closes and before the
+    // turn ends: their finalizers still publish (stored) and fork tasks, settled and flushed here.
     const provideTurnPlugins = <B, F, T>(effect: Effect.Effect<B, F, T>): Effect.Effect<B, F | HarnessError, unknown> => late.length === 0 ? effect : Effect.gen(function* () {
       const liveContext = yield* Effect.context<never>()
-      const activated = yield* activateGraph(afterTurn, "session", Context.merge(context, liveContext), scope)
-      return yield* effect.pipe(Effect.provide(activated))
+      const flush = RunContext.pipe(Effect.flatMap((run) => run.flush))
+      return yield* Effect.scoped(Effect.gen(function* () {
+        const activated = yield* activateGraph(afterTurn, "session", Context.merge(context, liveContext), yield* Effect.scope)
+        return yield* effect.pipe(Effect.provide(activated))
+      })).pipe(
+        Effect.onExit(Exit.match({
+          onSuccess: () => Effect.void,
+          // The turn already failed: what the finalizers wrote is stored if it can be, keeping the cause.
+          onFailure: () => TurnEvents.pipe(Effect.flatMap((events) => events.drain), Effect.andThen(flush), Effect.catchCause(() => Effect.void)),
+        })),
+        Effect.tap(() => settleTurn.pipe(Effect.andThen(flush))),
+      )
     })
     const outcome = yield* body.pipe(
       guardTurn,
