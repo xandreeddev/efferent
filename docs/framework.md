@@ -73,7 +73,12 @@ it owns no separate tables. A harness graph composes `sessionSqlitePlugin`
 (turn ownership). Process-owned CLI hosts configure the latter with
 `{ ownership: { mode: "process" } }`, under which a second process on the same
 host finds a live process's turn busy; hosts sharing a database across hosts
-use lease ownership.
+use lease ownership. `Harness.make` requires `Sessions`: a graph without
+`sessionsPlugin` fails with `service.missing` naming it. In-turn events are
+written through the turn's `TurnWriter` to the `SessionLog` and read back
+through `SessionStore`, so a custom `SessionStore` must be the projection over
+that same log (`SessionStoreProjectionLive`); one that does not read what the
+writer wrote fails the turn with `session.store` instead of losing its events.
 
 - `create`, `resume`, `list`, and `fork` operate on the same session heads and
   immutable fork boundaries as the unified log. `fork(id, through)` inherits
@@ -82,10 +87,16 @@ use lease ownership.
   inherits, and `fork(id, -1)` inherits nothing.
 - `send` journals input, admits through `Sessions.begin` and writes through its
   `TurnWriter` before ending the turn; `steer` queues input for a loop's
-  next admission boundary; `continue` resumes the pending queue.
+  next admission boundary; `continue` resumes the pending queue. Input
+  submitted while a turn is ending is recorded on its own, and `busy` holds
+  until the turn's writer is released. A steer that another instance's turn
+  claimed is not begun again as a turn.
 - `use(Service, callback)` accesses a selected domain service while holding the
   session gate; resource disposal waits until the callback completes.
-- `interrupt` cancels the active fiber. The run settles once as cancelled.
+- `interrupt` cancels the active fiber. The run settles once as cancelled. A
+  turn closed elsewhere (cancelled or reaped by another instance) still gets
+  its run's settlement, `run.cancelled`, recorded outside the closed writer:
+  `send` returns after a cancel and fails with `turn.closed` after a reap.
 - `events(after)` replays durable events after an exclusive cursor, then follows
   the journal. Notifications can coalesce; journal entries are not dropped.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.

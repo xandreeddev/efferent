@@ -74,15 +74,20 @@ deprecated `SessionStore` and `ConversationStore` APIs are projections over
 that journal. Compose the SQLite storage plugin with `sessionsPlugin`; CLI
 hosts use process ownership (a live process's turn is busy to another process
 on the same host), while hosts sharing a database across machines use leases.
+Without `sessionsPlugin`, `Harness.make` fails with `service.missing` naming it;
+a custom `SessionStore` must be the projection over the same `SessionLog`, or
+the turn fails with `session.store`.
 
 - `create`, `resume`, `list`, and `fork` use the unified session heads and
   immutable history boundaries.
 - `send` journals input, admits through `Sessions.begin` and writes through
   `TurnWriter` before ending the turn; `steer` queues input for a loop's
-  next admission boundary; `continue` resumes the pending queue.
+  next admission boundary; `continue` resumes the pending queue. Input
+  submitted while a turn is ending is still queued.
 - `use(Service, callback)` accesses a selected domain service while holding the
   session gate; resource disposal waits until the callback completes.
-- `interrupt` cancels the active fiber. The run settles once as cancelled.
+- `interrupt` cancels the active fiber. The run settles once as cancelled, and
+  so does a turn cancelled or reaped by another instance.
 - `events(after)` replays durable events after an exclusive cursor, then follows
   the journal. Notifications can coalesce; journal entries are not dropped.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.
