@@ -728,7 +728,13 @@ import is a snapshot, and subsequent writes by an old version are not mirrored.
 `SessionStoreProjectionLive` and `ConversationStoreProjectionLive` are the
 explicit deprecated compatibility surfaces. Both require the host's
 `SessionLog`; their writes append `harness.event` or `conversation.*` records
-with revision checks, and positional batches stay atomic. The convenience
+with revision checks, and positional batches stay atomic. A read after a
+cursor and an append find their place by a binary search over the log's
+cursor, so they cost what they return rather than the history. The
+positional listing shows conversation sessions only (not harness or task
+sessions sharing the log) and reads an unknown outcome as none; over the
+SQLite log it is one query, and `prune` removes old conversations in one
+transaction, leaves tombstones and truncates the write-ahead log. The convenience
 `SessionStoreLive(path)` and `SqliteConversationStoreLive(path)` compose these
 projections over SQLite without creating the former storage tables. Math and
 Canvas compose the message projection over their harness log and import their

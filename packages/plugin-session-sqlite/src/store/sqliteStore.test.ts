@@ -3,10 +3,12 @@ import { describe, expect, test } from "bun:test"
 import { mkdtempSync, statSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Option } from "effect"
-import { ConversationId, ConversationStore, StoreError } from "@xandreed/core"
+import { Effect, Layer, Option } from "effect"
+import { ConversationId, ConversationStore, SessionLog, SessionStore, StoreError } from "@xandreed/core"
 import type { AgentMessage } from "@xandreed/core"
-import { SqliteConversationStoreLive } from "./sqliteStore.js"
+import { SessionStoreProjectionLive } from "../compatibility.adapter.js"
+import { SessionLogSqliteLive } from "../session-log.adapter.js"
+import { ConversationStoreProjectionLive, SqliteConversationStoreLive } from "./sqliteStore.js"
 
 const freshDbPath = (): string =>
   join(mkdtempSync(join(tmpdir(), "engine-store-")), "test.db")
@@ -317,5 +319,50 @@ describe("SqliteConversationStoreLive — how a run ended is on record", () => {
         expect(Option.getOrThrow(listed[0]!.lastOutcome)).toEqual({ outcome: "ok", reason: "completed" })
       }),
     )
+  })
+})
+
+describe("SqliteConversationStoreLive — listing and retention over a shared log", () => {
+  test("the workspace listing shows conversations only, and an unknown outcome literal as none", async () => {
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const conversations = yield* ConversationStore
+      const harness = yield* SessionStore
+      const log = yield* SessionLog
+      // A domain host's messages under a harness session share the log.
+      const session = yield* harness.create("/ws", "custom")
+      yield* conversations.append(session.id, user("domain prompt"))
+      const id = yield* conversations.create("/ws")
+      yield* conversations.append(id, user("listed prompt"))
+      yield* conversations.recordOutcome(id, "ok", "completed")
+      const head = yield* log.head(id)
+      yield* log.commit(id, { expect: head.revision, notAfter: Option.none(), state: Option.none(), events: [{ kind: "conversation.outcome", turn: Option.none(), data: { at: 1, outcome: "abandoned", reason: "a future reason" } }] })
+      const listed = yield* conversations.listByWorkspace("/ws")
+      expect(listed.map((summary) => [summary.id, Option.getOrNull(summary.firstPrompt), Option.getOrNull(summary.lastOutcome)])).toEqual([[id, "listed prompt", null]])
+    }).pipe(Effect.provide(Layer.merge(SessionStoreProjectionLive, ConversationStoreProjectionLive()).pipe(Layer.provideMerge(SessionLogSqliteLive(freshDbPath())))))))
+  })
+
+  test("prune reclaims the space in the write-ahead log", async () => {
+    const dbPath = freshDbPath()
+    await withStoreAt(dbPath, Effect.gen(function* () {
+      const store = yield* ConversationStore
+      const old = yield* store.create("/ws")
+      yield* store.appendAll(old, Array.from({ length: 50 }, (_, index) => user(`${index} ${"x".repeat(400)}`)))
+      expect(statSync(`${dbPath}-wal`).size).toBeGreaterThan(0)
+      expect(yield* store.prune(Date.now() + 1)).toBe(1)
+      expect(statSync(`${dbPath}-wal`).size).toBe(0)
+    }))
+  })
+
+  test("of checkpoints at the same position, the newest is the fold, and a fork carries it", async () => {
+    await withStore(Effect.gen(function* () {
+      const store = yield* ConversationStore
+      const id = yield* store.create("/ws")
+      yield* store.appendAll(id, [user("a"), user("b")])
+      yield* store.checkpointAt(id, "first summary", 1)
+      yield* store.checkpointAt(id, "second summary", 1)
+      expect(Option.getOrThrow(yield* store.latestCheckpoint(id)).summary).toBe("second summary")
+      const fork = yield* store.fork(id)
+      expect(Option.getOrThrow(yield* store.latestCheckpoint(fork)).summary).toBe("second summary")
+    }))
   })
 })

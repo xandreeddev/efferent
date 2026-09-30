@@ -65,6 +65,39 @@ const eventOf = (session: ConversationId) => (row: EventRow): SessionLogEvent =>
   session, seq: row.seq, turn: Option.fromNullishOr(row.turn), kind: row.kind, at: row.at, data: json(row.data),
 })
 
+/** One conversation as the positional listing shows it: its first message and its latest title and outcome, as stored. */
+export interface ConversationOverview {
+  readonly id: ConversationId
+  readonly createdAt: number
+  readonly first: Option.Option<JsonObject>
+  readonly title: Option.Option<JsonObject>
+  readonly outcome: Option.Option<JsonObject>
+}
+
+/**
+ * What this package's compatibility projections use of a SQLite log beyond
+ * the SessionLog contract: set-based reads and retention in one transaction.
+ */
+export interface SqliteLogInternals {
+  /** The owner's conversation sessions (origin `conversation`), newest first, in one query. */
+  readonly conversations: (owner: string) => Effect.Effect<ReadonlyArray<ConversationOverview>, SessionLogError>
+  /** Remove the conversation sessions created before `before` in one transaction, then reclaim the space; returns how many. */
+  readonly prune: (before: number) => Effect.Effect<number, SessionLogError>
+}
+
+const internals = new WeakMap<SessionLog["Service"], SqliteLogInternals>()
+
+/** The SQLite internals of a log `SessionLogSqliteLive` built; none for any other SessionLog. */
+export const sqliteLogInternals = (log: SessionLog["Service"]): Option.Option<SqliteLogInternals> => Option.fromNullishOr(internals.get(log))
+
+interface OverviewRow {
+  readonly id: string
+  readonly created_at: number
+  readonly first: string | null
+  readonly title: string | null
+  readonly outcome: string | null
+}
+
 /** A commit's outcome inside its transaction. */
 type Outcome =
   | { readonly _tag: "Done"; readonly committed: SessionCommitted }
@@ -191,6 +224,29 @@ export const makeSessionLogSqlite = (path: string, options: { readonly legacyPat
       return Effect.fail(new LeaseExpired({ session: id, notAfter: Option.getOrElse(commit.notAfter, () => at), now: at }))
     })))),
     remove: (id) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => operation(() => db.transaction(() => removeTrees([id], now)).immediate()))),
+  })
+  internals.set(log, {
+    conversations: (owner) => operation(() => db.query<OverviewRow, [string]>(`
+      SELECT head.id AS id, head.created_at AS created_at,
+        (SELECT event.data FROM session_log_events event WHERE event.session_id = head.id AND event.kind = 'conversation.message' ORDER BY event.seq LIMIT 1) AS first,
+        (SELECT event.data FROM session_log_events event WHERE event.session_id = head.id AND event.kind = 'conversation.title' ORDER BY event.seq DESC LIMIT 1) AS title,
+        (SELECT event.data FROM session_log_events event WHERE event.session_id = head.id AND event.kind = 'conversation.outcome' ORDER BY event.seq DESC LIMIT 1) AS outcome
+      FROM session_heads head WHERE head.owner = ? AND head.origin = 'conversation' ORDER BY head.created_at DESC, head.id DESC`)
+      .all(owner)
+      .map((row): ConversationOverview => ({
+        id: ConversationId.make(row.id), createdAt: row.created_at,
+        first: Option.map(Option.fromNullishOr(row.first), json), title: Option.map(Option.fromNullishOr(row.title), json), outcome: Option.map(Option.fromNullishOr(row.outcome), json),
+      }))),
+    prune: (before) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => operation(() => {
+      const removed = db.transaction(() => {
+        const ids = db.query<{ readonly id: string }, [number]>("SELECT id FROM session_heads WHERE origin = 'conversation' AND created_at < ?").all(before).map((row) => row.id)
+        removeTrees(ids, now)
+        return ids.length
+      }).immediate()
+      // Reclaim the deleted pages from the WAL: deletion alone shrinks nothing on disk.
+      db.exec("PRAGMA wal_checkpoint(TRUNCATE);")
+      return removed
+    }))),
   })
   return log
 })

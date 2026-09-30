@@ -162,6 +162,21 @@ describe("legacy journals migrate into the unified session log", () => {
     }), [join(moved, "old.db"), join(moved, "copy.db")])
   })
 
+  test("a pruned conversation is not imported again from a copy of its source", async () => {
+    const dir = directory()
+    const source = join(dir, "old.db")
+    const destination = join(dir, "sessions.db")
+    seed(source)
+    await withStores(destination, Effect.gen(function* () {
+      expect(yield* (yield* ConversationStore).prune(Number.MAX_SAFE_INTEGER)).toBe(1)
+    }), [source])
+    copyFileSync(source, join(dir, "copy.db"))
+    await withStores(destination, Effect.gen(function* () {
+      expect((yield* Effect.result((yield* SessionLog).head(conversationId)))._tag).toBe("Failure")
+      expect((yield* (yield* SessionStore).read(harnessId, -1)).length).toBe(2)
+    }), [join(dir, "copy.db")])
+  })
+
   test("an undecodable legacy row is skipped and reported while the rest of the source imports", async () => {
     const path = join(directory(), "sessions.db")
     seed(path)
