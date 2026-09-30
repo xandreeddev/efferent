@@ -112,4 +112,16 @@ describe("terminal stream ordering", () => {
     state.delta(delta("current assistant"))
     expect(state.transcript().blocks.map((block) => block.text)).toEqual(["previous assistant", "previous tool", "previous reply", "current assistant"])
   })
+
+  test("a run id prefix does not suppress another run's final reply", () => {
+    const state = createTuiState(record())
+    state.events([
+      durable(0, "run.started", "run:tool"),
+      durable(1, "loop.event", "run:tool", { type: "assistant_message", turnIndex: 0, text: "same reply" }),
+      durable(2, "run.completed", "run:tool", { text: "same reply" }),
+      durable(3, "run.started", "run"),
+      durable(4, "run.completed", "run", { text: "same reply" }),
+    ])
+    expect(state.transcript().blocks.map((block) => block.text)).toEqual(["same reply", "same reply"])
+  })
 })

@@ -81,9 +81,10 @@ export interface Agent {
    * Run one turn: one the host began (its `TurnWriter`; the host ends it),
    * or one begun and ended here through the `Sessions` in the turn's
    * services. The turn is scoped: its subscriptions and tasks end with it.
-   * Tasks and background subscriptions are drained before the reply is
-   * recorded, exactly once — failed when `use` fails or is interrupted —
-   * and everything is stored before the turn returns. A turn closed
+   * On success, tasks and background subscriptions settle as the scopes
+   * close in dependency order, before the reply is recorded exactly once.
+   * Failures and interruptions record a failed reply and cancel remaining
+   * scoped work; recorded events are stored before the turn returns. A turn closed
    * elsewhere (cancelled, reaped) fails with `turn.closed`. `use` runs in
    * the turn's scope with the turn's services (RunContext, TurnEvents,
    * TurnTasks and the input's `layer`) provided: the same instances the
@@ -206,11 +207,11 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    *    context entry recorded by 2 or 3 waits for the message);
    * 4. the user's message taken by memory (TurnStarted, turn.started);
    * 5. the tools opened inside the host's layer, so its services reach them;
-   * 6. `use`, then its tasks and background reactions settled;
+   * 6. `use`, then on success its tasks and background reactions settled;
    * 7. the host's layer, then the plugins of 2 closed, while TurnLive is
-   *    still open: what their finalizers publish or fork is settled and
-   *    stored before TurnLive closes;
-   * 8. finalizer work settled, then the final reply recorded (failed when
+   *    still open: on success, what their finalizers publish or fork is
+   *    settled and stored before TurnLive closes;
+   * 8. on success finalizer work settled, then the final reply recorded (failed when
    *    the body or its finalizer work failed), before TurnLive closes;
    * 9. a turn begun here is ended here, with the outcome.
    */
@@ -248,8 +249,8 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       // Everything `use` does sees the turn's services: `yield* SomeHostTag` gets the per-turn instance.
       return yield* use(yield* turnOf(runOptions))
     })
-    // The turn-dependent plugins finalize before TurnLive closes. The outer guard settles their
-    // finalizer work alongside the host's, then records the final outcome while the writer is open.
+    // The turn-dependent plugins finalize before TurnLive closes. On success, the outer guard
+    // settles their finalizer work, then records the final outcome while the writer is open.
     const provideTurnPlugins = <B, F, T>(effect: Effect.Effect<B, F, T>): Effect.Effect<B, F | HarnessError, unknown> => late.length === 0 ? effect : Effect.gen(function* () {
       const liveContext = yield* Effect.context<never>()
       return yield* Effect.scoped(Effect.gen(function* () {

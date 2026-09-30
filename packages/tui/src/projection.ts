@@ -78,7 +78,7 @@ export const projectEvent = (state: Transcript, event: SessionEvent, renderers: 
     const settled = { ...next, status, runId: "", blocks: next.blocks.map((block) => block.status === "running" ? { ...block, status: "cancelled" as const } : block) }
     if (event.name === "run.completed") {
       const text = String(data.text ?? "")
-      return text.length > 0 && !settled.blocks.some((block) => block.kind === "assistant" && block.id.startsWith(`${event.runId}:`) && block.text === text)
+      return text.length > 0 && !settled.blocks.some((block) => block.kind === "assistant" && block.runId === event.runId && block.text === text)
         ? add(settled, { id: event.id, kind: "assistant", text, detail: "", status: "complete" }) : settled
     }
     return add(settled, { id: event.id, kind: "notice", text: status, detail: failureText(data.message ?? data.reason), status: event.name === "run.failed" ? "failed" : "cancelled" })
