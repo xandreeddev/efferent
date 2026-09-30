@@ -65,7 +65,8 @@ export interface Turn {
   readonly context: (entry: { readonly id: string; readonly version: string; readonly text: string }) => Effect.Effect<void, HarnessError>
   /** Answer without the loop; still a recorded turn. */
   readonly reply: (text: string) => Effect.Effect<TurnOutcome>
-  readonly run: <R = never>(policy: TurnPolicy<R>) => Effect.Effect<RunResult, HarnessError, R>
+  /** Run the step loop (model, tools, model…) under `policy` until it completes or stops. */
+  readonly loop: <R = never>(policy: TurnPolicy<R>) => Effect.Effect<RunResult, HarnessError, R>
   /** Wait until every journal write queued so far is stored (e.g. before delivering an answer). */
   readonly flush: Effect.Effect<void, HarnessError>
   /** Run a host store write in journal order and return its result. */

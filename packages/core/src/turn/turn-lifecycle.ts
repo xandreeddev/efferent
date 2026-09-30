@@ -92,7 +92,7 @@ export const turnOf = (options: TurnRunOptions = {}): Effect.Effect<Turn, Harnes
       tools: yield* turnTools,
       context: memory.context,
       reply: (text) => Effect.succeed<TurnOutcome>({ outcome: "completed", reply: Option.some(text) }),
-      run: (policy) => runTurnLoop(policy, options).pipe(Effect.provide(services)),
+      loop: (policy) => runTurnLoop(policy, options).pipe(Effect.provide(services)),
       flush: run.flush,
       write: run.write,
     } satisfies Turn

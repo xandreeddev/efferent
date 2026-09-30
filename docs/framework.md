@@ -359,7 +359,7 @@ const agent = yield* Agent.define({
 **One turn.** `agent.turn(input, use)` opens memory and tools for one admitted
 turn and hands `use` a `Turn`: `userMessage`, `memory` (read-only), `events`,
 `tasks`, `tools` (`match`, `apply`, `select`, `activate`, `active`),
-`context(entry)`, `reply(text)`, `run(policy)`, `flush` and `write(op)`. The
+`context(entry)`, `reply(text)`, `loop(policy)`, `flush` and `write(op)`. The
 turn is scoped: subscriptions and tasks end with it. On success, tasks and
 background subscriptions settle before the reply is recorded. The reply is
 recorded exactly once, with a `failed` outcome when `use` fails, is interrupted,
@@ -402,7 +402,7 @@ yield* agent.turn({ turn: { session, userMessage, runId }, services, layer: answ
     onTool(Deliver, ({ input }) => state.deliver(input.text)),
   ])
   yield* turn.tools.select(turn.userMessage)                     // always-on skills + the matcher's choice
-  const result = yield* turn.run({
+  const result = yield* turn.loop({
     step: (step) => state.directive(step),                       // step context and tool choice
     completion: () => state.verdict,                             // { complete, awaiting, facts }
     limits: { maxSteps: 6, requireCompletion: true },
