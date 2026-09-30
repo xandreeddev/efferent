@@ -63,7 +63,11 @@ Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)
 that `stackPlugins` composes the way the graph does. A turn is public steps
 over typed services (`TurnLive`, `persistMessage`, `openTurnTools`,
 `runTurnLoop`, `guardTurn`): `Agent.turn` is one composition of them, and
-`turnConformance` checks any other. `@xandreed/ai` versions prompts and
+`turnConformance` checks any other. A composable agent's conversations are
+sessions: one event log each, in storage the host provides (`SessionLog`),
+read and written through `@xandreed/plugin-sessions`, with an inbox and
+background tasks (`@xandreed/plugin-tasks`) the agent answers after the turn
+in flight. `@xandreed/ai` versions prompts and
 decision prompts, with variants per model and the provenance every call
 records. See [the framework guide](docs/framework.md).
 
@@ -132,7 +136,8 @@ The distribution build prepares artifacts under `.artifacts/` using each
 package's manifest version and matching internal dependency versions.
 The consumer check installs local tarballs outside the monorepo, then executes
 an external loop plugin, durable sessions, a fork, an eval, versioned prompts
-with a checked decision, and CLI startup.
+with a checked decision, a SQLite session log with a background task, and CLI
+startup.
 `@xandreed/core`, `@xandreed/evals`, `@xandreed/runtime`, `@xandreed/sdk`, and
 all nine `@xandreed/plugin-*` packages are published as `0.4.0` under npm's
 `latest` tag. Install evals with `npm install @xandreed/evals`, or install the

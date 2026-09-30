@@ -17,7 +17,6 @@ const capabilitiesOf = (context: Context.Context<never>): ReadonlyArray<Capabili
  *
  * ```ts
  * const plugins = CapabilitiesLive(host).pipe(
- *   stackPlugins(MemoryLogLive()),
  *   stackPlugins(MemoryWindowLive()),   // + the recall tool
  *   stackPlugins(ToolDiscoveryLive()),  // registry over [host, recall]; + the catalogue
  * )

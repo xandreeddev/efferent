@@ -1,8 +1,7 @@
 import { Effect, Option, Schema } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
-import type { EventBody } from "../harness/session.entity.js"
 import type { SubscribeOptions, Subscription, TurnEventsService } from "../ports/turn-events.port.js"
-import { TransientTurnEvents, TurnEvent as TurnEventSchema } from "./turn-event.entity.js"
+
 import type { TurnEvent, TurnEventName, TurnEventOf } from "./turn-event.entity.js"
 
 const isNamed = <Name extends TurnEventName>(name: Name) => (event: TurnEvent): event is TurnEventOf<Name> => event._tag === name
@@ -66,20 +65,4 @@ export const defineHostEvent = <A, I extends Readonly<Record<string, unknown>>>(
     on: <R>(handle: (data: A) => Effect.Effect<void, HarnessError, R>, options?: SubscribeOptions): Subscription<R> =>
       (events) => events.subscribe(select, handle, options),
   }
-}
-
-const encodeEvent = Schema.encodeSync(TurnEventSchema)
-
-/**
- * The journal form of one event: its name and encoded payload. Transient
- * events have none; a completed tool keeps only its encoded result.
- */
-export const journalBodyOf = (runId: string, event: TurnEvent): Option.Option<EventBody> => {
-  if (TransientTurnEvents.includes(event._tag)) return Option.none()
-  if (event._tag === "host") return Option.some({ name: event.name, runId, data: event.data })
-  const { _tag, ...data } = encodeEvent(event)
-  const payload: Record<string, unknown> = _tag === "tool.completed"
-    ? Object.fromEntries(Object.entries(data).filter(([key]) => key !== "result"))
-    : data
-  return Option.some({ name: _tag, runId, data: payload })
 }

@@ -63,7 +63,11 @@ turn. A changed runtime graph returns `restart-required`. The CLI saves the
 configuration and tells the user to restart. Source TypeScript is never rewritten
 by the terminal editor.
 
-## Sessions
+## Harness sessions
+
+The `Harness` keeps its own sessions in the configured `SessionStore`.
+Composable agents keep theirs in a session log instead (see
+[Sessions](#sessions-one-log-per-session)).
 
 - `create`, `resume`, `list`, and `fork` operate on the configured SessionStore.
 - `send` journals input and serializes runs; `steer` queues input for a loop's
@@ -260,7 +264,10 @@ skills, step context, completion) is the host's.
 
 | Concern | Port | Plugins |
 | --- | --- | --- |
-| Memory storage | `MemoryLog` | `@xandreed/plugin-memory-log` (the host journal) |
+| Session storage | `SessionLog` (the host provides it) | `SessionLogMemoryLive` (core), `SessionLogSqliteLive` (`@xandreed/plugin-session-sqlite`), or the host's own |
+| Sessions, turns and the inbox | `Sessions` | `@xandreed/plugin-sessions` |
+| Turn admission (budgets) | `TurnAdmission` | `TurnAdmissionOpen` (core), or the host's |
+| Background tasks | `Tasks` (over the host's `TaskRunner` and `TaskExecutor`) | `@xandreed/plugin-tasks` |
 | Memory strategy | `ConversationMemory` | `@xandreed/plugin-memory-window`, `@xandreed/plugin-memory-summary` |
 | Tool digests | `ResultDigester` (optional) | `@xandreed/plugin-memory-digest` |
 | Tool registry and discovery | `ToolRegistry` | `@xandreed/plugin-tool-discovery` |
@@ -271,12 +278,17 @@ skills, step context, completion) is the host's.
 **Defining the agent.** `Agent.define(config)` (from `@xandreed/sdk`) resolves
 the graph and activates its runtime plugins once, in the caller's scope.
 Session plugins, if any, are activated per turn with the turn's services.
-Swapping a strategy is swapping one entry.
+Swapping a strategy is swapping one entry. The host builds one `Sessions`
+(see [Sessions](#sessions-one-log-per-session)) and gives the agent the same
+instance its own code uses, in `services`.
 
 ```ts
+const sessions = yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(
+  Layer.provide(Layer.merge(SessionLogSqliteLive(".efferent/runtime/sessions.db"), TurnAdmissionOpen)),
+))
 const agent = yield* Agent.define({
+  services: sessions,                      // Sessions: where every turn is begun and written
   plugins: [
-    memoryLogPlugin,
     { plugin: memoryWindowPlugin, options: { digestOnWriteChars: 4_000 } },
     { plugin: toolDiscoveryPlugin, options: { grants: ["public"], maxCallsPerRun: 16 } },
     stepLoopPlugin,
@@ -294,8 +306,17 @@ turn and hands `use` a `Turn`: `userMessage`, `memory` (read-only), `events`,
 `tasks`, `tools` (`match`, `apply`, `select`, `activate`, `active`),
 `context(entry)`, `reply(text)`, `run(policy)`, `flush` and `write(op)`. The
 turn is scoped: subscriptions and tasks end with it. Tasks and background
-subscriptions are drained before `turn.ended`, which is recorded exactly once,
-with a `failed` outcome when `use` fails or is interrupted.
+subscriptions are drained before the reply is recorded, exactly once, with a
+`failed` outcome when `use` fails or is interrupted.
+
+`input.turn` is either a turn the host already began (the `TurnWriter` from
+`Sessions.begin`: the host ends it, after its own closing records) or a
+`NewTurn` (`{ session, userMessage, runId, key?, command? }`) that the agent
+begins through the `Sessions` in its services and ends with the outcome. A
+turn that cannot begin fails with the reason as its code (`session.busy`,
+`turn.duplicate`, `turn.key-conflict`, `turn.refused`); a turn someone else
+closes (a cancel, a reaped lease, a removed session) fails with
+`turn.closed`.
 
 A prompt is text sent to a model; the user's message is a `UserMessage` value
 (`new UserMessage({ text })`, never blank), and every field or parameter holding
@@ -314,7 +335,7 @@ class AnswerState extends Context.Service<AnswerState, AnswerStateService>()("ap
 const answerStateLayer = Layer.effect(AnswerState, RunContext.pipe(Effect.flatMap(makeAnswerState)))
 
 const userMessage = new UserMessage({ text })
-yield* agent.turn({ conversation, runId, userMessage, services, journal, layer: answerStateLayer }, (turn) => Effect.gen(function* () {
+yield* agent.turn({ turn: { session, userMessage, runId }, services, layer: answerStateLayer }, (turn) => Effect.gen(function* () {
   const quick = yield* quickReply(turn.userMessage)              // no loop, still a recorded turn
   if (Option.isSome(quick)) return yield* turn.reply(quick.value)
 
@@ -360,24 +381,25 @@ in publication order. A failed background handler is latched: the next
 delivery to it fails, and so does the drain before `turn.ended`, which fails
 the turn. Use it for reactions whose effects the next step does not need.
 
-**The journal.** The journal is the first subscriber: every event except
-transient deltas is appended with its name, and `tool.completed` keeps only
-the encoded result. Events and memory entries go through one ordered
-write-behind writer (`makeJournalWriter`). Producers queue and go on. One
-writer fiber stores items strictly in queue order, and writes consecutive
-appends together when the journal offers `appendAll` (`AgentConfig.journal`
-sets the queue capacity and batch size). The turn waits only at flushes:
-`turn.flush` returns once everything queued before it is stored, and
+**Where it is stored.** The turn's `TurnWriter` is the bus's first
+subscriber: every event except transient deltas is stored in the session's
+log under its own kind (see the vocabulary below), and `tool.completed` keeps
+neither the input nor the result, which memory holds. Events and memory
+entries go through the writer's one ordered write-behind queue. Producers
+queue and go on; one writer fiber stores items strictly in queue order,
+consecutive appends in one commit. The turn waits only at flushes:
+`turn.flush` returns once everything queued before it is committed, and
 `turn.write(op)` runs a host write in the same order and returns its result.
-The turn flushes before it returns; reading the journal through the writer
-flushes first. The first failed write is latched, so the turn fails at its
-next journal touch. Closing the turn's scope drains the queue before the
-writer stops, also on interruption. Memory builds every request from its
-in-process log, never by reading the journal back mid-turn.
+The first failed write is latched, so the turn fails at its next write.
+Closing the turn's scope drains the queue before the writer stops, also on
+interruption. Memory builds every request from the session's earlier turns
+(read once, when the turn opens) and what this turn recorded, never by
+reading the log back mid-turn.
 
 **Memory.** Every message, tool result, turn context, step context, skill
-activation, digest and compaction decision is an entry in an append-only log
-with its own id (`<runId>:<n>`). Every request is a pure fold of that log, so
+activation, digest and compaction decision is an entry in the session's log
+(a `memory.*` event, the turn's `turn.started` and its `turn.reply`) with its
+own id (`<runId>:<n>`). Every request is a pure fold of that log, so
 a request rebuilt later (another process, a restart) is byte-identical to the
 one the model saw. A strategy decides compactions and digests (`maintain`)
 and records them before they apply; it applies only its own compactions, so
@@ -406,7 +428,9 @@ compaction); the `ResultDigester` runs the tool's own prompt for the latest
 `userMessage` (a log without one digests nothing); the outcome is
 logged once as a `ToolDigest` entry and never recomputed on replay.
 
-`ConversationMemory.open({ conversation, runId, io })` reads what a strategy
+`ConversationMemory.open({ conversation, runId, log })` opens a strategy over
+the turn's `LogHandle` (the entries of earlier turns, and appends through the
+turn's writer). It reads what a strategy
 needs per turn (a `ResultDigester`, a summarizer's `UtilityLlm`) with
 `Effect.serviceOption` from the environment it is opened in; provide them to
 the open, not as an argument. `ToolRegistry.open(session)` requires
@@ -470,16 +494,18 @@ defaults and its layer:
 
 | Package | Layer | Provides | Requires |
 | --- | --- | --- | --- |
-| `@xandreed/plugin-memory-log` | `MemoryLogLive` | `MemoryLog` | — |
-| `@xandreed/plugin-memory-window` | `MemoryWindowLive` | `ConversationMemory`, `Capabilities` (recall) | `MemoryLog` |
-| `@xandreed/plugin-memory-summary` | `MemorySummaryLive` | `ConversationMemory` | `MemoryLog` |
+| `@xandreed/plugin-sessions` | `SessionsPluginLive` | `Sessions` | `SessionLog`, `TurnAdmission` |
+| `@xandreed/plugin-session-sqlite` | `SessionLogSqliteLive(path)` | `SessionLog` | — |
+| `@xandreed/plugin-tasks` | `TasksPluginLive` | `Tasks`, `Capabilities` (with `tools`) | `Sessions`, `TaskRunner`, `TaskExecutor` |
+| `@xandreed/plugin-memory-window` | `MemoryWindowLive` | `ConversationMemory`, `Capabilities` (recall) | — |
+| `@xandreed/plugin-memory-summary` | `MemorySummaryLive` | `ConversationMemory` | — |
 | `@xandreed/plugin-memory-digest` | `MemoryDigestLive` | `ResultDigester` (build it per turn) | `UtilityLlm` |
 | `@xandreed/plugin-tool-discovery` | `ToolDiscoveryLive` | `ToolRegistry`, `Capabilities` (catalogue) | `Capabilities` |
 | `@xandreed/plugin-agent-loop` | `StepLoopLive` | `StepLoop` | — |
 
-The schemas are `MemoryLogConfig`, `MemoryWindowConfig`, `MemorySummaryConfig`,
-`MemoryDigestConfig` and `ToolDiscoveryConfig`, with `memoryLogDefaults` and so
-on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
+The schemas are `SessionsConfig`, `TasksConfig`, `MemoryWindowConfig`,
+`MemorySummaryConfig`, `MemoryDigestConfig` and `ToolDiscoveryConfig`, with
+`sessionsDefaults` and so on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
 
 `stackPlugins(next)(base)` composes them the way the graph activates plugins:
 `next` is built over everything `base` provides, the two `Capabilities`
@@ -489,7 +515,6 @@ stack.
 
 ```ts
 const plugins = CapabilitiesLive(appTools).pipe(
-  stackPlugins(MemoryLogLive()),
   stackPlugins(MemoryWindowLive({ digestOnWriteChars: 4_000 })), // + the recall tool
   stackPlugins(ToolDiscoveryLive({ grants: ["public"] })),       // registry over [app, recall]; + the catalogue
   stackPlugins(StepLoopLive),
@@ -507,15 +532,18 @@ the other's tools, skills and sections, and neither layer sees the other's.
 
 The steps of a turn are public, over typed services, so a host composes the
 turn it needs; `Agent.turn` is one such composition. `TurnLive(input)` (from
-`@xandreed/core`, requiring `ConversationMemory` and `ToolRegistry`) builds, in
-this order, the event bus, the tasks and the write-behind journal, with the
-journal as the bus's first subscriber, then the memory session (opened where
-the layer is built) and `RunContext`. It provides:
+`@xandreed/core`, requiring `ConversationMemory` and `ToolRegistry`) builds,
+over the admitted turn's `TurnWriter`, in this order, the event bus and the
+tasks, with the writer as the bus's first subscriber, then the memory
+session (opened where the layer is built, over the session's earlier turns)
+and `RunContext` (which carries the turn's `session`). It provides:
 
-- `TurnMemory`: the session, the turn's `number`, `persistMessage`
-  (TurnStarted, then `turn.started`; once), `context(entry)` and
-  `persistReply(outcome)` (TurnEnded, then `turn.ended`; once, and a no-op
-  when the message was never persisted);
+- `TurnMemory`: the session, the turn's `number`, `persistMessage` (the
+  turn's TurnStarted, stored when the turn began, is shown to memory, then
+  `turn.started` is published; once), `context(entry)` and
+  `persistReply(outcome)` (`turn.reply`, then `turn.ended` is published;
+  once, and a no-op when the message was never persisted). The stored
+  `turn.ended` is the writer's `end`, the turn's closing commit;
 - `TurnToolbox`: `open` (once; the handlers run with the opener's services)
   and `tools` (fails with `tools.unavailable` before `open`);
 - `TurnPrompt`: `system(variant)` and `turnSections`;
@@ -541,7 +569,7 @@ body.pipe(
   guardTurn,
   Effect.scoped,
   Effect.provide(input.layer),                    // 2. built after RunContext, before TurnStarted
-  Effect.provide(TurnLive(turnInput)),            // 1. journal first, then memory and RunContext
+  Effect.provide(TurnLive(turnInput)),            // 1. the writer first, then memory and RunContext
   Effect.provide(agentContext),                   // the graph's services and the turn's
 )
 ```
@@ -552,9 +580,156 @@ includes its length. Anything built before `persistMessage` (the host's layer)
 sees only earlier turns. A host composing by hand uses the same pieces over a
 `stackPlugins` stack instead of a graph, and builds session plugins such as
 `MemoryDigestLive()` per turn over the turn's services. `turnConformance`
-checks a composition: the journal first, the message before the matcher's
-history, `turn.ended` exactly once on success, failure and interrupt, tasks
-joined before it, and the host layer seeing only earlier turns.
+checks a composition: the writer first, the message before the matcher's
+history, the reply and the turn's end exactly once on success, failure and
+interrupt, tasks joined before the reply, and the host layer seeing only
+earlier turns.
+
+## Sessions: one log per session
+
+A session is one conversation's append-only event log: every turn's
+message, memory, events and host records, the inbox, and the records of
+background tasks. Two layers split the work:
+
+- **`SessionLog`, the storage a host provides** (a core port). It is dumb on
+  purpose: per session a head (`header`, `seq`, `revision`, an opaque
+  `state` the sessions plugin owns, `updatedAt`, and `now`, the storage's
+  clock) and the events (`{ session, seq, turn, kind, at, data }`).
+  `create`, `head`, `list` (an owner's sessions, newest first, keyset
+  paged), `read` (after a cursor, by kinds), `remove` (with its children)
+  and `commit`. A commit is one compare-and-swap: it applies only when
+  `revision` still equals `expect` and, with `notAfter`, only while the
+  storage's clock has not passed it; events get dense `seq`s and the
+  storage's time; a commit may carry state and no events.
+  `sessionLogConformance(log)` checks all of it, including that one of many
+  concurrent commits wins. Core ships `SessionLogMemoryLive`;
+  `@xandreed/plugin-session-sqlite` ships `SessionLogSqliteLive(path)`; a
+  host writes its own over its database.
+- **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
+  requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
+  read and write sessions only through it.
+
+```ts
+const view = yield* sessions.create({ owner })                 // SessionView: header, turns, title, open, pending
+const address = { id: view.header.id, owner }                  // another owner's address finds nothing
+yield* Effect.scoped(Effect.gen(function* () {
+  const writer = yield* sessions.begin(address, { _tag: "User", userMessage, runId, key, command: {} })
+  yield* agent.turn({ turn: writer, services }, use)              // the agent runs it; the host ends it
+  yield* writer.append([{ kind: "answer.delivered", data: { text } }])
+  const { pending } = yield* writer.end({ reason: "completed", failure: Option.none() })
+  if (pending > 0) yield* sessions.drain(address, react)       // inbox items that arrived meanwhile
+}))
+```
+
+**One turn at a time.** `begin` opens a turn with its `turn.started` (the
+user's message, the host's `command`, the idempotency `key`) in one commit;
+a second begin while a turn is open is `SessionBusy` (a host answers 409).
+The same key again is `TurnDuplicate` with that turn, and the same key with
+another message or command is `KeyConflict`: keys are found in the log, so
+the check holds across restarts. The writer (`TurnWriter`) is the turn's one
+way to write: `append`, `write(op)` in queue order, `transact(decide)`
+(check, then append: decided again with the events others wrote when
+someone commits first), `flush` (committed to storage), `end` (the closing
+commit; it returns how many inbox items wait) and `closed` (completes when
+someone else closed the turn). A writer whose scope closes unended ends the
+turn as failed, or interrupted. Outside a turn, `Sessions.transact(address,
+decide)` is the same check-then-append (a page action, a setting); kinds only
+the framework writes are refused there (`RESERVED_KINDS`).
+
+**Ownership** is configured:
+
+- `{ mode: "lease", ttlMs, renew }`: several instances over one log. A turn
+  is held until the storage's `now + ttlMs`; each of its commits carries that
+  as `notAfter`, so a late write is refused by the storage's clock whatever
+  the instances' clocks say. `renew: "none"` fixes the lease at begin,
+  `"on-commit"` extends it with each write, `{ everyMs }` also renews from a
+  keep-alive (which notices a remote cancel within `everyMs`).
+- `{ mode: "process" }`: one process holds its turns without expiry, and a
+  turn another process left open is closed as interrupted when this one
+  next touches the session.
+
+A turn nobody holds any more reads as not open, and is closed as
+`interrupted` by the next `begin`, `cancel`, `deliver` or `drain`: never by
+a read, so loading or following a session runs nothing. `cancel(address,
+turn)` ends exactly that turn as cancelled, durably: every reader sees
+`turn.ended`, a holder on this instance is interrupted at once, and a
+holder elsewhere is refused at its next commit. `fork(parent, { inherit })`
+makes a child session (a background task's): with `inherit` its history is
+the parent's up to its last closed turn, and its turns count on from there.
+`changes(address)` signals each commit this instance makes (a feed polls
+for the others), and `lookup(address, key)` finds a key's turn.
+
+**Admission.** `TurnAdmission.admit(turn, open)` runs around the one commit
+that opens every turn (a user's, the inbox's, a task's), never around the
+turn's later writes, so a host can count and open in one transaction: a
+duplicate or a busy session fails inside it and counts nothing, and a
+refusal (`TurnRefused`) opens nothing. `TurnAdmissionOpen` admits all.
+
+**The vocabulary.** Each kind has one durable producer:
+
+| Kind | Written by |
+| --- | --- |
+| `turn.started` (`runId`, `key`, `origin`, `userMessage`, `command`, `claimed`) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
+| `turn.reply` | memory (`persistReply`) |
+| `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`) | the writer's `end`, a cancel or a reap |
+| `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
+| `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded` | the turn's bus |
+| `inbox.queued`, `inbox.dropped` | `deliver`; a claim that failed too often |
+| `task.started`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |
+| anything else | the host, through the writer or `transact` |
+
+Memory is rebuilt from `MEMORY_KINDS` by `entriesOfEvents`, which reads JSON
+back with sorted keys: the requests a model sees do not depend on the store
+(a JSON column may reorder keys), and the SDK checks this over the memory,
+SQLite and key-reordering stores against the golden requests.
+
+**The inbox.** `deliver(address, { id, source, content })` puts an item in
+the session's inbox, once per id, up to `inbox.maxPending` (20). Items wait
+for the next inbox turn: `begin(address, { _tag: "Inbox", runId })` claims
+every waiting item in its start commit (its `userMessage` is their contents)
+and fails with `NothingPending` when there are none. An item is done when its
+turn ends completed, partial or cancelled; a failed or interrupted claim
+returns it, up to `inbox.attempts` (2), and then it is dropped
+(`inbox.dropped`). User messages never queue. `drain(address, run)` runs
+inbox turns while items wait, the session is free and the host admits them,
+at most three. Whoever closes a turn and whoever delivers drains: the
+delivery either commits before the turn's closing commit (whose `pending`
+counts it) or after it (and finds the session free), so nothing waits
+unnoticed.
+
+**Background tasks** (`@xandreed/plugin-tasks`). A task is one turn of a
+child session, a fork of the conversation or an empty spawn, whose id is the
+task's. `Tasks.start(parent, { instructions, mode })` records `task.started`
+in the parent, checked against the tasks stored (a task does not start
+tasks; a session runs `maxRunning`, two, at once), and hands the work to the
+host's `TaskRunner`: `InProcessTaskRunnerLive` forks it on this process (its
+own fiber, interrupted with the layer), and a serverless host registers it
+with its `waitUntil`. The work begins the child's turn once (its key is the
+task's), runs it through the host's `TaskExecutor.turn` until the runner's
+deadline, records `task.result` before the turn closes, delivers the result
+to the parent's inbox (`task:<id>`, once) and drains the parent, whose
+`TaskExecutor.react` answers it after the turn in flight. The notice frames
+the task's words:
+
+```text
+[Background task <taskId> completed]
+<task-output>
+…the task's reply…
+</task-output>
+```
+
+The first of a child's `task.result` and `task.cancelled` ends the task.
+`cancel` stops a waiting or running task (its turn is cancelled, nothing is
+delivered); `status` and `list` read where tasks stand; `reconcile(parent)`
+runs tasks a lost runner never ran and delivers results it never delivered
+(its caller drains). A child the host will not admit fails with the host's
+reason, a turn past its deadline ends interrupted, and an abandoned turn is
+delivered as interrupted. With `tools`, the model gets `start_task` and
+`task_status` (off by default).
+
+**Following a session.** plugin-render's `SessionsJournalTailLive` is a
+`JournalTail` over `Sessions`: the render feed replays a session's events
+after a cursor, then follows `changes` and polls.
 
 ## Versioned prompts: `@xandreed/ai`
 

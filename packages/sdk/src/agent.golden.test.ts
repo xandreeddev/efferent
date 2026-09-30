@@ -3,12 +3,12 @@ import { LanguageModel, Prompt, Tool } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { join } from "node:path"
-import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfPayload, Failure, HarnessError, IntentMatcher, LogEntry, onTool, RunContext, subscribeAll, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
-import type { EventBody, JournalIO, Turn, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, LogEntry, onTool, RunContext, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
+import type { Turn, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
-import { memoryLogPlugin } from "@xandreed/plugin-memory-log"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { Agent } from "./agent.adapter.js"
 import type { AgentConfig } from "./agent.adapter.js"
@@ -18,10 +18,15 @@ import { Tally } from "./testing.port.js"
  * The golden pin of `Agent.turn`: one conversation of four turns (a tool call
  * with a digest, a skill activation and a system-prompt variant; a quick
  * reply with a host layer and a task; a failure; a matcher-seeded skill, a
- * planned batch and a forced tool choice) under a fixed clock. The journal
- * bytes, the memory log, the event order, the `context.built` fingerprints
- * and every model request are compared with `golden/agent-turn.json`.
- * Any composition of the turn must reproduce the file exactly.
+ * planned batch and a forced tool choice) under a fixed clock, stored in one
+ * session over the given session log. Two files pin it:
+ * - `golden/agent-turn.model.json`: what the model and the host see — the turns
+ *   (outcomes, event order, `context.built` fingerprints), the memory log and
+ *   every model request — compared as text, so even key order is fixed. It
+ *   changes only with `EFFERENT_UPDATE_MODEL_GOLDEN=1`.
+ * - `golden/agent-turn.journal.json`: the session's stored events, rewritten with
+ *   `EFFERENT_UPDATE_GOLDEN=1` when the storage format changes on purpose.
+ * Any composition of the turn must reproduce both exactly.
  */
 
 /* ── the host's definitions ── */
@@ -94,7 +99,7 @@ export const goldenHost = defineCapability({
 
 /** The agent every composition of the golden conversation reproduces. */
 export const goldenConfig: AgentConfig = {
-  plugins: [memoryLogPlugin, { plugin: memoryWindowPlugin, options: { digestOnWriteChars: 1 } }, toolDiscoveryPlugin, stepLoopPlugin, memoryDigestPlugin],
+  plugins: [{ plugin: memoryWindowPlugin, options: { digestOnWriteChars: 1 } }, toolDiscoveryPlugin, stepLoopPlugin, memoryDigestPlugin],
   capabilities: [goldenHost],
   turnServices: [LanguageModel.LanguageModel, UtilityLlm],
   limits: { streaming: false, maxSteps: 6 },
@@ -179,24 +184,25 @@ interface Observed {
 }
 
 /**
- * The golden conversation over `runner` — anything that runs one admitted
- * turn the way `Agent.turn` does, acquired in the conversation's scope —
- * under the fixed clock: every turn, then the journal and the log.
+ * The golden conversation over `runner` — anything that runs a turn the way
+ * `Agent.turn` does, acquired in the conversation's scope — under the fixed
+ * clock, in one session of `log` (in memory unless given): every turn, then
+ * the session's events and the memory log they hold.
  */
-export const runGolden = (runner: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope>) => Effect.scoped(Effect.gen(function* () {
+export const runGolden = (
+  runner: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope>,
+  log: Layer.Layer<SessionLog, unknown> = SessionLogMemoryLive,
+) => Effect.scoped(Effect.gen(function* () {
   const agent = yield* runner
-  const stored = yield* Ref.make<ReadonlyArray<EventBody>>([])
-  const bytes = yield* Ref.make<ReadonlyArray<string>>([])
-  const journal: JournalIO = {
-    append: (event) => Ref.update(bytes, (all) => [...all, JSON.stringify(event)]).pipe(Effect.andThen(Ref.update(stored, (all) => [...all, event]))),
-    read: (names) => Ref.get(stored).pipe(Effect.map((all) => all.filter((event) => names.length === 0 || names.includes(event.name)))),
-  }
+  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(log, TurnAdmissionOpen)))), Sessions)
+  const address = { id: conversation, owner: "golden" }
+  yield* sessions.create({ owner: address.owner, id: conversation })
   const requests = yield* Ref.make<ReadonlyArray<unknown>>([])
   const turns = yield* Ref.make<ReadonlyArray<Observed>>([])
 
   const input = (runId: string, text: string, model: LanguageModel.LanguageModel) => ({
-    conversation, runId, userMessage: new UserMessage({ text }), journal,
-    services: Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), digester), matcher),
+    turn: { session: address, userMessage: new UserMessage({ text }), runId },
+    services: Context.merge(Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), digester), matcher), Context.make(Sessions, sessions)),
   })
 
   /** Run one turn; its host subscribes to every event first and counts the memory it ends with. */
@@ -213,7 +219,7 @@ export const runGolden = (runner: Effect.Effect<Pick<Agent, "turn">, HarnessErro
     })
     const exit = yield* Effect.result(agent.turn(turnInput, observed))
     const recorded: Observed = {
-      runId: turnInput.runId,
+      runId: "admitted" in turnInput.turn ? turnInput.turn.admitted.runId : turnInput.turn.runId,
       outcome: exit._tag === "Success" ? exit.success : { failed: exit.failure instanceof HarnessError ? exit.failure.code : String(exit.failure) },
       events: yield* Ref.get(events),
       contextBuilt: yield* Ref.get(built),
@@ -274,21 +280,39 @@ export const runGolden = (runner: Effect.Effect<Pick<Agent, "turn">, HarnessErro
     step: (step) => Effect.succeed({ context: Option.none(), toolChoice: step.stepIndex === 1 ? Option.some({ tool: "note" }) : Option.none() }),
   }))
 
-  const all = yield* Ref.get(stored)
-  const log = yield* Effect.forEach(all.filter((event) => event.name === "memory.entries"), (event) => entriesOfPayload(event.data))
+  const stored = yield* sessions.read(address)
+  const memory = yield* entriesOfEvents(stored)
   return {
     turns: yield* Ref.get(turns),
-    journal: yield* Ref.get(bytes),
-    log: Schema.encodeSync(Schema.Array(LogEntry))(log.flat()),
+    journal: stored.map((event) => JSON.stringify({ seq: event.seq, turn: Option.getOrNull(event.turn), kind: event.kind, data: event.data })),
+    log: Schema.encodeSync(Schema.Array(LogEntry))(memory),
     requests: yield* Ref.get(requests),
   }
 })).pipe(Effect.provideService(Clock.Clock, fixedClock))
 
-const goldenPath = join(import.meta.dir, "../golden/agent-turn.json")
+const modelPath = join(import.meta.dir, "../golden/agent-turn.model.json")
+const journalPath = join(import.meta.dir, "../golden/agent-turn.journal.json")
+
+const pinned = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`
+
+/** The golden conversation's two halves, each as the exact text of its file. */
+export const goldenTexts = (result: Effect.Success<ReturnType<typeof runGolden>>) => {
+  const actual = JSON.parse(JSON.stringify(result))
+  return {
+    model: pinned({ turns: actual.turns, requests: actual.requests, log: actual.log }),
+    journal: pinned({ journal: actual.journal }),
+  }
+}
+
+/** Compare a run with both golden files (and rewrite the ones the environment asks for). */
+export const expectGolden = async (result: Effect.Success<ReturnType<typeof runGolden>>) => {
+  const actual = goldenTexts(result)
+  if (process.env.EFFERENT_UPDATE_MODEL_GOLDEN === "1") await Bun.write(modelPath, actual.model)
+  if (process.env.EFFERENT_UPDATE_GOLDEN === "1") await Bun.write(journalPath, actual.journal)
+  expect(actual.model).toBe(await Bun.file(modelPath).text())
+  expect(actual.journal).toBe(await Bun.file(journalPath).text())
+}
 
 test("Agent.turn reproduces the golden conversation byte for byte", async () => {
-  const actual = JSON.parse(JSON.stringify(await Effect.runPromise(runGolden(Agent.define(goldenConfig)))))
-  if (process.env.EFFERENT_UPDATE_GOLDEN === "1") await Bun.write(goldenPath, `${JSON.stringify(actual, null, 2)}\n`)
-  const golden = await Bun.file(goldenPath).json()
-  expect(actual).toEqual(golden)
+  await expectGolden(await Effect.runPromise(runGolden(Agent.define(goldenConfig))))
 })

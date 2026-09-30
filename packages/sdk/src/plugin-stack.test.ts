@@ -16,7 +16,6 @@ import {
 } from "@xandreed/core"
 import type { HarnessConfig, Plugin } from "@xandreed/core"
 import { StepLoopLive, stepLoopPlugin } from "@xandreed/plugin-agent-loop"
-import { MemoryLogLive, memoryLogPlugin } from "@xandreed/plugin-memory-log"
 import { MemoryWindowLive, memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { ToolDiscoveryLive, toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { activateGraph, resolveGraph } from "@xandreed/runtime"
@@ -48,12 +47,12 @@ const shapeOf = (context: Context.Context<never>) => ({
 describe("plugin stacks", () => {
   test("stacking the typed layers equals activating the same plugins as a graph", async () => {
     const { graph, stack } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const plugins: ReadonlyArray<Plugin> = [memoryLogPlugin, memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, hostPlugin]
+      // The host's capabilities come first, as Agent.define places them.
+      const plugins: ReadonlyArray<Plugin> = [hostPlugin, memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin]
       const config: HarnessConfig = { version: 1, plugins: plugins.map((plugin) => ({ id: plugin.id, use: plugin.id, options: {} })), system: "" }
       const resolved = yield* resolveGraph(config, plugins)
       const graph = yield* activateGraph(resolved, "runtime", Context.empty(), yield* Effect.scope)
       const stack = yield* Layer.build(CapabilitiesLive(host).pipe(
-        stackPlugins(MemoryLogLive()),
         stackPlugins(MemoryWindowLive()),
         stackPlugins(ToolDiscoveryLive()),
         stackPlugins(StepLoopLive),

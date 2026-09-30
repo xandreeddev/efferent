@@ -147,6 +147,25 @@ restored for forks. Math rebuilds its served-exercise set from persisted history
 Social retains its draft-only tools and human review queue; its domain workspace
 service is replaceable. Foundry remains independent of the SDK.
 
+## Sessions for composable agents
+
+A composable agent (`Agent.define`) keeps each conversation as a session: one
+append-only event log holding its turns, memory, events, host records, inbox
+and background tasks. The host provides the storage (`SessionLog`: a head
+per session and its events, written by compare-and-swap; Efferent ships an
+in-memory and a SQLite log) and reads and writes sessions only through
+`@xandreed/plugin-sessions`, as `Agent.turn` does. One turn is open per
+session at a time; a second message is refused, a retried one is found by
+its key. Turns are owned by a lease judged by the storage's clock (several
+instances) or by the process (one). Reading or following a session never
+runs anything.
+
+A background task (`@xandreed/plugin-tasks`) is one turn of a child session,
+a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`.
+Its result lands in the parent's inbox once, and the parent answers it after
+the turn in flight. See the framework guide's sessions section for the
+contract, the event vocabulary and the inbox protocol.
+
 The Canvas profile plugin accepts versioned model/effort/protocol configuration.
 The shipped default is unchanged; schema, recipe and prompt compatibility are
 still checked. New profiles require live browser evidence before promotion.

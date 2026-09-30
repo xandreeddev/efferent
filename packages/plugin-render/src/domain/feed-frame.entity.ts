@@ -12,6 +12,8 @@ export const JournalRecord = Schema.Struct({
   sequence: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   kind: Id,
   data: Json,
+  /** The turn the record belongs to, when the journal has turns (a session's does; null outside a turn). */
+  turn: Schema.optional(Schema.NullOr(Schema.Int)),
 })
 export type JournalRecord = typeof JournalRecord.Type
 

@@ -37,7 +37,6 @@ const CHECKED = [
   "packages/cli/src/**",
   "packages/plugin-context/src/**",
   "packages/plugin-memory/src/**",
-  "packages/plugin-memory-log/src/**",
   "packages/plugin-memory-window/src/**",
   "packages/plugin-memory-summary/src/**",
   "packages/plugin-memory-digest/src/**",
@@ -46,6 +45,8 @@ const CHECKED = [
   "packages/plugin-tools-local/src/**",
   "packages/plugin-policy-workspace/src/**",
   "packages/plugin-session-sqlite/src/**",
+  "packages/plugin-sessions/src/**",
+  "packages/plugin-tasks/src/**",
   "packages/plugin-telemetry/src/**",
   "packages/plugin-mcp/src/**",
   "packages/surface/src/**",
@@ -289,20 +290,6 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
-            "name": "plugin-memory-log",
-            "path": "packages/plugin-memory-log/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "@xandreed/core",
-                  "bun:test"
-            ]
-      },
-      {
             "name": "plugin-memory-window",
             "path": "packages/plugin-memory-window/src/**",
             "canImport": [
@@ -425,6 +412,51 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
+            "name": "plugin-sessions",
+            "path": "packages/plugin-sessions/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "@xandreed/core",
+                  "bun:test"
+            ]
+      },
+      {
+            "name": "plugin-tasks-tests",
+            "path": "packages/plugin-tasks/src/**/*.test.ts",
+            "canImport": [
+                  "plugin-tasks",
+                  "core",
+                  "plugin-sessions"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "@xandreed/core",
+                  "@xandreed/plugin-sessions",
+                  "bun:test"
+            ]
+      },
+      {
+            "name": "plugin-tasks",
+            "path": "packages/plugin-tasks/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "@xandreed/core",
+                  "bun:test"
+            ]
+      },
+      {
             "name": "plugin-telemetry",
             "path": "packages/plugin-telemetry/src/**",
             "canImport": [
@@ -527,11 +559,11 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "plugin-memory",
                   "plugin-session-sqlite",
                   "plugin-agent-loop",
-                  "plugin-memory-log",
                   "plugin-memory-window",
                   "plugin-memory-summary",
                   "plugin-memory-digest",
-                  "plugin-tool-discovery"
+                  "plugin-tool-discovery",
+                  "plugin-sessions"
             ],
             "externals": [
                   "effect",
@@ -544,8 +576,8 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "@xandreed/runtime",
                   "@xandreed/plugin-memory",
                   "@xandreed/plugin-session-sqlite",
+                  "@xandreed/plugin-sessions",
                   "@xandreed/plugin-agent-loop",
-                  "@xandreed/plugin-memory-log",
                   "@xandreed/plugin-memory-window",
                   "@xandreed/plugin-memory-summary",
                   "@xandreed/plugin-memory-digest",

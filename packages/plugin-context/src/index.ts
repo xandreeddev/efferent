@@ -3,7 +3,7 @@ import { ContextManager, definePlugin, HarnessError, safeKeepFrom, UtilityLlm } 
 
 const Config = Schema.Struct({ thresholdTokens: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))), keepTurns: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))) })
 export const contextPlugin = definePlugin({
-  id: "@xandreed/plugin-context", version: "0.7.0-next.1", requires: [UtilityLlm], provides: [ContextManager],
+  id: "@xandreed/plugin-context", version: "0.8.0-next.0", requires: [UtilityLlm], provides: [ContextManager],
   config: Config, defaults: { thresholdTokens: 80000, keepTurns: 6 },
   layer: (config) => Layer.effect(ContextManager, Effect.gen(function* () {
     const utility = yield* UtilityLlm

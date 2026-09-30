@@ -3,48 +3,15 @@ import type { Effect, Option, Scope } from "effect"
 import type { AgentMessage, ConversationId } from "../domain/message.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
-import type { EventBody } from "../harness/session.entity.js"
 import type { LogQuery } from "../memory/memory-log.entity.functions.js"
 import type { ArtifactRef, BuiltContext, EntryId, LogBody, LogEntry, Subject } from "../memory/memory-log.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 
-/**
- * Host-authorized journal access for one conversation: append an event,
- * read the conversation's events back by name, in append order. The host
- * backs it with its own fenced store.
- */
-export interface JournalIO {
-  readonly append: (event: EventBody) => Effect.Effect<void, HarnessError>
-  /** Several events in order, in one write when the store can (one transaction, one round trip). */
-  readonly appendAll?: (events: ReadonlyArray<EventBody>) => Effect.Effect<void, HarnessError>
-  readonly read: (names: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<EventBody>, HarnessError>
-}
-
-/**
- * The turn's ordered write-behind journal (see `makeJournalWriter`). Appends
- * return once queued; one writer stores them in the order they were queued,
- * batching consecutive appends. A failed write is latched: the next append,
- * read, flush or write fails with it.
- */
-export interface JournalWriter {
-  /** The journal as memory and the event sink use it: `append` queues, `read` flushes first. */
-  readonly io: JournalIO
-  /** Wait until everything queued so far is stored. */
-  readonly flush: Effect.Effect<void, HarnessError>
-  /** Run `op` in journal order (after everything queued before it) and return its result. */
-  readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | HarnessError>
-}
-
-/** An opened log: stored entries, and one atomic append. */
+/** A conversation's memory log for one turn: the entries stored before it, and one atomic append. */
 export interface LogHandle {
   readonly read: Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
   readonly append: (entries: ReadonlyArray<LogEntry>) => Effect.Effect<void, HarnessError>
 }
-
-/** STORAGE: where log entries live. Strategies never know the store. */
-export class MemoryLog extends Context.Service<MemoryLog, {
-  readonly open: (conversation: ConversationId, io: JournalIO) => Effect.Effect<LogHandle, HarnessError>
-}>()("efferent/MemoryLog") {}
 
 /** One tool result as the model sees it, supplied by whoever owns the tools. */
 export interface ToolView {
@@ -127,13 +94,14 @@ export interface MemorySession extends MemoryReader {
 export class ConversationMemory extends Context.Service<ConversationMemory, {
   readonly strategy: { readonly id: string; readonly version: string }
   /**
-   * Open the conversation's session for one run. A strategy reads what it
-   * needs per turn (a ResultDigester, a summarizer's UtilityLlm) with
-   * `Effect.serviceOption` from the environment it is opened in.
+   * Open the conversation's session for one run over its log (the turn's
+   * memory events). A strategy reads what it needs per turn (a
+   * ResultDigester, a summarizer's UtilityLlm) with `Effect.serviceOption`
+   * from the environment it is opened in.
    */
   readonly open: (scope: {
     readonly conversation: ConversationId
     readonly runId: string
-    readonly io: JournalIO
+    readonly log: LogHandle
   }) => Effect.Effect<MemorySession, HarnessError, Scope.Scope>
 }>()("efferent/ConversationMemory") {}

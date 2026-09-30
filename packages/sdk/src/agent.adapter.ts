@@ -11,6 +11,7 @@ import {
   HarnessError,
   openTurnTools,
   SessionEnvironment,
+  Sessions,
   StepLoop,
   ToolRegistry,
   TurnLive,
@@ -21,6 +22,7 @@ import type {
   Capability,
   HarnessConfig,
   LoopLimits,
+  NewTurn,
   Plugin,
   Turn,
   TurnInput,
@@ -28,6 +30,7 @@ import type {
   TurnOutcome,
   TurnRunOptions,
   TurnServices,
+  TurnWriter,
 } from "@xandreed/core"
 import { activateGraph, graphFingerprint, resolveGraph } from "@xandreed/runtime"
 
@@ -62,21 +65,22 @@ export interface AgentConfig {
   readonly budgetTokens?: number
   /** How deep event reactions may nest before the bus fails the publisher. */
   readonly maxEventDepth?: number
-  /** The write-behind journal: queued items before appends wait, and items written per batch. */
-  readonly journal?: { readonly capacity?: number; readonly batch?: number }
 }
 
 /** A defined agent: its graph is built; each turn is composed by the host. */
 export interface Agent {
   readonly fingerprint: string
   /**
-   * Run one admitted turn. The turn is scoped: its subscriptions and tasks
-   * end with it. Tasks and background subscriptions are drained before
-   * `turn.ended`, which is recorded exactly once — with a failed outcome
-   * when `use` fails or is interrupted — and the journal is flushed before
-   * the turn returns. `use` runs in the turn's scope with the turn's
-   * services (RunContext, TurnEvents, TurnTasks and the input's `layer`)
-   * provided: the same instances the tools, policy and subscriptions see.
+   * Run one turn: one the host began (its `TurnWriter`; the host ends it),
+   * or one begun and ended here through the `Sessions` in the turn's
+   * services. The turn is scoped: its subscriptions and tasks end with it.
+   * Tasks and background subscriptions are drained before the reply is
+   * recorded, exactly once — failed when `use` fails or is interrupted —
+   * and everything is stored before the turn returns. A turn closed
+   * elsewhere (cancelled, reaped) fails with `turn.closed`. `use` runs in
+   * the turn's scope with the turn's services (RunContext, TurnEvents,
+   * TurnTasks and the input's `layer`) provided: the same instances the
+   * tools, policy and subscriptions see.
    */
   readonly turn: <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -88,6 +92,29 @@ const failure = (code: string, message: string) => new HarnessError({ code, mess
 const missing = (key: string) => failure("service.missing", `The agent's plugins do not provide ${key}`)
 
 const entryOf = (item: Plugin | AgentPluginEntry): AgentPluginEntry => "plugin" in item ? item : { plugin: item }
+
+const isWriter = (turn: TurnWriter | NewTurn): turn is TurnWriter => "admitted" in turn
+
+/** Why a turn could not begin, as the turn's error codes. */
+const beginCodes = {
+  SessionBusy: "session.busy",
+  TurnDuplicate: "turn.duplicate",
+  KeyConflict: "turn.key-conflict",
+  NothingPending: "session.nothing-pending",
+  TurnRefused: "turn.refused",
+  SessionMissing: "session.missing",
+  SessionLogError: "session.log",
+} as const
+
+/** Begin a turn with the Sessions of the turn's services; its writer lives in the turn's scope. */
+const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effect<TurnWriter, HarnessError, Scope.Scope> =>
+  required(context, Sessions).pipe(Effect.flatMap((sessions) => sessions.begin(turn.session, {
+    _tag: "User", userMessage: turn.userMessage, runId: turn.runId, key: turn.key ?? turn.runId, command: turn.command ?? {},
+  })), Effect.mapError((error) => error instanceof HarnessError ? error : failure(beginCodes[error._tag], `the turn could not begin (${error._tag}) in session ${turn.session.id}`)))
+
+/** The turn's body, until someone else closes the turn: then the body is interrupted and the turn fails. */
+const untilClosed = (writer: TurnWriter) => <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError, R> =>
+  Effect.raceFirst(body, writer.closed.pipe(Effect.flatMap((closed) => Effect.fail(failure("turn.closed", `turn ${closed.turn} was ${closed.reason}`)))))
 
 const required = <I, S>(context: Context.Context<never>, tag: Context.Service<I, S>): Effect.Effect<S, HarnessError> =>
   Option.match(Context.getOption(context, tag), { onNone: () => Effect.fail(missing(tag.key)), onSome: Effect.succeed })
@@ -111,7 +138,7 @@ const hostCapabilities = (capabilities: ReadonlyArray<Capability>) => definePlug
 /**
  * Build the agent's plugin graph once. Runtime plugins are activated here,
  * in the caller's scope; session plugins (if any) are activated per turn with
- * that turn's services. Host capabilities join the graph as one more
+ * that turn's services. Host capabilities join the graph as its first
  * contributor.
  */
 const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scope.Scope> => Effect.gen(function* () {
@@ -120,12 +147,14 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   const hosted = config.capabilities ?? []
   const host = hostCapabilities(hosted)
   const withHost = hosted.length > 0
-  const plugins = [...entries.map((entry) => entry.plugin), ...(withHost ? [host] : [])]
+  // The host's capabilities are the graph's first contributor: the model sees the host's tools,
+  // skills and sections before any plugin's, whatever round each plugin resolves in.
+  const plugins = [...(withHost ? [host] : []), ...entries.map((entry) => entry.plugin)]
   const harness: HarnessConfig = {
     version: 1,
     plugins: [
-      ...entries.map((entry) => ({ id: entry.id ?? entry.plugin.id, use: entry.plugin.id, options: { ...entry.options } })),
       ...(withHost ? [{ id: host.id, use: host.id }] : []),
+      ...entries.map((entry) => ({ id: entry.id ?? entry.plugin.id, use: entry.plugin.id, options: { ...entry.options } })),
     ],
     ...(config.bindings === undefined ? {} : { bindings: { ...config.bindings } }),
     system: config.system ?? "",
@@ -142,13 +171,17 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   /**
    * One turn composed from the public pieces (`TurnLive`, `persistMessage`,
    * `openTurnTools`, `turnOf`, `guardTurn`), in this order:
-   * 1. TurnLive: the bus, tasks and journal writer, with the journal as the
-   *    first subscriber, then memory and RunContext;
+   * 0. the turn: the host's writer, or one begun here (Sessions.begin);
+   * 1. TurnLive: the bus and tasks, with the writer as the first
+   *    subscriber, then memory (the session's earlier memory events) and
+   *    RunContext;
    * 2. the host's layer, provided between TurnLive and the body: built after
-   *    RunContext and before TurnStarted, so it sees only earlier turns;
-   * 3. the user's message persisted (TurnStarted, turn.started);
+   *    RunContext and before memory takes the message, so it sees only
+   *    earlier turns;
+   * 3. the user's message taken by memory (TurnStarted, turn.started);
    * 4. the tools opened inside the host's layer, so its services reach them;
-   * 5. `use`.
+   * 5. `use`;
+   * 6. a turn begun here is ended here, with the outcome.
    */
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -163,20 +196,18 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     const registry = yield* required(context, ToolRegistry)
     const loop = yield* required(context, StepLoop)
 
+    const own = !isWriter(input.turn)
+    const writer = isWriter(input.turn) ? input.turn : yield* beginTurn(context, input.turn)
     const system = input.system ?? config.system
     const live: TurnLiveInput = {
-      conversation: input.conversation,
-      runId: input.runId,
-      userMessage: input.userMessage,
-      journal: input.journal,
+      turn: writer,
       ...(system === undefined ? {} : { system }),
-      ...(config.journal === undefined ? {} : { writer: config.journal }),
       ...(config.maxEventDepth === undefined ? {} : { maxEventDepth: config.maxEventDepth }),
     }
     const runOptions: TurnRunOptions = {
       ...(config.limits === undefined ? {} : { limits: config.limits }),
       ...(config.budgetTokens === undefined ? {} : { budgetTokens: config.budgetTokens }),
-      cacheKey: Option.orElse(Option.fromNullishOr(input.cacheKey), () => cacheKeyOf(config.cacheKeyPrefix ?? "", input.conversation)),
+      cacheKey: Option.orElse(Option.fromNullishOr(input.cacheKey), () => cacheKeyOf(config.cacheKeyPrefix ?? "", writer.admitted.session.id)),
       ...(input.steering === undefined ? {} : { steering: input.steering }),
     }
 
@@ -186,7 +217,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       // Everything `use` does sees the turn's services: `yield* SomeHostTag` gets the per-turn instance.
       return yield* use(yield* turnOf(runOptions))
     })
-    return yield* body.pipe(
+    const outcome = yield* body.pipe(
       guardTurn,
       Effect.scoped,
       provideHostLayer(Option.fromNullishOr(input.layer)),
@@ -195,7 +226,10 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       Effect.provideService(ToolRegistry, registry),
       Effect.provideService(StepLoop, loop),
       Effect.provide(context),
+      untilClosed(writer),
     )
+    if (own) yield* writer.end({ reason: outcome.outcome, failure: Option.none() })
+    return outcome
   }))) as Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
   return { fingerprint: graphFingerprint(graph), turn }

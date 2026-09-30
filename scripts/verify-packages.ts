@@ -34,7 +34,12 @@ console.log(`Installing from temporary local registry into ${consumer}`)
 const install = Bun.spawn(["bun", "install", "--ignore-scripts", "--no-cache", "--cache-dir", join(consumer, ".install-cache")], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await install.exited !== 0) process.exit(1)
 await writeFile(join(consumer, "verify.ts"), `
-import { Effect, Layer, Option, Schema } from "effect"
+import { Context, Deferred, Effect, Layer, Option, Schema } from "effect"
+import { Sessions, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import type { TurnWriter } from "@xandreed/core"
+import { SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
+import { SessionsPluginLive } from "@xandreed/plugin-sessions"
+import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
 import { CurrentPromptProvenance, defineDecisionPrompt, definePrompt, evaluateDecision, EvaluationModelLive, renderPrompt, withProvenance } from "@xandreed/ai"
 import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
 import sessions from "@xandreed/plugin-session-sqlite"
@@ -68,6 +73,26 @@ const chosen = await Effect.runPromise(decide("fast"))
 const refused = await Effect.runPromise(Effect.result(decide("sideways")))
 if (chosen.lane.choice !== "fast" || refused._tag !== "Failure" || refused.failure._tag !== "EvaluationError" || refused.failure.code !== "invalid") process.exit(1)
 console.log("Versioned prompts, their provenance and a checked decision passed")
+const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
+ const done = yield* Deferred.make<string>()
+ const react = (writer: TurnWriter) => Deferred.succeed(done, writer.admitted.userMessage.text).pipe(Effect.asVoid)
+ const executor = Layer.succeed(TaskExecutor, TaskExecutor.of({ turn: (_writer, task) => Effect.succeed({ outcome: "completed" as const, reply: Option.some("found " + task.instructions) }), react }))
+ const store = SessionsPluginLive({ ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(SessionLogSqliteLive(".efferent/sessions.db"), TurnAdmissionOpen)))
+ const context = yield* Layer.build(TasksPluginLive().pipe(Layer.provideMerge(Layer.mergeAll(store, InProcessTaskRunnerLive(), executor))))
+ const sessions = Context.get(context, Sessions)
+ const tasks = Context.get(context, Tasks)
+ const view = yield* sessions.create({ owner: "consumer" })
+ const address = { id: view.header.id, owner: "consumer" }
+ const pending = yield* Effect.scoped(Effect.gen(function*(){
+  const writer = yield* sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "hello" }), runId: "run-1", key: "k1", command: {} })
+  yield* tasks.start(address, { instructions: "the answer", mode: "fork" })
+  return (yield* writer.end({ reason: "completed", failure: Option.none() })).pending
+ }))
+ if (pending > 0) yield* sessions.drain(address, react)
+ return yield* Deferred.await(done).pipe(Effect.timeout("5 seconds"))
+})))
+if (!answered.includes("found the answer")) process.exit(1)
+console.log("Sessions over SQLite, a background task and the reaction to its result passed")
 `)
 await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, target: "ESNext", module: "ESNext", moduleResolution: "bundler", types: ["bun"] }, include: ["verify.ts"] }))
 const typecheck = Bun.spawn(["bun", "node_modules/typescript/bin/tsc", "--noEmit"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })

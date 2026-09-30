@@ -6,16 +6,19 @@ import { readerOf } from "../memory/memory-session.js"
 import { Capabilities } from "../ports/capability.port.js"
 import type { Capability, PromptContext, PromptSection } from "../ports/capability.port.js"
 import { ConversationMemory } from "../ports/memory.port.js"
+import type { LogHandle } from "../ports/memory.port.js"
 import { RunContext } from "../ports/run-context.port.js"
+import type { TurnDraft } from "../ports/sessions.port.js"
+import { draftOfTurnEvent, draftsOfEntries, entriesOfEvents } from "../session/session-event.entity.functions.js"
+import { MEMORY_KINDS, RESERVED_KINDS } from "../session/session-event.entity.js"
 import { ToolRegistry } from "../ports/tool-registry.port.js"
 import type { RunTools } from "../ports/tool-registry.port.js"
 import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
 import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnLiveInput } from "../ports/turn-scope.port.js"
-import { makeJournalWriter } from "./journal-writer.js"
 import { renderSections } from "./prompt-sections.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
-import { journalBodyOf } from "./turn-event.entity.functions.js"
+import type { TurnEvent } from "./turn-event.entity.js"
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
 
@@ -23,15 +26,22 @@ const failure = (code: string, message: string) => new HarnessError({ code, mess
 const inCaller = <A, E>(effect: Effect.Effect<A, E, unknown>): Effect.Effect<A, E> =>
   Effect.flatMap(Effect.context<never>(), (context) => effect.pipe(Effect.provide(context)) as Effect.Effect<A, E>)
 
+/** A host event may not take a name only the framework writes. */
+const storedDraft = (turn: number) => (event: TurnEvent): Option.Option<TurnDraft | HarnessError> =>
+  event._tag === "host" && RESERVED_KINDS.includes(event.name)
+    ? Option.some(failure("events.reserved", `${event.name} is the framework's kind`))
+    : Option.map(draftOfTurnEvent(turn, event), (draft): TurnDraft => ({ kind: draft.kind, data: draft.data }))
+
 /**
- * One admitted turn's services, built in this order: the event bus, the
- * tasks and the write-behind journal, with the journal as the bus's FIRST
- * subscriber (every durable event is queued before any reaction runs);
- * then the memory session, opened where this layer is built (a digester or
- * summarizer there is used), and RunContext. It also holds the tools slot
- * (`TurnToolbox`) and the prompt state (`TurnPrompt`). Nothing is recorded
- * until `TurnMemory.persistMessage`. Tasks run in the layer's scope: they
- * are interrupted, and the journal flushed, when it closes.
+ * One admitted turn's services, over the turn's writer, built in this order:
+ * the event bus and the tasks, with the writer as the bus's FIRST
+ * subscriber (every stored event is queued before any reaction runs); then
+ * the memory session, opened over the session's earlier memory events where
+ * this layer is built (a digester or summarizer there is used), and
+ * RunContext. It also holds the tools slot (`TurnToolbox`) and the prompt
+ * state (`TurnPrompt`). The message was stored when the turn began; memory
+ * takes it at `TurnMemory.persistMessage`. Tasks run in the layer's scope:
+ * they are interrupted when it closes.
  */
 export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   RunContext | TurnEvents | TurnTasks | TurnMemory | TurnToolbox | TurnPrompt,
@@ -44,17 +54,30 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const capabilities = Option.getOrElse(yield* Effect.serviceOption(Capabilities), (): ReadonlyArray<Capability> => [])
   const sections = capabilities.flatMap((capability) => capability.promptSections)
 
+  const writer = input.turn
+  const admitted = writer.admitted
   const events = yield* makeTurnEvents({ maxDepth: input.maxEventDepth ?? 8 })
   const tasks = yield* makeTurnTasks(scope)
-  // One ordered write-behind journal for events and memory: producers queue and go on; the
-  // turn waits only at flushes. Memory builds every request from its in-process log.
-  const writer = yield* makeJournalWriter(input.journal, scope, {
-    capacity: input.writer?.capacity ?? 1_024,
-    batch: input.writer?.batch ?? 64,
-  })
-  // The journal is the first subscriber: every durable event is queued before any reaction runs.
-  yield* events.subscribe((event) => journalBodyOf(input.runId, event), writer.io.append)
-  const session = yield* memory.open({ conversation: input.conversation, runId: input.runId, io: writer.io })
+  // The writer is the first subscriber: every stored event is queued before any reaction runs.
+  yield* events.subscribe(storedDraft(admitted.turn), (draft) => draft instanceof HarnessError ? Effect.fail(draft) : writer.append([draft]))
+  // Memory's log is the session's memory events before this turn; what it records goes to the
+  // same queue. Its TurnStarted is the turn's own `turn.started`, stored when the turn began.
+  const log: LogHandle = {
+    read: writer.history(MEMORY_KINDS).pipe(
+      Effect.flatMap((stored) => entriesOfEvents(stored).pipe(Effect.mapError((error) => failure("memory.log", `undecodable memory events: ${error.message}`)))),
+    ),
+    append: (entries) => Effect.gen(function* () {
+      const started = entries.filter((entry) => entry.body._tag === "TurnStarted")
+      // The stored message is entry `<runId>:0` of turn N: memory must number it the same.
+      if (started.some((entry) => entry.turn !== admitted.turn || entry.id !== writer.started.data.entry)) {
+        return yield* Effect.fail(failure("turn.numbering",
+          `memory took the message as ${started.map((entry) => `${entry.id} of turn ${entry.turn}`).join()}, the session stored ${String(writer.started.data.entry)} of turn ${admitted.turn}`))
+      }
+      const drafts = yield* draftsOfEntries(entries).pipe(Effect.mapError((error) => failure("memory.log", error.message)))
+      yield* writer.append(drafts.map((draft): TurnDraft => ({ kind: draft.kind, data: draft.data })))
+    }),
+  }
+  const session = yield* memory.open({ conversation: admitted.session.id, runId: admitted.runId, log })
   const reader = readerOf(session)
 
   const slot = yield* Ref.make(Option.none<RunTools>())
@@ -63,9 +86,10 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     onSome: (tools) => Effect.succeed(tools),
   })))
   const run = RunContext.of({
-    conversation: input.conversation,
-    runId: input.runId,
-    userMessage: input.userMessage,
+    conversation: admitted.session.id,
+    session: admitted.session,
+    runId: admitted.runId,
+    userMessage: admitted.userMessage,
     memory: reader,
     events,
     tasks,
@@ -87,10 +111,10 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     }))),
     persistMessage: Effect.gen(function* () {
       if (yield* Ref.getAndSet(claimed, true)) return yield* Effect.fail(failure("turn.persisted", "The user's message is already persisted"))
-      const number = (yield* session.turn) + 1
-      yield* session.record([{ _tag: "TurnStarted", userMessage: input.userMessage }], 0)
+      const number = admitted.turn
+      yield* session.record([{ _tag: "TurnStarted", userMessage: admitted.userMessage }], 0)
       yield* Ref.set(started, Option.some(number))
-      yield* events.publish({ _tag: "turn.started", runId: input.runId, turn: number, userMessage: input.userMessage })
+      yield* events.publish({ _tag: "turn.started", runId: admitted.runId, turn: number, userMessage: admitted.userMessage })
       return number
     }),
     context: (entry) => session.record([{ _tag: "TurnContext", sectionId: entry.id, version: entry.version, text: entry.text }], 0).pipe(Effect.asVoid),
@@ -98,7 +122,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       const number = yield* Ref.get(started)
       if (Option.isNone(number) || (yield* Ref.getAndSet(replied, true))) return
       yield* session.record([{ _tag: "TurnEnded", outcome: outcome.outcome, reply: outcome.reply }], 0)
-      yield* events.publish({ _tag: "turn.ended", runId: input.runId, turn: number.value, outcome: outcome.outcome, reply: outcome.reply })
+      yield* events.publish({ _tag: "turn.ended", runId: admitted.runId, turn: number.value, outcome: outcome.outcome, reply: outcome.reply })
     }),
   })
 

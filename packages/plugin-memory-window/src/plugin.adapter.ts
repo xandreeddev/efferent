@@ -12,7 +12,6 @@ import {
   Failure,
   HarnessError,
   ledgerOf,
-  MemoryLog,
   openLogSession,
   pendingCompaction,
   rewrittenBy,
@@ -122,23 +121,21 @@ export const recallCapability = defineCapability({
  * previews of oversized results and a ledger in place of the oldest turns.
  */
 export const memoryWindowPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-window", version: "0.7.0-next.1", scope: "runtime",
+  id: "@xandreed/plugin-memory-window", version: "0.8.0-next.0", scope: "runtime",
   config: MemoryWindowConfig, defaults: memoryWindowDefaults,
-  requires: [MemoryLog],
   provides: [ConversationMemory],
   contributes: [Capabilities],
   layer: (config) => Layer.mergeAll(
-    Layer.effect(ConversationMemory, Effect.gen(function* () {
-      const log = yield* MemoryLog
+    Layer.sync(ConversationMemory, () => {
       const policy = windowPolicy(config)
       return ConversationMemory.of({
         strategy: WINDOW_STRATEGY,
-        open: ({ conversation, runId, io }) => log.open(conversation, io).pipe(Effect.flatMap((handle) => openLogSession(handle, policy, { runId }))),
+        open: ({ runId, log }) => openLogSession(log, policy, { runId }),
       })
-    })),
+    }),
     Layer.succeed(Capabilities, [recallCapability]),
   ),
 })
-/** Windowed memory as a typed layer: provides ConversationMemory and contributes the recall tool; requires MemoryLog. */
+/** Windowed memory as a typed layer: provides ConversationMemory and contributes the recall tool. */
 export const MemoryWindowLive = memoryWindowPlugin.live
 export default memoryWindowPlugin

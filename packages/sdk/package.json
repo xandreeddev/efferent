@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/sdk",
-  "version": "0.7.0-next.1",
+  "version": "0.8.0-next.0",
   "type": "module",
   "main": "./src/index.ts",
   "exports": {
@@ -15,10 +15,10 @@
   },
   "devDependencies": {
     "@xandreed/plugin-agent-loop": "workspace:*",
-    "@xandreed/plugin-memory-log": "workspace:*",
     "@xandreed/plugin-memory-window": "workspace:*",
     "@xandreed/plugin-memory-summary": "workspace:*",
     "@xandreed/plugin-tool-discovery": "workspace:*",
-    "@xandreed/plugin-memory-digest": "workspace:*"
+    "@xandreed/plugin-memory-digest": "workspace:*",
+    "@xandreed/plugin-sessions": "workspace:*"
   }
 }

@@ -20,7 +20,7 @@
     },
     "packages/ai": {
       "name": "@xandreed/ai",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -45,7 +45,7 @@
     },
     "packages/cli": {
       "name": "@xandreed/cli",
-      "version": "0.2.0-next.0",
+      "version": "0.3.0-next.1",
       "bin": {
         "efferent": "./src/main.ts",
       },
@@ -62,14 +62,14 @@
     },
     "packages/core": {
       "name": "@xandreed/core",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "effect": "4.0.0-rc.118",
       },
     },
     "packages/evals": {
       "name": "@xandreed/evals",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -112,7 +112,7 @@
     },
     "packages/plugin-agent-loop": {
       "name": "@xandreed/plugin-agent-loop",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -120,7 +120,7 @@
     },
     "packages/plugin-context": {
       "name": "@xandreed/plugin-context",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -128,7 +128,7 @@
     },
     "packages/plugin-mcp": {
       "name": "@xandreed/plugin-mcp",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -137,7 +137,7 @@
     },
     "packages/plugin-memory": {
       "name": "@xandreed/plugin-memory",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -145,15 +145,7 @@
     },
     "packages/plugin-memory-digest": {
       "name": "@xandreed/plugin-memory-digest",
-      "version": "0.6.0-next.2",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
-      },
-    },
-    "packages/plugin-memory-log": {
-      "name": "@xandreed/plugin-memory-log",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -161,7 +153,7 @@
     },
     "packages/plugin-memory-summary": {
       "name": "@xandreed/plugin-memory-summary",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -169,7 +161,7 @@
     },
     "packages/plugin-memory-window": {
       "name": "@xandreed/plugin-memory-window",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -177,7 +169,7 @@
     },
     "packages/plugin-models": {
       "name": "@xandreed/plugin-models",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@effect/ai-anthropic": "4.0.0-rc.118",
         "@effect/ai-openai": "4.0.0-rc.118",
@@ -188,7 +180,7 @@
     },
     "packages/plugin-policy-workspace": {
       "name": "@xandreed/plugin-policy-workspace",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -196,7 +188,7 @@
     },
     "packages/plugin-render": {
       "name": "@xandreed/plugin-render",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -204,16 +196,35 @@
     },
     "packages/plugin-session-sqlite": {
       "name": "@xandreed/plugin-session-sqlite",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
         "ws": "^8.21.0",
       },
     },
+    "packages/plugin-sessions": {
+      "name": "@xandreed/plugin-sessions",
+      "version": "0.7.0-next.1",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "4.0.0-rc.118",
+      },
+    },
+    "packages/plugin-tasks": {
+      "name": "@xandreed/plugin-tasks",
+      "version": "0.7.0-next.1",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "4.0.0-rc.118",
+      },
+      "devDependencies": {
+        "@xandreed/plugin-sessions": "workspace:*",
+      },
+    },
     "packages/plugin-telemetry": {
       "name": "@xandreed/plugin-telemetry",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@effect/opentelemetry": "4.0.0-rc.118",
         "@effect/platform-bun": "4.0.0-rc.118",
@@ -228,7 +239,7 @@
     },
     "packages/plugin-tool-discovery": {
       "name": "@xandreed/plugin-tool-discovery",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -236,7 +247,7 @@
     },
     "packages/plugin-tools-local": {
       "name": "@xandreed/plugin-tools-local",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -245,7 +256,7 @@
     },
     "packages/runtime": {
       "name": "@xandreed/runtime",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "effect": "4.0.0-rc.118",
@@ -276,7 +287,7 @@
     },
     "packages/sdk": {
       "name": "@xandreed/sdk",
-      "version": "0.6.0-next.2",
+      "version": "0.7.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "@xandreed/plugin-memory": "workspace:*",
@@ -287,9 +298,9 @@
       "devDependencies": {
         "@xandreed/plugin-agent-loop": "workspace:*",
         "@xandreed/plugin-memory-digest": "workspace:*",
-        "@xandreed/plugin-memory-log": "workspace:*",
         "@xandreed/plugin-memory-summary": "workspace:*",
         "@xandreed/plugin-memory-window": "workspace:*",
+        "@xandreed/plugin-sessions": "workspace:*",
         "@xandreed/plugin-tool-discovery": "workspace:*",
       },
     },
@@ -343,7 +354,7 @@
     },
     "packages/tui": {
       "name": "@xandreed/tui",
-      "version": "0.2.0-next.0",
+      "version": "0.3.0-next.1",
       "dependencies": {
         "@opentui/core": "0.3.1",
         "@opentui/solid": "0.3.1",
@@ -355,7 +366,7 @@
     },
     "packages/ui-agent": {
       "name": "@xandreed/ui-agent",
-      "version": "0.3.0-next.2",
+      "version": "0.4.0-next.1",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "@xandreed/plugin-agent-loop": "workspace:*",
@@ -772,8 +783,6 @@
 
     "@xandreed/plugin-memory-digest": ["@xandreed/plugin-memory-digest@workspace:packages/plugin-memory-digest"],
 
-    "@xandreed/plugin-memory-log": ["@xandreed/plugin-memory-log@workspace:packages/plugin-memory-log"],
-
     "@xandreed/plugin-memory-summary": ["@xandreed/plugin-memory-summary@workspace:packages/plugin-memory-summary"],
 
     "@xandreed/plugin-memory-window": ["@xandreed/plugin-memory-window@workspace:packages/plugin-memory-window"],
@@ -785,6 +794,10 @@
     "@xandreed/plugin-render": ["@xandreed/plugin-render@workspace:packages/plugin-render"],
 
     "@xandreed/plugin-session-sqlite": ["@xandreed/plugin-session-sqlite@workspace:packages/plugin-session-sqlite"],
+
+    "@xandreed/plugin-sessions": ["@xandreed/plugin-sessions@workspace:packages/plugin-sessions"],
+
+    "@xandreed/plugin-tasks": ["@xandreed/plugin-tasks@workspace:packages/plugin-tasks"],
 
     "@xandreed/plugin-telemetry": ["@xandreed/plugin-telemetry@workspace:packages/plugin-telemetry"],
 
@@ -1497,6 +1510,8 @@
     "@types/sax/@types/node": ["@types/node@25.9.1", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-xfrlY7UD5rMJk3ZVJP8BNzS28J36YJg+xp+LPXV1TdWxr8uMH5A860QNxYDGQe/ylDSgjxE52Q9VnO7p75tJxg=="],
 
     "@types/ws/@types/node": ["@types/node@25.9.1", "", { "dependencies": { "undici-types": ">=7.24.0 <7.24.7" } }, "sha512-xfrlY7UD5rMJk3ZVJP8BNzS28J36YJg+xp+LPXV1TdWxr8uMH5A860QNxYDGQe/ylDSgjxE52Q9VnO7p75tJxg=="],
+
+    "@xandreed/plugin-session-sqlite/ws": ["ws@8.22.0", "", { "peerDependencies": { "bufferutil": "^4.0.1", "utf-8-validate": ">=5.0.2" }, "optionalPeers": ["bufferutil", "utf-8-validate"] }, "sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg=="],
 
     "anymatch/picomatch": ["picomatch@2.3.2", "", {}, "sha512-V7+vQEJ06Z+c5tSye8S+nHUfI51xoXIXjHQ99cQtKUkQqqO1kO/KCJUfZXuB47h/YBlDhah2H3hdUGXn8ie0oA=="],
 

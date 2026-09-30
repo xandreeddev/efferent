@@ -47,7 +47,7 @@ export const outcomeOf = (task: DigestTask, reply: string): DigestOutcome => tas
  * decides how; this plugin only asks.
  */
 export const memoryDigestPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-digest", version: "0.7.0-next.1", scope: "session",
+  id: "@xandreed/plugin-memory-digest", version: "0.8.0-next.0", scope: "session",
   config: MemoryDigestConfig, defaults: memoryDigestDefaults,
   requires: [UtilityLlm],
   provides: [ResultDigester],
