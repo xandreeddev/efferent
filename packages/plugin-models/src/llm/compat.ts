@@ -262,14 +262,12 @@ export const fromChatCompletion = (
     ]
   })
 
-/** The one request shape both paths send; only `stream` differs (streaming
- *  additionally asks the gateway to attach usage to the final chunk). The
- *  engine's per-conversation cache identity rides as `prompt_cache_key` —
- *  one conversation, one server-side cache lane (parallel sessions stop
- *  evicting each other's prefixes); absent when no run stamped one. */
-const requestSettings = (config: CompatConfig, cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>): Json => ({
-  ...(config.temperature === undefined ? {} : { temperature: config.temperature }),
-  ...(config.standardOnly === true ? {} : {
+/** A request's public options, shared by the body and the model's descriptor:
+ *  the sampling temperature (sent before the messages) and the gateway
+ *  extensions (sent after them), as the wire has always ordered them. */
+const requestSettings = (config: CompatConfig, cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>): { readonly sampling: Json; readonly extensions: Json } => ({
+  sampling: config.temperature === undefined ? {} : { temperature: config.temperature },
+  extensions: config.standardOnly === true ? {} : {
     ...Option.match(cacheKey, { onNone: () => ({}), onSome: (key) => ({ prompt_cache_key: key }) }),
     ...(config.thinking === undefined ? thinkingParams(config.model) : { thinking: { type: config.thinking } }),
     ...(config.reasoningEffort === undefined ? {} : { reasoning: { effort: config.reasoningEffort } }),
@@ -280,9 +278,14 @@ const requestSettings = (config: CompatConfig, cacheKey: Option.Option<string>, 
         ...(config.thinking === "disabled" || config.reasoningEffort !== undefined ? {} : { reasoning_effort: value.effort }),
       }),
     }),
-  }),
+  },
 })
 
+/** The one request shape both paths send; only `stream` differs (streaming
+ *  additionally asks the gateway to attach usage to the final chunk). The
+ *  engine's per-conversation cache identity rides as `prompt_cache_key` —
+ *  one conversation, one server-side cache lane (parallel sessions stop
+ *  evicting each other's prefixes); absent when no run stamped one. */
 const chatRequestBody = (
   config: CompatConfig,
   options: LanguageModel.ProviderOptions,
@@ -291,15 +294,17 @@ const chatRequestBody = (
   Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }).pipe(
     Effect.map(({ cacheKey, policy }) => {
       const tools = toChatTools(options.tools)
+      const settings = requestSettings(config, cacheKey, policy)
       return {
         model: config.model,
-        ...requestSettings(config, cacheKey, policy),
+        ...settings.sampling,
         messages: toChatMessages(options.prompt),
         stream: streaming,
         ...(options.responseFormat.type === "json" ? { response_format: {
           type: "json_schema", json_schema: { name: options.responseFormat.objectName, strict: true, schema: strictJsonSchema(options.responseFormat.schema) },
         } } : {}),
         ...(streaming ? { stream_options: { include_usage: true } } : {}),
+        ...settings.extensions,
         ...(tools.length > 0 ? { tools, tool_choice: toToolChoice(options.toolChoice) } : {}),
       }
     }),
@@ -410,6 +415,9 @@ export const makeCompatLanguageModel = (
       ) as never,
   }).pipe(Effect.map((model) => describeModel(model,
     Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }).pipe(
-      Effect.map(({ cacheKey, policy }) => ({ provider: config.moduleName, model: config.model, settings: requestSettings(config, cacheKey, policy) })),
+      Effect.map(({ cacheKey, policy }) => {
+        const settings = requestSettings(config, cacheKey, policy)
+        return { provider: config.moduleName, model: config.model, settings: { ...settings.sampling, ...settings.extensions } }
+      }),
     ),
   )))

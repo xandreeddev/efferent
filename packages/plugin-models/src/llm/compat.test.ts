@@ -63,6 +63,22 @@ describe("makeCompatLanguageModel", () => {
       expect(JSON.stringify(descriptor.value)).not.toContain("secret-test-key")
     }
   })
+  test("the wire keeps its key order: sampling before the messages, gateway extensions after them", async () => {
+    const { calls, impl } = capture()
+    await Effect.runPromise(Effect.gen(function* () {
+      const svc = yield* makeCompatLanguageModel({
+        moduleName: "Test", model: "kimi-k2-code", chatUrl: "https://gw.example/chat/completions",
+        apiKey: "secret-test-key", temperature: 0.25, fetchImpl: impl,
+      })
+      yield* svc.generateText({ prompt: "hello" })
+    }).pipe(
+      Effect.provideService(CurrentPromptCacheKey, Option.some("lane:test")),
+      Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "high", maxOutputTokens: 32 })),
+    ))
+    expect(Object.keys(calls[0]!.body as Record<string, unknown>)).toEqual([
+      "model", "temperature", "messages", "stream", "prompt_cache_key", "thinking", "reasoning_effort", "max_tokens",
+    ])
+  })
   test("sends chat-completions shape: system + messages + tools + bearer key", async () => {
     const { calls, impl } = capture()
     const result = await Effect.runPromise(
