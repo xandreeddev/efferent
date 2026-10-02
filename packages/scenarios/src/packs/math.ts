@@ -8,9 +8,9 @@ import type { AgentMessage } from "@xandreed/core"
 import { SqliteConversationStoreLive } from "@xandreed/plugin-session-sqlite"
 import { composeAgentMessage, makeMathSession, MATH_PROMPT_VERSION } from "@xandreed/math"
 import type { MathSession, MathSessionEvent } from "@xandreed/math"
-import type { Pack } from "@xandreed/evals/model"
-import { scenario } from "@xandreed/evals/run"
-import { briefContains, eventWhere, toolSequence, turnAlternationValid } from "@xandreed/evals/evidence"
+import type { Pack } from "../legacy/model.js"
+import { scenario } from "../legacy/run.js"
+import { briefContains, eventWhere, toolSequence, turnAlternationValid } from "../legacy/evidence.js"
 
 /**
  * The math pack: the tutor session's ENFORCED admission story as a scenario —

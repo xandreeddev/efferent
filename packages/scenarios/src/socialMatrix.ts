@@ -19,7 +19,7 @@ import type { BlogPost, XSearchResult } from "@xandreed/social"
 import { mkdtempSync, rmSync } from "node:fs"
 import { homedir, tmpdir } from "node:os"
 import { join } from "node:path"
-import { argValue, csv, fileStamp, grid, hasFlag, persistJson, positiveInt, runCampaign, runMatrixMain, trialFileName } from "@xandreed/evals/campaign"
+import { argValue, csv, fileStamp, grid, hasFlag, persistJson, positiveInt, runCampaign, runMatrixMain, trialFileName } from "./legacy/campaign.js"
 import { mean, percentile, wilsonInterval } from "@xandreed/evals/stats"
 import { generalTierCall, preflightAuth } from "./live/llm.js"
 

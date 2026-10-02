@@ -43,7 +43,7 @@ export const docsNav: DocGroup[] = [
       { slug: "concepts/providers", label: "Plugin configuration" },
       { slug: "concepts/plugin-reference", label: "Plugin reference" },
       { slug: "concepts/surface", label: "Surface — the UI substrate" },
-      { slug: "concepts/evals", label: "Evals — scenario packs" },
+      { slug: "concepts/evals", label: "Evals — calibrations and journeys" },
       { slug: "concepts/observability", label: "Observability" },
     ],
   },
@@ -118,8 +118,8 @@ export const capabilities = [
     href: "/docs/concepts/engine",
   },
   {
-    title: "Scenario evals",
-    desc: "Ordered steps over a real agent world, deterministic evidence checks, committed baselines compared by default — key-free in CI.",
+    title: "Evals",
+    desc: "Calibrations: one value for dataset, subject, candidates, judges, gates and selection. Journeys: ordered conversations over a booted app. Key-free in CI.",
     href: "/docs/concepts/evals",
   },
   {

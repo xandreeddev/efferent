@@ -1,5 +1,7 @@
 # @xandreed/scenarios
 
+> **Deprecated (2026-10).** The Pack/Scenario runner these packs use was removed from `@xandreed/evals`; it lives on as a frozen copy in `src/legacy/` (model, run, evidence, baseline, report, campaign). New evaluations are calibrations or journeys (`docs/composable-evaluations.md`). The packs keep running in CI until they are adapted.
+
 **Evals v3** (`docs/evals-v3.md`, adapted to the new line): the unit is a
 SCENARIO — ordered steps over a booted WORLD — and the evidence (event trail,
 persisted conversation, workspace fs) is data the checks read. The TOP of the

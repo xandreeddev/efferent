@@ -11,8 +11,8 @@ import {
   XPlatform,
 } from "@xandreed/social"
 import type { XSearchResult } from "@xandreed/social"
-import type { Pack } from "@xandreed/evals/model"
-import { scenario } from "@xandreed/evals/run"
+import type { Pack } from "../legacy/model.js"
+import { scenario } from "../legacy/run.js"
 
 const NOW = new Date("2026-07-12T12:00:00.000Z")
 const THREAD: ReadonlyArray<XSearchResult> = [

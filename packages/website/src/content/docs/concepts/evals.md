@@ -1,49 +1,65 @@
 ---
-title: Evals — scenario packs
-description: Ordered steps over real agent worlds, deterministic evidence checks, and committed baselines compared by default.
+title: Evals — calibrations and journeys
+description: One declarative value per calibration, journeys over booted applications, shared evaluators and judges, gates and reports.
 ---
 
-`@xandreed/scenarios` sits at the top of the package graph — the only package
-allowed to import the agents — and treats each agent's definition-of-done as
-what it really is: **a full scenario**, not a one-shot input/output pair.
+`@xandreed/evals` runs two kinds of eval. A **calibration** runs one subject under
+test (a port, an adapter, a prompt, a judge) over a labelled dataset for every
+candidate. A **journey** runs an ordered conversation over a booted application
+and scores each turn. Both produce the same trials, bind the same evaluators and
+judges, persist through the same store and compare with the same fingerprints.
+The application owns the datasets, subjects, candidates, evaluators and policy;
+the library runs them and reports. It keeps no registry of its own.
 
-## The shape
+## A calibration is one value
 
-A pack is a list of scenarios; a scenario is **ordered steps** over a real
-agent world — boot the workspace TUI, type an idea, `:lock`, `:forge`, read
-the dashboard — and **deterministic evidence checks** over three sources the
-framework captures as data:
+```ts
+import { Effect, Schema } from "effect"
+import { defineCalibration, runCalibration } from "@xandreed/evals"
 
-- the **event trail** (the session ledger, in order),
-- the **persisted conversation** (the same SQLite trail the TUI resumes from),
-- the **workspace** (files the run actually wrote).
+export const localeCalibration = defineCalibration({
+  id: "message-locale",
+  version: "3",
+  dataset: localeDataset,                       // typed inputs, labels, fixed splits
+  candidate: Schema.Struct({ id: Schema.String, model: Schema.String }),
+  candidates: [{ id: "small", model: "vendor/small" }, { id: "large", model: "vendor/large" }],
+  subject: {
+    task: (input) => resolveLocale(input.text),   // sees the input only
+    services: (candidate) => LocaleLive(candidate.model), // fresh for every case
+    fingerprints: { prompt: "locale-v3" },
+  },
+  output: LocaleDecision,
+  evidence: LocaleDecision,
+  evaluators: [{ evaluator: localeContract, select: ["locale", "fallback"] }],
+  gates: [
+    { evaluator: "locale.contract", metric: "locale", aggregate: "mean", minimum: 0.95, mode: "blocking" },
+    { evaluator: "locale.contract", metric: "fallback", aggregate: "mean", maximum: 0, mode: "blocking" },
+  ],
+  select: (summaries) => summaries.filter((summary) => summary.passed),
+  run: { repetitions: 3, concurrency: 1, timeoutMs: 90_000 },
+})
 
-"After the lock, the spec file's status is `locked`" and "the forge events
-follow the lock event" are one-line checks, not hand audits of a database.
+const report = runCalibration(localeCalibration, { runId: "2026-10-02", split: "calibration" })
+```
 
-## Baselines by default
+The dataset keeps `calibration` and `validation` splits apart and marks labels
+`known`, `reviewed` or `provisional`. The subject's `task` never receives the
+reference; its `services(candidate)` Layer is rebuilt for every case so counters,
+budgets and clients never leak between cases. Candidates are decoded strictly
+from files (`decodeCandidates`). Gates aggregate one metric per candidate
+(`mean` or `passRate`, with `minimum`/`maximum`); diagnostic gates are reported,
+never enforced. `judgeCalibration` pairs reference labels with the subject's
+metrics so `summarizeCalibration` can report agreement, Brier error and
+false-pass/false-fail rates: that is how a judge is calibrated. `select` is the
+host's policy; without it there is no recommendation, and the library never
+ranks or promotes on its own.
 
-Every pack has a **committed baseline** compared on every run — foundry's
-ratchet UX applied to agent quality. `bun run scenarios` (and CI) fails on
-regression without anyone remembering a flag. The **scripted twins** — the
-same scenarios driven by scripted models — run key-free in CI; live-keyed
-runs use the same packs against real providers.
-
-## Honest limits
-
-Scripted twins validate the harness, the folds, and the wiring — they cannot
-catch a live-provider defect (a response-shape change, a field the gateway
-renamed) or rendering under real load. Those classes are covered by the
-frame-level TUI battery (the real renderer, headless) and by live smoke runs;
-when a live bug ships anyway, the rule is: reproduce it, fix it, and land the
-regression at whichever layer would have caught it first.
-
-## Reusable runner
-
-`@xandreed/evals` exports `scenario`, `runPack` and `evaluate`. Supply arbitrary
-scoped fixtures, checks, judges and reporters from your application. The runner
-contains no application pack registry. `packages/scenarios` hosts this repository’s
-reference-app batteries and committed baselines.
+A run returns a `CalibrationReport`: identity fingerprints (calibration, dataset,
+evaluators, subject, candidates), every trial, per-candidate metrics, gates,
+performance and judge calibration, failures, the recommendation and whether it
+is promotion eligible (every blocking gate passed, reviewed labels, no failures).
+`calibrationMarkdown` renders it; `comparisonIssues` refuses to compare reports
+whose identity, case sets or coverage differ.
 
 ## Keyed scores and declared completeness
 
@@ -77,7 +93,7 @@ const assessment = assessCompleteness({
 ]) // Effect<Assessment, AssessmentError>; completeness = 0.5
 ```
 
-## Projections, registration and calibration
+## Projections and registration
 
 `projectEvaluatorInput(evaluator, project)` adapts a narrow evaluator to a larger
 run bundle. For example, a helpfulness evaluator can receive only the request
@@ -87,15 +103,10 @@ The host owns capture, authorization, storage and optional telemetry export.
 
 `evaluatorRegistry(entries)` validates unique `id@version` keys and returns a
 checked resolver. Each entry records an evaluator, projection version, prompt
-hash and effective settings. Use the same resolved evaluator when scoring a
-journey and building its calibration target.
-
-`promptFamilyBenchmark({ id, version, output, dataset, evaluate, comparator })`
-builds an ordinary `Benchmark` for one prompt family. `evaluate` receives only
-the case input; reference labels go to the outer comparator. The adapter never
-runs an agent or silently calls several unrelated prompts. One subject prompt
-may still emit multiple metrics. Human label review remains explicit in the
-existing dataset case `review` field.
+hash and effective settings. Journeys bind judges by `id@version` from this
+registry; a calibration of the judge itself uses the same resolved evaluator as
+its subject, so a calibration result applies to exactly the judge the journeys
+run.
 
 ## Journey selection and step evidence
 
@@ -117,3 +128,9 @@ inherited by model and parallel tool effects. Hosts can correlate provider
 attempts and tool executions without a mutable global counter or an additional
 LLM call. Capture duration using a monotonic clock; a fixed scenario date is not
 an elapsed-time measurement. Absent usage or observations remain unavailable.
+
+## Deprecated: scenario packs
+
+`packages/scenarios` holds this repository's reference-application packs on a
+frozen copy of the retired Pack/Scenario runner. They still run in CI
+(`bun run scenarios`) and will be adapted to calibrations and journeys.

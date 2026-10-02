@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Ref } from "effect"
 import { cappedTrial, containTrialFailure, grid, runCampaign, trialFileName } from "./campaign.js"
-import { mean, percentile, standardDeviation } from "./stats.js"
+import { mean, percentile, standardDeviation } from "@xandreed/evals/stats"
 
 interface Trial {
   readonly id: string

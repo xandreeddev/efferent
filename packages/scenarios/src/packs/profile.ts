@@ -21,9 +21,9 @@ import {
   SmithSettingsStoreLive,
 } from "@xandreed/smith"
 import type { ProfileAgent, ProfileSession, SmithEvent, SmithRunConfig } from "@xandreed/smith"
-import type { Pack } from "@xandreed/evals/model"
-import { scenario } from "@xandreed/evals/run"
-import { eventWhere, fileContains, fileExists } from "@xandreed/evals/evidence"
+import type { Pack } from "../legacy/model.js"
+import { scenario } from "../legacy/run.js"
+import { eventWhere, fileContains, fileExists } from "../legacy/evidence.js"
 import { CRITIC_RUBRIC_VERSION, makeTrajectoryCritic } from "../judges/trajectoryCritic.js"
 import { generalTierCall } from "../live/llm.js"
 import { seedWorkspace } from "../live/fixtures.js"

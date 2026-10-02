@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect"
 import type { UiPage } from "@xandreed/ui-agent"
-import type { Judge } from "@xandreed/evals/model"
+import type { Judge } from "../legacy/model.js"
 
 export const UI_PAGE_QUALITY_RUBRIC_VERSION = "2.0.0"
 

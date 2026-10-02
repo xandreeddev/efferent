@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import { join } from "node:path"
-import { argValue, fileStamp, persistJson, positiveInt, runMatrixMain } from "@xandreed/evals/campaign"
+import { argValue, fileStamp, persistJson, positiveInt, runMatrixMain } from "../legacy/campaign.js"
 import { LanguageModel, Prompt, Toolkit } from "effect/ai"
 import { HttpClientRequest } from "effect/http"
 import { Cause, Duration, Effect, Result, Option, Redacted, Ref, Stream } from "effect"

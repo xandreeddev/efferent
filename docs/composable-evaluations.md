@@ -1,36 +1,141 @@
-# Composable evaluations
+# Evals: calibrations and journeys
 
-The eval package supports independent dataset tasks (`Benchmark`) and ordered,
-stateful tasks (`journeyTask`). Both produce version 2 trials and select reusable
-evaluators. Existing Pack/Scenario and Check/Judge entry points remain available.
-Legacy score fields are now nullable when execution failed; consumers must test
-availability before formatting, averaging or establishing a baseline.
+`@xandreed/evals` runs two kinds of evaluation. A **calibration** runs one
+subject under test (a port, an adapter, a prompt, a judge) over a labelled
+dataset for every candidate. A **journey** runs an ordered conversation over a
+booted application and scores each turn. Both produce version 2 trials, bind the
+same evaluators and judges, persist through the same `EvaluationStore` and are
+compared with the same fingerprints. The application owns the datasets, the
+subjects, the candidates, the evaluators and the selection policy; the library
+runs them and reports. It has no registry of its own.
 
-## Composition
+## A calibration is one value
 
-- A dataset owns typed inputs, reference labels, a version and fixed calibration
-  and validation splits. Related families cannot cross splits. Subjective labels
-  remain provisional until reviewed.
-- A benchmark supplies an Effect task and output/evidence schemas. The task only
-  receives input. Its evaluator receives input, output, evidence and reference.
-- An evaluator owns an ID, version and named metrics. Bindings select metrics
-  without making duplicate calls. One judge can emit several scores.
-- `bindBenchmark` binds a typed task for a campaign. The host supplies model
-  Layers; candidates in `BenchmarkOptions` are metadata, not implicit routing.
-  A host selecting models per candidate binds its own `run(options)` function.
-- `journeyTask` acquires a scoped world, performs actions in order, durably records
-  each observation and returns partial evidence on a step failure. Its `completed`
-  output must be included in the host's deterministic gate.
-- `EvaluationStore` persists raw task evidence before assessment and each result
-  before aggregation. Reporters/exporters consume results independently.
+The whole setup of a calibration is one `defineCalibration({...})` value; the
+file that declares it is the place to read how the eval works.
+
+```ts
+import { Effect, Schema } from "effect"
+import { defineCalibration, runCalibration } from "@xandreed/evals"
+
+const Candidate = Schema.Struct({ id: Schema.String, model: Schema.String })
+
+export const localeCalibration = defineCalibration({
+  id: "message-locale",
+  version: "3",                                   // changes with gates, thresholds or selection
+  dataset: localeDataset,                         // Dataset<{ text: string }, { locale: "en" | "pt" }>
+  candidate: Candidate,                           // strict codec for candidate files
+  candidates: [{ id: "small", model: "vendor/small" }, { id: "large", model: "vendor/large" }],
+  subject: {
+    // Receives the input only; the reference reaches the evaluators afterwards.
+    task: (input) => Locale.pipe(
+      Effect.flatMap((locale) => locale.resolve(input.text)),
+      Effect.map((output) => ({ output, evidence: output })),
+    ),
+    // The host's Layer for a candidate, built fresh for every case: counters,
+    // budgets and clients never leak between cases.
+    services: (candidate) => LocaleLive(candidate.model),
+    fingerprints: { prompt: "locale-v3" },        // identity of the code under test
+  },
+  output: LocaleDecision,
+  evidence: LocaleDecision,
+  evaluators: [{ evaluator: localeContract, select: ["locale", "fallback"] }],
+  gates: [
+    { evaluator: "locale.contract", metric: "locale", aggregate: "mean", minimum: 0.95, mode: "blocking" },
+    { evaluator: "locale.contract", metric: "fallback", aggregate: "mean", maximum: 0, mode: "blocking" },
+    { evaluator: "locale.contract", metric: "unknown", aggregate: "mean", mode: "diagnostic" },
+  ],
+  // The host's policy, best first. Without it the report has no recommendation.
+  select: (summaries) => summaries.filter((summary) => summary.passed)
+    .toSorted((left, right) => mean(right, "locale.contract/locale") - mean(left, "locale.contract/locale")),
+  run: { repetitions: 3, concurrency: 1, timeoutMs: 90_000 },
+})
+
+// Needs an EvaluationStore Layer and whatever `services` requires from the host.
+const report = runCalibration(localeCalibration, { runId: crypto.randomUUID(), split: "calibration" })
+```
+
+- A **dataset** owns typed inputs, reference labels, a version and fixed
+  `calibration` and `validation` splits. Related case families never cross
+  splits. Subjective labels stay `provisional` until reviewed; a run on
+  provisional labels can never be promotion eligible.
+- The **subject** is the code under test. `task` receives the input only.
+  `services(candidate)` is the host's Layer for that candidate; the runner builds
+  it fresh for every case (`isolatedServices`), for the task and for the
+  evaluators alike. `fingerprints` declares what identifies the subject (prompt
+  ids, versions, hashes) and is part of the report identity.
+- **Candidates** are typed by the host's codec. `decodeCandidates(definition,
+  json)` reads a file strictly: unknown fields fail, they are never dropped.
+  Candidate ids must be unique.
+- **Evaluators** own an id, a version and named metrics; bindings select metrics
+  without duplicate calls. Deterministic contracts, `llmEvaluator`,
+  `semanticEvaluator` and entries resolved from an `evaluatorRegistry` all fit.
+- **Gates** aggregate one metric over a candidate's trials of the run: `mean` of
+  scored values, or `passRate` (trials at exactly 1 over every attempt, so a
+  failed trial counts as not passed). `minimum` and `maximum` bound the value;
+  `requiresReviewedReference` fails while any case in the split is provisional.
+  Diagnostic gates are reported, never enforced. A candidate passes when every
+  trial completed and every blocking gate passed.
+- **`judgeCalibration`** turns a case's reference and the subject's output into
+  comparable metrics; `summarizeCalibration` then reports agreement, Brier
+  error, confusion counts and false-pass/false-fail rates per candidate. This is
+  how a judge is calibrated: the judge is the subject, the labels are the
+  reference.
+- **`select`** is the host's policy over `CandidateSummary` values (metrics,
+  gates, performance, the typed candidate). Its first element is the report's
+  `recommendation`. The library never ranks or promotes on its own.
+- **`run`** holds the defaults; `runCalibration(definition, { runId, split,
+  repetitions?, concurrency?, timeoutMs? })` overrides them per run.
+  `validateCalibration` checks a definition without running it.
+
+## What a run reports
+
+`runCalibration` returns a `CalibrationReport` (persisted schema, version 1):
+
+- `identity`: `calibration` (`id@version`), `datasetHash`, `evaluatorHash`,
+  `subjectHash` and `candidatesHash`, all from `evaluationFingerprint`.
+- `trials`: every version 2 trial, candidate by candidate, case by case, sample
+  by sample. Trial ids are `<runId>/<calibration>/<candidate>/<case>/<sample>`.
+- `candidates`: per candidate its metric means (`evaluator/metric`), gate
+  results with the measured value, `passed`, the optional judge-calibration
+  summary and performance (attempts, completed, failed, cancelled, nearest-rank
+  p50/p95 latency including failures, judge usage only when every assessment
+  reported it).
+- `failures`: candidates whose run failed as a whole (for example a store
+  error); their completed trials are kept.
+- `reviewed`, `recommendation` and `promotionEligible`: eligible only when the
+  recommended candidate passed every blocking gate, on reviewed labels, with no
+  failures.
+
+`calibrationMarkdown(report)` renders the candidate table. `comparisonIssues(a,
+b)` refuses to compare two reports whose identity, case sets or metric coverage
+differ, or that contain incomplete trials. The host persists the report; the
+`EvaluationStore` port receives raw trials before assessment and each result
+before aggregation.
+
+## Journeys
+
+A `Journey` declares `hostLocale` for the initial session setup and
+`turns[].expected` for each turn's outcome, including `expected.locale`.
+`JourneyDriver.open` receives only `JourneyInput` (id, persona, host locale and
+fixture); `perform` receives only `JourneyAction`. The runner keeps the
+expectations for scoring, so a driver can never initialize a session from an
+expected answer. `runJourney` scores each turn deterministically
+(`scoreJourneyTurn`); the journey's `evaluators` bindings name the judges, by
+`id@version`, that the host resolves from its registry and projects with
+`projectEvaluatorInput`. `journeyTask` acquires a scoped world, performs actions
+in order, records each observation durably and returns partial evidence on a
+step failure; its `completed` output belongs in the host's deterministic gate.
+`selectJourneys` picks journeys by tier, tool, recipe or id from declared
+coverage, never from observed execution.
 
 ## Native prompts
 
 Use `Prompt.make`, `Prompt.merge`, `LanguageModel.generateObject` and native model
 Layers. Prompt modules own shared instructions, model-specific variants and
-version metadata. The loop accepts a legacy system string or a native Prompt.
-`CurrentPromptProvenance` carries an optional sidecar record for model adapters;
-it does not change the Prompt format or introduce a prompt registry.
+version metadata. `CurrentPromptProvenance` carries an optional sidecar record
+for model adapters; it does not change the Prompt format or introduce a prompt
+registry.
 
 ```ts
 const judge = llmEvaluator({
@@ -59,18 +164,18 @@ Boolean, scalar, probability and pairwise metrics have distinct types. A scalar
 score is not a probability. Calibration reports Brier error only for probability
 predictions against boolean references. `summarizeCalibration` reports measured
 coverage, confusion counts, precision/recall, false-pass/false-fail rates, scalar
-absolute error and ten probability reliability bins; empty bins stay unavailable. `assessBothOrders` preserves both blinded
-pairwise judgments and flags order sensitivity instead of converting it to a tie.
+absolute error and ten probability reliability bins; empty bins stay unavailable.
+`assessBothOrders` preserves both blinded pairwise judgments and flags order
+sensitivity instead of converting it to a tie.
 
 Evaluator failure, unavailable evidence and skipped execution contain no metrics.
-Unknown usage/cost encodes as null through Effect Option. Deterministic gates are
-separate from assessment; new semantic metrics can remain diagnostic. Gates that
-depend on reference labels can require known or reviewed labels.
+Unknown usage/cost encodes as null through Effect Option. Per-trial `Gate`s
+(`evaluateGates`) and per-run `AggregateGate`s are separate from assessment; new
+semantic metrics can remain diagnostic. Gates that depend on reference labels can
+require known or reviewed labels.
 
-Campaigns preserve completed trials if a target or reporter fails, and report
-those failures separately. `comparisonIssues` requires matching case sets and
-dataset/fixture/evaluator/policy/evidence fingerprints. Re-scoring saved evidence
-uses `assessAll` without rerunning the task.
+A run preserves completed trials when a candidate fails and reports that failure
+separately. Re-scoring saved evidence uses `assessAll` without rerunning the task.
 
 All examples and regression tests use scripted providers. They establish
 execution and measurement behavior, not model quality or provider compatibility.
@@ -124,8 +229,8 @@ const assessment = assessAll([
 })
 ```
 
-The selector controls exactly what the judge sees. When benchmarking the judge
-itself, keep human calibration labels in dataset references, outside this state.
+The selector controls exactly what the judge sees. When calibrating the judge
+itself, keep the reference labels in the dataset, outside this state.
 `semanticEvaluator` preserves the rubric version and records the backend identity,
 raw typed answers, usage and adapter metadata. Selecting several metrics still
 executes the judge once. Boolean answers become probability metrics; they are not

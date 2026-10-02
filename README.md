@@ -108,7 +108,7 @@ Set `inheritPrevious: false` for an independent setup.
 | `@xandreed/plugin-*` | Replaceable first-party capabilities |
 | `@xandreed/smith` | Coding preset and optional spec/forge modules |
 | `@xandreed/tui` / `@xandreed/cli` | Reusable terminal client and application entry |
-| `@xandreed/evals` | Scoped fixtures, checks, judges, campaigns and reporters |
+| `@xandreed/evals` | Calibrations and journeys: typed datasets, evaluators and judges, gates, reports |
 | `@xandreed/foundry` | Independent deterministic verification framework |
 
 Canvas, Math and Social are reference applications with domain-specific checks.
@@ -135,7 +135,7 @@ bun run --cwd packages/website check
 The distribution build prepares artifacts under `.artifacts/` using each
 package's manifest version and matching internal dependency versions.
 The consumer check installs local tarballs outside the monorepo, then executes
-an external loop plugin, durable sessions, a fork, an eval, versioned prompts
+an external loop plugin, durable sessions, a fork, a calibration, versioned prompts
 with a checked decision, a SQLite session log with a background task, and CLI
 startup.
 `@xandreed/core`, `@xandreed/evals`, `@xandreed/runtime`, `@xandreed/sdk`, and

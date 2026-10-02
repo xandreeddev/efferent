@@ -13,8 +13,8 @@ import {
   MemoryRecord,
   stripFences,
 } from "@xandreed/smith"
-import type { Judge, Pack } from "@xandreed/evals/model"
-import { scenario } from "@xandreed/evals/run"
+import type { Judge, Pack } from "../legacy/model.js"
+import { scenario } from "../legacy/run.js"
 import { listCases } from "../live/fixtures.js"
 import { generalTierCall, utilityTier } from "../live/llm.js"
 
