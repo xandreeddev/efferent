@@ -14,8 +14,8 @@ import {
   SmithSettingsStoreLive,
 } from "@xandreed/smith"
 import type { SmithEvent, SmithRunConfig } from "@xandreed/smith"
-import type { Pack } from "@xandreed/evals/model"
-import { scenario } from "@xandreed/evals/run"
+import type { Pack } from "../legacy/model.js"
+import { scenario } from "../legacy/run.js"
 import { CRITIC_RUBRIC_VERSION, makeTrajectoryCritic } from "../judges/trajectoryCritic.js"
 import { generalTierCall } from "../live/llm.js"
 import { cloneRepoWorkspace } from "../live/cloneWorld.js"

@@ -162,13 +162,15 @@ The model picker uses the configured model catalog. Ctrl+O expands tool details.
 
 ## Evals and reference applications
 
-`@xandreed/evals` exports `scenario`, `runPack`, `evaluate`, campaign persistence,
-statistics, evidence checks and baseline comparison. A scenario supplies its
-own scoped fixture, actions, checks and judges. `evaluate` accepts arbitrary
-packs and reporters; the library has no application registry. Hard failures and
-infrastructure failures cannot be hidden by a high average score.
+`@xandreed/evals` runs two kinds of eval: calibrations (`defineCalibration` /
+`runCalibration`: one value for the dataset, the subject under test, the
+candidates, the evaluators and judges, the gates and the host's selection policy)
+and journeys (ordered conversations over a booted application). The library has
+no application registry; hard failures and infrastructure failures cannot be
+hidden by a high average score, and only the host's policy ranks candidates.
 
-Application packs remain in `packages/scenarios`. Canvas, Math and Social now
+`packages/scenarios` is deprecated and runs on a frozen copy of the retired
+Pack/Scenario runner until its packs are adapted. Canvas, Math and Social now
 enter through their own `defineAgent` presets and `Harness.make`. Their model,
 domain loop, persistence and host services are replaceable graph nodes. The SDK
 bridges domain events to each application's existing browser or review protocol.

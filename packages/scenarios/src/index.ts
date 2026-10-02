@@ -10,9 +10,9 @@ export type {
   ScenarioMode,
   ScenarioResult,
   Step,
-} from "@xandreed/evals/model"
-export type { BoundScenario } from "@xandreed/evals/model"
-export { runPack, runScenario, scenario } from "@xandreed/evals/run"
+} from "./legacy/model.js"
+export type { BoundScenario } from "./legacy/model.js"
+export { runPack, runScenario, scenario } from "./legacy/run.js"
 export {
   briefContains,
   eventCount,
@@ -22,5 +22,5 @@ export {
   fileExists,
   toolSequence,
   turnAlternationValid,
-} from "@xandreed/evals/evidence"
+} from "./legacy/evidence.js"
 export { smithSpecPack } from "./packs/smithSpec.js"

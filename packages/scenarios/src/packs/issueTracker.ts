@@ -13,9 +13,9 @@ import {
   SMITH_LIMIT_DEFAULTS,
 } from "@xandreed/smith"
 import type { SmithEvent, SmithRunConfig } from "@xandreed/smith"
-import type { Check, Pack } from "@xandreed/evals/model"
-import { scenario } from "@xandreed/evals/run"
-import { eventOrder, eventWhere, fileContains, fileExists } from "@xandreed/evals/evidence"
+import type { Check, Pack } from "../legacy/model.js"
+import { scenario } from "../legacy/run.js"
+import { eventOrder, eventWhere, fileContains, fileExists } from "../legacy/evidence.js"
 
 interface IssueTrackerWorld {
   readonly dir: string

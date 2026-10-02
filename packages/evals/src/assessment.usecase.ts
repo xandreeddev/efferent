@@ -1,5 +1,5 @@
-import type { Effect, Schema, Scope } from "effect"
-import type { AssessmentError, EvaluationResult, EvaluationSplit, EvaluationTrial, EvaluationUsage, LabelReview, Metric } from "./assessment.entity.js"
+import type { Effect, Schema } from "effect"
+import type { AssessmentError, EvaluationResult, EvaluationSplit, EvaluationUsage, LabelReview, Metric } from "./assessment.entity.js"
 
 export interface DatasetCase<I, Ref> {
   readonly id: string
@@ -42,33 +42,7 @@ export interface AssessmentInput<I, O, E, Ref> {
   readonly evidence: E
   readonly reference: Ref
 }
-export interface Benchmark<I, O, E, Ref, R = never> {
-  readonly id: string
-  readonly kind: "benchmark" | "journey"
-  readonly dataset: Dataset<I, Ref>
-  readonly output: Schema.Codec<O>
-  readonly evidence: Schema.Codec<E>
-  /** References are intentionally absent from the task's arguments. */
-  readonly task: (input: I) => Effect.Effect<{ readonly output: O; readonly evidence: E }, AssessmentError, R | Scope.Scope>
-  readonly evaluators: ReadonlyArray<EvaluatorBinding<AssessmentInput<I, O, E, Ref>, R>>
-}
-export interface BenchmarkOptions {
-  readonly candidate: Readonly<Record<string, unknown>>
-  readonly split: typeof EvaluationSplit.Type
-  readonly repetitions: number
-  readonly concurrency?: number
-  readonly timeoutMs?: number
-  readonly runId: string
-}
-export interface BoundEvaluation<R = never> {
-  readonly id: string
-  readonly kind: "benchmark" | "journey"
-  readonly run: (options: BenchmarkOptions) => Effect.Effect<ReadonlyArray<EvaluationTrial>, AssessmentError, R>
-}
-export interface EvaluationReporter<R = never> {
-  readonly id: string
-  readonly write: (trials: ReadonlyArray<EvaluationTrial>) => Effect.Effect<void, AssessmentError, R>
-}
+/** A threshold on one trial's metric; `evaluateGates` applies it per trial. */
 export interface Gate {
   readonly evaluator: string
   readonly metric: string

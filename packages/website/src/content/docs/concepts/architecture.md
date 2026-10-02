@@ -18,7 +18,7 @@ the plugin and configuration APIs.
 - `smith`: coding preset and optional spec/forge workflows.
 - `tui` → SDK/core: reusable terminal presentation. It must not import Smith.
 - `cli`: composition and user commands.
-- `evals`: reusable runner; `scenarios`: reference-application packs and baselines.
+- `evals`: calibrations and journeys; `scenarios`: deprecated reference-application packs on a frozen copy of the retired Pack runner.
 - `foundry`: independent verification framework, no internal package dependencies.
 - Canvas, Math and Social enter through SDK presets; the structured UI-agent
   supplies Canvas’s domain protocol.

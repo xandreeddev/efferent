@@ -1,5 +1,5 @@
-import { assess } from "./assessment.usecase.functions.js"
-import { judgeEvaluator } from "./evaluators/legacy.js"
+import { assess } from "@xandreed/evals"
+import { judgeEvaluator } from "./evaluators.js"
 import { Effect, Option } from "effect"
 import type {
   BoundScenario,
@@ -13,7 +13,7 @@ import type {
   ScenarioResult,
   Step,
 } from "./model.js"
-import { wilsonInterval } from "./stats.js"
+import { wilsonInterval } from "@xandreed/evals/stats"
 
 /**
  * The scenario runner: boot the world (scoped), fold the steps in order —

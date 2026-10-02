@@ -15,7 +15,7 @@ Shared development skills live in `.agents/skills/<name>/SKILL.md`.
 - `smith`: coding preset and optional spec/forge workflows.
 - `tui` → SDK/core: reusable terminal presentation. It must not import Smith.
 - `cli`: composition and user commands.
-- `evals`: reusable runner; `scenarios`: reference-application packs and baselines.
+- `evals`: calibrations and journeys; `scenarios`: deprecated reference-application packs on a frozen copy of the retired Pack runner.
 - `foundry`: independent verification framework, no internal package dependencies.
 - Canvas, Math, Social and the structured UI-agent remain reference applications.
 
@@ -51,7 +51,7 @@ the committed baseline is EMPTY — every rule violation anywhere fails:
 - **After any task, run `bun run typecheck`** — a banned construct or a fresh
   finding fails the command and the change is rejected. CI additionally runs
   `bun test`, `bun run foundry demo` (the forge-loop E2E), and
-  `bun run scenarios` (the scripted packs vs committed baselines).
+  `bun run scenarios` (the deprecated scripted packs vs committed baselines).
 
 ## Running and validating
 

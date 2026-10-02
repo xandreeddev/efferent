@@ -1,7 +1,7 @@
 import { join } from "node:path"
 import { Effect, Option } from "effect"
-import type { ScenarioMode } from "@xandreed/evals/model"
-import { runPack } from "@xandreed/evals/run"
+import type { ScenarioMode } from "./legacy/model.js"
+import { runPack } from "./legacy/run.js"
 import {
   compareBaseline,
   DEFAULT_TOLERANCE,
@@ -10,8 +10,8 @@ import {
   unbaselinedEntries,
   versionDrift,
   writeBaseline,
-} from "@xandreed/evals/baseline"
-import { defaultExtras, renderReport } from "@xandreed/evals/report"
+} from "./legacy/baseline.js"
+import { defaultExtras, renderReport } from "./legacy/report.js"
 import { canvasPack } from "./packs/canvas.js"
 import { mathPack } from "./packs/math.js"
 import { profilePack } from "./packs/profile.js"

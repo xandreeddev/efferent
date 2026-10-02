@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
 import { landingReference } from "@xandreed/ui-agent"
-import { cappedTrial, containTrialFailure } from "@xandreed/evals/campaign"
+import { cappedTrial, containTrialFailure } from "./legacy/campaign.js"
 import { deriveStageMetrics, failedTrial, scoreInformationArchitecture, scoreRequestRelevance, serverReceiveMs } from "./uiMatrix.js"
 
 describe("the UI matrix deterministic scorers", () => {

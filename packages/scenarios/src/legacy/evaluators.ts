@@ -1,7 +1,7 @@
 import { Effect } from "effect"
-import { AssessmentError } from "../assessment.entity.js"
-import type { Evaluator } from "../assessment.usecase.js"
-import type { Check, Judge } from "../model.js"
+import { AssessmentError } from "@xandreed/evals"
+import type { Evaluator } from "@xandreed/evals"
+import type { Check, Judge } from "./model.js"
 
 export const checkEvaluator = <W>(check: Check<W>, version = "legacy-v1"): Evaluator<W> => ({
   id: check.name, version, metrics: ["passed"],

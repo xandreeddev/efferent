@@ -19,7 +19,7 @@ violation anywhere fails the build):
 ```bash
 bun run typecheck     # tsc + foundry self-check + the zero-baseline repo gate suite
 bun test              # colocated unit tests — key-free by design
-bun run scenarios     # scenario packs vs committed baselines (scripted twins)
+bun run scenarios     # deprecated scenario packs vs committed baselines (scripted twins)
 ```
 
 House rules the gates enforce (see the root `AGENTS.md` for the full list):
@@ -31,8 +31,8 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
 
 - Branch off `main`; PRs squash-merge.
 - Keep a PR to one concern; tests ride the same PR as the change.
-- New agent behavior ships with its scenario-pack additions — the battery is
-  part of the definition of done.
+- New agent behavior ships with its evaluation — a calibration or a journey
+  (`docs/composable-evaluations.md`); the battery is part of the definition of done.
 - Colocate tests next to the source (`foo.ts` / `foo.test.ts`); fixtures live
   outside `src/` so the gates never see deliberate violations.
 

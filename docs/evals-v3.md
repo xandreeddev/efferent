@@ -1,3 +1,5 @@
+> **Superseded (2026-10).** The Pack/Scenario runner this document designed was removed from `@xandreed/evals`; `packages/scenarios` keeps a frozen copy under `src/legacy/`. Current evals are calibrations and journeys: see `docs/composable-evaluations.md`.
+
 # Evals v3 — scenario packs, evidence, standing baselines
 
 **Status: approved direction (2026-07-07). Implemented after reshape PR R1** (which

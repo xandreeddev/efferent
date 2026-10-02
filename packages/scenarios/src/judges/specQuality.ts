@@ -1,7 +1,7 @@
 import { Effect, Schema } from "effect"
 import { encodeSpecDocText } from "@xandreed/core"
 import type { SpecDoc } from "@xandreed/core"
-import type { Judge } from "@xandreed/evals/model"
+import type { Judge } from "../legacy/model.js"
 
 /**
  * The SPEC-QUALITY judge — an anchored 4-axis rubric over the refiner's
