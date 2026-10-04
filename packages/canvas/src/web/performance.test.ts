@@ -17,15 +17,20 @@ describe("the structured Canvas performance contract", () => {
     expect(shell).not.toContain("mermaid")
   })
 
-  test("all reference pages compile well inside the 20ms local budget", () => {
+  test("reference page batches compile inside the 20ms budget at p95 after warmup", () => {
     const context = { pageId: "perf", csrfToken: "csrf", assets: new Map(), capabilities: new Set(["canvas.acknowledge", "canvas.request-demo"]) }
-    ;[landingReference, applicationReference, architectureReference].forEach((reference) => {
+    const compile = () => [landingReference, applicationReference, architectureReference].forEach((reference) => {
       renderUiPage({ manifest: reference.page, blocks: reference.blocks, complete: true }, context)
     })
-    const started = performance.now()
-    ;[landingReference, applicationReference, architectureReference].forEach((reference) => {
-      renderUiPage({ manifest: reference.page, blocks: reference.blocks, complete: true }, context)
-    })
-    expect(performance.now() - started).toBeLessThan(20)
+    // Warm the renderer and Dagre before measuring steady-state compilation.
+    // Keep the budget unchanged, and measure a distribution so one shared-runner
+    // scheduling/GC pause does not decide the entire performance contract.
+    Array.from({ length: 10 }).forEach(compile)
+    const samples = Array.from({ length: 25 }, () => {
+      const started = performance.now()
+      compile()
+      return performance.now() - started
+    }).sort((left, right) => left - right)
+    expect(samples[Math.ceil(samples.length * 0.95) - 1]).toBeLessThan(20)
   })
 })

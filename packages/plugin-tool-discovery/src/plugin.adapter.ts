@@ -45,7 +45,7 @@ export const toolDiscoveryPlugin = definePlugin({
       version: "1",
       promptSections: config.loadSkill ? [{
         id: "tool-discovery.catalogue", version: "1", tier: "static", order: config.catalogOrder,
-        render: () => Effect.succeed(catalogText(registry.skills)),
+        render: ({ skills }) => Effect.succeed(catalogText(skills)),
       }] : [],
     })
     return Layer.mergeAll(

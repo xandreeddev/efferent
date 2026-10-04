@@ -1,8 +1,10 @@
 import { Cause, Clock, Context, Effect, Exit, Fiber, Option, PubSub, Ref, Scope, Stream, Semaphore } from "effect"
-import { AgentLoop, HarnessError, SessionEnvironment, SessionStore, Sessions, TurnHooks, UserMessage } from "@xandreed/core"
+import { ActiveTurnWriter, AgentLoop, HarnessError, SessionEnvironment, SessionStore, Sessions, TurnHooks, UserMessage } from "@xandreed/core"
 import type { ConversationId, EventBody, HarnessConfig, Plugin, SessionEvent, SessionHandle, SessionRecord, TurnClosed, TurnWriter } from "@xandreed/core"
 import { activateGraph, graphFingerprint, resolveGraph } from "@xandreed/runtime"
 import type { PluginGraph } from "@xandreed/runtime"
+import { followSessionJournal, sessionJournalHistory } from "./session-journal.adapter.js"
+import { withLegacyMemory } from "./legacy-memory.adapter.js"
 
 interface PendingInput { readonly id: string; readonly text: string; readonly kind: "turn" | "steer" }
 interface TurnResult { readonly text: string; readonly outcome: "completed" | "partial" }
@@ -165,7 +167,7 @@ export const makeHarness = (options: {
         transient: (event: EventBody) => PubSub.publish(transientHub, event).pipe(Effect.asVoid), steering,
         history: (after: number, names: ReadonlyArray<string>) => store.read(record.id, after).pipe(
           Effect.map((events) => names.length === 0 ? events : events.filter((event) => names.includes(event.name)))),
-        services: Context.empty() }
+        services: Context.make(ActiveTurnWriter, { writer: withLegacyMemory(writer) }) }
       const task = Effect.gen(function* () {
         const prepared = Option.isSome(hooks) ? yield* hooks.value.before(args) : args
         const result = yield* loop.run(prepared)
@@ -232,6 +234,8 @@ export const makeHarness = (options: {
       steer: (text) => enqueue(text, "steer"), continue: drain, interrupt, close,
       busy: Ref.get(busy), pending: Ref.get(pending).pipe(Effect.map((state) => state.queue)), refresh: gate.withPermits(1)(refresh),
       history: store.read(record.id, -1), transient: Stream.fromPubSub(transientHub),
+      journalHistory: sessionJournalHistory(sessions, { id: record.id, owner: options.workspace }),
+      journal: (after) => followSessionJournal(sessions, { id: record.id, owner: options.workspace }, after),
       events: (after = -1) => Stream.unwrap(Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(notifications)
         const cursor = yield* Ref.make(after)

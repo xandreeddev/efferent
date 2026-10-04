@@ -178,9 +178,12 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       onNone: () => Effect.succeed<ReadonlySet<string>>(new Set(config.grants)),
       onSome: (service) => service.grants,
     })
+    const permittedTool = (name: string) => byName.get(name)?.annotations.permissions.every((permission) => grants.has(permission)) ?? false
+    const availableSkills = skills.filter((skill) => skill.permissions.every((permission) => grants.has(permission)) && skill.tools.every(permittedTool))
+    const availableSkillIds = new Set(availableSkills.map((skill) => skill.id))
     const initial = activationsOf(yield* session.entries)
-    const active = yield* Ref.make(initial.tools)
-    const loadedSkills = yield* Ref.make(initial.skills)
+    const active = yield* Ref.make(initial.tools.filter(permittedTool))
+    const loadedSkills = yield* Ref.make(initial.skills.filter((id) => availableSkillIds.has(id)))
     const calls = yield* Ref.make(new Map<string, number>())
     const skillLoads = yield* Ref.make(0)
     const invocation = yield* Ref.make(0)
@@ -190,6 +193,8 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
     const activate = (requested: ReadonlyArray<string>, source: ActivationSource) => Effect.gen(function* () {
       const unknown = requested.filter((id) => !skills.some((skill) => skill.id === id))
       if (unknown.length > 0) return yield* Effect.fail(harness("skills.unknown", `Unknown skills: ${unknown.join(", ")}`))
+      const forbidden = requested.filter((id) => !availableSkillIds.has(id))
+      if (forbidden.length > 0) return yield* Effect.fail(harness("capability.forbidden", `Skills require unavailable permissions: ${forbidden.join(", ")}`))
       const resolved = yield* resolveCapabilities(catalog, { recipes: [...requested], tools: [] }, grants)
       const current = yield* Ref.get(active)
       const fresh = resolved.tools.map((tool) => tool.id).filter((tool) => !current.includes(tool))
@@ -210,7 +215,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       const before = yield* Ref.get(active)
       yield* activate(requested, "load_skill").pipe(Effect.mapError((error) => failure(error.code, error.message)))
       const after = yield* Ref.get(active)
-      return skillInstructions(skills.filter((skill) => requested.includes(skill.id)), after.filter((tool) => !before.includes(tool)))
+      return skillInstructions(availableSkills.filter((skill) => requested.includes(skill.id)), after.filter((tool) => !before.includes(tool)))
     })
 
     const readReference = ({ skill, reference }: { readonly skill: string; readonly reference: string }) => Effect.gen(function* () {
@@ -221,7 +226,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       return found.text
     })
 
-    const wrap = (entry: RegisteredTool, handler: (params: unknown) => Effect.Effect<unknown, unknown, unknown>) => (params: unknown) => Effect.gen(function* () {
+    const wrap = (entry: RegisteredTool, handler: (params: unknown) => Effect.Effect<unknown, unknown, unknown>) => (params: unknown, handlerContext?: Toolkit.HandlerContext<Tool.Any>) => Effect.gen(function* () {
       const name = entry.tool.name
       const isOwn = own.includes(entry)
       if (!isOwn && !(yield* Ref.get(active)).includes(name)) {
@@ -242,11 +247,12 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       yield* Ref.update(calls, (all) => new Map([...all, [name, (all.get(name) ?? 0) + 1]]))
       const sequence = yield* Ref.getAndUpdate(invocation, (value) => value + 1)
       const invocationId = `${run.runId}:call:${sequence}`
+      const providerCall = handlerContext?.toolCallId === undefined ? {} : { toolCallId: ToolCallId.make(handlerContext.toolCallId) }
       const labels = entry.annotations.labels
       const stage = entry.annotations.stage
       const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => 0)
       // A subscriber failure fails the turn, never the tool call (which the model would see).
-      yield* run.events.publish({ _tag: "tool.started", step, invocationId, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
+      yield* run.events.publish({ _tag: "tool.started", step, invocationId, ...providerCall, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
       const started = yield* Clock.currentTimeMillis
       const lane = entry.annotations.readOnly ? readLane : writeLane
       const exit = yield* lane.withPermits(1)(Effect.exit(handler(params).pipe(Effect.provide(runServices))))
@@ -255,7 +261,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       const value: unknown = Exit.isSuccess(exit) ? exit.value
         : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${Cause.pretty(exit.cause).slice(0, 300)}`))
       const encoded = yield* Schema.encodeUnknownEffect(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(Effect.orElseSucceed(() => value))
-      yield* run.events.publish({ _tag: "tool.completed", step, invocationId, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
+      yield* run.events.publish({ _tag: "tool.completed", step, invocationId, ...providerCall, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
       return yield* ok ? Effect.succeed(value) : Effect.fail(value)
     }).pipe(Effect.withSpan(`tool.${entry.tool.name}`), Effect.provide(runServices))
 
@@ -269,8 +275,8 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))])) as never,
     )
 
-    const always = skills.filter((skill) => skill.always).map((skill) => skill.id)
-    const candidates = skills.filter((skill) => !skill.always)
+    const always = availableSkills.filter((skill) => skill.always).map((skill) => skill.id)
+    const candidates = availableSkills.filter((skill) => !skill.always)
     const candidateHash = fingerprintOf(canonicalJson(candidates.map((skill) => [skill.id, skill.version])))
 
     /** The tools active once the always-on skills are: what the matcher is told is already there. */
@@ -332,7 +338,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
         }).pipe(Effect.provideService(RunContext, run)),
       })
       if (applied && config.loadSkill) {
-        const seeded = skills.filter((skill) => chosen.includes(skill.id))
+        const seeded = availableSkills.filter((skill) => chosen.includes(skill.id))
         const callId = ToolCallId.make(`${run.runId}:matcher`)
         yield* session.recordTail([
           { role: "assistant", content: [{ type: "tool-call", toolCallId: callId, toolName: LoadSkill.name, input: { skills: chosen } }] },
@@ -354,10 +360,9 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       select,
       views,
       pollable: registered.filter((entry) => entry.annotations.pollable).map((entry) => entry.tool.name),
-      skills,
+      skills: availableSkills,
     } satisfies RunTools
   })
 
   return { catalog, open, views, skills }
 })
-

@@ -3,8 +3,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Deferred, Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
-import { AgentLoop, definePlugin, HarnessError, Memory, SessionLog, Sessions, SessionStore, TurnAdmission } from "@xandreed/core"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
+import { ActiveTurnWriter, AgentLoop, definePlugin, draftOfEntry, entriesOfEvents, EntryId, HarnessError, Memory, SessionLog, Sessions, SessionStore, TurnAdmission } from "@xandreed/core"
 import type { HarnessConfig, LoopInput, SessionHandle, SessionLogError, SessionMissing } from "@xandreed/core"
 import { sessionSqlitePlugin, SessionStoreProjectionLive } from "@xandreed/plugin-session-sqlite"
 import { memoryPlugin } from "@xandreed/plugin-memory"
@@ -20,6 +20,75 @@ const config = (directory: string, use = "echo"): HarnessConfig => ({ version: 1
   { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
   { id: "loop", use },
 ] })
+
+describe("native agent journal and historical memory", () => {
+  test("streams native writes while the host turn is busy, and inherits the exact fork prefix", async () => {
+    const directory = workspace()
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const native = loop("native", (input) => Effect.gen(function* () {
+        const { writer } = yield* Option.match(Context.getOption(input.services, ActiveTurnWriter), { onNone: () => Effect.fail(new HarnessError({ code: "test.writer", message: "Host writer missing" })), onSome: Effect.succeed })
+        yield* writer.append([{ kind: "smith.phase", data: { phase: "working", runId: input.runId } }])
+        yield* writer.flush
+        yield* Deferred.succeed(entered, undefined)
+        yield* Deferred.await(release)
+        return { text: "done", outcome: "completed" as const }
+      }))
+      const harness = yield* Harness.make({ workspace: directory, config: config(directory, "native"), plugins: [sessionSqlitePlugin, sessionsPlugin, native] })
+      const session = yield* harness.create()
+      const observed = yield* Effect.forkChild(session.journal().pipe(Stream.filter((event) => event.kind === "smith.phase"), Stream.take(1), Stream.runCollect))
+      const sending = yield* Effect.forkChild(session.send("work"))
+      yield* Deferred.await(entered)
+      expect(yield* session.busy).toBe(true)
+      const live = yield* Fiber.join(observed)
+      expect(live[0]?.data.phase).toBe("working")
+      expect((yield* session.journalHistory).some((event) => event.kind === "smith.phase")).toBe(true)
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(sending)
+      const trail = yield* session.history
+      const fork = yield* harness.fork(session.record.id, trail.at(-1)!.seq)
+      const inherited = yield* fork.journalHistory
+      expect(inherited.filter((event) => event.kind === "smith.phase")).toHaveLength(1)
+      expect(inherited.find((event) => event.kind === "smith.phase")?.session).toBe(session.record.id)
+      expect(new Set(inherited.map((event) => `${event.session}:${event.seq}`)).size).toBe(inherited.length)
+    })))
+  })
+
+  test("projects legacy assistant and tool facts into memory without replay or duplicate native messages", async () => {
+    const directory = workspace()
+    const old = loop("legacy", (input) => input.publish({ name: "messages", runId: input.runId, data: { messages: [
+      { role: "user", content: input.userMessage.text },
+      { role: "assistant", content: [{ type: "text", text: "The migration uses port services." }] },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: "prior-call", toolName: "read_file", output: "existing source fact" }] },
+    ] } }).pipe(Effect.as({ text: "legacy", outcome: "completed" as const })))
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const modern = loop("modern", (input) => Effect.gen(function* () {
+        const { writer } = yield* Option.match(Context.getOption(input.services, ActiveTurnWriter), { onNone: () => Effect.fail(new HarnessError({ code: "test.writer", message: "Host writer missing" })), onSome: Effect.succeed })
+        const history = yield* writer.history(["turn.started", "memory.message"])
+        const entries = yield* entriesOfEvents(history).pipe(Effect.mapError((error) => new HarnessError({ code: "test.decode", message: error.message })))
+        yield* Ref.set(seen, entries.map((entry) => entry.body._tag === "Message" ? JSON.stringify(entry.body.message) : entry.body._tag))
+        const draft = yield* draftOfEntry({ id: EntryId.make(`modern-answer:${input.runId}`), runId: input.runId, turn: writer.admitted.turn, step: 1, at: 1,
+          body: { _tag: "Message", message: { role: "assistant", content: [{ type: "text", text: "Native answer" }] } } }).pipe(Effect.mapError((error) => new HarnessError({ code: "test.encode", message: error.message })))
+        if (Option.isSome(draft)) yield* writer.append([{ kind: draft.value.kind, data: draft.value.data }])
+        yield* input.publish({ name: "messages", runId: input.runId, data: { messages: [{ role: "assistant", content: [{ type: "text", text: "Native answer" }] }] } })
+        return { text: "native", outcome: "completed" as const }
+      }))
+      const harness = yield* Harness.make({ workspace: directory, config: config(directory, "legacy"), plugins: [sessionSqlitePlugin, sessionsPlugin, old, modern] })
+      const session = yield* harness.create()
+      yield* session.send("original")
+      yield* harness.reconfigure(config(directory, "modern"))
+      yield* session.send("continue")
+      expect((yield* Ref.get(seen)).join("\n")).toContain("The migration uses port services.")
+      expect((yield* Ref.get(seen)).join("\n")).toContain("existing source fact")
+      expect((yield* Ref.get(seen)).filter((text) => text.includes('"content":"original"'))).toHaveLength(0)
+      yield* session.send("continue again")
+      expect((yield* Ref.get(seen)).filter((text) => text.includes("Native answer"))).toHaveLength(1)
+      expect((yield* session.journalHistory).filter((event) => event.kind === "memory.message")).toHaveLength(2)
+    })))
+  })
+})
 
 describe("durable SDK sessions", () => {
   test("active turns keep their graph; later turns and new sessions use the new configuration", async () => {

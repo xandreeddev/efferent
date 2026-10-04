@@ -1,4 +1,4 @@
-import { Effect, Layer } from "effect"
+import { Config, Effect, Layer, Option, Redacted } from "effect"
 import { AuthStore, ModelCatalog } from "@xandreed/core"
 import type { Credential, ModelCatalogEntryType } from "@xandreed/core"
 
@@ -13,6 +13,7 @@ const OPENCODE_MODELS = [
 
 const MODELS: Readonly<Record<string, ReadonlyArray<string>>> = {
   opencode: OPENCODE_MODELS,
+  vercel: ["deepseek/deepseek-v4.1-flash", "deepseek/deepseek-v4-flash"],
   "openai-codex": [
     "gpt-5.3-codex-spark",
     "gpt-5.4",
@@ -49,7 +50,9 @@ export const configuredModelCatalog = (
           ? `OpenAI subscription · ${model}`
           : provider === "openai"
             ? `OpenAI API key · ${model}`
-            : undefined,
+            : provider === "vercel"
+              ? `DeepSeek Flash ${model.includes("v4.1") ? "V4.1" : "V4"} · Vercel AI Gateway`
+              : undefined,
       provider,
       credential: credential.type,
     })),
@@ -74,6 +77,14 @@ export const reasoningEffortsFor = (selection: string): ReadonlyArray<ReasoningE
 export const ConfiguredModelCatalogLive = Layer.effect(
   ModelCatalog,
   Effect.map(AuthStore, (auth) => ({
-    list: auth.all.pipe(Effect.orElseSucceed(() => new Map<string, Credential>()), Effect.map(configuredModelCatalog)),
+    list: Effect.gen(function* () {
+      const credentials = yield* auth.all.pipe(Effect.orElseSucceed(() => new Map<string, Credential>()))
+      const gatewayKey = yield* Config.option(Config.Redacted("AI_GATEWAY_API_KEY")).pipe(
+        Effect.map(Option.filter((key) => Redacted.value(key).trim().length > 0)), Effect.orElseSucceed(() => Option.none()),
+      )
+      // Discovery needs credential presence, never the credential value.
+      return configuredModelCatalog(Option.isSome(gatewayKey)
+        ? new Map([...credentials, ["vercel", { type: "api_key" as const, key: "" }]]) : credentials)
+    }),
   })),
 )

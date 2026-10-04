@@ -515,6 +515,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "name": "scenarios",
             "path": "packages/scenarios/src/**",
             "canImport": [
+                  "runtime",
                   "canvas",
                   "foundry",
                   "math",
@@ -529,6 +530,7 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "social"
             ],
             "externals": ["@xandreed/sdk","@xandreed/evals",
+                  "@xandreed/runtime",
                   "effect",
                   "@effect/",
                   "effect/",
@@ -606,6 +608,9 @@ const config: typeof GateSuiteConfig.Encoded = {
             "name": "smith",
             "path": "packages/smith/src/**",
             "canImport": [
+                  "ai",
+                  "plugin-memory-window",
+                  "plugin-tool-discovery",
                   "plugin-sessions",
                   "foundry",
                   "core",
@@ -621,6 +626,9 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "plugin-memory"
             ],
             "externals": ["@xandreed/plugin-sessions",
+                  "@xandreed/ai",
+                  "@xandreed/plugin-memory-window",
+                  "@xandreed/plugin-tool-discovery",
                   "effect",
                   "@effect/",
                   "effect/",

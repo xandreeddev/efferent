@@ -29,7 +29,7 @@ export const smithWorkflowPlugin = definePlugin({
     const fs = yield* Layer.build(LocalFileSystemLive)
     return AgentLoop.of({ run: (input) => Effect.gen(function* () {
       if (config.mode === "spec") {
-        const result = yield* worker.run({ ...input, system: `${input.system}\nDraft a concrete implementation specification. Include the objective, constraints, acceptance criteria, and verification steps. Inspect using read-only tools. Do not implement. The user will review the draft and explicitly lock it.` })
+        const result = yield* worker.run({ ...input, system: `${input.system}\nDraft a concrete implementation specification. Include the objective, constraints, acceptance criteria, and verification steps. This optional specification worker has read_file, grep, glob, ls, load_skill and recall for inspection. Inspect using read-only tools. Do not implement. The user will review the draft and explicitly lock it.` })
         if (result.outcome === "completed") yield* input.publish({ name: "spec.draft", runId: input.runId, data: { text: result.text } })
         return result
       }
@@ -46,6 +46,7 @@ export const smithWorkflowPlugin = definePlugin({
       if (!allowed) return yield* fail("Forge cancelled before implementation: host verification was not approved.")
       const implementor = Layer.succeed(Implementor, { implement: ({ spec, attempt, feedback }) => worker.run({
         ...input, userMessage: new UserMessage({ text: `${spec.goal}\n\n${Option.getOrElse(feedback, () => "Implement this locked specification, then run the relevant checks.")}` }),
+        system: `${input.system}\nYou are now the optional specification workflow's implementation worker. Implement the locked specification directly with the available write_file and edit_file tools. Inspect with read_file, grep, glob and ls. Run relevant checks with Bash. The worker owns source changes in this workflow; editor delegation and proposal application tools are unavailable. Preserve unrelated work and report actual check results. Foundry independently verifies the result.`,
         publish: (event) => input.publish(event.name === "loop.event" ? { ...event, data: { ...event.data, turnIndex: Number(event.data.turnIndex ?? 0) + Number(attempt) * 10000 } } : event),
         transient: (event) => input.transient({ ...event, data: { ...event.data, turnIndex: Number(event.data.turnIndex ?? 0) + Number(attempt) * 10000 } }),
       }).pipe(Effect.mapError((error) => new ImplementorError({ attempt, message: error.message })), Effect.map(() => ({ filesTouched: [], ref: Option.some(`session:${input.session.id}`) }))) })

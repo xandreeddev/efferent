@@ -3,6 +3,7 @@ import { Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import type { Scope } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { estimateTokens, fingerprintOf } from "../memory/memory-log.entity.functions.js"
 import { openLogSession } from "../memory/memory-session.js"
 import type { MemoryPolicy } from "../memory/memory-session.js"
 import { ConversationMemory } from "../ports/memory.port.js"
@@ -16,6 +17,7 @@ import type { TurnOutcome } from "../ports/turn.port.js"
 import { recordingTurnWriter } from "./testing.js"
 import { TurnLive } from "./turn.adapter.js"
 import { guardTurn, openTurnTools } from "./turn-lifecycle.js"
+import { stepRequestOf } from "./turn-run.js"
 
 const policy: MemoryPolicy = {
   strategy: { id: "test", version: "1" },
@@ -65,6 +67,46 @@ const inTurn = <A, E>(recorded: Recorded, body: Effect.Effect<A, E, TurnMemory |
   Effect.scoped(body).pipe(Effect.provide(TurnLive({ turn: recorded.writer })), Effect.provide(services))
 
 describe("TurnLive", () => {
+  test("system step context reserves memory space and fingerprints the exact prepared request on each step", async () => {
+    const seen = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      const budgets = yield* Ref.make<ReadonlyArray<number>>([])
+      const checkingMemory = ConversationMemory.of({
+        strategy: policy.strategy,
+        open: ({ runId, log }) => openLogSession(log, {
+          ...policy,
+          maintain: ({ signal }) => Ref.update(budgets, (all) => [...all, signal.budgetTokens]).pipe(Effect.as({ actions: [], digest: [] })),
+        }, { runId }),
+      })
+      const plans = yield* Effect.scoped(Effect.gen(function* () {
+        yield* (yield* TurnMemory).persistMessage
+        yield* openTurnTools
+        const request = yield* stepRequestOf({
+          budgetTokens: 4000,
+          stepContext: "system",
+          step: (info) => Effect.succeed({ context: Option.some(`Internal policy for step ${info.stepIndex}. `.repeat(info.stepIndex === 0 ? 80 : 100)), toolChoice: Option.none() }),
+        })
+        return [
+          yield* request.plan({ stepIndex: 0, activeTools: [], lastUsage: Option.none() }),
+          yield* request.plan({ stepIndex: 1, activeTools: [], lastUsage: Option.none() }),
+        ]
+      })).pipe(Effect.provide(TurnLive({ turn: recorded.writer, system: "Base system" })), Effect.provide(Layer.merge(Layer.succeed(ConversationMemory, checkingMemory), Layer.succeed(ToolRegistry, registry))))
+      return { plans, budgets: yield* Ref.get(budgets), events: yield* Ref.get(recorded.stored) }
+    }))
+    const contexts = seen.events.filter((event) => event.kind === "context.built")
+    const requests = seen.events.filter((event) => event.kind === "request.prepared")
+    expect(contexts).toHaveLength(2)
+    expect(seen.budgets).toEqual([4000, ...seen.plans.map((plan) => 4000 - estimateTokens(plan.system))])
+    seen.plans.forEach((plan, index) => {
+      expect(plan.system).toContain(`Base system\n\nInternal policy for step ${index}.`)
+      expect(contexts[index]?.data.reservedTokens).toBe(estimateTokens(plan.system))
+      expect(contexts[index]?.data.systemFingerprint).toBe(fingerprintOf(plan.system))
+      expect(requests[index]?.data.system).toBe(plan.system)
+      expect(JSON.stringify(plan.messages)).not.toContain("Internal policy")
+    })
+    expect(contexts[0]?.data.systemFingerprint).not.toBe(contexts[1]?.data.systemFingerprint)
+  })
+
   test("memory takes the message once, at persistMessage; the writer stores every event before a subscriber sees it", async () => {
     const seen = await Effect.runPromise(Effect.gen(function* () {
       const recorded = yield* begun()

@@ -31,8 +31,8 @@ the committed baseline is EMPTY — every rule violation anywhere fails:
 - **Errors are values**: no `try`/`catch`/`throw`/`.catch()` — typed errors
   are `Schema.TaggedError`; foreign promises via `Effect.tryPromise` (or the
   two-arg `.then` for pure-promise fallbacks).
-- **State is a fold**: no `let`, no loop statements — `Effect.iterate` /
-  `Effect.reduce` / array combinators / `Ref`.
+- **State is a fold**: no `let`, no loop statements — `Effect.reduce` / `Effect.iterate` /
+  array combinators / `Ref`.
 - **Absence is `Option`** (never `A | undefined` returns); union branching is
   `Match`; no `as any` / `as unknown as` laundering; entities are
   `Schema.Class`/`Struct` with branded id fields; no parallel interfaces.

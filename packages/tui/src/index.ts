@@ -8,3 +8,5 @@ export { themes } from "./theme.js"
 export type { ThemeName } from "./theme.js"
 
 export type { EventRenderer, EventRenderers, TranscriptBlock } from "./projection.js"
+export type { JournalRenderer, JournalRenderers } from "./journal.entity.js"
+export { InspectorRow } from "./presentation.entity.js"

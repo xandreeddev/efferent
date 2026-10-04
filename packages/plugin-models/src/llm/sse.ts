@@ -1,6 +1,7 @@
 import { AiError } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Effect, Option, Result, Stream } from "effect"
+import type { Schema } from "effect"
 
 /**
  * The OpenAI-compatible SSE wire → `@effect/ai` `StreamPartEncoded`s, as a
@@ -65,6 +66,7 @@ interface StreamChunk {
       readonly reasoning_content?: string | null
       /** OpenRouter-style vocabulary (kimi-k2.6 via Moonshot serves this). */
       readonly reasoning?: string | null
+      readonly reasoning_details?: Schema.JsonArray
       readonly tool_calls?: ReadonlyArray<{
         readonly index?: number
         readonly id?: string
@@ -88,6 +90,7 @@ interface SseState {
   readonly reasoningOpen: Option.Option<string>
   readonly textSeq: number
   readonly reasoningSeq: number
+  readonly reasoningDetails: Schema.JsonArray
   /** Fragments merged by wire index — id/name land on the first fragment,
    *  arguments concatenate across the rest. Emitted whole at flush. */
   readonly toolCalls: ReadonlyArray<ToolCallAccum>
@@ -101,6 +104,7 @@ const initialState: SseState = {
   reasoningOpen: Option.none(),
   textSeq: 0,
   reasoningSeq: 0,
+  reasoningDetails: [],
   toolCalls: [],
   finishReason: Option.none(),
   usage: Option.none(),
@@ -125,8 +129,8 @@ const closeReasoning = (state: SseState): Emit =>
   Option.match(state.reasoningOpen, {
     onNone: () => [state, []],
     onSome: (id) => [
-      { ...state, reasoningOpen: Option.none() },
-      [{ type: "reasoning-end", id }],
+      { ...state, reasoningOpen: Option.none(), reasoningDetails: [] },
+      [{ type: "reasoning-end", id, ...(state.reasoningDetails.length === 0 ? {} : { metadata: { vercel: { reasoningDetails: state.reasoningDetails } } }) }],
     ],
   })
 
@@ -193,6 +197,29 @@ const mergeToolFragment = (
 const malformed = (moduleName: string, description: string): AiError.AiError =>
   AiError.make({ module: moduleName, method: "streamText", reason: new AiError.InvalidOutputError({ description }) })
 
+const detailRecord = (value: Schema.Json): Schema.JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value) ? value as Schema.JsonObject : {}
+
+/** Gateway detail fragments share their wire index; text is a delta and opaque fields are snapshots. */
+const mergeReasoningDetails = (details: Schema.JsonArray, fragments: Schema.JsonArray): Schema.JsonArray =>
+  fragments.reduce<Schema.JsonArray>((acc, fragment, position) => {
+    const next = detailRecord(fragment)
+    const match = acc.findIndex((value, at) => {
+      const prior = detailRecord(value)
+      return typeof next["index"] === "number" ? prior["index"] === next["index"]
+        : typeof next["id"] === "string" ? prior["id"] === next["id"] : at === position
+    })
+    if (match < 0) return [...acc, fragment]
+    return acc.map((value, at) => at !== match ? value : {
+      ...detailRecord(value), ...next,
+      ...Object.fromEntries(["text", "summary", "data"].flatMap((key) => {
+        const before = detailRecord(value)[key]
+        const delta = next[key]
+        return typeof before === "string" && typeof delta === "string" ? [[key, before + delta]] : []
+      })),
+    })
+  }, details)
+
 const applyChunk = (
   moduleName: string,
   state: SseState,
@@ -213,10 +240,18 @@ const applyChunk = (
   const delta = choice?.delta
   const reasoning = delta?.reasoning_content ?? delta?.reasoning
   const content = delta?.content
+  const withDetails = delta?.reasoning_details === undefined ? state : {
+    ...state,
+    reasoningDetails: mergeReasoningDetails(state.reasoningDetails, delta.reasoning_details),
+  }
   const afterReasoning: Emit =
     typeof reasoning === "string" && reasoning.length > 0
-      ? emitReasoning(state, reasoning)
-      : [state, []]
+      ? emitReasoning(withDetails, reasoning)
+      : delta?.reasoning_details?.length
+        ? Option.isSome(withDetails.reasoningOpen)
+          ? [withDetails, []]
+          : emitReasoning(withDetails, "")
+        : [withDetails, []]
   const afterText: Emit = emitThen(afterReasoning, (s) =>
     typeof content === "string" && content.length > 0 ? emitText(s, content) : [s, []],
   )

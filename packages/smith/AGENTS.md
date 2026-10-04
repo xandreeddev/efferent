@@ -1,146 +1,75 @@
 # @xandreed/smith
 
-**The SPEC-DRIVEN agent in the factory, RE-FOUNDED on the new line.** A rough
-idea becomes a **SpecDoc** (drafted by the refiner agent, refined WITH the
-human, LOCKED by the human), and only a locked spec forges:
-`@xandreed/foundry`'s `forge` loop — implement → snapshot → staged gate
-pipeline → typed feedback → retry — with a capable DIRECT coder on
-`@xandreed/engine` + `@xandreed/providers` as the implementor: the engine's
-loop + the smith coding toolkit (read/write/edit/Bash/grep/glob/ls; writes
-cwd-guarded), NO fleet, NO sub-agent tree, NO approval judge — refine is the
-prompt engineering, the gates are the judge, nothing in between
-(gates-outside doctrine). Conversations persist to the workspace's own
-`.efferent/smith.db`. Private, source-run only (`bun run smith`); boundaries:
-smith → engine + providers + foundry, never any old-line package.
+Smith is the direct coding preset on the configurable Efferent plugin graph.
+`bun run smith` and `bun run efferent` open the same coding workspace. The
+historical spec/forge driver remains available as `bun run smith:workflow`;
+specification workflows are optional, never required before a direct edit.
 
-```bash
-bun run smith --cwd ~/code/toy                    # TTY → the PERSISTENT workspace session:
-#   dashboard (specs · forge runs · lessons) → type an idea → refine → :lock → :forge
-#   (floor live in-session) → :new → next idea. :model [code|fast] pickers · :login/:logout.
-bun run smith spec "a stats module with tests" --cwd ~/code/toy   # TTY → refine mode
-#   … refine in the composer · :lock approves · :forge builds in the same TUI
-bun run smith spec "<idea>" --cwd <dir> -p [--yes]  # one unattended draft on stdout (--yes locks)
-bun run smith forge <slug|.efferent/specs/x.md>     # forge a LOCKED spec
-bun run smith "<task>" --cwd <dir> [-p]             # shorthand: trivial locked spec + forge
-bun run smith selftest                              # the factory SMOKE TEST: a canned prompt
-#   forges to completion in a throwaway seeded workspace on REAL providers — exit 0 = auth,
-#   router, gateway, loop, and gates all work RIGHT NOW (the dogfood the scripted twins can't be)
-```
+The user's Smith revamp explicitly authorizes controller/editor delegation.
+The controller inspects, decides, reviews, applies and verifies. A cheaper
+editor gets one bounded work order in a child session and stages its changes
+in an isolated overlay. It cannot mutate the actual workspace, run commands,
+start more workers or apply proposals. Cancellation drops unapplied changes.
+Application validates original file fingerprints and workspace containment;
+stale edits fail as tool data. Preserve unrelated and concurrent user changes.
 
-The SpecDoc lives at `<cwd>/.efferent/specs/<slug>.md` — git-committable
-provenance (flat frontmatter: status/limits/gate overrides; strict sections:
-`# Goal`, `## Acceptance`, `## Checks` (`- name: command` — each becomes a
-rank-2 `accept-<name>` gate), `## Constraints`, `## Non-goals`). The
-`propose_spec` tool is the ONLY way a draft changes; only the human locks.
-Exit: 0 accepted/locked · 1 rejected · 2 infra error. Artifact:
-`<cwd>/.foundry/runs/<id>.json` (each `AttemptRecord.implementorRef` =
-`conversation:<uuid>` — open it in `efferent` via `:browse`).
+Use the modern SDK `Agent.define` with configurable `ConversationMemory`,
+`ToolRegistry`, `StepLoop` and `Capabilities` services. Harness admits the turn
+once and supplies its `ActiveTurnWriter`; Smith must use that same writer.
+The native session journal is authoritative. Do not persist duplicate native
+and historical message/tool events. Child editor sessions retain their own
+request, usage, tool and failure evidence.
 
-## Model roles (defaults — all overridable)
+Jev decides whether each request needs an internal implementation plan.
+Planning uses the recent conversation plus the current user message. A plan
+is executed immediately and does not ask the user to lock a specification.
+An unavailable decision is recorded and conservatively requests a plan.
+Explicit read-only planning activates no edits or verification commands.
 
-general `opencode:kimi-k2.6` · code
-`opencode:kimi-k2.7-code` · fast `opencode:deepseek-v4-flash`. (These models
-think by DEFAULT — no request param; `openCodeThinkingMode` is an old-line
-knob the new providers deliberately don't send. The gateway returns the
-thinking under TWO field names — `reasoning` on kimi-k2.6, `reasoning_content`
-on k2.7-code/deepseek — providers' compat client parses both.) Configured
-**exactly like the efferent CLI**: user `.efferent/config.json`
-(local-over-global, `EFFERENT_MODEL`, `~/.efferent/auth.json` via `:login`
-there) WINS over these defaults; `--model/--code-model/--fast-model` flags win
-over everything (`settings/smithSettings.ts` — the overlay applies on READS
-and never persists a smith default). The roles are LIVE: the refiner runs on
-GENERAL, the forge implementor runs on CODE (`runForgeSession` scopes the
-implementor's LanguageModel through providers' `roleModelView("code")` —
-`codeModel ?? model`), and one-shot helpers run on FAST (`UtilityLlm`).
+The driver model comes from the main model setting; the editor comes from
+the fast model setting and inherits the driver when unset. Loop options
+`driverModel`/`editorModel` can override them. Pin choices, selected modules,
+reasoning policy and budgets for the turn. Defaults: 50 model steps across
+controller and editor, 12 steps per editor attempt, two attempts, 15 minutes,
+256000 shared tokens, a separate 64000-token conversation context window,
+4096 output tokens per request, and four concurrent reads. `budgetTokens`
+counts cumulative input/output usage for one user request; `contextTokens`
+bounds each model call's conversation context and cannot exceed that budget.
+Editor sessions and mutations are serialized; reported usage from both roles
+is charged to the same budget before the next request is admitted.
 
-## Layout (boundaries: smith → engine + providers + foundry)
+Effect expertise is optional prompt functionality, not repository docs.
+Six independently selectable, versioned sections are foundations, schema,
+services, concurrency, ai and architecture. The `effect` profile enables all;
+the normal Smith profile enables none. Module selection is a per-turn loop
+setting, so changes apply on the next turn without restarting the runtime.
 
-```
-src/
-├── main.ts            argv fold → SmithCommand (spec | forge <ref> | task shorthand) →
-│                      composition root (cli AppLive minus TUI extras + BunContext) →
-│                      TTY ? TUI (lazy import) : headless
-├── domain/            SmithConfig (defaults + SmithRunConfig) · SmithEvent (the ONE union
-│                      both hook families fan into: refine_* + spec_* + forge_* + gate_* +
-│                      {type:"agent"})
-├── settings/          the SettingsStore overlay (flags > user config > smith defaults)
-├── spec/              store (load/write/lock/list + unique slugs over FileSystem) ·
-│                      toForgeSpec (SpecDoc → foundry Spec — the ONLY foundry mapping;
-│                      gateRequestFromSpec: flags > frontmatter > discovery; trivialSpecDoc
-│                      for the shorthand)
-├── refine/            session (one persisted conversation with the refiner; the draft
-│                      FILE is the truth, re-read after every turn; ONE handler record
-│                      shared by the real agent layer and the scripted test seam; an
-│                      opened slug IS the draft; the context set's pins ride each turn
-│                      once-on-change) · headless (-p: one unattended draft on stdout,
-│                      --yes locks)
-├── context/           the CONTEXT SET (.efferent/context.json): entity + functions (pin
-│                      grammar: file · dir/ · glob · note: · spec: · run: · diff[:ref] ·
-│                      cmd:) · store · standing (rules · lessons · memory · quality bar,
-│                      GOVERNED by the set — off is None everywhere) · assemble (bounded,
-│                      per-block status, shell pins only when a turn asks) · inject (the
-│                      once-on-change seam for refine + follow-up; the forge brief takes
-│                      the bundle whole)
-├── implementor/       efferentImplementor (EfferentImplementorLive: Layer.effect capturing
-│                      the service Context so Implementor stays R=never; ONE conversation
-│                      per forge run — retries continue it with the gate brief; receipt.ref
-│                      links artifact↔conversation; runFleetToCompletion settles spawns;
-│                      only INFRA failures → ImplementorError) · prompt (renderSpecBrief:
-│                      acceptance + checks + constraints + non-goals; retry brief)
-│                      · filesTouched (tool_call_end → WorkspacePath)
-├── gates/             commandGate (rank-2 test gate over Bun.spawn; crash = GateCrash,
-│                      fail-closed) · suite (GateSuiteRequest: config | foundry.config.ts |
-│                      tsconfig→typecheck + package.json→bun test + spec checks →
-│                      accept-<name> gates; zero gates = ConfigError)
-├── forge/session.ts   Spec → suite → forge IN PLACE (TsProjectFresh + file sink);
-│                      runForgeSessionWith is the scripted-implementor test seam
-├── presentation/      eventLines — pure SmithEvent → text (headless lines + feed labels)
-├── headless/print.ts  -p mode: live event lines, flush-sentinel printer
-└── tui/               THREE modes on one chassis (runtime: withTuiChassis — scoped
-                       renderer + pump + exit Deferred; runTui / runTuiRefine /
-                       runTuiWorkspace). Workspace = the persistent session: idle
-                       dashboard (specs · runs · sessions · context · lessons — a MENU:
-                       Tab focuses a row, ↑/↓ move, ⏎ opens its verbs, :open lists all)
-                       ⇄ refine ⇄ forge, exit only by :quit. theme (single token set;
-                       no hex/glyph outside it) · presentation/{conversation,floor,refine,
-                       workspace,dashboard,contextView,selectBox,promptBox,loginFlow,
-                       modelCatalog} (pure machines, fold-tested) · state/ (signals +
-                       the ONE overlay: select picker | login flow) · view/ui/{atoms,
-                       BottomMenu,PromptBody} (the MenuRow discipline: one row shape for
-                       every menu) · actions/{model,login,settings,dashboard,context}
-                       (drivers; anthropic OAuth = PKCE + loopback server RACING a
-                       pasted redirect, state===verifier CSRF) · login/oauthServer ·
-                       commands (:quit/:new/:open/:context …/:lock/:forge [slug]/:ship/
-                       :model [code|fast]/:settings/:resume/:branch/:fold/:login/:logout)
-                       · keys (ONE Esc rule keyed on what RUNS: overlay → dashboard
-                       cursor → a busy turn or live forge → composer) · session/state
-                       (THE workspace session as one value: Idle | Refining | Forging
-                       | Forged — pure transitions, queries for "what is running",
-                       mode as a projection; fibers register themselves as their
-                       first action and withdraw in `ensuring`, so the runtime never
-                       holds a dead handle)
-```
+Follow the repository's zero-baseline rules: Schema contracts and branded
+identifiers, qualified entity/use-case pairs, Context.Service ports and Layer
+adapters. Use Option, Match, immutable values and Effect-native concurrency;
+no let/var, imperative loops, throw, try/catch, raw Promise orchestration in
+domain code, nullable domain returns or unsafe type laundering. Foreign IO
+belongs at adapter boundaries. TUI presentation belongs in `packages/tui`,
+which must not import Smith.
 
-## Rules
+Keep legacy public exports, stored specifications and Foundry artifacts.
+New sessions use `.efferent/runtime`; never delete `.efferent/smith.db` or old
+local state to reset a run. Publishing requires its existing repository rules;
+this task does not authorize publication.
 
-- Same composition discipline the repo gates enforce EVERYWHERE here, with a
-  **ZERO-entry ratchet baseline**: any new `let`/loop/nullable-return/tag-switch/
-  as-any/try-catch in `packages/smith/src/**` fails `bun run typecheck` outright.
-- The implementor is the ONLY place the agent runs; gates never call an LLM
-  (the judge-gate seam exists in foundry for that, deliberately unused here).
-- A rejected forge run is a RESULT (exit 1 + the report), never an error.
-- Launch from the repo root (`bun run smith -- --cwd <target>`): the Solid JSX
-  preload lives in the root `bunfig.toml`. The headless path imports no `.tsx`.
-- **`EFFERENT_MODEL` is IGNORED** (dropped at the edge, with a stderr note):
-  Bun auto-loads the LAUNCH dir's `.env`, so the efferent repo's own seed would
-  silently override smith's general default for every target workspace
-  (live-caught). Pick models via flags or `.efferent/config.json`.
-
-## Testing
-
-`bun test packages/smith` — all key-free: settings precedence, briefs,
-filesTouched, commandGate (incl. the fail-closed crash fold), suite discovery
-over temp dirs, the pure floor reducer, and the **scripted E2E**
-(`forge/session.test.ts`: foundry's scripted implementor + a real `bun test`
-gate in a temp workspace → fail → feedback → fix → accepted, asserting the
-exact `SmithEvent` sequence). Live keyed runs are manual (`-p` on a toy repo).
+Validate the production controller/editor path, planning decisions, optional
+modules, replay, cancellation, budgets and read-only restrictions. Test real
+provider request/response adapters with injected transport for scripted evals;
+provider-backed paid runs require explicit credentials/configuration.
+New Smith evaluations use the native `@xandreed/evals` calibration API:
+`defineCalibration` declares the dataset, candidate codec, isolated subject,
+evaluators, gates and host selection policy; `runCalibration` executes it.
+Build candidate services fresh for each case. Give the subject inputs only;
+reference labels belong to evaluators. Retain production journal, transport,
+diff, acceptance and architecture-check evidence. Hard or infrastructure
+failures must fail blocking gates. Do not add new retired Pack/Scenario
+definitions or legacy baselines for Smith. Scripted transport proves wiring,
+not held-out model quality or cost; it must not recommend or promote a model.
+`bun run evals:smith:check` runs both native regressions without provider
+credentials. Finish with `bun run typecheck`; do not weaken
+architecture or calibration gates.
