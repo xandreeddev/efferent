@@ -31,9 +31,12 @@ the fast model setting and inherits the driver when unset. Loop options
 `driverModel`/`editorModel` can override them. Pin choices, selected modules,
 reasoning policy and budgets for the turn. Defaults: 50 model steps across
 controller and editor, 12 steps per editor attempt, two attempts, 15 minutes,
-64000 shared tokens and 4096 output tokens per request, and four concurrent
-reads. Editor sessions and mutations are serialized; reported usage from both
-roles is charged to the same budget before the next request is admitted.
+256000 shared tokens, a separate 64000-token conversation context window,
+4096 output tokens per request, and four concurrent reads. `budgetTokens`
+counts cumulative input/output usage for one user request; `contextTokens`
+bounds each model call's conversation context and cannot exceed that budget.
+Editor sessions and mutations are serialized; reported usage from both roles
+is charged to the same budget before the next request is admitted.
 
 Effect expertise is optional prompt functionality, not repository docs.
 Six independently selectable, versioned sections are foundations, schema,

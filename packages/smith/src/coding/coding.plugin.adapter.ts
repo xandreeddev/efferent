@@ -24,17 +24,18 @@ export const SmithCodingConfig = Schema.Struct({
   editorMaxSteps: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
   maxEditorAttempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 5 })),
   budgetMillis: Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 3_600_000 })),
-  budgetTokens: Schema.Int.check(Schema.isBetween({ minimum: 1000, maximum: 256_000 })),
+  budgetTokens: Schema.Int.check(Schema.isBetween({ minimum: 1000, maximum: 256_000 })).annotate({ description: "Shared cumulative input/output tokens across controller and editor for one user request" }),
+  contextTokens: Schema.Int.check(Schema.isBetween({ minimum: 1000, maximum: 256_000 })).annotate({ description: "Per-request conversation context window; bounded by the shared token budget" }),
   maxOutputTokens: Schema.Int.check(Schema.isBetween({ minimum: 256, maximum: 16_384 })),
 })
-export const smithCodingDefaults = { readOnly: false, driverModel: "", editorModel: "", modules: [], planningMode: "auto" as const, maxModelRequests: 50, editorMaxSteps: 12, maxEditorAttempts: 2, budgetMillis: 900_000, budgetTokens: 64_000, maxOutputTokens: 4096 }
+export const smithCodingDefaults = { readOnly: false, driverModel: "", editorModel: "", modules: [], planningMode: "auto" as const, maxModelRequests: 50, editorMaxSteps: 12, maxEditorAttempts: 2, budgetMillis: 900_000, budgetTokens: 256_000, contextTokens: 64_000, maxOutputTokens: 4096 }
 const failure = (code: string, message: string) => new HarnessError({ code: `smith.${code}`, message })
 const PlanningEvent = defineHostEvent("smith.planning", Schema.Struct({ mode: Schema.Literals(["direct", "plan"]), reason: Schema.String, outcome: Schema.Literals(["selected", "unavailable", "explicit"]), promptId: Schema.String, promptVersion: Schema.String }))
 const EditorEvent = defineHostEvent("smith.editor", Schema.Struct({ workOrderId: Schema.String, sessionId: Schema.String, status: Schema.Literals(["started", "completed", "failed"]), attempt: Schema.Int, role: Schema.Literals(["editor", "controller"]), model: Schema.String, failure: Schema.OptionFromNullOr(Schema.String) }))
 const ProposalEvent = defineHostEvent("smith.proposal", EditProposal)
 const ReceiptEvent = defineHostEvent("smith.receipt", EditReceipt)
 const CheckEvent = defineHostEvent("smith.check", VerificationCheck)
-const ContextEvent = defineHostEvent("smith.context", Schema.Struct({ modules: Schema.Array(SmithEffectModule), readOnly: Schema.Boolean, budgetTokens: Schema.Int, controllerPromptVersion: Schema.String, editorPromptVersion: Schema.String, editSchemaVersion: Schema.String }))
+const ContextEvent = defineHostEvent("smith.context", Schema.Struct({ modules: Schema.Array(SmithEffectModule), readOnly: Schema.Boolean, budgetTokens: Schema.Int, contextTokens: Schema.Int, controllerPromptVersion: Schema.String, editorPromptVersion: Schema.String, editSchemaVersion: Schema.String }))
 const BudgetEvent = defineHostEvent("smith.budget", Schema.Struct({ requests: Schema.Int, requestUnit: Schema.Literal("model-step"), usedTokens: Schema.Number, limitTokens: Schema.Int }))
 const ModelEvent = defineHostEvent("smith.models", Schema.Struct({ driver: Schema.String, editor: Schema.String, modules: Schema.Array(SmithEffectModule), maxModelRequests: Schema.Int }))
 export const SMITH_CONTROLLER_PROMPT_VERSION = "2"
@@ -57,7 +58,8 @@ export const smithCodingPlugin = definePlugin({
     const baseModel = yield* LanguageModel.LanguageModel
     const planner = yield* Effect.serviceOption(SmithPlanning)
     const io = yield* makeWorkspace(workspace)
-    const agent = yield* Agent.define({ plugins: [], services: captured, workspace, cacheKeyPrefix: "smith", budgetTokens: config.budgetTokens })
+    const contextTokens = Math.min(config.contextTokens, config.budgetTokens)
+    const agent = yield* Agent.define({ plugins: [], services: captured, workspace, cacheKeyPrefix: "smith", budgetTokens: contextTokens })
     return AgentLoop.of({ run: (input) => Effect.scoped(Effect.gen(function* () {
       const writer = yield* Option.match(Context.getOption(input.services, ActiveTurnWriter), { onNone: () => Effect.fail(failure("turn", "Smith requires the Harness's admitted turn writer")), onSome: (active) => Effect.succeed(active.writer) })
       const loaded = yield* settings.load.pipe(Effect.mapError((error) => failure("models", error.message)))
@@ -95,7 +97,7 @@ export const smithCodingPlugin = definePlugin({
       const editorServices = servicesFor(editor, ["smith.editor"], loaded.fastReasoningEffort)
       const runController = agent.turn({ turn: writer, services: driverServices, system: `${input.system}\n\n${CHECK_SYSTEM}${config.readOnly ? "\nWorkspace access is read-only. For requests needing workspace work, inspect and propose changes; edits and commands are unavailable." : ""}`, steering: input.steering }, (turn) => Effect.gen(function* () {
         yield* ModelEvent.publish(turn.events, { driver: driverLabel, editor: editorLabel, modules: config.modules, maxModelRequests: config.maxModelRequests })
-        yield* ContextEvent.publish(turn.events, { modules: config.modules, readOnly: config.readOnly, budgetTokens: config.budgetTokens, controllerPromptVersion: SMITH_CONTROLLER_PROMPT_VERSION, editorPromptVersion: SMITH_EDITOR_PROMPT_VERSION, editSchemaVersion: SMITH_EDIT_SCHEMA_VERSION })
+        yield* ContextEvent.publish(turn.events, { modules: config.modules, readOnly: config.readOnly, budgetTokens: config.budgetTokens, contextTokens, controllerPromptVersion: SMITH_CONTROLLER_PROMPT_VERSION, editorPromptVersion: SMITH_EDITOR_PROMPT_VERSION, editSchemaVersion: SMITH_EDIT_SCHEMA_VERSION })
         yield* observeBudget(turn.events)
         yield* turn.events.subscribe((event) => event._tag === "assistant.delta" ? Option.some(event) : Option.none(), (event) => input.transient({ name: "native.delta", runId: input.runId, data: { event, sourceSession: writer.admitted.session.id } }))
         const history = yield* turn.memory.entries.pipe(Effect.map((entries): ReadonlyArray<AgentMessage> => entries.flatMap((entry): ReadonlyArray<AgentMessage> => entry.body._tag === "Message" ? [entry.body.message] : entry.body._tag === "TurnStarted" ? [{ role: "user", content: entry.body.userMessage.text }] : entry.body._tag === "TurnEnded" && Option.isSome(entry.body.reply) ? [{ role: "assistant", content: [{ type: "text", text: entry.body.reply.value }] }] : [])))

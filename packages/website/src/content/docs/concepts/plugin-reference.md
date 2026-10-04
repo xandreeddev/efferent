@@ -949,7 +949,8 @@ Requires: `effect/ai/LanguageModel`, `@xandreed/core/AuthStore`, `@xandreed/core
   "editorMaxSteps": 12,
   "maxEditorAttempts": 2,
   "budgetMillis": 900000,
-  "budgetTokens": 64000,
+  "budgetTokens": 256000,
+  "contextTokens": 64000,
   "maxOutputTokens": 4096
 }
 ```
@@ -1016,7 +1017,14 @@ Requires: `effect/ai/LanguageModel`, `@xandreed/core/AuthStore`, `@xandreed/core
     "budgetTokens": {
       "type": "integer",
       "minimum": 1000,
-      "maximum": 256000
+      "maximum": 256000,
+      "description": "Shared cumulative input/output tokens across controller and editor for one user request"
+    },
+    "contextTokens": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 256000,
+      "description": "Per-request conversation context window; bounded by the shared token budget"
     },
     "maxOutputTokens": {
       "type": "integer",
@@ -1035,6 +1043,7 @@ Requires: `effect/ai/LanguageModel`, `@xandreed/core/AuthStore`, `@xandreed/core
     "maxEditorAttempts",
     "budgetMillis",
     "budgetTokens",
+    "contextTokens",
     "maxOutputTokens"
   ],
   "additionalProperties": true

@@ -17,7 +17,7 @@ import { WorkOrder, WorkOrderId } from "./edit.entity.js"
 const parts = (name: string, params: Record<string, unknown>): ReadonlyArray<Response.PartEncoded> => [{ type: "tool-call", id: crypto.randomUUID(), name, params, providerExecuted: false }, { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 10 }, outputTokens: { total: 2 } } }]
 const final = (text: string): ReadonlyArray<Response.PartEncoded> => [{ type: "text", text }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 10 }, outputTokens: { total: 2 } } }]
 
-const fixtureModels = (workspace: string, readOnly = false, pauseEditor: Option.Option<Deferred.Deferred<void>> = Option.none(), failCheap = false, parallelOrders = false) => definePlugin({
+const fixtureModels = (workspace: string, readOnly = false, pauseEditor: Option.Option<Deferred.Deferred<void>> = Option.none(), failCheap = false, parallelOrders = false, inputTokens = 10) => definePlugin({
   id: "test/smith-models", version: "1", config: Schema.Struct({}), defaults: {}, provides: [LanguageModel.LanguageModel, AuthStore, SettingsStore, Shell, SmithPlanning],
   layer: () => Layer.unwrap(Effect.gen(function* () {
     const controllerCalls = yield* Ref.make(0)
@@ -54,7 +54,7 @@ const fixtureModels = (workspace: string, readOnly = false, pauseEditor: Option.
       if (index === 2) return parts("verify", { command: "test value" })
       return final("Updated and verified")
     })
-    const model = yield* LanguageModel.make({ generateText: (options) => generate(options.prompt).pipe(Effect.map((value) => [...value])), streamText: () => Stream.die("Fixture uses settled responses") })
+    const model = yield* LanguageModel.make({ generateText: (options) => generate(options.prompt).pipe(Effect.map((value) => value.map((part) => part.type === "finish" ? { ...part, usage: { ...part.usage, inputTokens: { total: inputTokens } } } : part))), streamText: () => Stream.die("Fixture uses settled responses") })
     return Layer.mergeAll(
       Layer.succeed(LanguageModel.LanguageModel, model),
       Layer.succeed(AuthStore, { get: () => Effect.succeed(Option.none()), resolveKey: () => Effect.succeed(Option.none()), all: Effect.succeed(new Map()), set: () => Effect.void, remove: () => Effect.void }),
@@ -153,6 +153,50 @@ describe("Smith production coding plugin", () => {
       expect(history.filter((event) => event.kind === "smith.editor").map((event) => event.data.status)).toEqual(["started", "completed", "started", "completed"])
       expect(history.find((event) => event.kind === "smith.budget")?.data).toMatchObject({ requests: 6, requestUnit: "model-step", usedTokens: 72 })
       expect(readFileSync(join(workspace, "value.ts"), "utf8")).toBe("new")
+    })).pipe(Effect.ensuring(Effect.sync(() => rmSync(workspace, { recursive: true, force: true })))))
+  })
+
+  test.each([
+    { name: "the larger default", options: {}, completes: true },
+    { name: "an explicit 64000-token cap", options: { budgetTokens: 64_000 }, completes: false },
+  ])("controller/editor cumulative usage respects $name", async ({ options, completes }) => {
+    const workspace = mkdtempSync(join(tmpdir(), "smith-cumulative-tokens-"))
+    writeFileSync(join(workspace, "value.ts"), "old")
+    const preset = smithAgent(workspace)
+    const models = fixtureModels(workspace, false, Option.none(), false, false, 16_000)
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const harness = yield* Harness.make({ workspace, plugins: [...preset.plugins, models], config: { ...preset.config, bindings: { "@xandreed/core/Shell": "models", "smith/Planning": "models" }, plugins: preset.config.plugins?.filter((entry) => entry.id !== "planning").map((entry) => entry.id === "models" ? { id: "models", use: models.id } : entry.id === "loop" ? { ...entry, options } : entry) } })
+      const session = yield* harness.create()
+      const result = yield* Effect.result(session.send("Update the value"))
+      const history = yield* session.journalHistory
+      expect(history.find((event) => event.kind === "smith.context")?.data.contextTokens).toBe(64_000)
+      if (completes) {
+        expect(result._tag).toBe("Success")
+        expect(history.find((event) => event.kind === "smith.budget")?.data).toMatchObject({ requests: 7, usedTokens: 112_014, limitTokens: 256_000 })
+        expect((yield* session.history).filter((event) => event.name === "run.completed").at(-1)?.data.outcome).toBe("completed")
+        expect(readFileSync(join(workspace, "value.ts"), "utf8")).toBe("new")
+      } else {
+        expect(result._tag).toBe("Failure")
+        if (result._tag === "Failure") expect(result.failure.message).toContain("The shared 64000-token budget cannot admit this request")
+        expect(history.filter((event) => event.kind === "request.prepared")).toHaveLength(1)
+        expect(history.filter((event) => event.kind === "smith.proposal")).toHaveLength(1)
+        expect(history.filter((event) => event.kind === "smith.receipt")).toHaveLength(0)
+        expect(readFileSync(join(workspace, "value.ts"), "utf8")).toBe("old")
+      }
+    })).pipe(Effect.ensuring(Effect.sync(() => rmSync(workspace, { recursive: true, force: true })))))
+  })
+
+  test("the larger shared budget keeps the per-request context window bounded before dispatch", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "smith-context-limit-"))
+    const preset = smithAgent(workspace)
+    const models = fixtureModels(workspace, true)
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const harness = yield* Harness.make({ workspace, plugins: [...preset.plugins, models], config: { ...preset.config, bindings: { "@xandreed/core/Shell": "models", "smith/Planning": "models" }, plugins: preset.config.plugins?.filter((entry) => entry.id !== "planning").map((entry) => entry.id === "models" ? { id: "models", use: models.id } : entry) } })
+      const session = yield* harness.create()
+      const result = yield* Effect.result(session.send("Inspect ".repeat(40_000)))
+      expect(result._tag).toBe("Failure")
+      if (result._tag === "Failure") expect(result.failure.message).toContain("The current turn alone exceeds the 64000-token context budget")
+      expect((yield* session.journalHistory).filter((event) => event.kind === "request.prepared")).toHaveLength(0)
     })).pipe(Effect.ensuring(Effect.sync(() => rmSync(workspace, { recursive: true, force: true })))))
   })
 
