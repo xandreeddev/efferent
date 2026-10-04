@@ -44,7 +44,7 @@ describe("Efferent terminal client", () => {
       tui.state.selectSession({ ...tui.state.session(), workspace: "/workspace/a-very-long-fixture-workspace-name" })
       tui.state.setModel(selection)
       const ready = (await tui.frame()).split("\n")[0]!
-      expect(ready).toContain("· code")
+      expect(ready).toContain(" · code")
       expect(ready).toMatch(/\sReady\s*$/)
       if (width < 140) expect(ready).toContain("...")
       if (width === 80) expect(ready).toContain("vercel:deepseek-v4.1-flash")
@@ -53,6 +53,9 @@ describe("Efferent terminal client", () => {
       const status = tui.ui.renderer.root.findDescendantById("header-status")!
       expect(status.x).toBeGreaterThanOrEqual(model.x + model.width + 1)
       expect(status.x + status.width).toBeLessThanOrEqual(width - 1)
+      tui.state.setMode("plan")
+      expect((await tui.frame()).split("\n")[0]).toContain(" · plan")
+      tui.state.setMode("code")
       tui.state.event({ version: 1, id: "start", sessionId: tui.state.session().id, seq: 0, at: Date.now(), name: "run.started", runId: "header-run", data: {} })
       tui.state.journal([{ session: tui.state.session().id, seq: 1, turn: Option.none(), kind: "host.editor", at: Date.now(), data: {} }])
       const active = (await tui.frame()).split("\n")[0]!

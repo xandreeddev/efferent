@@ -187,7 +187,7 @@ export const App = (props: { state: TuiState; actions: AppActions; assistantName
   return <box width="100%" height="100%" flexDirection="column" backgroundColor={color().background} paddingX={1}>
     <box id="session-header" height={1} flexShrink={0} flexDirection="row">
       <text fg={color().accent} width={9} flexShrink={0} wrapMode="none"><b>{props.assistantName ?? "efferent"}</b></text>
-      <text id="header-workspace" fg={color().muted} minWidth={0} maxWidth="25%" flexShrink={1} wrapMode="none" truncate>{terminalText(state.session().workspace.split("/").at(-1) ?? "")}</text>
+      <text id="header-workspace" fg={color().muted} minWidth={0} maxWidth={Math.floor((dimensions().width - 2) / 4)} flexShrink={1} wrapMode="none" truncate>{terminalText(state.session().workspace.split("/").at(-1) ?? "")}</text>
       <text id="header-mode" fg={color().muted} marginLeft={1} flexShrink={0} wrapMode="none">{`· ${state.mode()}`}</text>
       <text id="header-model" fg={color().muted} marginLeft={1} width={0} minWidth={0} flexGrow={1} wrapMode="none" truncate>{headerModel() && dimensions().width >= 80 ? `· ${headerModel()}` : ""}</text>
       <text id="header-status" fg={state.transcript().status === "Failed" ? color().danger : color().accent} marginLeft={1} flexShrink={0} maxWidth={Math.max(12, Math.floor(dimensions().width / 3))} wrapMode="none" truncate>{terminalText(heartbeat())}</text>

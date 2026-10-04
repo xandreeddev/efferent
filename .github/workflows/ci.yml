@@ -32,6 +32,20 @@ jobs:
       - run: sudo apt-get update
       - run: sudo apt-get install -y bubblewrap tmux
 
+      # Ubuntu 24.04 restricts capabilities in unprivileged user namespaces.
+      # Permit bwrap on this disposable runner; leave the host-wide policy on.
+      - name: Enable bubblewrap user namespaces
+        run: |
+          sudo tee /etc/apparmor.d/efferent-ci-bwrap > /dev/null <<'PROFILE'
+          abi <abi/4.0>,
+          include <tunables/global>
+          profile efferent-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          PROFILE
+          sudo apparmor_parser -r /etc/apparmor.d/efferent-ci-bwrap
+          bwrap --unshare-user --unshare-pid --unshare-net --ro-bind / / true
+
       # tsc + the zero-baseline repo gate suite — foundry's own source included.
       - run: bun run typecheck
 

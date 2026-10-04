@@ -13,7 +13,9 @@ export const workspaceChanges = (workspace: string): Effect.Effect<ReadonlyArray
   const names = (text: string) => text.split("\0").filter(Boolean)
   const diff = ["diff", "--no-ext-diff", "--no-textconv", "--relative"]
   const section = (title: string, text: string) => text.trim() ? `${title}\n${text}` : ""
-  return Effect.all([
+  // Verify the workspace before concurrent discovery: outside a repository,
+  // git diff can enter --no-index mode and obscure the actual discovery error.
+  return git(["rev-parse", "--show-toplevel"]).pipe(Effect.flatMap(() => Effect.all([
     git([...diff, "--cached", "--name-only", "-z", "--", "."]),
     git([...diff, "--name-only", "-z", "--", "."]),
     git(["ls-files", "--others", "--exclude-standard", "-z", "--", "."]),
@@ -34,5 +36,5 @@ export const workspaceChanges = (workspace: string): Effect.Effect<ReadonlyArray
         text: [section("Staged changes", indexDiff), section("Working tree changes", treeDiff)].filter(Boolean).join("\n\n").slice(0, 50_000),
       })))
     }, { concurrency: 4 })
-  }))
+  }))))
 }
