@@ -36,6 +36,7 @@ export {
   buildProvider,
   OPENCODE_CHAT_URL,
   OPENCODE_RESPONSES_API_URL,
+  VERCEL_CHAT_URL,
   prependClaudeCode,
   usesOpenCodeResponses,
   withAnthropicCacheBreakpoints,
@@ -57,3 +58,6 @@ export {
 export type { ReasoningEffort } from "./llm/modelCatalog.js"
 export { UtilityLlmLive } from "./llm/utilityLlm.js"
 export { modelsPlugin, default } from "./plugin.adapter.js"
+export { ModelTransport } from "./ports/model-transport.port.js"
+
+export type { ModelFetch } from "./ports/model-transport.port.js"

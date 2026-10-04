@@ -13,8 +13,11 @@ pnpm-lock.yaml
 package-lock.json
 yarn.lock
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
+!.env.template
+!.env.*.template
 .direnv/
 .DS_Store
 .idea/

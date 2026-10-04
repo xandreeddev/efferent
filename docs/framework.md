@@ -102,6 +102,9 @@ writer wrote fails the turn with `session.store` instead of losing its events.
   `turn.closed` after a reap.
 - `events(after)` replays durable events after an exclusive cursor, then follows
   the journal. Notifications can coalesce; journal entries are not dropped.
+- `journalHistory` and `journal(after?)` expose native records, preserving each
+  inherited record's source session and sequence. They remain readable during
+  active turns. The legacy event projection stays available for old clients.
 - `transient` carries bounded, disposable text deltas. It is not replay storage.
 - A reopened unfinished run is marked cancelled. Tools are never rerun merely
   because a client reconnects. A run still held (by its lease, or by a process
@@ -131,26 +134,26 @@ refreshed inherited credentials are written to the current credential store.
 
 ## Coding and policy
 
-Smith composes models, tools, memory, context, policy, sessions, MCP and telemetry.
-The default loop is a configurable plugin. Workspace file operations and
-sandboxed Bash run autonomously. Bubblewrap mounts the workspace writable and
-restricts network access. Timeouts and cancellation kill the process group.
-Outside-workspace operations, host commands and MCP tool calls go through the
-host Approval service; headless hosts deny by default.
+Smith composes the configured model services, memory-window, tool discovery,
+step-loop, coding capabilities, Jev planning, optional Effect modules and
+sessions. Its controller reviews proposals staged by the configured editor in scoped
+child sessions, then applies and verifies them within a shared budget. Bubblewrap
+keeps verification source files read-only and restricts network access. See
+[Smith](smith.md) for role configuration, optional modules and evaluation evidence.
 
 `/plan` removes mutation and shell tools. `/spec idea` drafts a specification
-through the configured coding loop using read-only tools. `/lock` records the
+through the optional workflow worker using read-only tools. `/lock` records the
 user's acceptance as a durable event. `/forge` implements that locked version
 under Foundry gates; it rejects missing or superseded locks. Host verification
 requires approval before implementation begins. The workflow delegates to the
-configured loop, so model, context and memory plugins remain in use. Its limits
+configured worker, retaining model services and composing context and memory. Its limits
 and gate configuration are plugin options. The historical workflow driver
 remains available as `bun run smith:workflow` for old specs.
 
 ## Terminal host
 
-`runTui` consumes an SDK harness and session, an approval channel, and optional
-commands and event renderers. Smith-specific commands belong in the CLI. The terminal
+`runTui` consumes an SDK harness and native session journal, an approval channel,
+and optional commands, journal renderers and legacy event renderers. Smith-specific commands belong in the CLI. The terminal
 supports multiline input, bracketed paste, session switching, transcript search,
 explicit follow mode, expandable tool details, and dark/light/mono themes.
 Typing `/` opens inline suggestions without moving focus out of the composer.
@@ -179,7 +182,9 @@ below 50 ms on the test machine. The PTY fixture checks rendering and shutdown. 
 launches the actual CLI in an isolated tmux server and checks first-run setup,
 model selection, slash filtering/completion, draft preservation, resizing, plugin edits and replacement, streamed output sampled across 50 deltas,
 tool expansion, cancellation, and clean exit without provider credentials.
-The model picker uses the configured model catalog. Ctrl+O expands tool details.
+The model picker uses the configured model catalog. Ctrl+O opens a keyboard
+inspector; details scroll independently of the conversation. Completed reads
+collapse into activity groups. Escape preserves the draft; Ctrl+U clears it.
 
 ## Evals and reference applications
 

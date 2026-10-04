@@ -3,6 +3,7 @@ import { FetchHttpClient, HttpClient } from "effect/http"
 import { Effect, Layer, Option } from "effect"
 import { AuthStore, extractUsage, parseModelSelection, SettingsStore, UtilityError, UtilityLlm } from "@xandreed/core"
 import { generateWith } from "./router.js"
+import { ModelTransport } from "../ports/model-transport.port.js"
 
 /**
  * The fast helper tier: one-shot completions on `fastModel ?? model`. No
@@ -13,7 +14,8 @@ export const UtilityLlmLive = Layer.effect(
   UtilityLlm,
   Effect.gen(function* () {
     const context = yield* Effect.context<AuthStore | SettingsStore>()
-    const http = yield* HttpClient.HttpClient
+    const defaultHttp = yield* HttpClient.HttpClient
+    const http = Option.getOrElse(Option.map(yield* Effect.serviceOption(ModelTransport), (transport) => transport.http), () => defaultHttp)
     const settings = yield* SettingsStore
 
     return {
@@ -38,8 +40,8 @@ export const UtilityLlmLive = Layer.effect(
             responseFormat: { type: "text" },
           }).pipe(
             Effect.mapError((e) => new UtilityError({ message: String(e) })),
-            Effect.provide(context),
             Effect.provideService(HttpClient.HttpClient, http),
+            Effect.provide(context),
           )
           const text = res.content
             .flatMap((p) => {

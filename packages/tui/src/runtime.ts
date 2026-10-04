@@ -1,13 +1,14 @@
 import { createCliRenderer } from "@opentui/core"
 import { render } from "@opentui/solid"
 import { createComponent } from "solid-js"
-import { Cause, Deferred, Effect, Fiber, Option, Ref, Semaphore, Stream } from "effect"
+import { Cause, Clock, Deferred, Effect, Fiber, Option, Ref, Schedule, Semaphore, Stream } from "effect"
 import type { Harness, HarnessError, SessionHandle } from "@xandreed/sdk"
 import { App } from "./App.js"
 import { createTuiState, errorMessage } from "./state.js"
 import type { Overlay, TuiState } from "./state.js"
 import type { ApprovalChannel } from "./approval.js"
 import type { EventRenderers } from "./projection.js"
+import type { JournalRenderers } from "./journal.entity.js"
 import type { ThemeName } from "./theme.js"
 
 export interface TuiCommand {
@@ -22,6 +23,8 @@ export const runTui = (options: {
   readonly approvals: ApprovalChannel
   readonly commands?: ReadonlyArray<TuiCommand>
   readonly eventRenderers?: EventRenderers
+  readonly journalRenderers?: JournalRenderers
+  readonly assistantName?: string
   readonly theme?: ThemeName
   readonly model?: string
   readonly initialPrompt?: string
@@ -30,7 +33,7 @@ export const runTui = (options: {
 }) => Effect.scoped(Effect.gen(function* () {
   const scope = yield* Effect.scope
   const rt = yield* Effect.context<never>()
-  const state = createTuiState(options.session.record, options.theme, options.eventRenderers)
+  const state = createTuiState(options.session.record, options.theme, options.eventRenderers, options.journalRenderers)
   state.setModel(options.model ?? "")
   const selected = yield* Ref.make(options.session)
   const follower = yield* Ref.make(Option.none<Fiber.Fiber<void, HarnessError>>())
@@ -46,12 +49,13 @@ export const runTui = (options: {
     yield* Ref.get(follower).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.asVoid) })))
     yield* Ref.set(selected, session)
     yield* Effect.sync(() => state.selectSession(session.record))
-    const events = session.events().pipe(Stream.groupedWithin(64, "16 millis"), Stream.runForEach((events) => Effect.sync(() => state.events(events))))
-    const deltas = session.transient.pipe(Stream.groupedWithin(64, "16 millis"), Stream.runForEach((events) => Effect.sync(() => state.deltas(events, session.record.id))))
+    const events = session.journal().pipe(Stream.groupedWithin(64, "16 millis"), Stream.runForEach((events) => Effect.sync(() => state.journal(events, session.record.id))))
+    const deltas = session.transient.pipe(Stream.groupedWithin(64, "16 millis"), Stream.runForEach((events) => Effect.sync(() => state.deltas(events.map((event) => event.name === "assistant.delta" ? { ...event, data: { ...event.data, sourceSession: session.record.id } } : event), session.record.id))))
     const fiber = yield* Effect.forkIn(Effect.all([events, deltas], { concurrency: "unbounded", discard: true }), scope)
     yield* Ref.set(follower, Option.some(fiber))
   }))
   yield* attach(options.session)
+  yield* Effect.forkScoped(Clock.currentTimeMillis.pipe(Effect.tap((now) => Effect.sync(() => state.tick(now))), Effect.repeat(Schedule.spaced("1 second"))))
   const closeOverlay = () => state.setOverlay({ kind: "none" })
   const commands: ReadonlyArray<TuiCommand> = [
     ...(options.commands ?? []),
@@ -87,7 +91,7 @@ export const runTui = (options: {
     Effect.promise(() => createCliRenderer({ exitOnCtrlC: false, exitSignals: [], useMouse: true, targetFps: 30 })),
     (value) => Effect.sync(() => value.destroy()),
   )
-  yield* Effect.promise(() => render(() => createComponent(App, { state, actions: {
+  yield* Effect.promise(() => render(() => createComponent(App, { state, ...(options.assistantName === undefined ? {} : { assistantName: options.assistantName }), actions: {
     commands, submit, palette, interrupt: () => launch(Ref.get(selected).pipe(Effect.flatMap((session) => session.interrupt))),
     quit: () => launch(Deferred.succeed(done, undefined)),
   } }), renderer))

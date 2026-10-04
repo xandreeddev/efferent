@@ -82,8 +82,8 @@ JSON can refer to local modules or installed npm plugins through `use`.
   "version": 1,
   "profile": "smith",
   "plugins": [
-    { "id": "memory", "use": "@xandreed/plugin-memory", "options": { "limit": 6 } },
-    { "id": "loop", "use": "@xandreed/plugin-agent-loop", "options": { "maxSteps": 40 } }
+    { "id": "memory", "use": "@xandreed/plugin-memory-window" },
+    { "id": "loop", "use": "@xandreed/smith/coding", "options": { "maxModelRequests": 40 } }
   ]
 }
 ```
@@ -117,6 +117,15 @@ Their browser and review interfaces remain available through `bun run canvas`,
 
 Use `/spec idea`, `/lock`, and `/forge` for gated workflows in the new terminal. The historical spec/forge driver is
 available through `bun run smith:workflow` for old specs.
+
+Smith uses the configured main model as controller and the fast model as editor
+(falling back to the controller). `/models` or `--driver-model`/`--editor-model` overrides
+each role. The editor stages a bounded proposal; the controller reviews,
+applies and verifies it. `/plan` is read-only; automatic internal planning is a
+separate Jev decision for each request. `/mods` enables optional, versioned
+Effect 4 prompt sections; `--profile effect` enables all six. `/context`,
+`/tasks`, `/changes` and `/checks` open inspectors. See [Smith's runtime and
+evaluation guide](docs/smith.md) for configuration and campaign evidence.
 
 ## Build and verify
 

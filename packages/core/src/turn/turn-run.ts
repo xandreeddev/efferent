@@ -80,7 +80,9 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
         onNone: () => Effect.void,
         onSome: (text) => session.record([{ _tag: "StepContext", step: info.stepIndex, text }], info.stepIndex).pipe(Effect.asVoid),
       })
-      const reserved = estimateTokens(system) + schemaTokens(tools, info.activeTools)
+      const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""
+      const finalSystem = [system, stepText].filter((part) => part.length > 0).join("\n\n")
+      const reserved = estimateTokens(finalSystem) + schemaTokens(tools, info.activeTools)
       yield* session.maintain({ phase: "step", lastUsage: info.lastUsage, budgetTokens: Math.max(1, budget - reserved), views: tools.views })
       const built = yield* session.build({ stepContext: stepContext === "tail" ? "tail" : "none" })
       const render = yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none")
@@ -88,12 +90,10 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       yield* events.publish({
         _tag: "context.built", step: info.stepIndex, turn: number,
         strategy: session.strategy.id, strategyVersion: session.strategy.version,
-        fingerprint: built.fingerprint, systemFingerprint: fingerprintOf(system),
+        fingerprint: built.fingerprint, systemFingerprint: fingerprintOf(finalSystem),
         estimatedTokens: built.estimatedTokens, reservedTokens: reserved,
         compactions: built.compactions.length, activeTools: info.activeTools,
       })
-      const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""
-      const finalSystem = [system, stepText].filter((part) => part.length > 0).join("\n\n")
       // Resolved once for the step: the header describes the model every attempt of the step calls.
       const model = yield* Option.match(Option.orElse(Option.map(choice, (value) => value.model), () => defaultModel), {
         onNone: () => Effect.succeed(Option.none<LanguageModel.LanguageModel>()),

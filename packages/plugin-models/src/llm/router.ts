@@ -1,11 +1,12 @@
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Clock, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
+import { Clock, Config, Duration, Effect, Layer, Metric, Option, Redacted, Ref, Stream } from "effect"
 import type { Context } from "effect"
-import { AuthStore, CurrentModelCallPolicy, describeModel, formatModelSelection, HarnessError, parseModelSelection, resolvingModel, SettingsStore } from "@xandreed/core"
+import { AuthError, AuthStore, CurrentModelCallPolicy, describeModel, formatModelSelection, HarnessError, parseModelSelection, resolvingModel, SettingsStore } from "@xandreed/core"
 import type { ModelSelection } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
+import { ModelTransport } from "../ports/model-transport.port.js"
 import {
   classifyLlmError,
   rejectEmptyResponse,
@@ -144,6 +145,17 @@ const describeSelection = (primary: ModelSelection, fallback: Option.Option<Mode
     },
   })))
 
+/** Resolve Gateway env credentials on every call, then the same shared auth port. */
+const resolveProviderAuth = (selection: ModelSelection) => Effect.gen(function* () {
+  const configured = selection.provider === "vercel"
+    ? yield* Config.option(Config.Redacted("AI_GATEWAY_API_KEY")).pipe(Effect.mapError(() => new AuthError({ provider: selection.provider, message: "AI_GATEWAY_API_KEY could not be read" })))
+    : Option.none<Redacted.Redacted<string>>()
+  const envKey = Option.filter(configured, (key) => Redacted.value(key).trim().length > 0)
+  if (Option.isSome(envKey)) return { credential: undefined, key: envKey.value }
+  const auth = yield* AuthStore
+  return { credential: Option.getOrUndefined(yield* auth.get(selection.provider)), key: Option.getOrUndefined(yield* auth.resolveKey(selection.provider)) }
+})
+
 /** Build + call one provider generateText for an explicit selection.
  *  `isFallback` only labels telemetry — the fallback rung must be visible
  *  in Grafana without changing the metric identities. */
@@ -157,10 +169,8 @@ export const generateWith = (
   AuthStore | HttpClient.HttpClient
 > =>
   Effect.gen(function* () {
-    const auth = yield* AuthStore
     const label = formatModelSelection(selection)
-    const credential = Option.getOrUndefined(yield* auth.get(selection.provider))
-    const key = Option.getOrUndefined(yield* auth.resolveKey(selection.provider))
+    const { credential, key } = yield* resolveProviderAuth(selection)
     const built = yield* buildProvider(selection, credential, key)
     return yield* (
       built.svc.generateText(
@@ -371,10 +381,8 @@ export const streamWith = (
 ): Stream.Stream<unknown, unknown, AuthStore | HttpClient.HttpClient> =>
   Stream.unwrap(
     Effect.gen(function* () {
-      const auth = yield* AuthStore
       const label = formatModelSelection(selection)
-      const credential = Option.getOrUndefined(yield* auth.get(selection.provider))
-      const key = Option.getOrUndefined(yield* auth.resolveKey(selection.provider))
+      const { credential, key } = yield* resolveProviderAuth(selection)
       const built = yield* buildProvider(selection, credential, key)
       return (
         built.svc.streamText(
@@ -417,8 +425,8 @@ const selectionModel = (
         withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)),
         effort,
       ).pipe(
-        Effect.provide(context),
         Effect.provideService(HttpClient.HttpClient, http),
+        Effect.provide(context),
       ) as never,
     generateObject: (() => Effect.fail(configError("generateObject is not wired on the new line yet"))) as never,
     // No stream-level fallback rung: a pre-first-part stream failure
@@ -426,8 +434,8 @@ const selectionModel = (
     // call rides this router's fallback — one rung, no double-hop.
     streamText: ((options: unknown) =>
       withConfiguredEffortStream(streamWith(primary, options), effort).pipe(
-        Stream.provideContext(context),
         Stream.provideService(HttpClient.HttpClient, http),
+        Stream.provideContext(context),
       )) as never,
   } satisfies LanguageModel.LanguageModel
   return describeModel(service, describeSelection(primary, fallback, effort))
@@ -442,7 +450,8 @@ export const LanguageModelLive = Layer.effect(
   LanguageModel.LanguageModel,
   Effect.gen(function* () {
     const context = yield* Effect.context<AuthStore | SettingsStore>()
-    const http = yield* HttpClient.HttpClient
+    const defaultHttp = yield* HttpClient.HttpClient
+    const http = Option.getOrElse(Option.map(yield* Effect.serviceOption(ModelTransport), (transport) => transport.http), () => defaultHttp)
     // One settings read: the model of the selection it finds.
     const selected = currentSelection.pipe(
       Effect.map(({ primary, fallback, effort }) => selectionModel(primary, fallback, effort, context, http)),
@@ -481,7 +490,8 @@ export const LanguageModelSelectionLive = (
   LanguageModel.LanguageModel,
   Effect.gen(function* () {
     const context = yield* Effect.context<AuthStore>()
-    const http = yield* HttpClient.HttpClient
+    const defaultHttp = yield* HttpClient.HttpClient
+    const http = Option.getOrElse(Option.map(yield* Effect.serviceOption(ModelTransport), (transport) => transport.http), () => defaultHttp)
     return selectionModel(primary, fallback, Option.none(), context, http)
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))

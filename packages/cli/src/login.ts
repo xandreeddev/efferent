@@ -9,7 +9,9 @@ export const loginCommand = (workspace: string, home: string, launch: (state: Tu
   const store = <A, E>(effect: Effect.Effect<A, E, AuthStore>) => effect.pipe(Effect.provide(LocalAuthStoreLive(workspace, home, ".efferent/runtime", ".efferent")), Effect.mapError((error) => invalid(String(error))))
   const apiKey = (provider: string, state: TuiState) => state.setOverlay({ kind: "edit", title: `API key · ${provider}`, value: "", secret: true,
     save: (key) => launch(state, key.trim().length === 0 ? Effect.fail(invalid("Enter an API key")) : store(AuthStore.pipe(Effect.flatMap((auth) => auth.set(ProviderId.make(provider), { type: "api_key", key: key.trim() })))).pipe(Effect.tap(() => Effect.sync(() => {
-      state.setOverlay({ kind: "none" }); state.setNotice(`Connected ${provider}. Use /model provider:model to select a model.`)
+      state.setOverlay({ kind: "none" }); state.setNotice(provider === "vercel"
+        ? "Vercel AI Gateway connected. /model vercel:deepseek/deepseek-v4.1-flash selects DeepSeek Flash."
+        : `Connected ${provider}. Use /model provider:model to select a model.`)
     })), Effect.andThen(onConnected?.() ?? Effect.void))),
   })
   const oauth = (provider: "openai" | "anthropic", state: TuiState) => Effect.scoped(Effect.gen(function* () {
@@ -52,11 +54,11 @@ export const loginCommand = (workspace: string, home: string, launch: (state: Tu
     if (onConnected !== undefined) yield* onConnected()
   }))
   const providerMenu = (provider: string, state: TuiState) => state.setOverlay({ kind: "menu", title: `Connect ${provider}`, rows: [
-    { label: "API key", detail: "Stored locally; input is masked", select: () => apiKey(provider, state) },
+    { label: "API key", detail: provider === "vercel" ? "Vercel AI Gateway key · input is masked" : "Stored locally; input is masked", select: () => apiKey(provider, state) },
     ...(["openai", "anthropic"].includes(provider) ? [{ label: "Subscription login", detail: "Browser authorization with PKCE", select: () => launch(state, oauth(provider as "openai" | "anthropic", state)) }] : []),
   ] })
   return { name: "login", description: "Connect a provider with an API key or subscription", run: (argument, state) => Effect.sync(() => {
     if (argument.length > 0) { providerMenu(argument, state); return }
-    state.setOverlay({ kind: "menu", title: "Connect a provider", rows: ["openai", "anthropic", "google", "opencode"].map((provider) => ({ label: provider, detail: "", select: () => providerMenu(provider, state) })) })
+    state.setOverlay({ kind: "menu", title: "Connect a provider", rows: ["openai", "anthropic", "google", "opencode", "vercel"].map((provider) => ({ label: provider, detail: provider === "vercel" ? "Vercel AI Gateway" : "", select: () => providerMenu(provider, state) })) })
   }) }
 }

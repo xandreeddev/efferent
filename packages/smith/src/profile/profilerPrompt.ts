@@ -43,7 +43,7 @@ are grandfathered by a baseline so only NEW code must be clean.
    grandfathered at lock) — report them, don't fear them.
 4. Rule selection: the "effect" pack for Effect.ts codebases; the
    "effect-architecture" pack when the workspace uses Effect-native entities,
-   use cases, Context.Tag ports, and Layer adapters; the "quality"
+   use cases, Context.Service ports, and Layer adapters; the "quality"
    pack (paradigm-neutral anti-gate-gaming: no skipped tests, no empty
    catch) for any TypeScript project. For project-specific rules, load the
    gate-rule-authoring skill BEFORE writing one, and keep each rule small

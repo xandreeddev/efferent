@@ -704,3 +704,437 @@ Requires: `efferent/DelegateLoop`, `efferent/SessionStore`, `efferent/Approval`
   "additionalProperties": true
 }
 ```
+
+## @xandreed/plugin-memory-window
+
+Scope: **runtime** · API 2 · Version 0.8.0-next.0
+
+Provides: `efferent/ConversationMemory`
+
+Requires: none
+
+### Defaults
+
+```json
+{
+  "compactPreviousTurn": true,
+  "turnContext": "current",
+  "replies": true,
+  "spillMinChars": 2000,
+  "previewChars": 600,
+  "ledgerTurnChars": 240,
+  "digestOnWriteChars": 0,
+  "digests": true,
+  "media": "none",
+  "maxImages": 8
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "compactPreviousTurn": {
+      "type": "boolean"
+    },
+    "turnContext": {
+      "type": "string",
+      "enum": [
+        "current",
+        "all"
+      ]
+    },
+    "replies": {
+      "type": "boolean"
+    },
+    "spillMinChars": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "previewChars": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "ledgerTurnChars": {
+      "type": "integer",
+      "exclusiveMinimum": 0
+    },
+    "digestOnWriteChars": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "digests": {
+      "type": "boolean"
+    },
+    "media": {
+      "type": "string",
+      "enum": [
+        "none",
+        "inline"
+      ]
+    },
+    "maxImages": {
+      "type": "integer",
+      "minimum": 0
+    }
+  },
+  "required": [
+    "compactPreviousTurn",
+    "turnContext",
+    "replies",
+    "spillMinChars",
+    "previewChars",
+    "ledgerTurnChars",
+    "digestOnWriteChars",
+    "digests",
+    "media",
+    "maxImages"
+  ],
+  "additionalProperties": true
+}
+```
+
+## @xandreed/plugin-tool-discovery
+
+Scope: **runtime** · API 2 · Version 0.8.0-next.0
+
+Provides: `efferent/ToolRegistry`
+
+Requires: `efferent/Capabilities`
+
+### Defaults
+
+```json
+{
+  "grants": [],
+  "loadSkill": true,
+  "maxCallsPerRun": 64,
+  "maxSkillLoadsPerRun": 4,
+  "readConcurrency": 4,
+  "matcherTimeoutMs": 3000,
+  "catalogVersion": "1",
+  "catalogOrder": 900
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "grants": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "loadSkill": {
+      "type": "boolean"
+    },
+    "maxCallsPerRun": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000
+    },
+    "maxSkillLoadsPerRun": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "readConcurrency": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 32
+    },
+    "matcherTimeoutMs": {
+      "type": "integer",
+      "minimum": 50,
+      "maximum": 60000
+    },
+    "catalogVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "catalogOrder": {
+      "type": "integer"
+    }
+  },
+  "required": [
+    "grants",
+    "loadSkill",
+    "maxCallsPerRun",
+    "maxSkillLoadsPerRun",
+    "readConcurrency",
+    "matcherTimeoutMs",
+    "catalogVersion",
+    "catalogOrder"
+  ],
+  "additionalProperties": true
+}
+```
+
+## @xandreed/plugin-agent-loop/steps
+
+Scope: **runtime** · API 2 · Version 0.8.0-next.0
+
+Provides: `efferent/StepLoop`
+
+Requires: none
+
+### Defaults
+
+```json
+{}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "not": {
+    "type": "null"
+  }
+}
+```
+
+## @xandreed/smith/capabilities
+
+Scope: **runtime** · API 2 · Version 1.0.0
+
+Provides: `@xandreed/core/FileSystem`, `@xandreed/core/Shell`
+
+Requires: `efferent/SessionEnvironment`
+
+### Defaults
+
+```json
+{}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": false,
+  "description": "No capability options. Configure readOnly on the Smith coding loop."
+}
+```
+
+## @xandreed/smith/coding
+
+Scope: **session** · API 2 · Version 1.0.0
+
+Provides: `efferent/AgentLoop`
+
+Requires: `effect/ai/LanguageModel`, `@xandreed/core/AuthStore`, `@xandreed/core/SettingsStore`, `efferent/Sessions`, `efferent/SessionEnvironment`, `efferent/Capabilities`, `efferent/ConversationMemory`, `efferent/ToolRegistry`, `efferent/StepLoop`, `@xandreed/core/FileSystem`, `@xandreed/core/Shell`
+
+### Defaults
+
+```json
+{
+  "readOnly": false,
+  "driverModel": "",
+  "editorModel": "",
+  "modules": [],
+  "planningMode": "auto",
+  "maxModelRequests": 50,
+  "editorMaxSteps": 12,
+  "maxEditorAttempts": 2,
+  "budgetMillis": 900000,
+  "budgetTokens": 64000,
+  "maxOutputTokens": 4096
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "readOnly": {
+      "type": "boolean"
+    },
+    "driverModel": {
+      "type": "string"
+    },
+    "editorModel": {
+      "type": "string"
+    },
+    "modules": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "foundations",
+          "schema",
+          "services",
+          "concurrency",
+          "ai",
+          "architecture"
+        ]
+      }
+    },
+    "planningMode": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "direct",
+        "plan"
+      ]
+    },
+    "maxModelRequests": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 500,
+      "description": "Shared model steps across controller/editor; transport retries below LanguageModel remain provider-owned"
+    },
+    "editorMaxSteps": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100
+    },
+    "maxEditorAttempts": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5
+    },
+    "budgetMillis": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 3600000
+    },
+    "budgetTokens": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 256000
+    },
+    "maxOutputTokens": {
+      "type": "integer",
+      "minimum": 256,
+      "maximum": 16384
+    }
+  },
+  "required": [
+    "readOnly",
+    "driverModel",
+    "editorModel",
+    "modules",
+    "planningMode",
+    "maxModelRequests",
+    "editorMaxSteps",
+    "maxEditorAttempts",
+    "budgetMillis",
+    "budgetTokens",
+    "maxOutputTokens"
+  ],
+  "additionalProperties": true
+}
+```
+
+## @xandreed/smith/effect
+
+Scope: **runtime** · API 2 · Version 1.0.0
+
+Provides: none
+
+Requires: none
+
+### Defaults
+
+```json
+{}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "not": {
+    "type": "null"
+  }
+}
+```
+
+## @xandreed/smith/planning
+
+Scope: **session** · API 2 · Version 1
+
+Provides: `smith/Planning`
+
+Requires: none
+
+### Defaults
+
+```json
+{
+  "endpoint": "https://ai-gateway.vercel.sh/v4/ai/evaluation-model",
+  "apiKeyEnv": "AI_GATEWAY_API_KEY",
+  "apiKeyProvider": "vercel",
+  "protocol": "gateway",
+  "model": "typesafe-ai/jev",
+  "timeoutMs": 2000,
+  "maxInputBytes": 24000
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "endpoint": {
+      "type": "string"
+    },
+    "apiKeyEnv": {
+      "type": "string"
+    },
+    "apiKeyProvider": {
+      "type": "string"
+    },
+    "protocol": {
+      "type": "string",
+      "enum": [
+        "gateway",
+        "systemone"
+      ]
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timeoutMs": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 30000
+    },
+    "maxInputBytes": {
+      "type": "integer",
+      "minimum": 1000,
+      "maximum": 64000
+    }
+  },
+  "required": [
+    "endpoint",
+    "apiKeyEnv",
+    "apiKeyProvider",
+    "protocol",
+    "model",
+    "timeoutMs",
+    "maxInputBytes"
+  ],
+  "additionalProperties": true
+}
+```

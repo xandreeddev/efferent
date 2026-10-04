@@ -40,6 +40,8 @@ export const StepStartedEvent = Schema.TaggedStruct("step.started", {
 export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
   step: Schema.Int,
   invocationId: Schema.String,
+  /** The provider's pairing key when the toolkit supplies it; keeps concurrent payload joins exact. */
+  toolCallId: Schema.optionalKey(ToolCallId),
   tool: Schema.String,
   input: Schema.Unknown,
   labels: Labels,
@@ -49,6 +51,7 @@ export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
 export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
   step: Schema.Int,
   invocationId: Schema.String,
+  toolCallId: Schema.optionalKey(ToolCallId),
   tool: Schema.String,
   input: Schema.Unknown,
   ok: Schema.Boolean,

@@ -7,11 +7,13 @@ import { LanguageModelLive } from "./llm/router.js"
 import { UtilityLlmLive } from "./llm/utilityLlm.js"
 import { ConfiguredModelCatalogLive } from "./llm/modelCatalog.js"
 import { LocalSettingsStoreLive } from "./settings/localSettings.js"
+import { ModelTransport } from "./ports/model-transport.port.js"
 
 const Config = Schema.Struct({ model: Schema.String, fastModel: Schema.String, fallbackModel: Schema.String, inheritPrevious: Schema.Boolean })
 export const modelsPlugin = definePlugin({
   id: "@xandreed/plugin-models", version: "0.8.0-next.0", config: Config,
   defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true }, requires: [SessionEnvironment],
+  optional: [ModelTransport],
   provides: [LanguageModel.LanguageModel, UtilityLlm, AuthStore, SettingsStore, ModelCatalog],
   layer: (config) => Layer.unwrap(Effect.gen(function* () {
     const { workspace } = yield* SessionEnvironment

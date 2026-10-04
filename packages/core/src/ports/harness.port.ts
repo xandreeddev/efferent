@@ -5,6 +5,7 @@ import type { AgentMessage, ConversationId } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { EventBody, MemoryEntry, SessionEvent, SessionRecord } from "../harness/session.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
+import type { SessionLogEvent } from "../session/session-log.entity.js"
 
 /** @deprecated Historical event vocabulary; live adapters project it over SessionLog. New hosts use Sessions and TurnWriter. */
 export class SessionStore extends Context.Service<SessionStore, {
@@ -81,6 +82,10 @@ export interface SessionHandle {
   readonly events: (after?: number) => Stream.Stream<SessionEvent, HarnessError>
   readonly transient: Stream.Stream<EventBody>
   readonly history: Effect.Effect<ReadonlyArray<SessionEvent>, HarnessError>
+  /** Native log, including the immutable inherited prefix; reads never execute work. */
+  readonly journalHistory: Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
+  /** Follow native commits without acquiring the active-run gate. An omitted cursor replays inherited history too. */
+  readonly journal: (after?: number) => Stream.Stream<SessionLogEvent, HarnessError>
   readonly busy: Effect.Effect<boolean>
   readonly pending: Effect.Effect<ReadonlyArray<{ readonly id: string; readonly text: string }>>
   readonly continue: Effect.Effect<void, HarnessError>

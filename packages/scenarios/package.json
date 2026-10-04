@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Evals v3: scenario packs over agent worlds — ordered steps, deterministic evidence checks, LLM judges, standing baselines. The regression battery of the agent line.",
+  "description": "Evals v3: scenario packs over agent worlds \u2014 ordered steps, deterministic evidence checks, LLM judges, standing baselines. The regression battery of the agent line.",
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
@@ -25,6 +25,7 @@
     "@xandreed/ui-agent": "workspace:*",
     "@xandreed/social": "workspace:*",
     "@xandreed/evals": "workspace:*",
-    "@xandreed/sdk": "workspace:*"
+    "@xandreed/sdk": "workspace:*",
+    "@xandreed/runtime": "workspace:*"
   }
 }

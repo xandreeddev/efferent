@@ -8,7 +8,7 @@ import { Effect, Option, Stream } from "effect"
  * - Streamed text/reasoning chunks occupy ORDERED SLOTS at the position
  *   their start/first-delta arrived; deltas append in place (and fan out
  *   through `onDelta` for live rendering); a chunk that accumulated nothing
- *   is dropped (content-part identity).
+ *   is dropped unless it carries provider metadata needed for replay.
  * - Every settled part (tool-call, tool-result, finish, provider extras)
  *   passes through at its arrival position unchanged — metadata included,
  *   so the router's model stamp and the usage fold read exactly what the
@@ -38,6 +38,7 @@ type Entry =
       readonly channel: "text" | "reasoning"
       readonly id: string
       readonly text: string
+      readonly metadata?: Readonly<Record<string, unknown>>
     }
   | { readonly kind: "part"; readonly part: unknown }
 
@@ -56,22 +57,35 @@ const CHANNEL_BY_TYPE: Record<string, "text" | "reasoning"> = {
   "reasoning-end": "reasoning",
 }
 
+const isMetadata = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+
+/** Provider records can arrive on any chunk; opaque array snapshots replace prior arrays. */
+const mergeMetadata = (previous: unknown, incoming: unknown): Readonly<Record<string, unknown>> => {
+  const base = isMetadata(previous) ? previous : {}
+  return !isMetadata(incoming) ? base : { ...base, ...Object.fromEntries(Object.entries(incoming).map(([key, value]) =>
+    [key, isMetadata(value) && isMetadata(base[key]) ? mergeMetadata(base[key], value) : value])) }
+}
+
 const openChunk = (
   entries: ReadonlyArray<Entry>,
   channel: "text" | "reasoning",
   id: string,
+  metadata?: unknown,
 ): ReadonlyArray<Entry> =>
   entries.some((e) => e.kind === "chunk" && e.channel === channel && e.id === id)
-    ? entries
-    : [...entries, { kind: "chunk", channel, id, text: "" }]
+    ? entries.map((e) => e.kind === "chunk" && e.channel === channel && e.id === id
+      ? { ...e, metadata: mergeMetadata(e.metadata, metadata) } : e)
+    : [...entries, { kind: "chunk", channel, id, text: "", metadata: mergeMetadata(undefined, metadata) }]
 
 const appendDelta = (
   entries: ReadonlyArray<Entry>,
   channel: "text" | "reasoning",
   id: string,
   delta: string,
+  metadata?: unknown,
 ): ReadonlyArray<Entry> =>
-  openChunk(entries, channel, id).map((e) =>
+  openChunk(entries, channel, id, metadata).map((e) =>
     e.kind === "chunk" && e.channel === channel && e.id === id
       ? { ...e, text: e.text + delta }
       : e,
@@ -79,7 +93,8 @@ const appendDelta = (
 
 const entryParts = (entry: Entry): ReadonlyArray<unknown> => {
   if (entry.kind === "part") return [entry.part]
-  return entry.text.length > 0 ? [{ type: entry.channel, text: entry.text }] : []
+  const metadata = entry.metadata !== undefined && Object.keys(entry.metadata).length > 0 ? { metadata: entry.metadata } : {}
+  return entry.text.length > 0 || Object.keys(metadata).length > 0 ? [{ type: entry.channel, text: entry.text, ...metadata }] : []
 }
 
 export const foldStreamParts = <E, R, R2 = never>(
@@ -101,6 +116,7 @@ export const foldStreamParts = <E, R, R2 = never>(
         readonly delta?: string
         readonly reason?: string
         readonly usage?: unknown
+        readonly metadata?: unknown
       }
       const type = p.type ?? ""
       // Tool argument streaming: fan the deltas for incremental admission
@@ -126,13 +142,13 @@ export const foldStreamParts = <E, R, R2 = never>(
       if (channel !== undefined) {
         const id = p.id ?? `${channel}-1`
         if (type.endsWith("-start")) {
-          return Effect.succeed({ ...state, entries: openChunk(state.entries, channel, id) })
+          return Effect.succeed({ ...state, entries: openChunk(state.entries, channel, id, p.metadata) })
         }
         if (type.endsWith("-end")) {
-          return Effect.succeed(state)
+          return Effect.succeed({ ...state, entries: openChunk(state.entries, channel, id, p.metadata) })
         }
         const delta = p.delta ?? ""
-        const next = { ...state, entries: appendDelta(state.entries, channel, id, delta) }
+        const next = { ...state, entries: appendDelta(state.entries, channel, id, delta, p.metadata) }
         return delta.length > 0
           ? onDelta({ channel, id, delta }).pipe(Effect.as(next))
           : Effect.succeed(next)

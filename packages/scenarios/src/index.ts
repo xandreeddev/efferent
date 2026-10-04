@@ -24,3 +24,5 @@ export {
   turnAlternationValid,
 } from "./legacy/evidence.js"
 export { smithSpecPack } from "./packs/smithSpec.js"
+
+export { runSmithCalibration, smithCodingCalibration, smithInteractionCalibration } from "./smith-calibration.adapter.js"

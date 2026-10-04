@@ -17,6 +17,8 @@
     "evals:ui-matrix": "bun packages/scenarios/src/uiMatrix.ts",
     "evals:math-matrix": "bun packages/scenarios/src/mathMatrix.ts",
     "evals:social-matrix": "bun packages/scenarios/src/socialMatrix.ts",
+    "evals:smith": "bun packages/scenarios/src/smithMatrix.ts",
+    "evals:smith:check": "bun packages/scenarios/src/main.ts smith-coding smith-interaction",
     "evals:ui-latency-probe": "bun packages/scenarios/src/live/latencyProbe.ts",
     "test": "bun test",
     "eval": "bun run scenarios",

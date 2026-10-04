@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Stream } from "effect"
 import { foldStreamParts } from "./streamFold.js"
 import type { StreamDelta } from "./streamFold.js"
+import { responseToAgentMessages, toPromptMessages } from "./mapping.js"
 
 /** The fold's spec: ordered slots, empty-chunk drops, settled passthrough,
  *  finish extraction — the settled shape `step()` reads, from parts. */
@@ -88,6 +89,37 @@ describe("foldStreamParts", () => {
       { type: "finish", reason: "stop", usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } },
     ])
     expect(turn.content[0]).toEqual({ type: "text", text: "hi" })
+  })
+
+  test("reasoning metadata survives streaming and durable message replay without visible text", async () => {
+    const details = [{ type: "reasoning.encrypted", data: "opaque-provider-signature", id: "r1" }]
+    const { turn, deltas } = await fold([
+      { type: "reasoning-start", id: "r1", metadata: { vercel: { trace: "trace-1" } } },
+      { type: "reasoning-delta", id: "r1", delta: "", metadata: { vercel: { reasoningDetails: [] } } },
+      { type: "reasoning-end", id: "r1", metadata: { vercel: { reasoningDetails: details } } },
+      { type: "tool-call", id: "c1", name: "read_file", params: { path: "README.md" } },
+    ])
+    const metadata = { vercel: { trace: "trace-1", reasoningDetails: details } }
+    expect(turn.content[0]).toEqual({ type: "reasoning", text: "", metadata })
+    expect(deltas).toEqual([])
+    const messages = responseToAgentMessages(turn.content)
+    expect(messages[0]).toMatchObject({ role: "assistant", content: [{ type: "reasoning", text: "", providerOptions: metadata }, { type: "tool-call", toolCallId: "c1" }] })
+    expect(toPromptMessages(messages)[0]).toMatchObject({ role: "assistant", content: [{ type: "reasoning", text: "", options: metadata }, { type: "tool-call", id: "c1" }] })
+  })
+
+  test("text chunk metadata is retained from start, delta and end in its ordered slot", async () => {
+    const start = { provider: { trace: "trace-1" } }
+    const { turn } = await fold([
+      { type: "text-start", id: "t1", metadata: start },
+      { type: "text-delta", id: "t1", delta: "hi", metadata: { provider: { cache: "hit" } } },
+      { type: "tool-call", id: "c1", name: "echo", params: {} },
+      { type: "text-end", id: "t1", metadata: { provider: { signature: "opaque" } } },
+    ])
+    expect(turn.content).toEqual([
+      { type: "text", text: "hi", metadata: { provider: { trace: "trace-1", cache: "hit", signature: "opaque" } } },
+      { type: "tool-call", id: "c1", name: "echo", params: {} },
+    ])
+    expect(start).toEqual({ provider: { trace: "trace-1" } })
   })
 
   test("choice-finish then usage-only finish: FIRST reason wins, usage-carrier wins", async () => {

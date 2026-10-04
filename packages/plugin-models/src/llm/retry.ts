@@ -58,6 +58,9 @@ export const classifyLlmError = (error: unknown): ErrorClass => {
     return e?._tag === "HttpClientError" && e.reason?._tag === "TransportError" ? "transient" : "permanent"
   }
   const reason = error.reason
+  // Gateway configuration rejections can arrive behind a 5xx wrapper.
+  // Their semantic classification must win over the transport status.
+  if (reason._tag === "InvalidRequestError") return "permanent"
   const response = "http" in reason ? reason.http?.response : undefined
   if (response !== undefined) {
     if (response.status === 429) {

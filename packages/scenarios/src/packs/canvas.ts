@@ -180,16 +180,17 @@ const bootFollowupWorld = Effect.gen(function* () {
       yield* session.send(followup)
       const followupDone = Date.now()
       yield* Ref.set(latency, { initial: initialDone - initialAt, followup: followupDone - followupAt })
-      yield* Effect.sleep("75 millis")
+      yield* untilAgentEnd(session, 2)
     }),
   } satisfies FollowupWorld
 })
 
 /** The turn's own terminal event, not a fixed sleep: the scripted run's duration is the runtime's, not the scenario's. */
-const untilAgentEnd = (session: CanvasSession) =>
+const untilAgentEnd = (session: CanvasSession, turns = 1) =>
   session.subscribe(0).pipe(
     Stream.filter((entry) => entry.event.type === "agent_end"),
-    Stream.runHead,
+    Stream.take(turns),
+    Stream.runDrain,
     Effect.timeout(Duration.seconds(10)),
     Effect.asVoid,
     Effect.orDie,

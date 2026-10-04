@@ -10,6 +10,8 @@ import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth
 import { makeCompatLanguageModel } from "./compat.js"
 import { makeOpenAiCodexLanguageModel } from "./openAiCodex.js"
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
+import { ModelTransport } from "../ports/model-transport.port.js"
+import { makeOpenCodeRequestHeaders } from "./openCodeHeaders.adapter.js"
 
 /**
  * Per-provider `LanguageModel` construction. Built PER REQUEST from a
@@ -25,6 +27,7 @@ import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 export const OPENCODE_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
 /** OpenCode serves GPT models through the OpenAI Responses protocol. */
 export const OPENCODE_RESPONSES_API_URL = "https://opencode.ai/zen/v1"
+export const VERCEL_CHAT_URL = "https://ai-gateway.vercel.sh/v1/chat/completions"
 
 /** Gemini through its OpenAI-compatible chat completions (Bearer API key). */
 export const GOOGLE_CHAT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
@@ -145,15 +148,26 @@ const buildProviderService = (
   key: Redacted.Redacted<string> | undefined,
 ): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => {
   const oauth = credential?.type === "oauth"
+  if (selection.provider === "vercel") {
+    return key === undefined
+      ? Effect.fail(new AuthError({ provider: selection.provider, message: "no Vercel AI Gateway credential — set AI_GATEWAY_API_KEY or sign in with Smith /login vercel" }))
+      : Effect.serviceOption(ModelTransport).pipe(Effect.flatMap((transport) => makeCompatLanguageModel({
+          moduleName: "VercelGateway", chatUrl: VERCEL_CHAT_URL, apiKey: Redacted.value(key), model: selection.modelId,
+          gatewayDialect: "vercel",
+          ...(/deepseek.*flash/i.test(selection.modelId) ? { thinking: "disabled" as const, reasoningEffort: "none" as const, providerOrder: ["deepseek"] } : {}),
+          ...Option.match(transport, { onNone: () => ({}), onSome: (value) => ({ fetchImpl: value.fetch }) }),
+        })), Effect.map((svc) => ({ svc, prependClaudeCode: false })))
+  }
   if (selection.provider === "opencode") {
     if (key === undefined) return Effect.fail(missingKey(selection))
     if (usesOpenCodeResponses(selection.modelId)) {
       return Effect.all({
         cacheKey: Effect.service(CurrentPromptCacheKey),
         policy: Effect.service(CurrentModelCallPolicy),
+        routingHeaders: makeOpenCodeRequestHeaders,
       }).pipe(
-        Effect.flatMap(({ cacheKey, policy }) =>
-          OpenAiClient.make({ apiKey: key, apiUrl: OPENCODE_RESPONSES_API_URL }).pipe(
+        Effect.flatMap(({ cacheKey, policy, routingHeaders }) =>
+          OpenAiClient.make({ apiKey: key, apiUrl: OPENCODE_RESPONSES_API_URL, transformClient: (client) => client.pipe(HttpClient.mapRequestEffect((request) => routingHeaders.pipe(Effect.map((headers) => HttpClientRequest.setHeaders(request, headers))))) }).pipe(
             Effect.flatMap((client) =>
               OpenAiLanguageModel.make({
                 model: selection.modelId,
@@ -165,24 +179,26 @@ const buildProviderService = (
         ),
       )
     }
-    return makeCompatLanguageModel({
+    return Effect.serviceOption(ModelTransport).pipe(Effect.flatMap((transport) => makeCompatLanguageModel({
       moduleName: "OpenCode",
       chatUrl: OPENCODE_CHAT_URL,
       apiKey: Redacted.value(key),
       model: selection.modelId,
-    }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
+      ...Option.match(transport, { onNone: () => ({}), onSome: (value) => ({ fetchImpl: value.fetch }) }),
+    })), Effect.map((svc) => ({ svc, prependClaudeCode: false })))
   }
   if (selection.provider === "google") {
     return key === undefined
       ? Effect.fail(missingKey(selection))
-      : makeCompatLanguageModel({
+      : Effect.serviceOption(ModelTransport).pipe(Effect.flatMap((transport) => makeCompatLanguageModel({
           moduleName: "Google",
           chatUrl: GOOGLE_CHAT_URL,
           apiKey: Redacted.value(key),
           model: selection.modelId,
           // As before: no cache key, thinking defaults or call policy for Gemini.
           standardOnly: true,
-        }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
+          ...Option.match(transport, { onNone: () => ({}), onSome: (value) => ({ fetchImpl: value.fetch }) }),
+        })), Effect.map((svc) => ({ svc, prependClaudeCode: false })))
   }
   if (selection.provider === "anthropic") {
     if (key === undefined) return Effect.fail(missingKey(selection))
@@ -236,7 +252,7 @@ const buildProviderService = (
   return Effect.fail(
     new AuthError({
       provider: selection.provider,
-      message: `provider "${selection.provider}" is not wired on the new line (v1: opencode, google, anthropic, openai, openai-codex)`,
+      message: `provider "${selection.provider}" is not wired on the new line (v1: opencode, vercel, google, anthropic, openai, openai-codex)`,
     }),
   )
 }
