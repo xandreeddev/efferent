@@ -44,8 +44,8 @@ import { CurrentPromptProvenance, defineDecisionPrompt, definePrompt, evaluateDe
 import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
 import sessions from "@xandreed/plugin-session-sqlite"
 import { sessionsPlugin } from "@xandreed/plugin-sessions"
-import { assessAll, defineCalibration, runCalibration, semanticEvaluator, EvaluationStore } from "@xandreed/evals"
-import { SemanticJevLive } from "@xandreed/evals/adapters/semantic-jev.adapter"
+import { assessAll, semanticEvaluator } from "@xandreed/evals"
+import { SemanticJevLive } from "@xandreed/evals"
 const echo = definePlugin({ id: "external/echo", version: "1", config: Schema.Struct({prefix: Schema.String}), defaults: {prefix:"hello "}, provides:[AgentLoop], layer: ({prefix}) => Layer.succeed(AgentLoop,{ run: input => Effect.succeed({text:prefix+input.userMessage.text,outcome:"completed"}) }) })
 await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const harness = yield* Harness.make({workspace:process.cwd(), plugins:[sessions,sessionsPlugin,echo], config:{version:1,plugins:[{id:"store",use:sessions.id},{id:"session-service",use:sessionsPlugin.id,options:{ownership:{mode:"process"}}},{id:"loop",use:echo.id}]}})
@@ -56,9 +56,6 @@ await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const fork = yield* harness.fork(session.record.id,last.seq)
  if((yield* fork.history).length===0) return yield* Effect.die("fork has no history")
 })) )
-const calibration = defineCalibration({ id:"external", version:"1", dataset:{ id:"answers", version:"1", input:Schema.String, reference:Schema.Boolean, cases:[{id:"good",family:"good",split:"calibration",review:"known",input:"supported",reference:true,provenance:"fixture"},{id:"bad",family:"bad",split:"validation",review:"known",input:"other",reference:false,provenance:"fixture"}] }, candidate:Schema.Struct({id:Schema.String}), candidates:[{id:"scripted"}], subject:{ task:(input:string)=>Effect.succeed({output:input,evidence:input}), services:()=>Layer.empty, fingerprints:{prompt:"v1"} }, output:Schema.String, evidence:Schema.String, evaluators:[{ evaluator:{ id:"contract", version:"1", metrics:["supported"], run:(input:{output:string;reference:boolean})=>Effect.succeed({metrics:[{kind:"boolean" as const,name:"supported",value:(input.output==="supported")===input.reference}],reason:"fixture"}) }, select:["supported"] }], gates:[{evaluator:"contract",metric:"supported",aggregate:"passRate",minimum:1,mode:"blocking"}], run:{repetitions:1,concurrency:1,timeoutMs:1000} })
-const report = await Effect.runPromise(runCalibration(calibration,{runId:"external",split:"calibration"}).pipe(Effect.provide(Layer.succeed(EvaluationStore,{writeTrial:()=>Effect.void,writeAssessment:()=>Effect.void}))))
-if(!report.candidates[0]?.passed) process.exit(1)
 const rubric = semanticEvaluator({id:"external-quality",version:"1",questions:{supported:{type:"boolean",instructions:"Is the answer supported?"}},state:(input:{answer:string})=>input.answer})
 const assessments = await Effect.runPromise(assessAll([{evaluator:rubric,select:["supported"]}],{answer:"fixture"}).pipe(Effect.provide(SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))))
 if(assessments[0]?.status!=="scored" || assessments[0]?.metadata.backend!=="jev") process.exit(1)
@@ -115,4 +112,7 @@ await writeFile(join(consumer, "tui-fixture.ts"), await readFile(join(root, "scr
 const terminal = Bun.spawn(["python", join(root, "scripts/verify-tui.py"), "--consumer", consumer], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await terminal.exited !== 0) process.exit(1)
 registry.stop(true)
+await writeFile(join(consumer, "evaluation-consumer.mjs"), await readFile(join(root, "scripts/evaluation-consumer.fixture.mjs"), "utf8"))
+const evalNode = Bun.spawn(["node", "evaluation-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await evalNode.exited !== 0) process.exit(1)
 console.log(`Packed consumer verified at ${consumer}`)

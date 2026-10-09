@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { LanguageModel, Prompt } from "effect/ai"
-import { Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Effect, Fiber, Layer, Option, Ref, Schema, SchemaRepresentation, Stream } from "effect"
 import { assessAll, unknownEvaluationUsage } from "./assessment.usecase.functions.js"
 import { SemanticJudge } from "./ports/semantic-judge.port.js"
 import { SemanticInput } from "./semantic.entity.js"
@@ -90,6 +90,23 @@ test("response schema constrains offered choices and fractional score bounds", (
   expect(Schema.decodeUnknownResult(schema)({ answers: { ...answers, unexpected: answers.groundedness } })._tag).toBe("Failure")
   expect(Schema.is(schema)({ answers: { ...answers, preference: { type: "choice", choice: "C" } } })).toBe(false)
   expect(Schema.is(schema)({ answers: { ...answers, completeness: { type: "score", score: 3 } } })).toBe(false)
+})
+
+test("provider response schema uses finite properties without propertyNames", () => {
+  const schema = SchemaRepresentation.toJsonSchemaDocument(SchemaRepresentation.toRepresentation(semanticResponseSchema(input.questions).ast), { onExcessProperty: "error" }).schema
+  expect(JSON.stringify(schema)).not.toContain("propertyNames")
+  expect(schema).toMatchObject({
+    type: "object", additionalProperties: false,
+    properties: { answers: {
+      type: "object", additionalProperties: false,
+      required: ["groundedness", "completeness", "preference"],
+      properties: {
+        groundedness: { properties: { probability: { minimum: 0, maximum: 1 } } },
+        completeness: { properties: { score: { minimum: 0, maximum: 2 } } },
+        preference: { properties: { choice: { enum: ["A", "B", "tie"] } } },
+      },
+    } },
+  })
 })
 
 test("categorical decisions remain usable directly but cannot become preference metrics", async () => {

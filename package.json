@@ -34,7 +34,8 @@
     "smith:workflow": "bun packages/smith/src/main.ts",
     "docs:generate": "bun scripts/generate-plugin-reference.ts",
     "verify:tui": "python scripts/verify-tui.py",
-    "verify:tmux": "python scripts/verify-tmux.py"
+    "verify:tmux": "python scripts/verify-tmux.py",
+    "eval:cli": "bun packages/evals-cli/src/main.ts"
   },
   "devDependencies": {
     "@types/bun": "^1.3.14",

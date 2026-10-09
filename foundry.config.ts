@@ -30,6 +30,9 @@ const CHECKED = [
   "packages/core/src/**",
   "packages/ai/src/**",
   "packages/evals/src/**",
+  "packages/evals-cli/src/**",
+  "packages/evals-langfuse/src/**",
+  "packages/evals-langsmith/src/**",
   "packages/plugin-agent-loop/src/**",
   "packages/runtime/src/**",
   "packages/sdk/src/**",
@@ -118,7 +121,11 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
   ],
   boundaries: {
-    layers: [{name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","effect/ai","@xandreed/core","node:","bun:test"]},
+    layers: [
+      { name: "evals-cli", path: "packages/evals-cli/src/**", canImport: ["evals"], externals: ["effect", "@xandreed/evals", "node:", "tsx/esm/api", "bun:test"] },
+      { name: "evals-langfuse", path: "packages/evals-langfuse/src/**", canImport: ["evals"], externals: ["effect", "@xandreed/evals", "@langfuse/client", "node:", "bun:test"] },
+      { name: "evals-langsmith", path: "packages/evals-langsmith/src/**", canImport: ["evals"], externals: ["effect", "@xandreed/evals", "langsmith", "node:", "bun:test"] },
+      {name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","effect/ai","@noble/hashes/","node:","bun:test"]},
       { name: "ai", path: "packages/ai/src/**", canImport: ["core"], externals: ["effect", "effect/ai", "@xandreed/core", "bun:test"] },
       {
             "name": "canvas",

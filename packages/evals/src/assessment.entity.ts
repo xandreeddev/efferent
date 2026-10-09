@@ -31,27 +31,6 @@ export const EvaluationResult = Schema.Struct({
   metadata: Schema.Record(Schema.String, Schema.Unknown),
 })
 export type EvaluationResult = typeof EvaluationResult.Type
-export const EvaluationTrial = Schema.Struct({
-  version: Schema.Literal(2),
-  id: EvaluationId,
-  target: Schema.String,
-  kind: Schema.Literals(["benchmark", "journey"]),
-  dataset: Schema.String,
-  datasetVersion: EvaluationVersion,
-  caseId: Schema.String,
-  split: EvaluationSplit,
-  review: LabelReview,
-  candidate: Schema.Record(Schema.String, Schema.Unknown),
-  sample: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
-  status: Schema.Literals(["completed", "error", "cancelled", "skipped"]),
-  startedAt: Schema.Number,
-  endedAt: Schema.Number,
-  output: Schema.OptionFromNullOr(Schema.Unknown),
-  evidence: Schema.OptionFromNullOr(Schema.Unknown),
-  reason: Schema.OptionFromNullOr(Schema.String),
-  evaluations: Schema.Array(EvaluationResult),
-})
-export type EvaluationTrial = typeof EvaluationTrial.Type
 export class AssessmentError extends Schema.TaggedError<AssessmentError>()("AssessmentError", {
   code: Schema.Literals(["invalid", "unavailable", "provider", "persistence", "timeout"]),
   message: Schema.String,

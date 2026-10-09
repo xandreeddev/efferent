@@ -3,13 +3,8 @@ import { Effect, Option } from "effect"
 import { assessCompleteness } from "./completeness.entity.functions.js"
 import { evaluationScores } from "./evaluation-score.entity.functions.js"
 import { projectEvaluatorInput, evaluatorRegistry } from "./evaluator-registry.usecase.functions.js"
-import { selectJourneys } from "./journey-selection.entity.functions.js"
-import { scoreJourneyTurn } from "./journey.entity.functions.js"
-import type { Journey, JourneyExpectation } from "./journey.entity.js"
 import type { Evaluator } from "./assessment.usecase.js"
 
-const expected: JourneyExpectation = { locale: "en", requiredTools: ["read"], forbiddenTools: ["write"], recipes: ["lookup"], components: [], outcome: "answered", requiredText: [], forbiddenText: [], maxAgentSteps: 3 }
-const journey: Journey = { id: "read", tier: 0, tierReason: "critical", persona: { id: "guest", category: "anonymous", authenticated: false }, hostLocale: "en", description: "read", fixture: "v1", turns: [{ action: { type: "message", text: "read" }, expected }] }
 const tool = { name: "read", invocationId: "call-1", stepId: "step-1" }
 const evidence = { required: ["a", "b", "c", "d"].map((id) => ({ id, description: id })), tools: [tool], evidenceRefs: ["answer"] }
 const actions = ["matched", "matched", "partial", "missing"].map((status, index) => ({ actionId: ["a", "b", "c", "d"][index]!, status: status as "matched" | "partial" | "missing", tools: index < 3 ? [tool] : [], evidenceRefs: ["answer"], reason: "Observed answer" }))
@@ -37,17 +32,6 @@ describe("evaluation contracts", () => {
     const registry = await Effect.runPromise(evaluatorRegistry([entry]))
     expect((await Effect.runPromise(registry.resolve("help", "1"))).evaluator).toBe(evaluator)
     expect(await Effect.runPromise(Effect.isFailure(evaluatorRegistry([entry, entry])))).toBe(true)
-  })
-  it("selects declared coverage with AND between selector kinds", async () => {
-    expect(await Effect.runPromise(selectJourneys([journey], { tiers: [0], tools: ["write"], recipes: ["lookup"], ids: [] }))).toHaveLength(1)
-    expect(await Effect.runPromise(Effect.isFailure(selectJourneys([journey], { tiers: [1], tools: [], recipes: [], ids: [] })))).toBe(true)
-    expect(await Effect.runPromise(Effect.isFailure(selectJourneys([journey], { tiers: [], tools: ["unknown"], recipes: [], ids: [] })))).toBe(true)
-  })
-  it("fails missing step measurements and wrong arguments", () => {
-    const observed = { text: "ok", locale: "en", tools: ["read"], recipes: ["lookup"], components: [], outcome: "answered", evidence: ["file"], costUsd: 0, latencyMs: 1 }
-    expect(scoreJourneyTurn(expected, observed).passed).toBe(false)
-    expect(scoreJourneyTurn(expected, { ...observed, agentSteps: 3 }).passed).toBe(true)
-    expect(scoreJourneyTurn({ ...expected, requiredToolArguments: [{ name: "read", arguments: { id: "a" } }] }, { ...observed, agentSteps: 1, toolCalls: [{ name: "read", arguments: { id: "b" } }] }).passed).toBe(false)
   })
   it("exposes comments without manufacturing unavailable scores", () => {
     const result = { version: 2 as const, evaluator: "x", evaluatorVersion: "1", status: "scored" as const, metrics: [{ kind: "boolean" as const, name: "x", value: true, comment: "specific" }], reason: Option.some("shared"), references: [], startedAt: 0, endedAt: 1, usage: { inputTokens: Option.none<number>(), outputTokens: Option.none<number>(), costUsd: Option.none<number>() }, metadata: {} }

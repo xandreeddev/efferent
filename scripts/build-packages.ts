@@ -6,7 +6,7 @@ import solidPlugin from "@opentui/solid/bun-plugin"
 // Build an isolated publish tree; development keeps source exports and workspace links.
 const root = join(import.meta.dir, "..")
 const output = join(root, ".artifacts/packages")
-const names = ["core", "ai", "runtime", "sdk", "evals", "foundry", "smith", "tui", "cli",
+const names = ["core", "ai", "runtime", "sdk", "evals", "evals-cli", "evals-langfuse", "evals-langsmith", "foundry", "smith", "tui", "cli",
   "plugin-agent-loop", "plugin-context", "plugin-memory", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-tool-discovery", "plugin-models", "plugin-tools-local",
   "plugin-policy-workspace", "plugin-session-sqlite", "plugin-sessions", "plugin-tasks", "plugin-telemetry", "plugin-mcp", "plugin-render", "ui-agent", "surface"]
 const manifests = new Map(await Promise.all(names.map(async (name) =>
@@ -63,12 +63,13 @@ await Promise.all(names.map(async (name) => {
   if (missing.length > 0) { console.error(`Missing distribution dependencies for ${original.name}: ${missing.map(([key]) => key).join(", ")}`); process.exit(1) }
   const dependencies = Object.fromEntries(Object.entries(original.dependencies ?? {}).map(([key, value]) => [key, String(value).startsWith("workspace:") ? versions.get(key) : value]))
   const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies,
-    files: ["dist", "skills", "profiles", "README.md", "LICENSE"], engines: { bun: ">=1.3.0" }, license: "MIT",
+    files: ["dist", "skills", "profiles", "README.md", "LICENSE"], engines: name.startsWith("evals") ? { node: ">=24" } : { bun: ">=1.3.0" }, license: "MIT",
+    ...(name === "evals-cli" ? { bin: { "efferent-eval": "./dist/main.js" } } : {}),
     ...(name === "cli" ? { bin: { efferent: "./dist/main.js" }, main: "./dist/main.js" } : {}),
   }
   delete manifest.devDependencies
   await writeFile(join(target, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(join(target, "README.md"), `# ${original.name}\n\nEfferent composable agent framework, ${version}. Bun on Linux.\n\nDocumentation: https://github.com/xandreeddev/efferent\n`)
+  await writeFile(join(target, "README.md"), `# ${original.name}\n\nEfferent composable agent framework, ${version}. ${name.startsWith("evals") ? "Node 24." : "Bun on Linux."}\n\nDocumentation: https://github.com/xandreeddev/efferent\n`)
   await cp(join(root, "LICENSE"), join(target, "LICENSE"))
   console.log(`Built ${relative(root, target)}`)
 }))

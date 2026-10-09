@@ -21,20 +21,22 @@ export const validateSemanticAnswers = (input: SemanticInput, value: unknown) =>
   return answers
 })
 
-/** A struct that refuses keys it does not declare (the rest may hold only undeclared keys, as never). */
+/** Reject excess fields before decoding, while exposing a finite object schema to providers. */
 const exactStruct = <Fields extends Schema.Struct.Fields>(fields: Fields) => {
+  const struct = Schema.Struct(fields)
   const declared = Object.keys(fields)
-  return Schema.StructWithRest(Schema.Struct(fields), [
-    Schema.Record(Schema.String.check(Schema.makeFilter((key: string) => !declared.includes(key))), Schema.Never),
-  ])
+  return Schema.Unknown.check(Schema.makeFilter(
+    (value) => Schema.is(struct)(value) && typeof value === "object" && value !== null && Object.keys(value).every((key) => declared.includes(key)),
+    { toJsonSchema: () => Schema.toJsonSchemaDocument(struct, { onExcessProperty: "error" }).schema },
+  )).pipe(Schema.decodeTo(struct))
 }
 
 /** A provider-facing schema with exactly the rubric's question IDs and offered choices. */
 export const semanticResponseSchema = (questions: SemanticQuestions) => Schema.Struct({
   answers: exactStruct(Object.fromEntries(Object.entries(questions).map(([id, question]) => [id,
     Match.value(question).pipe(
-      Match.when({ type: "boolean" }, () => Schema.Struct({ type: Schema.Literal("boolean"), probability: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 1 }))) })),
-      Match.when({ type: "score" }, (value) => Schema.Struct({ type: Schema.Literal("score"), score: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: value.criteria.length - 1 }))) })),
+      Match.when({ type: "boolean" }, () => Schema.Struct({ type: Schema.Literal("boolean"), probability: Schema.Finite.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 1 }))) })),
+      Match.when({ type: "score" }, (value) => Schema.Struct({ type: Schema.Literal("score"), score: Schema.Finite.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: value.criteria.length - 1 }))) })),
       Match.when({ type: "choice" }, (value) => Schema.Struct({ type: Schema.Literal("choice"), choice: Schema.Literals(Object.keys(value.criteria)) })),
       Match.exhaustive,
     ),

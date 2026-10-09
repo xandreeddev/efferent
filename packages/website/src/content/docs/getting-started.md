@@ -100,7 +100,7 @@ Set `inheritPrevious: false` for an independent setup.
 | `@xandreed/plugin-*` | Replaceable first-party capabilities |
 | `@xandreed/smith` | Coding preset and optional spec/forge modules |
 | `@xandreed/tui` / `@xandreed/cli` | Reusable terminal client and application entry |
-| `@xandreed/evals` | Calibrations and journeys: typed datasets, evaluators and judges, gates, reports |
+| `@xandreed/evals` | Tasks, trials, graders and suites; app adapters, local reports and retrieval metrics |
 | `@xandreed/foundry` | Independent deterministic verification framework |
 
 Canvas, Math and Social are reference applications with domain-specific checks.

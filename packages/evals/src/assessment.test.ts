@@ -5,7 +5,6 @@ import { assessAll } from "./assessment.usecase.functions.js"
 import { validateDataset, summarizeAssessments } from "./assessment.entity.functions.js"
 import { compareCalibrationMetric, summarizeCalibration } from "./evaluator-calibration.entity.functions.js"
 import { assessBothOrders } from "./evaluators/pairwise.js"
-import { journeyTask } from "./journey-assessment.usecase.functions.js"
 import type { Dataset, Evaluator } from "./assessment.usecase.js"
 
 const data: Dataset<string, boolean> = {
@@ -69,17 +68,4 @@ test("calibration coverage excludes missing predictions and preserves confusion 
   expect(Option.getOrThrow(result.brier)).toBeCloseTo(0.81)
   expect(Option.isNone(result.recall)).toBe(true)
   expect(result.reliability[9]?.count).toBe(1)
-})
-test("journey records partial observations and releases its world on a failed step", async () => {
-  const recorded: string[] = []
-  const task = journeyTask({
-    boot: (_: string) => Effect.acquireRelease(Effect.succeed("world"), () => Effect.sync(() => { recorded.push("released") })),
-    steps: (_: string) => [{ id: "first", act: () => Effect.succeed("observation") }, { id: "second", act: () => Effect.fail(new AssessmentError({ code: "provider", message: "failed" })) }],
-    record: (id: string, _observation: string) => Effect.sync(() => { recorded.push(id) }),
-    evidence: (_world: string, observations: ReadonlyArray<string>) => Effect.succeed(observations),
-  })
-  const result = await Effect.runPromise(Effect.scoped(task("input")))
-  expect(result.output.completed).toBe(false)
-  expect(result.evidence).toEqual(["observation"])
-  expect(recorded).toEqual(["first", "released"])
 })

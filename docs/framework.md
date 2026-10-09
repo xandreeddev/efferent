@@ -186,7 +186,7 @@ The model picker uses the configured model catalog. Ctrl+O expands tool details.
 For typed datasets, reusable evaluators, task/journey composition and native prompt
 examples, see [Composable evaluations](composable-evaluations.md).
 
-Journey execution separates inputs from labels. A `Journey` declares `hostLocale`
+The explicit historical journey bridge separates inputs from labels. Its `Journey` declares `hostLocale`
 for initial session setup and `turns[].expected.locale` for each turn's outcome.
 `JourneyDriver.open` receives only `JourneyInput` (id, persona, host locale and
 fixture); `perform` receives only `JourneyAction`. The runner retains expectations
@@ -196,14 +196,11 @@ conversion; new execution never reads an expected answer to initialize its sessi
 Typed `Dataset<Input, Reference>` cases can supply both focused tasks and journeys,
 with reference labels available only to evaluators.
 
-`@xandreed/evals` runs two kinds of eval. A calibration (`defineCalibration`,
-`runCalibration`) is one value naming the dataset, the subject under test, the
-candidates, the evaluators and judges, the run settings, the aggregate gates and
-the host's selection policy; the runner builds the candidate's services fresh for
-every case and reports metrics, gates, judge calibration and performance. A
-journey runs an ordered conversation over a booted application. The library has
-no application registry; hard failures and infrastructure failures cannot be
-hidden by a high average score, and only the host's policy ranks candidates.
+`@xandreed/evals` supplies a generic Schema domain for tasks, trials, candidates, runnables, journeys, graders, grading contexts, outcomes, suites and grader calibrations. Apps implement execution adapters, scoped environments and per-grader evidence projections. The shared runner keeps references out of execution, persists partial transcripts and terminal outcomes, and grades stored evidence independently.
+
+`@xandreed/evals-cli` is the local Node 24 command line. Langfuse and LangSmith are separate optional official SDK export packages; reports work without credentials or provider availability. Retrieval ranking and typed semantic graders are reusable. Ordinary model/prompt comparisons are suites; calibration specifically measures grader agreement. The historical runner/report APIs remain under `@xandreed/evals/legacy` for unmigrated reference scenarios.
+
+See [evaluation-domain.md](evaluation-domain.md) for interfaces, lifecycle, commands and package ownership.
 
 `packages/scenarios` is deprecated: its packs run on a frozen copy of the retired
 Pack/Scenario runner (`src/legacy/`) until they are adapted. Canvas, Math and Social now

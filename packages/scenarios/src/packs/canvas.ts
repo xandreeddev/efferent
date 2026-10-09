@@ -1,5 +1,5 @@
 import { LanguageModel } from "effect/ai"
-import { Context, Duration, Effect, Layer, Ref, Stream } from "effect"
+import { Context, Duration, Effect, Layer, Ref, Schedule, Stream } from "effect"
 import { ConversationStore } from "@xandreed/core"
 import type { AgentMessage } from "@xandreed/core"
 import { LocalAuthStoreLive } from "@xandreed/plugin-models"
@@ -174,13 +174,13 @@ const bootFollowupWorld = Effect.gen(function* () {
       const initialAt = Date.now()
       yield* session.send(SCRIPTED_PROMPT)
       const initialDone = Date.now()
-      yield* Effect.sleep("10 millis")
+      yield* Ref.get(calls).pipe(Effect.repeat({ until: (count) => count > 0, schedule: Schedule.spaced("1 millis") }), Effect.timeout(Duration.seconds(10)), Effect.orDie)
       yield* Ref.set(beforeFollowup, uiEvents.length)
       const followupAt = Date.now()
       yield* session.send(followup)
       const followupDone = Date.now()
       yield* Ref.set(latency, { initial: initialDone - initialAt, followup: followupDone - followupAt })
-      yield* Effect.sleep("75 millis")
+      yield* session.subscribe(0).pipe(Stream.filter((entry) => entry.event.type === "agent_end"), Stream.take(2), Stream.runCollect, Effect.timeout(Duration.seconds(10)), Effect.orDie)
     }),
   } satisfies FollowupWorld
 })

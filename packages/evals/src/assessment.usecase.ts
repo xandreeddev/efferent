@@ -42,18 +42,6 @@ export interface AssessmentInput<I, O, E, Ref> {
   readonly evidence: E
   readonly reference: Ref
 }
-/** A threshold on one trial's metric; `evaluateGates` applies it per trial. */
-export interface Gate {
-  readonly evaluator: string
-  readonly metric: string
-  readonly minimum: number
-  readonly mode: "blocking" | "diagnostic"
-  readonly requiresReviewedReference?: boolean
-}
-export interface GateResult {
-  readonly passed: boolean
-  readonly findings: ReadonlyArray<string>
-}
 export interface SavedAssessment<I> {
   readonly input: I
   readonly results: ReadonlyArray<EvaluationResult>

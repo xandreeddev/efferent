@@ -162,12 +162,7 @@ The model picker uses the configured model catalog. Ctrl+O expands tool details.
 
 ## Evals and reference applications
 
-`@xandreed/evals` runs two kinds of eval: calibrations (`defineCalibration` /
-`runCalibration`: one value for the dataset, the subject under test, the
-candidates, the evaluators and judges, the gates and the host's selection policy)
-and journeys (ordered conversations over a booted application). The library has
-no application registry; hard failures and infrastructure failures cannot be
-hidden by a high average score, and only the host's policy ranks candidates.
+`@xandreed/evals` models tasks, trials, transcripts, observed outcomes, runnables, graders and suites. Applications provide the execution/environment adapters and grading-context projections. A calibration measures a grader against labelled examples; ordinary model comparisons are suites. The local Node CLI and optional Langfuse/LangSmith exporters are separate packages. See [Evaluation domain and adapters](/docs/concepts/evals/) for the interfaces and workflow.
 
 `packages/scenarios` is deprecated and runs on a frozen copy of the retired
 Pack/Scenario runner until its packs are adapted. Canvas, Math and Social now
