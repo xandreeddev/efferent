@@ -155,6 +155,18 @@
       ],
       "@xandreed/evals/*": [
         "packages/evals/src/*.ts"
+      ],
+      "@xandreed/evals-cli": [
+        "packages/evals-cli/src/index.ts"
+      ],
+      "@xandreed/evals-cli/*": [
+        "packages/evals-cli/src/*.ts"
+      ],
+      "@xandreed/evals-langfuse": [
+        "packages/evals-langfuse/src/index.ts"
+      ],
+      "@xandreed/evals-langsmith": [
+        "packages/evals-langsmith/src/index.ts"
       ]
     }
   }

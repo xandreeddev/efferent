@@ -1,136 +1,199 @@
 ---
-title: Evals — calibrations and journeys
-description: One declarative value per calibration, journeys over booted applications, shared evaluators and judges, gates and reports.
+title: Evaluation domain and adapters
+description: Tasks, trials, graders, suites, app environments, local Node CLI and portable export.
 ---
 
-`@xandreed/evals` runs two kinds of eval. A **calibration** runs one subject under
-test (a port, an adapter, a prompt, a judge) over a labelled dataset for every
-candidate. A **journey** runs an ordered conversation over a booted application
-and scores each turn. Both produce the same trials, bind the same evaluators and
-judges, persist through the same store and compare with the same fingerprints.
-The application owns the datasets, subjects, candidates, evaluators and policy;
-the library runs them and reports. It keeps no registry of its own.
+The evaluation packages run typed functions, retrievers and agents without depending on an agent runtime or an observability provider. Applications own their schemas, execution adapters, environment lifecycle, evidence projections, model selection and budgets. Local reports are the source of truth.
 
-## A calibration is one value
+The task, trial, grader, transcript, outcome and suite vocabulary follows [Anthropic's evaluation definitions](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents). A runnable is the versioned execution target bound to a task. A calibration evaluates a grader's agreement with labels; comparing application prompts or models is an ordinary suite.
+
+## Package boundaries
+
+```text
+packages/
+  evals/src/
+    domain/          # Schema entities and pure rules
+    contracts/       # typed execution and application registration
+    ports/           # durable storage and export services
+    usecases/        # scoped execution, grading, calibration
+    graders/retrieval/
+  evals-cli/src/
+    adapters/        # atomic filesystem storage
+    cli.adapter.ts   # commands and local report operations
+    config-loader.adapter.ts
+    main.ts          # Node entrypoint
+  evals-langfuse/src/ # official SDK export adapter
+  evals-langsmith/src/# official SDK export adapter
+```
+
+The core has no agent SDK, Docker, browser, database or provider client dependency. The CLI and exporters are Node 24 packages. An app can use the core runner without the CLI or register its own exporter without changing the domain.
+
+## Entities and their relationships
+
+| Entity | What it records |
+| --- | --- |
+| Task | Input, separate reference, dataset/version/split/review, grader bindings and provenance |
+| Candidate | Configuration and fingerprints of the subject under test |
+| Runnable | Identity and version of an execution target |
+| Journey | Fixture and ordered actions; action codecs belong to the app |
+| Trial | One task/candidate/sample attempt, timestamps, status, output, full evidence, transcript, outcome and grades |
+| Transcript | Ordered durable events, including intermediate tool work and failures |
+| Outcome | State observed through the environment after execution |
+| Grader | Versioned code, model or human grading definition and declared metrics |
+| GradingContext | Schema-encoded app projection, references, omissions, UTF-8 size and fingerprint |
+| Grade | Score or an explicit unavailable/error/pending/skipped result, plus its exact context and usage |
+| Suite | Tasks, candidates, repetitions, concurrency, deadlines, purpose and gates |
+| Calibration | Grader being evaluated and the suite measuring its agreement |
+| EvaluationRun | Trial evidence, gate findings, failures and run provenance |
+| ReviewBundle | Explicit labelled approvals bound to fingerprints of captured evidence |
+
+Inputs and references travel on different paths. `RunnableExecution.execute` receives the task input, candidate and environment; it reads the trial-scoped `TrialRecorder` port. It never receives the reference or task declaration. The app projection receives the captured trial and reference afterwards. This prevents the harness from leaking labels; an app must also keep them out of its fixtures and closures.
+
+## Eval ports and app layers
+
+The eval package defines `RunnableExecution<I,O,E,W>` and `EvaluationEnvironment<I,W>`
+contracts. Each application specializes them as concrete `Context.Service` ports, implemented
+with Layers. Input, output, evidence and live world types are explicit. Factory helpers
+`runnableExecutionPort` and `evaluationEnvironmentPort` create typed services for generic
+suite declarations; apps may declare named service classes directly.
+
+`defineRunnable` binds the specific execution Layer to its compatible environment Layers and
+input/output/evidence schemas. TypeScript rejects mismatched input or world types. Each
+runnable registration owns its allowed named environments. The binding implements
+`TrialExecution`, the portable runtime port: its input and captured results use `Schema.Json`,
+the recursive JSON value union. The adapter decodes input before opening the environment,
+then encodes output and evidence with their declared schemas and normalizes portable JSON
+using the persistence serialization rules. Absent diagnostic fields are omitted; serialized
+model requests remain exact strings. No live world or environment cast
+crosses into the shared harness. A task input can be a discriminated union, such as separate
+information-search and image-search requests.
+
+`EvaluationServicesLive(app)` selects a bound registration and builds fresh services within
+the trial scope. Use cases request these through `EvaluationServices` and call the resolved
+ports; they construct no Layers. Every trial has independent resources and a recorder.
+Grading constructs only `EvidenceProjector` and `GraderAssessment`, so it acquires no
+execution/environment services. Optional exporters implement `EvaluationExport`.
+
+The CLI provides the resolver and local store. Programmatic consumers provide both
+`EvaluationServicesLive(app)` and an `EvaluationRunStore` implementation to `runEvaluation`
+or `gradeEvaluation`.
+
+## Typed runnable boundary
+
+`defineGraderCalibration` reuses an app's registered grader as its subject. The app supplies
+the typed input codec and controlled labelled cases. Execution saves the original grading
+context and verdict; a separate agreement grade checks the expected status and metrics,
+including unavailable evidence, false passes and false failures. Regrading those observations
+does not call the subject. Rerun the calibration to test a changed target grader implementation.
+Native gates require exactly one measurement per bound scope, and validation rejects duplicate
+scopes, unbound gates and families leaking across dataset splits.
 
 ```ts
-import { Effect, Schema } from "effect"
-import { defineCalibration, runCalibration } from "@xandreed/evals"
+const TextRunnable = runnableExecutionPort<
+  string, string, { readonly length: number }, { readonly prefix: string }
+>("text-function")
+const TextEnvironment = evaluationEnvironmentPort<
+  string, { readonly prefix: string }
+>("text-function")
 
-export const localeCalibration = defineCalibration({
-  id: "message-locale",
-  version: "3",
-  dataset: localeDataset,                       // typed inputs, labels, fixed splits
-  candidate: Schema.Struct({ id: Schema.String, model: Schema.String }),
-  candidates: [{ id: "small", model: "vendor/small" }, { id: "large", model: "vendor/large" }],
-  subject: {
-    task: (input) => resolveLocale(input.text),   // sees the input only
-    services: (candidate) => LocaleLive(candidate.model), // fresh for every case
-    fingerprints: { prompt: "locale-v3" },
-  },
-  output: LocaleDecision,
-  evidence: LocaleDecision,
-  evaluators: [{ evaluator: localeContract, select: ["locale", "fallback"] }],
-  gates: [
-    { evaluator: "locale.contract", metric: "locale", aggregate: "mean", minimum: 0.95, mode: "blocking" },
-    { evaluator: "locale.contract", metric: "fallback", aggregate: "mean", maximum: 0, mode: "blocking" },
-  ],
-  select: (summaries) => summaries.filter((summary) => summary.passed),
-  run: { repetitions: 3, concurrency: 1, timeoutMs: 90_000 },
+const registration = defineRunnable({
+  definition: { id: EvalId.make("text-function"), version: "1", description: "Text function", fingerprints: {} },
+  input: Schema.String,
+  output: Schema.String,
+  evidence: Schema.Struct({ length: Schema.Number }),
+  runnable: TextRunnable,
+  environment: TextEnvironment,
+  layer: Layer.succeed(TextRunnable, {
+    execute: (input, candidate, world) => Effect.succeed({
+      output: world.prefix + input, evidence: { length: input.length }
+    })
+  }),
+  environments: [{ id: "memory", layer: Layer.succeed(TextEnvironment, {
+    open: () => Effect.succeed({ prefix: "hello " }),
+    inspect: (world) => Effect.succeed({ state: world, references: [] })
+  }) }]
 })
-
-const report = runCalibration(localeCalibration, { runId: "2026-10-02", split: "calibration" })
 ```
 
-The dataset keeps `calibration` and `validation` splits apart and marks labels
-`known`, `reviewed` or `provisional`. The subject's `task` never receives the
-reference; its `services(candidate)` Layer is rebuilt for every case so counters,
-budgets and clients never leak between cases. Candidates are decoded strictly
-from files (`decodeCandidates`). Gates aggregate one metric per candidate
-(`mean` or `passRate`, with `minimum`/`maximum`); diagnostic gates are reported,
-never enforced. `judgeCalibration` pairs reference labels with the subject's
-metrics so `summarizeCalibration` can report agreement, Brier error and
-false-pass/false-fail rates: that is how a judge is calibrated. `select` is the
-host's policy; without it there is no recommendation, and the library never
-ranks or promotes on its own.
+`EvaluationEnvironment.open` acquires a fresh scoped world. `inspect` observes its resulting state. Acquire resources with `Effect.acquireRelease`; the scope closes after success, failure or timeout. A function evaluation may use a small in-process world; a stateful agent may inspect database records or filesystem changes. Docker is one possible app-owned environment.
 
-A run returns a `CalibrationReport`: identity fingerprints (calibration, dataset,
-evaluators, subject, candidates), every trial, per-candidate metrics, gates,
-performance and judge calibration, failures, the recommendation and whether it
-is promotion eligible (every blocking gate passed, reviewed labels, no failures).
-`calibrationMarkdown` renders it; `comparisonIssues` refuses to compare reports
-whose identity, case sets or coverage differ.
+`TrialRecorder.record` persists each transcript event during execution. If a target fails, the earlier events remain. The runner persists the terminal execution before grading and each completed grade independently. A grading failure does not erase the target's evidence.
 
-## Keyed scores and declared completeness
+## Evidence projection
 
-Typed metrics retain their kind and range. Each metric may supply its own
-`comment`; `evaluationScores(result)` returns `{ key, score, comment }` rows for
-scored results, using the assessment reason as a compatibility fallback. Error,
-unavailable and skipped results produce no numeric rows.
+Each grader binding chooses versioned `EvidenceProjection` metadata and a scope. The app implements the `EvidenceProjector` port; its `project(trial, task, scope)` returns a `GradingContext`. The app selects facts, conversation turns, tool results or outcome fields relevant to that criterion. Avoid sending every model request and every tool schema to a judge.
 
-`assessCompleteness(evidence, actions)` validates one label for each declared
-customer action, valid tool/evidence references, and explanations for every
-partial or missing action. Code calculates `(matched + 0.5 * partial) / total`.
-An empty applicable action set is unavailable. The generated comment includes
-every action and its attributed invocation and step.
+`gradingContext` encodes the selected schema, measures UTF-8 JSON bytes, adds the reserved rubric/response allowance and rejects over-budget required context as unavailable. It never truncates automatically. The app records optional omissions explicitly and keeps full evidence in the trial. The fingerprint covers the projection identity/version, input and budget. A judge cache also needs grader, rubric, schema, model and settings identity; the context fingerprint alone is insufficient.
 
-```ts
-import { assessCompleteness } from "@xandreed/evals"
+## Local CLI
 
-const assessment = assessCompleteness({
-  required: [
-    { id: "opening", description: "State the opening time." },
-    { id: "directions", description: "Explain how to reach the office." },
-  ],
-  tools: [{ name: "read_office", invocationId: "call-1", stepId: "step-1" }],
-  evidenceRefs: ["office-hours", "delivered-answer"],
-}, [
-  { actionId: "opening", status: "matched", tools: [
-    { name: "read_office", invocationId: "call-1", stepId: "step-1" },
-  ], evidenceRefs: ["office-hours", "delivered-answer"], reason: "09:00 is stated." },
-  { actionId: "directions", status: "missing", tools: [],
-    evidenceRefs: ["delivered-answer"], reason: "No directions were delivered." },
-]) // Effect<Assessment, AssessmentError>; completeness = 0.5
+```sh
+efferent-eval list --config eval.config.ts
+efferent-eval validate --config eval.config.ts
+efferent-eval run function-contract --config eval.config.ts --split validation --directory .eval-results/run-1
+efferent-eval calibrate grader-agreement --config eval.config.ts --repetitions 2
+efferent-eval inspect --report .eval-results/run-1/report.json
+efferent-eval compare --baseline baseline.json --candidate-report candidate.json
+efferent-eval run function-contract --config eval.config.ts --execute-only --directory .eval-results/capture
+efferent-eval grade --config eval.config.ts --from .eval-results/capture/execution.json --directory .eval-results/grades-1
+efferent-eval review --config eval.config.ts --report report.json --directory .eval-results/review
 ```
 
-## Projections and registration
+`inspect` and `compare` work without loading app configuration. `list`, `validate` and `estimate` require declarations only; resource acquisition belongs to environment/runnable execution. An async default configuration factory can inspect command arguments without acquiring execution resources. Apps register extensions for domain-specific cost estimation or plan selection.
 
-`projectEvaluatorInput(evaluator, project)` adapts a narrow evaluator to a larger
-run bundle. For example, a helpfulness evaluator can receive only the request
-and delivered answer while an execution evaluator receives tool definitions,
-calls and step snapshots. The framework never fetches a tracing vendor's data.
-The host owns capture, authorization, storage and optional telemetry export.
+`run` defaults to the validation split; `calibrate` defaults to calibration. Use `--split all`
+when a declared suite intentionally crosses both. `--task`, `--candidate`, `--repetitions`,
+`--concurrency` and `--timeout-ms` select and bound execution.
 
-`evaluatorRegistry(entries)` validates unique `id@version` keys and returns a
-checked resolver. Each entry records an evaluator, projection version, prompt
-hash and effective settings. Journeys bind judges by `id@version` from this
-registry; a calibration of the judge itself uses the same resolved evaluator as
-its subject, so a calibration result applies to exactly the judge the journeys
-run.
+Execution writes `execution.json` before any grader runs. `--execute-only` stops there.
+`grade --from execution.json` projects and grades saved work with the registered graders,
+creates new run/trial identities, records source execution provenance and writes a separate
+`report.json`. It never opens an execution environment. Use `--grader id` for a subset and a
+fresh directory for each revision. Required projection context has a deadline as well as a
+byte budget. Incomplete execution cannot pass a gate even if a grader returns a score.
 
-## Journey selection and step evidence
+Reviews start unapproved; `review --import review.json` requires unchanged evidence
+fingerprints and named approvals with rationales, and writes approved records separately.
+Applying labels to an app's dataset remains an app-owned, versioned operation.
 
-Journey expectations accept `maxAgentSteps`, `requiredToolArguments` and
-`requiredActions`. Missing measured steps fail an explicitly declared ceiling.
-Journeys can declare `coverage: { tools, recipes }` and versioned evaluator
-bindings with turn/journey scope; hosts execute those bindings against their own
-appropriate evidence projections.
+Writes use a temporary file followed by atomic rename; each trial and grade is durable as
+it completes. Blocking gate failure exits with status 2. Missing measurements are unavailable.
+Remote export does not change the local execution or grade revision.
 
-`selectJourneys(corpus, { tiers, tools, recipes, ids })` selects whole journeys
-from declared coverage and expected required/forbidden calls, never from observed
-execution. Values within one selector are OR; selector kinds are AND. Unknown
-selectors and empty results fail. Numeric tiers 0–3 are supported;
-`journeyTier` maps historical blocking/quality/exploratory to 0/1/2.
+## Export
 
-The agent loop emits `turn_end` with completed/failed/cancelled status, paired
-with `turn_start`. `CurrentAgentStep` is a fiber-local optional step index,
-inherited by model and parallel tool effects. Hosts can correlate provider
-attempts and tool executions without a mutable global counter or an additional
-LLM call. Capture duration using a monotonic clock; a fixed scenario date is not
-an elapsed-time measurement. Absent usage or observations remain unavailable.
+```sh
+efferent-eval export --config eval.config.ts --report report.json --exporter langfuse,langsmith
+efferent-eval run function-contract --config eval.config.ts --exporter langsmith
+```
 
-## Deprecated: scenario packs
+Register `langfuseExporter(options)` or `langsmithExporter(options)` in the app's `exporters`. Clients are constructed only when exporting. Stable remote IDs map back to local trial IDs and metric identities. Both adapters use the provider's official SDK. Langfuse receives traces and numeric scores; LangSmith receives project runs and feedback. Full encoded trial metadata retains unavailable grades, context, usage and provenance.
 
-`packages/scenarios` holds this repository's reference-application packs on a
-frozen copy of the retired Pack/Scenario runner. They still run in CI
-(`bun run scenarios`) and will be adapted to calibrations and journeys.
+Export after a run is best-effort and produces separate receipts/errors after the local report is durable. The explicit export command can retry a saved report. Live application telemetry is a separate concern and is not reconfigured by evaluation export.
+
+## Retrieval grading
+
+`rankingMetrics` provides hit rate, precision, recall, MRR, nDCG, anchor nDCG and unjudged/duplicate counts. Unknown relevance makes judged precision/full nDCG unavailable. Anchor nDCG deliberately measures against the known positive anchors and must be named as such. Applications may supply observed relevance grades when they own a stronger duplicate identity rule.
+
+`semanticRetrievalGraders(judge)` provides contextual precision over ranked passages, contextual recall over expected claims and contextual relevancy over statements. Apps project documents, sentence units and claims, bind their judge model and cost guard, and preserve the verdicts. Missing or duplicate verdict IDs fail validation. Empty required units are unavailable. The definitions are informed by DeepEval's [precision](https://deepeval.com/docs/metrics-contextual-precision), [recall](https://deepeval.com/docs/metrics-contextual-recall) and [relevancy](https://deepeval.com/docs/metrics-contextual-relevancy) metrics; no Python runtime is required. Answer faithfulness and answer relevance are separate answer graders.
+
+## Migration
+
+The previous calibration/journey execution APIs and `rescore` / `rejudge` command aliases
+are removed. The public package exports the native domain and its pure grading helpers;
+`./stats` remains a separate entrypoint. There is no historical report importer. Existing
+historical artifacts can remain on disk while new runs use the native schema.
+
+## Agent plugins and captured context
+
+An application composes its agent plugins independently of its `EvaluationApp` registry.
+Memory plugins maintain and render model context from a session log; tool discovery provides
+active tool definitions. An app model adapter captures the serialized request after those
+steps and any provider-specific transformations, then the runnable copies capture into the
+portable execution. Final database state is useful as an independent outcome but cannot
+reproduce what an earlier model call saw.
+
+A projection reads saved capture, not current memory or live storage. Another app supplies
+its own environment, runnable, evidence codecs and projections while reusing this domain,
+CLI, retrieval graders and optional export adapters. To test a changed memory plugin, execute
+again. To test a changed rubric or projection, grade the same saved execution again.

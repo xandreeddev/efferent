@@ -1,0 +1,6 @@
+{
+  "name": "@xandreed/evals-cli", "version": "0.10.0-next.0", "type": "module",
+  "main": "./src/index.ts", "exports": {".": "./src/index.ts", "./*": "./src/*.ts"},
+  "bin": {"efferent-eval": "./src/main.ts"},
+  "dependencies": {"@xandreed/evals": "workspace:*", "effect": "4.0.0-rc.118", "tsx": "4.23.13"}
+}

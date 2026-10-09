@@ -1,6 +1,6 @@
 import { Effect, Match, Option, Schema } from "effect"
-import { AssessmentError, Metric, type EvaluationResult, type EvaluationTrial } from "./assessment.entity.js"
-import type { Dataset, Gate, GateResult } from "./assessment.usecase.js"
+import { AssessmentError, Metric, type EvaluationResult } from "./assessment.entity.js"
+import type { Dataset } from "./assessment.usecase.js"
 
 export const validateDataset = <I, Ref>(dataset: Dataset<I, Ref>) => Effect.gen(function* () {
   const ids = dataset.cases.map((item) => item.id)
@@ -33,17 +33,6 @@ export const numericMetric = (metric: Metric): Option.Option<number> => Match.va
   Match.when({ kind: "preference" }, () => Option.none()),
   Match.exhaustive,
 )
-
-export const evaluateGates = (trial: EvaluationTrial, gates: ReadonlyArray<Gate>): GateResult => {
-  const findings = gates.filter((gate) => gate.mode === "blocking").flatMap((gate) => {
-    if (gate.requiresReviewedReference && trial.review === "provisional") return [`${gate.evaluator}/${gate.metric}: reference label needs review`]
-    const result = trial.evaluations.find((value) => value.evaluator === gate.evaluator)
-    const metric = result?.metrics.find((value) => value.name === gate.metric)
-    const score = result?.status === "scored" && metric ? numericMetric(metric) : Option.none()
-    return Option.isSome(score) && score.value >= gate.minimum ? [] : [`${gate.evaluator}/${gate.metric}: missing assessment or below ${gate.minimum}`]
-  })
-  return { passed: trial.status === "completed" && findings.length === 0, findings }
-}
 
 export const summarizeAssessments = (results: ReadonlyArray<EvaluationResult>) => ({
   total: results.length,
