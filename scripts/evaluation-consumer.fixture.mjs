@@ -21,7 +21,10 @@ import { evaluationCli } from "@xandreed/evals-cli"
 import { langfuseExporter } from "@xandreed/evals-langfuse"
 import { langsmithExporter } from "@xandreed/evals-langsmith"
 
-if (Number(process.versions.node.split(".")[0]) < 24) process.exit(1)
+if (Number(process.versions.node.split(".")[0]) < 24) {
+  console.error(`Evaluation consumers require Node 24; received ${process.versions.node}.`)
+  process.exit(1)
+}
 const directory = await mkdtemp(join(process.cwd(), "evals-node-"))
 const Runnable = runnableExecutionPort("consumer")
 const Environment = evaluationEnvironmentPort("consumer")
