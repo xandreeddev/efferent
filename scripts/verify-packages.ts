@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 const root = join(import.meta.dir, "..")
-/** The consumer installs the Effect the packages were built against. */
-const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { readonly dependencies: { readonly effect: string } }
+/** Keep the consumer on the same Effect/platform ABI as the build. */
+const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { readonly dependencies: { readonly effect: string }; readonly overrides: Readonly<Record<string, string>> }
 const packages = join(root, ".artifacts/packages")
 const tarballs = join(root, ".artifacts/tarballs")
 await mkdir(tarballs, { recursive: true })
@@ -29,7 +29,7 @@ const registry: Bun.Server<undefined> = Bun.serve({ hostname: "127.0.0.1", port:
   return Response.json({ name: manifest.name, "dist-tags": { latest: manifest.version }, versions: { [manifest.version]: { ...manifest, dist: { shasum: artifact.shasum, tarball: `http://127.0.0.1:${registry.port}/${manifest.name}/artifact.tgz` } } } })
 } })
 await writeFile(join(consumer, "bunfig.toml"), `[install.scopes]\n"@xandreed" = { url = "http://127.0.0.1:${registry.port}" }\n`)
-await writeFile(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: { ...Object.fromEntries(artifacts.map(({manifest}) => [manifest.name,manifest.version])), effect: rootManifest.dependencies.effect, "@types/bun": "1.3.14" } }))
+await writeFile(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", overrides: rootManifest.overrides, dependencies: { ...Object.fromEntries(artifacts.map(({manifest}) => [manifest.name,manifest.version])), effect: rootManifest.dependencies.effect, "@types/bun": "1.3.14" } }))
 console.log(`Installing from temporary local registry into ${consumer}`)
 const install = Bun.spawn(["bun", "install", "--ignore-scripts", "--no-cache", "--cache-dir", join(consumer, ".install-cache")], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await install.exited !== 0) process.exit(1)

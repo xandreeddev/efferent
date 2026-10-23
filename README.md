@@ -138,6 +138,14 @@ The consumer check installs local tarballs outside the monorepo, then executes
 an external loop plugin, durable sessions, a fork, a calibration, versioned prompts
 with a checked decision, a SQLite session log with a background task, and CLI
 startup.
+
+The current prerelease builds use Effect `4.0.0-rc.118`. Keep
+`@effect/platform-node-shared` on that same version through the root `overrides`
+in `package.json`: the platform adapter's caret range also admits newer stable
+releases with a different Effect ABI. The isolated consumer copies those overrides
+so it verifies the dependency versions used by the build. Applications using these
+prerelease artifacts should retain the same Effect/platform alignment.
+
 `@xandreed/core`, `@xandreed/evals`, `@xandreed/runtime`, `@xandreed/sdk`, and
 all nine `@xandreed/plugin-*` packages are published as `0.4.0` under npm's
 `latest` tag. Install evals with `npm install @xandreed/evals`, or install the
