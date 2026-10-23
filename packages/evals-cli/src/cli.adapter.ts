@@ -8,7 +8,14 @@ import {
   EvalId,
   runEvaluation,
   calibrateGrader,
+  calibrationApplication,
   gradeEvaluation,
+  ComparisonReport,
+  ComparisonSide,
+  compareEvaluations,
+  comparisonPreflight,
+  validateComparisonSpecification,
+  type ComparisonExecution,
   comparisonIssues,
   validateEvaluationApp,
   ReviewBundle,
@@ -24,7 +31,9 @@ import {
   EvaluationRunStoreFsLive,
   fileIo,
   readRun,
-  writeJson
+  writeJson,
+  readComparisonSpecification,
+  writeComparisonSpecification
 } from "./adapters/evaluation-store.fs.adapter.js"
 import { loadEvaluationApp } from "./config-loader.adapter.js"
 
@@ -48,13 +57,28 @@ export const cliArguments = (args: ReadonlyArray<string>) => ({
       : args.findIndex((item, index) => index > 0 && item.startsWith("--"))
   )
 })
+/** Shared selection parsing for app admission checks. It acquires no resources and supplies no comparison defaults. */
+export const evaluationSelection = (args: ReadonlyArray<string>): EvaluationSelection => {
+  const line = cliArguments(args)
+  return {
+    ids: line.ids,
+    tasks: line.value("--task", "").split(",").filter(Boolean),
+    executeOnly: line.has("--execute-only"),
+    candidates: line.value("--candidate", "").split(",").filter(Boolean),
+    split: line.value("--split", line.command === "calibrate" ? "calibration" : "validation"),
+    ...(line.has("--repetitions") ? { repetitions: Number(line.value("--repetitions", "1")) } : {}),
+    ...(line.has("--concurrency") ? { concurrency: Number(line.value("--concurrency", "1")) } : {}),
+    ...(line.has("--timeout-ms") ? { timeoutMs: Number(line.value("--timeout-ms", "60000")) } : {}),
+    ...(line.has("--environment") ? { environment: line.value("--environment", "") } : {}),
+  }
+}
 const help =
-  "efferent-eval <list|validate|estimate|run|calibrate|grade|inspect|compare|review|export> [ids] --config eval.config.ts [--directory dir] [--split calibration|validation] [--repetitions n] [--environment id] [--task id] [--execute-only] [--exporter langfuse,langsmith]\nGrade captured work: grade --from execution.json [--grader id] --directory revision\nLocal reports are authoritative. Remote export is opt-in. App configurations may register additional commands."
+  "efferent-eval <list|validate|estimate|run|calibrate|grade|inspect|compare|review|export> [ids] --config eval.config.ts [--directory dir] [--split name] [--repetitions n] [--environment id] [--task id] [--execute-only] [--exporter langfuse,langsmith]\nProspective comparison: run|calibrate|validate [ids] --spec specification.json --side baseline|candidate [explicit selectors]\nCompare: compare --baseline baseline/report.json --candidate-report candidate/report.json [--spec specification.json]\nGrade captured work: grade --from execution.json [--grader id] --directory revision\nLocal reports are authoritative. Remote export is opt-in. App configurations may register additional commands."
 const requireFreshDirectory = (directory: string) =>
   fileIo(() => mkdir(directory, { recursive: true })).pipe(
     Effect.andThen(fileIo(() => readdir(directory))),
     Effect.flatMap((names) =>
-      names.some((name) => name === "execution.json" || name === "report.json")
+      names.some((name) => name === "execution.json" || name === "report.json" || name === "comparison-spec.json")
         ? Effect.fail(
             new EvaluationError({
               code: "invalid",
@@ -81,6 +105,8 @@ export const evaluationCli = (
       output(help)
       return 0
     }
+    if ((line.has("--spec") && !["run", "calibrate", "validate", "compare"].includes(line.command)) || (line.has("--side") && (!line.has("--spec") || line.command === "compare")))
+      return yield* Effect.fail(new EvaluationError({ code: "invalid", message: "--spec requires run, calibrate, validate or compare; --side requires a prospective run/validation, never grade or compare" }))
     if (line.command === "inspect") {
       const run = yield* readRun(line.value("--report", line.ids[0] ?? ""))
       output(
@@ -114,6 +140,13 @@ export const evaluationCli = (
     if (line.command === "compare") {
       const baseline = yield* readRun(line.value("--baseline", ""))
       const candidate = yield* readRun(line.value("--candidate-report", ""))
+      if (line.has("--spec")) {
+        const spec = yield* readComparisonSpecification(line.value("--spec", "")).pipe(Effect.flatMap(validateComparisonSpecification))
+        const report = compareEvaluations(baseline, candidate, spec)
+        const encoded = yield* Schema.encodeEffect(ComparisonReport)(report).pipe(Effect.mapError((error) => new EvaluationError({ code: "invalid", message: String(error) })))
+        output(encoded)
+        return report.accepted ? 0 : 2
+      }
       const issues = comparisonIssues(baseline, candidate)
       output({
         issues,
@@ -137,6 +170,11 @@ export const evaluationCli = (
       output(result)
       return typeof result === "number" ? result : 0
     }
+    const comparison: Option.Option<ComparisonExecution> = line.has("--spec") ? Option.some({
+      specification: yield* readComparisonSpecification(line.value("--spec", "")).pipe(Effect.flatMap(validateComparisonSpecification)),
+      side: yield* Schema.decodeUnknownEffect(ComparisonSide)(line.value("--side", "")).pipe(Effect.mapError(() => new EvaluationError({ code: "invalid", message: "--spec requires --side baseline|candidate" }))),
+    }) : Option.none()
+    const selection: EvaluationSelection = { ...evaluationSelection(args), ...Option.match(comparison, { onNone: () => ({}), onSome: (value) => ({ comparison: value }) }) }
     if (line.command === "list") {
       output({
         application: app.id,
@@ -158,6 +196,11 @@ export const evaluationCli = (
     }
     if (line.command === "validate") {
       yield* validateEvaluationApp(app)
+      if (Option.isSome(comparison)) {
+        const configured = line.ids.length === 1 && app.calibrations.some((entry) => entry.id === line.ids[0])
+          ? yield* calibrationApplication(app, line.ids[0]!) : app
+        yield* comparisonPreflight(configured, selection, comparison.value)
+      }
       output({ application: app.id, valid: true })
       return 0
     }
@@ -274,28 +317,6 @@ export const evaluationCli = (
         ? 2
         : 0
     }
-    const selection: EvaluationSelection = {
-      ids: line.ids,
-      tasks: line.value("--task", "").split(",").filter(Boolean),
-      executeOnly: line.has("--execute-only"),
-      candidates: line.value("--candidate", "").split(",").filter(Boolean),
-      split: line.value(
-        "--split",
-        line.command === "calibrate" ? "calibration" : "validation"
-      ),
-      ...(line.has("--repetitions")
-        ? { repetitions: Number(line.value("--repetitions", "1")) }
-        : {}),
-      ...(line.has("--concurrency")
-        ? { concurrency: Number(line.value("--concurrency", "1")) }
-        : {}),
-      ...(line.has("--timeout-ms")
-        ? { timeoutMs: Number(line.value("--timeout-ms", "60000")) }
-        : {}),
-      ...(line.has("--environment")
-        ? { environment: line.value("--environment", "") }
-        : {})
-    }
     if (!["run", "calibrate"].includes(line.command))
       return yield* Effect.fail(
         new EvaluationError({
@@ -304,6 +325,7 @@ export const evaluationCli = (
         })
       )
     yield* requireFreshDirectory(directory)
+    if (Option.isSome(comparison)) yield* writeComparisonSpecification(directory, comparison.value.specification)
     const run = yield* (
       line.command === "calibrate"
         ? calibrateGrader(app, line.ids[0] ?? "", randomUUID(), selection)

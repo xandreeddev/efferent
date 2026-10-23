@@ -3,7 +3,13 @@ import { EvalId, Version, Fingerprints } from "./identity.entity.js"
 import { Metric, EvaluationUsage } from "../assessment.entity.js"
 import { GradingContext } from "./grading-context.entity.js"
 
-export const Grader = Schema.Struct({ id: EvalId, version: Version, kind: Schema.Literals(["code", "model", "human"]), metrics: Schema.Array(Schema.NonEmptyString), fingerprints: Fingerprints })
+export const Grader = Schema.Struct({
+  id: EvalId, version: Version, kind: Schema.Literals(["code", "model", "human"]),
+  metrics: Schema.Array(Schema.NonEmptyString),
+  /** Declared metrics that may be inapplicable to an observation. Omitted means none are optional. */
+  optionalMetrics: Schema.optionalKey(Schema.Array(Schema.NonEmptyString)),
+  fingerprints: Fingerprints,
+})
 export type Grader = typeof Grader.Type
 export const Grade = Schema.Struct({
   grader: Schema.String, version: Version, scope: Schema.String, status: Schema.Literals(["scored", "error", "unavailable", "pending", "skipped"]),

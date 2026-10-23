@@ -4,6 +4,7 @@ import type { Runnable } from "../domain/runnable.entity.js"
 import type { Grader } from "../domain/grader.entity.js"
 import type { Calibration } from "../domain/calibration.entity.js"
 import type { EvaluationError } from "../domain/identity.entity.js"
+import type { ComparisonExecution } from "../domain/comparison-specification.entity.js"
 
 import type { EvidenceProjection } from "../domain/evidence-projection.entity.js"
 import type { TrialExecution } from "../ports/trial-execution.port.js"
@@ -50,6 +51,7 @@ export interface EvaluationApp {
   >
 }
 export interface EvaluationSelection {
+  readonly comparison?: ComparisonExecution
   readonly ids: ReadonlyArray<string>
   readonly split: string
   readonly repetitions?: number

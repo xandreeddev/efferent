@@ -14,12 +14,16 @@ export const validateDataset = <I, Ref>(dataset: Dataset<I, Ref>) => Effect.gen(
   return dataset
 })
 
-export const validateMetrics = (metrics: ReadonlyArray<Metric>, expected: ReadonlyArray<string>) =>
+export const metricDeclarationIsValid = (expected: ReadonlyArray<string>, optional: ReadonlyArray<string> = []): boolean =>
+  new Set(expected).size === expected.length && expected.every((name) => name.trim().length > 0) &&
+  new Set(optional).size === optional.length && optional.every((name) => expected.includes(name))
+
+export const validateMetrics = (metrics: ReadonlyArray<Metric>, expected: ReadonlyArray<string>, optional: ReadonlyArray<string> = []) =>
   Schema.decodeEffect(Schema.toType(Schema.Array(Metric)))(metrics).pipe(
     Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) })),
     Effect.flatMap((values) => {
       const names = values.map((metric) => metric.name)
-      return new Set(names).size !== names.length || expected.some((name) => !names.includes(name)) || names.some((name) => !expected.includes(name)) ||
+      return !metricDeclarationIsValid(expected, optional) || new Set(names).size !== names.length || expected.some((name) => !optional.includes(name) && !names.includes(name)) || names.some((name) => !expected.includes(name)) ||
         values.some((metric) => metric.kind === "score" && (metric.min >= metric.max || metric.value < metric.min || metric.value > metric.max))
         ? Effect.fail(new AssessmentError({ code: "invalid", message: "Evaluator returned missing, duplicate, unexpected or out-of-range metrics" }))
         : Effect.succeed(values)

@@ -4,6 +4,8 @@ import {
   defineGraderCalibration, defineEvaluationApp, EvalId, GraderAssessment, EvaluationError,
   EvaluationServicesLive, EvaluationRunStore, runEvaluation, gradeEvaluation, executionFingerprint,
   runGates, validateEvaluationApp, unknownEvaluationUsage, calibrateGrader, CalibrationReference, CalibrationObservation,
+  calibrationApplication, comparisonGradingFingerprint, comparisonPreflight, comparisonTaskFingerprint,
+  comparisonGateDefinitions, comparisonExecutionSettings, type ComparisonSpecification,
 } from "../index.js"
 import { fixture } from "./fixture.testing.js"
 
@@ -73,4 +75,31 @@ test("validation rejects unbound gates, duplicate scopes and family leakage", as
     { ...suite, tasks: [{ ...task, graders: [task.graders[0]!, task.graders[0]!] }] },
     { ...suite, tasks: [task, { ...task, id: EvalId.make("other"), split: "calibration" }] },
   ].map(async (invalid) => expect(await Effect.runPromise(validateEvaluationApp({ ...base, suites: [invalid] }).pipe(Effect.isFailure))).toBe(true)))
+})
+
+test("a target grader revision can be compared while its labels and agreement grader remain fixed", async () => {
+  const changed = defineGraderCalibration({ id: "calibration", version: "1", description: "Evidence boundary", input: Input,
+    grader: { ...target, definition: { ...target.definition, version: "2", fingerprints: { prompt: "revised" } } },
+    cases: calibration.calibration.suite.tasks.map((task) => ({ ...task, split: task.split === "calibration" ? "calibration" as const : "validation" as const,
+      input: Schema.decodeUnknownSync(Schema.toCodecJson(Input))(task.input), reference: Schema.decodeUnknownSync(CalibrationReference)(task.reference),
+    })),
+  })
+  const changedApp = { ...app, calibrations: [changed.calibration], runnables: [changed.runnable], graders: changed.graders, projections: changed.projections }
+  const [before, after] = await Effect.runPromise(Effect.all([calibrationApplication(app, "calibration"), calibrationApplication(changedApp, "calibration")]))
+  expect(comparisonGradingFingerprint(before)).toBe(comparisonGradingFingerprint(after))
+  const selection = { ids: ["calibration"], split: "all" }
+  const spec: ComparisonSpecification = {
+    version: 1, id: EvalId.make("judge-revision"), application: app.id, hypothesis: "Revised target judge improves agreement.",
+    baseline: { candidate: before.suites[0]!.candidates[0]!, fingerprints: before.fingerprints },
+    candidate: { candidate: after.suites[0]!.candidates[0]!, fingerprints: after.fingerprints },
+    allowedFingerprintChanges: ["calibratedGrader", "calibratedGrader:prompt"],
+    tasks: before.suites[0]!.tasks.map((task) => ({ suiteId: before.suites[0]!.id, taskId: task.id, fingerprint: comparisonTaskFingerprint(task) })),
+    repetitions: 1, execution: comparisonExecutionSettings(before, selection), gradingConfiguration: comparisonGradingFingerprint(before), gates: comparisonGateDefinitions(before.suites),
+    primary: { grader: "calibration.agreement@1", metric: "agreement", direction: "higher" }, minimumImprovement: 0.05,
+    plannedIndependentFamilies: 30, targetPower: 0.8, powerRationale: "Fixture validates wiring, not power; only three families must remain inconclusive.", seed: 1,
+  }
+  expect(await Effect.runPromise(comparisonPreflight(before, selection, { specification: spec, side: "baseline" }).pipe(Effect.isSuccess))).toBe(true)
+  expect(await Effect.runPromise(comparisonPreflight(after, selection, { specification: spec, side: "candidate" }).pipe(Effect.isSuccess))).toBe(true)
+  const run = await Effect.runPromise(calibrateGrader(changedApp, "calibration", "changed", { ...selection, comparison: { specification: spec, side: "candidate" } }).pipe(Effect.provide(Layer.merge(EvaluationServicesLive(changedApp), store))))
+  expect(run.fingerprints.comparisonSide).toBe("candidate")
 })

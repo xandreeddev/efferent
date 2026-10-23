@@ -1,4 +1,5 @@
 import type { Metric } from "../assessment.entity.js"
+import { metricDeclarationIsValid } from "../assessment.entity.functions.js"
 import type { CalibrationObservation, CalibrationReference } from "./grader-calibration.entity.js"
 
 const agrees = (actual: Metric, expected: Metric, tolerance: number): boolean =>
@@ -12,8 +13,10 @@ export const calibrationAgreement = (
   actual: CalibrationObservation,
   reference: CalibrationReference,
   declaredMetrics: ReadonlyArray<string>,
+  optionalMetrics: ReadonlyArray<string> = [],
 ): ReadonlyArray<Metric> => {
-  const valid = new Set(actual.metrics.map((metric) => metric.name)).size === actual.metrics.length &&
+  const valid = metricDeclarationIsValid(declaredMetrics, optionalMetrics) && new Set(actual.metrics.map((metric) => metric.name)).size === actual.metrics.length &&
+    (actual.status !== "scored" || declaredMetrics.every((name) => optionalMetrics.includes(name) || actual.metrics.some((metric) => metric.name === name))) &&
     actual.metrics.every((metric) => declaredMetrics.includes(metric.name) &&
       (metric.kind !== "score" || metric.min < metric.max && metric.value >= metric.min && metric.value <= metric.max))
   const status = actual.status === reference.status

@@ -1,6 +1,7 @@
 import { Effect } from "effect"
 import { EvaluationError } from "../domain/identity.entity.js"
 import type { EvaluationApp } from "./evaluation-app.contract.js"
+import { metricDeclarationIsValid } from "../assessment.entity.functions.js"
 
 export const defineEvaluationApp = (
   application: EvaluationApp
@@ -17,6 +18,7 @@ export const validateEvaluationApp = (app: EvaluationApp) => {
   ]
   const invalid =
     !app.id.trim() ||
+    [...app.graders.map((entry) => entry.definition), ...app.calibrations.map((entry) => entry.grader)].some((grader) => !metricDeclarationIsValid(grader.metrics, grader.optionalMetrics)) ||
     registries.some(
       (entries) =>
         new Set(entries.map((entry) => entry.id)).size !== entries.length

@@ -15,7 +15,9 @@ import {
   EvalId,
   EvaluationRun,
   gradingContext,
-  unknownEvaluationUsage
+  unknownEvaluationUsage,
+  ComparisonSpecification, comparisonTaskFingerprint, comparisonGradingFingerprint,
+  comparisonGateDefinitions, comparisonExecutionSettings
 } from "@xandreed/evals"
 import { evaluationCli } from "@xandreed/evals-cli"
 import { langfuseExporter } from "@xandreed/evals-langfuse"
@@ -204,3 +206,28 @@ if (
 console.log(
   "Node 24 typed function, TS app loading, local CLI and optional exporter imports passed"
 )
+
+const comparisonSpec = {
+  version: 1, id: EvalId.make("consumer-comparison"), application: app.id,
+  hypothesis: "An unchanged function is a wiring control, not an improvement claim.",
+  baseline: { candidate: app.suites[0].candidates[0], fingerprints: app.fingerprints },
+  candidate: { candidate: app.suites[0].candidates[0], fingerprints: app.fingerprints },
+  allowedFingerprintChanges: [],
+  tasks: app.suites[0].tasks.map((task) => ({ suiteId: app.suites[0].id, taskId: task.id, fingerprint: comparisonTaskFingerprint(task) })),
+  repetitions: 1, execution: comparisonExecutionSettings(app, { ids: ["suite"], split: "validation" }),
+  gradingConfiguration: comparisonGradingFingerprint(app), gates: comparisonGateDefinitions(app.suites),
+  primary: { grader: "contract@1", metric: "correct", direction: "higher" }, minimumImprovement: 0.05,
+  plannedIndependentFamilies: 30, targetPower: 0.8, powerRationale: "Single-case wiring control; intentionally inadequate for an improvement claim.", seed: 7,
+}
+const specPath = join(directory, "comparison.json")
+await writeFile(specPath, JSON.stringify(Schema.encodeSync(ComparisonSpecification)(comparisonSpec)))
+await Effect.runPromise(Effect.forEach(["baseline", "candidate"], (side) => evaluationCli([
+  "run", "suite", "--config", config, "--directory", join(directory, side), "--spec", specPath, "--side", side,
+], { output })))
+const comparisonOutputs = []
+const comparisonCode = await Effect.runPromise(evaluationCli([
+  "compare", "--spec", specPath, "--baseline", join(directory, "baseline", "report.json"),
+  "--candidate-report", join(directory, "candidate", "report.json"), "--config", "must-not-load.ts",
+], { output: (value) => comparisonOutputs.push(value) }))
+if (comparisonCode !== 2 || comparisonOutputs[0]?.verdict !== "inconclusive" || comparisonOutputs[0]?.accepted !== false) process.exit(1)
+console.log("Node 24 prospective comparison codecs, frozen execution and provider-free comparison passed")

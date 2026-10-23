@@ -120,6 +120,8 @@ const registration = defineRunnable({
 
 `TrialRecorder.record` persists each transcript event during execution. If a target fails, the earlier events remain. The runner persists the terminal execution before grading and each completed grade independently. A grading failure does not erase the target's evidence.
 
+A grader declares all possible metric names in `metrics`. Its optional `optionalMetrics` is a unique subset of those names; absence means an empty subset. Only those metrics may be omitted when inapplicable. Required omissions, unknown names, duplicates and invalid numeric ranges fail validation. Omitted metrics stay absent: a gate or primary comparison that requires one remains unmeasured. Native grading and target-grader calibration use the same validation before accepting a scored observation, and saved calibration observations are checked against the same required/optional contract during agreement grading. Changing applicability changes grader fingerprints and requires fresh comparison specifications.
+
 ## Evidence projection
 
 Each grader binding chooses versioned `EvidenceProjection` metadata and a scope. The app implements the `EvidenceProjector` port; its `project(trial, task, scope)` returns a `GradingContext`. The app selects facts, conversation turns, tool results or outcome fields relevant to that criterion. Avoid sending every model request and every tool schema to a judge.
@@ -144,6 +146,79 @@ efferent-eval review --config eval.config.ts --report report.json --directory .e
 `grade` runs the app's graders against saved output/evidence and creates a separate report revision without acquiring the subject environment. Reviews start unapproved; `review --import review.json` requires unchanged evidence fingerprints and named approvals with rationales, and writes approved records separately. Applying labels to an app's dataset remains an app-owned, versioned operation.
 
 A run writes `report.json` and individual trial files under `trials/`. Writes use a temporary file followed by atomic rename. Blocking gate failure exits with status 2; missing measurements remain unavailable.
+
+## Prospective comparisons
+
+Ordinary `compare` checks compatibility and displays gates. It does not establish a statistically supported improvement. For a prospective claim, freeze one `ComparisonSpecification` before either execution and pass the same specification to both sides:
+
+```sh
+efferent-eval validate answer-quality --config eval.config.ts --spec comparison.json --side baseline --split holdout --repetitions 3
+efferent-eval run answer-quality --config eval.config.ts --spec comparison.json --side baseline --split holdout --repetitions 3 --directory .eval-results/baseline
+efferent-eval run answer-quality --config revised.config.ts --spec comparison.json --side candidate --split holdout --repetitions 3 --directory .eval-results/candidate
+efferent-eval compare --spec comparison.json --baseline .eval-results/baseline/report.json --candidate-report .eval-results/candidate/report.json
+```
+
+These are ordinary native runs. `--spec` does not choose tasks, candidates, splits or repetition counts: the explicit selection must match the frozen declaration. `validate --spec` is read-only and opens no execution environment. `calibrate --spec --side …` uses the same preflight after resolving the calibration declaration; `validate` also resolves a named calibration. Calibration defaults to the calibration split; `run` and `validate` default to validation. Split names on native tasks are application-defined.
+
+The specification contains:
+
+| Field | Meaning |
+| --- | --- |
+| `version`, `id`, `application`, `hypothesis` | Versioned comparison identity and the claim being tested |
+| `baseline`, `candidate` | Each exact native Candidate and expected application run fingerprints |
+| `allowedFingerprintChanges` | Explicit changed run fingerprint keys; fixture/protocol/assessment changes cannot be allowed |
+| `tasks`, `repetitions` | Suite/task IDs and full task fingerprints, including input, reference, review, family, split and grader bindings; repeated samples per task |
+| `execution` | Each suite's environment bindings, timeout and concurrency |
+| `gradingConfiguration`, `gates` | Frozen assessment definitions/projections and native gate definitions |
+| `primary` | One grader/version, metric and direction (`higher` or `lower`) |
+| `minimumImprovement` | Strictly positive practical improvement in the metric's original units required by the interval's lower bound |
+| `plannedIndependentFamilies`, `targetPower`, `powerRationale` | Planned independent family count, target power of 0.8 and its design rationale |
+| `seed` | Unsigned 32-bit bootstrap seed |
+
+Build these identities from declarations, not by copying a result after observing it:
+
+```ts
+const selection = { ids: [suite.id], split: "holdout", repetitions: 3 }
+const specification: ComparisonSpecification = {
+  version: 1, id: EvalId.make("instruction-revision-1"), application: baselineApp.id,
+  hypothesis: "The revised instruction improves supported answer quality.",
+  baseline: { candidate: baselineCandidate, fingerprints: baselineApp.fingerprints },
+  candidate: { candidate: revisedCandidate, fingerprints: revisedApp.fingerprints },
+  allowedFingerprintChanges: ["application"],
+  tasks: suite.tasks.filter((task) => task.split === "holdout").map((task) => ({
+    suiteId: suite.id, taskId: task.id, fingerprint: comparisonTaskFingerprint(task),
+  })),
+  repetitions: 3,
+  execution: comparisonExecutionSettings(baselineApp, selection),
+  gradingConfiguration: comparisonGradingFingerprint(baselineApp),
+  gates: comparisonGateDefinitions([suite]),
+  primary: { grader: "answer-quality@1", metric: "supported", direction: "higher" },
+  minimumImprovement: 0.05,
+  plannedIndependentFamilies: plannedFamilyCount, targetPower: 0.8,
+  powerRationale: designRationale, seed: 42,
+}
+// Serialize with Schema.encodeEffect(ComparisonSpecification), so Option gate bounds encode correctly.
+```
+
+Programmatic consumers pass `comparison: { specification, side }` in `EvaluationSelection`. The public `comparisonPreflight` checks the complete selection without I/O. The CLI exports `evaluationSelection(args)` so application admission can use the same parser. Application-specific provider routing, budgets and fixture revisions must be captured in Candidate configuration or run fingerprints; the generic runner cannot discover them. A calibration's effective application and target-grader provenance come from `calibrationApplication(app, calibrationId)`.
+
+Before any subject call, the CLI exclusively creates `comparison-spec.json` in a fresh directory. The core validates selection and binds the decoded specification fingerprint and side to execution provenance. A failed attempt cannot overwrite this file by reusing the directory. `grade` preserves the original specification identity and rejects `--spec`: it cannot add preregistration retroactively. Changing grading policy makes a frozen comparison incompatible. Regrade both saved captures for exploratory measurement corrections, then freeze a new design for future confirmation. Historical reports remain readable through ordinary comparison, but do not acquire prospective status.
+
+The subject still receives only its input, candidate and environment. The specification, references and power rationale never enter runnable input. A target judge revision is a candidate change in a calibration; its agreement grader and labels remain fixed. Agreement grader fingerprints describe the metric contract and agreement rule, while target fingerprints stay on the candidate, runnable and calibration provenance.
+
+### Estimation and interpretation
+
+The comparison matches every specified task and repetition. It averages bound primary scopes within a trial, paired repetitions within a task, tasks within a family, and then gives every family equal weight. `Task.family` is an application-wide lineage ID: translations, paraphrases and cases derived from one source retain the same family even across datasets or suites. Efferent does not infer semantic independence from a filename or language.
+
+It resamples paired family means 10,000 times using the frozen seed and reports a two-sided 95% percentile bootstrap interval. Positive reported improvement always means better, including lower-is-better metrics. At least `max(30, plannedIndependentFamilies)` independent families are required for confirmation. Thirty is a conservative reporting floor, not a power calculation: the application supplies the design rationale, expected effect/variation and independent family count for its 80% target. More repetitions do not increase the independent sample count.
+
+The report gives `incompatible`, `inconclusive`, `improved` or `regressed`. Improvement requires the entire interval above the declared practical margin; regression requires it below the negative margin. An interval crossing either decision boundary is inconclusive, not a tie or equivalence. Insufficient families, provisional references, incomplete required evidence and degenerate intervals remain inconclusive. Nonmatching task/specification/configuration identities are incompatible. No p-value or achieved power is invented.
+
+`accepted` additionally requires the candidate to pass the recomputed frozen blocking gates. Reports expose per-task paired changes, observed regressions, gate findings and missing measurements, so an aggregate cannot conceal failures. All primary pairs and required blocking grades must be present; unavailable primary data is never a zero or an omitted successful pair. Secondary unmeasured grades are counted separately and do not invalidate an otherwise complete primary comparison. Secondary scores, exploratory candidate searches and repeated looks cannot be promoted to the preregistered primary claim. `compare --spec` exits 0 only when accepted, otherwise 2; invalid inputs retain typed errors. Plain `compare` retains its existing compatibility-only exit behavior.
+
+### Holdout ownership
+
+The application owns fresh case authoring, review, semantic family assignment, sealing, exposure records and the draft/frozen/consumed/retired lifecycle. A split named `holdout` is not proof that nobody has read it. The library can validate recorded identities, not observe source-file access or certify secrecy. Once a result informs an instruction, fixture, judge or policy change, retire that holdout version from confirmation. Preserve the original failures and use a fresh independent family set for the next prospective claim. This policy needs no separate runner or campaign service.
 
 ## Export
 

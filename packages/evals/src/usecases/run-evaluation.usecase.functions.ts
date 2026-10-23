@@ -22,6 +22,7 @@ import type { TrialRecorder } from "../ports/trial-recorder.port.js"
 import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
 import { validateMetrics } from "../assessment.entity.functions.js"
 import { fingerprint } from "../domain/grading-context.entity.functions.js"
+import { comparisonExecutionFingerprints, comparisonGradingFingerprint } from "../domain/comparison-specification.entity.functions.js"
 
 export const gradeTrial = (
   app: EvaluationApp,
@@ -88,7 +89,8 @@ export const gradeTrial = (
                   grade.status === "scored"
                     ? validateMetrics(
                         grade.metrics,
-                        grader.definition.metrics
+                        grader.definition.metrics,
+                        grader.definition.optionalMetrics
                       ).pipe(
                         Effect.mapError(
                           (error) =>
@@ -435,10 +437,7 @@ export const gradeEvaluation = (
       trials,
       fingerprints: {
         ...source.fingerprints,
-        gradingConfiguration: fingerprint({
-          graders: app.graders.map((grader) => grader.definition),
-          projections: app.projections.map(({ definition }) => definition)
-        }),
+        gradingConfiguration: comparisonGradingFingerprint(app),
         sourceRun: source.id,
         sourceExecution:
           source.fingerprints.sourceExecution ?? executionFingerprint(source)
@@ -478,6 +477,7 @@ export const runEvaluation = (
 > =>
   Effect.gen(function* () {
     yield* validateEvaluationApp(app)
+    const executionFingerprints = yield* comparisonExecutionFingerprints(app, selection)
     if (
       (selection.concurrency !== undefined &&
         (!Number.isInteger(selection.concurrency) ||
@@ -589,7 +589,7 @@ export const runEvaluation = (
       phase: "executed",
       startedAt,
       endedAt: yield* Clock.currentTimeMillis,
-      fingerprints: app.fingerprints,
+      fingerprints: executionFingerprints,
       trials: settled,
       gates: [],
       failures: settled.flatMap((trial) =>
@@ -601,15 +601,11 @@ export const runEvaluation = (
     return selection.executeOnly ? run : yield* gradeEvaluation(app, run, runId)
   })
 
-export const calibrateGrader = (
-  app: EvaluationApp,
-  id: string,
-  runId: string,
-  selection: EvaluationSelection
-) => {
+/** Resolves calibration declarations without opening their subject environment. */
+export const calibrationApplication = (app: EvaluationApp, id: string): Effect.Effect<EvaluationApp, EvaluationError> => {
   const calibration = app.calibrations.find((entry) => entry.id === id)
   return calibration
-    ? runEvaluation(
+    ? validateEvaluationApp(app).pipe(Effect.as(
         {
           ...app,
           suites: [calibration.suite],
@@ -624,10 +620,8 @@ export const calibrateGrader = (
               )
             )
           }
-        },
-        runId,
-        { ...selection, ids: [calibration.suite.id] }
-      )
+        }
+      ))
     : Effect.fail(
         new EvaluationError({
           code: "invalid",
@@ -635,3 +629,6 @@ export const calibrateGrader = (
         })
       )
 }
+
+export const calibrateGrader = (app: EvaluationApp, id: string, runId: string, selection: EvaluationSelection) =>
+  calibrationApplication(app, id).pipe(Effect.flatMap((calibrated) => runEvaluation(calibrated, runId, { ...selection, ids: [id] })))

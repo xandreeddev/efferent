@@ -1,6 +1,7 @@
 import { Effect, Layer, Option, Ref, Schema } from "effect"
 import type { DatasetCase } from "../assessment.usecase.js"
 import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
+import { validateMetrics } from "../assessment.entity.functions.js"
 import { CalibrationObservation, CalibrationReference } from "../domain/grader-calibration.entity.js"
 import { calibrationAgreement } from "../domain/grader-calibration.entity.functions.js"
 import { GradingContext } from "../domain/grading-context.entity.js"
@@ -59,7 +60,11 @@ export const defineGraderCalibration = <I>(options: {
           schema: options.input, input, budget, references: [], omissions: [] })
         yield* recorder.record("calibration.context", context)
         const result = yield* Effect.flatMap(GraderAssessment, (grader) => grader.assess(context, selected)).pipe(
-          Effect.provide(Layer.fresh(options.grader.layer)), Effect.result,
+          Effect.provide(Layer.fresh(options.grader.layer)),
+          Effect.tap((observed) => observed.status === "scored"
+            ? validateMetrics(observed.metrics, options.grader.definition.metrics, options.grader.definition.optionalMetrics).pipe(Effect.mapError((error) => new EvaluationError({ code: "invalid", message: error.message })))
+            : Effect.void),
+          Effect.result,
         )
         const observation: CalibrationObservation = result._tag === "Success"
           ? { status: result.success.status, metrics: result.success.metrics, reason: result.success.reason }
@@ -86,10 +91,10 @@ export const defineGraderCalibration = <I>(options: {
   const grader: GraderRegistration = {
     definition: { id: EvalId.make(agreementId), version: options.version, kind: "code",
       metrics: ["agreement", "status-agreement", "metric-agreement", "false-pass", "false-fail"],
-      fingerprints: { target: fingerprint(options.grader.definition), comparison: "calibration-agreement:1" } },
+      fingerprints: { metrics: fingerprint({ required: options.grader.definition.metrics, optional: options.grader.definition.optionalMetrics ?? [] }), comparison: "calibration-agreement:2" } },
     layer: Layer.succeed(GraderAssessment, {
       assess: (context) => decode(AgreementInput, context.input).pipe(Effect.map(({ observation, reference }) => ({
-        status: "scored" as const, metrics: calibrationAgreement(observation, reference, options.grader.definition.metrics),
+        status: "scored" as const, metrics: calibrationAgreement(observation, reference, options.grader.definition.metrics, options.grader.definition.optionalMetrics),
         reason: observation.reason, usage: unknownEvaluationUsage, metadata: {},
       }))),
     }),

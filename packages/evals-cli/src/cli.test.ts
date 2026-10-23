@@ -8,20 +8,24 @@ import {
   GraderAssessment
 } from "@xandreed/evals"
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile } from "node:fs/promises"
+import { access, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Option, Layer } from "effect"
+import { Effect, Option, Layer, Ref } from "effect"
 import {
   EvalId,
   EvaluationError,
   unknownEvaluationUsage,
   gradingContext,
   comparisonIssues,
+  ComparisonSpecification,
+  EvaluationRun,
   type EvaluationApp
 } from "@xandreed/evals"
 import { Schema } from "effect"
 import { evaluationCli } from "./cli.adapter.js"
+import { comparisonFixture } from "../../evals/src/testing/comparison-fixture.testing.js"
+import { FixtureRunnable, fixtureRegistration } from "../../evals/src/testing/fixture.testing.js"
 
 const FunctionRunnable = runnableExecutionPort<string, string, Schema.Json, Record<string, never>>("cli-fixture")
 const FunctionEnvironment = evaluationEnvironmentPort<string, Record<string, never>>("cli-fixture")
@@ -281,4 +285,50 @@ test("comparisons require the same grading policy and all bound grades", async (
       trials: saved.trials.map((trial) => ({ ...trial, grades: [] }))
     })
   ).toContain("Incomplete trials or grade coverage")
+})
+
+test("spec validation is read-only; run freezes the specification before any subject call", async () => {
+  const f = comparisonFixture()
+  const root = await mkdtemp(join(tmpdir(), "evaluation-spec-"))
+  const specPath = join(root, "spec.json")
+  await writeFile(specPath, JSON.stringify(Schema.encodeSync(ComparisonSpecification)(f.specification)))
+  const directory = join(root, "run")
+  const calls = await Effect.runPromise(Ref.make(0))
+  const checked = { ...f.base, runnables: [fixtureRegistration(Layer.succeed(FixtureRunnable, {
+    execute: () => Effect.gen(function* () {
+      const saved = yield* Effect.tryPromise({ try: () => readFile(join(directory, "comparison-spec.json"), "utf8"), catch: (error) => new EvaluationError({ code: "persistence", message: String(error) }) })
+      expect(JSON.parse(saved)).toEqual(Schema.encodeSync(ComparisonSpecification)(f.specification))
+      yield* Ref.update(calls, (count) => count + 1)
+      return { output: "answer", evidence: {} }
+    }),
+  }))] }
+  const flags = ["suite", "--spec", specPath, "--side", "baseline", "--directory", directory]
+  expect(await Effect.runPromise(evaluationCli(["validate", ...flags], { config: checked, output }))).toBe(0)
+  expect(await Effect.runPromise(Ref.get(calls))).toBe(0)
+  await expect(access(directory)).rejects.toThrow()
+  expect(await Effect.runPromise(evaluationCli(["run", ...flags, "--execute-only"], { config: checked, output }))).toBe(0)
+  expect(await Effect.runPromise(Ref.get(calls))).toBe(60)
+  const saved = JSON.parse(await readFile(join(directory, "execution.json"), "utf8"))
+  expect(saved.fingerprints.comparisonSide).toBe("baseline")
+  await expect(Effect.runPromise(evaluationCli(["run", ...flags], { config: checked, output }))).rejects.toThrow("fresh --directory")
+  await expect(Effect.runPromise(evaluationCli(["grade", "--spec", specPath, "--from", join(directory, "execution.json")], { config: checked, output }))).rejects.toThrow("--spec requires")
+})
+
+test("spec comparison uses only saved reports, with explicit verdicts and legacy comparisons preserved", async () => {
+  const f = comparisonFixture()
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-spec-compare-"))
+  const [baseline, candidate] = await Effect.runPromise(Effect.all([f.report("baseline"), f.report("candidate")]))
+  const specPath = join(directory, "spec.json")
+  const baselinePath = join(directory, "baseline.json")
+  const candidatePath = join(directory, "candidate.json")
+  await writeFile(specPath, JSON.stringify(Schema.encodeSync(ComparisonSpecification)(f.specification)))
+  await writeFile(baselinePath, JSON.stringify(Schema.encodeSync(EvaluationRun)(baseline)))
+  await writeFile(candidatePath, JSON.stringify(Schema.encodeSync(EvaluationRun)(candidate)))
+  const values: unknown[] = []
+  const args = ["compare", "--baseline", baselinePath, "--candidate-report", candidatePath, "--config", "no-config-may-be-loaded.ts"]
+  expect(await Effect.runPromise(evaluationCli([...args, "--spec", specPath], { output: (value) => values.push(value) }))).toBe(0)
+  expect(values[0]).toMatchObject({ verdict: "improved", accepted: true, measuredPairs: 60, confidenceLevel: 0.95 })
+  expect(await Effect.runPromise(evaluationCli(args, { output }))).toBe(0)
+  await writeFile(candidatePath, JSON.stringify(Schema.encodeSync(EvaluationRun)({ ...candidate, fingerprints: { gradingConfiguration: candidate.fingerprints.gradingConfiguration! } })))
+  expect(await Effect.runPromise(evaluationCli([...args, "--spec", specPath], { output }))).toBe(2)
 })
