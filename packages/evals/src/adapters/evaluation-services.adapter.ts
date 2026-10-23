@@ -1,4 +1,5 @@
-import { Effect, Layer } from "effect"
+import { ExecutionReceipt } from "../ports/execution-receipt.port.js"
+import { Context, Effect, Layer } from "effect"
 import type { EvaluationApp } from "../contracts/evaluation-app.contract.js"
 import { EvaluationError } from "../domain/identity.entity.js"
 import { EvaluationServices } from "../ports/evaluation-services.port.js"
@@ -7,6 +8,9 @@ import { TrialRecorder } from "../ports/trial-recorder.port.js"
 /** Layer construction belongs at the eval runtime edge, outside application use cases. */
 export const EvaluationServicesLive = (app: EvaluationApp) =>
   Layer.succeed(EvaluationServices, {
+    receipt: app.executionReceipt
+      ? Layer.build(Layer.fresh(app.executionReceipt)).pipe(Effect.map((context) => Context.get(context, ExecutionReceipt).recordOpened))
+      : Effect.succeed(Effect.void),
     execution: (runnableId, environmentId, recorder) =>
       Effect.suspend(() => {
         const runnable = app.runnables.find(

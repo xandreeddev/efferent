@@ -95,3 +95,5 @@ export * from "./ports/trial-recorder.port.js"
 
 export * from "./ports/evaluation-services.port.js"
 export * from "./adapters/evaluation-services.adapter.js"
+
+export * from "./ports/execution-receipt.port.js"

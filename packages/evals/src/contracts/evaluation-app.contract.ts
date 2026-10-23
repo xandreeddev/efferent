@@ -1,3 +1,4 @@
+import type { ExecutionReceipt } from "../ports/execution-receipt.port.js"
 import type { Effect, Layer } from "effect"
 import type { Suite } from "../domain/suite.entity.js"
 import type { Runnable } from "../domain/runnable.entity.js"
@@ -42,6 +43,7 @@ export interface EvaluationApp {
   readonly projections: ReadonlyArray<ProjectionRegistration>
   readonly environmentFor: Readonly<Record<string, string>>
   readonly fingerprints: Readonly<Record<string, string>>
+  readonly executionReceipt?: Layer.Layer<ExecutionReceipt, EvaluationError>
   readonly exporters?: ReadonlyArray<ExporterRegistration>
   readonly commands: Readonly<
     Record<

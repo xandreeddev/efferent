@@ -116,5 +116,5 @@ export const defineGraderCalibration = <I>(options: {
       repetitions: 1, concurrency: 1, timeoutMs: 30_000,
     },
   }
-  return { calibration, runnable, graders: [grader], projections: [projection], environment: { id: environmentId } }
+  return { input: options.input, reference: CalibrationReference, calibration, runnable, graders: [grader], projections: [projection], environment: { id: environmentId } }
 }

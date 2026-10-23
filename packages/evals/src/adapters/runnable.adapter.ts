@@ -43,6 +43,7 @@ export const defineRunnable = <I, O, E, W, R, H>(options: {
             Effect.mapError((error) => new EvaluationError({ code: "invalid", message: String(error) }))
           )
           const world = yield* host.open(input, candidate)
+          yield* inspection.ready ?? Effect.void
           const attempted = yield* runner.execute(input, candidate, world).pipe(
             Effect.flatMap((result) => Effect.all({
               output: portable(options.output, result.output),

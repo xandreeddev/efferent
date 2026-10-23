@@ -12,6 +12,7 @@ export class TrialExecution extends Context.Service<TrialExecution, {
     candidate: Candidate,
     inspection: {
       readonly timeoutMs: number
+      readonly ready?: Effect.Effect<void, EvaluationError>
       readonly record: (outcome: Outcome) => Effect.Effect<void>
     }
   ) => Effect.Effect<

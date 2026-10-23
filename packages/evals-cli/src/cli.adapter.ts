@@ -140,6 +140,17 @@ export const evaluationCli = (
     if (line.command === "compare") {
       const baseline = yield* readRun(line.value("--baseline", ""))
       const candidate = yield* readRun(line.value("--candidate-report", ""))
+      if (baseline.fingerprints["receipt:policy"] || candidate.fingerprints["receipt:policy"] || line.has("--holdout-manifest")) {
+        // A receipt policy is app-owned; loading its configuration applies the same admission
+        // checks as execution. Ordinary saved reports remain provider/configuration free.
+        const configured = options.config ?? (yield* loadEvaluationApp(line.value("--config", "eval.config.ts"), args))
+        const extension = configured.commands.compare
+        if (extension) {
+          const result = yield* extension(line.args)
+          output(result)
+          return typeof result === "number" ? result : 0
+        }
+      }
       if (line.has("--spec")) {
         const spec = yield* readComparisonSpecification(line.value("--spec", "")).pipe(Effect.flatMap(validateComparisonSpecification))
         const report = compareEvaluations(baseline, candidate, spec)

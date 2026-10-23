@@ -167,7 +167,8 @@ const runTrial = (
   task: Task,
   candidate: Candidate,
   sample: number,
-  selection: EvaluationSelection
+  selection: EvaluationSelection,
+  ready: Effect.Effect<void, EvaluationError>
 ) =>
   Effect.uninterruptibleMask((restore) =>
     Effect.gen(function* () {
@@ -252,6 +253,7 @@ const runTrial = (
               const runner = yield* TrialExecution
               return yield* runner.execute(task.input, candidate, {
                 timeoutMs: suite.timeoutMs,
+                ready,
                 record: (outcome) => Ref.update(state, (trial) => ({
                   ...trial,
                   outcome: Option.some(outcome)
@@ -543,6 +545,8 @@ export const runEvaluation = (
           message: "Unknown task selection"
         })
       )
+    const services = yield* EvaluationServices
+    const ready = yield* services.receipt
     const startedAt = yield* Clock.currentTimeMillis
     const trials = yield* Effect.forEach(suites, (suite) => {
       const repetitions = selection.repetitions ?? suite.repetitions
@@ -577,7 +581,7 @@ export const runEvaluation = (
             )
           ),
         ({ task, candidate, sample }) =>
-          runTrial(app, runId, suite, task, candidate, sample, selection),
+          runTrial(app, runId, suite, task, candidate, sample, selection, ready),
         { concurrency: suite.concurrency }
       )
     })
@@ -599,7 +603,7 @@ export const runEvaluation = (
     const store = yield* EvaluationRunStore
     yield* store.writeRun(run)
     return selection.executeOnly ? run : yield* gradeEvaluation(app, run, runId)
-  })
+  }).pipe(Effect.scoped)
 
 /** Resolves calibration declarations without opening their subject environment. */
 export const calibrationApplication = (app: EvaluationApp, id: string): Effect.Effect<EvaluationApp, EvaluationError> => {

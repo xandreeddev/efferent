@@ -10,6 +10,7 @@ import type { TrialRecorder } from "./trial-recorder.port.js"
 export class EvaluationServices extends Context.Service<
   EvaluationServices,
   {
+    readonly receipt: Effect.Effect<Effect.Effect<void, EvaluationError>, EvaluationError, Scope.Scope>
     readonly execution: (
       runnable: string,
       environment: string,
