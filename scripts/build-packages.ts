@@ -16,6 +16,32 @@ if (undeclared.length > 0) { console.error(`Declare "engines" in the package.jso
 const runtimeNote = (engines: { readonly node?: string, readonly bun?: string }) =>
   engines.node !== undefined && engines.bun !== undefined ? "Node 24 or Bun." : engines.node !== undefined ? "Node 24." : "Bun only."
 const versions = new Map(Array.from(manifests.values(), (manifest) => [manifest.name, manifest.version]))
+/**
+ * The build stamp the publish script checks: the commit the sources came from, whether the
+ * working tree had changes, and the one version every package shares. Changes are tracked and
+ * untracked files anywhere, plus gitignored files in the folders a package publishes from
+ * (`src`, `skills`, `profiles`), since the build copies those too. Read before building, so it
+ * describes the sources the build read. Without git the build is stamped dirty with no commit,
+ * which publish refuses.
+ */
+const git = (args: ReadonlyArray<string>) => {
+  if (Bun.which("git") === null) return { success: false, text: "" }
+  const result = Bun.spawnSync(["git", ...args], { cwd: root, stdout: "pipe", stderr: "ignore" })
+  return { success: result.success, text: result.stdout.toString().trim() }
+}
+const head = git(["rev-parse", "HEAD"])
+const status = git(["status", "--porcelain"])
+const ignored = git(["ls-files", "--others", "--ignored", "--exclude-standard", "--",
+  ...names.flatMap((name) => ["src", "skills", "profiles"].map((folder) => `packages/${name}/${folder}`))])
+if (ignored.text.length > 0) console.warn(`Ignored files in published folders mark this build dirty:\n${ignored.text}`)
+const shared = new Set(versions.values())
+if (shared.size !== 1) console.warn(`Packages do not share one version (${Array.from(versions, ([name, version]) => `${name}@${version}`).join(", ")}); publish will refuse this build.`)
+const stamp = {
+  commit: head.success ? head.text : null,
+  dirty: !status.success || status.text.length > 0 || !ignored.success || ignored.text.length > 0,
+  version: shared.size === 1 ? Array.from(shared)[0] : null,
+  packages: names.map((dir) => ({ dir, name: manifests.get(dir)!.name, version: manifests.get(dir)!.version })),
+}
 await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
 const declarations = join(root, ".artifacts/types")
@@ -32,7 +58,10 @@ await Promise.all(names.map(async (name) => {
   await Promise.all(files.map(async (file) => {
     const destination = join(target, file.replace(/^src\//, "dist/").replace(/\.tsx?$/, ".js"))
     await mkdir(join(destination, ".."), { recursive: true })
-    if (file.endsWith(".ts")) await writeFile(destination, await transpiler.transform(await readFile(join(source, file), "utf8")))
+    // The transpiler drops a leading `#!` line, which a `bin` entry (efferent-eval) needs to run as a command.
+    const code = file.endsWith(".ts") ? await readFile(join(source, file), "utf8") : ""
+    const shebang = code.startsWith("#!") ? `${code.split("\n", 1)[0]}\n` : ""
+    if (file.endsWith(".ts")) await writeFile(destination, shebang + await transpiler.transform(code))
     else await cp(join(source, file), destination)
   }))
   await cp(join(declarations, name, "src"), join(target, "dist"), { recursive: true })
@@ -47,7 +76,7 @@ await Promise.all(names.map(async (name) => {
   const dependencies = Object.fromEntries(Object.entries(original.dependencies ?? {}).map(([key, value]) => [key, String(value).startsWith("workspace:") ? versions.get(key) : value]))
   const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies,
     files: ["dist", "skills", "profiles", "README.md", "LICENSE"], license: "MIT",
-    ...(name === "evals-cli" ? { bin: { "efferent-eval": "./dist/main.js" } } : {}),
+    ...(name === "evals-cli" ? { bin: { "efferent-eval": "dist/main.js" } } : {}),
   }
   delete manifest.devDependencies
   await writeFile(join(target, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
@@ -55,3 +84,6 @@ await Promise.all(names.map(async (name) => {
   await cp(join(root, "LICENSE"), join(target, "LICENSE"))
   console.log(`Built ${relative(root, target)}`)
 }))
+// Written last: a failed build leaves no stamp, so it cannot be published.
+await writeFile(join(output, "build.json"), `${JSON.stringify(stamp, null, 2)}\n`)
+console.log(`Stamped ${relative(root, join(output, "build.json"))}: ${stamp.version ?? "mixed versions"} at ${stamp.commit ?? "no commit"}${stamp.dirty ? " (dirty tree)" : ""}`)

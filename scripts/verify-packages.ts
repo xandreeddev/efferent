@@ -108,4 +108,9 @@ registry.stop(true)
 await writeFile(join(consumer, "evaluation-consumer.mjs"), await readFile(join(root, "scripts/evaluation-consumer.fixture.mjs"), "utf8"))
 const evalNode = Bun.spawn(["node", "evaluation-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await evalNode.exited !== 0) process.exit(1)
+// The installed bin runs as a command, which needs the shebang the build keeps.
+const evalBin = Bun.spawn([join(consumer, "node_modules/.bin/efferent-eval"), "--help"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const evalHelp = await new Response(evalBin.stdout).text()
+if (await evalBin.exited !== 0 || !evalHelp.startsWith("efferent-eval ")) { console.error("The efferent-eval bin did not run as a command"); process.exit(1) }
+console.log("The efferent-eval bin runs as a command")
 console.log(`Packed consumer verified at ${consumer}`)

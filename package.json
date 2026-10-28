@@ -15,10 +15,11 @@
     "test": "bun test",
     "check": "bun run typecheck",
     "verify": "bun run typecheck && bun test && bun run foundry demo && bun run --cwd packages/website check",
-    "typecheck": "bun packages/foundry/src/main.ts check --config foundry.config.ts --baseline .foundry/baseline.json",
+    "typecheck": "bun packages/foundry/src/main.ts check --config foundry.config.ts --baseline .foundry/baseline.json && bun x tsc -p scripts/tsconfig.json",
     "prepare": "bun scripts/installHooks.ts",
     "build:packages": "bun scripts/build-packages.ts",
     "verify:packages": "bun scripts/verify-packages.ts",
+    "publish:packages": "bun scripts/publish-packages.ts",
     "docs:generate": "bun scripts/generate-plugin-reference.ts",
     "eval:cli": "bun packages/evals-cli/src/main.ts"
   },

@@ -1,0 +1,10 @@
+{
+  "extends": "../tsconfig.base.json",
+  "comment": "The repository scripts (build, verify, publish, docs) run on Bun and import the workspace packages through the base paths; `bun run typecheck` checks them with this project.",
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "types": ["bun", "node"]
+  },
+  "include": ["./**/*.ts"]
+}

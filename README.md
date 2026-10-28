@@ -138,6 +138,11 @@ composable agent's turn, a session fork, an eval composition and a SQLite
 session log with a background task on Bun, then imports every Node-capable
 package on Node.
 
+Releases are published with `bun run publish:packages`, which checks the build
+against the current commit and is a dry run unless `--publish` is passed; see
+[publishing](CONTRIBUTING.md#publishing). Changes per release are in the
+[changelog](CHANGELOG.md).
+
 See [the framework guide](docs/framework.md), the
 [evaluation domain](docs/evaluation-domain.md) and [contributing](CONTRIBUTING.md).
 
