@@ -17,7 +17,7 @@ its **own** static gates on its own source at a **zero baseline** (one new
 violation anywhere fails the build):
 
 ```bash
-bun run typecheck     # tsc + foundry self-check + the zero-baseline repo gate suite
+bun run typecheck     # tsc + foundry self-check + the zero-baseline repo gate suite + scripts/
 bun test              # colocated unit tests — key-free by design
 bun run foundry demo  # the forge-loop E2E over a scripted implementor
 ```
@@ -35,33 +35,61 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
   (`docs/composable-evaluations.md`); the battery is part of the definition of done.
 - Colocate tests next to the source (`foo.ts` / `foo.test.ts`); fixtures live
   outside `src/` so the gates never see deliberate violations.
+- Add an entry under **Unreleased** in `CHANGELOG.md`: what changes for
+  someone using the packages, with a migration note for anything breaking.
+  Repository-only changes go under its "Repository" heading.
 
 ## Publishing
 
-The framework packages are published manually; there is no release
-automation. All 17 publishable packages share one version (currently `0.13.0`)
-under npm's `latest` tag. The previously published `efferent`, `@xandreed/cli`
-and `@xandreed/sdk-*` packages are a frozen earlier line.
+The framework packages are published from a maintainer's terminal; there is
+no release automation, and publishing needs explicit sign-off. All 17
+publishable packages share one version (`0.13.0` in the sources) and are
+published under npm's `latest` tag. The previously published `efferent`,
+`@xandreed/cli` and `@xandreed/sdk-*` packages are a frozen earlier line.
 
 For a release, set the new version in every publishable `package.json` and in
-each plugin definition (`version:` in `definePlugin`), then run
-`bun run docs:generate`. The distribution build resolves `workspace:*`
-dependencies to the matching package versions. Build and verify:
+each plugin definition (`version:` in `definePlugin`), run
+`bun run docs:generate`, and turn the changelog's **Unreleased** section into
+the new version, with the release date. Merge that, then publish from a clean
+checkout of the merge commit:
 
 ```sh
-bun run build:packages
+bun install --frozen-lockfile
+bun run build:packages            # also writes .artifacts/packages/build.json
 bun run verify:packages
+bun run publish:packages          # dry run: every check, then npm publish --dry-run
+bun run publish:packages --publish
 ```
 
-Publish in dependency order, skipping any version already on npm: `core`; the
-plugins; `runtime`; `sdk` (after `runtime`); then `evals`, `evals-cli`,
-`evals-langfuse` and `evals-langsmith`:
+The distribution build resolves `workspace:*` dependencies to the matching
+package versions and stamps `build.json` with the commit, whether the working
+tree had changes, the shared version and the packages it built. Changes are
+tracked and untracked files anywhere, plus gitignored files in a package's
+`src`, `skills` or `profiles` folder, which the build copies too.
+`publish:packages` refuses, before publishing anything, when:
 
-```sh
-npm publish ./.artifacts/packages/<package> --access public --tag latest
-```
+- the packages do not all share one version;
+- a built version differs from its source `package.json`;
+- `build.json` is missing, does not list the built packages, records a commit
+  other than `HEAD`, or records a build from a tree with changes;
+- the working tree has changes, untracked files included;
+- the `@xandreed/*` dependencies between the packages form a cycle;
+- `npm whoami` fails (log in with `npm login`), or names an account other than
+  the project's (`xandreed`);
+- the registry cannot be reached, or answers anything but found or not found,
+  when asked whether a version is already published.
 
-These commands are manual; merging a version bump publishes nothing.
+Every step uses `https://registry.npmjs.org`: the already-published check,
+`npm whoami` and `npm publish`, which is passed the registry so that npm
+settings (a scoped `@xandreed:registry` included) cannot send it elsewhere. It
+publishes one package at a time, each after the `@xandreed/*` packages it
+depends on, with `npm publish <dir> --access public --tag latest`. A
+`name@version` already on the registry is skipped (the check bypasses the
+registry's cache), so a run that stopped part-way can be repeated. npm runs in
+the same terminal, so its two-factor prompt works there; run it from an
+interactive terminal. Merging a version bump publishes nothing; tag the
+release (`v<version>`) after it is on npm. Tags resume with `v0.13.0`; 0.11.0
+and 0.12.0 have none.
 
 ## Distribution changes
 

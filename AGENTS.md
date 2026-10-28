@@ -24,12 +24,16 @@ Node; `bun run verify:packages` imports every Node-capable package on Node.
 
 All production packages participate in the zero-baseline architecture gates.
 New session data uses `.efferent/runtime`; never delete old local data to reset it.
-Build artifacts go under `.artifacts`. Publishing requires explicit sign-off.
+Build artifacts go under `.artifacts`. Publishing requires explicit sign-off;
+releases go through `bun run publish:packages`, a dry run unless
+`--publish` (CONTRIBUTING.md, "Publishing"). Every PR adds an entry under
+"Unreleased" in `CHANGELOG.md`.
 
 ## Conventions (gate-enforced, ZERO baseline)
 
-`bun run typecheck` = the canonical repo profile (static architecture + tsc), and
-the committed baseline is EMPTY — every rule violation anywhere fails:
+`bun run typecheck` = the canonical repo profile (static architecture + tsc),
+then tsc over `scripts/` (`scripts/tsconfig.json`), and the committed baseline
+is EMPTY — every rule violation anywhere fails:
 
 - **Errors are values**: no `try`/`catch`/`throw`/`.catch()` — typed errors
   are `Schema.TaggedError`; foreign promises via `Effect.tryPromise` (or the

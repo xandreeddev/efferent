@@ -65,7 +65,10 @@ See [evaluation-domain.md](evaluation-domain.md) for interfaces, lifecycle, comm
 under `.artifacts/packages`. `bun run verify:packages` packs them, installs them
 in a temporary external project through a temporary local npm registry, and exercises
 SDK sessions, replacement plugins, persistence, forks and custom evals on Bun,
-then imports every Node-capable package on Node. Publishing is a separate release action.
+then imports every Node-capable package on Node. Publishing is a separate release action:
+`bun run publish:packages` checks the build stamp (`.artifacts/packages/build.json`)
+against the current commit and a clean tree, then publishes in dependency order; it is a
+dry run unless `--publish` is passed (see [publishing](../CONTRIBUTING.md#publishing)).
 
 ## Agent-loop trace content
 
