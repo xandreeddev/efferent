@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { mkdir } from "node:fs/promises"
 import { chmodSync } from "node:fs"
 import { dirname } from "node:path"
-import { Clock, Effect, Layer, Option, Schema } from "effect"
+import { Clock, Effect, Layer, Match, Option, Schema } from "effect"
 import type { Scope } from "effect"
 import {
   ConversationId,
@@ -39,7 +39,11 @@ interface EventRow {
   readonly data: string
 }
 
-const failure = (code: string) => (error: unknown) => new SessionLogError({ code, message: String(error) })
+/** SQLite's busy result and its extended forms (`SQLITE_BUSY_TIMEOUT`, …): the lock stayed taken past `busy_timeout`. */
+const busy = (error: unknown): boolean =>
+  typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" && error.code.startsWith("SQLITE_BUSY")
+/** A store failure as a SessionLogError: `store.busy` when another connection held the lock too long, else `code`. */
+const failure = (code: string) => (error: unknown) => new SessionLogError({ code: busy(error) ? "store.busy" : code, message: String(error) })
 const json = (text: string): JsonObject => JSON.parse(text) as JsonObject
 
 const headOf = (row: HeadRow, now: number): SessionHead => ({
@@ -64,18 +68,21 @@ const eventOf = (session: ConversationId) => (row: EventRow): SessionLogEvent =>
   session, seq: row.seq, turn: Option.fromNullishOr(row.turn), kind: row.kind, at: row.at, data: json(row.data),
 })
 
-/** A commit's outcome inside its transaction. */
+/** A commit's outcome inside its transaction, with the time it was decided at. */
 type Outcome =
   | { readonly _tag: "Done"; readonly committed: SessionCommitted }
   | { readonly _tag: "Missing" }
   | { readonly _tag: "Conflict"; readonly actual: number }
-  | { readonly _tag: "Expired" }
+  | { readonly _tag: "Expired"; readonly at: number }
 
 /**
  * The authoritative session journal in one SQLite file: `session_heads`
  * and `session_log_events`. Removal cascades to events and children. A commit is one
  * IMMEDIATE transaction that checks the revision and the clock before it
- * writes; the clock is the process's.
+ * writes. The clock is the caller's Effect `Clock`, read once the transaction
+ * holds the write lock: a commit that waited for another connection past its
+ * `notAfter` is refused, and events carry the time they were committed. A
+ * lock held past the 5 s `busy_timeout` fails with `store.busy`.
  */
 export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Service"], SessionLogError, Scope.Scope> => Effect.gen(function* () {
   yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: failure("store.open") })
@@ -85,9 +92,10 @@ export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Se
   )
   const operation = <A>(work: () => A) => Effect.try({ try: work, catch: failure("store.io") })
   yield* operation(() => chmodSync(path, 0o600))
+  // The busy timeout first: switching a new file to WAL takes a lock that another process opening it at once may hold.
   yield* operation(() => db.exec(`
-    PRAGMA journal_mode = WAL;
     PRAGMA busy_timeout = 5000;
+    PRAGMA journal_mode = WAL;
     PRAGMA foreign_keys = ON;
     CREATE TABLE IF NOT EXISTS session_heads (
       id TEXT PRIMARY KEY, owner TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, meta TEXT NOT NULL,
@@ -106,15 +114,15 @@ export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Se
 
   const log = SessionLog.of({
     create: (header: SessionHeader) => Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis
-      const outcome = yield* operation(() => db.transaction((): "created" | "exists" | "orphan" => {
-        if (headRow(header.id) !== null) return "exists"
-        if (Option.isSome(header.parent) && headRow(header.parent.value.id) === null) return "orphan"
+      const { outcome, now } = yield* Clock.clockWith((clock) => operation(() => db.transaction(() => {
+        const now = clock.currentTimeMillisUnsafe()
+        if (headRow(header.id) !== null) return { outcome: "exists" as const, now }
+        if (Option.isSome(header.parent) && headRow(header.parent.value.id) === null) return { outcome: "orphan" as const, now }
         const parent = Option.getOrNull(header.parent)
         db.query("INSERT INTO session_heads (id, owner, origin, created_at, meta, parent_id, parent_through, turn_at_fork, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")
           .run(header.id, header.owner, header.origin, header.createdAt, JSON.stringify(header.meta), parent?.id ?? null, parent?.through ?? null, parent?.turnAtFork ?? null, now)
-        return "created"
-      }).immediate())
+        return { outcome: "created" as const, now }
+      }).immediate()))
       if (outcome === "exists") return yield* Effect.fail(new SessionExists({ session: header.id }))
       if (outcome === "orphan") return yield* Effect.fail(new SessionMissing({ session: Option.match(header.parent, { onNone: () => header.id, onSome: (parent) => parent.id }) }))
       const row = yield* operation(() => headRow(header.id))
@@ -144,11 +152,13 @@ export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Se
         .all(id, query.after, ...query.kinds, limit)
         .map(eventOf(id)))
     }),
-    commit: (id, commit) => Clock.currentTimeMillis.pipe(Effect.flatMap((at) => operation(() => db.transaction((): Outcome => {
+    commit: (id, commit) => Clock.clockWith((clock) => operation(() => db.transaction((): Outcome => {
+      // The time is read under the write lock: a commit that waited for it is judged, and stamped, when it writes.
+      const at = clock.currentTimeMillisUnsafe()
       const head = db.query<{ readonly seq: number; readonly revision: number }, [string]>("SELECT seq, revision FROM session_heads WHERE id = ?").get(id)
       if (head === null) return { _tag: "Missing" }
       if (head.revision !== commit.expect) return { _tag: "Conflict", actual: head.revision }
-      if (Option.isSome(commit.notAfter) && at > commit.notAfter.value) return { _tag: "Expired" }
+      if (Option.isSome(commit.notAfter) && at > commit.notAfter.value) return { _tag: "Expired", at }
       const events = commit.events.map((draft, index): SessionLogEvent => ({
         session: id, seq: head.seq + index + 1, turn: draft.turn, kind: draft.kind, at, data: json(JSON.stringify(draft.data)),
       }))
@@ -157,12 +167,12 @@ export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Se
       db.query("UPDATE session_heads SET revision = revision + 1, seq = ?, state = COALESCE(?, state), updated_at = ? WHERE id = ?")
         .run(head.seq + events.length, Option.match(commit.state, { onNone: () => null, onSome: (state) => JSON.stringify(state) }), at, id)
       return { _tag: "Done", committed: { revision: head.revision + 1, seq: head.seq + events.length, events, at } }
-    }).immediate()).pipe(Effect.flatMap((outcome): Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing> => {
-      if (outcome._tag === "Done") return Effect.succeed(outcome.committed)
-      if (outcome._tag === "Missing") return Effect.fail(new SessionMissing({ session: id }))
-      if (outcome._tag === "Conflict") return Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: outcome.actual }))
-      return Effect.fail(new LeaseExpired({ session: id, notAfter: Option.getOrElse(commit.notAfter, () => at), now: at }))
-    })))),
+    }).immediate())).pipe(Effect.flatMap(Match.valueTags({
+      Done: (outcome): Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing> => Effect.succeed(outcome.committed),
+      Missing: () => Effect.fail(new SessionMissing({ session: id })),
+      Conflict: (outcome) => Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: outcome.actual })),
+      Expired: (outcome) => Effect.fail(new LeaseExpired({ session: id, notAfter: Option.getOrElse(commit.notAfter, () => outcome.at), now: outcome.at })),
+    }))),
     remove: (id) => operation(() => db.transaction(() => { removeTree(id) }).immediate()),
   })
   return log

@@ -1,23 +1,12 @@
 import { Effect, Option } from "effect"
 import type { Context } from "effect"
-import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { ConversationId } from "../domain/message.entity.js"
+import { check, expect, freshId, headerOf } from "../conformance.functions.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import type { SessionLog } from "../ports/session-log.port.js"
-import type { JsonObject, SessionDraft, SessionHeader } from "./session-log.entity.js"
+import type { JsonObject, SessionDraft } from "./session-log.entity.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
-
-const fail = (check: string, message: string) => Effect.fail(new ConformanceFailure({ check, message }))
-const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(check, message)
-
-/** A fresh id per session, so the kit can run against a shared store. */
-const freshId = Effect.sync(() => ConversationId.make(crypto.randomUUID()))
-
-const headerOf = (id: ConversationId, owner: string, parent: Option.Option<{ readonly id: ConversationId; readonly through: number; readonly turnAtFork: number }> = Option.none()): SessionHeader => ({
-  id, owner, origin: "user", createdAt: 1_767_225_600_000, meta: { title: "conformance", nested: { list: [1, "two", null] } }, parent,
-})
 
 const draft = (kind: string, data: JsonObject, turn: Option.Option<number> = Option.none()): SessionDraft => ({ kind, turn, data })
 
@@ -34,15 +23,6 @@ const rich: JsonObject = { zeta: 1, alpha: { b: [true, false, { y: "ü", x: 0.5 
  * so the kit is safe on a shared database.
  */
 export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck> => {
-  const check = (name: string, id: string, body: (owner: string) => Effect.Effect<void, unknown>): ConformanceCheck => ({
-    name,
-    run: freshId.pipe(
-      Effect.flatMap((owner) => body(`owner-${owner}`)),
-      Effect.catch((error: unknown) => error instanceof ConformanceFailure ? Effect.fail(error)
-        : fail(id, `unexpected ${typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "error"}: ${JSON.stringify(error)}`)),
-    ),
-  })
-
   return [
     check("a new session is empty: seq 0, revision 0, the header as given", "create", (owner) => Effect.gen(function* () {
       const id = yield* freshId

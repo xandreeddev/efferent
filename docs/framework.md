@@ -406,10 +406,13 @@ the open, not as an argument. `ToolRegistry.open(session)` requires
 is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
 `PermissionGrants` there are used when present.
 
-`memoryConformance(memory, services)`, `stepLoopConformance(loop)` and
-`turnConformance(runner, services)` (from `@xandreed/core`) are the port
-contracts as runnable checks. Run them against a new strategy, loop or turn
-composition.
+`memoryConformance(memory, services)`, `stepLoopConformance(loop)`,
+`turnConformance(runner, services)`, `sessionLogConformance(log)` and
+`sessionLogRecoveryConformance(subject)` (from `@xandreed/core`) are the port
+contracts as runnable checks: each returns `ConformanceCheck`s (`name`, and a
+`run` effect that fails with a `ConformanceFailure` naming the broken check)
+that any test runner can run. Run them against a new strategy, loop, turn
+composition or session store.
 
 **Tool discovery.** Hosts contribute tools (`defineTool`: handler, view,
 annotations) and skills (`defineSkill`, or `skillsFromFiles` over
@@ -590,11 +593,31 @@ background tasks. Two layers split the work:
   and `commit`. A commit is one compare-and-swap: it applies only when
   `revision` still equals `expect` and, with `notAfter`, only while the
   storage's clock has not passed it; events get dense `seq`s and the
-  storage's time; a commit may carry state and no events.
+  storage's time; a commit may carry state and no events. The storage's
+  clock is whatever the backend reads: the memory and SQLite logs read the
+  committing process's Effect `Clock` (SQLite once it holds the write lock),
+  so instances sharing them need clocks in step; a host's own store may read
+  its database server's clock instead.
   `sessionLogConformance(log)` checks all of it, including that one of many
-  concurrent commits wins. Core ships `SessionLogMemoryLive`;
-  `@xandreed/plugin-session-sqlite` ships `SessionLogSqliteLive(path)`; a
-  host writes its own over its database.
+  concurrent commits wins. `sessionLogRecoveryConformance({ open,
+  callerClock })` checks, inside one process, what must survive handles,
+  reopening and interruption: `open` opens
+  a new handle on the same data each time (scoped), and the kit checks that
+  commits are there after closing and reopening, that two open handles see
+  each other's commits and race with one winner per revision, that an
+  interrupted commit is stored whole or not at all, and that a handle whose
+  scope never closed blocks nobody; with `callerClock` (the backend stamps
+  time with the caller's Effect `Clock`) a commit at exactly `notAfter` is
+  accepted and one a millisecond later refused. An in-memory log passes only
+  when every `open` returns the same store. Core ships `SessionLogMemoryLive`;
+  `@xandreed/plugin-session-sqlite` ships `SessionLogSqliteLive(path)` and
+  `makeSessionLogSqlite(path)` (the scoped log itself, a recovery subject's
+  `open`); a host writes its own over its database. The SQLite log reads the
+  clock once its transaction holds the write lock, so a commit that waited
+  for another connection past its `notAfter` is refused and events carry the
+  time they were written; a lock held past its 5 s busy timeout fails with
+  `SessionLogError` code `store.busy`, and processes opening one new file at
+  once wait for each other rather than fail.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it.
@@ -633,10 +656,13 @@ declarations, see durable model requests).
 
 - `{ mode: "lease", ttlMs, renew }`: several instances over one log. A turn
   is held until the storage's `now + ttlMs`; each of its commits carries that
-  as `notAfter`, so a late write is refused by the storage's clock whatever
-  the instances' clocks say. `renew: "none"` fixes the lease at begin,
-  `"on-commit"` extends it with each write, `{ everyMs }` also renews from a
-  keep-alive (which notices a remote cancel within `everyMs`).
+  as `notAfter`, and the storage refuses a write that arrives later by its
+  own clock. For the memory and SQLite logs that clock is the committing
+  process's Effect `Clock`, read under the write lock, so instances sharing a
+  lease over them need clocks in step; a host's store that reads its server's
+  clock judges every instance by that one. `renew: "none"` fixes the lease
+  at begin, `"on-commit"` extends it with each write, `{ everyMs }` also
+  renews from a keep-alive (which notices a remote cancel within `everyMs`).
 - `{ mode: "process" }`: a turn is held without expiry for as long as the
   process that began it runs. The turn names its holder's host, pid and
   start time: a turn left open by a process of this host that has stopped

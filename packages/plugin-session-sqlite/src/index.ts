@@ -12,4 +12,4 @@ export const sessionSqlitePlugin = definePlugin({
 })
 export default sessionSqlitePlugin
 
-export { SessionLogSqliteLive, sessionLogSqlitePlugin } from "./session-log.adapter.js"
+export { makeSessionLogSqlite, SessionLogSqliteLive, sessionLogSqlitePlugin } from "./session-log.adapter.js"

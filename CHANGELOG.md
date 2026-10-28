@@ -8,6 +8,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Breaking
+
+- **`@xandreed/plugin-session-sqlite`: a commit that waited past its lease is
+  refused.** The SQLite log read the clock before taking its write lock, so a
+  commit that waited for another connection's lock beyond its `notAfter` was
+  still accepted, stamped with the time it started waiting. The clock (the
+  caller's Effect `Clock`) is now read inside the IMMEDIATE transaction, in
+  `commit` and in `create`: such a commit fails with `LeaseExpired`, and
+  events and `updatedAt` carry the time they were written.
+- **`@xandreed/plugin-session-sqlite`: lock contention fails with
+  `store.busy`.** A write lock held by another connection past the 5 s busy
+  timeout fails with `SessionLogError` code `store.busy`; it was `store.io`.
+  A host that matched `store.io` to retry on lock contention matches
+  `store.busy` now; `store.io` is left for other storage failures.
+
 ### Added
 
 - `@xandreed/core`: every `TurnEvent` member carries a `description`
@@ -33,6 +48,29 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   socket frames, and the task records with their failure codes.
   `bun run docs:generate` writes it and fails when its hand-kept parts no
   longer match the code.
+- `@xandreed/plugin-session-sqlite` exports `makeSessionLogSqlite(path)`, the
+  scoped log `SessionLogSqliteLive` builds.
+- `@xandreed/core`: `sessionLogRecoveryConformance(subject)` and
+  `SessionLogSubject` (`open`, a new handle on the same data each time, and
+  `callerClock`), a conformance kit for what a `SessionLog` must keep across
+  handles, reopening and interruption: reopening, reopening twice, two open
+  handles, racing compare-and-swap through two handles, interrupted commits,
+  a handle whose scope never closed, and, with `callerClock`, the exact
+  `notAfter` boundary. It runs over the memory log (Bun and Node) and the
+  SQLite log, and the SQLite package adds subprocess tests: processes opening
+  one new file at once, a commit waiting behind another process's lock,
+  SIGKILL in the middle of commits, two processes making 200 compare-and-swap
+  increments each, and turns reaped after their holder is killed under
+  process and lease ownership. A new docs page, "Conformance kits", lists
+  core's kits and `@xandreed/plugin-render`'s, and how to run them against
+  your own adapter.
+
+### Fixed
+
+- `@xandreed/plugin-session-sqlite`: processes opening one new database file
+  at the same moment could fail at once with "database is locked", because
+  the file was switched to WAL before the busy timeout was set. The busy
+  timeout is now set first, so they wait for each other.
 
 ### Repository
 
