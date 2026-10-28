@@ -9,9 +9,9 @@ Plugin and configuration contracts live in `src/harness`; service tags live in
 in paired `.functions.ts` modules. `definePlugin` bridges typed Layers at the
 explicit `plugin.adapter.ts` boundary.
 
-The agent loop implementation lives in `@xandreed/plugin-agent-loop`, plugin
-activation in `@xandreed/runtime`, and durable sessions in `@xandreed/sdk`.
-The older generic session chassis remains for existing domain hosts. Foundry
+The step loop lives in `@xandreed/plugin-agent-loop`, plugin activation in
+`@xandreed/runtime`, sessions in `@xandreed/plugin-sessions`, and the
+composable agent (`Agent.define`, `Agent.turn`) in `@xandreed/sdk`. Foundry
 is independent and supplies deterministic verification when a host chooses it.
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

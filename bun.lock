@@ -75,14 +75,6 @@
         "effect": "4.0.7",
       },
     },
-    "packages/plugin-memory": {
-      "name": "@xandreed/plugin-memory",
-      "version": "0.13.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-    },
     "packages/plugin-memory-digest": {
       "name": "@xandreed/plugin-memory-digest",
       "version": "0.13.0",
@@ -175,8 +167,6 @@
       "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "@xandreed/plugin-memory": "workspace:*",
-        "@xandreed/plugin-session-sqlite": "workspace:*",
         "@xandreed/runtime": "workspace:*",
         "effect": "4.0.7",
       },
@@ -185,6 +175,7 @@
         "@xandreed/plugin-memory-digest": "workspace:*",
         "@xandreed/plugin-memory-summary": "workspace:*",
         "@xandreed/plugin-memory-window": "workspace:*",
+        "@xandreed/plugin-session-sqlite": "workspace:*",
         "@xandreed/plugin-sessions": "workspace:*",
         "@xandreed/plugin-tool-discovery": "workspace:*",
       },
@@ -487,8 +478,6 @@
     "@xandreed/foundry": ["@xandreed/foundry@workspace:packages/foundry"],
 
     "@xandreed/plugin-agent-loop": ["@xandreed/plugin-agent-loop@workspace:packages/plugin-agent-loop"],
-
-    "@xandreed/plugin-memory": ["@xandreed/plugin-memory@workspace:packages/plugin-memory"],
 
     "@xandreed/plugin-memory-digest": ["@xandreed/plugin-memory-digest@workspace:packages/plugin-memory-digest"],
 

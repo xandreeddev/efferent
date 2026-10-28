@@ -1,22 +1,23 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Schema } from "effect"
 import { definePlugin } from "./plugin.adapter.js"
-import { Approval, SessionEnvironment } from "../ports/harness.port.js"
+import { ActionPolicy, SessionEnvironment } from "../ports/harness.port.js"
+import { HarnessError } from "./plugin.entity.js"
 
-/** Provides a workspace named from its options and what the Approval it requires answers. */
+/** Provides a workspace named from its options and whether the ActionPolicy it requires allows naming it. */
 const namer = definePlugin({
   id: "test/namer", version: "1", scope: "runtime",
   config: Schema.Struct({ prefix: Schema.String, excited: Schema.Boolean }),
   defaults: { prefix: "ws", excited: false },
-  requires: [Approval],
+  requires: [ActionPolicy],
   provides: [SessionEnvironment],
-  layer: ({ prefix, excited }) => Layer.effect(SessionEnvironment, Approval.pipe(
-    Effect.flatMap((approval) => approval.request("name the workspace")),
-    Effect.map((approved) => ({ workspace: `${prefix}:${approved}${excited ? "!" : ""}` })),
+  layer: ({ prefix, excited }) => Layer.effect(SessionEnvironment, ActionPolicy.pipe(
+    Effect.flatMap((policy) => Effect.isSuccess(policy.authorize("name_workspace", {}))),
+    Effect.map((allowed) => ({ workspace: `${prefix}:${allowed}${excited ? "!" : ""}` })),
   )),
 })
 
-const approval = Layer.succeed(Approval, { request: () => Effect.succeed(true) })
+const approval = Layer.succeed(ActionPolicy, { authorize: () => Effect.void })
 const workspaceOf = (layer: Layer.Layer<SessionEnvironment, unknown>) =>
   Effect.runPromise(Effect.result(SessionEnvironment.pipe(Effect.map((environment) => environment.workspace), Effect.provide(layer))))
 
@@ -34,7 +35,7 @@ describe("definePlugin", () => {
   })
 
   test("build decodes the same way: missing options default, full options are unchanged", async () => {
-    const services = Context.make(Approval, { request: () => Effect.succeed(false) })
+    const services = Context.make(ActionPolicy, { authorize: () => Effect.fail(new HarnessError({ code: "policy.denied", message: "no" })) })
     const workspace = (options: unknown) => Effect.runPromise(Effect.scoped(namer.build(options, services)).pipe(
       Effect.map((built) => Context.getUnsafe(built, SessionEnvironment).workspace),
     ))

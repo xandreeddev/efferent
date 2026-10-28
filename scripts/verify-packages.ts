@@ -34,31 +34,39 @@ console.log(`Installing from temporary local registry into ${consumer}`)
 const install = Bun.spawn(["bun", "install", "--ignore-scripts", "--no-cache", "--cache-dir", join(consumer, ".install-cache")], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await install.exited !== 0) process.exit(1)
 await writeFile(join(consumer, "verify.ts"), `
-import { Context, Deferred, Effect, Layer, Option, Schema } from "effect"
-import { Sessions, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { Context, Deferred, Effect, Layer, Option, Stream } from "effect"
+import { LanguageModel } from "effect/ai"
+import { Sessions, SessionLogMemoryLive, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
 import { SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
-import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
-import sessions from "@xandreed/plugin-session-sqlite"
-import { sessionsPlugin } from "@xandreed/plugin-sessions"
+import { Agent } from "@xandreed/sdk"
+import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { assessAll, semanticEvaluator } from "@xandreed/evals"
 import { SemanticJevLive } from "@xandreed/evals"
-const echo = definePlugin({ id: "external/echo", version: "1", config: Schema.Struct({prefix: Schema.String}), defaults: {prefix:"hello "}, provides:[AgentLoop], layer: ({prefix}) => Layer.succeed(AgentLoop,{ run: input => Effect.succeed({text:prefix+input.userMessage.text,outcome:"completed"}) }) })
-await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
- const harness = yield* Harness.make({workspace:process.cwd(), plugins:[sessions,sessionsPlugin,echo], config:{version:1,plugins:[{id:"store",use:sessions.id},{id:"session-service",use:sessionsPlugin.id,options:{ownership:{mode:"process"}}},{id:"loop",use:echo.id}]}})
- const session = yield* harness.create()
- yield* session.send("world")
- const last = (yield* session.history).at(-1)
- if(last?.data.text !== "hello world") return yield* Effect.die("external plugin did not execute")
- const fork = yield* harness.fork(session.record.id,last.seq)
- if((yield* fork.history).length===0) return yield* Effect.die("fork has no history")
+const usage = { inputTokens: { total: 3 }, outputTokens: { total: 2 } }
+const turned = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
+ const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+ const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 2 }, system: "Be brief." })
+ const model = yield* LanguageModel.make({
+  generateText: (options) => Effect.succeed([{ type: "text", text: JSON.stringify(options.prompt).includes("world") ? "hello world" : "unseen" }, { type: "finish", reason: "stop", usage }] as never),
+  streamText: () => Stream.die("not scripted") as never,
+ })
+ const view = yield* sessions.create({ owner: "consumer" })
+ const address = { id: view.header.id, owner: "consumer" }
+ const outcome = yield* agent.turn({ turn: { session: address, userMessage: new UserMessage({ text: "world" }), runId: "run-1" }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
+  (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+ const fork = yield* sessions.fork(address, { origin: "fork", inherit: true })
+ return { outcome, forked: fork.header.parent }
 })) )
+if (turned.outcome.outcome !== "completed" || Option.getOrNull(turned.outcome.reply) !== "hello world" || Option.isNone(turned.forked)) process.exit(1)
 const rubric = semanticEvaluator({id:"external-quality",version:"1",questions:{supported:{type:"boolean",instructions:"Is the answer supported?"}},state:(input:{answer:string})=>input.answer})
 const assessments = await Effect.runPromise(assessAll([{evaluator:rubric,select:["supported"]}],{answer:"fixture"}).pipe(Effect.provide(SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))))
 if(assessments[0]?.status!=="scored" || assessments[0]?.metadata.backend!=="jev") process.exit(1)
-console.log("External SDK, plugin, persistence, fork, eval composition, and optional rubric adapter passed")
+console.log("Composable agent turn, session fork, eval composition and optional rubric adapter passed")
 const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const done = yield* Deferred.make<string>()
  const react = (writer: TurnWriter) => Deferred.succeed(done, writer.admitted.userMessage.text).pipe(Effect.asVoid)

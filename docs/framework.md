@@ -2,11 +2,11 @@
 
 ## Runtime model
 
-A host creates `Harness.make({ workspace, config, plugins })` inside
-`Effect.scoped`. The runtime validates a dependency graph, acquires runtime
-plugins once, and acquires session plugins for each open session. Finalizers
-release resources in reverse dependency order. A failed activation closes its
-partially acquired scope.
+`Agent.define(config)` (from `@xandreed/sdk`) is the entry point. The runtime
+validates the plugin graph, acquires runtime plugins once in the caller's
+scope and activates session plugins per turn. Finalizers release resources in
+reverse dependency order; a failed activation closes its partially acquired
+scope. See [Composable agents](#composable-agents-the-host-composes-the-turn).
 
 Each plugin has a stable `id`, `version`, `apiVersion`, `scope`, Effect Schema,
 default options, required service tags, provided service tags, and Layer factory.
@@ -15,115 +15,25 @@ require a `bindings` entry selecting the instance id. Runtime plugins cannot
 require session services. Dependencies are checked before activation.
 
 ```ts
-import { Effect, Layer, Schema } from "effect"
-import { AgentLoop, definePlugin } from "@xandreed/sdk"
+import { Layer, Schema } from "effect"
+import { definePlugin, SessionEnvironment } from "@xandreed/sdk"
 
 export default definePlugin({
-  id: "example/echo",
+  id: "example/workspace",
   version: "1.0.0",
-  config: Schema.Struct({ prefix: Schema.String }),
-  defaults: { prefix: "Echo: " },
-  provides: [AgentLoop],
-  layer: ({ prefix }) => Layer.succeed(AgentLoop, {
-    run: (input) => Effect.succeed({
-      text: prefix + input.userMessage.text,
-      outcome: "completed",
-    }),
-  }),
+  config: Schema.Struct({ workspace: Schema.String }),
+  defaults: { workspace: "." },
+  provides: [SessionEnvironment],
+  layer: ({ workspace }) => Layer.succeed(SessionEnvironment, { workspace }),
 })
 ```
 
-This plugin replaces the complete agent loop. No model credentials or tools
-are needed to run it. `scripts/verify-packages.ts`
-executes an equivalent external plugin against packed SDK artifacts.
+A plugin's options are given where the agent is defined, as
+`{ plugin, options }` entries in `Agent.define({ plugins })`. They merge over
+the plugin's defaults and decode through its schema; undeclared keys are refused.
 
-## Configuration
-
-Base names are `efferent.config.json` and `efferent.config.ts`; having both in
-one directory is an error. Global bases live in `~/.efferent/`. TypeScript
-exports a default configuration and may export `plugins: Plugin[]` containing
-local definitions. JSON resolves `use: "./my-plugin.ts"` or an installed package.
-Only trusted configuration modules should be loaded: TypeScript executes code.
-
-The merge order is preset, global base, workspace base, selected profile,
-`.efferent/overrides.json`, then invocation. Plugin entries merge by instance
-`id`; options merge by key. Changing `use` replaces the prior instance options.
-Profile maps and bindings merge by key. An unknown profile is an error.
-
-`config explain` reports source layers and selected providers, redacting common
-credential keys. `plugin inspect ID` emits the plugin schema. `plugin add PACKAGE`
-installs into `~/.efferent/plugins` with install scripts disabled, validates the
-graph, then writes the workspace override. Removing a required provider fails
-validation until its dependants are changed too.
-
-`harness.reconfigure(config, plugins?)` validates and stages the next graph before
-making it available. An optional registry introduces newly loaded implementations;
-successful reconfiguration retains that registry for later changes. Idle sessions refresh; active sessions refresh before their next
-turn. A changed runtime graph returns `restart-required`; the host decides when
-to restart. Source TypeScript configuration is never rewritten.
-
-## Harness sessions
-
-The `Harness` and composable agents share the configured `SessionLog` and
-`Sessions` lifecycle (see [Sessions](#sessions-one-log-per-session)). The
-historical `SessionStore` API is a deprecated event projection over that log;
-it owns no separate tables. A harness graph composes `sessionSqlitePlugin`
-(storage, compatibility projection and open admission) with `sessionsPlugin`
-(turn ownership). Single-host deployments configure the latter with
-`{ ownership: { mode: "process" } }`, under which a second process on the same
-host finds a live process's turn busy; hosts sharing a database across hosts
-use lease ownership. `Harness.make` requires `Sessions`: a graph without
-`sessionsPlugin` fails with `service.missing` naming it. In-turn events are
-written through the turn's `TurnWriter` to the `SessionLog` and read back
-through `SessionStore`, so a custom `SessionStore` must be the projection over
-that same log (`SessionStoreProjectionLive`); one that does not read what the
-writer wrote fails the turn with `session.store` instead of losing its events.
-
-- `create`, `resume`, `list`, and `fork` operate on the same session heads and
-  immutable fork boundaries as the unified log. `fork(id, through)` inherits
-  exactly the events up to `through` (and that turn's `turn.ended` when no
-  harness event comes between), its turns count on from every turn it
-  inherits, and `fork(id, -1)` inherits nothing. A cut within inherited history
-  copies that exact prefix while retaining the logical parent and turn counter.
-- `send` journals input, admits through `Sessions.begin` and writes through its
-  `TurnWriter` before ending the turn; `steer` queues input for a loop's
-  next admission boundary; `continue` resumes the pending queue. Input
-  submitted while a turn is ending is recorded on its own, and `busy` holds
-  until the turn's writer is released. A steer that another instance's turn
-  claimed is not begun again as a turn.
-- `use(Service, callback)` accesses a selected domain service while holding the
-  session gate; resource disposal waits until the callback completes.
-- `interrupt` cancels the active fiber. The run settles once as cancelled. A
-  turn closed elsewhere (cancelled or reaped by another instance) still gets
-  its run's settlement, `run.cancelled`, recorded outside the closed writer:
-  the durable ending takes precedence even if the loop returns successfully
-  without another write. `send` returns after a cancel and fails with
-  `turn.closed` after a reap.
-- `events(after)` replays durable events after an exclusive cursor, then follows
-  the journal. Notifications can coalesce; journal entries are not dropped.
-- `transient` carries bounded, disposable text deltas. It is not replay storage.
-- A reopened unfinished run is marked cancelled. Tools are never rerun merely
-  because a client reconnects. A run still held (by its lease, or by a process
-  that still runs) is left alone. A fork
-  requires a settled event boundary. A refused begin leaves the queued input
-  unclaimed so the caller can continue it once the session is free.
-
-Session plugins can require `SessionEnvironment` to access the workspace and
-current session record. `domainLoop` and `domainSession` bridge an existing domain
-event protocol to SDK lifecycle and replay; optional snapshots restore domain
-state when a session is forked. When the host provides a `ConversationStore`,
-`domainLoop` binds the domain session's writes to its conversation to the
-harness run through a token inherited by its fibers. A write from an earlier
-run fails with `StoreError` even while a later run is active; writes after the
-run ends or its external closure is noticed also fail. These
-writes are recorded beside the turn rather than through its writer, so a turn
-closed on another instance is noticed during execution at the writer's next
-commit. Settlement also checks the durable ending when the loop returns.
-
-The SQLite plugin uses WAL and transactional sequence allocation. The memory
-plugin uses a workspace-scoped append-only JSONL ledger. The default new data
-namespace is `.efferent/runtime`; historical data is retained without migration.
-The models plugin reads existing model settings and credentials as fallbacks by
+The SQLite session store uses WAL and transactional sequence allocation. The
+models plugin reads existing model settings and credentials as fallbacks by
 default. Explicit plugin options and current credentials win. Set its
 `inheritPrevious` option to `false` to use an independent setup; new logins and
 refreshed inherited credentials are written to the current credential store.
@@ -534,8 +444,7 @@ contributor's array in graph order. A capability carries tools, skills and
 prompt sections; per-turn host state comes from the turn's `layer`. The
 system prompt is the configured prefix, then the `static`
 sections, then the `session` sections, each tier by `order`. `turn` sections
-are recorded as turn context when the first run starts. The `Harness` remains
-the self-contained session host for applications that do not compose turns.
+are recorded as turn context when the first run starts.
 
 ### Typed plugin layers
 
@@ -685,50 +594,6 @@ background tasks. Two layers split the work:
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it.
-
-### Existing SQLite journals
-
-SQLite opens the unified `session_heads` and `session_log_events` tables. On
-the first open it imports existing `harness_sessions`/`harness_events` and
-`conversations`/`messages`/`checkpoints`/`run_outcomes` into those tables in one
-IMMEDIATE transaction. The original rows, event ids, message positions,
-checkpoints, timestamps and `user_version` are preserved. Corrupt legacy
-message rows retain their positions and are skipped by the compatibility
-reader, as before; a harness session or event row that does not decode is
-skipped and logged, and the rest of the source imports. A failed import rolls
-back all imported rows and can be retried after repairing the source.
-
-`SessionLogSqliteLive(path, { legacyPaths: [...] })` and the storage plugin's
-`legacyPaths` option import older files through read-only connections into the
-configured destination. An orphan historical message row (written under a
-harness id without a conversation row) joins the session stored under that id
-and keeps its owner; an orphan without one is created under the storage
-plugin's `SessionEnvironment.workspace` (standalone adapters may name
-`legacyOwner`, and otherwise isolate it under the compatibility owner).
-Existing sources are left intact; absent optional sources are skipped.
-Sessions are matched by id, not by the source's path: events a session
-already holds are not imported again, and removing or pruning a session
-leaves a tombstone, so a moved, renamed or copied source neither duplicates
-records nor brings a removed session back. An owner, identity or
-historical-position conflict refuses the whole source. Stop older application versions before migrating: the
-import is a snapshot, and subsequent writes by an old version are not mirrored.
-
-`SessionStoreProjectionLive` and `ConversationStoreProjectionLive` are the
-explicit deprecated compatibility surfaces. Both require the host's
-`SessionLog`; their writes append `harness.event` or `conversation.*` records
-with revision checks, and positional batches stay atomic. A read after a
-cursor and an append find their place by a binary search over the log's
-cursor, so they cost what they return rather than the history. The
-positional listing shows conversation sessions only (not harness or task
-sessions sharing the log) and reads an unknown outcome as none; over the
-SQLite log it is one query, and `prune` removes old conversations in one
-transaction, leaves tombstones and truncates the write-ahead log. The convenience
-`SessionStoreLive(path)` and `SqliteConversationStoreLive(path)` compose these
-projections over SQLite without creating the former storage tables. Hosts with an
-older message database compose the message projection over their harness log
-with `ConversationStoreProjectionLive({ legacy: { paths, owner } })`, which
-imports that database into the log once. New hosts use `Sessions`, `TurnWriter` and
-`ConversationMemory` directly.
 
 ```ts
 const view = yield* sessions.create({ owner })                 // SessionView: header, turns, title, open, pending

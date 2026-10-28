@@ -1,7 +1,7 @@
 import { Context, Option } from "effect"
 
 /**
- * The CURRENT conversation's cache identity, stamped by `runAgent` for the
+ * The CURRENT conversation's cache identity, stamped by the step loop for the
  * duration of a run. Adapters that can key server-side prompt caches on a
  * stable id (OpenAI-compatible `prompt_cache_key`) read it at call time —
  * one conversation, one cache lane, so parallel sessions stop evicting

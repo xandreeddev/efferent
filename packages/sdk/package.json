@@ -10,9 +10,7 @@
   "dependencies": {
     "@xandreed/core": "workspace:*",
     "effect": "4.0.7",
-    "@xandreed/runtime": "workspace:*",
-    "@xandreed/plugin-memory": "workspace:*",
-    "@xandreed/plugin-session-sqlite": "workspace:*"
+    "@xandreed/runtime": "workspace:*"
   },
   "devDependencies": {
     "@xandreed/plugin-agent-loop": "workspace:*",
@@ -20,6 +18,7 @@
     "@xandreed/plugin-memory-summary": "workspace:*",
     "@xandreed/plugin-tool-discovery": "workspace:*",
     "@xandreed/plugin-memory-digest": "workspace:*",
-    "@xandreed/plugin-sessions": "workspace:*"
+    "@xandreed/plugin-sessions": "workspace:*",
+    "@xandreed/plugin-session-sqlite": "workspace:*"
   }
 }
