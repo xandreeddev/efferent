@@ -11,7 +11,7 @@ import { CurrentModelEndpoints, ModelEndpoints } from "./ports/model-endpoints.p
 
 const Config = Schema.Struct({ model: Schema.String, fastModel: Schema.String, fallbackModel: Schema.String, inheritPrevious: Schema.Boolean, endpoints: ModelEndpoints })
 export const modelsPlugin = definePlugin({
-  id: "@xandreed/plugin-models", version: "0.12.0", config: Config,
+  id: "@xandreed/plugin-models", version: "0.13.0", config: Config,
   defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {} }, requires: [SessionEnvironment],
   provides: [LanguageModel.LanguageModel, UtilityLlm, AuthStore, SettingsStore, ModelCatalog],
   layer: (config) => Layer.unwrap(Effect.gen(function* () {

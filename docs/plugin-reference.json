@@ -1,7 +1,7 @@
 [
   {
     "id": "efferent/approval-host",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -18,7 +18,7 @@
   },
   {
     "id": "@xandreed/plugin-session-sqlite",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -56,7 +56,7 @@
   },
   {
     "id": "@xandreed/plugin-session-sqlite/log",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -82,7 +82,7 @@
   },
   {
     "id": "@xandreed/plugin-sessions",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -126,7 +126,8 @@
                 },
                 "ttlMs": {
                   "type": "integer",
-                  "minimum": 1000
+                  "minimum": 1000,
+                  "maximum": 9007199254740991
                 },
                 "renew": {
                   "anyOf": [
@@ -142,7 +143,8 @@
                       "properties": {
                         "everyMs": {
                           "type": "integer",
-                          "minimum": 100
+                          "minimum": 100,
+                          "maximum": 9007199254740991
                         }
                       },
                       "required": [
@@ -240,7 +242,7 @@
   },
   {
     "id": "@xandreed/plugin-models",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -313,7 +315,7 @@
   },
   {
     "id": "@xandreed/plugin-memory",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -348,7 +350,7 @@
   },
   {
     "id": "@xandreed/plugin-memory-window",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -386,19 +388,23 @@
         },
         "spillMinChars": {
           "type": "integer",
+          "maximum": 9007199254740991,
           "exclusiveMinimum": 0
         },
         "previewChars": {
           "type": "integer",
+          "maximum": 9007199254740991,
           "exclusiveMinimum": 0
         },
         "ledgerTurnChars": {
           "type": "integer",
+          "maximum": 9007199254740991,
           "exclusiveMinimum": 0
         },
         "digestOnWriteChars": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "digests": {
           "type": "boolean"
@@ -412,7 +418,8 @@
         },
         "maxImages": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -432,7 +439,7 @@
   },
   {
     "id": "@xandreed/plugin-memory-summary",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -486,7 +493,8 @@
         },
         "cooldownTurns": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "turnContext": {
           "type": "string",
@@ -510,7 +518,8 @@
         },
         "maxImages": {
           "type": "integer",
-          "minimum": 0
+          "minimum": 0,
+          "maximum": 9007199254740991
         },
         "instructions": {
           "type": "string"
@@ -532,7 +541,7 @@
   },
   {
     "id": "@xandreed/plugin-memory-digest",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -562,7 +571,7 @@
   },
   {
     "id": "@xandreed/plugin-tool-discovery",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -619,7 +628,9 @@
           "minLength": 1
         },
         "catalogOrder": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
         }
       },
       "required": [
@@ -637,7 +648,7 @@
   },
   {
     "id": "@xandreed/plugin-agent-loop",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -683,7 +694,7 @@
   },
   {
     "id": "@xandreed/plugin-agent-loop/steps",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -700,7 +711,7 @@
   },
   {
     "id": "@xandreed/plugin-tasks",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -751,7 +762,7 @@
   },
   {
     "id": "@xandreed/plugin-render/surface",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -782,7 +793,7 @@
   },
   {
     "id": "@xandreed/plugin-render/feed",
-    "version": "0.12.0",
+    "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -803,18 +814,22 @@
       "properties": {
         "pollMs": {
           "type": "integer",
+          "maximum": 9007199254740991,
           "exclusiveMinimum": 0
         },
         "maxPollMs": {
           "type": "integer",
+          "maximum": 9007199254740991,
           "exclusiveMinimum": 0
         },
         "heartbeatMs": {
           "type": "integer",
+          "maximum": 9007199254740991,
           "exclusiveMinimum": 0
         },
         "maxDurationMs": {
           "type": "integer",
+          "maximum": 9007199254740991,
           "exclusiveMinimum": 0
         }
       },
