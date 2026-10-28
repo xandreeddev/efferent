@@ -71,7 +71,10 @@ sessions only through `@xandreed/plugin-sessions`, as `Agent.turn` does. One
 turn is open per session at a time; a second message is refused, a retried
 one is found by its key. Turns are owned by a lease judged by the storage's
 clock (several instances) or by the process that began them, for as long as
-it runs (one host). Reading or following a session never runs anything.
+it runs (one host). The storage's clock is the backend's: the memory and
+SQLite logs read the committing process's Effect `Clock`, under the write
+lock, so instances sharing a lease over them need clocks in step; a host's
+own store may read its server's clock instead. Reading or following a session never runs anything.
 
 `Agent.turn` closes the body scope, the host's layer, then the plugins that
 depend on turn services. On success, tasks and background reactions settle

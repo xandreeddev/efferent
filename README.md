@@ -60,6 +60,13 @@ Override a service through an explicit binding.
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores them
 in a SQLite file on Bun, and any other store can implement the `SessionLog` port.
 
+Core ships the port contracts as conformance kits, checks any test runner can
+run against your own implementation: `sessionLogConformance` and
+`sessionLogRecoveryConformance` (reopening, two handles, interrupted commits,
+a handle whose scope never closed) for a session store,
+`memoryConformance`, `stepLoopConformance` and `turnConformance`. See
+[conformance kits](packages/website/src/content/docs/concepts/conformance.md).
+
 Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)
 that `stackPlugins` composes the way the graph does. A turn is public steps
 over typed services (`TurnLive`, `persistMessage`, `openTurnTools`,

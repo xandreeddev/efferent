@@ -213,6 +213,26 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
+            "name": "plugin-session-sqlite-tests",
+            "path": "packages/plugin-session-sqlite/src/**/*.test*.ts",
+            "canImport": [
+                  "plugin-session-sqlite",
+                  "core",
+                  "plugin-sessions"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "ws",
+                  "@xandreed/plugin-sessions"
+            ]
+      },
+      {
             "name": "plugin-session-sqlite",
             "path": "packages/plugin-session-sqlite/src/**",
             "canImport": [

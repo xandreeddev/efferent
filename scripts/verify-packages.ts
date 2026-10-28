@@ -37,9 +37,9 @@ if (await install.exited !== 0) process.exit(1)
 await writeFile(join(consumer, "verify.ts"), `
 import { Context, Deferred, Effect, Layer, Option, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
-import { Sessions, SessionLogMemoryLive, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { Sessions, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
-import { SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
+import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
 import { Agent } from "@xandreed/sdk"
@@ -88,6 +88,11 @@ const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
 })))
 if (!answered.includes("found the answer")) process.exit(1)
 console.log("Sessions over SQLite, a background task and the reaction to its result passed")
+const recovery = sessionLogRecoveryConformance({ open: makeSessionLogSqlite(".efferent/recovery.db"), callerClock: true })
+const recoveryFailures = (await Effect.runPromise(Effect.forEach(recovery, (check) => Effect.result(check.run).pipe(
+ Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
+if (recoveryFailures.length > 0) { console.error(recoveryFailures.join("\\n")); process.exit(1) }
+console.log("The SessionLog recovery kit passed over the packed SQLite log (" + recovery.length + " checks)")
 `)
 /**
  * The documentation's imports must exist in the packed packages: every
@@ -162,7 +167,15 @@ if (Bun.which("node") !== null) {
   await writeFile(join(consumer, "node-imports.mjs"), nodeReady.map((name) => `await import(${JSON.stringify(name)})`).join("\n") + `
 const { encodeSse, FeedReady, renderSurfacePlugin } = await import("@xandreed/plugin-render")
 if (renderSurfacePlugin.id !== "@xandreed/plugin-render/surface" || encodeSse(FeedReady.make({})) !== "event: ready\\ndata: {}\\n\\n") process.exit(1)
-console.log("${nodeReady.length} packages import on Node; plugin-render encodes on Node")
+const { Effect } = await import("effect")
+const { SessionLog, SessionLogMemoryLive, sessionLogRecoveryConformance } = await import("@xandreed/core")
+// An in-memory log reopens only when every open shares its store: build it once.
+const memoryLog = await Effect.runPromise(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
+const recovery = sessionLogRecoveryConformance({ open: Effect.succeed(memoryLog), callerClock: true })
+const recoveryFailures = (await Effect.runPromise(Effect.forEach(recovery, (check) => Effect.result(check.run).pipe(
+  Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
+if (recoveryFailures.length > 0) { console.error(recoveryFailures.join("\\n")); process.exit(1) }
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes and the SessionLog recovery kit passes over the memory log on Node")
 `)
   const node = Bun.spawn(["node", "node-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await node.exited !== 0) process.exit(1)

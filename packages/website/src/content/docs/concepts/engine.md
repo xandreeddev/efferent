@@ -17,4 +17,7 @@ The step loop is `stepLoopPlugin` from `@xandreed/plugin-agent-loop`.
 `@xandreed/plugin-sessions` owns serialized turns, durable events and forks;
 `Agent.turn` in the SDK composes one turn over them.
 
+Core also ships the port contracts as runnable checks, to run against your
+own implementation: see [conformance kits](/docs/concepts/conformance).
+
 See [SDK and sessions](/docs/concepts/harness).

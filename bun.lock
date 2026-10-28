@@ -126,6 +126,9 @@
         "effect": "4.0.7",
         "ws": "^8.21.0",
       },
+      "devDependencies": {
+        "@xandreed/plugin-sessions": "workspace:*",
+      },
     },
     "packages/plugin-sessions": {
       "name": "@xandreed/plugin-sessions",
