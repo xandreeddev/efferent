@@ -10,6 +10,8 @@ import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth
 import { makeCompatLanguageModel } from "./compat.js"
 import { makeOpenAiCodexLanguageModel } from "./openAiCodex.js"
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
+import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
+import type { ModelEndpoint } from "../ports/model-endpoints.port.js"
 
 /**
  * Per-provider `LanguageModel` construction. Built PER REQUEST from a
@@ -18,8 +20,9 @@ import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
  *
  * v1 providers: opencode (OpenAI-compatible gateway — the default), google
  * (Gemini's OpenAI-compatible endpoint), anthropic (api key or subscription
- * OAuth), openai (api key). OpenAI-OAuth
- * (Codex) and ollama are deferred until an agent needs them.
+ * OAuth), openai (api key), openai-codex (subscription OAuth). A configured
+ * endpoint, or a `local` credential with a `baseUrl`, sends its provider's
+ * models to that OpenAI-compatible URL, with or without a key.
  */
 
 export const OPENCODE_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
@@ -139,7 +142,49 @@ const openCodeResponsesConfig = (cacheKey: Option.Option<string>, policy: Option
   }),
 })
 
+/** `<url>/chat/completions` of an OpenAI-compatible base URL. */
+export const chatCompletionsUrl = (baseUrl: string): string => `${baseUrl.replace(/\/+$/, "")}/chat/completions`
+
+/** An endpoint's key: its own, then the environment variable it names, then the AuthStore's; none is valid. */
+const endpointKey = (endpoint: ModelEndpoint, stored: Redacted.Redacted<string> | undefined): Option.Option<string> =>
+  Option.fromNullishOr(endpoint.apiKey).pipe(
+    Option.orElse(() => Option.flatMap(Option.fromNullishOr(endpoint.apiKeyEnv), (name) => Option.fromNullishOr(process.env[name]))),
+    Option.orElse(() => Option.map(Option.fromNullishOr(stored), Redacted.value)),
+    Option.filter((value) => value.length > 0),
+  )
+
+const endpointModel = (
+  selection: ModelSelection,
+  url: string,
+  key: Option.Option<string>,
+  standardOnly: boolean,
+): Effect.Effect<BuiltProvider> =>
+  makeCompatLanguageModel({
+    moduleName: selection.provider,
+    chatUrl: chatCompletionsUrl(url),
+    model: selection.modelId,
+    standardOnly,
+    ...Option.match(key, { onNone: () => ({}), onSome: (apiKey) => ({ apiKey }) }),
+  }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
+
+/** A configured endpoint first, then a `local` credential's URL, then the built-in providers. */
 const buildProviderService = (
+  selection: ModelSelection,
+  credential: Credential | undefined,
+  key: Redacted.Redacted<string> | undefined,
+): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> =>
+  Effect.flatMap(Effect.service(CurrentModelEndpoints), (endpoints) => {
+    const endpoint = Option.fromNullishOr(endpoints[selection.provider])
+    if (Option.isSome(endpoint)) {
+      return endpointModel(selection, endpoint.value.url, endpointKey(endpoint.value, key), endpoint.value.standardOnly ?? true)
+    }
+    if (credential?.type === "local" && credential.baseUrl !== undefined) {
+      return endpointModel(selection, credential.baseUrl, Option.none(), true)
+    }
+    return buildBuiltInProvider(selection, credential, key)
+  })
+
+const buildBuiltInProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
@@ -236,7 +281,7 @@ const buildProviderService = (
   return Effect.fail(
     new AuthError({
       provider: selection.provider,
-      message: `provider "${selection.provider}" is not wired on the new line (v1: opencode, google, anthropic, openai, openai-codex)`,
+      message: `provider "${selection.provider}" is not wired (built in: opencode, google, anthropic, openai, openai-codex; add others as models plugin endpoints)`,
     }),
   )
 }

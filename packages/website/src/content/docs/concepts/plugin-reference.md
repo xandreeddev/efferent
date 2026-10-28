@@ -284,7 +284,8 @@ Requires: `efferent/SessionEnvironment`
   "model": "",
   "fastModel": "",
   "fallbackModel": "",
-  "inheritPrevious": true
+  "inheritPrevious": true,
+  "endpoints": {}
 }
 ```
 
@@ -306,13 +307,38 @@ Requires: `efferent/SessionEnvironment`
     },
     "inheritPrevious": {
       "type": "boolean"
+    },
+    "endpoints": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string"
+          },
+          "apiKey": {
+            "type": "string"
+          },
+          "apiKeyEnv": {
+            "type": "string"
+          },
+          "standardOnly": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": true
+      }
     }
   },
   "required": [
     "model",
     "fastModel",
     "fallbackModel",
-    "inheritPrevious"
+    "inheritPrevious",
+    "endpoints"
   ],
   "additionalProperties": true
 }

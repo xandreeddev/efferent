@@ -87,6 +87,21 @@ JSON can refer to local modules or installed npm plugins through `use`.
 }
 ```
 
+To use any OpenAI-compatible server — a local model or a self-hosted gateway,
+with or without a key — name it under the models plugin's `endpoints` and select
+`<name>:<model id>`:
+
+```json
+{ "id": "models", "use": "@xandreed/plugin-models", "options": {
+  "model": "local:llama3.1:8b",
+  "endpoints": { "local": { "url": "http://localhost:11434/v1" } }
+} }
+```
+
+The key comes from `apiKey`, the environment variable `apiKeyEnv` names, or a
+stored key; with none, no `Authorization` header is sent. See
+[plugin configuration](packages/website/src/content/docs/concepts/providers.md#model-endpoints).
+
 Session plugin changes apply between turns; runtime plugin changes require a
 restart. The models plugin inherits existing model settings and sign-ins by
 default; explicit plugin options take precedence. Set `inheritPrevious: false`

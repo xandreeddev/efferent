@@ -7,11 +7,12 @@ import { LanguageModelLive } from "./llm/router.js"
 import { UtilityLlmLive } from "./llm/utilityLlm.js"
 import { ConfiguredModelCatalogLive } from "./llm/modelCatalog.js"
 import { LocalSettingsStoreLive } from "./settings/localSettings.js"
+import { CurrentModelEndpoints, ModelEndpoints } from "./ports/model-endpoints.port.js"
 
-const Config = Schema.Struct({ model: Schema.String, fastModel: Schema.String, fallbackModel: Schema.String, inheritPrevious: Schema.Boolean })
+const Config = Schema.Struct({ model: Schema.String, fastModel: Schema.String, fallbackModel: Schema.String, inheritPrevious: Schema.Boolean, endpoints: ModelEndpoints })
 export const modelsPlugin = definePlugin({
   id: "@xandreed/plugin-models", version: "0.11.0", config: Config,
-  defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true }, requires: [SessionEnvironment],
+  defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {} }, requires: [SessionEnvironment],
   provides: [LanguageModel.LanguageModel, UtilityLlm, AuthStore, SettingsStore, ModelCatalog],
   layer: (config) => Layer.unwrap(Effect.gen(function* () {
     const { workspace } = yield* SessionEnvironment
@@ -24,7 +25,8 @@ export const modelsPlugin = definePlugin({
       setRole: () => Effect.fail(new SettingsError({ message: "Edit the models plugin configuration to change a model" })),
       set: () => Effect.fail(new SettingsError({ message: "Edit the models plugin configuration to change settings" })),
     })
-    const base = Layer.merge(settings, LocalAuthStoreLive(workspace, homedir(), ".efferent/runtime", config.inheritPrevious ? ".efferent" : undefined))
+    const base = Layer.mergeAll(settings, LocalAuthStoreLive(workspace, homedir(), ".efferent/runtime", config.inheritPrevious ? ".efferent" : undefined),
+      Layer.succeed(CurrentModelEndpoints, config.endpoints))
     return Layer.mergeAll(LanguageModelLive, UtilityLlmLive, ConfiguredModelCatalogLive).pipe(Layer.provideMerge(base))
   })),
 })

@@ -62,8 +62,8 @@ export interface CompatConfig {
   readonly moduleName: string
   /** Full chat-completions endpoint. */
   readonly chatUrl: string
-  /** Bearer key (already resolved from the AuthStore). */
-  readonly apiKey: string
+  /** Bearer key (already resolved). Omit for keyless endpoints such as a local server. */
+  readonly apiKey?: string
   /** Provider-native model id. */
   readonly model: string
   /** Host-selected thinking mode. Omit to retain family defaults. */
@@ -323,7 +323,7 @@ const postChat = (
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${config.apiKey}`,
+          ...(config.apiKey === undefined || config.apiKey.length === 0 ? {} : { authorization: `Bearer ${config.apiKey}` }),
         },
         body: JSON.stringify(body),
       })
