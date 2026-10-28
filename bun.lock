@@ -4,7 +4,7 @@
     "": {
       "name": "agent",
       "dependencies": {
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
       "devDependencies": {
         "@types/bun": "^1.3.14",
@@ -16,46 +16,46 @@
     },
     "packages/core": {
       "name": "@xandreed/core",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/evals": {
       "name": "@xandreed/evals",
-      "version": "0.10.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@noble/hashes": "2.4.0",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/evals-cli": {
       "name": "@xandreed/evals-cli",
-      "version": "0.10.0-next.0",
+      "version": "0.13.0",
       "bin": {
         "efferent-eval": "./src/main.ts",
       },
       "dependencies": {
         "@xandreed/evals": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
         "tsx": "4.23.13",
       },
     },
     "packages/evals-langfuse": {
       "name": "@xandreed/evals-langfuse",
-      "version": "0.10.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@langfuse/client": "5.11.1",
         "@xandreed/evals": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/evals-langsmith": {
       "name": "@xandreed/evals-langsmith",
-      "version": "0.10.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/evals": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
         "langsmith": "0.10.8",
       },
     },
@@ -63,92 +63,92 @@
       "name": "@xandreed/foundry",
       "version": "0.0.0",
       "dependencies": {
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
         "typescript": "^5.9.3",
       },
     },
     "packages/plugin-agent-loop": {
       "name": "@xandreed/plugin-agent-loop",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/plugin-memory": {
       "name": "@xandreed/plugin-memory",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/plugin-memory-digest": {
       "name": "@xandreed/plugin-memory-digest",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/plugin-memory-summary": {
       "name": "@xandreed/plugin-memory-summary",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/plugin-memory-window": {
       "name": "@xandreed/plugin-memory-window",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/plugin-models": {
       "name": "@xandreed/plugin-models",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
-        "@effect/ai-anthropic": "4.0.0-rc.118",
-        "@effect/ai-openai": "4.0.0-rc.118",
+        "@effect/ai-anthropic": "4.0.7",
+        "@effect/ai-openai": "4.0.7",
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
         "ws": "^8.21.0",
       },
     },
     "packages/plugin-render": {
       "name": "@xandreed/plugin-render",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/plugin-session-sqlite": {
       "name": "@xandreed/plugin-session-sqlite",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
         "ws": "^8.21.0",
       },
     },
     "packages/plugin-sessions": {
       "name": "@xandreed/plugin-sessions",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/plugin-tasks": {
       "name": "@xandreed/plugin-tasks",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
       "devDependencies": {
         "@xandreed/plugin-sessions": "workspace:*",
@@ -156,29 +156,29 @@
     },
     "packages/plugin-tool-discovery": {
       "name": "@xandreed/plugin-tool-discovery",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/runtime": {
       "name": "@xandreed/runtime",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
     },
     "packages/sdk": {
       "name": "@xandreed/sdk",
-      "version": "0.8.0-next.0",
+      "version": "0.13.0",
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "@xandreed/plugin-memory": "workspace:*",
         "@xandreed/plugin-session-sqlite": "workspace:*",
         "@xandreed/runtime": "workspace:*",
-        "effect": "4.0.0-rc.118",
+        "effect": "4.0.7",
       },
       "devDependencies": {
         "@xandreed/plugin-agent-loop": "workspace:*",
@@ -205,7 +205,7 @@
     },
   },
   "overrides": {
-    "effect": "4.0.0-rc.118",
+    "effect": "4.0.7",
   },
   "packages": {
     "@astrojs/compiler": ["@astrojs/compiler@4.0.0", "", {}, "sha512-eouss7G8ygdZqHuke033VMcVw5HTZUu+PXd/h06DGDUg/jt5btPYPqh66ENWw/mU78rBrf/oeC4oqoBwMtDMNA=="],
@@ -236,9 +236,9 @@
 
     "@clack/prompts": ["@clack/prompts@1.6.0", "", { "dependencies": { "@clack/core": "1.4.2", "fast-string-width": "^3.0.2", "fast-wrap-ansi": "^0.2.0", "sisteransi": "^1.0.5" } }, "sha512-EYlRokl8szrP9Z25qT5aepMdBjzBvHF9ZEhzIiUBc9guz/T31EqRgvD0QSgZcpE93xiwrr+OkB4nz0BZyF6fSA=="],
 
-    "@effect/ai-anthropic": ["@effect/ai-anthropic@4.0.0-rc.118", "", { "peerDependencies": { "effect": "^4.0.0-rc.118" } }, "sha512-75a5I0nU/CnKXBstDKCtMVWazzGnmxETRtO1EXXtFJfYRGIp2MjJeB5bIfBReqrT6aXA3LE+D4S1K/9bqfOTHg=="],
+    "@effect/ai-anthropic": ["@effect/ai-anthropic@4.0.7", "", { "peerDependencies": { "effect": "^4.0.7" } }, "sha512-LgLeLM1UJKMgCE6dUbIfLYZNUTPyjacmTHlSzcdSRk2yBwdzEguhF9Lh4IorLAUC2ViFY9b+QaAAHVlYueG/wQ=="],
 
-    "@effect/ai-openai": ["@effect/ai-openai@4.0.0-rc.118", "", { "peerDependencies": { "effect": "^4.0.0-rc.118" } }, "sha512-VEhcR8L77hurJ5bHjxrrDe3KAIFZYf3xB1qwycbI5sfXrO6OdH6SMqqWQuOT71bBaUdGLbFc48Cmjl44XTozzg=="],
+    "@effect/ai-openai": ["@effect/ai-openai@4.0.7", "", { "peerDependencies": { "effect": "^4.0.7" } }, "sha512-9zkzfZE64RLbKH/98V/nUdu2gXKKQ62iWUvevCpaCU8lBDnfRfn9aMTt5jkHq6c7yQbi9owuJk/TidnNgzXxiQ=="],
 
     "@emnapi/runtime": ["@emnapi/runtime@1.11.1", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-vgj7R3y3Wgx24IQaGPA/R6YFXLHVMOZ0uVEyIQPaWs+rd1AzfEMXlAC22FYwO1XkKR6NPsq7mUandH8oIRdZFw=="],
 
@@ -606,7 +606,7 @@
 
     "dset": ["dset@3.1.4", "", {}, "sha512-2QF/g9/zTaPDc3BjNcVTGoBbXBgYfMTTceLaYcFJ/W9kggFUkhxD/hMEeuLKbugyef9SqAx8cpgwlIP/jinUTA=="],
 
-    "effect": ["effect@4.0.0-rc.118", "", {}, "sha512-hxhpCd+swzrtu9lnyPpEFre2ODQzJ9qxgyL1oHIEY8NKnW4PxTbM1XzplMZXiAsLD62HO+KJc41Nqxr9T791ZQ=="],
+    "effect": ["effect@4.0.7", "", {}, "sha512-47CiUzNAmeLr40pDT9vKMxxtB8o3bdpZEKU4IUM3fVxsK2GYzPsV7fQoZP0I41A308BZd71nMxqJ0KRh3s9u2g=="],
 
     "entities": ["entities@6.0.1", "", {}, "sha512-aN97NXWF6AWBTahfVOIrB/NShkzi5H7F9r1s9mD3cDj4Ko5f2qhhVoYMibXF7GlLveb/D2ioWay8lxI97Ven3g=="],
 

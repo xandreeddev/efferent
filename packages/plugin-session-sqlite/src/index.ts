@@ -12,7 +12,7 @@ export const SessionStoreLive = (path: string, options: { readonly legacyPaths?:
 
 /** Storage and the open admission policy; compose sessionsPlugin explicitly in the host graph. */
 export const sessionSqlitePlugin = definePlugin({
-  id: "@xandreed/plugin-session-sqlite", version: "0.12.0", scope: "runtime",
+  id: "@xandreed/plugin-session-sqlite", version: "0.13.0", scope: "runtime",
   config: Config, defaults: { path: ".efferent/runtime/sessions.db", legacyPaths: [] }, requires: [SessionEnvironment], provides: [SessionLog, SessionStore, TurnAdmission],
   layer: ({ path, legacyPaths }) => Layer.unwrap(SessionEnvironment.pipe(Effect.map(({ workspace }) => SessionStoreLive(path, { legacyPaths, legacyOwner: workspace })))),
 })

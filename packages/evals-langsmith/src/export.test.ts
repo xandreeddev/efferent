@@ -24,7 +24,7 @@ test("official SDK exports linked trial metadata and measured scores", async () 
           ? { successes: [], errors: [] }
           : path.includes("info")
             ? {
-                version: "0.12.0",
+                version: "0.13.0",
                 batch_ingest_config: {
                   use_multipart_endpoint: false,
                   size_limit: 100,

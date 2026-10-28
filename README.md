@@ -16,7 +16,7 @@ this repository's history.
 npm install @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
 ```
 
-Every package below is published at `0.12.0` under npm's `latest` tag. The
+Every package below is published at `0.13.0` under npm's `latest` tag. The
 historical `efferent` npm package is a different release line.
 
 ## Compose

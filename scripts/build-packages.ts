@@ -10,8 +10,11 @@ const names = ["core", "runtime", "sdk", "evals", "evals-cli", "evals-langfuse",
 const manifests = new Map(await Promise.all(names.map(async (name) =>
   [name, JSON.parse(await readFile(join(root, "packages", name, "package.json"), "utf8"))] as const,
 )))
-/** bun:sqlite keeps the SQLite store on Bun; everything else runs on Node and Bun. */
-const runtimes = (name: string) => name === "plugin-session-sqlite" ? { bun: ">=1.3.0" } : name.startsWith("evals") ? { node: ">=24" } : { node: ">=24", bun: ">=1.3.0" }
+/** Each package declares the runtimes it supports; the published manifest keeps that declaration. */
+const undeclared = names.filter((name) => manifests.get(name)?.engines === undefined)
+if (undeclared.length > 0) { console.error(`Declare "engines" in the package.json of: ${undeclared.join(", ")}`); process.exit(1) }
+const runtimeNote = (engines: { readonly node?: string, readonly bun?: string }) =>
+  engines.node !== undefined && engines.bun !== undefined ? "Node 24 or Bun." : engines.node !== undefined ? "Node 24." : "Bun only."
 const versions = new Map(Array.from(manifests.values(), (manifest) => [manifest.name, manifest.version]))
 await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
@@ -43,12 +46,12 @@ await Promise.all(names.map(async (name) => {
   if (missing.length > 0) { console.error(`Missing distribution dependencies for ${original.name}: ${missing.map(([key]) => key).join(", ")}`); process.exit(1) }
   const dependencies = Object.fromEntries(Object.entries(original.dependencies ?? {}).map(([key, value]) => [key, String(value).startsWith("workspace:") ? versions.get(key) : value]))
   const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies,
-    files: ["dist", "skills", "profiles", "README.md", "LICENSE"], engines: runtimes(name), license: "MIT",
+    files: ["dist", "skills", "profiles", "README.md", "LICENSE"], license: "MIT",
     ...(name === "evals-cli" ? { bin: { "efferent-eval": "./dist/main.js" } } : {}),
   }
   delete manifest.devDependencies
   await writeFile(join(target, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(join(target, "README.md"), `# ${original.name}\n\nEfferent composable agent framework, ${version}. ${name === "plugin-session-sqlite" ? "Bun only (bun:sqlite)." : name.startsWith("evals") ? "Node 24." : "Node 24 or Bun."}\n\nDocumentation: https://github.com/xandreeddev/efferent\n`)
+  await writeFile(join(target, "README.md"), `# ${original.name}\n\nEfferent composable agent framework, ${version}. ${runtimeNote(original.engines)}\n\nDocumentation: https://github.com/xandreeddev/efferent\n`)
   await cp(join(root, "LICENSE"), join(target, "LICENSE"))
   console.log(`Built ${relative(root, target)}`)
 }))

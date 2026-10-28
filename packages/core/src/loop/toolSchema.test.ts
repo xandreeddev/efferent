@@ -17,7 +17,8 @@ describe("strictJsonSchema", () => {
       properties: {
         query: { type: "string" },
         note: { anyOf: [{ type: "string" }, { type: "null" }] },
-        limit: { type: "integer" },
+        // Effect 4's Int is a safe integer; the schema states the range its decoder accepts.
+        limit: { type: "integer", minimum: Number.MIN_SAFE_INTEGER, maximum: Number.MAX_SAFE_INTEGER },
       },
       additionalProperties: false,
     })

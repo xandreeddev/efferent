@@ -121,7 +121,7 @@ export const recallCapability = defineCapability({
  * previews of oversized results and a ledger in place of the oldest turns.
  */
 export const memoryWindowPlugin = definePlugin({
-  id: "@xandreed/plugin-memory-window", version: "0.12.0", scope: "runtime",
+  id: "@xandreed/plugin-memory-window", version: "0.13.0", scope: "runtime",
   config: MemoryWindowConfig, defaults: memoryWindowDefaults,
   provides: [ConversationMemory],
   contributes: [Capabilities],
