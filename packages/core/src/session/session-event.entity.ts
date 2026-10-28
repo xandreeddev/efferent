@@ -1,6 +1,8 @@
 import { Schema } from "effect"
+import { TokenUsage } from "../domain/token-usage.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
+import type { TurnEventName } from "../turn/turn-event.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { JsonObject } from "./session-log.entity.js"
 
@@ -15,6 +17,8 @@ import { JsonObject } from "./session-log.entity.js"
  *   `decision.recorded`, `completion.evaluated`), written from the bus;
  * - the inbox (`inbox.*`);
  * - anything else: a host's own records, under the host's own names.
+ * `journalSchemaOf(kind)` (the paired functions file) gives the schema each
+ * of the framework's kinds is stored with.
  */
 
 /** Opens a turn: who asked, what they said, the host's command and the inbox items it claims. */
@@ -44,6 +48,32 @@ export const TurnEndedData = Schema.Struct({
 })
 export type TurnEndedData = typeof TurnEndedData.Type
 
+/** An inbox item as delivered (`inbox.queued`): its stable id, who sent it and the text a turn shows the model. */
+export const InboxQueuedData = Schema.Struct({
+  id: Schema.String,
+  source: JsonObject,
+  content: Schema.String,
+})
+export type InboxQueuedData = typeof InboxQueuedData.Type
+
+/** An inbox item given up on (`inbox.dropped`): as many turns took it and failed as the inbox allows. */
+export const InboxDroppedData = Schema.Struct({
+  id: Schema.String,
+  reason: Schema.Literals(["attempts"]),
+})
+export type InboxDroppedData = typeof InboxDroppedData.Type
+
+/**
+ * One step's provider response as stored (`step.usage`): its step, model and
+ * token usage. The rest of `assistant.message` is memory's `memory.message`.
+ */
+export const StepUsageData = Schema.Struct({
+  step: Schema.Int,
+  model: Schema.OptionFromNullOr(Schema.String),
+  usage: TokenUsage,
+})
+export type StepUsageData = typeof StepUsageData.Type
+
 /** The kind each memory entry is stored under. `TurnStarted` is the turn's own `turn.started`. */
 export const MemoryKindOf = {
   SystemPrepared: "memory.system",
@@ -66,6 +96,9 @@ export const TURN_EVENT_KINDS: ReadonlyArray<string> = [
   "completion.evaluated", "context.built", "decision.recorded",
   "request.prepared",
 ]
+
+/** Bus events not stored from the bus: memory or the session records them itself, and storing them again would be a second copy. */
+export const RECORDED_ELSEWHERE: ReadonlySet<TurnEventName> = new Set<TurnEventName>(["turn.started", "turn.ended", "skills.activated"])
 
 /** The inbox and the session's own records. */
 export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued", "inbox.dropped"]

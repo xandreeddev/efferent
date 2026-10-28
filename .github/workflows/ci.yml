@@ -49,5 +49,8 @@ jobs:
       - run: bun run build:packages
       - run: bun run verify:packages
       - run: bun run docs:generate
-      - run: git diff --exit-code -- docs/plugin-reference.json packages/website/src/content/docs/concepts/plugin-reference.md
+      # The generated references (plugins, events) are committed as generated, new files included.
+      - run: |
+          git status --porcelain -- docs packages/website/src/content/docs
+          test -z "$(git status --porcelain -- docs packages/website/src/content/docs)"
       - run: bun run --cwd packages/website check

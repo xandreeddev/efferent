@@ -1,9 +1,19 @@
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Schema, Struct } from "effect"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
-import { LogEntry } from "../memory/memory-log.entity.js"
-import { TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
+import { EntryId, LogBody, LogEntry } from "../memory/memory-log.entity.js"
+import { ModelRequestHeader } from "../turn/model-request.entity.js"
+import { ToolCompletedEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
 import type { TurnEvent as TurnEventType } from "../turn/turn-event.entity.js"
-import { MemoryKindOf, TurnEndedData, TurnStartedData } from "./session-event.entity.js"
+import {
+  InboxDroppedData,
+  InboxQueuedData,
+  MemoryKindOf,
+  RECORDED_ELSEWHERE,
+  StepUsageData,
+  TURN_EVENT_KINDS,
+  TurnEndedData,
+  TurnStartedData,
+} from "./session-event.entity.js"
 import type { TurnEndedData as TurnEnded, TurnStartedData as TurnStarted } from "./session-event.entity.js"
 import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 
@@ -72,12 +82,13 @@ export const entryOfEvent = (event: SessionLogEvent): Effect.Effect<Option.Optio
 export const entriesOfEvents = (events: ReadonlyArray<SessionLogEvent>): Effect.Effect<ReadonlyArray<LogEntry>, Schema.SchemaError> =>
   Effect.forEach(events, entryOfEvent).pipe(Effect.map((entries) => entries.flatMap(Option.toArray)))
 
-/** Bus events memory or the session records itself: storing them again would be a second copy. */
-const recordedElsewhere: ReadonlySet<string> = new Set(["turn.started", "turn.ended", "skills.activated"])
-
 /** A completed tool's input and result are in the memory log (the call and its `memory.tool-result`). */
+const OMITTED_FROM_TOOL_COMPLETED = ["result", "encoded", "input"] as const
+
 const withoutPayload = (data: Record<string, unknown>): JsonObject =>
-  Object.fromEntries(Object.entries(data).filter(([key]) => key !== "result" && key !== "encoded" && key !== "input"))
+  Object.fromEntries(Object.entries(data).filter(([key]) => !(OMITTED_FROM_TOOL_COMPLETED as ReadonlyArray<string>).includes(key)))
+
+const encodeStepUsage = Schema.encodeSync(StepUsageData)
 
 /**
  * The stored form of one bus event of turn `turn`: its name and encoded
@@ -86,12 +97,58 @@ const withoutPayload = (data: Record<string, unknown>): JsonObject =>
  * usage (its content is memory's `memory.message`).
  */
 export const draftOfTurnEvent = (turn: number, event: TurnEventType): Option.Option<SessionDraft> => {
-  if (TransientTurnEvents.includes(event._tag) || recordedElsewhere.has(event._tag)) return Option.none()
+  if (TransientTurnEvents.includes(event._tag) || RECORDED_ELSEWHERE.has(event._tag)) return Option.none()
   if (event._tag === "host") return Option.some({ kind: event.name, turn: Option.some(turn), data: event.data })
-  const { _tag, ...data } = encodeTurnEvent(event)
-  if (_tag === "assistant.message") {
-    const { step, model, usage } = data as { readonly step: unknown; readonly model: unknown; readonly usage: unknown }
-    return Option.some({ kind: "step.usage", turn: Option.some(turn), data: { step, model, usage } })
+  if (event._tag === "assistant.message") {
+    return Option.some({ kind: "step.usage", turn: Option.some(turn), data: { ...encodeStepUsage({ step: event.step, model: event.model, usage: event.usage }) } })
   }
+  const { _tag, ...data } = encodeTurnEvent(event)
   return Option.some({ kind: _tag, turn: Option.some(turn), data: _tag === "tool.completed" ? withoutPayload(data) : data })
 }
+
+/**
+ * The stored form of a memory entry (`memory.*`, `turn.reply`): the entry's
+ * id, run, step and time, and `body`, the entry's body without its `_tag`
+ * (the kind names it, see `MemoryKindOf`).
+ */
+export const StoredMemoryData = <Body extends Schema.Top>(body: Body) => Schema.Struct({
+  entry: EntryId,
+  runId: Schema.String,
+  step: Schema.Int,
+  at: Schema.Number,
+  body,
+})
+
+/** Each memory kind's stored schema, from the log body it holds. */
+const memorySchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unknown>]> = LogBody.members.flatMap((member) =>
+  "fields" in member ? [[MemoryKindOf[member.fields._tag.schema.literal], StoredMemoryData(Schema.Struct(Struct.omit(member.fields, ["_tag"])))] as const] : [])
+
+/**
+ * The stored schema of each bus event in `TURN_EVENT_KINDS` that is stored
+ * whole under its own name (`step.usage` is `StepUsageData`, `tool.completed`
+ * drops its payload). A bus event left out of `TURN_EVENT_KINDS` has none.
+ */
+const busSchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unknown>]> = TurnEvent.members.flatMap((member) => {
+  const tag = member.fields._tag.schema.literal
+  if (tag === "tool.completed" || !TURN_EVENT_KINDS.includes(tag)) return []
+  return [[tag, Schema.Struct(Struct.omit(member.fields, ["_tag"]))] as const]
+})
+
+const journalSchemas: ReadonlyMap<string, Schema.Codec<unknown, unknown>> = new Map<string, Schema.Codec<unknown, unknown>>([
+  ["turn.started", TurnStartedData],
+  ["turn.ended", TurnEndedData],
+  ["step.usage", StepUsageData],
+  ["request.prepared", ModelRequestHeader],
+  ["inbox.queued", InboxQueuedData],
+  ["inbox.dropped", InboxDroppedData],
+  ["tool.completed", Schema.Struct(Struct.omit(ToolCompletedEvent.fields, ["_tag", ...OMITTED_FROM_TOOL_COMPLETED]))],
+  ...memorySchemas,
+  ...busSchemas,
+])
+
+/**
+ * The schema the framework stores a journal kind's `data` with: every kind
+ * in `RESERVED_KINDS` has one. None for any other kind (a host's records, a
+ * plugin's own, such as the tasks plugin's `task.*`).
+ */
+export const journalSchemaOf = (kind: string): Option.Option<Schema.Codec<unknown, unknown>> => Option.fromNullishOr(journalSchemas.get(kind))

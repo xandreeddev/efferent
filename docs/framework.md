@@ -43,15 +43,12 @@ refreshed inherited credentials are written to the current credential store.
 For typed datasets, reusable evaluators, task/journey composition and native prompt
 examples, see [Composable evaluations](composable-evaluations.md).
 
-The explicit historical journey bridge separates inputs from labels. Its `Journey` declares `hostLocale`
-for initial session setup and `turns[].expected.locale` for each turn's outcome.
-`JourneyDriver.open` receives only `JourneyInput` (id, persona, host locale and
-fixture); `perform` receives only `JourneyAction`. The runner retains expectations
-for scoring. Drivers report the observed turn locale, not the initial host locale.
-Historical declarations with `expectedLocale` require explicit `decodeLegacyJourney`
-conversion; new execution never reads an expected answer to initialize its session.
-Typed `Dataset<Input, Reference>` cases can supply both focused tasks and journeys,
-with reference labels available only to evaluators.
+A `Journey` is a fixture and an ordered list of actions whose payloads belong to
+the application's codec. The application's runnable performs the actions against
+a fresh, scoped environment and records each observation through the trial's
+`TrialRecorder`; graders score the recorded outcome. Typed
+`Dataset<Input, Reference>` cases become tasks (`tasksFromDataset`), with
+reference labels kept out of execution and available only to evaluators.
 
 `@xandreed/evals` supplies a generic Schema domain for tasks, trials, candidates, runnables, journeys, graders, grading contexts, outcomes, suites and grader calibrations. Apps implement execution adapters, scoped environments and per-grader evidence projections. The shared runner keeps references out of execution, persists partial transcripts and terminal outcomes, and grades stored evidence independently.
 
@@ -136,7 +133,7 @@ runLoop({
     chooseContinuation({ stepIndex, messages, activeTools }),
 })
 // chooseContinuation returns an Effect of
-// { model: LanguageModel.Service, system: Prompt.Prompt }.
+// { model: LanguageModel.LanguageModel, system: Prompt.Prompt }.
 ```
 
 The hook runs at a provider step after any initial batch, with its actual tool
@@ -227,7 +224,9 @@ preserved and pending tasks are interrupted when the turn's scope closes.
 `NewTurn` (`{ session, userMessage, runId, key?, command? }`) that the agent
 begins through the `Sessions` in its services and ends with the outcome. A
 turn that cannot begin fails with the reason as its code (`session.busy`,
-`turn.duplicate`, `turn.key-conflict`, `turn.refused`); a turn someone else
+`turn.duplicate`, `turn.key-conflict`, `turn.refused`; all of them are
+`turnBeginCodes` from `@xandreed/sdk`, with suggested HTTP statuses in the
+[event reference](event-reference.md#begin-codes)); a turn someone else
 closes (a cancel, a reaped lease, a removed session) fails with
 `turn.closed`.
 
@@ -279,7 +278,9 @@ verdict.
 form), `step.ended` (the recorded results by entry id),
 `completion.evaluated`, `skills.activated`, `context.built`,
 `decision.recorded`, `assistant.message`, `assistant.delta` (transient),
-`turn.ended`, and host events from `defineHostEvent`. Publication is inline
+`turn.ended`, and host events from `defineHostEvent`; the
+[event reference](event-reference.md) lists each one's payload, who
+publishes it and how it is stored. Publication is inline
 and ordered, depth-first up to a cap: every subscriber runs before `publish`
 returns, so state a subscriber changes is visible to the next step, and a
 subscriber failure fails the turn. Within a step the order is `step.started`
@@ -668,7 +669,10 @@ turn's later writes, so a host can count and open in one transaction: a
 duplicate or a busy session fails inside it and counts nothing, and a
 refusal (`TurnRefused`) opens nothing. `TurnAdmissionOpen` admits all.
 
-**The vocabulary.** Each kind has one durable producer:
+**The vocabulary.** Each kind has one durable producer (the generated
+[event reference](event-reference.md) has every kind's payload, its
+sensitive content, the exact `RESERVED_KINDS` and the begin codes;
+`journalSchemaOf(kind)` gives each framework kind's schema):
 
 | Kind | Written by |
 | --- | --- |
@@ -677,6 +681,7 @@ refusal (`TurnRefused`) opens nothing. `TurnAdmissionOpen` admits all.
 | `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`) | the writer's `end`, a cancel or a reap |
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
 | `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded` | the turn's bus |
+| `request.prepared` (the request's header: system text, tool declarations, model, cache key) | the turn, before each provider call (`TurnMemory.prepareRequest`) |
 | `inbox.queued`, `inbox.dropped` | `deliver`; a claim that failed too often |
 | `task.started`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |
 | anything else | the host, through the writer or `transact` |

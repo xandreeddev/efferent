@@ -1,133 +1,85 @@
 # Evals: calibrations and journeys
 
-`@xandreed/evals` runs two kinds of evaluation. A **calibration** runs one
-subject under test (a port, an adapter, a prompt, a judge) over a labelled
-dataset for every candidate. A **journey** runs an ordered conversation over a
-booted application and scores each turn. Both produce version 2 trials, bind the
-same evaluators and judges, persist through the same `EvaluationStore` and are
-compared with the same fingerprints. The application owns the datasets, the
-subjects, the candidates, the evaluators and the selection policy; the library
-runs them and reports. It has no registry of its own.
+`@xandreed/evals` runs typed evaluations. A **suite** runs tasks for every
+candidate through the application's runnables and grades each trial; a
+**calibration** measures a grader's agreement with labels; a **journey** is a
+fixture and an ordered list of the application's actions, which the
+application's runnable performs as a task. Every trial records its evidence, transcript, outcome and grades,
+persists through the same `EvaluationRunStore` and is compared with the same
+fingerprints. The application owns the schemas, runnables, environments,
+evidence projections, graders, candidates and selection policy; the library
+runs them and reports. The domain, its ports and the `efferent-eval` CLI are
+described in [Evaluation domain and adapters](evaluation-domain.md).
 
-## A calibration is one value
+## A calibration measures a grader
 
-The whole setup of a calibration is one `defineCalibration({...})` value; the
-file that declares it is the place to read how the eval works.
+`defineGraderCalibration` turns a registered grader into a calibration. The
+grader runs as the subject over controlled cases and its verdict is captured;
+a separate agreement grader then compares that verdict with the case's
+`CalibrationReference` label (status and metrics, within a tolerance). The
+labels never reach the grader under test.
 
 ```ts
-import { Effect, Schema } from "effect"
-import { defineCalibration, runCalibration } from "@xandreed/evals"
+import { Effect, Layer, Option, Schema } from "effect"
+import { calibrateGrader, defineEvaluationApp, defineGraderCalibration, EvaluationServicesLive } from "@xandreed/evals"
+import type { EvaluationRunStore, GraderRegistration } from "@xandreed/evals"
 
-const Candidate = Schema.Struct({ id: Schema.String, model: Schema.String })
+declare const evidenceGrader: GraderRegistration        // the grader under test: its definition and GraderAssessment Layer
+declare const runStore: Layer.Layer<EvaluationRunStore>  // where trials and the run are written
 
-export const localeCalibration = defineCalibration({
-  id: "message-locale",
-  version: "3",                                   // changes with gates, thresholds or selection
-  dataset: localeDataset,                         // Dataset<{ text: string }, { locale: "en" | "pt" }>
-  candidate: Candidate,                           // strict codec for candidate files
-  candidates: [{ id: "small", model: "vendor/small" }, { id: "large", model: "vendor/large" }],
-  subject: {
-    // Receives the input only; the reference reaches the evaluators afterwards.
-    task: (input) => Locale.pipe(
-      Effect.flatMap((locale) => locale.resolve(input.text)),
-      Effect.map((output) => ({ output, evidence: output })),
-    ),
-    // The host's Layer for a candidate, built fresh for every case: counters,
-    // budgets and clients never leak between cases.
-    services: (candidate) => LocaleLive(candidate.model),
-    fingerprints: { prompt: "locale-v3" },        // identity of the code under test
-  },
-  output: LocaleDecision,
-  evidence: LocaleDecision,
-  evaluators: [{ evaluator: localeContract, select: ["locale", "fallback"] }],
-  gates: [
-    { evaluator: "locale.contract", metric: "locale", aggregate: "mean", minimum: 0.95, mode: "blocking" },
-    { evaluator: "locale.contract", metric: "fallback", aggregate: "mean", maximum: 0, mode: "blocking" },
-    { evaluator: "locale.contract", metric: "unknown", aggregate: "mean", mode: "diagnostic" },
+const Input = Schema.Struct({ evidence: Schema.OptionFromNullOr(Schema.Boolean) })
+const valid = (value: boolean) => ({ status: "scored" as const, metrics: [{ metric: { kind: "boolean" as const, name: "valid", value }, tolerance: 0 }] })
+
+export const calibration = defineGraderCalibration({
+  id: "evidence-agreement",
+  version: "1",                                     // changes with the cases or the labels
+  description: "Accepts supported answers, rejects unsupported ones, refuses missing evidence",
+  input: Input,
+  grader: evidenceGrader,
+  cases: [
+    { id: "supported", family: "supported", split: "calibration", review: "known", provenance: "Controlled evidence",
+      input: { evidence: Option.some(true) }, reference: valid(true) },
+    { id: "unsupported", family: "unsupported", split: "calibration", review: "known", provenance: "Controlled evidence",
+      input: { evidence: Option.some(false) }, reference: valid(false) },
+    { id: "missing", family: "missing", split: "validation", review: "known", provenance: "Controlled evidence",
+      input: { evidence: Option.none() }, reference: { status: "unavailable", metrics: [] } },
   ],
-  // The host's policy, best first. Without it the report has no recommendation.
-  select: (summaries) => summaries.filter((summary) => summary.passed)
-    .toSorted((left, right) => mean(right, "locale.contract/locale") - mean(left, "locale.contract/locale")),
-  run: { repetitions: 3, concurrency: 1, timeoutMs: 90_000 },
 })
 
-// Needs an EvaluationStore Layer and whatever `services` requires from the host.
-const report = runCalibration(localeCalibration, { runId: crypto.randomUUID(), split: "calibration" })
+const app = defineEvaluationApp({
+  id: "evidence", suites: [], calibrations: [calibration.calibration],
+  runnables: [calibration.runnable], graders: calibration.graders, projections: calibration.projections,
+  environmentFor: { [calibration.runnable.definition.id]: calibration.environment.id }, fingerprints: {}, commands: {},
+})
+
+// The run: every trial, its grades and the gate findings, written to the store.
+export const report = calibrateGrader(app, "evidence-agreement", crypto.randomUUID(), { ids: [], split: "all" }).pipe(
+  Effect.provide(Layer.merge(EvaluationServicesLive(app), runStore)),
+)
 ```
 
-- A **dataset** owns typed inputs, reference labels, a version and fixed
-  `calibration` and `validation` splits. Related case families never cross
-  splits. Subjective labels stay `provisional` until reviewed; a run on
-  provisional labels can never be promotion eligible.
-- The **subject** is the code under test. `task` receives the input only.
-  `services(candidate)` is the host's Layer for that candidate; the runner builds
-  it fresh for every case (`isolatedServices`), for the task and for the
-  evaluators alike. `fingerprints` declares what identifies the subject (prompt
-  ids, versions, hashes) and is part of the report identity.
-- **Candidates** are typed by the host's codec. `decodeCandidates(definition,
-  json)` reads a file strictly: unknown fields fail, they are never dropped.
-  Candidate ids must be unique.
-- **Evaluators** own an id, a version and named metrics; bindings select metrics
-  without duplicate calls. Deterministic contracts, `llmEvaluator`,
-  `semanticEvaluator` and entries resolved from an `evaluatorRegistry` all fit.
-- **Gates** aggregate one metric over a candidate's trials of the run: `mean` of
-  scored values, or `passRate` (trials at exactly 1 over every attempt, so a
-  failed trial counts as not passed). `minimum` and `maximum` bound the value;
-  `requiresReviewedReference` fails while any case in the split is provisional.
-  Diagnostic gates are reported, never enforced. A candidate passes when every
-  trial completed and every blocking gate passed.
-- **`judgeCalibration`** turns a case's reference and the subject's output into
-  comparable metrics; `summarizeCalibration` then reports agreement, Brier
-  error, confusion counts and false-pass/false-fail rates per candidate. This is
-  how a judge is calibrated: the judge is the subject, the labels are the
-  reference.
-- **`select`** is the host's policy over `CandidateSummary` values (metrics,
-  gates, performance, the typed candidate). Its first element is the report's
-  `recommendation`. The library never ranks or promotes on its own.
-- **`run`** holds the defaults; `runCalibration(definition, { runId, split,
-  repetitions?, concurrency?, timeoutMs? })` overrides them per run.
-  `validateCalibration` checks a definition without running it.
+- **Cases** carry the input, the reference label, a `family` (related cases
+  never cross splits), a fixed `calibration` or `validation` split, the label's
+  review state and its provenance.
+- **Gates** are blocking: full agreement, no false passes and no false
+  failures, on reviewed labels only.
+- **The run** is an `EvaluationRun`: every trial with its captured grading
+  context, the gate findings and the failures. Regrading saved observations
+  makes no grader calls; testing a revised grader means running the
+  calibration again. The same calibration runs from the CLI with
+  `efferent-eval calibrate evidence-agreement --config eval.config.ts`.
 
-## What a run reports
-
-`runCalibration` returns a `CalibrationReport` (persisted schema, version 1):
-
-- `identity`: `calibration` (`id@version`), `datasetHash`, `evaluatorHash`,
-  `subjectHash` and `candidatesHash`, all from `evaluationFingerprint`.
-- `trials`: every version 2 trial, candidate by candidate, case by case, sample
-  by sample. Trial ids are `<runId>/<calibration>/<candidate>/<case>/<sample>`.
-- `candidates`: per candidate its metric means (`evaluator/metric`), gate
-  results with the measured value, `passed`, the optional judge-calibration
-  summary and performance (attempts, completed, failed, cancelled, nearest-rank
-  p50/p95 latency including failures, judge usage only when every assessment
-  reported it).
-- `failures`: candidates whose run failed as a whole (for example a store
-  error); their completed trials are kept.
-- `reviewed`, `recommendation` and `promotionEligible`: eligible only when the
-  recommended candidate passed every blocking gate, on reviewed labels, with no
-  failures.
-
-`calibrationMarkdown(report)` renders the candidate table. `comparisonIssues(a,
-b)` refuses to compare two reports whose identity, case sets or metric coverage
-differ, or that contain incomplete trials. The host persists the report; the
-`EvaluationStore` port receives raw trials before assessment and each result
-before aggregation.
+Comparing application prompts or models is an ordinary suite: tasks bound to
+a runnable, candidates with their fingerprints, graders and gates.
 
 ## Journeys
 
-A `Journey` declares `hostLocale` for the initial session setup and
-`turns[].expected` for each turn's outcome, including `expected.locale`.
-`JourneyDriver.open` receives only `JourneyInput` (id, persona, host locale and
-fixture); `perform` receives only `JourneyAction`. The runner keeps the
-expectations for scoring, so a driver can never initialize a session from an
-expected answer. `runJourney` scores each turn deterministically
-(`scoreJourneyTurn`); the journey's `evaluators` bindings name the judges, by
-`id@version`, that the host resolves from its registry and projects with
-`projectEvaluatorInput`. `journeyTask` acquires a scoped world, performs actions
-in order, records each observation durably and returns partial evidence on a
-step failure; its `completed` output belongs in the host's deterministic gate.
-`selectJourneys` picks journeys by tier, tool, recipe or id from declared
-coverage, never from observed execution.
+A `Journey` declares a fixture and an ordered list of actions; the action
+payloads belong to the application's codec, and the runner knows only their
+order. The application's runnable performs the actions against a fresh,
+scoped environment and records each observation through the trial's
+`TrialRecorder`, so a failed step keeps the evidence gathered before it. Its
+graders score the recorded outcome like any other trial.
 
 ## Native prompts
 
@@ -169,10 +121,13 @@ absolute error and ten probability reliability bins; empty bins stay unavailable
 sensitivity instead of converting it to a tie.
 
 Evaluator failure, unavailable evidence and skipped execution contain no metrics.
-Unknown usage/cost encodes as null through Effect Option. Per-trial `Gate`s
-(`evaluateGates`) and per-run `AggregateGate`s are separate from assessment; new
-semantic metrics can remain diagnostic. Gates that depend on reference labels can
-require known or reviewed labels.
+Unknown usage/cost encodes as null through Effect Option. Gates are separate
+from assessment: a suite's `Gate` names a grader's metric, aggregates it over
+each candidate's trials (`mean` or `passRate`) and checks it against a minimum
+or maximum, `blocking` or `diagnostic`, so a new semantic metric can stay
+diagnostic. The run records each one as a `GateFinding` in `EvaluationRun`'s
+`gates`. A gate with `requiresReviewedReference` does not pass while any of its
+trials' reference labels is provisional.
 
 A run preserves completed trials when a candidate fails and reports that failure
 separately. Re-scoring saved evidence uses `assessAll` without rerunning the task.
@@ -240,13 +195,13 @@ only for offered `A`/`B`/`tie` keys. Other categories are supported directly thr
 
 ### Optional JEV transport
 
-Import the JEV bridge explicitly. The core eval entry point does not import it,
-and the eval package has no dependency on the Vercel AI SDK. The host supplies its
-SDK transport, configured Gateway model, credentials, and retry policy:
+`SemanticJevLive` is exported from `@xandreed/evals`, which has no dependency
+on the Vercel AI SDK: the host supplies its SDK transport, configured Gateway
+model, credentials, and retry policy:
 
 ```ts
 import { createGateway, experimental_evaluate } from "ai"
-import { SemanticJevLive } from "@xandreed/evals/adapters/semantic-jev.adapter"
+import { SemanticJevLive } from "@xandreed/evals"
 
 const gateway = createGateway({ apiKey }) // host configuration
 const jev = SemanticJevLive({

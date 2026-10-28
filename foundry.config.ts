@@ -303,7 +303,8 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "plugin-memory-summary",
                   "plugin-memory-digest",
                   "plugin-tool-discovery",
-                  "plugin-sessions"
+                  "plugin-sessions",
+                  "plugin-tasks"
             ],
             "externals": [
                   "effect",
@@ -316,6 +317,7 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "@xandreed/runtime",
                   "@xandreed/plugin-session-sqlite",
                   "@xandreed/plugin-sessions",
+                  "@xandreed/plugin-tasks",
                   "@xandreed/plugin-agent-loop",
                   "@xandreed/plugin-memory-window",
                   "@xandreed/plugin-memory-summary",

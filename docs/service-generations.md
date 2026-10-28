@@ -39,10 +39,11 @@ compatible chat-completions endpoint. It supports structured-output schemas,
 AbortSignal propagation through response consumption, and request hooks for
 budget reservations/accounting. Provider-specific decisions stay in adapters.
 
-`@xandreed/evals` defines journey actions, personas, tiers, expectations,
-observations, trials, calibration cases and experiment candidates. A scoped
-JourneyDriver invokes the real host transport. JourneyEvidence persists every
-trial, including timeouts and unexpected driver defects. The library neither
+`@xandreed/evals` defines tasks, journeys (a fixture and ordered actions),
+trials, graders, calibration cases and candidates. The application's runnable
+performs a journey against a fresh, scoped environment, invoking the real host
+transport, and records each observation through the trial's `TrialRecorder`;
+the run persists every trial, including timeouts and unexpected defects. The library neither
 assumes a browser implementation nor selects a tracing vendor. JSON artifacts
 encode optional infrastructure errors as null/string and hydrate through Schema.
 

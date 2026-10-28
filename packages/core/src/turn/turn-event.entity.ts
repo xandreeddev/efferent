@@ -28,6 +28,8 @@ export const TurnStartedEvent = Schema.TaggedStruct("turn.started", {
   runId: Schema.String,
   turn: Schema.Int,
   userMessage: UserMessage,
+}).annotate({
+  description: "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said. Not journaled from the bus: the session stored its own `turn.started` when the turn began. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
 })
 
 export const StepStartedEvent = Schema.TaggedStruct("step.started", {
@@ -35,6 +37,8 @@ export const StepStartedEvent = Schema.TaggedStruct("step.started", {
   /** Step zero of a host-planned batch: no provider call. */
   planned: Schema.Boolean,
   activeTools: Schema.Array(Schema.String),
+}).annotate({
+  description: "Published by the step loop as each step starts. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`.",
 })
 
 export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
@@ -44,6 +48,8 @@ export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
   input: Schema.Unknown,
   labels: Labels,
   stage: Schema.OptionFromNullOr(Schema.String),
+}).annotate({
+  description: "Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes no `tool.*` event; `step.ended.results` lists every recorded result. Journaled as `tool.started`, input included.",
 })
 
 export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
@@ -56,9 +62,12 @@ export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
   result: Schema.Unknown,
   /** The wire form of `result`, as the model receives it. */
   encoded: Schema.Unknown,
+  /** From just after `tool.started` to the handler's exit, the wait for the tool's read or write lane included. */
   durationMs: Schema.Number,
   labels: Labels,
   stage: Schema.OptionFromNullOr(Schema.String),
+}).annotate({
+  description: "Published by the tool registry when a handler returned or failed (`ok`). `result` is the decoded value, `encoded` its wire form as the model receives it. `durationMs` runs from just after `tool.started` to the handler's exit, so it includes any wait for the tool's read or write lane. Journaled as `tool.completed` without `input`, `result` and `encoded`: memory keeps the call and its result (`memory.message`, `memory.tool-result`).",
 })
 
 export const StepResult = Schema.Struct({
@@ -74,17 +83,23 @@ export const StepEndedEvent = Schema.TaggedStruct("step.ended", {
   status: Schema.Literals(["completed", "failed", "cancelled"]),
   /** The step's recorded tool results, in log order. */
   results: Schema.Array(StepResult),
+}).annotate({
+  description: "Published by the step loop after the step's tail is recorded. `status` is completed, failed or cancelled; `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls included. Journaled as `step.ended`.",
 })
 
 export const CompletionEvaluatedEvent = Schema.TaggedStruct("completion.evaluated", {
   step: Schema.Int,
   verdict: CompletionVerdict,
+}).annotate({
+  description: "Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.",
 })
 
 export const SkillsActivatedEvent = Schema.TaggedStruct("skills.activated", {
   skills: Schema.Array(Schema.String),
   tools: Schema.Array(Schema.String),
   source: ActivationSource,
+}).annotate({
+  description: "Published by the tool registry when skills (and their tools) become active: always-on skills, the intent matcher, the model's `load_skill`, or the host. Not journaled from the bus: memory records the activation as `memory.skills`.",
 })
 
 export const ContextBuiltEvent = Schema.TaggedStruct("context.built", {
@@ -98,10 +113,14 @@ export const ContextBuiltEvent = Schema.TaggedStruct("context.built", {
   reservedTokens: Schema.Int,
   compactions: Schema.Int,
   activeTools: Schema.Array(Schema.String),
+}).annotate({
+  description: "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate and reservation, how many compactions the build applied, and the active tools. Journaled as `context.built`; the full request is journaled beside it as `request.prepared`.",
 })
 
 export const DecisionRecordedEvent = Schema.TaggedStruct("decision.recorded", {
   record: DecisionRecord,
+}).annotate({
+  description: "Published by `recordDecision`, for example when `turn.tools.select` or `apply` records the skill selection: the decision record holds the candidates, the policy version and what was chosen. Journaled as `decision.recorded`.",
 })
 
 export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
@@ -111,6 +130,8 @@ export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
   model: Schema.OptionFromNullOr(Schema.String),
   toolCalls: Schema.Array(Schema.Struct({ id: Schema.String, tool: Schema.String, input: Schema.Unknown })),
   usage: TokenUsage,
+}).annotate({
+  description: "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage. Journaled only as `step.usage` (step, model, usage): the content itself is memory's `memory.message`.",
 })
 
 /** A streamed increment — transient: never journaled, restated by assistant.message. */
@@ -119,6 +140,8 @@ export const AssistantDeltaEvent = Schema.TaggedStruct("assistant.delta", {
   channel: Schema.Literals(["text", "reasoning", "tool-params"]),
   id: Schema.String,
   delta: Schema.String,
+}).annotate({
+  description: "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call publishes none.",
 })
 
 export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {
@@ -126,12 +149,16 @@ export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {
   turn: Schema.Int,
   outcome: Schema.Literals(["completed", "partial", "failed"]),
   reply: Schema.OptionFromNullOr(Schema.String),
+}).annotate({
+  description: "Published once when the turn's reply is recorded (`TurnMemory.persistReply`, from `guardTurn`), also when the turn fails, with outcome failed. Under `Agent.turn` that is after `use`, the host's per-turn layer and the turn-dependent plugins have closed, and their subscriptions with them: only a subscription whose scope is still open sees it, such as one made with `Scope.provide(observerScope)` over the caller's outer scope, or one registered around `TurnLive` by a host composing the turn itself. Otherwise read the `TurnOutcome` `Agent.turn` returns, or the stored `turn.reply` and `turn.ended`. Not journaled from the bus: memory stores `turn.reply` and the session its own `turn.ended` (reason and failure).",
 })
 
 /** An application's own event (see `defineHostEvent`); `name` is the host's namespace. */
 export const HostEvent = Schema.TaggedStruct("host", {
   name: Schema.Trimmed.check(Schema.isNonEmpty()),
   data: Data,
+}).annotate({
+  description: "An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it. Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`.",
 })
 
 export const TurnEvent = Schema.Union(

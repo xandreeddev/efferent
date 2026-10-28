@@ -33,7 +33,7 @@ import type {
   TurnWriter,
 } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
-import { closedState, heldTurn, pendingOf, stateJson, stateOf, titleOf, viewOf } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, heldTurn, pendingOf, queuedData, stateJson, stateOf, titleOf, viewOf } from "./sessions-state.entity.functions.js"
 import type { Holder } from "./sessions-state.entity.functions.js"
 import type { HeldTurn, ProcessLiveness, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 import { makeTurnWriter } from "./turn-writer.adapter.js"
@@ -120,7 +120,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const after = closedState(state, "interrupted", config.inbox.attempts, true)
     const closing = yield* turnEndedDraft(turn, { reason: "interrupted", failure: Option.some({ code: "turn.lease", message: "the turn's holder stopped writing" }) })
       .pipe(Effect.mapError(storage("session.encode")))
-    const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: { id, reason: "attempts" } }))
+    const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: droppedData(id) }))
     return { drafts: [closing, ...dropped], state: after.state }
   })
 
@@ -148,7 +148,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const after = closedState(state, reason, config.inbox.attempts, false)
     const closing = yield* turnEndedDraft(turn, { reason, failure: Option.some({ code: "turn.unended", message: "the turn's scope closed before it ended" }) })
       .pipe(Effect.mapError(storage("session.encode")))
-    const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: { id, reason: "attempts" } }))
+    const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: droppedData(id) }))
     return { drafts: [closing, ...dropped], next: Option.some(after.state), result: undefined }
   })).pipe(Effect.timeout("10 seconds"), Effect.ignore)
 
@@ -328,7 +328,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       if (pendingOf(state).length >= config.inbox.maxPending) return yield* Effect.fail(new InboxFull({ session: address.id, pending: pendingOf(state).length }))
       const next: SessionsState = { ...state, inbox: [...state.inbox, { id: item.id, attempts: 0, claimedBy: Option.none() }] }
       return {
-        drafts: [...reap.drafts, { kind: "inbox.queued", turn: Option.none(), data: { id: item.id, source: item.source, content: item.content } }],
+        drafts: [...reap.drafts, { kind: "inbox.queued", turn: Option.none(), data: queuedData(item) }],
         next: Option.some(next),
         result: { delivered: true, pending: pendingOf(next).length },
       }

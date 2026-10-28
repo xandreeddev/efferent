@@ -732,5 +732,38 @@
       ],
       "additionalProperties": true
     }
+  },
+  {
+    "id": "@xandreed/plugin-render/output",
+    "version": "0.13.0",
+    "apiVersion": 2,
+    "scope": "session",
+    "requires": [
+      "efferent/ui/OutputAdmission",
+      "efferent/ui/OutputJournal",
+      "efferent/ui/OutputContext"
+    ],
+    "provides": [
+      "efferent/ui/Output",
+      "efferent/ui/OutputTools"
+    ],
+    "defaults": {
+      "maxBytes": 32768
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "maxBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 131072
+        }
+      },
+      "required": [
+        "maxBytes"
+      ],
+      "additionalProperties": true
+    }
   }
 ]

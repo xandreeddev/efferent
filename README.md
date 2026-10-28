@@ -31,7 +31,7 @@ import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 
-declare const model: LanguageModel.Service // from @xandreed/plugin-models or any effect/ai provider
+declare const model: LanguageModel.LanguageModel // from @xandreed/plugin-models or any effect/ai provider
 
 const reply = Effect.scoped(Effect.gen(function* () {
   const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(
@@ -68,7 +68,10 @@ over typed services (`TurnLive`, `persistMessage`, `openTurnTools`,
 sessions: one event log each, in storage the host provides (`SessionLog`),
 read and written through `@xandreed/plugin-sessions`, with an inbox and
 background tasks (`@xandreed/plugin-tasks`) the agent answers after the turn
-in flight. See [the framework guide](docs/framework.md).
+in flight. See [the framework guide](docs/framework.md). Every event a turn
+publishes and every kind a session's journal stores, with its payload, is in
+the generated [event reference](docs/event-reference.md), with the begin and
+error codes and the feed frames a host serves them with.
 
 ## Configuration
 
@@ -136,7 +139,10 @@ package's manifest version and matching internal dependency versions.
 The consumer check installs local tarballs outside the monorepo, runs a
 composable agent's turn, a session fork, an eval composition and a SQLite
 session log with a background task on Bun, then imports every Node-capable
-package on Node.
+package on Node. It also compiles every `@xandreed/*` import in the README,
+the guides and the website docs against the packed packages, and checks that
+each plugin's version is its package's. `bun run docs:generate` writes the
+plugin and event references.
 
 Releases are published with `bun run publish:packages`, which checks the build
 against the current commit and is a dry run unless `--publish` is passed; see
@@ -144,6 +150,7 @@ against the current commit and is a dry run unless `--publish` is passed; see
 [changelog](CHANGELOG.md).
 
 See [the framework guide](docs/framework.md), the
+[event reference](docs/event-reference.md), the
 [evaluation domain](docs/evaluation-domain.md) and [contributing](CONTRIBUTING.md).
 
 MIT · Xand Reed

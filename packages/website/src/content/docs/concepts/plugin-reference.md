@@ -811,3 +811,39 @@ Requires: `efferent/render/JournalTail`
   "additionalProperties": true
 }
 ```
+
+## @xandreed/plugin-render/output
+
+Scope: **session** · API 2 · Version 0.13.0
+
+Provides: `efferent/ui/Output`, `efferent/ui/OutputTools`
+
+Requires: `efferent/ui/OutputAdmission`, `efferent/ui/OutputJournal`, `efferent/ui/OutputContext`
+
+### Defaults
+
+```json
+{
+  "maxBytes": 32768
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "maxBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 131072
+    }
+  },
+  "required": [
+    "maxBytes"
+  ],
+  "additionalProperties": true
+}
+```
