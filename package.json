@@ -7,34 +7,15 @@
     "packages/*"
   ],
   "scripts": {
-    "social": "bun packages/social/src/main.ts",
-    "social:dev": "bun --hot packages/social/src/main.ts",
     "foundry": "bun packages/foundry/src/main.ts",
-    "smith": "bun packages/cli/src/main.ts",
-    "canvas": "bun packages/canvas/src/main.ts",
-    "scenarios": "bun packages/scenarios/src/main.ts",
-    "evals:live": "bun packages/scenarios/src/evalsLive.ts",
-    "evals:ui-matrix": "bun packages/scenarios/src/uiMatrix.ts",
-    "evals:math-matrix": "bun packages/scenarios/src/mathMatrix.ts",
-    "evals:social-matrix": "bun packages/scenarios/src/socialMatrix.ts",
-    "evals:ui-latency-probe": "bun packages/scenarios/src/live/latencyProbe.ts",
     "test": "bun test",
-    "eval": "bun run scenarios",
     "check": "bun run typecheck",
-    "verify": "bun run typecheck && bun test && bun run foundry demo && bun run scenarios && bun run --cwd packages/website check",
-    "smith:dev": "bun --hot packages/cli/src/main.ts",
-    "obs:up": "docker compose -f docker-compose.observability.yml up -d",
-    "obs:down": "docker compose -f docker-compose.observability.yml down",
+    "verify": "bun run typecheck && bun test && bun run foundry demo && bun run --cwd packages/website check",
     "typecheck": "bun packages/foundry/src/main.ts check --config foundry.config.ts --baseline .foundry/baseline.json",
     "prepare": "bun scripts/installHooks.ts",
-    "math": "bun packages/math/src/main.ts",
-    "efferent": "bun packages/cli/src/main.ts",
     "build:packages": "bun scripts/build-packages.ts",
     "verify:packages": "bun scripts/verify-packages.ts",
-    "smith:workflow": "bun packages/smith/src/main.ts",
     "docs:generate": "bun scripts/generate-plugin-reference.ts",
-    "verify:tui": "python scripts/verify-tui.py",
-    "verify:tmux": "python scripts/verify-tmux.py",
     "eval:cli": "bun packages/evals-cli/src/main.ts"
   },
   "devDependencies": {
@@ -45,11 +26,7 @@
     "typescript": "^5.9.3"
   },
   "dependencies": {
-    "@opentui/core": "0.3.1",
-    "@opentui/solid": "0.3.1",
-    "effect": "4.0.0-rc.118",
-    "solid-js": "1.9.12",
-    "web-tree-sitter": "0.25.10"
+    "effect": "4.0.0-rc.118"
   },
   "overrides": {
     "effect": "4.0.0-rc.118"

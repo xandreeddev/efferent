@@ -49,7 +49,7 @@ graph) and command gates — a shell command whose exit code is the verdict.
 
 Rank 4 is the **judge**: an LLM gate that runs last, judges only what
 determinism cannot (intent fulfillment, honesty of the implementation), and
-is marked non-deterministic on its verdict. In smith it's ON by default and
+is marked non-deterministic on its verdict. When enabled it is
 fail-closed — an unparseable verdict is a failure. A **red-first probe**
 warns when a spec's accept check already passes on the untouched workspace:
 a check that is green before any work cannot measure the work.

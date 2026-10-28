@@ -9,8 +9,8 @@ import {
 export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
 
 /**
- * The canonical repo profile: Smith and the developer scripts discover the
- * same contract, so a forge can never run against weaker defaults than CI.
+ * The canonical repo profile: the developer scripts and CI discover the
+ * same contract, so nothing runs against weaker defaults than CI.
  *
  * The old line (sdk-core / sdk-adapters / cli / web / evals) is DELETED —
  * every package below was born under these rules with a ZERO-entry baseline,
@@ -23,12 +23,11 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  * Effect's core modules; each `effect/<module>` barrel that was its own v3
  * package (effect/ai was @effect/ai) is allowed by name, or all of them with
  * the raw `effect/` prefix beside `@effect/`. v4 no longer re-exports
- * fast-check, so property tests name it (core, math) where v3 reached it
+ * fast-check, so property tests name it (core) where v3 reached it
  * through `effect`.
  */
 const CHECKED = [
   "packages/core/src/**",
-  "packages/ai/src/**",
   "packages/evals/src/**",
   "packages/evals-cli/src/**",
   "packages/evals-langfuse/src/**",
@@ -36,31 +35,16 @@ const CHECKED = [
   "packages/plugin-agent-loop/src/**",
   "packages/runtime/src/**",
   "packages/sdk/src/**",
-  "packages/tui/src/**",
-  "packages/cli/src/**",
-  "packages/plugin-context/src/**",
   "packages/plugin-memory/src/**",
   "packages/plugin-memory-window/src/**",
   "packages/plugin-memory-summary/src/**",
   "packages/plugin-memory-digest/src/**",
   "packages/plugin-tool-discovery/src/**",
   "packages/plugin-models/src/**",
-  "packages/plugin-tools-local/src/**",
-  "packages/plugin-policy-workspace/src/**",
   "packages/plugin-session-sqlite/src/**",
   "packages/plugin-sessions/src/**",
   "packages/plugin-tasks/src/**",
-  "packages/plugin-telemetry/src/**",
-  "packages/plugin-mcp/src/**",
-  "packages/surface/src/**",
-  "packages/ui-agent/src/**",
   "packages/plugin-render/src/**",
-  "packages/canvas/src/**",
-  "packages/scenarios/src/**",
-  "packages/smith/src/**",
-  "packages/math/src/**",
-  "packages/social/src/**",
-  "packages/issue-tracker-example/src/**",
   // The factory judges itself by the same profile (the dogfood).
   "packages/foundry/src/**",
 ]
@@ -79,10 +63,9 @@ const ERASURE_BOUNDARY = [
   "packages/plugin-models/src/llm/providers.ts",
   "packages/plugin-agent-loop/src/loop.ts",
   "packages/core/src/mcp/bridge.ts",
-  "packages/plugin-tools-local/src/plugin.adapter.ts",
   "packages/plugin-tool-discovery/src/registry.adapter.ts",
 ]
-const TEST_SCAFFOLDING = ["**/*.test.ts", "**/*.test.tsx", "**/testing.ts", "packages/scenarios/src/**"]
+const TEST_SCAFFOLDING = ["**/*.test.ts", "**/*.test.tsx", "**/testing.ts"]
 
 const config: typeof GateSuiteConfig.Encoded = {
   tsconfig: "tsconfig.json",
@@ -112,75 +95,13 @@ const config: typeof GateSuiteConfig.Encoded = {
       include: ["packages/core/src/domain/**", "packages/core/src/spec/**"],
     },
   ],
-  checks: [
-    {
-      name: "scripted-scenarios",
-      command: "bun run scenarios",
-      kind: "eval",
-      timeoutMs: 900_000,
-    },
-  ],
+  checks: [],
   boundaries: {
     layers: [
       { name: "evals-cli", path: "packages/evals-cli/src/**", canImport: ["evals"], externals: ["effect", "@xandreed/evals", "node:", "tsx/esm/api", "bun:test"] },
       { name: "evals-langfuse", path: "packages/evals-langfuse/src/**", canImport: ["evals"], externals: ["effect", "@xandreed/evals", "@langfuse/client", "node:", "bun:test"] },
       { name: "evals-langsmith", path: "packages/evals-langsmith/src/**", canImport: ["evals"], externals: ["effect", "@xandreed/evals", "langsmith", "node:", "bun:test"] },
       {name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","effect/ai","@noble/hashes/","node:","bun:test"]},
-      { name: "ai", path: "packages/ai/src/**", canImport: ["core"], externals: ["effect", "effect/ai", "@xandreed/core", "bun:test"] },
-      {
-            "name": "canvas",
-            "path": "packages/canvas/src/**",
-            "canImport": [
-                  "plugin-sessions",
-                  "surface",
-                  "ui-agent",
-                  "core",
-                  "plugin-session-sqlite",
-                  "plugin-telemetry",
-                  "plugin-models"
-            ],
-            "externals": ["@xandreed/plugin-sessions","@xandreed/sdk", "@xandreed/runtime",
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@alpinejs/csp",
-                  "@xandreed/surface",
-                  "@xandreed/ui-agent",
-                  "@xandreed/core",
-                  "@xandreed/plugin-session-sqlite",
-                  "@xandreed/plugin-telemetry",
-                  "@xandreed/plugin-models"
-            ]
-      },
-      {
-            "name": "cli",
-            "path": "packages/cli/src/**",
-            "canImport": [
-                  "core",
-                  "sdk",
-                  "runtime",
-                  "smith",
-                  "tui",
-                  "plugin-models"
-            ],
-            "externals": ["@xandreed/plugin-tools-local",
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/core",
-                  "@xandreed/sdk",
-                  "@xandreed/runtime",
-                  "@xandreed/smith",
-                  "@xandreed/tui",
-                  "@xandreed/plugin-models"
-            ]
-      },
       {
             "name": "core",
             "path": "packages/core/src/**",
@@ -204,52 +125,6 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
-            "name": "issue-tracker-example",
-            "path": "packages/issue-tracker-example/src/**",
-            "canImport": [
-                  "foundry"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/foundry"
-            ]
-      },
-      {
-            "name": "math",
-            "path": "packages/math/src/**",
-            "canImport": [
-                  "plugin-sessions",
-                  "surface",
-                  "core",
-                  "plugin-agent-loop",
-                  "plugin-tools-local",
-                  "plugin-session-sqlite",
-                  "plugin-telemetry",
-                  "plugin-models"
-            ],
-            "externals": ["@xandreed/plugin-sessions","@xandreed/sdk", "@xandreed/runtime",
-                  "effect",
-                  "fast-check",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/surface",
-                  "@xandreed/core",
-                  "@xandreed/plugin-agent-loop",
-                  "@xandreed/plugin-tools-local",
-                  "@xandreed/plugin-session-sqlite",
-                  "@xandreed/plugin-telemetry",
-                  "@xandreed/plugin-models"
-            ]
-      },
-      {
             "name": "plugin-agent-loop",
             "path": "packages/plugin-agent-loop/src/**",
             "canImport": [
@@ -263,39 +138,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun",
                   "bun:",
                   "@xandreed/core"
-            ]
-      },
-      {
-            "name": "plugin-context",
-            "path": "packages/plugin-context/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/core"
-            ]
-      },
-      {
-            "name": "plugin-mcp",
-            "path": "packages/plugin-mcp/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/core",
-                  "ws"
             ]
       },
       {
@@ -388,22 +230,6 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
-            "name": "plugin-policy-workspace",
-            "path": "packages/plugin-policy-workspace/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/core"
-            ]
-      },
-      {
             "name": "plugin-session-sqlite",
             "path": "packages/plugin-session-sqlite/src/**",
             "canImport": [
@@ -466,43 +292,6 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
-            "name": "plugin-telemetry",
-            "path": "packages/plugin-telemetry/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/core",
-                  "@opentelemetry/exporter-metrics-otlp-http",
-                  "@opentelemetry/exporter-trace-otlp-http",
-                  "@opentelemetry/sdk-metrics",
-                  "@opentelemetry/sdk-trace-base"
-            ]
-      },
-      {
-            "name": "plugin-tools-local",
-            "path": "packages/plugin-tools-local/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/core",
-                  "ws"
-            ]
-      },
-      {
             "name": "runtime",
             "path": "packages/runtime/src/**",
             "canImport": [
@@ -516,46 +305,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun",
                   "bun:",
                   "@xandreed/core"
-            ]
-      },
-      {
-            "name": "scenarios",
-            "path": "packages/scenarios/src/**",
-            "canImport": [
-                  "canvas",
-                  "foundry",
-                  "math",
-                  "smith",
-                  "core",
-                  "plugin-agent-loop",
-                  "plugin-tools-local",
-                  "plugin-session-sqlite",
-                  "plugin-mcp",
-                  "plugin-models",
-                  "ui-agent",
-                  "social"
-            ],
-            "externals": ["@xandreed/sdk","@xandreed/evals",
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@opentui/core",
-                  "@xandreed/canvas",
-                  "@xandreed/foundry",
-                  "@xandreed/math",
-                  "@xandreed/smith",
-                  "playwright",
-                  "@xandreed/core",
-                  "@xandreed/plugin-agent-loop",
-                  "@xandreed/plugin-tools-local",
-                  "@xandreed/plugin-session-sqlite",
-                  "@xandreed/plugin-mcp",
-                  "@xandreed/plugin-models",
-                  "@xandreed/ui-agent",
-                  "@xandreed/social"
             ]
       },
       {
@@ -610,130 +359,6 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
-            "name": "smith",
-            "path": "packages/smith/src/**",
-            "canImport": [
-                  "plugin-sessions",
-                  "foundry",
-                  "core",
-                  "plugin-agent-loop",
-                  "plugin-tools-local",
-                  "plugin-session-sqlite",
-                  "plugin-telemetry",
-                  "plugin-mcp",
-                  "plugin-models",
-                  "plugin-policy-workspace",
-                  "sdk",
-                  "plugin-context",
-                  "plugin-memory"
-            ],
-            "externals": ["@xandreed/plugin-sessions",
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@opentui/core",
-                  "@opentui/solid",
-                  "@xandreed/foundry",
-                  "solid-js",
-                  "@xandreed/core",
-                  "@xandreed/plugin-agent-loop",
-                  "@xandreed/plugin-tools-local",
-                  "@xandreed/plugin-session-sqlite",
-                  "@xandreed/plugin-telemetry",
-                  "@xandreed/plugin-mcp",
-                  "@xandreed/plugin-models",
-                  "@xandreed/plugin-policy-workspace",
-                  "@xandreed/sdk",
-                  "@xandreed/plugin-context",
-                  "@xandreed/plugin-memory"
-            ]
-      },
-      {
-            "name": "social",
-            "path": "packages/social/src/**",
-            "canImport": [
-                  "plugin-sessions",
-                  "core",
-                  "plugin-agent-loop",
-                  "plugin-telemetry",
-                  "plugin-models"
-            ],
-            "externals": ["@xandreed/plugin-sessions","@xandreed/sdk", "@xandreed/runtime", "@xandreed/plugin-session-sqlite",
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "playwright",
-                  "@xandreed/core",
-                  "@xandreed/plugin-agent-loop",
-                  "@xandreed/plugin-telemetry",
-                  "@xandreed/plugin-models"
-            ]
-      },
-      {
-            "name": "surface",
-            "path": "packages/surface/src/**",
-            "canImport": [
-                  "ui-agent"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@dagrejs/dagre",
-                  "@xandreed/ui-agent"
-            ]
-      },
-      {
-            "name": "tui",
-            "path": "packages/tui/src/**",
-            "canImport": [
-                  "core",
-                  "sdk"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/core",
-                  "@xandreed/sdk",
-                  "@opentui/core",
-                  "@opentui/solid",
-                  "solid-js"
-            ]
-      },
-      {
-            "name": "ui-agent",
-            "path": "packages/ui-agent/src/**",
-            "canImport": [
-                  "core",
-                  "plugin-agent-loop",
-                  "plugin-render"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/core",
-                  "@xandreed/plugin-agent-loop",
-                  "@xandreed/plugin-render"
-            ]
-      },
-      {
             "name": "plugin-render",
             "path": "packages/plugin-render/src/**",
             "canImport": [
@@ -747,7 +372,7 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "node:",
                   "bun:test"
             ]
-      }
+      },
 ],
   },
 }

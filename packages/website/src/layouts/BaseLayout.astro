@@ -10,7 +10,7 @@ interface Props {
   title: string
   description?: string
 }
-const { title, description = "A coding-agent SDK on Effect.ts + Bun." } = Astro.props
+const { title, description = "A composable agent framework on Effect, for Node and Bun." } = Astro.props
 const canonical = new URL(Astro.url.pathname, Astro.site)
 const fullTitle = title === "efferent" ? title : `${title} · efferent`
 ---

@@ -167,5 +167,4 @@ Export after a run is best-effort and produces separate receipts/errors after th
 The root entrypoint exposes the typed evaluation domain. The previous calibration/journey
 execution APIs and the `legacy` entrypoint have been removed. Historical evidence stays
 unchanged; migrate declarations to tasks and use `grade` with a new directory for each
-grading revision. The deprecated reference scenarios retain their frozen runner independently
-of the evaluation package.
+grading revision.

@@ -1,17 +1,17 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
-import { createRequire } from "node:module"
 import { join, relative } from "node:path"
-import solidPlugin from "@opentui/solid/bun-plugin"
 
 // Build an isolated publish tree; development keeps source exports and workspace links.
 const root = join(import.meta.dir, "..")
 const output = join(root, ".artifacts/packages")
-const names = ["core", "ai", "runtime", "sdk", "evals", "evals-cli", "evals-langfuse", "evals-langsmith", "foundry", "smith", "tui", "cli",
-  "plugin-agent-loop", "plugin-context", "plugin-memory", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-tool-discovery", "plugin-models", "plugin-tools-local",
-  "plugin-policy-workspace", "plugin-session-sqlite", "plugin-sessions", "plugin-tasks", "plugin-telemetry", "plugin-mcp", "plugin-render", "ui-agent", "surface"]
+const names = ["core", "runtime", "sdk", "evals", "evals-cli", "evals-langfuse", "evals-langsmith",
+  "plugin-agent-loop", "plugin-memory", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-tool-discovery", "plugin-models",
+  "plugin-session-sqlite", "plugin-sessions", "plugin-tasks", "plugin-render"]
 const manifests = new Map(await Promise.all(names.map(async (name) =>
   [name, JSON.parse(await readFile(join(root, "packages", name, "package.json"), "utf8"))] as const,
 )))
+/** bun:sqlite keeps the SQLite store on Bun; everything else runs on Node and Bun. */
+const runtimes = (name: string) => name === "plugin-session-sqlite" ? { bun: ">=1.3.0" } : name.startsWith("evals") ? { node: ">=24" } : { node: ">=24", bun: ">=1.3.0" }
 const versions = new Map(Array.from(manifests.values(), (manifest) => [manifest.name, manifest.version]))
 await rm(output, { recursive: true, force: true })
 await mkdir(output, { recursive: true })
@@ -19,7 +19,6 @@ const declarations = join(root, ".artifacts/types")
 await rm(declarations, { recursive: true, force: true })
 const types = Bun.spawn(["bun", "x", "tsc", "--project", "tsconfig.json", "--noEmit", "false", "--declaration", "--emitDeclarationOnly", "--outDir", declarations, "--rootDir", "packages"], { cwd: root, stdout: "inherit", stderr: "inherit" })
 if (await types.exited !== 0) process.exit(1)
-const require = createRequire(import.meta.url)
 const transpiler = new Bun.Transpiler({ target: "bun", loader: "ts" })
 await Promise.all(names.map(async (name) => {
   const source = join(root, "packages", name)
@@ -30,28 +29,9 @@ await Promise.all(names.map(async (name) => {
   await Promise.all(files.map(async (file) => {
     const destination = join(target, file.replace(/^src\//, "dist/").replace(/\.tsx?$/, ".js"))
     await mkdir(join(destination, ".."), { recursive: true })
-    if (file.endsWith(".tsx")) {
-      const result = await Bun.build({ entrypoints: [join(source, file)], target: "bun", external: ["*"], plugins: [solidPlugin] })
-      if (!result.success) { console.error(result.logs); process.exit(1) }
-      await writeFile(destination, await result.outputs[0]!.text())
-    } else if (file.endsWith(".ts")) await writeFile(destination, await transpiler.transform(await readFile(join(source, file), "utf8")))
+    if (file.endsWith(".ts")) await writeFile(destination, await transpiler.transform(await readFile(join(source, file), "utf8")))
     else await cp(join(source, file), destination)
   }))
-  if (name === "tui") {
-    await rm(join(target, "dist"), { recursive: true, force: true })
-    const bundle = await Bun.build({
-      entrypoints: [join(source, "src/index.ts")],
-      outdir: join(target, "dist"), target: "bun", splitting: true,
-      external: ["effect", "effect/*", "@xandreed/*", "@opentui/core", "@opentui/core/*", "bun", "node:*"],
-      plugins: [{ name: "solid-client-runtime", setup(builder) {
-        builder.onResolve({ filter: /^solid-js$/ }, () => ({ path: require.resolve("solid-js/dist/solid.js") }))
-        builder.onResolve({ filter: /^solid-js\/store$/ }, () => ({ path: require.resolve("solid-js/store/dist/store.js") }))
-        builder.onResolve({ filter: /^solid-js\/web$/ }, () => ({ path: require.resolve("solid-js/web/dist/web.js") }))
-      } }, solidPlugin],
-    })
-    if (!bundle.success) { console.error(bundle.logs); process.exit(1) }
-    await writeFile(join(target, "dist/approval.js"), await transpiler.transform(await readFile(join(source, "src/approval.ts"), "utf8")))
-  }
   await cp(join(declarations, name, "src"), join(target, "dist"), { recursive: true })
   await Promise.all(["skills", "profiles"].map(async (asset) => {
     if (await Bun.file(join(source, asset)).exists() || Array.from(new Bun.Glob(`${asset}/**/*`).scanSync({ cwd: source })).length > 0) await cp(join(source, asset), join(target, asset), { recursive: true })
@@ -63,13 +43,12 @@ await Promise.all(names.map(async (name) => {
   if (missing.length > 0) { console.error(`Missing distribution dependencies for ${original.name}: ${missing.map(([key]) => key).join(", ")}`); process.exit(1) }
   const dependencies = Object.fromEntries(Object.entries(original.dependencies ?? {}).map(([key, value]) => [key, String(value).startsWith("workspace:") ? versions.get(key) : value]))
   const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies,
-    files: ["dist", "skills", "profiles", "README.md", "LICENSE"], engines: name.startsWith("evals") ? { node: ">=24" } : { bun: ">=1.3.0" }, license: "MIT",
+    files: ["dist", "skills", "profiles", "README.md", "LICENSE"], engines: runtimes(name), license: "MIT",
     ...(name === "evals-cli" ? { bin: { "efferent-eval": "./dist/main.js" } } : {}),
-    ...(name === "cli" ? { bin: { efferent: "./dist/main.js" }, main: "./dist/main.js" } : {}),
   }
   delete manifest.devDependencies
   await writeFile(join(target, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(join(target, "README.md"), `# ${original.name}\n\nEfferent composable agent framework, ${version}. ${name.startsWith("evals") ? "Node 24." : "Bun on Linux."}\n\nDocumentation: https://github.com/xandreeddev/efferent\n`)
+  await writeFile(join(target, "README.md"), `# ${original.name}\n\nEfferent composable agent framework, ${version}. ${name === "plugin-session-sqlite" ? "Bun only (bun:sqlite)." : name.startsWith("evals") ? "Node 24." : "Node 24 or Bun."}\n\nDocumentation: https://github.com/xandreeddev/efferent\n`)
   await cp(join(root, "LICENSE"), join(target, "LICENSE"))
   console.log(`Built ${relative(root, target)}`)
 }))

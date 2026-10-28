@@ -10,7 +10,7 @@ import { href, GITHUB } from "../lib/nav"
       <a class="brand" href={href("/")} aria-label="efferent home">
         <BrandLogo height={26} />
       </a>
-      <p>A composable agent SDK and coding terminal on Effect + Bun.</p>
+      <p>A composable agent framework on Effect, for Node and Bun.</p>
     </div>
 
     <nav class="ft-cols" aria-label="Footer">
@@ -22,22 +22,15 @@ import { href, GITHUB } from "../lib/nav"
         <a href={href("/docs/concepts/foundry")}>The factory</a>
       </div>
       <div>
-        <h4>Reference apps</h4>
-        <a href={href("/docs/agents/smith")}>smith — the coder</a>
-        <a href={href("/docs/agents/math")}>math — the tutor</a>
-        <a href={href("/docs/agents/canvas")}>canvas — the page builder</a>
-        <a href={href("/docs/agents/social")}>social — the drafter</a>
-      </div>
-      <div>
         <h4>Project</h4>
         <a href={GITHUB} target="_blank" rel="noopener">GitHub</a>
-        <a href={href("/docs/concepts/observability")}>Observability</a>
+        <a href={href("/docs/concepts/plugin-reference")}>Plugin reference</a>
       </div>
     </nav>
   </div>
 
   <div class="ft-base">
-    <span>MIT licensed · built with Effect, Bun &amp; Astro</span>
+    <span>MIT licensed · built with Effect &amp; Astro</span>
     <span class="ft-social">
       <a href={GITHUB} target="_blank" rel="noopener" aria-label="GitHub"><Icon name="github" size={16} /></a>
     </span>

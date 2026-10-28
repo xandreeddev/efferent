@@ -38,8 +38,8 @@ export default definePlugin({
 })
 ```
 
-This plugin replaces the complete agent loop. No model credentials, coding
-tools, or terminal library are needed to run it. `scripts/verify-packages.ts`
+This plugin replaces the complete agent loop. No model credentials or tools
+are needed to run it. `scripts/verify-packages.ts`
 executes an equivalent external plugin against packed SDK artifacts.
 
 ## Configuration
@@ -55,24 +55,17 @@ The merge order is preset, global base, workspace base, selected profile,
 `id`; options merge by key. Changing `use` replaces the prior instance options.
 Profile maps and bindings merge by key. An unknown profile is an error.
 
-`config explain` reports source layers and selected providers, redacting common
-credential keys. `plugin inspect ID` emits the plugin schema. `plugin add PACKAGE`
-installs into `~/.efferent/plugins` with install scripts disabled, validates the
-graph, then writes the workspace override. Removing a required provider fails
-validation until its dependants are changed too.
-
 `harness.reconfigure(config)` validates and stages the next graph before making
 it available. Idle sessions refresh; active sessions refresh before their next
-turn. A changed runtime graph returns `restart-required`. The CLI saves the
-configuration and tells the user to restart. Source TypeScript is never rewritten
-by the terminal editor.
+turn. A changed runtime graph returns `restart-required`; the host decides when
+to restart. Source TypeScript configuration is never rewritten.
 
 ## Sessions
 
 The harness and composable agents share `SessionLog` and `Sessions`. The
 deprecated `SessionStore` and `ConversationStore` APIs are projections over
-that journal. Compose the SQLite storage plugin with `sessionsPlugin`; CLI
-hosts use process ownership (a live process's turn is busy to another process
+that journal. Compose a storage plugin with `sessionsPlugin`; single-host
+deployments use process ownership (a live process's turn is busy to another process
 on the same host), while hosts sharing a database across machines use leases.
 Without `sessionsPlugin`, `Harness.make` fails with `service.missing` naming it;
 a custom `SessionStore` must be the projection over the same `SessionLog`, or
@@ -122,57 +115,9 @@ default. Explicit plugin options and current credentials win. Set its
 `inheritPrevious` option to `false` to use an independent setup; new logins and
 refreshed inherited credentials are written to the current credential store.
 
-## Coding and policy
-
-Smith composes models, tools, memory, context, policy, sessions, MCP and telemetry.
-The default loop is a configurable plugin. Workspace file operations and
-sandboxed Bash run autonomously. Bubblewrap mounts the workspace writable and
-restricts network access. Timeouts and cancellation kill the process group.
-Outside-workspace operations, host commands and MCP tool calls go through the
-host Approval service; headless hosts deny by default.
-
-`/plan` removes mutation and shell tools. `/spec idea` drafts a specification
-through the configured coding loop using read-only tools. `/lock` records the
-user's acceptance as a durable event. `/forge` implements that locked version
-under Foundry gates; it rejects missing or superseded locks. Host verification
-requires approval before implementation begins. The workflow delegates to the
-configured loop, so model, context and memory plugins remain in use. Its limits
-and gate configuration are plugin options. The historical workflow driver
-remains available as `bun run smith:workflow` for old specs.
-
-## Terminal host
-
-`runTui` consumes an SDK harness and session, an approval channel, and optional
-commands and event renderers. Smith-specific commands belong in the CLI. The terminal
-supports multiline input, bracketed paste, session switching, transcript search,
-explicit follow mode, expandable tool details, and dark/light/mono themes.
-Credential input stays outside the text renderer; only mask characters render.
-`/login` offers API keys and OpenAI/Anthropic subscription authorization with
-PKCE, callback state checks, a masked manual fallback, and scoped cancellation.
-
-A transcript mounts at most 60 blocks. Durable event and transient delta batches
-update the UI at most once per batch. Assistant and tool blocks follow logical
-turn order across batches, including text buffered before the durable run start;
-durable settlement remains authoritative. The terminal tests exercise 10,000 events
-and assert p95 input-to-frame time below 50 ms on the test machine. The PTY fixture checks rendering and shutdown. `python scripts/verify-tmux.py`
-launches the actual CLI in an isolated tmux server and checks first-run setup,
-model selection, draft preservation, resizing, plugin edits, streamed output,
-tool expansion, cancellation, and clean exit without provider credentials.
-The model picker uses the configured model catalog. Ctrl+O expands tool details.
-
-## Evals and reference applications
+## Evals
 
 `@xandreed/evals` models tasks, trials, transcripts, observed outcomes, runnables, graders and suites. Applications provide the execution/environment adapters and grading-context projections. A calibration measures a grader against labelled examples; ordinary model comparisons are suites. The local Node CLI and optional Langfuse/LangSmith exporters are separate packages. See [Evaluation domain and adapters](/docs/concepts/evals/) for the interfaces and workflow.
-
-`packages/scenarios` is deprecated and runs on a frozen copy of the retired
-Pack/Scenario runner until its packs are adapted. Canvas, Math and Social now
-enter through their own `defineAgent` presets and `Harness.make`. Their model,
-domain loop, persistence and host services are replaceable graph nodes. The SDK
-bridges domain events to each application's existing browser or review protocol.
-Canvas page state and Math message state are snapshotted into the journal and
-restored for forks. Math rebuilds its served-exercise set from persisted history.
-Social retains its draft-only tools and human review queue; its domain workspace
-service is replaceable. Foundry remains independent of the SDK.
 
 ## Sessions for composable agents
 
@@ -203,14 +148,10 @@ Its result lands in the parent's inbox once, and the parent answers it after
 the turn in flight. See the framework guide's sessions section for the
 contract, the event vocabulary and the inbox protocol.
 
-The Canvas profile plugin accepts versioned model/effort/protocol configuration.
-The shipped default is unchanged; schema, recipe and prompt compatibility are
-still checked. New profiles require live browser evidence before promotion.
-
 ## Distribution
 
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
 under `.artifacts/packages`. `bun run verify:packages` packs them, installs them
 in a temporary external project through a temporary local npm registry, and exercises
-SDK sessions, replacement plugins, persistence, forks, custom evals and CLI
-startup, followed by the packed terminal in a real PTY. Publishing is a separate release action.
+SDK sessions, replacement plugins, persistence, forks and custom evals on Bun,
+then imports every Node-capable package on Node. Publishing is a separate release action.

@@ -1,4 +1,4 @@
-# Efferent — composable agent SDK on Effect + Bun
+# Efferent — composable agent framework on Effect, for Node and Bun
 
 Read `../CLAUDE.md` for identity and repository rules. The current architecture
 and configuration contract are documented in `README.md` and `docs/framework.md`.
@@ -12,12 +12,15 @@ Shared development skills live in `.agents/skills/<name>/SKILL.md`.
 - `runtime` → core: configuration, dependency graph and scoped plugin activation.
 - `sdk` → runtime/core: sessions, replay, queues, cancellation and safe reconfiguration.
 - `plugin-*` → core: independently configurable capabilities, including the agent loop.
-- `smith`: coding preset and optional spec/forge workflows.
-- `tui` → SDK/core: reusable terminal presentation. It must not import Smith.
-- `cli`: composition and user commands.
-- `evals`: calibrations and journeys; `scenarios`: deprecated reference-application packs on a frozen copy of the retired Pack runner.
-- `foundry`: independent verification framework, no internal package dependencies.
-- Canvas, Math, Social and the structured UI-agent remain reference applications.
+- `evals` (+ `evals-cli`, `evals-langfuse`, `evals-langsmith`): tasks, trials, graders and suites; the local CLI and exporters run on Node 24.
+- `foundry`: independent verification framework, no internal package dependencies; development tooling, not published.
+- `website`: the docs site; not published.
+
+This repository holds the framework only. The coding CLI (`cli`, `tui`,
+`smith`), the reference applications and the plugins only they used were
+removed on 2026-10-28 and are moving to their own repositories.
+Everything except `plugin-session-sqlite` (`bun:sqlite`) must also load on
+Node; `bun run verify:packages` imports every Node-capable package on Node.
 
 All production packages participate in the zero-baseline architecture gates.
 New session data uses `.efferent/runtime`; never delete old local data to reset it.
@@ -50,21 +53,17 @@ the committed baseline is EMPTY — every rule violation anywhere fails:
   runtime imports, `Effect.run*`, and Layer construction never enter the core.
 - **After any task, run `bun run typecheck`** — a banned construct or a fresh
   finding fails the command and the change is rejected. CI additionally runs
-  `bun test`, `bun run foundry demo` (the forge-loop E2E), and
-  `bun run scenarios` (the deprecated scripted packs vs committed baselines).
+  `bun test`, `bun run foundry demo` (the forge-loop E2E), and the packed
+  consumer check (`bun run verify:packages`).
 
 ## Running and validating
 
-Use `bun run efferent` (or `bun run smith`) for direct coding. `/spec`, `/lock`
-and `/forge` activate the configurable workflow plugin. The historical
-spec/forge driver is `bun run smith:workflow`. JSON and TypeScript configuration
-resolve through the same plugin graph. UI changes belong in JSON overrides.
+JSON and TypeScript configuration resolve through the same plugin graph.
 
-Run `bun run typecheck`, `bun test`, `bun run foundry demo`, `bun run scenarios`,
+Run `bun run typecheck`, `bun test`, `bun run foundry demo`,
 `bun run build:packages`, `bun run verify:packages`, and the website check.
-For terminal changes run `python scripts/verify-tmux.py` against the actual CLI,
-`python scripts/verify-tui.py`, and the TUI frame tests. A passing fixture smoke
-test does not establish that model setup, commands, or real provider calls work.
+A passing fixture smoke test does not establish that model setup or real
+provider calls work.
 Provider-backed evals require explicit model/credential configuration; preserve
 candidate, prompt, schema and protocol versions in their evidence.
 

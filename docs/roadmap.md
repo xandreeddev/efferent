@@ -1,5 +1,9 @@
 # Roadmap — the agent line
 
+> **Historical (2026-10-28).** The coding CLI (`cli`, `tui`, `smith`), the
+> reference applications and their plugins moved out of this repository, which
+> now holds the agent framework only. Mentions of them below are historical.
+
 Living backlog of what's **not yet built** in efferent — rewritten 2026-07-09
 for the agent line (engine / providers / surface / foundry + smith / math /
 canvas / social + scenarios). The previous revision of this file described
