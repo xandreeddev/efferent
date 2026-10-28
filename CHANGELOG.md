@@ -8,6 +8,60 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `@xandreed/core`: every `TurnEvent` member carries a `description`
+  annotation saying who publishes it, when, what its payload means and
+  whether it is transient or stored.
+- `@xandreed/core`: schemas for the journal kinds that had none —
+  `InboxQueuedData`, `InboxDroppedData`, `StepUsageData` and
+  `StoredMemoryData(body)` (the `{ entry, runId, step, at, body }` envelope of
+  `memory.*` and `turn.reply`). `journalSchemaOf(kind)` gives the schema of
+  any reserved kind's `data`, and none for a host's or plugin's own kinds.
+  `RECORDED_ELSEWHERE` exports the bus events that memory or the session
+  stores instead of the bus (`turn.started`, `turn.ended`,
+  `skills.activated`). `@xandreed/plugin-sessions` writes `inbox.queued` and
+  `inbox.dropped` through the schemas; what is stored is unchanged.
+- `@xandreed/sdk`: `turnBeginCodes`, the `HarnessError` code `Agent.turn`
+  fails with for each reason `Sessions.begin` refuses a turn.
+- The event reference: `docs/event-reference.md`, its website page and
+  `docs/event-reference.json` list every bus event (description, payload,
+  how it is stored), every journal kind (writer, sensitive content, fields),
+  the exact reserved kinds, the begin codes with suggested HTTP statuses,
+  common turn error codes (every one raised under `turn.`, `events.`,
+  `request.`, `loop.` and `tools.`), the `@xandreed/plugin-render` feed and
+  socket frames, and the task records with their failure codes.
+  `bun run docs:generate` writes it and fails when its hand-kept parts no
+  longer match the code.
+
+### Repository
+
+- A 0.13.0 session journal, recorded deterministically by
+  `scripts/record-journal-fixture.ts` (`packages/sdk/fixtures/journal-0.13.0.json`):
+  every reserved kind (the fixture lists them), the task records, the inbox
+  and a host event. The sdk test `journal-compat.test.ts` reads every
+  fixture in that folder, decodes every event with `journalSchemaOf`,
+  rebuilds the memory log and replays every stored model request from it.
+- `bun run verify:packages` compiles every `@xandreed/*` import in the
+  README, `docs/framework.md`, `docs/composable-evaluations.md` and the
+  website docs against the packed packages, and checks that each plugin's
+  version equals its package's.
+- The plugin reference lists `uiOutputPlugin`; its generator imports every
+  workspace package and fails when one exports a plugin it does not list.
+- The docs site deploys when a `v*` tag is pushed, or by hand, no longer on
+  every push to main, so it describes what npm has; the `github-pages`
+  environment needs a `v*` tag rule once (CONTRIBUTING). CI still builds and
+  link-checks it on every push, and fails when a generated reference under
+  `docs/` or the website is not committed as generated.
+- `docs/composable-evaluations.md` showed calibration APIs that were removed
+  and an import path the package does not export; it now uses
+  `defineGraderCalibration` and `calibrateGrader`, and imports
+  `SemanticJevLive` from `@xandreed/evals`, and describes gates as the
+  suite's `Gate`s and the run's `GateFinding`s. Snippets named
+  `LanguageModel.Service`, which Effect 4 calls `LanguageModel.LanguageModel`.
+  `docs/framework.md` and `docs/service-generations.md` no longer describe
+  the removed journey driver.
+
 ## 0.13.0
 
 The composable agent (`Agent.define` and `Agent.turn` over the step loop) is

@@ -1,7 +1,8 @@
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { existsSync } from "node:fs"
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { join, relative } from "node:path"
 const root = join(import.meta.dir, "..")
 /** The consumer installs the Effect the packages were built against, and the repo's TypeScript. */
 const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { readonly dependencies: { readonly effect: string }, readonly devDependencies: { readonly typescript: string } }
@@ -88,11 +89,73 @@ const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
 if (!answered.includes("found the answer")) process.exit(1)
 console.log("Sessions over SQLite, a background task and the reaction to its result passed")
 `)
-await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, target: "ESNext", module: "ESNext", moduleResolution: "bundler", types: ["bun"] }, include: ["verify.ts"] }))
+/**
+ * The documentation's imports must exist in the packed packages: every
+ * `@xandreed/*` import in a TypeScript or JavaScript code block of the
+ * README, the guides and the website docs becomes one import in
+ * `doc-imports.ts`, which the consumer typecheck compiles. A renamed or
+ * removed export, or a subpath a package does not export, fails here.
+ */
+const websiteDocs = join(root, "packages/website/src/content/docs")
+const documented = [
+  ...["README.md", "docs/framework.md", "docs/events.md", "docs/composable-evaluations.md"].map((file) => join(root, file)).filter((file) => existsSync(file)),
+  ...(await readdir(websiteDocs, { recursive: true })).filter((file) => /\.mdx?$/.test(file)).sort().map((file) => join(websiteDocs, file)),
+]
+const docImports = (await Promise.all(documented.map(async (file) => {
+  const text = await readFile(file, "utf8")
+  const blocks = Array.from(text.matchAll(/^```(?:ts|typescript|tsx|mts|js|javascript|mjs)\b[^\n]*\n([\s\S]*?)^```/gm))
+  const statement = /import\s+(type\s+)?((?:[A-Za-z_$][\w$]*\s*,\s*)?(?:\{[^}]*\}|\*\s+as\s+[A-Za-z_$][\w$]*|[A-Za-z_$][\w$]*))\s+from\s+["']([^"']+)["']/g
+  return blocks.flatMap((block) => Array.from((block[1] ?? "").matchAll(statement)).filter((found) => (found[3] ?? "").startsWith("@xandreed/")).map((found) => ({
+    where: `${relative(root, file)}:${text.slice(0, (block.index ?? 0) + (block[0].indexOf(found[0]))).split("\n").length}`,
+    typeOnly: found[1] !== undefined,
+    clause: found[2] ?? "",
+    from: found[3] ?? "",
+  })))
+}))).flat()
+const aliased = docImports.flatMap((entry, index) => {
+  const named = /\{([^}]*)\}/.exec(entry.clause)
+  const namespace = /\*\s+as\s+[A-Za-z_$][\w$]*/.test(entry.clause)
+  const defaulted = /^\s*[A-Za-z_$][\w$]*\s*(,|$)/.test(entry.clause)
+  const names = (named?.[1] ?? "").split(",").map((part) => part.trim()).filter((part) => part.length > 0).map((part) => {
+    const typeOnly = part.startsWith("type ")
+    return { typeOnly, name: (typeOnly ? part.slice(5) : part).split(/\s+as\s+/)[0]?.trim() ?? "" }
+  })
+  const keyword = entry.typeOnly ? "import type" : "import"
+  return [
+    `// ${entry.where}`,
+    ...names.map((item, position) => `${keyword} { ${item.typeOnly ? "type " : ""}${item.name} as doc${index}_${position} } from ${JSON.stringify(entry.from)}`),
+    ...(namespace ? [`${keyword} * as doc${index}_ns from ${JSON.stringify(entry.from)}`] : []),
+    ...(defaulted ? [`${keyword} doc${index}_default from ${JSON.stringify(entry.from)}`] : []),
+  ]
+})
+await writeFile(join(consumer, "doc-imports.ts"), `// Every @xandreed import of the documentation, as written there (scripts/verify-packages.ts).\n${aliased.join("\n")}\nexport {}\n`)
+console.log(`Checking ${docImports.length} documented imports from ${documented.length} files`)
+await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, target: "ESNext", module: "ESNext", moduleResolution: "bundler", types: ["bun"] }, include: ["verify.ts", "doc-imports.ts"] }))
 const typecheck = Bun.spawn(["bun", "node_modules/typescript/bin/tsc", "--noEmit"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await typecheck.exited !== 0) process.exit(1)
 const verify = Bun.spawn(["bun", "verify.ts"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await verify.exited !== 0) process.exit(1)
+// A plugin states the version of the package it ships in: graph fingerprints and the plugin reference carry it.
+await writeFile(join(consumer, "plugin-versions.ts"), `
+import { readFile } from "node:fs/promises"
+const names: ReadonlyArray<string> = ${JSON.stringify(artifacts.map(({ manifest }) => String(manifest.name)).sort())}
+const isPlugin = (value: unknown): value is { readonly id: string; readonly version: string } => typeof value === "object" && value !== null
+  && "id" in value && "version" in value && "apiVersion" in value && "build" in value && "provides" in value
+const found = await Promise.all(names.map(async (name) => {
+  const manifest = JSON.parse(await readFile(\`node_modules/\${name}/package.json\`, "utf8")) as { readonly version: string }
+  const plugins = [...new Set(Object.values(await import(name)).filter(isPlugin))]
+  return plugins.map((plugin) => ({ name, id: plugin.id, version: plugin.version, expected: manifest.version }))
+}))
+const plugins = found.flat()
+const mismatched = plugins.filter((plugin) => plugin.version !== plugin.expected)
+if (plugins.length === 0 || mismatched.length > 0) {
+  console.error(plugins.length === 0 ? "No plugin found in the packed packages" : mismatched.map((plugin) => \`\${plugin.id} (\${plugin.name}) says \${plugin.version}, its package is \${plugin.expected}\`).join("\\n"))
+  process.exit(1)
+}
+console.log(\`\${plugins.length} plugins carry their package's version\`)
+`)
+const pluginVersions = Bun.spawn(["bun", "plugin-versions.ts"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await pluginVersions.exited !== 0) process.exit(1)
 if (Bun.which("node") !== null) {
   // Every package that declares Node must load there: a Bun-only import fails here, not in a consumer's deploy.
   const nodeReady = artifacts.filter(({ manifest }) => manifest.engines?.node !== undefined).map(({ manifest }) => String(manifest.name))

@@ -27,7 +27,9 @@ New session data uses `.efferent/runtime`; never delete old local data to reset 
 Build artifacts go under `.artifacts`. Publishing requires explicit sign-off;
 releases go through `bun run publish:packages`, a dry run unless
 `--publish` (CONTRIBUTING.md, "Publishing"). Every PR adds an entry under
-"Unreleased" in `CHANGELOG.md`.
+"Unreleased" in `CHANGELOG.md`. An event or stored-payload change regenerates
+the references (`bun run docs:generate`, which writes `docs/event-reference.*`)
+and must keep `packages/sdk/fixtures/journal-0.13.0.json` decoding.
 
 ## Conventions (gate-enforced, ZERO baseline)
 

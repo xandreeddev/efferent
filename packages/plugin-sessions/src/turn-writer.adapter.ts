@@ -13,7 +13,7 @@ import type {
   TurnWriter,
 } from "@xandreed/core"
 import type { Context } from "effect"
-import { closedState, pendingOf, stateJson, stateOf } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, pendingOf, stateJson, stateOf } from "./sessions-state.entity.functions.js"
 import type { SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
@@ -253,7 +253,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     const done = yield* commitPlan((at) => Effect.gen(function* () {
       const after = closedState(at.state, ending.reason, config.inbox.attempts, yield* Ref.get(tried))
       const closing = yield* turnEndedDraft(admitted.turn, ending).pipe(Effect.mapError((error) => harness("session.encode", error.message)))
-      const dropped = after.dropped.map((item): TurnDraft => ({ kind: "inbox.dropped", data: { id: item, reason: "attempts" } }))
+      const dropped = after.dropped.map((item): TurnDraft => ({ kind: "inbox.dropped", data: droppedData(item) }))
       return { drafts: [{ kind: closing.kind, data: closing.data }, ...dropped], next: after.state, result: pendingOf(after.state).length }
     }), { renew: false })
     yield* Ref.set(ended, true)

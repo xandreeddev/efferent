@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from "effect"
-import type { JsonObject, OpenTurn, SessionHead, SessionView, TurnEndReason } from "@xandreed/core"
+import { InboxDroppedData, InboxQueuedData } from "@xandreed/core"
+import type { InboxItem, JsonObject, OpenTurn, SessionHead, SessionView, TurnEndReason } from "@xandreed/core"
 import { SessionsState } from "./sessions-state.entity.js"
 import type { HeldTurn, HolderProcess, InboxSlot, Ownership, ProcessLiveness, SessionsState as State } from "./sessions-state.entity.js"
 
@@ -21,6 +22,15 @@ export const stateOf = (head: SessionHead): Effect.Effect<State, Schema.SchemaEr
 
 /** The state as the head stores it. */
 export const stateJson = (state: State): JsonObject => ({ sessions: encodeState(state) })
+
+const encodeQueued = Schema.encodeSync(InboxQueuedData)
+const encodeDropped = Schema.encodeSync(InboxDroppedData)
+
+/** What `inbox.queued` stores of a delivered item. */
+export const queuedData = (item: InboxItem): JsonObject => ({ ...encodeQueued({ id: item.id, source: item.source, content: item.content }) })
+
+/** What `inbox.dropped` stores of an item as many turns took and failed as the inbox allows. */
+export const droppedData = (id: string): JsonObject => ({ ...encodeDropped({ id, reason: "attempts" }) })
 
 /** Who asks whether a turn is held: this Sessions instance, and how it tells whether a process runs. */
 export interface Holder {

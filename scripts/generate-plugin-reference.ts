@@ -1,22 +1,47 @@
+import { existsSync } from "node:fs"
+import { readdir, readFile } from "node:fs/promises"
+import { join } from "node:path"
 import { JsonSchema, Schema } from "effect"
-import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
-import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
-import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
-import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
-import { modelsPlugin } from "@xandreed/plugin-models"
-import { renderFeedPlugin, renderSurfacePlugin } from "@xandreed/plugin-render"
-import { sessionLogSqlitePlugin, sessionSqlitePlugin } from "@xandreed/plugin-session-sqlite"
-import { sessionsPlugin } from "@xandreed/plugin-sessions"
-import { tasksPlugin } from "@xandreed/plugin-tasks"
-import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
+import type { Plugin } from "@xandreed/core"
+import * as agentLoop from "@xandreed/plugin-agent-loop"
+import * as memoryDigest from "@xandreed/plugin-memory-digest"
+import * as memorySummary from "@xandreed/plugin-memory-summary"
+import * as memoryWindow from "@xandreed/plugin-memory-window"
+import * as models from "@xandreed/plugin-models"
+import * as render from "@xandreed/plugin-render"
+import * as sessionSqlite from "@xandreed/plugin-session-sqlite"
+import * as sessions from "@xandreed/plugin-sessions"
+import * as tasks from "@xandreed/plugin-tasks"
+import * as toolDiscovery from "@xandreed/plugin-tool-discovery"
 /** A self-contained draft-07 schema, as the reference has always published. */
 const jsonSchemaOf = (schema: Schema.Top) => {
   const document = JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
   return { $schema: JsonSchema.META_SCHEMA_URI_DRAFT_07, ...document.schema, ...(Object.keys(document.definitions).length > 0 ? { definitions: document.definitions } : {}) }
 }
 /** Every first-party plugin the framework publishes, in host-graph order. */
-const firstParty = [sessionSqlitePlugin, sessionLogSqlitePlugin, sessionsPlugin, modelsPlugin, memoryWindowPlugin,
-  memorySummaryPlugin, memoryDigestPlugin, toolDiscoveryPlugin, stepLoopPlugin, tasksPlugin, renderSurfacePlugin, renderFeedPlugin]
+const firstParty: ReadonlyArray<Plugin> = [sessionSqlite.sessionSqlitePlugin, sessionSqlite.sessionLogSqlitePlugin, sessions.sessionsPlugin,
+  models.modelsPlugin, memoryWindow.memoryWindowPlugin, memorySummary.memorySummaryPlugin, memoryDigest.memoryDigestPlugin,
+  toolDiscovery.toolDiscoveryPlugin, agentLoop.stepLoopPlugin, tasks.tasksPlugin, render.renderSurfacePlugin, render.renderFeedPlugin,
+  render.uiOutputPlugin]
+/** A `definePlugin` result, as a package exports it. */
+const isPlugin = (value: unknown): value is Plugin => typeof value === "object" && value !== null && "id" in value && "version" in value
+  && "apiVersion" in value && "build" in value && "provides" in value && typeof value.id === "string" && typeof value.build === "function"
+/**
+ * Every plugin a workspace package exports (its default export too) is in the
+ * reference, or the reference is incomplete. The packages are found on disk,
+ * every one but the docs site and foundry, so a new package is scanned
+ * without being named here.
+ */
+const packagesDir = join(import.meta.dir, "..", "packages")
+const packageNames = await Promise.all((await readdir(packagesDir)).filter((dir) => !["website", "foundry"].includes(dir) && existsSync(join(packagesDir, dir, "package.json"))).sort()
+  .map(async (dir) => (JSON.parse(await readFile(join(packagesDir, dir, "package.json"), "utf8")) as { readonly name: string }).name))
+const namespaces: ReadonlyArray<Record<string, unknown>> = await Promise.all(packageNames.map((name) => import(name)))
+const exported = new Set(namespaces.flatMap((namespace) => Object.values(namespace).filter(isPlugin)))
+const unlisted = [...exported].filter((plugin) => !firstParty.includes(plugin))
+if (unlisted.length > 0) {
+  console.error(`Exported plugins missing from firstParty in scripts/generate-plugin-reference.ts: ${unlisted.map((plugin) => plugin.id).join(", ")}`)
+  process.exit(1)
+}
 const plugins = firstParty.map((plugin) => ({
   id: plugin.id, version: plugin.version, apiVersion: plugin.apiVersion, scope: plugin.scope,
   requires: plugin.requires, provides: plugin.provides, defaults: plugin.defaults, schema: jsonSchemaOf(plugin.schema),
@@ -24,4 +49,4 @@ const plugins = firstParty.map((plugin) => ({
 await Bun.write("docs/plugin-reference.json", `${JSON.stringify(plugins, null, 2)}\n`)
 const sections = plugins.map((plugin) => `## ${plugin.id}\n\nScope: **${plugin.scope}** · API ${plugin.apiVersion} · Version ${plugin.version}\n\nProvides: ${plugin.provides.map((key) => `\`${key}\``).join(", ")}\n\nRequires: ${plugin.requires.map((key) => `\`${key}\``).join(", ") || "none"}\n\n### Defaults\n\n\`\`\`json\n${JSON.stringify(plugin.defaults, null, 2)}\n\`\`\`\n\n### Configuration schema\n\n\`\`\`json\n${JSON.stringify(plugin.schema, null, 2)}\n\`\`\``).join("\n\n")
 await Bun.write("packages/website/src/content/docs/concepts/plugin-reference.md", `---\ntitle: Plugin reference\ndescription: Generated defaults, dependencies, and schemas for the first-party plugins.\n---\n\nGenerated by \`bun run docs:generate\` from the plugin definitions.\n\n${sections}\n`)
-console.log(`Generated reference for ${plugins.length} plugins`)
+console.log(`Generated reference for ${plugins.length} plugins, scanning ${packageNames.length} packages`)

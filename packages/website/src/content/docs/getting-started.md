@@ -33,7 +33,7 @@ import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 
-declare const model: LanguageModel.Service // from @xandreed/plugin-models or any effect/ai provider
+declare const model: LanguageModel.LanguageModel // from @xandreed/plugin-models or any effect/ai provider
 
 const reply = Effect.scoped(Effect.gen(function* () {
   const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(

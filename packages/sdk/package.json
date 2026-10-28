@@ -19,6 +19,7 @@
     "@xandreed/plugin-tool-discovery": "workspace:*",
     "@xandreed/plugin-memory-digest": "workspace:*",
     "@xandreed/plugin-sessions": "workspace:*",
-    "@xandreed/plugin-session-sqlite": "workspace:*"
+    "@xandreed/plugin-session-sqlite": "workspace:*",
+    "@xandreed/plugin-tasks": "workspace:*"
   }
 }

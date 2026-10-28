@@ -103,8 +103,11 @@ const entryOf = (item: Plugin | AgentPluginEntry): AgentPluginEntry => "plugin" 
 
 const isWriter = (turn: TurnWriter | NewTurn): turn is TurnWriter => "admitted" in turn
 
-/** Why a turn could not begin, as the turn's error codes. */
-const beginCodes = {
+/**
+ * Why a turn could not begin (`Sessions.begin` failed), as the code of the
+ * `HarnessError` `Agent.turn` fails with: keyed by the begin error's tag.
+ */
+export const turnBeginCodes = {
   SessionBusy: "session.busy",
   TurnDuplicate: "turn.duplicate",
   KeyConflict: "turn.key-conflict",
@@ -118,7 +121,7 @@ const beginCodes = {
 const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effect<TurnWriter, HarnessError, Scope.Scope> =>
   required(context, Sessions).pipe(Effect.flatMap((sessions) => sessions.begin(turn.session, {
     _tag: "User", userMessage: turn.userMessage, runId: turn.runId, key: turn.key ?? turn.runId, command: turn.command ?? {},
-  })), Effect.mapError((error) => error instanceof HarnessError ? error : failure(beginCodes[error._tag], `the turn could not begin (${error._tag}) in session ${turn.session.id}`)))
+  })), Effect.mapError((error) => error instanceof HarnessError ? error : failure(turnBeginCodes[error._tag], `the turn could not begin (${error._tag}) in session ${turn.session.id}`)))
 
 /** The turn's body, until someone else closes the turn: then the body is interrupted and the turn fails. */
 const untilClosed = (writer: TurnWriter) => <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError, R> =>

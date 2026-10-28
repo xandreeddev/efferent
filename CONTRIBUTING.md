@@ -35,6 +35,15 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
   (`docs/composable-evaluations.md`); the battery is part of the definition of done.
 - Colocate tests next to the source (`foo.ts` / `foo.test.ts`); fixtures live
   outside `src/` so the gates never see deliberate violations.
+- A change to an event or a stored payload runs `bun run docs:generate`
+  (the plugin and [event](docs/event-reference.md) references are committed
+  as generated) and must keep every release's journal fixture readable
+  (`packages/sdk/src/journal-compat.test.ts` reads each
+  `packages/sdk/fixtures/journal-<version>.json`). A fixture records what a
+  release wrote: record one per release with
+  `bun scripts/record-journal-fixture.ts`. It refuses to overwrite an
+  existing fixture unless `--force` is passed, and `--force` is only for
+  re-recording the current, unreleased version.
 - Add an entry under **Unreleased** in `CHANGELOG.md`: what changes for
   someone using the packages, with a migration note for anything breaking.
   Repository-only changes go under its "Repository" heading.
@@ -90,6 +99,15 @@ the same terminal, so its two-factor prompt works there; run it from an
 interactive terminal. Merging a version bump publishes nothing; tag the
 release (`v<version>`) after it is on npm. Tags resume with `v0.13.0`; 0.11.0
 and 0.12.0 have none.
+
+Pushing a `v<version>` tag also deploys the documentation site from that tag
+(`.github/workflows/docs.yml`; a manual dispatch can deploy it too), so push
+the tag only with the same sign-off as the npm publish. The `github-pages`
+environment must allow `v*` tags to deploy: it allowed only `main` before the
+site moved to tag deploys, and a refused tag fails the deploy job after the
+build. Add the rule once, in Settings → Environments → github-pages →
+Deployment branches and tags, or with
+`gh api -X POST repos/xandreeddev/efferent/environments/github-pages/deployment-branch-policies -f name='v*' -f type=tag`.
 
 ## Distribution changes
 

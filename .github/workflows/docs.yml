@@ -1,20 +1,30 @@
 # Build the documentation site (packages/website/, hand-built Astro) and deploy
 # it to GitHub Pages — the project page at https://xandreeddev.github.io/efferent/.
 #
-# One-time setup: enable Pages with source "GitHub Actions"
-#   Settings → Pages → Build and deployment → Source: GitHub Actions
-#   (or: gh api -X POST /repos/xandreeddev/efferent/pages -f build_type=workflow)
+# One-time setup:
+# 1. Enable Pages with source "GitHub Actions"
+#      Settings → Pages → Build and deployment → Source: GitHub Actions
+#      (or: gh api -X POST /repos/xandreeddev/efferent/pages -f build_type=workflow)
+# 2. Let release tags deploy: the github-pages environment admits only the
+#    refs its deployment policy lists (it starts with `main` alone), and a
+#    tag it refuses fails the deploy job after the build.
+#      Settings → Environments → github-pages → Deployment branches and tags → add tag rule v*
+#      (or: gh api -X POST repos/xandreeddev/efferent/environments/github-pages/deployment-branch-policies -f name='v*' -f type=tag)
 #
 # packages/website is a Bun workspace member, so it installs from the root
 # bun.lock — one `bun install` at the repo root resolves its deps.
+#
+# The site deploys when a release is tagged (v*, once step 2 above is done),
+# or by hand, never on every push to main: the docs describe what npm has,
+# and main runs ahead of it between releases. Pushing a release tag is
+# therefore outward-facing and needs the same sign-off as the npm publish
+# (CONTRIBUTING.md, "Publishing"). CI (ci.yml) still builds and link-checks
+# the site on every push.
 name: docs
 
 on:
   push:
-    branches: [main]
-    paths:
-      - "packages/website/**"
-      - ".github/workflows/docs.yml"
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:

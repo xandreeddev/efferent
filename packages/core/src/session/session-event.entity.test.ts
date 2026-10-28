@@ -5,9 +5,9 @@ import { ConversationId } from "../domain/message.entity.js"
 import { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
-import type { TurnEvent } from "../turn/turn-event.entity.js"
-import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, turnStartedDraft } from "./session-event.entity.functions.js"
-import { MEMORY_KINDS, RESERVED_KINDS } from "./session-event.entity.js"
+import { TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
+import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, turnStartedDraft } from "./session-event.entity.functions.js"
+import { MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
 import type { SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-00000000e3e3")
@@ -116,5 +116,52 @@ describe("the turn's bus events as stored", () => {
     expect(Option.map(stored, (draft) => draft.kind)).toEqual(Option.some("answer.published"))
     expect(RESERVED_KINDS.includes("answer.published")).toBe(false)
     expect(["turn.started", "turn.ended", "memory.message", "step.usage", "inbox.queued"].every((kind) => RESERVED_KINDS.includes(kind))).toBe(true)
+  })
+})
+
+describe("the journal's schemas", () => {
+  const decodes = (kind: string, data: unknown) => Option.match(journalSchemaOf(kind), {
+    onNone: () => false,
+    onSome: (schema) => Option.isSome(Schema.decodeUnknownOption(schema)(data)),
+  })
+  test("every reserved kind has one; a host's or a plugin's own kind has none", () => {
+    expect(RESERVED_KINDS.filter((kind) => Option.isNone(journalSchemaOf(kind)))).toEqual([])
+    expect(["answer.published", "task.started", "tool.progress"].map(journalSchemaOf).every(Option.isNone)).toBe(true)
+  })
+  test("every bus event the journal stores under a kind of its own is stored under a reserved kind, and only those have a schema", () => {
+    const tags = TurnEvent.members.map((member) => member.fields._tag.schema.literal)
+    const stored = tags.filter((tag) => tag !== "host" && !TransientTurnEvents.includes(tag) && !RECORDED_ELSEWHERE.has(tag))
+    const kinds = stored.map((tag) => tag === "assistant.message" ? "step.usage" : tag)
+    expect(kinds.filter((kind) => !RESERVED_KINDS.includes(kind) || Option.isNone(journalSchemaOf(kind)))).toEqual([])
+    // A bus event's own name has a schema only when it is a reserved kind.
+    expect(tags.filter((tag) => Option.isSome(journalSchemaOf(tag)) && !RESERVED_KINDS.includes(tag))).toEqual([])
+  })
+  test("what the bus stores decodes with its kind's schema, and nothing it omits is required", () => {
+    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0 }
+    const events: ReadonlyArray<TurnEvent> = [
+      { _tag: "assistant.message", step: 1, text: "hello", reasoning: "", model: Option.none(), toolCalls: [], usage },
+      { _tag: "tool.completed", step: 0, invocationId: "i", tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 }, durationMs: 5, labels: {}, stage: Option.none() },
+      { _tag: "step.started", step: 0, planned: false, activeTools: ["lookup"] },
+    ]
+    const stored = events.flatMap((event) => Option.toArray(draftOfTurnEvent(1, event)))
+    expect(stored.map((draft) => [draft.kind, decodes(draft.kind, draft.data)])).toEqual([["step.usage", true], ["tool.completed", true], ["step.started", true]])
+  })
+  test("a memory entry decodes as its kind's envelope; the inbox records decode as written", async () => {
+    const entry: LogEntry = { id: EntryId.make("r:1"), runId: "r", turn: 1, step: 0, at: 5, body: { _tag: "StepContext", step: 0, text: "STEP 0" } }
+    const draft = Option.getOrThrow(await Effect.runPromise(draftOfEntry(entry)))
+    expect([draft.kind, decodes(draft.kind, draft.data), decodes("memory.message", draft.data)]).toEqual(["memory.step", true, false])
+    expect(decodes("inbox.queued", { id: "a", source: {}, content: "hello" })).toBe(true)
+    expect(decodes("inbox.dropped", { id: "a", reason: "attempts" })).toBe(true)
+    expect(decodes("inbox.dropped", { id: "a" })).toBe(false)
+  })
+  test("the events recorded elsewhere are not stored from the bus", () => {
+    expect([...RECORDED_ELSEWHERE]).toEqual(["turn.started", "turn.ended", "skills.activated"])
+    const recordedElsewhere: ReadonlyArray<TurnEvent> = [
+      { _tag: "turn.started", runId: "r", turn: 1, userMessage: new UserMessage({ text: "hello" }) },
+      { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.some("hi") },
+      { _tag: "skills.activated", skills: ["s"], tools: ["t"], source: "host" },
+    ]
+    expect(recordedElsewhere.map((event) => event._tag)).toEqual([...RECORDED_ELSEWHERE])
+    expect(recordedElsewhere.map((event) => draftOfTurnEvent(1, event)).every(Option.isNone)).toBe(true)
   })
 })
