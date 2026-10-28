@@ -1,7 +1,7 @@
 [
   {
     "id": "efferent/approval-host",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -18,7 +18,7 @@
   },
   {
     "id": "@xandreed/plugin-session-sqlite",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -56,7 +56,7 @@
   },
   {
     "id": "@xandreed/plugin-session-sqlite/log",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -82,7 +82,7 @@
   },
   {
     "id": "@xandreed/plugin-sessions",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -240,7 +240,7 @@
   },
   {
     "id": "@xandreed/plugin-models",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -257,7 +257,8 @@
       "model": "",
       "fastModel": "",
       "fallbackModel": "",
-      "inheritPrevious": true
+      "inheritPrevious": true,
+      "endpoints": {}
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -274,20 +275,45 @@
         },
         "inheritPrevious": {
           "type": "boolean"
+        },
+        "endpoints": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "apiKey": {
+                "type": "string"
+              },
+              "apiKeyEnv": {
+                "type": "string"
+              },
+              "standardOnly": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "additionalProperties": true
+          }
         }
       },
       "required": [
         "model",
         "fastModel",
         "fallbackModel",
-        "inheritPrevious"
+        "inheritPrevious",
+        "endpoints"
       ],
       "additionalProperties": true
     }
   },
   {
     "id": "@xandreed/plugin-memory",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -322,7 +348,7 @@
   },
   {
     "id": "@xandreed/plugin-memory-window",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -406,7 +432,7 @@
   },
   {
     "id": "@xandreed/plugin-memory-summary",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -506,7 +532,7 @@
   },
   {
     "id": "@xandreed/plugin-memory-digest",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -536,7 +562,7 @@
   },
   {
     "id": "@xandreed/plugin-tool-discovery",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -611,7 +637,7 @@
   },
   {
     "id": "@xandreed/plugin-agent-loop",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -657,7 +683,7 @@
   },
   {
     "id": "@xandreed/plugin-agent-loop/steps",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -674,7 +700,7 @@
   },
   {
     "id": "@xandreed/plugin-tasks",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -725,7 +751,7 @@
   },
   {
     "id": "@xandreed/plugin-render/surface",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -756,7 +782,7 @@
   },
   {
     "id": "@xandreed/plugin-render/feed",
-    "version": "0.11.0",
+    "version": "0.12.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [

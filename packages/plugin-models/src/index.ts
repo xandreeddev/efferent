@@ -34,6 +34,7 @@ export { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL, toOpenAiCodexReques
 export { normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7, OpenAiCodexWebSocketHttpClient } from "./llm/openAiCodexWebSocket.js"
 export {
   buildProvider,
+  chatCompletionsUrl,
   OPENCODE_CHAT_URL,
   OPENCODE_RESPONSES_API_URL,
   prependClaudeCode,
@@ -57,3 +58,4 @@ export {
 export type { ReasoningEffort } from "./llm/modelCatalog.js"
 export { UtilityLlmLive } from "./llm/utilityLlm.js"
 export { modelsPlugin, default } from "./plugin.adapter.js"
+export { CurrentModelEndpoints, ModelEndpoint, ModelEndpoints } from "./ports/model-endpoints.port.js"

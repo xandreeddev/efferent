@@ -39,7 +39,7 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
 ## Publishing
 
 The framework packages are published manually; there is no release
-automation. All 18 publishable packages share one version (currently `0.11.0`)
+automation. All 18 publishable packages share one version (currently `0.12.0`)
 under npm's `latest` tag. The previously published `efferent`, `@xandreed/cli`
 and `@xandreed/sdk-*` packages are a frozen earlier line.
 
