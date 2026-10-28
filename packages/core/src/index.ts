@@ -36,13 +36,6 @@ export type { LoopEvent, ToolCallSummary } from "./domain/loop-event.entity.js"
 
 // ports
 export {
-  ConversationStore,
-  ConversationSummary,
-  RunOutcomeRecord,
-  StoredMessage,
-  StoreError,
-} from "./ports/conversation-store.port.js"
-export {
   EngineSettings,
   SETTINGS_KEYS,
   SettingsError,
@@ -125,7 +118,6 @@ export * from "./harness/plugin.entity.js"
 export * from "./harness/plugin.adapter.js"
 export * from "./harness/plugin-stack.adapter.js"
 export * from "./harness/config.entity.js"
-export * from "./harness/session.entity.js"
 export * from "./ports/harness.port.js"
 
 export { defineAgent, defineConfig } from "./harness/config.entity.functions.js"

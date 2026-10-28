@@ -12,8 +12,8 @@ the plugin and configuration APIs.
 ## Architecture
 
 - `core`: shared schemas, ports and protocol helpers; no provider or host imports.
-- `runtime` → core: configuration, dependency graph and scoped plugin activation.
-- `sdk` → runtime/core: sessions, replay, queues, cancellation and safe reconfiguration.
+- `runtime` → core: plugin dependency graph and scoped plugin activation.
+- `sdk` → runtime/core: `Agent.define` and `Agent.turn`, the composable agent over sessions.
 - `plugin-*` → core: independently configurable capabilities, including the agent loop.
 - `evals`: tasks, trials, graders and suites; `evals-cli`, `evals-langfuse` and `evals-langsmith` add the local CLI and exporters.
 - `foundry`: independent verification framework, no internal package dependencies.

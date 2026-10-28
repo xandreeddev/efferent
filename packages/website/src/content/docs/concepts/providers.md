@@ -1,27 +1,17 @@
 ---
 title: Plugin configuration
-description: Replace services and configure every capability through a validated graph.
+description: Configure each plugin's options and replace services through a validated graph.
 ---
 
 
 
-Base names are `efferent.config.json` and `efferent.config.ts`; having both in
-one directory is an error. Global bases live in `~/.efferent/`. TypeScript
-exports a default configuration and may export `plugins: Plugin[]` containing
-local definitions. JSON resolves `use: "./my-plugin.ts"` or an installed package.
-Only trusted configuration modules should be loaded: TypeScript executes code.
-
-The merge order is preset, global base, workspace base, selected profile,
-`.efferent/overrides.json`, then invocation. Plugin entries merge by instance
-`id`; options merge by key. Changing `use` replaces the prior instance options.
-Profile maps and bindings merge by key. An unknown profile is an error.
-
-Removing a required provider fails validation until its dependants are changed too.
-
-`harness.reconfigure(config)` validates and stages the next graph before making
-it available. Idle sessions refresh; active sessions refresh before their next
-turn. A changed runtime graph returns `restart-required`; the host decides when
-to restart. Source TypeScript configuration is never rewritten.
+An agent's plugins are configured where it is defined: each entry in
+`Agent.define({ plugins })` is a plugin, or `{ plugin, id?, options }`. Options
+merge over the plugin's defaults and decode through its schema; undeclared keys
+are refused. Two providers of one service need a `bindings` entry naming the
+instance to use. The graph is validated before anything activates: invalid
+options, missing dependencies, cycles, ambiguous providers and incompatible
+plugin API versions are all refused.
 
 ## Model endpoints
 
@@ -30,19 +20,14 @@ The models plugin calls the built-in providers (`opencode`, `google`,
 OpenAI-compatible server instead — a local model, a self-hosted gateway — name
 it under `endpoints` and select its models as `<name>:<model id>`:
 
-```json
-{
-  "version": 1,
-  "plugins": [
-    { "id": "models", "use": "@xandreed/plugin-models", "options": {
-      "model": "local:llama3.1:8b",
-      "endpoints": {
-        "local": { "url": "http://localhost:11434/v1" },
-        "gateway": { "url": "https://gateway.example/v1", "apiKeyEnv": "GATEWAY_API_KEY" }
-      }
-    } }
-  ]
-}
+```ts
+{ plugin: modelsPlugin, options: {
+  model: "local:llama3.1:8b",
+  endpoints: {
+    local: { url: "http://localhost:11434/v1" },
+    gateway: { url: "https://gateway.example/v1", apiKeyEnv: "GATEWAY_API_KEY" },
+  },
+} }
 ```
 
 Requests go to `<url>/chat/completions`. The key is optional: the plugin uses

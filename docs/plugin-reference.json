@@ -1,37 +1,16 @@
 [
   {
-    "id": "efferent/approval-host",
+    "id": "@xandreed/plugin-session-sqlite",
     "version": "0.13.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
     "provides": [
-      "efferent/Approval"
-    ],
-    "defaults": {},
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "not": {
-        "type": "null"
-      }
-    }
-  },
-  {
-    "id": "@xandreed/plugin-session-sqlite",
-    "version": "0.13.0",
-    "apiVersion": 2,
-    "scope": "runtime",
-    "requires": [
-      "efferent/SessionEnvironment"
-    ],
-    "provides": [
       "efferent/SessionLog",
-      "efferent/SessionStore",
       "efferent/TurnAdmission"
     ],
     "defaults": {
-      "path": ".efferent/runtime/sessions.db",
-      "legacyPaths": []
+      "path": ".efferent/runtime/sessions.db"
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -39,17 +18,10 @@
       "properties": {
         "path": {
           "type": "string"
-        },
-        "legacyPaths": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          }
         }
       },
       "required": [
-        "path",
-        "legacyPaths"
+        "path"
       ],
       "additionalProperties": true
     }
@@ -309,41 +281,6 @@
         "fallbackModel",
         "inheritPrevious",
         "endpoints"
-      ],
-      "additionalProperties": true
-    }
-  },
-  {
-    "id": "@xandreed/plugin-memory",
-    "version": "0.13.0",
-    "apiVersion": 2,
-    "scope": "session",
-    "requires": [
-      "efferent/SessionEnvironment"
-    ],
-    "provides": [
-      "efferent/Memory"
-    ],
-    "defaults": {
-      "file": ".efferent/runtime/memory.jsonl",
-      "limit": 8
-    },
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "properties": {
-        "file": {
-          "type": "string"
-        },
-        "limit": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 100
-        }
-      },
-      "required": [
-        "file",
-        "limit"
       ],
       "additionalProperties": true
     }
@@ -642,52 +579,6 @@
         "matcherTimeoutMs",
         "catalogVersion",
         "catalogOrder"
-      ],
-      "additionalProperties": true
-    }
-  },
-  {
-    "id": "@xandreed/plugin-agent-loop",
-    "version": "0.13.0",
-    "apiVersion": 2,
-    "scope": "session",
-    "requires": [
-      "effect/ai/LanguageModel",
-      "efferent/AgentTools",
-      "efferent/SessionStore",
-      "efferent/Memory",
-      "efferent/ContextManager"
-    ],
-    "provides": [
-      "efferent/AgentLoop"
-    ],
-    "defaults": {
-      "maxSteps": 100,
-      "toolConcurrency": 1,
-      "streaming": true
-    },
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "properties": {
-        "maxSteps": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1000
-        },
-        "toolConcurrency": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 32
-        },
-        "streaming": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "maxSteps",
-        "toolConcurrency",
-        "streaming"
       ],
       "additionalProperties": true
     }

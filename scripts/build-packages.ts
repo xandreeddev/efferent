@@ -5,7 +5,7 @@ import { join, relative } from "node:path"
 const root = join(import.meta.dir, "..")
 const output = join(root, ".artifacts/packages")
 const names = ["core", "runtime", "sdk", "evals", "evals-cli", "evals-langfuse", "evals-langsmith",
-  "plugin-agent-loop", "plugin-memory", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-tool-discovery", "plugin-models",
+  "plugin-agent-loop", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-tool-discovery", "plugin-models",
   "plugin-session-sqlite", "plugin-sessions", "plugin-tasks", "plugin-render"]
 const manifests = new Map(await Promise.all(names.map(async (name) =>
   [name, JSON.parse(await readFile(join(root, "packages", name, "package.json"), "utf8"))] as const,

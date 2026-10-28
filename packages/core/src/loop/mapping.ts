@@ -20,7 +20,7 @@ import type { TokenUsage } from "../domain/token-usage.entity.js"
  */
 
 /** Wrap a fold summary as the single user message standing in for the folded
- *  history — prepended by `runAgent` when the conversation has a checkpoint. */
+ *  history — prepended when memory replays a conversation from a checkpoint. */
 export const handoffToMessage = (summary: string): AgentMessage => ({
   role: "user",
   content:

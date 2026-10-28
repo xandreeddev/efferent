@@ -24,73 +24,64 @@ All framework packages are published at `0.13.0` under npm's `latest` tag.
 ## Compose
 
 ```ts
-import { Effect, Layer, Schema } from "effect"
-import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
-import sessions from "@xandreed/plugin-session-sqlite"
-import { sessionsPlugin } from "@xandreed/plugin-sessions"
+import { Context, Effect, Layer, Option } from "effect"
+import { LanguageModel } from "effect/ai"
+import { Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { Agent } from "@xandreed/sdk"
+import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
+import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 
-const echo = definePlugin({
-  id: "example/echo", version: "1",
-  config: Schema.Struct({ prefix: Schema.String }), defaults: { prefix: "hello " },
-  provides: [AgentLoop],
-  layer: ({ prefix }) => Layer.succeed(AgentLoop, {
-    run: (input) => Effect.succeed({ text: prefix + input.userMessage.text, outcome: "completed" }),
-  }),
-})
+declare const model: LanguageModel.Service // from @xandreed/plugin-models or any effect/ai provider
 
-await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-  const harness = yield* Harness.make({
-    workspace: process.cwd(),
-    plugins: [sessions, sessionsPlugin, echo],
-    config: { version: 1, plugins: [
-      { id: "store", use: sessions.id },
-      { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
-      { id: "loop", use: echo.id },
-    ] },
+const reply = Effect.scoped(Effect.gen(function* () {
+  const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(
+    Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)),
+  )), Sessions)
+  const agent = yield* Agent.define({
+    plugins: [{ plugin: memoryWindowPlugin, options: { digestOnWriteChars: 4_000 } }, toolDiscoveryPlugin, stepLoopPlugin],
+    turnServices: [LanguageModel.LanguageModel],
+    system: "You are a helpful assistant.",
   })
-  const session = yield* harness.create()
-  yield* session.send("world")
-  console.log(yield* session.history)
-})))
+  const view = yield* sessions.create({ owner: "user-1" })
+  const outcome = yield* agent.turn({
+    turn: { session: { id: view.header.id, owner: "user-1" }, userMessage: new UserMessage({ text: "Hello" }), runId: crypto.randomUUID() },
+    services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
+  }, (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+  return outcome.reply
+}))
 ```
 
 A plugin declares an Effect Schema, defaults, required/provided service tags,
 and a scoped Layer. The runtime rejects invalid options, missing dependencies,
 cycles, ambiguous providers, and incompatible plugin API versions before use.
-Replace the loop, memory or any other service through an explicit binding.
+Override a service through an explicit binding.
 
-The SQLite session store uses `bun:sqlite`, so this example runs on Bun. On
-Node, provide the `SessionLog` port from `@xandreed/core` with your own store,
-or with `SessionLogMemoryLive` for an in-memory log.
+`SessionLogMemoryLive` keeps sessions in memory and runs anywhere;
+`SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores them
+in a SQLite file on Bun, and any other store can implement the `SessionLog` port.
 
 ## Configuration
 
-Configuration is JSON or TypeScript and resolves through the same plugin graph.
-Each entry names an instance, the plugin it uses, and its options:
-
-```json
-{
-  "version": 1,
-  "plugins": [
-    { "id": "memory", "use": "@xandreed/plugin-memory", "options": { "limit": 6 } },
-    { "id": "loop", "use": "@xandreed/plugin-agent-loop", "options": { "maxSteps": 40 } }
-  ]
-}
-```
-
-The [plugin reference](/docs/concepts/plugin-reference/) lists every
-first-party plugin with its defaults and configuration schema.
+Plugins are configured where the agent is defined: an entry in
+`Agent.define({ plugins })` is a plugin, or `{ plugin, id?, options }`. Options
+merge over the plugin's defaults and decode through its schema; undeclared keys
+are refused. The [plugin reference](/docs/concepts/plugin-reference/) lists every
+first-party plugin with its defaults and configuration schema, and
+[plugin configuration](/docs/concepts/providers/#model-endpoints) shows how to
+point the models plugin at any OpenAI-compatible endpoint.
 
 ## Packages
 
 | Package | Responsibility |
 | --- | --- |
 | `@xandreed/core` | Shared schemas, ports, messages and protocol helpers |
-| `@xandreed/runtime` | Config loading, plugin graph validation and scoped activation |
-| `@xandreed/sdk` | Durable sessions, queues, cancellation, replay and forks |
+| `@xandreed/runtime` | Plugin graph validation and scoped activation |
+| `@xandreed/sdk` | `Agent.define` and `Agent.turn`: the agent's plugin graph and its turns, over durable sessions |
 | `@xandreed/plugin-agent-loop` | The agent step loop |
 | `@xandreed/plugin-models` | Model routing and provider adapters |
-| `@xandreed/plugin-memory`, `-memory-window`, `-memory-summary`, `-memory-digest` | Conversation memory strategies |
+| `@xandreed/plugin-memory-window`, `-memory-summary`, `-memory-digest` | Conversation memory strategies and tool-result digests |
 | `@xandreed/plugin-tool-discovery` | Tool and skill discovery |
 | `@xandreed/plugin-sessions` | Conversation sessions and the turn lifecycle |
 | `@xandreed/plugin-session-sqlite` | SQLite session store (Bun) |
@@ -112,8 +103,8 @@ bun run --cwd packages/website check
 
 The distribution build prepares artifacts under `.artifacts/` using each
 package's manifest version and matching internal dependency versions. The
-consumer check installs local tarballs outside the monorepo, runs an external
-loop plugin with durable sessions, a fork and an eval composition on Bun, and
+consumer check installs local tarballs outside the monorepo, runs a
+composable agent's turn, a session fork and an eval composition on Bun, and
 imports every Node-capable package on Node.
 
 See [the framework guide](/docs/concepts/harness/) and the

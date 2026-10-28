@@ -39,7 +39,7 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
 ## Publishing
 
 The framework packages are published manually; there is no release
-automation. All 18 publishable packages share one version (currently `0.13.0`)
+automation. All 17 publishable packages share one version (currently `0.13.0`)
 under npm's `latest` tag. The previously published `efferent`, `@xandreed/cli`
 and `@xandreed/sdk-*` packages are a frozen earlier line.
 
@@ -54,9 +54,8 @@ bun run verify:packages
 ```
 
 Publish in dependency order, skipping any version already on npm: `core`; the
-plugins; `runtime`; `sdk` (after `runtime`, `plugin-memory` and
-`plugin-session-sqlite`); then `evals`, `evals-cli`, `evals-langfuse` and
-`evals-langsmith`:
+plugins; `runtime`; `sdk` (after `runtime`); then `evals`, `evals-cli`,
+`evals-langfuse` and `evals-langsmith`:
 
 ```sh
 npm publish ./.artifacts/packages/<package> --access public --tag latest

@@ -1,6 +1,5 @@
 import { JsonSchema, Schema } from "effect"
-import { agentLoopPlugin, stepLoopPlugin } from "@xandreed/plugin-agent-loop"
-import { memoryPlugin } from "@xandreed/plugin-memory"
+import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -10,16 +9,14 @@ import { sessionLogSqlitePlugin, sessionSqlitePlugin } from "@xandreed/plugin-se
 import { sessionsPlugin } from "@xandreed/plugin-sessions"
 import { tasksPlugin } from "@xandreed/plugin-tasks"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { approvalPlugin } from "@xandreed/sdk"
 /** A self-contained draft-07 schema, as the reference has always published. */
 const jsonSchemaOf = (schema: Schema.Top) => {
   const document = JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
   return { $schema: JsonSchema.META_SCHEMA_URI_DRAFT_07, ...document.schema, ...(Object.keys(document.definitions).length > 0 ? { definitions: document.definitions } : {}) }
 }
 /** Every first-party plugin the framework publishes, in host-graph order. */
-const firstParty = [approvalPlugin(), sessionSqlitePlugin, sessionLogSqlitePlugin, sessionsPlugin, modelsPlugin, memoryPlugin,
-  memoryWindowPlugin, memorySummaryPlugin, memoryDigestPlugin, toolDiscoveryPlugin, agentLoopPlugin, stepLoopPlugin, tasksPlugin,
-  renderSurfacePlugin, renderFeedPlugin]
+const firstParty = [sessionSqlitePlugin, sessionLogSqlitePlugin, sessionsPlugin, modelsPlugin, memoryWindowPlugin,
+  memorySummaryPlugin, memoryDigestPlugin, toolDiscoveryPlugin, stepLoopPlugin, tasksPlugin, renderSurfacePlugin, renderFeedPlugin]
 const plugins = firstParty.map((plugin) => ({
   id: plugin.id, version: plugin.version, apiVersion: plugin.apiVersion, scope: plugin.scope,
   requires: plugin.requires, provides: plugin.provides, defaults: plugin.defaults, schema: jsonSchemaOf(plugin.schema),

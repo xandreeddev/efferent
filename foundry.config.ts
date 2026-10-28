@@ -35,7 +35,6 @@ const CHECKED = [
   "packages/plugin-agent-loop/src/**",
   "packages/runtime/src/**",
   "packages/sdk/src/**",
-  "packages/plugin-memory/src/**",
   "packages/plugin-memory-window/src/**",
   "packages/plugin-memory-summary/src/**",
   "packages/plugin-memory-digest/src/**",
@@ -197,22 +196,6 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
-            "name": "plugin-memory",
-            "path": "packages/plugin-memory/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "@xandreed/core"
-            ]
-      },
-      {
             "name": "plugin-models",
             "path": "packages/plugin-models/src/**",
             "canImport": [
@@ -314,7 +297,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "sdk",
                   "core",
                   "runtime",
-                  "plugin-memory",
                   "plugin-session-sqlite",
                   "plugin-agent-loop",
                   "plugin-memory-window",
@@ -332,7 +314,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun:",
                   "@xandreed/core",
                   "@xandreed/runtime",
-                  "@xandreed/plugin-memory",
                   "@xandreed/plugin-session-sqlite",
                   "@xandreed/plugin-sessions",
                   "@xandreed/plugin-agent-loop",
@@ -340,7 +321,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "@xandreed/plugin-memory-summary",
                   "@xandreed/plugin-memory-digest",
                   "@xandreed/plugin-tool-discovery",
-                  "@xandreed/plugin-memory",
                   "@xandreed/plugin-session-sqlite"
             ]
       },
