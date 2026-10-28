@@ -20,7 +20,7 @@ tool delivery without paying for an unnecessary closing prose request.
 
 ## UI host plugin
 
-Use the minimal `@xandreed/ui-agent/output` entrypoint. `UiOutput.emit` accepts a
+Use the minimal `@xandreed/plugin-render/output` entrypoint. `UiOutput.emit` accepts a
 structured proposal with exact release identifiers and source evidence IDs.
 The admission port validates the catalog/schema and the journal port commits
 an authorized, fenced, idempotent revision. The journal owns persistence before

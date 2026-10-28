@@ -3,8 +3,8 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 const root = join(import.meta.dir, "..")
-/** The consumer installs the Effect the packages were built against. */
-const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { readonly dependencies: { readonly effect: string } }
+/** The consumer installs the Effect the packages were built against, and the repo's TypeScript. */
+const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { readonly dependencies: { readonly effect: string }, readonly devDependencies: { readonly typescript: string } }
 const packages = join(root, ".artifacts/packages")
 const tarballs = join(root, ".artifacts/tarballs")
 await mkdir(tarballs, { recursive: true })
@@ -29,7 +29,7 @@ const registry: Bun.Server<undefined> = Bun.serve({ hostname: "127.0.0.1", port:
   return Response.json({ name: manifest.name, "dist-tags": { latest: manifest.version }, versions: { [manifest.version]: { ...manifest, dist: { shasum: artifact.shasum, tarball: `http://127.0.0.1:${registry.port}/${manifest.name}/artifact.tgz` } } } })
 } })
 await writeFile(join(consumer, "bunfig.toml"), `[install.scopes]\n"@xandreed" = { url = "http://127.0.0.1:${registry.port}" }\n`)
-await writeFile(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: { ...Object.fromEntries(artifacts.map(({manifest}) => [manifest.name,manifest.version])), effect: rootManifest.dependencies.effect, "@types/bun": "1.3.14" } }))
+await writeFile(join(consumer, "package.json"), JSON.stringify({ private: true, type: "module", dependencies: { ...Object.fromEntries(artifacts.map(({manifest}) => [manifest.name,manifest.version])), effect: rootManifest.dependencies.effect, typescript: rootManifest.devDependencies.typescript, "@types/bun": "1.3.14" } }))
 console.log(`Installing from temporary local registry into ${consumer}`)
 const install = Bun.spawn(["bun", "install", "--ignore-scripts", "--no-cache", "--cache-dir", join(consumer, ".install-cache")], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await install.exited !== 0) process.exit(1)
@@ -40,7 +40,6 @@ import type { TurnWriter } from "@xandreed/core"
 import { SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
-import { CurrentPromptProvenance, defineDecisionPrompt, definePrompt, evaluateDecision, EvaluationModelLive, renderPrompt, withProvenance } from "@xandreed/ai"
 import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
 import sessions from "@xandreed/plugin-session-sqlite"
 import { sessionsPlugin } from "@xandreed/plugin-sessions"
@@ -60,18 +59,6 @@ const rubric = semanticEvaluator({id:"external-quality",version:"1",questions:{s
 const assessments = await Effect.runPromise(assessAll([{evaluator:rubric,select:["supported"]}],{answer:"fixture"}).pipe(Effect.provide(SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))))
 if(assessments[0]?.status!=="scored" || assessments[0]?.metadata.backend!=="jev") process.exit(1)
 console.log("External SDK, plugin, persistence, fork, eval composition, and optional rubric adapter passed")
-const greeting = definePrompt({ id: "external.greeting", version: "1", render: (name: string) => [{ role: "system", content: "Greet the user." }, { role: "user", content: name }], variants: { baseline: { shared: [], models: { "vendor/small": [{ role: "system", content: "Be brief." }] } } } })
-const small = await Effect.runPromise(renderPrompt(greeting, "Ada", { model: "vendor/small", variant: "baseline" }))
-const large = await Effect.runPromise(renderPrompt(greeting, "Ada", { model: "vendor/large", variant: "baseline" }))
-if (small.prompt.content.length !== 3 || large.prompt.content.length !== 2 || Option.getOrNull(small.provenance.modelOverride) !== "vendor/small" || Option.isSome(large.provenance.modelOverride)) process.exit(1)
-const current = await Effect.runPromise(Effect.service(CurrentPromptProvenance).pipe(withProvenance(small.provenance)))
-if (Option.getOrNull(current)?.hash !== small.provenance.hash || !/^[0-9a-f]{64}$/.test(small.provenance.hash) || small.provenance.hash === large.provenance.hash) process.exit(1)
-const route = defineDecisionPrompt({ id: "external.route", version: "1", family: "routing", state: (text: string) => text, questions: () => ({ lane: { type: "choice", instructions: "Which lane?", criteria: { fast: "Quick.", slow: "Careful." } } }) })
-const decide = (choice: string) => evaluateDecision(route, "hello").pipe(Effect.provide(EvaluationModelLive({ model: "stub/judge", transport: () => Promise.resolve({ answers: { lane: { type: "choice", choice } } }) })))
-const chosen = await Effect.runPromise(decide("fast"))
-const refused = await Effect.runPromise(Effect.result(decide("sideways")))
-if (chosen.lane.choice !== "fast" || refused._tag !== "Failure" || refused.failure._tag !== "EvaluationError" || refused.failure.code !== "invalid") process.exit(1)
-console.log("Versioned prompts, their provenance and a checked decision passed")
 const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const done = yield* Deferred.make<string>()
  const react = (writer: TurnWriter) => Deferred.succeed(done, writer.admitted.userMessage.text).pipe(Effect.asVoid)
@@ -99,18 +86,16 @@ if (await typecheck.exited !== 0) process.exit(1)
 const verify = Bun.spawn(["bun", "verify.ts"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await verify.exited !== 0) process.exit(1)
 if (Bun.which("node") !== null) {
-  await writeFile(join(consumer, "render-node.mjs"), `import { encodeSse, FeedReady, renderSurfacePlugin } from "@xandreed/plugin-render"
+  // Every package that declares Node must load there: a Bun-only import fails here, not in a consumer's deploy.
+  const nodeReady = artifacts.filter(({ manifest }) => manifest.engines?.node !== undefined).map(({ manifest }) => String(manifest.name))
+  await writeFile(join(consumer, "node-imports.mjs"), nodeReady.map((name) => `await import(${JSON.stringify(name)})`).join("\n") + `
+const { encodeSse, FeedReady, renderSurfacePlugin } = await import("@xandreed/plugin-render")
 if (renderSurfacePlugin.id !== "@xandreed/plugin-render/surface" || encodeSse(FeedReady.make({})) !== "event: ready\\ndata: {}\\n\\n") process.exit(1)
-console.log("plugin-render imports on Node")
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes on Node")
 `)
-  const node = Bun.spawn(["node", "render-node.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+  const node = Bun.spawn(["node", "node-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await node.exited !== 0) process.exit(1)
-} else console.log("node not on PATH: skipped the plugin-render Node import check")
-const cli = Bun.spawn(["bun", "node_modules/@xandreed/cli/dist/main.js", "--help"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
-if (await cli.exited !== 0) process.exit(1)
-await writeFile(join(consumer, "tui-fixture.ts"), await readFile(join(root, "scripts/tui-fixture.ts"), "utf8"))
-const terminal = Bun.spawn(["python", join(root, "scripts/verify-tui.py"), "--consumer", consumer], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
-if (await terminal.exited !== 0) process.exit(1)
+} else console.log("node not on PATH: skipped the Node import check")
 registry.stop(true)
 await writeFile(join(consumer, "evaluation-consumer.mjs"), await readFile(join(root, "scripts/evaluation-consumer.fixture.mjs"), "utf8"))
 const evalNode = Bun.spawn(["node", "evaluation-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })

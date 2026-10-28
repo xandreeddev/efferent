@@ -2,53 +2,52 @@
 
 **Compose the agent. Own the harness.**
 
-An Effect-native agent SDK and coding terminal for Bun on Linux. The model,
-agent loop, tools, policy, context, memory, persistence, MCP, and telemetry are
-configurable plugins. Smith is the coding preset; the SDK also runs headlessly.
+An Effect-native agent framework for Node 24 and Bun. The model, agent loop,
+memory, sessions, tool discovery, background tasks and rendering are
+configurable plugins. The SDK composes them into one validated graph.
 
-## Start
+This repository holds the framework only. The coding CLI and the reference
+applications are moving to their own repositories; until then they live in
+this repository's history.
 
-```sh
-bun install
-bun run efferent
-```
-
-When no model is configured, the setup screen opens automatically. Use `/setup`
-to return to provider login, model selection, and plugin configuration at any time.
-`/login` connects an API key or subscription; `/model` shows available models.
-
-Type `/` to see commands immediately, keep typing to filter, use ↑↓ to select,
-Enter to run, or Tab to complete a command before adding arguments. Ctrl+P opens
-the full command palette. Enter sends; Alt+Enter adds a line; Escape interrupts.
-`/plan` enables read-only tools.
-
-Use `/plugins` → select an instance → **Replace plugin…** to swap its implementation.
-Choose an available replacement or **Use another plugin…** for a local module
-or installed package. Efferent validates the resulting graph before saving; a
-failed replacement keeps the current configuration. The replacement uses its
-own default settings. Edit its options from the same menu afterward.
-Bubblewrap is required for sandboxed Bash (`bun run efferent doctor`).
+## Install
 
 ```sh
-bun run efferent -p "Explain this repository" --json
-bun run efferent config explain
-bun run efferent --resume SESSION_ID
+npm install @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
 ```
+
+Every package below is published at `0.11.0` under npm's `latest` tag. The
+historical `efferent` npm package is a different release line.
 
 ## Compose
 
 ```ts
-import { Effect } from "effect"
-import { Harness } from "@xandreed/sdk"
-import { smithAgent } from "@xandreed/smith"
+import { Effect, Layer, Schema } from "effect"
+import { AgentLoop, definePlugin, Harness } from "@xandreed/sdk"
+import sessions from "@xandreed/plugin-session-sqlite"
+import { sessionsPlugin } from "@xandreed/plugin-sessions"
 
-const agent = smithAgent(process.cwd())
+const echo = definePlugin({
+  id: "example/echo", version: "1",
+  config: Schema.Struct({ prefix: Schema.String }), defaults: { prefix: "hello " },
+  provides: [AgentLoop],
+  layer: ({ prefix }) => Layer.succeed(AgentLoop, {
+    run: (input) => Effect.succeed({ text: prefix + input.userMessage.text, outcome: "completed" }),
+  }),
+})
+
 await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const harness = yield* Harness.make({
-    workspace: process.cwd(), config: agent.config, plugins: agent.plugins,
+    workspace: process.cwd(),
+    plugins: [sessions, sessionsPlugin, echo],
+    config: { version: 1, plugins: [
+      { id: "store", use: sessions.id },
+      { id: "session-service", use: sessionsPlugin.id, options: { ownership: { mode: "process" } } },
+      { id: "loop", use: echo.id },
+    ] },
   })
   const session = yield* harness.create()
-  yield* session.send("Explain the architecture")
+  yield* session.send("world")
   console.log(yield* session.history)
 })))
 ```
@@ -56,8 +55,11 @@ await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
 A plugin declares an Effect Schema, defaults, required/provided service tags,
 and a scoped Layer. The runtime rejects invalid options, missing dependencies,
 cycles, ambiguous providers, and incompatible plugin API versions before use.
-Override a service through an explicit binding; replace the loop or memory
-without importing Smith or the TUI.
+Override a service through an explicit binding.
+
+The SQLite session store uses `bun:sqlite`, so this example runs on Bun. On
+Node, provide the `SessionLog` port from `@xandreed/core` with your own store,
+or with `SessionLogMemoryLive` for an in-memory log.
 
 Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)
 that `stackPlugins` composes the way the graph does. A turn is public steps
@@ -67,20 +69,17 @@ over typed services (`TurnLive`, `persistMessage`, `openTurnTools`,
 sessions: one event log each, in storage the host provides (`SessionLog`),
 read and written through `@xandreed/plugin-sessions`, with an inbox and
 background tasks (`@xandreed/plugin-tasks`) the agent answers after the turn
-in flight. `@xandreed/ai` versions prompts and
-decision prompts, with variants per model and the provenance every call
-records. See [the framework guide](docs/framework.md).
+in flight. See [the framework guide](docs/framework.md).
 
 ## Configuration
 
-Choose `efferent.config.json` or `efferent.config.ts` per directory. Both resolve
+Configuration is `efferent.config.json` or `efferent.config.ts`; both resolve
 through the same graph. TypeScript can additionally export a `plugins` array.
 JSON can refer to local modules or installed npm plugins through `use`.
 
 ```json
 {
   "version": 1,
-  "profile": "smith",
   "plugins": [
     { "id": "memory", "use": "@xandreed/plugin-memory", "options": { "limit": 6 } },
     { "id": "loop", "use": "@xandreed/plugin-agent-loop", "options": { "maxSteps": 40 } }
@@ -88,71 +87,54 @@ JSON can refer to local modules or installed npm plugins through `use`.
 }
 ```
 
-Order: preset → global base → workspace base → profile → workspace overrides →
-invocation. `/plugins` writes `.efferent/overrides.json` atomically. Session plugin
-changes apply between turns; runtime plugin changes require a restart.
-
-New sessions and memory live under `.efferent/runtime/`. Existing databases,
-auth files, specs, and memory are retained. The models plugin inherits existing
-model settings and sign-ins by default; explicit plugin options take precedence.
-Set `inheritPrevious: false` for an independent setup.
+Session plugin changes apply between turns; runtime plugin changes require a
+restart. The models plugin inherits existing model settings and sign-ins by
+default; explicit plugin options take precedence. Set `inheritPrevious: false`
+for an independent setup.
 
 ## Packages
 
 | Package | Responsibility |
 | --- | --- |
 | `@xandreed/core` | Shared schemas, ports, messages and protocol helpers |
-| `@xandreed/ai` | Versioned prompts and decision prompts on `effect/ai`, with their provenance |
 | `@xandreed/runtime` | Config loading, plugin graph validation and scoped activation |
 | `@xandreed/sdk` | Durable sessions, queues, cancellation, replay and forks |
-| `@xandreed/plugin-*` | Replaceable first-party capabilities |
-| `@xandreed/smith` | Coding preset and optional spec/forge modules |
-| `@xandreed/tui` / `@xandreed/cli` | Reusable terminal client and application entry |
+| `@xandreed/plugin-agent-loop` | The agent step loop |
+| `@xandreed/plugin-models` | Model routing and provider adapters |
+| `@xandreed/plugin-memory`, `-memory-window`, `-memory-summary`, `-memory-digest` | Conversation memory strategies |
+| `@xandreed/plugin-tool-discovery` | Tool and skill discovery |
+| `@xandreed/plugin-sessions` | Conversation sessions and the turn lifecycle |
+| `@xandreed/plugin-session-sqlite` | SQLite session store (Bun only) |
+| `@xandreed/plugin-tasks` | Background tasks |
+| `@xandreed/plugin-render` | Render surfaces, event feeds and streaming |
 | `@xandreed/evals` | Tasks, trials, graders and suites; app adapters, local reports and retrieval metrics |
-| `@xandreed/foundry` | Independent deterministic verification framework |
+| `@xandreed/evals-cli` | The `efferent-eval` command line (Node 24) |
+| `@xandreed/evals-langfuse`, `@xandreed/evals-langsmith` | Optional evaluation exporters (Node 24) |
 
-Canvas, Math and Social are reference applications with domain-specific checks.
-Their browser and review interfaces remain available through `bun run canvas`,
-`bun run math`, and `bun run social`. All three enter through SDK presets.
-
-Use `/spec idea`, `/lock`, and `/forge` for gated workflows in the new terminal. The historical spec/forge driver is
-available through `bun run smith:workflow` for old specs.
+`packages/foundry` (the deterministic verification framework behind
+`bun run typecheck`) and `packages/website` (the docs site) are development
+tooling and are not published.
 
 ## Build and verify
 
 ```sh
+bun install
 bun run typecheck
 bun test
 bun run foundry demo
-bun run scenarios
 bun run build:packages
 bun run verify:packages
-python scripts/verify-tui.py
-python scripts/verify-tmux.py
 bun run --cwd packages/website check
 ```
 
 The distribution build prepares artifacts under `.artifacts/` using each
 package's manifest version and matching internal dependency versions.
-The consumer check installs local tarballs outside the monorepo, then executes
-an external loop plugin, durable sessions, a fork, a calibration, versioned prompts
-with a checked decision, a SQLite session log with a background task, and CLI
-startup.
-`@xandreed/core`, `@xandreed/evals`, `@xandreed/runtime`, `@xandreed/sdk`, and
-all nine `@xandreed/plugin-*` packages are published as `0.4.0` under npm's
-`latest` tag. Install evals with `npm install @xandreed/evals`, or install the
-SDK and the plugins your application uses, for example:
+The consumer check installs local tarballs outside the monorepo, runs an
+external loop plugin, durable sessions, a fork, an eval composition and a SQLite
+session log with a background task on Bun, then imports every Node-capable
+package on Node.
 
-```sh
-npm install @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-tools-local
-```
-
-The remaining artifacts are local builds. The historical `efferent` npm
-package is a different release line.
-
-See [the framework guide](docs/framework.md), [implementation status](docs/framework-reset.md),
-and [contributing](CONTRIBUTING.md).
+See [the framework guide](docs/framework.md), the
+[evaluation domain](docs/evaluation-domain.md) and [contributing](CONTRIBUTING.md).
 
 MIT · Xand Reed
-
-Evaluation domain, application adapters, local Node CLI and provider export: [evaluation-domain.md](docs/evaluation-domain.md).

@@ -1,5 +1,9 @@
 # Framework reset implementation
 
+> **Historical (2026-10-28).** The coding CLI (`cli`, `tui`, `smith`), the
+> reference applications and their plugins moved out of this repository, which
+> now holds the agent framework only. Mentions of them below are historical.
+
 September 2026 implementation status. Efferent now has an Effect-native,
 Bun/Linux agent SDK, a validated plugin graph, and a new terminal client.
 

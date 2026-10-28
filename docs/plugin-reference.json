@@ -1,7 +1,7 @@
 [
   {
     "id": "efferent/approval-host",
-    "version": "0.8.0-next.0",
+    "version": "0.11.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
@@ -18,7 +18,7 @@
   },
   {
     "id": "@xandreed/plugin-session-sqlite",
-    "version": "0.8.0-next.0",
+    "version": "0.11.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -55,8 +55,34 @@
     }
   },
   {
+    "id": "@xandreed/plugin-session-sqlite/log",
+    "version": "0.11.0",
+    "apiVersion": 2,
+    "scope": "runtime",
+    "requires": [],
+    "provides": [
+      "efferent/SessionLog"
+    ],
+    "defaults": {
+      "path": ".efferent/runtime/sessions.db"
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
     "id": "@xandreed/plugin-sessions",
-    "version": "0.8.0-next.0",
+    "version": "0.11.0",
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [
@@ -214,7 +240,7 @@
   },
   {
     "id": "@xandreed/plugin-models",
-    "version": "0.8.0-next.0",
+    "version": "0.11.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -261,7 +287,7 @@
   },
   {
     "id": "@xandreed/plugin-memory",
-    "version": "0.8.0-next.0",
+    "version": "0.11.0",
     "apiVersion": 2,
     "scope": "session",
     "requires": [
@@ -295,319 +321,114 @@
     }
   },
   {
-    "id": "@xandreed/plugin-context",
-    "version": "0.8.0-next.0",
+    "id": "@xandreed/plugin-memory-window",
+    "version": "0.11.0",
     "apiVersion": 2,
-    "scope": "session",
-    "requires": [
-      "@xandreed/core/UtilityLlm"
-    ],
-    "provides": [
-      "efferent/ContextManager"
-    ],
-    "defaults": {
-      "thresholdTokens": 80000,
-      "keepTurns": 6
-    },
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "properties": {
-        "thresholdTokens": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        },
-        "keepTurns": {
-          "type": "integer",
-          "exclusiveMinimum": 0
-        }
-      },
-      "required": [
-        "thresholdTokens",
-        "keepTurns"
-      ],
-      "additionalProperties": true
-    }
-  },
-  {
-    "id": "@xandreed/plugin-policy-workspace",
-    "version": "0.8.0-next.0",
-    "apiVersion": 2,
-    "scope": "session",
-    "requires": [
-      "efferent/SessionEnvironment",
-      "efferent/Approval"
-    ],
-    "provides": [
-      "efferent/ActionPolicy"
-    ],
-    "defaults": {},
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "not": {
-        "type": "null"
-      }
-    }
-  },
-  {
-    "id": "@xandreed/plugin-mcp",
-    "version": "0.8.0-next.0",
-    "apiVersion": 2,
-    "scope": "session",
-    "requires": [
-      "efferent/SessionEnvironment",
-      "efferent/ActionPolicy"
-    ],
-    "provides": [
-      "@xandreed/core/McpClient"
-    ],
-    "defaults": {
-      "servers": {}
-    },
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "properties": {
-        "servers": {
-          "type": "object",
-          "additionalProperties": {
-            "type": "object",
-            "properties": {
-              "command": {
-                "type": "string"
-              },
-              "args": {
-                "anyOf": [
-                  {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "env": {
-                "anyOf": [
-                  {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              }
-            },
-            "required": [
-              "command"
-            ],
-            "additionalProperties": true
-          }
-        }
-      },
-      "required": [
-        "servers"
-      ],
-      "additionalProperties": true
-    }
-  },
-  {
-    "id": "@xandreed/plugin-tools-local",
-    "version": "0.8.0-next.0",
-    "apiVersion": 2,
-    "scope": "session",
-    "requires": [
-      "efferent/SessionEnvironment",
-      "efferent/ActionPolicy",
-      "efferent/Memory",
-      "@xandreed/core/McpClient"
-    ],
-    "provides": [
-      "efferent/AgentTools"
-    ],
-    "defaults": {
-      "readOnly": false
-    },
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "properties": {
-        "readOnly": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "readOnly"
-      ],
-      "additionalProperties": true
-    }
-  },
-  {
-    "id": "@xandreed/plugin-agent-loop",
-    "version": "0.8.0-next.0",
-    "apiVersion": 2,
-    "scope": "session",
-    "requires": [
-      "effect/ai/LanguageModel",
-      "efferent/AgentTools",
-      "efferent/SessionStore",
-      "efferent/Memory",
-      "efferent/ContextManager"
-    ],
-    "provides": [
-      "efferent/AgentLoop"
-    ],
-    "defaults": {
-      "maxSteps": 100,
-      "toolConcurrency": 1,
-      "streaming": true
-    },
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "properties": {
-        "maxSteps": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1000
-        },
-        "toolConcurrency": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 32
-        },
-        "streaming": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "maxSteps",
-        "toolConcurrency",
-        "streaming"
-      ],
-      "additionalProperties": true
-    }
-  },
-  {
-    "id": "@xandreed/plugin-telemetry",
-    "version": "0.8.0-next.0",
-    "apiVersion": 2,
-    "scope": "session",
+    "scope": "runtime",
     "requires": [],
     "provides": [
-      "efferent/TurnHooks"
+      "efferent/ConversationMemory"
     ],
     "defaults": {
-      "enabled": false,
-      "serviceName": "efferent"
+      "compactPreviousTurn": true,
+      "turnContext": "current",
+      "replies": true,
+      "spillMinChars": 2000,
+      "previewChars": 600,
+      "ledgerTurnChars": 240,
+      "digestOnWriteChars": 0,
+      "digests": true,
+      "media": "none",
+      "maxImages": 8
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
       "properties": {
-        "enabled": {
+        "compactPreviousTurn": {
           "type": "boolean"
         },
-        "serviceName": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "enabled",
-        "serviceName"
-      ],
-      "additionalProperties": true
-    }
-  },
-  {
-    "id": "@xandreed/plugin-agent-loop/delegate",
-    "version": "0.8.0-next.0",
-    "apiVersion": 2,
-    "scope": "session",
-    "requires": [
-      "effect/ai/LanguageModel",
-      "efferent/AgentTools",
-      "efferent/SessionStore",
-      "efferent/Memory",
-      "efferent/ContextManager"
-    ],
-    "provides": [
-      "efferent/DelegateLoop"
-    ],
-    "defaults": {
-      "maxSteps": 100,
-      "toolConcurrency": 1,
-      "streaming": true
-    },
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "properties": {
-        "maxSteps": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 1000
-        },
-        "toolConcurrency": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 32
-        },
-        "streaming": {
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "maxSteps",
-        "toolConcurrency",
-        "streaming"
-      ],
-      "additionalProperties": true
-    }
-  },
-  {
-    "id": "@xandreed/smith/workflow",
-    "version": "0.2.0-next.0",
-    "apiVersion": 2,
-    "scope": "session",
-    "requires": [
-      "efferent/DelegateLoop",
-      "efferent/SessionStore",
-      "efferent/Approval"
-    ],
-    "provides": [
-      "efferent/AgentLoop"
-    ],
-    "defaults": {
-      "mode": "spec",
-      "maxAttempts": 3,
-      "budgetMillis": 900000,
-      "testCommand": "",
-      "configPath": ""
-    },
-    "schema": {
-      "$schema": "http://json-schema.org/draft-07/schema#",
-      "type": "object",
-      "properties": {
-        "mode": {
+        "turnContext": {
           "type": "string",
           "enum": [
-            "spec",
-            "lock",
-            "forge"
+            "current",
+            "all"
           ]
         },
-        "maxAttempts": {
-          "type": "integer",
-          "minimum": 1,
-          "maximum": 10
+        "replies": {
+          "type": "boolean"
         },
-        "budgetMillis": {
+        "spillMinChars": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "previewChars": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "ledgerTurnChars": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "digestOnWriteChars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "digests": {
+          "type": "boolean"
+        },
+        "media": {
+          "type": "string",
+          "enum": [
+            "none",
+            "inline"
+          ]
+        },
+        "maxImages": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "compactPreviousTurn",
+        "turnContext",
+        "replies",
+        "spillMinChars",
+        "previewChars",
+        "ledgerTurnChars",
+        "digestOnWriteChars",
+        "digests",
+        "media",
+        "maxImages"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "id": "@xandreed/plugin-memory-summary",
+    "version": "0.11.0",
+    "apiVersion": 2,
+    "scope": "runtime",
+    "requires": [],
+    "provides": [
+      "efferent/ConversationMemory"
+    ],
+    "defaults": {
+      "triggerRatio": 0.8,
+      "keepRatio": 0.16,
+      "cooldownTurns": 3,
+      "turnContext": "current",
+      "replies": true,
+      "digests": true,
+      "media": "none",
+      "maxImages": 8,
+      "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript."
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "triggerRatio": {
           "anyOf": [
             {
               "type": "number"
@@ -622,19 +443,360 @@
             }
           ]
         },
-        "testCommand": {
-          "type": "string"
+        "keepRatio": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "string",
+              "enum": [
+                "Infinity",
+                "-Infinity",
+                "NaN"
+              ]
+            }
+          ]
         },
-        "configPath": {
+        "cooldownTurns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "turnContext": {
+          "type": "string",
+          "enum": [
+            "current",
+            "all"
+          ]
+        },
+        "replies": {
+          "type": "boolean"
+        },
+        "digests": {
+          "type": "boolean"
+        },
+        "media": {
+          "type": "string",
+          "enum": [
+            "none",
+            "inline"
+          ]
+        },
+        "maxImages": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "instructions": {
           "type": "string"
         }
       },
       "required": [
-        "mode",
-        "maxAttempts",
-        "budgetMillis",
-        "testCommand",
-        "configPath"
+        "triggerRatio",
+        "keepRatio",
+        "cooldownTurns",
+        "turnContext",
+        "replies",
+        "digests",
+        "media",
+        "maxImages",
+        "instructions"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "id": "@xandreed/plugin-memory-digest",
+    "version": "0.11.0",
+    "apiVersion": 2,
+    "scope": "session",
+    "requires": [
+      "@xandreed/core/UtilityLlm"
+    ],
+    "provides": [
+      "efferent/ResultDigester"
+    ],
+    "defaults": {
+      "maxSourceChars": 48000
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "maxSourceChars": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 400000
+        }
+      },
+      "required": [
+        "maxSourceChars"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "id": "@xandreed/plugin-tool-discovery",
+    "version": "0.11.0",
+    "apiVersion": 2,
+    "scope": "runtime",
+    "requires": [
+      "efferent/Capabilities"
+    ],
+    "provides": [
+      "efferent/ToolRegistry"
+    ],
+    "defaults": {
+      "grants": [],
+      "loadSkill": true,
+      "maxCallsPerRun": 64,
+      "maxSkillLoadsPerRun": 4,
+      "readConcurrency": 4,
+      "matcherTimeoutMs": 3000,
+      "catalogVersion": "1",
+      "catalogOrder": 900
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "grants": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "loadSkill": {
+          "type": "boolean"
+        },
+        "maxCallsPerRun": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "maxSkillLoadsPerRun": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "readConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "matcherTimeoutMs": {
+          "type": "integer",
+          "minimum": 50,
+          "maximum": 60000
+        },
+        "catalogVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "catalogOrder": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "grants",
+        "loadSkill",
+        "maxCallsPerRun",
+        "maxSkillLoadsPerRun",
+        "readConcurrency",
+        "matcherTimeoutMs",
+        "catalogVersion",
+        "catalogOrder"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "id": "@xandreed/plugin-agent-loop",
+    "version": "0.11.0",
+    "apiVersion": 2,
+    "scope": "session",
+    "requires": [
+      "effect/ai/LanguageModel",
+      "efferent/AgentTools",
+      "efferent/SessionStore",
+      "efferent/Memory",
+      "efferent/ContextManager"
+    ],
+    "provides": [
+      "efferent/AgentLoop"
+    ],
+    "defaults": {
+      "maxSteps": 100,
+      "toolConcurrency": 1,
+      "streaming": true
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "maxSteps": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "toolConcurrency": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 32
+        },
+        "streaming": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "maxSteps",
+        "toolConcurrency",
+        "streaming"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "id": "@xandreed/plugin-agent-loop/steps",
+    "version": "0.11.0",
+    "apiVersion": 2,
+    "scope": "runtime",
+    "requires": [],
+    "provides": [
+      "efferent/StepLoop"
+    ],
+    "defaults": {},
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "not": {
+        "type": "null"
+      }
+    }
+  },
+  {
+    "id": "@xandreed/plugin-tasks",
+    "version": "0.11.0",
+    "apiVersion": 2,
+    "scope": "runtime",
+    "requires": [
+      "efferent/Sessions",
+      "efferent/TaskRunner",
+      "efferent/TaskExecutor"
+    ],
+    "provides": [
+      "efferent/Tasks"
+    ],
+    "defaults": {
+      "maxRunning": 2,
+      "tools": false,
+      "replyChars": 12000,
+      "closingReserveMs": 2000
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "maxRunning": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 20
+        },
+        "tools": {
+          "type": "boolean"
+        },
+        "replyChars": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 100000
+        },
+        "closingReserveMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 600000
+        }
+      },
+      "required": [
+        "maxRunning",
+        "tools",
+        "replyChars",
+        "closingReserveMs"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "id": "@xandreed/plugin-render/surface",
+    "version": "0.11.0",
+    "apiVersion": 2,
+    "scope": "runtime",
+    "requires": [
+      "efferent/render/Store",
+      "efferent/ui/OutputAdmission"
+    ],
+    "provides": [
+      "efferent/render/Render"
+    ],
+    "defaults": {
+      "maxBytes": 32768
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "maxBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 131072
+        }
+      },
+      "required": [
+        "maxBytes"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "id": "@xandreed/plugin-render/feed",
+    "version": "0.11.0",
+    "apiVersion": 2,
+    "scope": "runtime",
+    "requires": [
+      "efferent/render/JournalTail"
+    ],
+    "provides": [
+      "efferent/render/Feed"
+    ],
+    "defaults": {
+      "pollMs": 200,
+      "maxPollMs": 1000,
+      "heartbeatMs": 15000,
+      "maxDurationMs": 240000
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "pollMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "maxPollMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "heartbeatMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "maxDurationMs": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "pollMs",
+        "maxPollMs",
+        "heartbeatMs",
+        "maxDurationMs"
       ],
       "additionalProperties": true
     }

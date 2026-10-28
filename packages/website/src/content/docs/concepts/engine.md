@@ -1,6 +1,6 @@
 ---
 title: Core contracts
-description: Shared schemas and service ports, independent of providers and terminal clients.
+description: Shared schemas and service ports, independent of providers and hosts.
 ---
 
 # Core

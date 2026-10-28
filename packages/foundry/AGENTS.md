@@ -13,8 +13,9 @@ OBSERVED, not claimed: `ForgeOptions.fingerprint` (the movement oracle —
 call, and the diff ∪ receipt claim is what gets recorded and what the
 stalled breaker keys on (Bash-heredoc writes are invisible to tool-call
 capture — the zig re-forge recorded "0 files" while main.zig was being
-rewritten via `cat >`). The reference consumer is `@xandreed/smith` — the
-efferent coder standing at this forge.
+rewritten via `cat >`). In this repository foundry runs the
+architecture gates (`bun run typecheck`); its coding-agent consumer moved out
+with the CLI.
 
 **This package is written in the style its own gates enforce, and CI runs
 `bun run foundry check` on this source (`foundry.config.ts`) — a violation

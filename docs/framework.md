@@ -33,8 +33,8 @@ export default definePlugin({
 })
 ```
 
-This plugin replaces the complete agent loop. No model credentials, coding
-tools, or terminal library are needed to run it. `scripts/verify-packages.ts`
+This plugin replaces the complete agent loop. No model credentials or tools
+are needed to run it. `scripts/verify-packages.ts`
 executes an equivalent external plugin against packed SDK artifacts.
 
 ## Configuration
@@ -59,9 +59,8 @@ validation until its dependants are changed too.
 `harness.reconfigure(config, plugins?)` validates and stages the next graph before
 making it available. An optional registry introduces newly loaded implementations;
 successful reconfiguration retains that registry for later changes. Idle sessions refresh; active sessions refresh before their next
-turn. A changed runtime graph returns `restart-required`. The CLI saves the
-configuration and tells the user to restart. Source TypeScript is never rewritten
-by the terminal editor.
+turn. A changed runtime graph returns `restart-required`; the host decides when
+to restart. Source TypeScript configuration is never rewritten.
 
 ## Harness sessions
 
@@ -70,7 +69,7 @@ The `Harness` and composable agents share the configured `SessionLog` and
 historical `SessionStore` API is a deprecated event projection over that log;
 it owns no separate tables. A harness graph composes `sessionSqlitePlugin`
 (storage, compatibility projection and open admission) with `sessionsPlugin`
-(turn ownership). Process-owned CLI hosts configure the latter with
+(turn ownership). Single-host deployments configure the latter with
 `{ ownership: { mode: "process" } }`, under which a second process on the same
 host finds a live process's turn busy; hosts sharing a database across hosts
 use lease ownership. `Harness.make` requires `Sessions`: a graph without
@@ -129,59 +128,7 @@ default. Explicit plugin options and current credentials win. Set its
 `inheritPrevious` option to `false` to use an independent setup; new logins and
 refreshed inherited credentials are written to the current credential store.
 
-## Coding and policy
-
-Smith composes models, tools, memory, context, policy, sessions, MCP and telemetry.
-The default loop is a configurable plugin. Workspace file operations and
-sandboxed Bash run autonomously. Bubblewrap mounts the workspace writable and
-restricts network access. Timeouts and cancellation kill the process group.
-Outside-workspace operations, host commands and MCP tool calls go through the
-host Approval service; headless hosts deny by default.
-
-`/plan` removes mutation and shell tools. `/spec idea` drafts a specification
-through the configured coding loop using read-only tools. `/lock` records the
-user's acceptance as a durable event. `/forge` implements that locked version
-under Foundry gates; it rejects missing or superseded locks. Host verification
-requires approval before implementation begins. The workflow delegates to the
-configured loop, so model, context and memory plugins remain in use. Its limits
-and gate configuration are plugin options. The historical workflow driver
-remains available as `bun run smith:workflow` for old specs.
-
-## Terminal host
-
-`runTui` consumes an SDK harness and session, an approval channel, and optional
-commands and event renderers. Smith-specific commands belong in the CLI. The terminal
-supports multiline input, bracketed paste, session switching, transcript search,
-explicit follow mode, expandable tool details, and dark/light/mono themes.
-Typing `/` opens inline suggestions without moving focus out of the composer.
-Typing filters names; arrows select, Tab completes for arguments, Enter runs,
-and Escape dismisses while preserving the draft. Ctrl+P opens the full palette.
-The CLI opens `/setup` automatically if no model is configured; it links provider
-login, model selection, and plugin configuration. Existing users can run `/setup`.
-`/plugins` offers **Replace plugin…** for every instance, with compatible loaded
-implementations and a local-path/installed-package entry. The host loads and
-validates the proposed graph before persisting it. Invalid replacements leave the
-saved and active configuration intact; runtime changes explicitly require restart.
-
-Credential input stays outside the text renderer; only mask characters render.
-`/login` offers API keys and OpenAI/Anthropic subscription authorization with
-PKCE, callback state checks, a masked manual fallback, and scoped cancellation.
-
-A transcript mounts at most 60 blocks, keyed by durable IDs so streaming updates retain their native markdown renderers. Settling a message preserves its position. Durable event and transient delta batches
-update the UI at most once per batch.
-Transient text arriving before its durable run start is buffered for the selected
-session, up to 128 deltas. Assistant and tool blocks follow their logical turn
-order even when transient text precedes earlier durable blocks across batches;
-durable settlement remains authoritative. Session switches clear
-the buffer, and late deltas from settled runs or previous sessions are discarded.
-The terminal tests exercise 10,000 events and assert p95 input-to-frame time
-below 50 ms on the test machine. The PTY fixture checks rendering and shutdown. `python scripts/verify-tmux.py`
-launches the actual CLI in an isolated tmux server and checks first-run setup,
-model selection, slash filtering/completion, draft preservation, resizing, plugin edits and replacement, streamed output sampled across 50 deltas,
-tool expansion, cancellation, and clean exit without provider credentials.
-The model picker uses the configured model catalog. Ctrl+O expands tool details.
-
-## Evals and reference applications
+## Evals
 
 For typed datasets, reusable evaluators, task/journey composition and native prompt
 examples, see [Composable evaluations](composable-evaluations.md).
@@ -198,32 +145,17 @@ with reference labels available only to evaluators.
 
 `@xandreed/evals` supplies a generic Schema domain for tasks, trials, candidates, runnables, journeys, graders, grading contexts, outcomes, suites and grader calibrations. Apps implement execution adapters, scoped environments and per-grader evidence projections. The shared runner keeps references out of execution, persists partial transcripts and terminal outcomes, and grades stored evidence independently.
 
-`@xandreed/evals-cli` is the local Node 24 command line. Langfuse and LangSmith are separate optional official SDK export packages; reports work without credentials or provider availability. Retrieval ranking and typed semantic graders are reusable. Ordinary model/prompt comparisons are suites; calibration specifically measures grader agreement. The historical runner/report APIs remain under `@xandreed/evals/legacy` for unmigrated reference scenarios.
+`@xandreed/evals-cli` is the local Node 24 command line. Langfuse and LangSmith are separate optional official SDK export packages; reports work without credentials or provider availability. Retrieval ranking and typed semantic graders are reusable. Ordinary model/prompt comparisons are suites; calibration specifically measures grader agreement.
 
 See [evaluation-domain.md](evaluation-domain.md) for interfaces, lifecycle, commands and package ownership.
-
-`packages/scenarios` is deprecated: its packs run on a frozen copy of the retired
-Pack/Scenario runner (`src/legacy/`) until they are adapted. Canvas, Math and Social now
-enter through their own `defineAgent` presets and `Harness.make`. Their model,
-domain loop, persistence and host services are replaceable graph nodes. The SDK
-bridges domain events to each application's existing browser or review protocol.
-Canvas page state and Math message state are snapshotted into the journal and
-restored for forks. Math rebuilds its served-exercise set from persisted history.
-Social retains its draft-only tools and human review queue; its domain workspace
-service is replaceable. Foundry remains independent of the SDK.
-
-The Canvas profile plugin accepts versioned model/effort/protocol configuration.
-The shipped default is unchanged; schema, recipe and prompt compatibility are
-still checked. New profiles require live browser evidence before promotion.
 
 ## Distribution
 
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
 under `.artifacts/packages`. `bun run verify:packages` packs them, installs them
 in a temporary external project through a temporary local npm registry, and exercises
-SDK sessions, replacement plugins, persistence, forks, custom evals, versioned
-prompts with a checked decision (`@xandreed/ai`) and CLI startup, followed by
-the packed terminal in a real PTY. Publishing is a separate release action.
+SDK sessions, replacement plugins, persistence, forks and custom evals on Bun,
+then imports every Node-capable package on Node. Publishing is a separate release action.
 
 ## Agent-loop trace content
 
@@ -792,11 +724,10 @@ sessions sharing the log) and reads an unknown outcome as none; over the
 SQLite log it is one query, and `prune` removes old conversations in one
 transaction, leaves tombstones and truncates the write-ahead log. The convenience
 `SessionStoreLive(path)` and `SqliteConversationStoreLive(path)` compose these
-projections over SQLite without creating the former storage tables. Math and
-Canvas compose the message projection over their harness log with
-`ConversationStoreProjectionLive({ legacy: { paths, owner } })`, which imports
-the host plugin's configured message database (its `file` option) into that
-log once; domain page/catalog/theme stores continue to own their product data. New hosts use `Sessions`, `TurnWriter` and
+projections over SQLite without creating the former storage tables. Hosts with an
+older message database compose the message projection over their harness log
+with `ConversationStoreProjectionLive({ legacy: { paths, owner } })`, which
+imports that database into the log once. New hosts use `Sessions`, `TurnWriter` and
 `ConversationMemory` directly.
 
 ```ts
@@ -952,67 +883,3 @@ delivered as interrupted. With `tools`, the model gets `start_task` and
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events
 after a cursor, then follows `changes` and polls.
-
-## Versioned prompts: `@xandreed/ai`
-
-`@xandreed/ai` gives prompts an identity on top of `effect/ai`, and records
-it on every call.
-
-**Model prompts.** `definePrompt({ id, version, render, variants?, output? })`
-renders an input into a native `Prompt`. A variant has a `shared` fragment and
-optional fragments per provider and per model; for a `ModelTarget` (`{ model:
-"provider/model", variant }`) the most specific applies:
-`models[model] ?? providers[provider] ?? shared`. An unknown variant fails; a
-prompt without variants accepts any. The fragment goes after the prompt's
-system messages (`composeVariant`).
-
-```ts
-const summary = definePrompt({
-  id: "app.summary",
-  version: "summary-v2",
-  render: (input: { readonly text: string }) => [
-    { role: "system", content: "Summarize the text for a reader in a hurry." },
-    { role: "user", content: input.text },
-  ],
-  variants: {
-    baseline: { shared: [] },
-    concise: {
-      shared: [{ role: "system", content: "Keep it short." }],
-      models: { "vendor/small-model": [{ role: "system", content: "One sentence." }] },
-    },
-  },
-  output: () => ({ name: "summary", schema: Schema.Struct({ summary: Schema.String }) }),
-})
-
-const reply = yield* generateObject(summary, { text }, { target: { model: "vendor/small-model", variant: "concise" } })
-```
-
-`renderPrompt(prompt, input, target?)` returns the composed prompt and its
-`PromptProvenance`: id, version, variant, the override that applied (the
-model or the provider) and a hash, the SHA-256 hex of `JSON.stringify` of the
-encoded composed prompt. `generateText` and `generateObject` call the
-`LanguageModel` inside `withProvenance`, which sets the
-`CurrentPromptProvenance` model adapters read. Without an explicit target a
-prompt reads `CurrentModelTarget`, and renders for `{ model: "unknown",
-variant: "baseline" }` without one. `promptSection(prompt, { id, version,
-tier, order })` turns a prompt over the `PromptContext` into a system-prompt
-section; the variant string a policy's `model` choice passes is
-`encodeTarget(target)`.
-
-**Decision prompts.** `defineDecisionPrompt({ id, version, family, state,
-questions, variants? })` asks an `EvaluationModel` choice questions (`{ type:
-"choice", instructions, criteria }`) and boolean questions (`{ type:
-"boolean", instructions }`) about a state, which is data, never instructions.
-A variant rewords questions and describes their choices; it cannot add a
-question or a choice. `renderDecision` hashes `JSON.stringify({ state,
-questions })`. `evaluateDecision(prompt, input)` returns answers typed per
-question, and `validateAnswers` holds every answer to the questions asked:
-all of them, nothing else, and only offered choices. `makeEvaluationModel({
-model, transport, timeoutMs?, maxInputBytes? })` (or `EvaluationModelLive`)
-bridges a host transport with a byte budget and a deadline, and
-`scriptedEvaluationModel` answers from a script under the same checks. Every
-failure is an `EvaluationError` (`unavailable`, `timeout`, `invalid` or
-`budget`).
-
-`PromptId`, `PromptProvenance` and `CurrentPromptProvenance` stay in
-`@xandreed/core`, where transports read them; `@xandreed/ai` re-exports them.
