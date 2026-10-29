@@ -23,7 +23,7 @@ const subjectOf = (stream: (command: string) => Stream.Stream<BashEvent, BashErr
 const failedChecks = (subject: BashSubject) => Effect.runPromise(Effect.forEach(bashConformance(subject), (check) =>
   Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : [])))).then((failed) => failed.flat().toSorted())
 
-const everyCheck = ["cwd", "env", "exit-code", "inherit-env", "interrupt", "signal", "stdin", "stdin-ignored", "streaming", "streams", "timeout", "utf8"]
+const everyCheck = ["backpressure", "cwd", "env", "exit-code", "inherit-env", "interrupt", "signal", "stdin", "stdin-ignored", "streaming", "streams", "timeout", "utf8"]
 
 describe("the Bash kit catches backends that run nothing", () => {
   test("its checks have the ids the docs list", () => {

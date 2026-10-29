@@ -34,7 +34,12 @@ ls, find, grep and bash; beside them is the skill directory loader
   `ERR_STREAM_DESTROYED` on stdin; and takes the parent environment from
   `parentEnv` (tests plant variables there) through `resolveBashEnv`.
   `exitGraceMs` after the exit it closes the output pipes, so a background
-  process kept with `killBackground: false` needs its own output.
+  process kept with `killBackground: false` needs its own output. Output
+  goes through `relayOutput` into a stream buffer of `OUTPUT_BUFFER` events:
+  when it is full the pipe is paused, so on Node a slow reader holds the
+  command back on a full pipe (Bun reads a child's pipes ahead regardless,
+  so the kit's subject there sets `holdsBack: false`); after the exit what
+  is left is read at once. An error on a pipe fails the stream.
 - Configuration is flat (`shell`, `killBackground`, `exitGraceMs`;
   `WorkspaceToolsConfig` likewise).
 - The workspace tools never touch `node:` or a runtime: they work through

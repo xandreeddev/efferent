@@ -166,5 +166,9 @@ Deployment branches and tags, or with
 ## Distribution changes
 
 Run `bun run build:packages` and `bun run verify:packages` for package changes.
+`verify:packages` checks only the build of `HEAD` (`build.json`) from a clean
+tree, and refuses test code in it (`*.test.*`, `testing` modules and folders,
+which the build leaves out); to check a build of uncommitted changes, run
+`bun run verify:packages --allow-dirty` right after `bun run build:packages`.
 The external-consumer test installs local tarballs; it never publishes them.
 Run `bun run --cwd packages/website check` for documentation changes.

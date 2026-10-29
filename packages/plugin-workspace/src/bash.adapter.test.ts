@@ -2,11 +2,12 @@ import { describe, expect, test } from "bun:test"
 import { mkdtemp, realpath, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Clock, Effect, Option, Stream } from "effect"
+import { PassThrough } from "node:stream"
+import { Cause, Clock, Effect, Fiber, Option, Queue, Ref, Stream } from "effect"
 import type { Context } from "effect"
-import { Bash, bashConformance } from "@xandreed/core"
-import type { BashSubject } from "@xandreed/core"
-import { BashLive, makeBash } from "./bash.adapter.js"
+import { Bash, BashError, bashConformance } from "@xandreed/core"
+import type { BashEvent, BashSubject } from "@xandreed/core"
+import { BashLive, makeBash, relayOutput } from "./bash.adapter.js"
 import type { BashLiveOptions } from "./local-system.entity.js"
 
 /** A fresh directory under the system's temporary directory, removed with its scope. */
@@ -17,6 +18,8 @@ const temporary = Effect.acquireRelease(
 
 const subject: BashSubject = {
   open: (planted) => Effect.all({ root: temporary, bash: makeBash({ parentEnv: { ...process.env, ...planted } }) }),
+  // Bun reads a child's pipes ahead of the reader; on Node (verify:packages) the kit checks the command is held back.
+  holdsBack: process.versions["bun"] === undefined,
 }
 
 type BashShape = Context.Service.Shape<typeof Bash>
@@ -106,4 +109,58 @@ describe("the local Bash", () => {
     }))
     expect(outcome).toEqual({ events: [{ _tag: "BashChunk", stream: "stdout", text: "first" }], shell: "gone", child: "gone" })
   }, 20_000)
+})
+
+describe("the output relay", () => {
+  /** A relay over a stream buffer of `capacity` events and two pipes the test writes to. */
+  const relayed = (capacity: number) => Effect.gen(function* () {
+    const queue = yield* Queue.make<BashEvent, BashError | Cause.Done>({ capacity })
+    const relay = yield* relayOutput(queue)
+    const stdout = new PassThrough()
+    const stderr = new PassThrough()
+    relay.attach("stdout", stdout)
+    relay.attach("stderr", stderr)
+    return { queue, relay, stdout, stderr }
+  })
+  const exit: BashEvent = { _tag: "BashExit", termination: "exit", exitCode: Option.some(0), signal: Option.none(), durationMs: 1 }
+  const settle = Effect.sleep("20 millis")
+
+  test("pauses the pipes while the stream's buffer is full, resumes them as it is read, and keeps the order", async () => {
+    const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { queue, relay, stdout, stderr } = yield* relayed(2)
+      yield* Effect.forEach(["a", "b", "c"], (text) => Effect.sync(() => stdout.write(text)).pipe(Effect.andThen(settle)), { discard: true })
+      yield* Effect.sync(() => stderr.write("d")).pipe(Effect.andThen(settle))
+      const whileFull = { stdout: stdout.isPaused(), stderr: stderr.isPaused(), buffered: Queue.sizeUnsafe(queue) }
+      // Written while its pipe is paused: it comes after what waits before it.
+      yield* Effect.sync(() => stdout.write("é")).pipe(Effect.andThen(settle))
+      const reader = yield* Effect.forkScoped(Stream.runCollect(Stream.fromQueue(queue)))
+      yield* settle
+      const resumed = { stdout: stdout.isPaused(), stderr: stderr.isPaused() }
+      relay.flow()
+      // The first byte of a two-byte character, which never gets its second.
+      yield* Effect.sync(() => stdout.write(Uint8Array.from([0xc3]))).pipe(Effect.andThen(settle))
+      relay.finish(exit)
+      return { whileFull, resumed, all: [...yield* Fiber.join(reader)] }
+    })))
+    expect(seen.whileFull).toEqual({ stdout: true, stderr: true, buffered: 2 })
+    expect(seen.resumed).toEqual({ stdout: false, stderr: false })
+    // A byte left over from a split character is flushed as U+FFFD when the stream finishes, before the exit.
+    expect(seen.all.map((event) => event._tag === "BashChunk" ? `${event.stream}:${event.text}` : event._tag))
+      .toEqual(["stdout:a", "stdout:b", "stdout:c", "stderr:d", "stdout:é", "stdout:\uFFFD", "BashExit"])
+  })
+
+  test("an error reading a pipe fails the stream with SpawnFailed, after the output before it", async () => {
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { queue, stdout } = yield* relayed(16)
+      yield* Effect.sync(() => stdout.write("before")).pipe(Effect.andThen(settle))
+      yield* Effect.sync(() => stdout.destroy(new Error("read failed")))
+      const texts = yield* Ref.make<ReadonlyArray<string>>([])
+      const result = yield* Stream.fromQueue(queue).pipe(
+        Stream.runForEach((event) => Ref.update(texts, (all) => [...all, event._tag === "BashChunk" ? event.text : event._tag])),
+        Effect.result,
+      )
+      return { texts: yield* Ref.get(texts), failure: result._tag === "Failure" ? [result.failure.reason, result.failure.message] : [] }
+    })))
+    expect(outcome).toEqual({ texts: ["before"], failure: ["SpawnFailed", "could not read the command's stdout: read failed"] })
+  })
 })

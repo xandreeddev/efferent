@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import type { Scope } from "effect"
-import { Bash, Capabilities, FileSystem, Failure, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, SessionEnvironment, toolResultMedia } from "@xandreed/core"
+import { Bash, Capabilities, FileSystem, Failure, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, SessionEnvironment, toolParametersSchema, toolResultMedia } from "@xandreed/core"
 import type { Capability } from "@xandreed/core"
 import { makeRegistry } from "@xandreed/plugin-tool-discovery"
 import type { DiscoveryConfig } from "@xandreed/plugin-tool-discovery"
@@ -15,6 +15,7 @@ import { localSystemPlugin, workspaceToolsPlugin, WorkspaceToolsPluginLive } fro
 import { workspaceTools } from "./workspace-tools.adapter.js"
 import { BashToolResult, EditResult, FindResult, GrepResult, LsResult, ReadResult, workspaceToolsDefaults, WriteResult } from "./workspace-tools.entity.js"
 import type { WorkspaceToolsConfig } from "./workspace-tools.entity.js"
+import { toolDescriptions } from "./workspace-tools.entity.functions.js"
 
 const temporary = Effect.acquireRelease(
   Effect.promise(() => mkdtemp(join(tmpdir(), "efferent-tools-"))).pipe(Effect.flatMap((dir) => Effect.promise(() => realpath(dir)))),
@@ -461,6 +462,41 @@ describe("ls, find and grep", () => {
     expect(seen.many).toMatchObject({ matches: 4, files: 2, truncated: true })
     expect(seen.many.lines.map((line) => line.path)).toEqual(["a.txt", "a.txt", "b.txt", "b.txt"])
     expect(seen.one).toMatchObject({ matches: 8, files: 1, truncated: true })
+  })
+
+  test("grep names a file it may not read as permission denied, not as skipped", async () => {
+    const seen = await scoped(Effect.gen(function* () {
+      const { root, capability, call } = yield* bench()
+      yield* io(() => writeFile(join(root, "open.txt"), "hit\n"))
+      yield* io(() => writeFile(join(root, "secret.txt"), "hit\n"))
+      yield* io(() => chmod(join(root, "secret.txt"), 0o000))
+      const result = yield* succeeds(GrepResult)(call("grep", { pattern: "hit" }))
+      yield* io(() => chmod(join(root, "secret.txt"), 0o600))
+      return { result, view: shown(capability, "grep", result, { pattern: "hit" }) }
+    }))
+    // A superuser reads any file: then both match.
+    if (process.getuid?.() === 0) expect(seen.result).toMatchObject({ matches: 2, skipped: 0, unreadable: [] })
+    else {
+      expect(seen.result).toMatchObject({ matches: 1, skipped: 0, unreadable: [{ path: "secret.txt", reason: "Permission" }] })
+      expect(seen.view).toBe("open.txt:1:hit\n[Could not read 1 file, permission denied: secret.txt.]")
+    }
+  })
+
+  test("read, ls, find and grep show the model the largest limit they take, and refuse a larger one", async () => {
+    const tools = await scoped(Effect.gen(function* () {
+      const { capability } = yield* bench({ maxLines: 40, lsEntries: 30, findResults: 20, grepMatches: 10 })
+      return capability.tools
+    }))
+    const tool = (name: string) => Option.getOrThrow(Option.fromNullishOr(tools.find((entry) => entry.tool.name === name))).tool
+    const maxima = ["read", "ls", "find", "grep"].map((name) => {
+      const limit: unknown = Object.entries(toolParametersSchema(tool(name)).properties ?? {}).find(([key]) => key === "limit")?.[1]
+      return [name, typeof limit === "object" && limit !== null && "maximum" in limit ? limit.maximum : undefined]
+    })
+    expect(maxima).toEqual([["read", 40], ["ls", 30], ["find", 20], ["grep", 10]])
+    const decodes = (name: string, params: unknown) => Schema.is(tool(name).parametersSchema)(params)
+    expect([decodes("ls", { limit: 30 }), decodes("ls", { limit: 31 }), decodes("grep", { pattern: "x", limit: 11 }), decodes("read", { path: "a", limit: 0 })])
+      .toEqual([true, false, false, false])
+    expect(toolDescriptions({ ...workspaceToolsDefaults, grepMatches: 10 }).grep).toContain("limit (1 to 10) asks for fewer")
   })
 })
 

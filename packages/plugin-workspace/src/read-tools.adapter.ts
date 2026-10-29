@@ -8,9 +8,9 @@ import { decodeText, formatBytes, lineWindow, looksBinary } from "./text-window.
 import { displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget } from "./workspace-path.entity.functions.js"
 import type { ProtectRule, WorkspaceAccess } from "./workspace-path.entity.functions.js"
 import type { WorkspaceTarget } from "./workspace-path.entity.js"
-import { FindParams, FindResult, GrepParams, GrepResult, LsParams, LsResult, ReadParams, ReadResult } from "./workspace-tools.entity.js"
-import type { GrepLine, WorkspaceToolsConfig } from "./workspace-tools.entity.js"
-import { binaryRead, compactFind, fileTooLargeHint, compactGrep, compactLs, compactRead, readMedia, renderFind, renderGrep, renderLs, renderRead, toolDescriptions } from "./workspace-tools.entity.functions.js"
+import { FindResult, GrepResult, LsResult, ReadResult } from "./workspace-tools.entity.js"
+import type { GrepLine, GrepUnreadable, WorkspaceToolsConfig } from "./workspace-tools.entity.js"
+import { binaryRead, compactFind, fileTooLargeHint, compactGrep, compactLs, compactRead, readMedia, renderFind, renderGrep, renderLs, renderRead, toolDescriptions, toolParameters } from "./workspace-tools.entity.functions.js"
 
 /** What every workspace tool is built with: the configuration, the path functions, the compiled `protect` globs and the per-file write locks. */
 export interface WorkspaceToolContext {
@@ -34,14 +34,18 @@ const walkExcludes = (access: WorkspaceAccess, target: WorkspaceTarget, excludes
 export const fileSubjects = (path: string): ReadonlyArray<Subject> =>
   path.length > 0 && path.trim() === path ? [{ kind: "file", id: path, label: Option.none(), data: Option.none() }] : []
 
-const ReadTool = (description: string) => Tool.make("read", { description, parameters: ReadParams, success: ReadResult, failure: Failure, failureMode: "return" })
-const LsTool = (description: string) => Tool.make("ls", { description, parameters: LsParams, success: LsResult, failure: Failure, failureMode: "return" })
-const FindTool = (description: string) => Tool.make("find", { description, parameters: FindParams, success: FindResult, failure: Failure, failureMode: "return" })
-const GrepTool = (description: string) => Tool.make("grep", { description, parameters: GrepParams, success: GrepResult, failure: Failure, failureMode: "return" })
+const ReadTool = (config: WorkspaceToolsConfig) =>
+  Tool.make("read", { description: toolDescriptions(config).read, parameters: toolParameters(config).read, success: ReadResult, failure: Failure, failureMode: "return" })
+const LsTool = (config: WorkspaceToolsConfig) =>
+  Tool.make("ls", { description: toolDescriptions(config).ls, parameters: toolParameters(config).ls, success: LsResult, failure: Failure, failureMode: "return" })
+const FindTool = (config: WorkspaceToolsConfig) =>
+  Tool.make("find", { description: toolDescriptions(config).find, parameters: toolParameters(config).find, success: FindResult, failure: Failure, failureMode: "return" })
+const GrepTool = (config: WorkspaceToolsConfig) =>
+  Tool.make("grep", { description: toolDescriptions(config).grep, parameters: toolParameters(config).grep, success: GrepResult, failure: Failure, failureMode: "return" })
 
 /** `read`: a window of a text file's lines, an image (`readImages`), or what a binary file is. */
 export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
-  tool: ReadTool(toolDescriptions(config).read),
+  tool: ReadTool(config),
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path)
     const target = yield* resolveTarget(access, params.path, { confine: config.confine })
@@ -54,7 +58,7 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
     const bytes = yield* access.fs.readBytes(target.path).pipe(Effect.mapError(fsFailure(target.display)))
     if (looksBinary(bytes)) return yield* binaryRead(target.display, bytes, config.readImages)
     const decoded = decodeText(bytes)
-    const window = lineWindow(decoded.text, { offset: params.offset ?? 1, limit: Math.min(params.limit ?? config.maxLines, config.maxLines), maxBytes: config.maxBytes })
+    const window = lineWindow(decoded.text, { offset: params.offset ?? 1, limit: params.limit ?? config.maxLines, maxBytes: config.maxBytes })
     return yield* Result.match(window, {
       onFailure: (total) => Effect.fail(failure("OffsetPastEnd", `${target.display} has ${total} line${total === 1 ? "" : "s"}; offset must be at most ${Math.max(1, total)}`)),
       onSuccess: (lines) => Effect.succeed({
@@ -69,13 +73,13 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
 
 /** `ls`: a directory's entries by name, at most `lsEntries` of them. */
 export const lsTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
-  tool: LsTool(toolDescriptions(config).ls),
+  tool: LsTool(config),
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
     const entries = yield* access.fs.list(target.path).pipe(Effect.mapError((error) => error.reason === "NotDirectory"
       ? failure("NotDirectory", `${target.display} is not a directory; use read to see a file`) : fsFailure(target.display)(error)))
-    const limit = Math.min(params.limit ?? config.lsEntries, config.lsEntries)
+    const limit = params.limit ?? config.lsEntries
     return { path: target.display, entries: entries.slice(0, limit).map((entry) => ({ name: entry.name, kind: entry.kind })), total: entries.length }
   }),
   view: { version: "1", render: renderLs, compact: compactLs },
@@ -84,11 +88,11 @@ export const lsTool = ({ config, path }: WorkspaceToolContext): RegisteredTool =
 
 /** `find`: the files under a directory whose path matches a glob, as paths relative to the workspace root. */
 export const findTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
-  tool: FindTool(toolDescriptions(config).find),
+  tool: FindTool(config),
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
-    const limit = Math.min(params.limit ?? config.findResults, config.findResults)
+    const limit = params.limit ?? config.findResults
     const found = yield* access.fs.glob(params.pattern, { cwd: target.path, exclude: walkExcludes(access, target, config.exclude), dot: true, onlyFiles: true, limit }).pipe(
       Effect.mapError((error) => error.reason === "Invalid" ? failure("InvalidPattern", `${params.pattern}: ${error.message}`) : fsFailure(target.display)(error)))
     return { pattern: params.pattern, path: target.display, paths: found.paths.map((relative) => displayOf(access, access.path.join(target.path, relative))), truncated: found.truncated }
@@ -103,6 +107,7 @@ interface Searched {
   readonly files: number
   readonly skipped: number
   readonly truncated: boolean
+  readonly unreadable: ReadonlyArray<GrepUnreadable>
 }
 
 /**
@@ -110,12 +115,13 @@ interface Searched {
  * Files come from a walk that never enters links or excluded names; each is
  * resolved again before it is read and skipped when it leads outside the
  * workspace, is not a regular file, is larger than `maxFileBytes` or is
- * binary. Lines are cut to `grepLineChars` before matching. Searching a
+ * binary; one the file system refuses (permission denied, say) is named in
+ * `unreadable` with the reason, not counted as skipped. Lines are cut to `grepLineChars` before matching. Searching a
  * directory, one file gives at most a quarter of the limit, so one large
  * file cannot fill the result.
  */
 export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
-  tool: GrepTool(toolDescriptions(config).grep),
+  tool: GrepTool(config),
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
@@ -130,11 +136,11 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
           return { path: absolute, display: displayOf(access, absolute) }
         })),
         Effect.mapError((error) => error.reason === "Invalid" ? failure("InvalidPattern", `glob ${glob}: ${error.message}`) : fsFailure(target.display)(error)))
-    const limit = Math.min(params.limit ?? config.grepMatches, config.grepMatches)
+    const limit = params.limit ?? config.grepMatches
     const perFile = files.length > 1 ? Math.max(1, Math.ceil(limit / 4)) : limit
     const context = params.context ?? 0
     const skip = (state: Searched): Searched => ({ ...state, skipped: state.skipped + 1 })
-    const searched = yield* Effect.reduce(files, (): Searched => ({ lines: [], matches: 0, files: 0, skipped: 0, truncated: false }), (state, file) => {
+    const searched = yield* Effect.reduce(files, (): Searched => ({ lines: [], matches: 0, files: 0, skipped: 0, truncated: false, unreadable: [] }), (state, file) => {
       if (state.matches >= limit) return Effect.succeed({ ...state, truncated: true })
       const read = Effect.gen(function* () {
         const real = yield* access.fs.realPath(file.path)
@@ -144,19 +150,22 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
         const bytes = yield* access.fs.readBytes(real)
         return looksBinary(bytes) ? Option.none<Uint8Array>() : Option.some(bytes)
       })
-      return read.pipe(Effect.option, Effect.map((bytes) => Option.match(Option.flatten(bytes), {
-        onNone: () => skip(state),
-        onSome: (content) => {
-          const found = searchText(decodeText(content).text, pattern, { lineChars: config.grepLineChars, context, cap: Math.min(perFile, limit - state.matches) })
-          return {
-            lines: [...state.lines, ...found.lines.map((line) => ({ path: file.display, ...line }))],
-            matches: state.matches + found.matches,
-            files: state.files + (found.matches > 0 ? 1 : 0),
-            skipped: state.skipped,
-            truncated: state.truncated || found.capped,
-          }
-        },
-      })))
+      return read.pipe(
+        Effect.map(Option.match({
+          onNone: () => skip(state),
+          onSome: (content): Searched => {
+            const found = searchText(decodeText(content).text, pattern, { lineChars: config.grepLineChars, context, cap: Math.min(perFile, limit - state.matches) })
+            return {
+              ...state,
+              lines: [...state.lines, ...found.lines.map((line) => ({ path: file.display, ...line }))],
+              matches: state.matches + found.matches,
+              files: state.files + (found.matches > 0 ? 1 : 0),
+              truncated: state.truncated || found.capped,
+            }
+          },
+        })),
+        Effect.catch((error) => Effect.succeed({ ...state, unreadable: [...state.unreadable, { path: file.display, reason: error.reason }] })),
+      )
     })
     return { pattern: params.pattern, path: target.display, ...searched }
   }),

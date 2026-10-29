@@ -1,5 +1,5 @@
-import { Result, Schema } from "effect"
-import { AttachmentRejectedReason, BASH_ENV_ALLOWLIST, BashTermination, compileGlob, ImageMediaType, Media } from "@xandreed/core"
+import { Effect, Result, Schema } from "effect"
+import { AttachmentRejectedReason, BASH_ENV_ALLOWLIST, BashTermination, compileGlob, FsReason, ImageMediaType, Media } from "@xandreed/core"
 
 /** The seven workspace tools, by the names the model calls them. */
 export const WorkspaceToolName = Schema.Literals(["read", "write", "edit", "ls", "find", "grep", "bash"])
@@ -247,11 +247,16 @@ export type GrepParams = typeof GrepParams.Type
 export const GrepLine = Schema.Struct({ path: Schema.String, line: Schema.Int, text: Schema.String, match: Schema.Boolean })
 export type GrepLine = typeof GrepLine.Type
 
+/** A file `grep` could not read, and why (`Permission` when access was denied). */
+export const GrepUnreadable = Schema.Struct({ path: Schema.String, reason: FsReason })
+export type GrepUnreadable = typeof GrepUnreadable.Type
+
 /**
  * What `grep` found: the matching lines (with their context) in walk order,
  * how many lines matched and in how many files, whether it stopped at the
- * limit, and how many files it skipped (binary, larger than `maxFileBytes`,
- * or resolving outside the workspace).
+ * limit, how many files it skipped (binary, larger than `maxFileBytes`, or
+ * resolving outside the workspace), and the files it could not read
+ * (`unreadable`, empty in results stored before it was recorded).
  */
 export const GrepResult = Schema.Struct({
   pattern: Schema.String,
@@ -261,6 +266,7 @@ export const GrepResult = Schema.Struct({
   files: Schema.Int,
   truncated: Schema.Boolean,
   skipped: Schema.Int,
+  unreadable: Schema.Array(GrepUnreadable).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
 })
 export type GrepResult = typeof GrepResult.Type
 

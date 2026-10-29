@@ -18,6 +18,7 @@ export {
   GrepLine,
   GrepParams,
   GrepResult,
+  GrepUnreadable,
   LsEntry,
   LsParams,
   LsResult,

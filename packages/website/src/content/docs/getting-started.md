@@ -111,8 +111,10 @@ bun run --cwd packages/website check
 ```
 
 The distribution build prepares artifacts under `.artifacts/` using each
-package's manifest version and matching internal dependency versions. The
-consumer check installs local tarballs outside the monorepo, runs a
+package's manifest version and matching internal dependency versions,
+leaving test code out. The consumer check accepts only a build of `HEAD`
+from a clean tree (`--allow-dirty` accepts one of uncommitted changes). It
+installs local tarballs outside the monorepo, runs a
 composable agent's turn, a session fork and an eval composition on Bun,
 imports every Node-capable package on Node, runs the `FileSystem` and
 `Bash` kits over the local adapters of `@xandreed/plugin-workspace`, loads a

@@ -3,6 +3,7 @@ import { ImageMediaType, MEDIA_LIMITS, mediaFromBytes, sniffImageType } from "@x
 import type { AttachmentRejectedReason, BashOptions, Media } from "@xandreed/core"
 import { renderSearchLines } from "./text-search.entity.functions.js"
 import { formatBytes, headLines, mediaTypeOf } from "./text-window.entity.functions.js"
+import { FindParams, GrepParams, LsParams, ReadParams } from "./workspace-tools.entity.js"
 import type { BashToolResult, EditResult, FindResult, GrepResult, LsResult, ReadResult, WorkspaceSkillName, WorkspaceToolName, WorkspaceToolsConfig, WriteResult } from "./workspace-tools.entity.js"
 
 /** The skill each tool belongs to, by its short name. */
@@ -23,14 +24,30 @@ const imageLimit = (config: WorkspaceToolsConfig): string => {
 }
 const listed = (names: ReadonlyArray<string>): string => names.length === 0 ? "nothing" : names.join(", ")
 
+/** A `limit` from 1 to the configured cap, which the tool's parameter schema shows the model as its maximum. */
+const limitUpTo = (maximum: number) => Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum })))
+
+/**
+ * The parameters `read`, `ls`, `find` and `grep` take under `config`: their
+ * `limit` goes up to the configured cap (`maxLines`, `lsEntries`,
+ * `findResults`, `grepMatches`), so the model is shown the real maximum and
+ * a larger one is refused rather than quietly lowered.
+ */
+export const toolParameters = (config: WorkspaceToolsConfig) => ({
+  read: Schema.Struct({ ...ReadParams.fields, limit: limitUpTo(config.maxLines) }),
+  ls: Schema.Struct({ ...LsParams.fields, limit: limitUpTo(config.lsEntries) }),
+  find: Schema.Struct({ ...FindParams.fields, limit: limitUpTo(config.findResults) }),
+  grep: Schema.Struct({ ...GrepParams.fields, limit: limitUpTo(config.grepMatches) }),
+})
+
 /** What the model is told each tool does, with the configured limits in it. */
 export const toolDescriptions = (config: WorkspaceToolsConfig): Readonly<Record<WorkspaceToolName, string>> => ({
-  read: `Read a text file of the workspace${config.readImages ? ", or look at an image" : ""}. Shows at most ${config.maxLines} lines or ${formatBytes(config.maxBytes)} at a time; when more is left, the result says which offset to continue from. offset is the first line to show (1-based), limit how many lines. ${config.readImages ? `A PNG, JPEG, GIF or WebP image (up to ${imageLimit(config)} and ${MEDIA_LIMITS.maxPixels} pixels a side) is returned as an image you can see; another binary file is reported, not shown.` : "A binary file is reported, not shown."} To see a directory, use ls.`,
+  read: `Read a text file of the workspace${config.readImages ? ", or look at an image" : ""}. Shows at most ${config.maxLines} lines or ${formatBytes(config.maxBytes)} at a time; when more is left, the result says which offset to continue from. offset is the first line to show (1-based), limit how many lines (at most ${config.maxLines}). ${config.readImages ? `A PNG, JPEG, GIF or WebP image (up to ${imageLimit(config)} and ${MEDIA_LIMITS.maxPixels} pixels a side) is returned as an image you can see; another binary file is reported, not shown.` : "A binary file is reported, not shown."} To see a directory, use ls.`,
   write: "Create a file, or replace all of an existing one, with content; missing directories are created. To change part of a file, use edit. Emptying a non-empty file is refused.",
   edit: "Change part of a file by replacing exact text. Each edit's oldText must appear exactly once in the file: copy it from read (without the notice lines), with enough surrounding lines to be unique. All edits are matched against the file as it was before this call and must not overlap; newText replaces oldText (empty to delete it). Line endings and a byte-order mark are kept.",
-  ls: `List a directory (by default the workspace root): one entry per line, directories ending in /, symbolic links in @. At most ${config.lsEntries} entries.`,
-  find: `Find files whose path matches a glob pattern, relative to path (by default the workspace root): * and ? match within a name, ** any number of directories, {a,b} either; e.g. **/*.ts or src/**/test_*.py. Never looks inside ${listed(config.exclude)} or symbolic links. At most ${config.findResults} paths.`,
-  grep: `Search file contents for a regular expression (JavaScript syntax), or for plain text with literal: true. path is a file or a directory (by default the workspace root); glob limits the files searched (*.ts searches every directory). Shows path:line:text for each matching line, and context lines around each match when asked. Lines are cut to ${config.grepLineChars} characters before matching. At most ${config.grepMatches} matching lines; binary files, ${listed(config.exclude)} and symbolic links are skipped.`,
+  ls: `List a directory (by default the workspace root): one entry per line, directories ending in /, symbolic links in @. At most ${config.lsEntries} entries; limit (1 to ${config.lsEntries}) asks for fewer.`,
+  find: `Find files whose path matches a glob pattern, relative to path (by default the workspace root): * and ? match within a name, ** any number of directories, {a,b} either; e.g. **/*.ts or src/**/test_*.py. Never looks inside ${listed(config.exclude)} or symbolic links. At most ${config.findResults} paths; limit (1 to ${config.findResults}) asks for fewer.`,
+  grep: `Search file contents for a regular expression (JavaScript syntax), or for plain text with literal: true. path is a file or a directory (by default the workspace root); glob limits the files searched (*.ts searches every directory). Shows path:line:text for each matching line, and context lines around each match when asked. Lines are cut to ${config.grepLineChars} characters before matching. At most ${config.grepMatches} matching lines; limit (1 to ${config.grepMatches}) asks for fewer. Binary files, ${listed(config.exclude)} and symbolic links are skipped, and files that cannot be read are named.`,
   bash: `Run a shell command with bash -c in the workspace root. timeout is in seconds (default ${seconds(config.bashTimeoutMs)}, at most ${seconds(config.bashMaxTimeoutMs)}); stdin is written to the command's standard input. Returns the exit code and the output, stdout and stderr in the order they came. Output longer than ${config.maxLines} lines or ${formatBytes(config.maxBytes)} is cut to its end${config.spillDir === null ? "" : `, and the whole of it (up to ${formatBytes(config.maxFileBytes)}) is saved to a file you can read`}. A non-zero exit code is a result to read, not a failure. Anything the command leaves running may be stopped when it returns.`,
 })
 
@@ -164,8 +181,19 @@ export const renderFind = (result: FindResult, maxLines: number, maxBytes: numbe
 
 export const compactFind = (result: FindResult): string => `(find ${result.pattern} in ${result.path}: ${result.paths.length}${result.truncated ? "+" : ""} paths)`
 
+/** The files grep could not read, one line per reason, each naming at most five of them. */
+const unreadableLines = (result: GrepResult): ReadonlyArray<string> =>
+  Array.from(new Set(result.unreadable.map((file) => file.reason)), (reason) => {
+    const paths = result.unreadable.filter((file) => file.reason === reason).map((file) => file.path)
+    const why = reason === "Permission" ? "permission denied" : `a file-system error (${reason})`
+    return `[Could not read ${paths.length} file${paths.length === 1 ? "" : "s"}, ${why}: ${paths.slice(0, 5).join(", ")}${paths.length > 5 ? `, and ${paths.length - 5} more` : ""}.]`
+  })
+
 export const renderGrep = (result: GrepResult, withContext: boolean, maxLines: number, maxBytes: number): string => {
-  const skipped = result.skipped === 0 ? [] : [`[${result.skipped} file${result.skipped === 1 ? "" : "s"} skipped: binary, larger than the read limit, or leading outside the workspace.]`]
+  const skipped = [
+    ...(result.skipped === 0 ? [] : [`[${result.skipped} file${result.skipped === 1 ? "" : "s"} skipped: binary, larger than the read limit, or leading outside the workspace.]`]),
+    ...unreadableLines(result),
+  ]
   if (result.matches === 0) return [`No matches for ${result.pattern} in ${result.path}.`, ...skipped].join("\n")
   const head = headLines(renderSearchLines(result.lines, withContext), maxLines, maxBytes)
   return [

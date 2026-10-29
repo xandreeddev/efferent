@@ -3,21 +3,44 @@ import { Effect, Option, Schema, Layer } from "effect"
 import { EvalId, EvaluationError } from "../../domain/identity.entity.js"
 import type { GraderRegistration } from "../../contracts/evaluation-app.contract.js"
 import { unknownEvaluationUsage } from "../../assessment.usecase.functions.js"
+import { fingerprint } from "../../domain/grading-context.entity.functions.js"
 import {
   RetrievalContext,
   RetrievalJudgement,
+  type RetrievalItem,
   type RetrievalMeasure
 } from "./semantic-retrieval.entity.js"
+import { retrievalItems } from "./semantic-retrieval.entity.functions.js"
 import { contextualPrecision } from "./contextual-precision.functions.js"
 import { contextualRecall } from "./contextual-recall.functions.js"
 import { contextualRelevancy } from "./contextual-relevancy.functions.js"
 
+/**
+ * A measure's judge: the projected context (for contextual relevancy without
+ * the expected claims) and the units to rule on (`retrievalItems`), each
+ * with the id its verdict must carry, one verdict per id.
+ */
+export type RetrievalJudge = (
+  measure: RetrievalMeasure,
+  input: RetrievalContext,
+  items: ReadonlyArray<RetrievalItem>
+) => Effect.Effect<RetrievalJudgement, EvaluationError>
+
+/**
+ * `rubric`: what each measure's judge works from, its prompt or the template
+ * the prompt is built from. The grader's `rubric` fingerprint is taken from
+ * it, so reports graded under different prompts do not compare as alike.
+ * Without one, the fingerprint names only the measure's definition
+ * (`retrieval-<measure>:1`), the same whatever the judge's prompt.
+ */
+export type SemanticRetrievalOptions = {
+  readonly rubric?: Readonly<Partial<Record<RetrievalMeasure, string>>>
+}
+
 /** The application binds its judge model and cost guard. No provider SDK enters the domain. */
 export const semanticRetrievalGraders = (
-  judge: (
-    measure: RetrievalMeasure,
-    input: RetrievalContext
-  ) => Effect.Effect<RetrievalJudgement, EvaluationError>
+  judge: RetrievalJudge,
+  options: SemanticRetrievalOptions = {}
 ): ReadonlyArray<GraderRegistration> =>
   (
     [
@@ -31,7 +54,12 @@ export const semanticRetrievalGraders = (
       version: "1",
       kind: "model",
       metrics: [measure],
-      fingerprints: { rubric: `retrieval-${measure}:1` }
+      fingerprints: {
+        rubric: Option.match(Option.fromNullishOr(options.rubric?.[measure]), {
+          onNone: () => `retrieval-${measure}:1`,
+          onSome: (rubric) => `retrieval-${measure}:1:${fingerprint({ measure, rubric })}`
+        })
+      }
     },
     layer: Layer.succeed(GraderAssessment, {
       assess: (context) =>
@@ -44,16 +72,8 @@ export const semanticRetrievalGraders = (
                 new EvaluationError({ code: "invalid", message: String(error) })
             )
           )
-          const expectedIds =
-            measure === "contextual-recall"
-              ? input.expectedClaims.map((_, index) => `claim:${index}`)
-              : measure === "contextual-relevancy"
-                ? input.documents.flatMap((document) =>
-                    document.statements.map(
-                      (_, index) => `${document.id}/statement:${index}`
-                    )
-                  )
-                : input.documents.map((document) => document.id)
+          const items = retrievalItems(measure, input)
+          const expectedIds = items.map((item) => item.id)
           if (
             !expectedIds.length ||
             new Set(expectedIds).size !== expectedIds.length
@@ -69,7 +89,8 @@ export const semanticRetrievalGraders = (
             measure,
             measure === "contextual-relevancy"
               ? { ...input, expectedClaims: [] }
-              : input
+              : input,
+            items
           )
           const verdict = yield* Schema.decodeUnknownEffect(RetrievalJudgement)(
             judgement
