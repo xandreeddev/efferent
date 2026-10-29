@@ -303,6 +303,24 @@ describe("Agent.turn", () => {
     expect(named(events, "turn.ended").map((event) => [event.data.reason, event.data.failure])).toMatchObject([["failed", { code: "session.contended" }]])
   })
 
+  test("a turn that cannot begin fails with the refusal itself: the caller catches SessionBusy by its tag, and nothing ran or was stored", async () => {
+    const { answer, ran, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      yield* journal.sessions.begin(journal.address, { _tag: "User", userMessage: new UserMessage({ text: "first" }), runId: "run-1", key: "run-1", command: {} })
+      const ran = yield* Ref.make(false)
+      const answer = yield* agent.turn(inputFor(journal, "run-2", "second", model), (turn) => Ref.set(ran, true).pipe(Effect.andThen(turn.reply("never")))).pipe(
+        Effect.map(() => "ran"),
+        Effect.catchTag("SessionBusy", (busy) => Effect.succeed(`${codeOf(busy)}: turn ${busy.turn} of ${busy.session} is open`)),
+      )
+      return { answer, ran: yield* Ref.get(ran), events: yield* journal.stored }
+    })))
+    expect(answer).toBe(`session.busy: turn 1 of ${conversation} is open`)
+    expect(ran).toBe(false)
+    expect(named(events, "turn.started").map((event) => event.data.runId)).toEqual(["run-1"])
+  })
+
   test("a failing subscriber's code is the one the stored turn.ended carries", async () => {
     const events = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const agent = yield* define(memoryWindowPlugin)
@@ -1117,7 +1135,7 @@ describe("resuming a turn", () => {
     expect(prompt).not.toContain("\"role\":\"assistant\"")
   })
 
-  test("a turn that cannot be resumed fails with turn.not-resumable, naming the turn and why", async () => {
+  test("a turn that cannot be resumed fails with NotResumable (turn.not-resumable), naming the turn and why", async () => {
     const failures = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* inMemorySession
@@ -1129,13 +1147,13 @@ describe("resuming a turn", () => {
       }
       // `resumes` is typed only as a number: a host's `Number(query.resumes)` may be anything, and the turn fails, it does not die.
       return yield* Effect.forEach([[1, "run-2"], [9, "run-3"], [1.5, "run-4"], [Number.NaN, "run-5"]] as const, ([turn, runId]) =>
-        resume(turn, runId).pipe(Effect.map((error) => [codeOf(error), error.message])))
+        resume(turn, runId).pipe(Effect.map((error) => [codeOf(error), error._tag === "NotResumable" ? [error.session, error.turn, error.reason] : error._tag])))
     })))
     expect(failures).toEqual([
-      ["turn.not-resumable", `turn 1 of session ${conversation} cannot be resumed (finished)`],
-      ["turn.not-resumable", `turn 9 of session ${conversation} cannot be resumed (missing)`],
-      ["turn.not-resumable", `turn 1.5 of session ${conversation} cannot be resumed (missing)`],
-      ["turn.not-resumable", `turn NaN of session ${conversation} cannot be resumed (missing)`],
+      ["turn.not-resumable", [conversation, 1, "finished"]],
+      ["turn.not-resumable", [conversation, 9, "missing"]],
+      ["turn.not-resumable", [conversation, 1.5, "missing"]],
+      ["turn.not-resumable", [conversation, Number.NaN, "missing"]],
     ])
   })
 })
@@ -1169,7 +1187,7 @@ describe("a turn's images", () => {
     expect(seen[1]?.prompt.includes(pixelPng)).toBe(again)
   })
 
-  test("an attachment that is not an image fails the turn before it begins (turn.attachment-rejected)", async () => {
+  test("an attachment that is not an image fails the turn before it begins with AttachmentRejected (turn.attachment-rejected)", async () => {
     const { error, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* inMemorySession
@@ -1180,7 +1198,7 @@ describe("a turn's images", () => {
       return { error, events: yield* journal.stored }
     })))
     expect(codeOf(error)).toBe("turn.attachment-rejected")
-    expect(error.message).toContain("UnsupportedType")
+    expect(error).toMatchObject({ _tag: "AttachmentRejected", reason: "UnsupportedType", index: 0 })
     expect(events).toEqual([])
   })
 })

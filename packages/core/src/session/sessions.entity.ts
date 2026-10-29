@@ -226,7 +226,8 @@ export class SessionContended extends Schema.TaggedError<SessionContended>()("Se
 /**
  * Why a turn could not begin: a refusal of `Sessions.begin`, or
  * `AttachmentRejected` from the check of the message's images before it.
- * Nothing was opened.
+ * Nothing was opened. `Agent.turn` (any `TurnRunner`) fails with it as it
+ * is, so a host matches one with `Effect.catchTag("SessionBusy", …)`.
  */
 export const TurnBeginError = Schema.Union([
   AttachmentRejected, SessionBusy, TurnDuplicate, KeyConflict, RunIdReused, NothingPending, NotResumable, TurnRefused, SessionMissing,
@@ -236,11 +237,9 @@ export type TurnBeginError = typeof TurnBeginError.Type
 
 /**
  * The code each begin refusal stands for, keyed by its tag: what
- * `harnessCodeOf` gives for the refusal, what a turn that fails with it
- * stores, and the code of the `HarnessError` `Agent.turn` fails with when
- * the turn cannot begin. An `AttachmentRejected`'s `reason` is in the
- * message only; a host that branches on it runs `normalizeUserMessage`
- * itself before the turn.
+ * `harnessCodeOf` (and `turnEndingOf`) gives for the refusal `Agent.turn`
+ * fails with when the turn cannot begin, and what a turn that fails with
+ * it stores.
  */
 export const turnBeginCodes = {
   AttachmentRejected: "turn.attachment-rejected",

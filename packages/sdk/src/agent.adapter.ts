@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Duration, Effect, Exit, Match, Metric, Option, Schema } from "effect"
+import { Cause, Clock, Context, Duration, Effect, Exit, Metric, Option, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import {
   cacheKeyOf,
@@ -11,7 +11,6 @@ import {
   harnessDefectsAsFailures,
   HarnessError,
   isBudgetTokens,
-  isHarnessError,
   normalizeUserMessage,
   openTurnTools,
   processActivity,
@@ -32,7 +31,6 @@ import {
   TurnPrompt,
   TurnToolbox,
   traceTurn,
-  turnBeginCodes,
   turnEndingOf,
   turnOf,
 } from "@xandreed/core"
@@ -45,6 +43,7 @@ import type {
   Plugin,
   ProcessActivity,
   Turn,
+  TurnBeginError,
   TurnClosed,
   TurnError,
   TurnInput,
@@ -139,7 +138,11 @@ export interface Agent {
   /**
    * Run one turn: one the host began (its `TurnWriter`; the host ends it),
    * or one begun and ended here through the `Sessions` in the turn's
-   * services. The turn is scoped: its subscriptions and tasks end with it.
+   * services. A turn to begin here that cannot begin fails with the refusal
+   * itself (`TurnBeginError`: `SessionBusy`, `TurnDuplicate`,
+   * `NotResumable`…; match it with `Effect.catchTag`, `harnessCodeOf` gives
+   * its code), before anything is opened, run or counted.
+   * The turn is scoped: its subscriptions and tasks end with it.
    * On success, tasks and background subscriptions settle as the scopes
    * close in dependency order, before the reply is recorded exactly once.
    * Failures and interruptions record a failed reply and cancel remaining
@@ -165,7 +168,7 @@ export interface Agent {
   readonly turn: <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
     use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
-  ) => Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  ) => Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 }
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
@@ -216,9 +219,10 @@ const keyOf = (turn: NewTurn): string => turn.key ?? (turn.resumes === undefined
  * Begin a turn with the Sessions of the turn's services; its writer lives in
  * the turn's scope. The message's attachments are checked first
  * (`normalizeUserMessage`), whatever Sessions the turn's services hold, and
- * the normalised message is the one begun.
+ * the normalised message is the one begun. A refusal is the turn's failure
+ * as it is (`TurnBeginError`), for the caller to match by tag.
  */
-const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effect<TurnWriter, HarnessError, Scope.Scope> => Effect.gen(function* () {
+const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effect<TurnWriter, TurnBeginError | HarnessError, Scope.Scope> => Effect.gen(function* () {
   const sessions = yield* required(context, Sessions)
   const userMessage = yield* normalizeUserMessage(turn.userMessage)
   return yield* sessions.begin(turn.session, {
@@ -226,13 +230,7 @@ const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effec
     ...(turn.meta === undefined ? {} : { meta: turn.meta }),
     ...(turn.resumes === undefined ? {} : { resumes: turn.resumes }),
   })
-}).pipe(Effect.mapError((error) => isHarnessError(error) ? error
-  : failure(turnBeginCodes[error._tag], Match.value(error).pipe(
-    Match.tag("NotResumable", (refused) => `turn ${refused.turn} of session ${turn.session.id} cannot be resumed (${refused.reason})`),
-    Match.tag("RunIdReused", (reused) => `run id ${reused.runId} was used by turn ${reused.turn} of session ${turn.session.id}: each turn needs a new one`),
-    Match.tag("AttachmentRejected", (rejected) => `the turn could not begin (AttachmentRejected, ${rejected.reason}: ${rejected.message}) in session ${turn.session.id}`),
-    Match.orElse((other) => `the turn could not begin (${other._tag}) in session ${turn.session.id}`),
-  ))))
+})
 
 /** The turn's body, until someone else closes the turn: then the body is interrupted and the turn fails with that `TurnClosed`. */
 const untilClosed = (writer: TurnWriter) => <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E | TurnClosed, R> =>
@@ -352,7 +350,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
     use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
-  ): Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
+  ): Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
     const scope = yield* Effect.scope
     const absent = turnKeys.filter((key) => !input.services.mapUnsafe.has(key))
     if (absent.length > 0) return yield* Effect.fail(failure("service.missing", `The turn does not provide ${absent.join(", ")}`))
@@ -435,7 +433,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     })
     // From admission to the end: the turn's span encloses its plugins, layer, tools, `use`, reply and end.
     return yield* admitted.pipe(measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] }))
-  }))) as Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  }))) as Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
   // The probes are the runtime's alone, wherever this is read (a turn's own services hold others).
   const activity = processActivity.pipe(Effect.updateContext((current: Context.Context<never>) =>

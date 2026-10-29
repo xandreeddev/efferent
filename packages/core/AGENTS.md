@@ -31,7 +31,9 @@ implementations reach the writer. `isTurnError` tells one by its tag and
 fields, from any copy of core: `harnessDefectsAsFailures` and the bus
 restore one carried as a defect, and a loop or a registry lets one through
 rather than wrap it. `PLUGIN_API_VERSION` is 3 since the writer raises the
-tags; versions 1 and 2 still load.
+tags; versions 1 and 2 still load. A `TurnRunner` (`Agent.turn`) fails a
+turn that cannot begin with its `TurnBeginError` as it is, never a
+`HarnessError` made from it (`turnConformance` checks `SessionBusy`).
 
 The step loop lives in `@xandreed/plugin-agent-loop`, plugin activation in
 `@xandreed/runtime`, sessions in `@xandreed/plugin-sessions`, and the

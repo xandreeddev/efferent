@@ -8,7 +8,6 @@ import {
   guardTurn,
   harnessDefectsAsFailures,
   HarnessError,
-  isHarnessError,
   Sessions,
   openTurnTools,
   stackPlugins,
@@ -23,7 +22,7 @@ import {
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
-import type { Turn, TurnError, TurnInput, TurnOutcome, TurnResult, TurnServices, TurnWriter } from "@xandreed/core"
+import type { Turn, TurnBeginError, TurnError, TurnInput, TurnOutcome, TurnResult, TurnServices, TurnWriter } from "@xandreed/core"
 import { StepLoopLive } from "@xandreed/plugin-agent-loop"
 import { MemoryDigestLive } from "@xandreed/plugin-memory-digest"
 import { MemoryWindowLive } from "@xandreed/plugin-memory-window"
@@ -52,7 +51,7 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
     const writer: TurnWriter = "admitted" in input.turn ? input.turn : yield* Effect.flatMap(Effect.service(Sessions), (sessions) => {
       const next = input.turn as Exclude<typeof input.turn, TurnWriter>
       return sessions.begin(next.session, { _tag: "User", userMessage: next.userMessage, runId: next.runId, key: next.key ?? next.runId, command: next.command ?? {} })
-    }).pipe(Effect.provide(input.services), Effect.mapError((error) => isHarnessError(error) ? error : new HarnessError({ code: "session.begin", message: error._tag })))
+    }).pipe(Effect.provide(input.services)) // a refusal is the turn's failure as it is, as under `Agent.turn`
     const body = Effect.gen(function* () {
       yield* (yield* TurnMemory).persistMessage
       yield* openTurnTools
@@ -78,7 +77,7 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
       const { pending } = yield* writer.end(turnEndingOf(exit))
       return { ...exit.value, pending }
     }).pipe(traceTurn(writer))
-  })) as Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  })) as Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
   return { turn }
 })
 
