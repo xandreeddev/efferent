@@ -234,7 +234,7 @@ describe("models plugin storage: local", () => {
   test("refuses a host's HostCredentials", async () => {
     const host = Context.make(HostCredentials, HostCredentials.of({ load: Effect.succeed(new Map()), save: () => Effect.void }))
     const refused = await Effect.runPromise(Effect.flip(Effect.scoped(build(".", { inheritPrevious: false }, host))))
-    expect(refused).toMatchObject({ code: "plugin.activation", plugin: "@xandreed/plugin-models" })
+    expect(refused).toMatchObject({ code: "config.options", plugin: "@xandreed/plugin-models" })
     expect(refused.message).toContain(`HostCredentials, which needs storage: "memory"`)
   })
 })

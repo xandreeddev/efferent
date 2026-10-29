@@ -104,6 +104,21 @@ publishes and every kind a session's journal stores, with its payload, is in
 the generated [event reference](docs/event-reference.md), with the begin and
 error codes and the feed frames a host serves them with.
 
+Skills can be files: `skillsDirectoryPlugin` from `@xandreed/plugin-workspace`
+reads every `SKILL.md` under `.agents/skills` (the Agent Skills layout) when
+the agent is defined, and tool discovery serves them like the host's own:
+the catalogue line, `load_skill` for the instructions and
+`read_skill_reference` for the other files of the skill's directory.
+
+```ts
+import { localSystemPlugin, skillsDirectoryPlugin } from "@xandreed/plugin-workspace"
+
+const plugins = [localSystemPlugin, { plugin: skillsDirectoryPlugin, options: { idPrefix: "project." } }, memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin]
+```
+
+See [skills from a directory](docs/framework.md#skills-from-a-directory)
+in the framework guide for the id rule, the limits and the failure codes.
+
 ## Configuration
 
 Plugins are configured where the agent is defined: an entry in
@@ -150,7 +165,7 @@ names, or the host's `HostCredentials`, and settings edits stay in memory. See
 | `@xandreed/plugin-session-sqlite` | SQLite session store (Bun only) |
 | `@xandreed/plugin-tasks` | Background tasks |
 | `@xandreed/plugin-render` | Render surfaces, event feeds and streaming |
-| `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`; Linux and macOS) |
+| `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`; Linux and macOS), and skills from directories of `SKILL.md` files (`skillsDirectoryPlugin`) |
 | `@xandreed/evals` | Tasks, trials, graders and suites; app adapters, local reports and retrieval metrics |
 | `@xandreed/evals-cli` | The `efferent-eval` command line (Node 24) |
 | `@xandreed/evals-langfuse`, `@xandreed/evals-langsmith` | Optional evaluation exporters (Node 24) |

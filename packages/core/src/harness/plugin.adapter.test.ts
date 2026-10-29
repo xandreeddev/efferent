@@ -46,4 +46,29 @@ describe("definePlugin", () => {
     })
     expect(namer.schema).toBe(namer.config)
   })
+
+  test("build keeps the code of a HarnessError the layer fails with, and names the plugin", async () => {
+    const failing = (error: HarnessError) => definePlugin({
+      id: "test/failing", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {},
+      provides: [SessionEnvironment], layer: () => Layer.effect(SessionEnvironment, Effect.fail(error)),
+    })
+    const built = (error: HarnessError) => Effect.runPromise(Effect.flip(Effect.scoped(failing(error).build({}, Context.empty()))))
+    expect(await built(new HarnessError({ code: "skills.duplicate", message: "two skills x" }))).toMatchObject({
+      code: "skills.duplicate", message: "two skills x", plugin: "test/failing",
+    })
+    expect(await built(new HarnessError({ code: "own.code", message: "inner", plugin: "inner/plugin" }))).toMatchObject({ code: "own.code", plugin: "inner/plugin" })
+  })
+
+  test("build matches a HarnessError by its tag and fields, so one from another copy of core keeps its code too", async () => {
+    // What a plugin built against a second copy of @xandreed/core fails with: the same tag, another class.
+    class OtherCopyHarnessError extends Schema.TaggedError<OtherCopyHarnessError>()("HarnessError", {
+      code: Schema.String, message: Schema.String, plugin: Schema.optional(Schema.String),
+    }) {}
+    const failing = definePlugin({
+      id: "test/other-copy", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {},
+      provides: [SessionEnvironment], layer: () => Layer.effect(SessionEnvironment, Effect.fail(new OtherCopyHarnessError({ code: "skills.duplicate", message: "two skills x" }))),
+    })
+    const error = await Effect.runPromise(Effect.flip(Effect.scoped(failing.build({}, Context.empty()))))
+    expect([error instanceof HarnessError, error.code, error.message, error.plugin]).toEqual([true, "skills.duplicate", "two skills x", "test/other-copy"])
+  })
 })

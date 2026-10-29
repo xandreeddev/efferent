@@ -285,6 +285,115 @@ Requires: none
 }
 ```
 
+## @xandreed/plugin-workspace/skills
+
+Scope: **runtime** · API 2 · Version 0.13.0
+
+Provides: none
+
+Contributes: `efferent/Capabilities`
+
+Requires: `@xandreed/core/FileSystem`
+
+Optional: `efferent/SessionEnvironment`
+
+### Defaults
+
+```json
+{
+  "roots": [
+    ".agents/skills"
+  ],
+  "required": false,
+  "strict": false,
+  "tools": "ignore",
+  "idPrefix": "",
+  "maxReferenceBytes": 65536,
+  "maxSkills": 200,
+  "maxFiles": 2000,
+  "maxBytes": 8388608,
+  "alwaysSection": true,
+  "sectionOrder": 850
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "roots": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "required": {
+      "type": "boolean"
+    },
+    "strict": {
+      "type": "boolean"
+    },
+    "tools": {
+      "type": "string",
+      "enum": [
+        "declared",
+        "ignore"
+      ]
+    },
+    "idPrefix": {
+      "type": "string",
+      "description": "Put before every skill id; no whitespace."
+    },
+    "maxReferenceBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 16777216
+    },
+    "maxSkills": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "maxFiles": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "maxBytes": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1073741824
+    },
+    "alwaysSection": {
+      "type": "boolean"
+    },
+    "sectionOrder": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "roots",
+    "required",
+    "strict",
+    "tools",
+    "idPrefix",
+    "maxReferenceBytes",
+    "maxSkills",
+    "maxFiles",
+    "maxBytes",
+    "alwaysSection",
+    "sectionOrder"
+  ],
+  "additionalProperties": true
+}
+```
+
 ## @xandreed/plugin-models
 
 Scope: **runtime** · API 2 · Version 0.13.0
@@ -293,7 +402,7 @@ Provides: `effect/ai/LanguageModel`, `@xandreed/core/UtilityLlm`, `@xandreed/cor
 
 Requires: `efferent/SessionEnvironment`
 
-Uses when present: `@xandreed/plugin-models/HostCredentials`
+Optional: `@xandreed/plugin-models/HostCredentials`
 
 ### Defaults
 
@@ -470,6 +579,8 @@ Uses when present: `@xandreed/plugin-models/HostCredentials`
 Scope: **runtime** · API 2 · Version 0.13.0
 
 Provides: `efferent/ConversationMemory`
+
+Contributes: `efferent/Capabilities`
 
 Requires: none
 
@@ -728,6 +839,8 @@ Scope: **runtime** · API 2 · Version 0.13.0
 
 Provides: `efferent/ToolRegistry`
 
+Contributes: `efferent/Capabilities`
+
 Requires: `efferent/Capabilities`
 
 ### Defaults
@@ -835,6 +948,8 @@ Requires: none
 Scope: **runtime** · API 2 · Version 0.13.0
 
 Provides: `efferent/Tasks`
+
+Contributes: `efferent/Capabilities`
 
 Requires: `efferent/Sessions`, `efferent/TaskRunner`, `efferent/TaskExecutor`
 

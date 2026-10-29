@@ -165,7 +165,13 @@
         "effect": "4.0.7",
       },
       "devDependencies": {
+        "@xandreed/evals": "workspace:*",
+        "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-memory-window": "workspace:*",
+        "@xandreed/plugin-sessions": "workspace:*",
+        "@xandreed/plugin-tool-discovery": "workspace:*",
         "@xandreed/runtime": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
       },
     },
     "packages/runtime": {

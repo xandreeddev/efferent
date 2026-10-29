@@ -295,13 +295,24 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun:test"
             ]
       },
+      // The one plugin test layer that imports upward (sdk, evals and the plugins
+      // an agent needs): the skills directory is tested end to end, through
+      // Agent.define and a journey. Test files are not built or packed, but if
+      // sdk ever lists plugin-workspace as a devDependency, move those tests to
+      // sdk-tests rather than make the two devDependencies a cycle.
       {
             "name": "plugin-workspace-tests",
             "path": "packages/plugin-workspace/src/**/*.test.ts",
             "canImport": [
                   "plugin-workspace",
                   "core",
-                  "runtime"
+                  "runtime",
+                  "sdk",
+                  "evals",
+                  "plugin-agent-loop",
+                  "plugin-memory-window",
+                  "plugin-sessions",
+                  "plugin-tool-discovery"
             ],
             "externals": [
                   "effect",
@@ -310,6 +321,12 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "node:",
                   "@xandreed/core",
                   "@xandreed/runtime",
+                  "@xandreed/sdk",
+                  "@xandreed/evals",
+                  "@xandreed/plugin-agent-loop",
+                  "@xandreed/plugin-memory-window",
+                  "@xandreed/plugin-sessions",
+                  "@xandreed/plugin-tool-discovery",
                   "bun:test"
             ]
       },

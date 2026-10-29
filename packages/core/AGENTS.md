@@ -42,4 +42,11 @@ what `Sessions.begin` stores. Anything that turns a log into text (search,
 transcripts, traces, fingerprints, estimates) goes through `elideMediaData`
 or `userMessageText`, never the base64.
 
+Skills as files: `harness/skill-files.entity.ts` and its functions read a
+tree of `SKILL.md` files without IO (`readSkillFiles`, which never fails and
+returns the issues; `skillsFromFiles`, strict) and collect one through the
+`FileSystem` port (`collectSkillFiles`, over `glob`). The frontmatter parser
+there is the skills' own YAML subset; `spec/frontmatter.ts` stays the flat
+one the spec codec uses.
+
 See the root AGENTS.md for the enforced zero-baseline rules and checks.
