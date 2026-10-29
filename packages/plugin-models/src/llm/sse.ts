@@ -1,8 +1,10 @@
 import { AiError } from "effect/ai"
 import type { Response } from "effect/ai"
-import { Effect, Option, Result, Stream } from "effect"
+import { Cause, Effect, Option, Result, Stream } from "effect"
+import { reasonOf } from "@xandreed/core"
 import type { CompletionUsage, StreamChunk, StreamToolCall } from "./chat-wire.entity.js"
 import { chunkErrorOf, decodeStreamChunk, decodeToolArguments, isQuotaExhausted } from "./chat-wire.entity.functions.js"
+import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 
 /**
  * The OpenAI-compatible SSE wire → `@effect/ai` `StreamPartEncoded`s, as a
@@ -288,7 +290,7 @@ export const sseStreamParts = (options: {
       AiError.make({
         module: options.moduleName,
         method: "streamText",
-        reason: new AiError.UnknownError({ description: `the response body stream failed: ${String(cause)}` }),
+        reason: new AiError.UnknownError({ description: `the response body stream failed: ${redactCredentials(reasonOf(Cause.die(cause)))}` }),
       }),
   }).pipe(
     Stream.decodeText(),

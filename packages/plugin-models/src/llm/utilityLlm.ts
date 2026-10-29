@@ -1,7 +1,7 @@
 import { Prompt } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Effect, Layer, Option } from "effect"
-import { AuthStore, extractUsage, parseModelSelection, replayableContext, SettingsStore, UtilityError, UtilityLlm } from "@xandreed/core"
+import { Cause, Effect, Layer, Option } from "effect"
+import { AuthStore, extractUsage, parseModelSelection, reasonOf, replayableContext, SettingsStore, UtilityError, UtilityLlm } from "@xandreed/core"
 import { generateWith, transportFetchOf, withCodexSessions, withConfiguredEffort } from "./router.js"
 
 /**
@@ -24,7 +24,7 @@ export const UtilityLlmLive = Layer.effect(
       complete: (prompt: string) =>
         Effect.gen(function* () {
           const loaded = yield* settings.load.pipe(
-            Effect.mapError((e) => new UtilityError({ message: e.message })),
+            Effect.mapError((e) => new UtilityError({ message: e.message, cause: e })),
           )
           const raw = Option.getOrElse(
             Option.orElse(loaded.fastModel, () => loaded.model),
@@ -41,7 +41,7 @@ export const UtilityLlmLive = Layer.effect(
             toolChoice: "none",
             responseFormat: { type: "text" },
           }), Option.orElse(loaded.fastReasoningEffort, () => loaded.reasoningEffort)).pipe(
-            Effect.mapError((e) => new UtilityError({ message: String(e) })),
+            Effect.mapError((e) => new UtilityError({ message: reasonOf(Cause.fail(e)), cause: e })),
             // The transport's fetch innermost, as the routed model sets it (router.ts).
             (call) => Option.match(fetch, { onNone: () => call, onSome: (value) => Effect.provideService(call, FetchHttpClient.Fetch, value) }),
             Effect.provide(context),

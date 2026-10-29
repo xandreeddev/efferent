@@ -1,7 +1,7 @@
 import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
-import { Context, Effect, Layer, Option, Ref, Schema } from "effect"
-import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, HarnessError, isHarnessError, StepLoop } from "@xandreed/core"
+import { Cause, Context, Effect, Layer, Option, Ref, Schema } from "effect"
+import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isHarnessError, reasonOf, StepLoop } from "@xandreed/core"
 import type { AgentMessage, CompletionVerdict, LogEntry, LoopEvent, RunResult, StepInfo, StepPlan, StepRequest, StepResult, TokenUsage } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopToolChoice } from "./loop.js"
@@ -150,7 +150,8 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
     Effect.provide(handlers),
     Effect.provideService(LanguageModel.LanguageModel, model),
     Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
-    Effect.mapError((error) => isHarnessError(error) ? error : new HarnessError({ code: "loop.failed", message: String(error) })),
+    // What failed underneath (a provider's `AiError`) stays the cause; the message is its text, never its stack.
+    Effect.mapError((error) => isHarnessError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
   ))
   return {
     outcome: result.outcome === "ok" ? "completed" : "partial",

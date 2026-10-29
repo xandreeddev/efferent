@@ -1,10 +1,7 @@
 import { Option, Result } from "effect"
+import { errorCodeOf } from "@xandreed/core"
 import type { BashExit, FsReason } from "@xandreed/core"
 import type { ProcessEnd } from "./local-system.entity.js"
-
-/** The `code` a Node error carries (`ENOENT`, `ERR_FS_EISDIR`, …), when it has one. */
-export const errorCodeOf = (error: unknown): Option.Option<string> =>
-  typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? Option.some(error.code) : Option.none()
 
 /** A thrown value's message, for the `message` of the error it becomes. */
 export const errorMessageOf = (error: unknown): string => error instanceof Error ? error.message : String(error)

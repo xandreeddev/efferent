@@ -42,7 +42,7 @@ export const resolveGraph = (
     if (!SUPPORTED_PLUGIN_API_VERSIONS.includes(plugin.apiVersion)) return yield* invalid(`${entry.id}: plugin API ${plugin.apiVersion} is incompatible with ${PLUGIN_API_VERSION}`)
     const options = mergeOptions(plugin.schema, plugin.defaults, entry.options ?? {})
     yield* Schema.decodeUnknownEffect(plugin.schema)(options, { onExcessProperty: "error", reportInput: true }).pipe(
-      Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: entry.id, message: String(error) })),
+      Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: entry.id, message: error.message, cause: error })),
     )
     return { entry, plugin, options }
   }), { concurrency: 1 })

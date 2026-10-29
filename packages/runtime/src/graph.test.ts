@@ -97,7 +97,9 @@ describe("plugin graph", () => {
     })))
     expect(items).toEqual(["50", "2", "process"])
     const typo = await Effect.runPromise(Effect.flip(resolveGraph({ version: 1, plugins: [{ id: "n", use: "nested", options: { inbox: { maxPending: 50, typo: 1 } } }] }, [nested])))
-    expect(typo).toMatchObject({ code: "config.options", plugin: "n" })
+    expect(typo).toMatchObject({ code: "config.options", plugin: "n", cause: { _tag: "SchemaError" } })
+    expect(typo.message).toContain("typo")
+    expect(typo.message).not.toStartWith("SchemaError")
   })
   test("profiles are refused, not ignored", async () => {
     const configs = [
