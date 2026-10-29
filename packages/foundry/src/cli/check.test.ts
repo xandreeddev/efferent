@@ -71,6 +71,8 @@ const seedViolations = (dir: string): void => {
       "export const unbounded = Stream.callback<number>(() => Effect.void)",
       'export const ordered = ["b", "a"].sort((a, b) => a.localeCompare(b))',
       "export const Item = Schema.Struct({ id: Schema.String })",
+      "const LocalId = Schema.Trimmed.check(Schema.isNonEmpty())",
+      "export const Owned = Schema.Struct({ ownerId: Schema.optionalKey(Schema.String), localId: LocalId, itemId: Schema.optionalKey(Schema.String.pipe(Schema.brand(\"ItemId\"))) })",
       "export interface Item { readonly id: string }",
       "export const loop = (xs: ReadonlyArray<number>) => { for (const x of xs) { void x } }",
       "export const tag = (x: { readonly _tag: string }) => { switch (x._tag) { default: return 0 } }",

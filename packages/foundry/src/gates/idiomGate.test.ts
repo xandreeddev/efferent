@@ -72,12 +72,13 @@ describe("effect-idioms gate over fixtures", () => {
     ])
   })
 
-  test("effect/branded-id-fields flags unbranded id-shaped fields only", async () => {
+  test("effect/branded-id-fields flags unbranded id-shaped fields, through check chains, wrappers and local consts", async () => {
     const findings = await findingsFor(["effect/branded-id-fields"], ["unbrandedId.ts"])
-    expect(at(findings)).toEqual([
-      { rule: "effect/branded-id-fields", file: "unbrandedId.ts", line: 4 },
-      { rule: "effect/branded-id-fields", file: "unbrandedId.ts", line: 5 },
-    ])
+    // Not the `Branded` struct: a brand inside a wrapper, a pipe on a branded
+    // const, or an id declared elsewhere passes.
+    expect(at(findings)).toEqual(
+      [4, 5, 16, 17, 18, 19, 20, 21, 22, 23, 24].map((line) => ({ rule: "effect/branded-id-fields", file: "unbrandedId.ts", line })),
+    )
   })
 
   test("effect/no-loop-statements flags every loop kind", async () => {
