@@ -4,7 +4,7 @@ import type { Assessment } from "./assessment.usecase.js"
 import { ActionAssessment, CompletenessEvidence } from "./completeness.entity.js"
 
 /** The model labels actions; it never sets the denominator or aggregate score. */
-export const assessCompleteness = (evidence: CompletenessEvidence, raw: ReadonlyArray<ActionAssessment>): Effect.Effect<Assessment, AssessmentError> => Effect.gen(function* () {
+export const assessCompleteness = Effect.fnUntraced(function* (evidence: CompletenessEvidence, raw: ReadonlyArray<ActionAssessment>): Effect.fn.Return<Assessment, AssessmentError> {
   yield* Schema.decodeEffect(Schema.toType(CompletenessEvidence))(evidence).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: `Completeness evidence does not decode: ${error.message}`, cause: error })))
   const actions = yield* Schema.decodeEffect(Schema.toType(Schema.Array(ActionAssessment)))(raw).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: `Action assessments do not decode: ${error.message}`, cause: error })))
   if (evidence.required.length === 0) return yield* Effect.fail(new AssessmentError({ code: "unavailable", message: "No applicable required actions" }))

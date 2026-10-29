@@ -24,13 +24,40 @@ import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
 import { validateMetrics } from "../assessment.entity.functions.js"
 import { fingerprint } from "../domain/grading-context.entity.functions.js"
 
-export const gradeTrial = (
-  app: EvaluationApp,
-  trial: Trial,
-  onSettled: (trial: Trial) => Effect.Effect<void> = () => Effect.void,
-  timeoutMs = 60_000
-) =>
-  Effect.gen(function* () {
+/** A trial's span attributes, which logs written under its span carry as annotations. */
+const trialAttributes = (trial: Pick<Trial, "id" | "runId" | "suiteId" | "task" | "candidate" | "sample">) => ({
+  "eval.run.id": trial.runId,
+  "eval.trial.id": trial.id,
+  "eval.suite.id": trial.suiteId,
+  "eval.task.id": trial.task.id,
+  "eval.candidate.id": trial.candidate.id,
+  "eval.sample": trial.sample
+})
+
+/**
+ * Sets `attributes` on the span `Effect.fn` opened and annotates the logs
+ * under it with them. A pipeable gets the call's arguments; it takes them as
+ * a rest (`...[, trial]`), so the function keeps its optional parameters.
+ */
+const annotated =
+  (attributes: Record<string, unknown>) =>
+  <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    Effect.annotateCurrentSpan(attributes).pipe(
+      Effect.andThen(effect),
+      Effect.annotateLogs(attributes)
+    )
+
+/** A trial's id, `run/suite/candidate/task/sample`. */
+const trialPath = (runId: EvalId, suite: EvalId, candidate: EvalId, task: EvalId, sample: number) =>
+  EvalPath.make(`${runId}/${suite}/${candidate}/${task}/${sample}`)
+
+export const gradeTrial = Effect.fn("eval.grade")(
+  function* (
+    app: EvaluationApp,
+    trial: Trial,
+    onSettled: (trial: Trial) => Effect.Effect<void> = () => Effect.void,
+    timeoutMs = 60_000
+  ) {
     const store = yield* EvaluationRunStore
     const services = yield* EvaluationServices
     return yield* Effect.reduce(
@@ -158,7 +185,9 @@ export const gradeTrial = (
           return settled
         })
     )
-  })
+  },
+  (effect, ...[, trial]) => annotated(trialAttributes(trial))(effect)
+)
 
 /** A run id becomes the first segment of every trial id, so it must be an `EvalId`. */
 const decodeRunId = (runId: string) =>
@@ -173,142 +202,145 @@ const decodeRunId = (runId: string) =>
     )
   )
 
-const runTrial = (
-  app: EvaluationApp,
-  runId: EvalId,
-  suite: Suite,
-  task: Task,
-  candidate: Candidate,
-  sample: number,
-  selection: EvaluationSelection
-) =>
-  Effect.uninterruptibleMask((restore) =>
-    Effect.gen(function* () {
-      const store = yield* EvaluationRunStore
-      const startedAt = yield* Clock.currentTimeMillis
-      const initial: Trial = {
-        version: 1,
-        id: EvalPath.make(
-          `${runId}/${suite.id}/${candidate.id}/${task.id}/${sample}`
-        ),
-        runId,
-        suiteId: suite.id,
-        task,
-        candidate,
-        sample,
-        status: "running",
-        startedAt,
-        endedAt: startedAt,
-        output: Option.none(),
-        evidence: Option.none(),
-        outcome: Option.none(),
-        transcript: [],
-        reason: "",
-        grades: []
-      }
-      const state = yield* Ref.make(initial)
-      const writer = yield* Semaphore.make(1)
-      yield* store.writeTrial(initial)
-      const recorder: TrialRecorder["Service"] = {
-        record: (kind, data) =>
-          Effect.uninterruptible(
-            writer.withPermits(1)(
-              Effect.gen(function* () {
-                const current = yield* Ref.get(state)
-                if (current.status !== "running") return
-                const at = yield* Clock.currentTimeMillis
-                const updated = yield* Ref.updateAndGet(state, (trial) => ({
-                  ...trial,
-                  transcript: [
-                    ...trial.transcript,
-                    {
-                      id: EvalPath.make(
-                        `${trial.id}/event/${trial.transcript.length}`
-                      ),
-                      sequence: trial.transcript.length,
-                      at,
-                      kind,
-                      data
-                    }
-                  ]
-                }))
-                yield* store.writeTrial(updated)
-              })
-            )
-          )
-      }
-      const runnable = app.runnables.find(
-        (entry) => entry.definition.id === task.runnable
-      )
-      const environment = runnable?.environments.find(
-        (entry) =>
-          entry.id ===
-          (selection.environment ?? app.environmentFor[task.runnable])
-      )
-      const services = yield* EvaluationServices
-      const execution = yield* restore(
-        Effect.scoped(
-          Effect.gen(function* () {
-            if (!runnable || !environment)
-              return yield* Effect.fail(
-                new EvaluationError({
-                  code: "invalid",
-                  message: `No runnable/environment for ${task.runnable}`
-                })
-              )
-            const context = yield* services.execution(
-              task.runnable,
-              environment.id,
-              recorder
-            )
-            return yield* Effect.gen(function* () {
-              const runner = yield* TrialExecution
-              return yield* runner.execute(task.input, candidate, {
-                timeoutMs: suite.timeoutMs,
-                record: (outcome) => Ref.update(state, (trial) => ({
-                  ...trial,
-                  outcome: Option.some(outcome)
-                }))
-              })
-            }).pipe(Effect.provide(context))
-          })
-        ).pipe(
-          Effect.timeoutOrElse({
-            duration: suite.timeoutMs,
-            orElse: () =>
-              Effect.fail(
-                new EvaluationError({
-                  code: "timeout",
-                  message: "Trial deadline exceeded"
-                })
-              )
-          })
-        )
-      ).pipe(Effect.exit)
-      return yield* writer.withPermits(1)(Effect.gen(function* () {
-        const recorded = yield* Ref.get(state)
-        const completed: Trial = {
-          ...recorded,
-          endedAt: yield* Clock.currentTimeMillis,
-          status: Exit.isSuccess(execution)
-            ? "completed"
-            : Cause.hasInterruptsOnly(execution.cause)
-              ? "cancelled"
-              : "error",
-          output: Exit.isSuccess(execution)
-            ? Option.some(execution.value.output)
-            : Option.none(),
-          evidence: Exit.isSuccess(execution)
-            ? Option.some(execution.value.evidence)
-            : Option.none(),
-          reason: Exit.isSuccess(execution) ? "" : reasonOf(execution.cause)
+const runTrial = Effect.fn("eval.trial")(
+  function* (
+    app: EvaluationApp,
+    runId: EvalId,
+    suite: Suite,
+    task: Task,
+    candidate: Candidate,
+    sample: number,
+    selection: EvaluationSelection
+  ) {
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        const store = yield* EvaluationRunStore
+        const startedAt = yield* Clock.currentTimeMillis
+        const initial: Trial = {
+          version: 1,
+          id: trialPath(runId, suite.id, candidate.id, task.id, sample),
+          runId,
+          suiteId: suite.id,
+          task,
+          candidate,
+          sample,
+          status: "running",
+          startedAt,
+          endedAt: startedAt,
+          output: Option.none(),
+          evidence: Option.none(),
+          outcome: Option.none(),
+          transcript: [],
+          reason: "",
+          grades: []
         }
-        yield* Ref.set(state, completed)
-        yield* store.writeTrial(completed)
-        return completed
-      }))
-    })
-  )
+        const state = yield* Ref.make(initial)
+        const writer = yield* Semaphore.make(1)
+        yield* store.writeTrial(initial)
+        const recorder: TrialRecorder["Service"] = {
+          record: (kind, data) =>
+            Effect.uninterruptible(
+              writer.withPermits(1)(
+                Effect.gen(function* () {
+                  const current = yield* Ref.get(state)
+                  if (current.status !== "running") return
+                  const at = yield* Clock.currentTimeMillis
+                  const updated = yield* Ref.updateAndGet(state, (trial) => ({
+                    ...trial,
+                    transcript: [
+                      ...trial.transcript,
+                      {
+                        id: EvalPath.make(
+                          `${trial.id}/event/${trial.transcript.length}`
+                        ),
+                        sequence: trial.transcript.length,
+                        at,
+                        kind,
+                        data
+                      }
+                    ]
+                  }))
+                  yield* store.writeTrial(updated)
+                })
+              )
+            )
+        }
+        const runnable = app.runnables.find(
+          (entry) => entry.definition.id === task.runnable
+        )
+        const environment = runnable?.environments.find(
+          (entry) =>
+            entry.id ===
+            (selection.environment ?? app.environmentFor[task.runnable])
+        )
+        const services = yield* EvaluationServices
+        const execution = yield* restore(
+          Effect.scoped(
+            Effect.gen(function* () {
+              if (!runnable || !environment)
+                return yield* Effect.fail(
+                  new EvaluationError({
+                    code: "invalid",
+                    message: `No runnable/environment for ${task.runnable}`
+                  })
+                )
+              const context = yield* services.execution(
+                task.runnable,
+                environment.id,
+                recorder
+              )
+              return yield* Effect.gen(function* () {
+                const runner = yield* TrialExecution
+                return yield* runner.execute(task.input, candidate, {
+                  timeoutMs: suite.timeoutMs,
+                  record: (outcome) => Ref.update(state, (trial) => ({
+                    ...trial,
+                    outcome: Option.some(outcome)
+                  }))
+                })
+              }).pipe(Effect.provide(context))
+            })
+          ).pipe(
+            Effect.timeoutOrElse({
+              duration: suite.timeoutMs,
+              orElse: () =>
+                Effect.fail(
+                  new EvaluationError({
+                    code: "timeout",
+                    message: "Trial deadline exceeded"
+                  })
+                )
+            })
+          )
+        ).pipe(Effect.exit)
+        return yield* writer.withPermits(1)(Effect.gen(function* () {
+          const recorded = yield* Ref.get(state)
+          const completed: Trial = {
+            ...recorded,
+            endedAt: yield* Clock.currentTimeMillis,
+            status: Exit.isSuccess(execution)
+              ? "completed"
+              : Cause.hasInterruptsOnly(execution.cause)
+                ? "cancelled"
+                : "error",
+            output: Exit.isSuccess(execution)
+              ? Option.some(execution.value.output)
+              : Option.none(),
+            evidence: Exit.isSuccess(execution)
+              ? Option.some(execution.value.evidence)
+              : Option.none(),
+            reason: Exit.isSuccess(execution) ? "" : reasonOf(execution.cause)
+          }
+          yield* Ref.set(state, completed)
+          yield* store.writeTrial(completed)
+          return completed
+        }))
+      })
+    )
+  },
+  (effect, ...[, runId, suite, task, candidate, sample]) =>
+    annotated(trialAttributes({ id: trialPath(runId, suite.id, candidate.id, task.id, sample), runId, suiteId: suite.id, task, candidate, sample }))(effect)
+)
 
 /** Identifies captured execution independently of grader revisions and their reports. */
 export const executionFingerprint = (run: EvaluationRun) =>
@@ -343,17 +375,17 @@ export const executionFingerprint = (run: EvaluationRun) =>
   })
 
 /** Regrades captured work. This use case never opens an environment or invokes a runnable. */
-export const gradeEvaluation = (
-  app: EvaluationApp,
-  source: EvaluationRun,
-  runId: string,
-  selection: GradingSelection = {}
-): Effect.Effect<
-  EvaluationRun,
-  EvaluationError,
-  EvaluationRunStore | EvaluationServices
-> =>
-  Effect.gen(function* () {
+export const gradeEvaluation = Effect.fn("eval.regrade")(
+  function* (
+    app: EvaluationApp,
+    source: EvaluationRun,
+    runId: string,
+    selection: GradingSelection = {}
+  ): Effect.fn.Return<
+    EvaluationRun,
+    EvaluationError,
+    EvaluationRunStore | EvaluationServices
+  > {
     yield* parseEvaluationApp(app)
     const id = yield* decodeRunId(runId)
     if (source.application !== app.id)
@@ -426,9 +458,7 @@ export const gradeEvaluation = (
           )
         const revised: Trial = {
           ...trial,
-          id: EvalPath.make(
-            `${id}/${trial.suiteId}/${trial.candidate.id}/${trial.task.id}/${trial.sample}`
-          ),
+          id: trialPath(id, trial.suiteId, trial.candidate.id, trial.task.id, trial.sample),
           runId: id,
           task: {
             ...trial.task,
@@ -486,18 +516,20 @@ export const gradeEvaluation = (
     const store = yield* EvaluationRunStore
     yield* store.writeRun(run)
     return run
-  })
+  },
+  (effect, ...[, , runId]) => annotated({ "eval.run.id": runId })(effect)
+)
 
-export const runEvaluation = (
-  app: EvaluationApp,
-  runId: string,
-  selection: EvaluationSelection
-): Effect.Effect<
-  EvaluationRun,
-  EvaluationError,
-  EvaluationRunStore | EvaluationServices
-> =>
-  Effect.gen(function* () {
+export const runEvaluation = Effect.fn("eval.run")(
+  function* (
+    app: EvaluationApp,
+    runId: string,
+    selection: EvaluationSelection
+  ): Effect.fn.Return<
+    EvaluationRun,
+    EvaluationError,
+    EvaluationRunStore | EvaluationServices
+  > {
     yield* parseEvaluationApp(app)
     const id = yield* decodeRunId(runId)
     if (
@@ -621,39 +653,44 @@ export const runEvaluation = (
     const store = yield* EvaluationRunStore
     yield* store.writeRun(run)
     return selection.executeOnly ? run : yield* gradeEvaluation(app, run, id)
-  })
+  },
+  (effect, ...[, runId]) => annotated({ "eval.run.id": runId })(effect)
+)
 
-export const calibrateGrader = (
-  app: EvaluationApp,
-  id: string,
-  runId: string,
-  selection: EvaluationSelection
-) => {
-  const calibration = app.calibrations.find((entry) => entry.id === id)
-  return calibration
-    ? runEvaluation(
-        {
-          ...app,
-          suites: [calibration.suite],
-          calibrations: app.calibrations.filter((entry) => entry.id !== calibration.id),
-          fingerprints: {
-            ...app.fingerprints,
-            calibration: `${calibration.id}@${calibration.version}`,
-            calibratedGrader: `${calibration.grader.id}@${calibration.grader.version}`,
-            ...Object.fromEntries(
-              Object.entries(calibration.grader.fingerprints).map(
-                ([key, value]) => [`calibratedGrader:${key}`, value]
-              )
-            )
-          }
-        },
-        runId,
-        { ...selection, ids: [calibration.suite.id] }
-      )
-    : Effect.fail(
+export const calibrateGrader = Effect.fn("eval.calibrate")(
+  function* (
+    app: EvaluationApp,
+    id: string,
+    runId: string,
+    selection: EvaluationSelection
+  ) {
+    const calibration = app.calibrations.find((entry) => entry.id === id)
+    if (!calibration)
+      return yield* Effect.fail(
         new EvaluationError({
           code: "invalid",
           message: `Unknown calibration ${id}`
         })
       )
-}
+    return yield* runEvaluation(
+      {
+        ...app,
+        suites: [calibration.suite],
+        calibrations: app.calibrations.filter((entry) => entry.id !== calibration.id),
+        fingerprints: {
+          ...app.fingerprints,
+          calibration: `${calibration.id}@${calibration.version}`,
+          calibratedGrader: `${calibration.grader.id}@${calibration.grader.version}`,
+          ...Object.fromEntries(
+            Object.entries(calibration.grader.fingerprints).map(
+              ([key, value]) => [`calibratedGrader:${key}`, value]
+            )
+          )
+        }
+      },
+      runId,
+      { ...selection, ids: [calibration.suite.id] }
+    )
+  },
+  (effect, ...[, id, runId]) => annotated({ "eval.run.id": runId, "eval.calibration.id": id })(effect)
+)

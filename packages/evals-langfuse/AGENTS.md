@@ -10,6 +10,7 @@ Exports a saved `EvaluationRun` to Langfuse through its official client (`@langf
 - Export only `scored` grades' `boolean`, `score` and `probability` metrics, as `NUMERIC` scores named `<grader>@<version>/<scope>/<metric>`; `preference` stays local.
 - Send at most 50 events per ingestion batch; any rejected event fails the export as `provider`.
 - Fail with an `EvaluationError` (`invalid` when the run does not encode, `provider` for the service) that keeps the schema or client error as `cause`; the message is `Langfuse export: ` and the client's reason (`reasonOf(Cause.die(error))`), never `String(error)`. The local report is never touched.
+- `exportRun` is one `eval.export` span (`Effect.fn`) carrying `eval.exporter: "langfuse"` and the run's `eval.run.id`.
 
 ## Public surface
 
@@ -35,6 +36,7 @@ None.
 
 - `src/export.test.ts:12`: runs the evals fixture app (`@xandreed/evals/testing/fixture.testing`) and exports it to a key-free `Bun.serve` stand-in on loopback.
 - `src/export.test.ts:97`: an ingestion refused with 401 fails as `provider`, the client's error as its cause.
+- `src/export.test.ts:126`: a failed export is still one `eval.export` span with the exporter and run ids.
 - `bun run verify:packages` imports the packed exporter on Node (`scripts/evaluation-consumer.fixture.mjs`).
 - Run: `env -u HTTP_PROXY -u HTTPS_PROXY bun test packages/evals-langfuse`.
 

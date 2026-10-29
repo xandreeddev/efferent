@@ -8,6 +8,7 @@ import { semanticResponseSchema, validateSemanticAnswers } from "./semantic.enti
 import { semanticEvaluator } from "./evaluators/semantic.js"
 import { SemanticJevLive } from "./adapters/semantic-jev.adapter.js"
 import { SemanticLlmLive } from "./adapters/semantic-llm.adapter.js"
+import { spanRecorder } from "./testing/fixture.testing.js"
 
 const input: SemanticInput = { state: "Answer: open at 09:00. Evidence: hours 09:00–17:00.", questions: {
   groundedness: { type: "boolean", instructions: "All factual claims are supported by the evidence." },
@@ -79,6 +80,22 @@ test("native LLM profiles pair distinct prompts and model Layers with the same r
     expect(Option.getOrThrow(a[0]!.usage.outputTokens)).toBe(5)
     expect(Option.isNone(a[0]!.usage.costUsd)).toBe(true)
   }))
+})
+
+test("a semantic assessment is traced: eval.semantic.run under eval.evaluator, the judge's call under it", async () => {
+  const jev = spanRecorder()
+  await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(
+    Effect.provide(SemanticJevLive({ evaluate: async () => ({ answers }) })), Effect.withTracer(jev.tracer),
+  ))
+  expect(jev.named("eval.semantic.run").map(jev.parentOf)).toEqual(["eval.evaluator"])
+  expect(jev.named("eval.semantic.jev").map((span) => [jev.parentOf(span), span.attributes.get("gen_ai.request.model")])).toEqual([["eval.semantic.run", "typesafe-ai/jev"]])
+  const llm = spanRecorder()
+  await Effect.runPromise(Effect.gen(function* () {
+    const prompts = yield* Ref.make<ReadonlyArray<string>>([])
+    const judge = SemanticLlmLive({ id: "llm-traced", prompt: (request) => Prompt.make([{ role: "user", content: JSON.stringify(request) }]) }).pipe(Layer.provide(model(prompts)))
+    return yield* assessAll(bindings, { state: input.state }).pipe(Effect.provide(judge))
+  }).pipe(Effect.withTracer(llm.tracer)))
+  expect(llm.named("eval.semantic.llm").map((span) => [llm.parentOf(span), span.attributes.get("eval.backend")])).toEqual([["eval.semantic.run", "llm-traced"]])
 })
 
 test("malformed, mismatched and non-finite answers fail without scores", async () => {

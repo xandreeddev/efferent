@@ -8,7 +8,7 @@ export const validateSemanticInput = (input: SemanticInput) => Schema.decodeEffe
   Effect.mapError((error) => invalid(`Semantic input does not decode: ${error.message}`, error)),
 )
 
-export const validateSemanticAnswers = (input: SemanticInput, value: unknown) => Effect.gen(function* () {
+export const validateSemanticAnswers = Effect.fnUntraced(function* (input: SemanticInput, value: unknown) {
   yield* validateSemanticInput(input)
   const answers = yield* Schema.decodeUnknownEffect(SemanticAnswers)(value).pipe(Effect.mapError((error) => invalid(`Judge answers do not decode: ${error.message}`, error)))
   const ids = Object.keys(input.questions)

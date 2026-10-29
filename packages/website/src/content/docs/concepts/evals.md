@@ -188,6 +188,22 @@ Register `langfuseExporter(options)` or `langsmithExporter(options)` in the app'
 
 Export after a run is best-effort and produces separate receipts/errors after the local report is durable. A failed export is a `provider` error whose message carries the service's reason (`LangSmith export: Failed to create project. Received status [401]…`) and whose `cause` is the client's error; a receipt keeps the message only. The explicit export command can retry a saved report. Live application telemetry is a separate concern and is not reconfigured by evaluation export.
 
+## Traces
+
+A host that runs the use cases under a tracer (`Effect.withTracer`, or its telemetry layer) sees one span per unit of work:
+
+```text
+eval.calibrate         calibrateGrader: eval.calibration.id, eval.run.id
+└─ eval.run            runEvaluation: eval.run.id
+   ├─ eval.trial       one trial: eval.run.id, eval.trial.id, eval.suite.id, eval.task.id, eval.candidate.id, eval.sample
+   │  └─ (the runnable's own spans; a calibration's eval.calibration.execute)
+   └─ eval.regrade     gradeEvaluation, also on its own over saved work: eval.run.id
+      └─ eval.grade    gradeTrial, one trial's grades: the trial's ids
+         └─ (the projection's and graders' spans: eval.calibration.project, eval.retrieval.assess)
+```
+
+Logs written under `eval.trial` and `eval.grade` carry the same ids as annotations, under the same keys. Dataset-level assessment opens `eval.evaluator` per evaluator, `eval.semantic.run` for `semanticEvaluator`, the judges' `eval.semantic.llm` and `eval.semantic.jev`, and `eval.pairwise` over both orders. Each exporter's `exportRun` is one `eval.export` span carrying `eval.exporter` and `eval.run.id`.
+
 ## Retrieval grading
 
 `rankingMetrics` provides hit rate, precision, recall, MRR, nDCG, anchor nDCG and unjudged/duplicate counts. Unknown relevance makes judged precision/full nDCG unavailable. Anchor nDCG deliberately measures against the known positive anchors and must be named as such. Applications may supply observed relevance grades when they own a stronger duplicate identity rule.

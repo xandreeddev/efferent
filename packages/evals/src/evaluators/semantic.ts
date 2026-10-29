@@ -13,7 +13,7 @@ export const semanticEvaluator = <I>(options: {
   readonly state: (input: I) => string
 }): Evaluator<I, SemanticJudge> => ({
   id: options.id, version: options.version, metrics: Object.keys(options.questions),
-  run: (input) => Effect.gen(function* () {
+  run: Effect.fn("eval.semantic.run")(function* (input) {
     const request = yield* validateSemanticInput({ state: options.state(input), questions: options.questions })
     if (Object.values(request.questions).some((question) => question.type === "choice" && Object.keys(question.criteria).some((key) => !["A", "B", "tie"].includes(key))))
       return yield* Effect.fail(new AssessmentError({ code: "invalid", message: "Preference metrics require A/B/tie choices; use SemanticJudge directly for categorical decisions" }))

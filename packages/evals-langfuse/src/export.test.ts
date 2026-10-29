@@ -6,7 +6,7 @@ import {
   EvaluationRunStore,
   runEvaluation
 } from "@xandreed/evals"
-import { fixture } from "@xandreed/evals/testing/fixture.testing"
+import { fixture, spanRecorder } from "@xandreed/evals/testing/fixture.testing"
 import { langfuseExporter } from "./langfuse-export.adapter.js"
 
 test("official SDK exports linked trial metadata and measured scores", async () => {
@@ -121,4 +121,28 @@ test("a refused ingestion is a provider error that keeps the client's error as i
   expect(refused.message).toStartWith("Langfuse export: UnauthorizedError")
   expect(refused.message).toContain("Status code: 401")
   expect(refused.cause).toBeInstanceOf(Error)
+})
+
+test("an export is one eval.export span naming the exporter and the run, failed or not", async () => {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json({ message: "Invalid credentials" }, { status: 401 })
+  })
+  const { tracer, named } = spanRecorder()
+  const report = await Effect.runPromise(
+    runEvaluation(fixture(), "fixture-run", { ids: [], split: "validation" }).pipe(
+      Effect.provide(EvaluationServicesLive(fixture())),
+      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void }))
+    )
+  )
+  await Effect.runPromise(
+    EvaluationExport.use((port) => port.exportRun(report)).pipe(
+      Effect.provide(langfuseExporter({ baseUrl: `http://127.0.0.1:${server.port}`, publicKey: "fixture", secretKey: "fixture" }).layer),
+      Effect.flip,
+      Effect.withTracer(tracer),
+      Effect.ensuring(Effect.sync(() => server.stop(true)))
+    )
+  )
+  expect(named("eval.export").map((span) => [span.attributes.get("eval.exporter"), span.attributes.get("eval.run.id")])).toEqual([["langfuse", "fixture-run"]])
 })

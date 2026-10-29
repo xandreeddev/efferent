@@ -46,10 +46,8 @@ const upsert = (create: () => Promise<unknown>, update: () => Promise<unknown>) 
  * first export created.
  */
 const exportService = (options: LangSmithExportOptions) => ({
-  exportRun: (
-    run: EvaluationRun
-  ): Effect.Effect<ExportReceipt, EvaluationError> =>
-    Effect.gen(function* () {
+  exportRun: Effect.fn("eval.export", { attributes: { "eval.exporter": "langsmith" } })(
+    function* (run: EvaluationRun): Effect.fn.Return<ExportReceipt, EvaluationError> {
       const encoded = yield* Schema.encodeEffect(EvaluationRun)(run).pipe(
         Effect.mapError(
           (error) =>
@@ -161,7 +159,9 @@ const exportService = (options: LangSmithExportOptions) => ({
         at: Date.now(),
         mappings
       }
-    })
+    },
+    (effect, run) => Effect.annotateCurrentSpan("eval.run.id", run.id).pipe(Effect.andThen(effect))
+  )
 })
 export const EvaluationExportLangSmithLive = (
   options: LangSmithExportOptions

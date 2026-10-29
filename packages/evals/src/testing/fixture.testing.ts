@@ -3,7 +3,7 @@ import { TrialRecorder } from "../ports/trial-recorder.port.js"
 import { evaluationEnvironmentPort } from "../ports/evaluation-environment.port.js"
 import { EvidenceProjector } from "../ports/evidence-projector.port.js"
 import { GraderAssessment } from "../ports/grader-assessment.port.js"
-import { Effect, Option, Schema, Layer } from "effect"
+import { Effect, Option, Schema, Layer, Tracer } from "effect"
 import { EvalId, defineRunnable, gradingContext, type EvaluationApp } from "../index.js"
 import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
 
@@ -132,3 +132,24 @@ export const fixture = (
     }
   ]
 })
+
+/** A tracer that keeps every span it opens: `named` finds them, `parentOf` names a kept span's parent. */
+export const spanRecorder = () => {
+  const spans: Array<Tracer.NativeSpan> = []
+  const tracer = Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options)
+      spans.push(span)
+      return span
+    }
+  })
+  const named = (name: string) => spans.filter((span) => span.name === name)
+  const parentOf = (span: Tracer.NativeSpan | undefined) =>
+    Option.fromNullishOr(span).pipe(
+      Option.flatMap((child) => child.parent),
+      Option.flatMap((parent) => Option.fromNullishOr(spans.find((each) => each.spanId === parent.spanId))),
+      Option.map((parent) => parent.name),
+      Option.getOrElse(() => "")
+    )
+  return { spans, tracer, named, parentOf }
+}

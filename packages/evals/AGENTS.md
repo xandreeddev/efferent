@@ -16,6 +16,7 @@ The evaluation domain: tasks, runnables, candidates, trials, transcripts, outcom
 - A `metadata` field (`Grade`, `EvaluationResult`, `SemanticResult`, `Assessment`) is a `Schema.JsonObject`: it is stored and exported as JSON.
 - Order with an explicit `Order` (`Order.String`, code-unit order), never the locale: fingerprints and comparison lines must match on every machine.
 - Persist each transcript event and the settled trial as they happen; a trial settles under `uninterruptibleMask`, so an interrupted one is stored as `cancelled`.
+- A use case or port method that runs once per run, trial, grade or judge call is `Effect.fn("eval.<op>")`, one span per call: `eval.run`, `eval.trial`, `eval.regrade` (`gradeEvaluation`), `eval.grade` (`gradeTrial`), `eval.calibrate`, `eval.calibration.execute` and `.project`, `eval.pairwise`, `eval.retrieval.assess`, `eval.semantic.run`, the judges' `eval.semantic.llm` and `.jev`; `assess` keeps its `eval.evaluator` span. A pipeable sets the ids on the span and on the logs under it, under the same keys (`eval.run.id`, `eval.trial.id`, `eval.suite.id`, `eval.task.id`, `eval.candidate.id`, `eval.sample`). Validators and judge constructors are `Effect.fnUntraced`.
 - Service keys are `efferent/evals/<Name>` (per app: `efferent/evals/<id>/RunnableExecution`, `…/EvaluationEnvironment`); never rename one.
 
 ## Public surface
@@ -51,11 +52,11 @@ None.
 | `src/adapters/` | `EvaluationServicesLive`, `defineRunnable`, `defineGraderCalibration`, `isolatedServices`, the LLM and Jev semantic judges |
 | `src/graders/retrieval/` | ranking metrics and the three judged retrieval graders |
 | `src/*.ts`, `src/evaluators/` | dataset-level assessment (`assessment.*`, `semantic.*`, `completeness.*`, `decision-comparison.*`, `evaluation-score.*`, `evaluator-*`, `evaluators/semantic.ts`), `stats.ts`, `cli.functions.ts`; `evaluators/llm.ts` and `evaluators/pairwise.ts` are not exported |
-| `src/testing/` | `fixture.testing.ts` (the fixture app the exporter tests reuse) and the use-case tests; the build leaves the whole folder out |
+| `src/testing/` | `fixture.testing.ts` (the fixture app and the `spanRecorder` tracer the exporter tests reuse) and the use-case tests; the build leaves the whole folder out |
 
 ## Tests
 
-- `src/testing/`: `evaluation.test.ts` (runner, gates, reasons, app violations), `scoped-layers.test.ts` (scopes, timeouts, late callbacks), `typed-ports.test.ts`, `grader-calibration.test.ts`; `src/semantic.test.ts`, `src/assessment.test.ts`, `src/evaluation-contract.test.ts`, `src/decision-comparison.test.ts`, `src/graders/retrieval/semantic-retrieval.test.ts`, `src/domain/identity.entity.functions.test.ts` (`reasonOf`), `src/stats.test.ts`; every judge is scripted, no keys.
+- `src/testing/`: `evaluation.test.ts` (runner, gates, reasons, app violations), `traces.test.ts` (the span tree and its ids), `scoped-layers.test.ts` (scopes, timeouts, late callbacks), `typed-ports.test.ts`, `grader-calibration.test.ts`; `src/semantic.test.ts`, `src/assessment.test.ts`, `src/evaluation-contract.test.ts`, `src/decision-comparison.test.ts`, `src/graders/retrieval/semantic-retrieval.test.ts`, `src/domain/identity.entity.functions.test.ts` (`reasonOf`), `src/stats.test.ts`; every judge is scripted, no keys.
 - `bun run verify:packages` imports the packed package on Node and runs `scripts/evaluation-consumer.fixture.mjs` (a typed function suite through the packed CLI).
 - Run: `bun test packages/evals/src`.
 

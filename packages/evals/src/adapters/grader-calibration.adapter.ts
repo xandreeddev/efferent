@@ -68,7 +68,7 @@ const calibrationOf = <I>(options: GraderCalibrationOptions<I>, inputs: Readonly
       inspect: (world) => Ref.get(world).pipe(Effect.map((value) => ({ state: Option.getOrNull(value), references: [] }))),
     }) }],
     layer: Layer.succeed(runnablePort, {
-      execute: (input, selected, world) => Effect.gen(function* () {
+      execute: Effect.fn("eval.calibration.execute", { attributes: { "eval.calibration.id": id } })(function* (input, selected, world) {
         const recorder = yield* TrialRecorder
         const context = yield* gradingContext({ projection: options.grader.definition.id, version: options.version,
           schema: options.input, input, budget, references: [], omissions: [] })
@@ -89,7 +89,7 @@ const calibrationOf = <I>(options: GraderCalibrationOptions<I>, inputs: Readonly
   const projection: ProjectionRegistration = {
     definition: { id: EvalId.make(agreementId), version: options.version, budget },
     layer: Layer.succeed(EvidenceProjector, {
-      project: (trial) => Effect.gen(function* () {
+      project: Effect.fn("eval.calibration.project", { attributes: { "eval.calibration.id": id } })(function* (trial) {
         const observation = yield* decode(CalibrationObservation, Option.getOrNull(trial.output))
         const reference = yield* decode(CalibrationReference, trial.task.reference)
         return yield* gradingContext({ projection: agreementId, version: options.version, schema: AgreementInput,

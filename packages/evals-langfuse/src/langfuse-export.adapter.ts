@@ -21,10 +21,8 @@ const EXPORT_CONCURRENCY = 4
 const remoteId = (id: string) =>
   createHash("sha256").update(id).digest("hex").slice(0, 32)
 const exportService = (options: LangfuseExportOptions) => ({
-  exportRun: (
-    run: EvaluationRun
-  ): Effect.Effect<ExportReceipt, EvaluationError> =>
-    Effect.gen(function* () {
+  exportRun: Effect.fn("eval.export", { attributes: { "eval.exporter": "langfuse" } })(
+    function* (run: EvaluationRun): Effect.fn.Return<ExportReceipt, EvaluationError> {
       const encoded = yield* Schema.encodeEffect(EvaluationRun)(run).pipe(
         Effect.mapError(
           (error) =>
@@ -121,7 +119,9 @@ const exportService = (options: LangfuseExportOptions) => ({
         at: Date.now(),
         mappings
       }
-    })
+    },
+    (effect, run) => Effect.annotateCurrentSpan("eval.run.id", run.id).pipe(Effect.andThen(effect))
+  )
 })
 export const EvaluationExportLangfuseLive = (options: LangfuseExportOptions) =>
   Layer.succeed(EvaluationExport, exportService(options))
