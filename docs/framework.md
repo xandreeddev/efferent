@@ -765,6 +765,12 @@ text (step context included in `"system"` mode) and the tool declarations.
 Earlier logs without a header remain readable but cannot reconstruct this
 additional metadata.
 
+A streamed step stores the assistant message a non-streamed one stores: its
+text and reasoning parts keep their provider metadata (Anthropic's thinking
+signature and redacted thinking, the `itemId` and `encryptedContent` of an
+OpenAI Responses reasoning item), so the later requests of the session, and
+their replays, send that reasoning back either way.
+
 Effect AI models hide provider configuration inside adapters. Efferent's
 provider adapters and routers describe their public options with
 `describeModel(model, { provider, model, settings })`; hosts should do the

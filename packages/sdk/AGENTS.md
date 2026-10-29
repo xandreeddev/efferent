@@ -25,6 +25,7 @@ None of its own: the system prompt prefix is the host's (`AgentConfig.system`, a
 | Pinned text | Source | Pinned by |
 |---|---|---|
 | Every model request of the golden conversation: system prompts with the tool-discovery catalogue, tool descriptions and schemas (`load_skill`, `recall_context`, the host's), memory renderings (a `CompactViews` compaction, a digested result), seeded `load_skill` exchanges | `golden/agent-turn.model.json` | exact text, `src/agent.golden.test.ts:317`; over three storage backends, `src/agent.backends.test.ts` |
+| Every model request of a streamed conversation: signed and redacted thinking sent back with its provider metadata, by the next request, the journal's rebuild of it and a second agent | `golden/agent-stream.model.json` | exact text, `src/agent.stream-golden.test.ts` |
 
 The golden has no spill, dropped-turn or summary scenario: those texts are pinned, or not, in their plugins.
 
@@ -40,11 +41,12 @@ None.
 | `src/index.ts` | core re-export and the sdk's own exports |
 | `src/testing.port.ts` | test-only services for the agent tests |
 | `golden/agent-turn.model.json`, `golden/agent-turn.journal.json` | the golden conversation: what the model and host see, and what is stored |
+| `golden/agent-stream.model.json` | the streamed golden: what a streamed conversation sends and stores |
 | `fixtures/journal-<version>.json` | journals each release wrote |
 
 ## Tests
 
-- Golden and composition: `agent.golden.test.ts`, `agent.backends.test.ts`, `turn-composition.test.ts` (also runs core's `turnConformance`), `plugin-stack.test.ts`.
+- Golden and composition: `agent.golden.test.ts`, `agent.stream-golden.test.ts`, `agent.backends.test.ts`, `turn-composition.test.ts` (also runs core's `turnConformance`), `plugin-stack.test.ts`.
 - Behaviour: `agent.adapter.test.ts`, `agent.trace.test.ts` (span nesting and ids), `activity.test.ts`, `models-plugin.test.ts`; the key-free journey `resume.journey.test.ts`.
 - Kits and compatibility: `memory.conformance.test.ts` (core's `memoryConformance` over the window and summary strategies and a test-only one), `journal-compat.test.ts`, `events-guide.test.ts`.
 - Run: `bun test packages/sdk`.
