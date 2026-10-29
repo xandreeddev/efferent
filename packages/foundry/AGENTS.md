@@ -119,7 +119,8 @@ shrinks: an entry naming a file the rule does not check, or one it no
 longer flags, is itself a finding under the rule's id
 (`architecture/role-suffix-required`'s `ROLELESS_FILES`,
 `effect/no-option-unwrap`'s `NULLABLE_EDGES`, `effect/no-unknown-json`'s
-`UNKNOWN_JSON_EDGES`, `effect/no-record-cast`'s `RECORD_CAST_EDGES`). A
+`UNKNOWN_JSON_EDGES`, `effect/no-record-cast`'s `RECORD_CAST_EDGES`,
+`effect/no-provider-namespace`'s `PROVIDER_NAMESPACE_EDGES`). A
 new rule that needs a per-file exemption uses `exclude`, `allow` for
 today's exceptions, or a boundary when only part of what it flags is the
 design there. A rule with
@@ -142,9 +143,13 @@ crosses a boundary instead of trusting it: `effect/no-unknown-json`
 `Schema.fromJsonString(Schema.Unknown)`, except as the argument of a
 `Schema.encode*` call, which writes a value out) and
 `effect/no-record-cast` (`as Record<string, unknown|any>` and `as { … }`).
+`effect/no-provider-namespace` keeps provider-neutral code opaque to the
+providers: an `anthropic`, `openai`, `google` or `router` key, written in
+an object or a type, destructured or read (`x.openai`, `x["router"]`).
 In the root profile each runs over every package (`CHECKED`), less the
 files its entry excludes, but `prefer-effect-fn`, which still enters
-package by package.
+package by package, and `no-provider-namespace`, which runs in the two
+provider-neutral packages, core and the agent loop (`PROVIDER_NEUTRAL`).
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

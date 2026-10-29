@@ -2,7 +2,7 @@ import { AiError, LanguageModel } from "effect/ai"
 import type { Response } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Cause, Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Predicate, Ref, Stream } from "effect"
-import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, harnessError, parseModelSelection, reasonOf, replayableContext, resolvingModel, SettingsStore } from "@xandreed/core"
+import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, harnessError, parseModelSelection, reasonOf, replayableContext, resolvingModel, SettingsStore, stampPartModel, stampResponseModel, storedJson } from "@xandreed/core"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, endpointOwnKey, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
@@ -181,16 +181,16 @@ export const withConfiguredEffort = <A, E, R>(
     ),
 )
 
-/** Requested routing profile, before explicit fallback/retry policy chooses a transport attempt. */
+/** Requested routing profile, before explicit fallback/retry policy chooses a transport attempt. The
+ *  call policy is recorded as JSON, as the request header stores it: a field it leaves unset is left out. */
 const describeSelection = (primary: ModelSelection, fallback: Option.Option<ModelSelection>, effort: EngineSettings["reasoningEffort"]) =>
-  Effect.service(CurrentModelCallPolicy).pipe(Effect.map((current) => ({
-    provider: primary.provider,
-    model: primary.modelId,
-    settings: {
-      fallback: Option.getOrElse(Option.map(fallback, formatModelSelection), () => null),
-      policy: Option.getOrElse(Option.orElse(current, () => Option.map(effort, (value) => ({ effort: value }))), () => null),
-    },
-  })))
+  Effect.service(CurrentModelCallPolicy).pipe(Effect.flatMap((current) => storedJson({
+    fallback: Option.getOrElse(Option.map(fallback, formatModelSelection), () => null),
+    policy: Option.getOrElse(Option.orElse(current, () => Option.map(effort, (value) => ({ effort: value }))), () => null),
+  })), Effect.mapBoth({
+    onFailure: (error) => harnessError("request.model", `the routed model's settings are not JSON: ${error.message}`, error),
+    onSuccess: (settings) => ({ provider: primary.provider, model: primary.modelId, settings }),
+  }))
 
 /**
  * The credential and key one call uses. An endpoint with its own key
@@ -270,7 +270,7 @@ export const generateWith = <O extends PromptOptions>(
       built.svc.generateText(
         shapeOptions(built, options) as never,
       ) as Effect.Effect<{
-        readonly content: ReadonlyArray<unknown>
+        readonly content: ReadonlyArray<Response.AnyPart>
         readonly usage: unknown
       }, AiError.AiError>
     ).pipe(
@@ -354,31 +354,21 @@ export const withFallbackRung = <A, E, R>(
     ),
   )
 
-const stampModel = (part: unknown, label: string): unknown => {
-  if (typeof part !== "object" || part === null) return part
-  const p = part as { readonly type?: unknown; readonly metadata?: unknown }
-  if (p.type !== "finish") return part
-  const metadata =
-    typeof p.metadata === "object" && p.metadata !== null
-      ? (p.metadata as Record<string, unknown>)
-      : {}
-  return { ...p, metadata: { ...metadata, router: { model: label } } }
-}
-
 /**
- * Stamp the RESOLVED selection onto the finish part — the trail must answer
- * "which model produced this message" from the db alone. The response MUST be
+ * Stamp the RESOLVED selection onto the finish part (core's
+ * `stampResponseModel`) — the trail must answer "which model produced this
+ * message" from the db alone. The response MUST be
  * rebuilt as a real `GenerateTextResponse`: it's a class whose
  * text/finishReason/usage are prototype GETTERS, so a `{...res}` spread
  * silently strips them — finishReason read as undefined and the loop treated
  * every tool turn as "done" (the one-tool-call-then-dead bug, live-caught).
  */
 export const stampResponse = (
-  res: { readonly content: ReadonlyArray<unknown> },
+  res: { readonly content: ReadonlyArray<Response.AnyPart> },
   label: string,
 ): LanguageModel.GenerateTextResponse<never> =>
   new LanguageModel.GenerateTextResponse(
-    res.content.map((part) => stampModel(part, label)) as never,
+    stampResponseModel(res.content, label) as never,
   )
 
 /** What the stream telemetry accumulates while parts flow — exactly the
@@ -477,10 +467,10 @@ export const streamWith = <O extends PromptOptions>(
       return (
         built.svc.streamText(
           shapeOptions(built, options) as never,
-        ) as Stream.Stream<unknown, AiError.AiError>
+        ) as Stream.Stream<Response.AnyPart, AiError.AiError>
       ).pipe(
         retryableLlmStream(label),
-        Stream.map((part) => stampModel(part, label)),
+        Stream.map((part) => stampPartModel(part, label)),
         tapStreamTelemetry(label),
         Stream.withSpan("providers.generate", {
           attributes: { "llm.model": label },
@@ -598,9 +588,9 @@ export const LanguageModelLive = Layer.effect(
     const asHarness = (error: AiError.AiError) => harnessError("request.model", reasonOf(Cause.fail(error)), error)
     return resolvingModel(
       describeModel(service, currentSelection.pipe(
+        Effect.mapError(asHarness),
         Effect.flatMap(({ primary, fallback, effort }) => describeSelection(primary, fallback, effort)),
         Effect.provide(context),
-        Effect.mapError(asHarness),
       )),
       selected.pipe(Effect.mapError(asHarness)),
     )

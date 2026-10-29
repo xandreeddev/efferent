@@ -771,7 +771,12 @@ signature and redacted thinking, the `itemId` and `encryptedContent` of an
 OpenAI Responses reasoning item), so the later requests of the session, and
 their replays, send that reasoning back either way. That metadata is stored
 as JSON in `providerOptions` (`ProviderOptions`, keyed by provider), less
-core's own `engine` key, which no request carries. A tool the provider runs
+core's own `engine` key (`ENGINE_KEY`), which no request carries. A model
+that sends each call on to another, such as the settings-backed router,
+stamps the model it resolved on the response's finish part under that key
+(`stampResponseModel`, `stampPartModel` for a stream); `responseModelOf`
+reads it, and the loop stores it with the turn's usage on the assistant
+message (`assistantModel`). A tool the provider runs
 (a provider-defined tool) keeps its call and its result in the assistant
 message, in arrival order, the result marked `providerExecuted`; the
 provider is sent both back as its own, and a chat-completions model is sent
@@ -781,7 +786,10 @@ Effect AI models hide provider configuration inside adapters. Efferent's
 provider adapters and routers describe their public options with
 `describeModel(model, { provider, model, settings })`; hosts should do the
 same for custom models, preserving the descriptor when wrapping a model
-(`modelRequestDescriptorOf` reads it). An undescribed model is recorded as
+(`modelRequestDescriptorOf` reads it). `settings` is JSON
+(`Schema.JsonObject`): a value JSON cannot hold, an `undefined` field
+included, fails each dispatch with `request.descriptor`, so settings built
+from optional fields go through `storedJson` first. An undescribed model is recorded as
 explicitly opaque: its prompt/tools are checked, but its private provider
 settings cannot be validated. Credentials never belong in `settings`.
 A model that reads its configuration per call, such as the settings-backed

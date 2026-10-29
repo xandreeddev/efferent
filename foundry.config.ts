@@ -115,16 +115,13 @@ const EFFECT_FN_CLEAN = [
  * Open schemas (`effect/no-unknown-json`) core keeps for now. The MCP
  * bridge passes a model's arguments to a server it does not know; a
  * plugin entry's in-code options may hold values that are not JSON (a
- * function, a layer); a model request's descriptor records the settings
- * each provider builds, until the providers build them as JSON; the
- * deprecated JSON helpers keep what they read today until they are
- * removed. Each entry goes once its file decodes what it reads; the list
- * only shrinks.
+ * function, a layer); the deprecated JSON helpers keep what they read
+ * today until they are removed. Each entry goes once its file decodes what
+ * it reads; the list only shrinks.
  */
 const UNKNOWN_JSON_EDGES = [
   "packages/core/src/mcp/bridge.ts",
   "packages/core/src/harness/config.entity.ts",
-  "packages/core/src/turn/model-request.entity.ts",
   "packages/core/src/util/json.ts",
 ]
 
@@ -132,17 +129,26 @@ const UNKNOWN_JSON_EDGES = [
  * Casts to an object type (`effect/no-record-cast`) not yet replaced by a
  * decode or a type. The tool registry hands its two skill tools the
  * parameters the toolkit decoded, through a handler map typed `unknown`.
- * The models plugin's chat client, router and utility model read
- * effect/ai's response parts through hand-written shapes, until they are
- * typed as effect/ai's own. Each entry goes once its file is typed; like
- * NULLABLE_EDGES the list only shrinks.
+ * Each entry goes once its file is typed; like NULLABLE_EDGES the list
+ * only shrinks.
  */
 const RECORD_CAST_EDGES = [
   // Core's failure classifier reads a foreign failure's fields off an open record, until it decodes them.
   "packages/core/src/domain/agent-failure.entity.functions.ts",
   "packages/plugin-tool-discovery/src/registry.adapter.ts",
-  "packages/plugin-models/src/llm/router.ts",
 ]
+
+/**
+ * The provider-neutral packages (`effect/no-provider-namespace`): core and
+ * the agent loop carry a provider's metadata and options opaque, and write
+ * their own under core's `ENGINE_KEY`. Their tests and kits drive the loop
+ * with provider-shaped metadata and are left out. The deprecated
+ * `extractModel` still reads the stamp the models plugin's router kept
+ * under `router`, for one minor release; its entry goes with it, and the
+ * list only shrinks.
+ */
+const PROVIDER_NEUTRAL = [src("core"), src("plugin-agent-loop")]
+const PROVIDER_NAMESPACE_EDGES = ["packages/core/src/domain/engine-stamp.entity.functions.ts"]
 
 /**
  * The files that had no role suffix when `architecture/role-suffix-required`
@@ -325,6 +331,13 @@ const config: typeof GateSuiteConfig.Encoded = {
     // Each with its allow list above, which only shrinks.
     { rule: "effect/no-unknown-json", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_JSON_EDGES },
     { rule: "effect/no-record-cast", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: RECORD_CAST_EDGES },
+    // Provider metadata and options stay opaque where no provider is meant.
+    {
+      rule: "effect/no-provider-namespace",
+      include: PROVIDER_NEUTRAL,
+      exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING],
+      allow: PROVIDER_NAMESPACE_EDGES,
+    },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
     // One package at a time (the list above).

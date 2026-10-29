@@ -17,6 +17,7 @@ import { noEffectPromise, noPromiseAll } from "./promiseInterop.js"
 import { requireConcurrencyOption } from "./concurrencyOption.js"
 import { preferEffectFn } from "./effectFn.js"
 import { noOptionUnwrap } from "./optionUnwrap.js"
+import { noProviderNamespace } from "./providerNamespace.js"
 import { noSilentIgnore } from "./silentFailures.js"
 import {
   contextTagsLiveInPorts,
@@ -49,6 +50,7 @@ export {
   noSyncCodec,
   noUnknownJson,
   noRecordCast,
+  noProviderNamespace,
   noCausePrettyData,
   noEffectPromise,
   noPromiseAll,

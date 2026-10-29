@@ -15,6 +15,8 @@ export {
   UserContentPart,
   UserRoleMessage,
 } from "./domain/message.entity.js"
+export { ENGINE_KEY, ResponseStamp } from "./domain/engine-stamp.entity.js"
+export { extractModel, responseModelOf, stampPartModel, stampResponseModel } from "./domain/engine-stamp.entity.functions.js"
 export {
   AttachmentRejected,
   AttachmentRejectedReason,
@@ -107,7 +109,6 @@ export {
   assistantModel,
   assistantUsage,
   extractUsage,
-  extractModel,
   handoffToMessage,
   safeKeepFrom,
   responseReasoning,

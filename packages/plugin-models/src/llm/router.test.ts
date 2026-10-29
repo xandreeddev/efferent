@@ -1,30 +1,27 @@
 import { describe, expect, test } from "bun:test"
-import { AiError, LanguageModel } from "effect/ai"
+import { AiError, LanguageModel, Response as AiResponse } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { ConfigProvider, Effect, Layer, Metric, Option, Redacted, Ref, Schema, Stream, Tracer } from "effect"
-import { AuthStore, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, SettingsStore } from "@xandreed/core"
+import { AuthStore, CurrentModelCallPolicy, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, responseModelOf, SettingsStore } from "@xandreed/core"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { generateWith, LanguageModelLive, LanguageModelSelectionLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
 
-const finish = {
-  type: "finish",
+const finish = AiResponse.makePart("finish", {
   reason: "tool-calls",
-  usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } },
-}
+  usage: new AiResponse.Usage({ inputTokens: { total: 10 }, outputTokens: { total: 5 } }),
+})
 
 const content = [
-  { type: "text", text: "listing…" },
-  { type: "tool-call", id: "c1", name: "ls", params: { path: "." } },
+  AiResponse.makePart("text", { text: "listing…" }),
+  AiResponse.makePart("tool-call", { id: "c1", name: "ls", params: { path: "." }, providerExecuted: false }),
   finish,
 ]
 
 describe("stampResponse", () => {
-  test("stamps the resolved model onto the finish part's metadata", () => {
+  test("stamps the resolved model onto the finish part under core's key", () => {
     const stamped = stampResponse({ content }, "opencode:kimi-k2.6")
-    const finishPart = stamped.content.find(
-      (p) => (p as { type?: string }).type === "finish",
-    ) as { metadata?: { router?: { model?: string } } }
-    expect(finishPart.metadata?.router?.model).toBe("opencode:kimi-k2.6")
+    expect(Option.getOrNull(responseModelOf(stamped.content))).toBe("opencode:kimi-k2.6")
+    expect(stamped.content.find((part) => part.type === "finish")?.metadata).toStrictEqual({ engine: { model: "opencode:kimi-k2.6" } })
   })
 
   test("REGRESSION: the class getters survive — a plain spread killed the loop", () => {
@@ -497,5 +494,44 @@ describe("the routed model's surface", () => {
     expect(failures.map((error) => AiError.isAiError(error) ? error.reason._tag : "escaped")).toEqual(["AuthenticationError", "AuthenticationError", "AuthenticationError"])
     expect(String(failures[0])).toContain("no credential for opencode")
     expect(asked).toEqual(["opencode", "opencode", "opencode"])
+  })
+
+  test("a call, settled or streamed, carries the model it was routed to on its finish part, under core's key", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: async (request) => {
+        const { stream } = await request.json() as { readonly stream: boolean }
+        return stream
+          ? new Response(`data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } })
+          : Response.json({ choices: [{ finish_reason: "stop", message: { content: "ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })
+      },
+    })
+    const models = await Effect.runPromise(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection("stamp-local:chat"))
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelSelectionLive(selection, Option.none()).pipe(Layer.provide(localAuth(Option.some(`http://127.0.0.1:${server.port}/v1`))))),
+      )
+      const settled = yield* model.generateText({ prompt: "hi" })
+      const streamed = yield* Stream.runCollect(model.streamText({ prompt: "hi" }))
+      return [responseModelOf(settled.content), responseModelOf(Array.from(streamed))]
+    })).finally(() => server.stop(true))
+    expect(models).toEqual([Option.some("stamp-local:chat"), Option.some("stamp-local:chat")])
+  })
+
+  test("its descriptor records the call policy as JSON: a field the policy leaves unset is left out, and the settings decode", async () => {
+    const descriptor = await Effect.runPromise(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection("opencode:glm-5.2"))
+      const fallback = yield* Effect.fromOption(parseModelSelection("google:gemini-3.5-flash"))
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelSelectionLive(selection, Option.some(fallback)).pipe(Layer.provide(localAuth(Option.none())))),
+      )
+      return yield* modelRequestDescriptorOf(model).pipe(
+        Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "high", maxOutputTokens: undefined })),
+      )
+    }))
+    expect(Option.getOrThrow(descriptor)).toStrictEqual({
+      provider: "opencode", model: "glm-5.2",
+      settings: { fallback: "google:gemini-3.5-flash", policy: { effort: "high" } },
+    })
   })
 })

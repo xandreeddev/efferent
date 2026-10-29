@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
 import type { Schema } from "effect"
 import { Prompt, Response } from "effect/ai"
+import { responseModelOf, stampResponseModel } from "../domain/engine-stamp.entity.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
@@ -17,7 +18,6 @@ import {
   toPromptMessages,
   withToolCallIds,
   withUsageOnAssistant,
-  extractModel,
   handoffToMessage,
 } from "./mapping.js"
 
@@ -270,20 +270,22 @@ describe("withUsageOnAssistant / assistantUsage", () => {
 })
 
 describe("the model stamp", () => {
-  test("extractModel reads the router's finish metadata; the assistant message carries it", () => {
-    const content = [textPart("hi"), finishPart(usageOf({ total: 5 }, { total: 3 }), { router: { model: "opencode:kimi-k2.7-code" } })]
-    const model = extractModel(content)
+  test("a stamped response's model is stored on the assistant message, and reaches no prompt", () => {
+    const content = stampResponseModel([textPart("hi"), finishPart(usageOf({ total: 5 }, { total: 3 }))], "opencode:kimi-k2.7-code")
+    const model = responseModelOf(content)
     expect(Option.getOrThrow(model)).toBe("opencode:kimi-k2.7-code")
     const messages = withUsageOnAssistant(
-      [{ role: "assistant", content: [{ type: "text", text: "hi" }] }],
+      responseToAgentMessages(content),
       { inputTokens: 5, outputTokens: 3, totalTokens: 8, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
       model,
     )
     expect(Option.getOrNull(assistantModel(messages[0] as AgentMessage))).toBe("opencode:kimi-k2.7-code")
+    expect(toPromptMessages(messages)).toEqual([{ role: "assistant", content: [{ type: "text", text: "hi" }] }])
   })
 
   test("no stamp → None, and the usage stamp stays model-free", () => {
-    expect(Option.isNone(extractModel([finishPart(usageOf({}, {}))]))).toBe(true)
+    const messages = withUsageOnAssistant(responseToAgentMessages([textPart("hi"), finishPart(usageOf({}, {}))]), extractUsage(undefined, []), responseModelOf([finishPart(usageOf({}, {}))]))
+    expect(Option.isNone(assistantModel(messages[0] as AgentMessage))).toBe(true)
   })
 })
 

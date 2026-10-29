@@ -3,11 +3,11 @@ import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 
-/** Public provider options only. Credentials and endpoint authorization never belong here. */
+/** Public provider options only, as JSON. Credentials and endpoint authorization never belong here. */
 export const ModelRequestDescriptor = Schema.Struct({
   provider: Schema.String,
   model: Schema.String,
-  settings: Schema.Record(Schema.String, Schema.Unknown),
+  settings: Schema.JsonObject,
 })
 export type ModelRequestDescriptor = typeof ModelRequestDescriptor.Type
 

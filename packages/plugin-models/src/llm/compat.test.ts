@@ -56,7 +56,7 @@ describe("makeCompatLanguageModel", () => {
     ))
     expect(Option.isSome(descriptor)).toBe(true)
     if (Option.isSome(descriptor)) {
-      const sent = calls[0]!.body as Record<string, unknown>
+      const sent = calls[0]!.body as Schema.JsonObject
       expect(descriptor.value).toEqual({
         provider: "Test", model: "kimi-k2-code",
         settings: Object.fromEntries(Object.entries(sent).filter(([key]) => !["messages", "model", "stream"].includes(key))),

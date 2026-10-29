@@ -116,7 +116,9 @@ would judge attempt N against attempt N-1's source).
    `effect/no-unknown-json` (`Record(String, Unknown)` and
    `fromJsonString(Unknown)`, except as what a `Schema.encode*` call
    writes), `effect/no-record-cast` (`as Record<string, unknown>`,
-   `as { … }`), `effect/no-cause-pretty-data` (`Cause.pretty` outside an
+   `as { … }`), `effect/no-provider-namespace` (an `anthropic`, `openai`,
+   `google` or `router` key in provider-neutral code),
+   `effect/no-cause-pretty-data` (`Cause.pretty` outside an
    `Effect.log*` argument), `effect/no-effect-promise`, `effect/no-promise-all`,
    `effect/callback-buffer-size`, `effect/no-process-env`,
    `effect/no-ambient-time-random` (`Date.now`, argless `new Date()`,
