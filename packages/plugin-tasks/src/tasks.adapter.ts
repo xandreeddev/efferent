@@ -3,8 +3,10 @@ import {
   ConversationId,
   HarnessError,
   MemoryKindOf,
+  SessionExists,
   SessionLogError,
   Sessions,
+  TaskConflict,
   TaskExecutor,
   TaskMissing,
   TaskRefused,
@@ -13,7 +15,7 @@ import {
   UserMessage,
 } from "@xandreed/core"
 import type { JsonObject, SessionAddress, TaskMode, TaskView, TurnOutcome, TurnRefused, TurnWriter } from "@xandreed/core"
-import { deliveredOf, deliveryId, endOf, goneEnd, isActive, isFinished, noticeOf, resultOf, startedOf } from "./task.entity.functions.js"
+import { deliveredOf, deliveryId, endOf, goneEnd, isActive, isChildOf, isFinished, noticeOf, resultOf, startedOf } from "./task.entity.functions.js"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started, TasksConfig } from "./task-records.entity.js"
 
@@ -42,13 +44,15 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
 
   const childOf = (parent: SessionAddress, task: ConversationId): SessionAddress => ({ id: task, owner: parent.owner })
 
-  /** The child's view and its records; a child that is gone is none. */
-  const childState = (child: SessionAddress) => Effect.all([sessions.get(child), sessions.read(child, { kinds: OUTCOME_KINDS })]).pipe(
-    Effect.map(Option.some),
+  /** The child's view and its records; a child that is gone, or a session under its id that is not the parent's task child, is none. */
+  const childState = (parent: SessionAddress, child: SessionAddress) => sessions.get(child).pipe(
+    Effect.flatMap((view) => isChildOf(view, parent.id)
+      ? sessions.read(child, { kinds: OUTCOME_KINDS }).pipe(Effect.map((records) => Option.some([view, records] as const)))
+      : Effect.succeed(Option.none())),
     Effect.catchTag("SessionMissing", () => Effect.succeed(Option.none())),
   )
 
-  const viewOf = (parent: SessionAddress, started: Started, delivered: ReadonlySet<string>) => childState(childOf(parent, started.taskId)).pipe(
+  const viewOf = (parent: SessionAddress, started: Started, delivered: ReadonlySet<string>) => childState(parent, childOf(parent, started.taskId)).pipe(
     Effect.map((state): TaskView => ({
       taskId: started.taskId,
       parent: parent.id,
@@ -121,13 +125,18 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
         TurnDuplicate: () => Effect.void,
         KeyConflict: () => Effect.void,
         NothingPending: () => Effect.void,
+        // A task's turn begins under a new run id: never raised here.
+        RunIdReused: () => Effect.void,
         // A task's turn resumes nothing: never raised here.
         NotResumable: () => Effect.void,
         TurnRefused: (refused: TurnRefused) => recordEnd(child, {
           taskId: task.taskId, outcome: "failed", reply: Option.none(), failure: Option.some({ code: "task.refused", message: refused.message }),
         }),
-        // The turn was closed under it (cancelled, removed): nothing more to record.
-        HarnessError: (error) => Effect.logInfo(`background task ${task.taskId} stopped: ${error.message}`),
+        // The turn was closed under it (cancelled, removed): nothing more to record. Any other failure is the
+        // store's (the result or the end not stored): a failure, logged as one.
+        HarnessError: (error) => error.code === "turn.closed"
+          ? Effect.logInfo(`background task ${task.taskId} stopped: ${error.message}`)
+          : Effect.logWarning(`background task ${task.taskId} could not store its turn: ${error.code}: ${error.message}`),
       }),
       Effect.asVoid,
     )
@@ -209,28 +218,54 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     Effect.withSpan("task.run", { attributes: { "task.id": taskId, "session.id": parent.id } }),
   )
 
+  /**
+   * The task's child, created once its `task.started` is stored: a fork of the
+   * parent (or an empty spawn) under the task's id. One that exists is kept
+   * when it is the parent's task child (a retried start); any other session
+   * under the id is `SessionExists`. True when it was created now.
+   */
+  const childFor = (parent: SessionAddress, started: Started) =>
+    sessions.fork(parent, { id: started.taskId, origin: "task", meta: { taskId: started.taskId, mode: started.mode }, inherit: started.mode === "fork" }).pipe(
+      Effect.as(true),
+      Effect.catchTag("SessionExists", (exists) => sessions.get(childOf(parent, started.taskId)).pipe(
+        Effect.catchTag("SessionMissing", () => Effect.fail(exists)),
+        Effect.flatMap((view) => isChildOf(view, parent.id) ? Effect.succeed(false) : Effect.fail(exists)),
+      )),
+    )
+
   const start = (parent: SessionAddress, input: { readonly taskId?: ConversationId; readonly instructions: string; readonly mode: TaskMode; readonly meta?: JsonObject }) => Effect.gen(function* () {
     const view = yield* sessions.get(parent)
     if (Option.isSome(view.header.parent)) {
       return yield* Effect.fail(new TaskRefused({ session: parent.id, reason: "depth", message: "a background task cannot start another task" }))
     }
     const taskId = input.taskId ?? ConversationId.make(yield* Effect.sync(() => crypto.randomUUID()))
-    // Checked against the tasks as stored: a start that raced another is decided again with it.
-    const decided = yield* sessions.transact(parent, () => Effect.gen(function* () {
-      const tasks = yield* listOf(parent)
-      if (tasks.some((task) => task.taskId === taskId)) return { drafts: [], result: false }
-      const active = tasks.filter((task) => isActive(task.status)).length
+    const started: Started = { taskId, instructions: input.instructions, mode: input.mode, meta: input.meta ?? {} }
+    // Checked against the tasks as stored, and decided again after a conflict, so the decision only reads: the
+    // child is created after the record is stored, and the two are not cut apart by an interruption.
+    const begun = yield* Effect.uninterruptible(sessions.transact(parent, () => Effect.gen(function* () {
+      const earlier = startedOf(yield* parentRecords(parent)).find((record) => record.taskId === taskId)
+      if (earlier !== undefined) {
+        // A retry of the start is the same task; other instructions or another mode under its id are not.
+        return earlier.instructions === input.instructions && earlier.mode === input.mode
+          ? { drafts: [], result: false }
+          : yield* Effect.fail(new TaskConflict({ session: parent.id, taskId }))
+      }
+      const active = (yield* listOf(parent)).filter((task) => isActive(task.status)).length
       if (active >= config.maxRunning) {
         return yield* Effect.fail(new TaskRefused({
           session: parent.id, reason: "limit", message: `${active} background tasks are already running; wait for one to finish`,
         }))
       }
-      yield* sessions.fork(parent, { id: taskId, origin: "task", meta: { taskId, mode: input.mode }, inherit: input.mode === "fork" })
-        .pipe(Effect.catchTag("SessionExists", () => Effect.void))
-      const data = yield* startedJson({ taskId, instructions: input.instructions, mode: input.mode, meta: input.meta ?? {} })
-      return { drafts: [{ kind: TASK_STARTED, data }], result: true }
-    })).pipe(Effect.catchTag("ReservedKind", reservedAsStorage))
-    if (decided.result) yield* runner.run(work(parent, taskId))
+      // The id may not name another session (the parent itself, another conversation): the child is created under it.
+      const taken = yield* sessions.get(childOf(parent, taskId)).pipe(Effect.map(Option.some), Effect.catchTag("SessionMissing", () => Effect.succeedNone))
+      if (Option.exists(taken, (session) => !isChildOf(session, parent.id))) return yield* Effect.fail(new SessionExists({ session: taskId }))
+      return { drafts: [{ kind: TASK_STARTED, data: yield* startedJson(started) }], result: true }
+    })).pipe(
+      Effect.catchTag("ReservedKind", reservedAsStorage),
+      // A retry also creates the child a start that stopped between the two left without one, and runs the task then.
+      Effect.flatMap((decided) => childFor(parent, started).pipe(Effect.map((created) => decided.result || created))),
+    ))
+    if (begun) yield* runner.run(work(parent, taskId))
     return yield* taskOf(parent, taskId).pipe(Effect.catchTag("TaskMissing", () =>
       Effect.fail(new SessionLogError({ code: "tasks.lost", message: `task ${taskId} was started but is not in ${parent.id}` }))))
   })

@@ -8,6 +8,7 @@ import type { TurnActivity } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
 import { TurnAdmission } from "../ports/turn-admission.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
+import { frameworkDraft } from "./session-event.entity.functions.js"
 import type { JsonObject, SessionLogEvent } from "./session-log.entity.js"
 import { TurnRefused } from "./sessions.entity.js"
 import type { AdmittedTurn, BeginTurn, InboxItem, SessionAddress, TurnEnding } from "./sessions.entity.js"
@@ -104,14 +105,19 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * read only by their owner, listed in pages and forked; one open turn per
  * session (`SessionBusy`, on any instance, and exactly one winner of a
  * race); a key's retry is the same turn (`TurnDuplicate`, whatever the
- * `meta`) and anything else under it a `KeyConflict`; `meta` stored,
+ * `meta`) and anything else under it a `KeyConflict`; a run id an earlier
+ * turn of the session, or of the history a fork inherits, was begun with
+ * refused as `RunIdReused`, opening nothing; `meta` stored,
  * admitted and shown to the host's admission; the resume rules and every
  * `NotResumable` reason; an image its bytes do not support refused with
  * `AttachmentRejected` and an inbox turn with nothing to take with
  * `NothingPending`, opening nothing; the writer storing in order and its
  * end storing how the turn ended (completed, failed with a code, a scope
  * closed unended or interrupted); writing outside a turn and the reserved
- * kinds; cancel and removal closing the writer; the inbox (delivered once
+ * kinds, refused there and to a turn's writer unless the framework's turn
+ * wrote them (`frameworkDraft`); cancel and removal closing the writer, and
+ * a turn nobody holds any more reaped alike by a cancel or a delivery,
+ * whichever comes first; the inbox (delivered once
  * per id, taken by one inbox turn, waiting for the open turn, given back
  * when its turn is interrupted from outside, done when its turn is
  * cancelled); a turn whose lease ran out shown closed, left alone by a
@@ -263,6 +269,26 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("duplicate", started === "turn.started@1", `the retries stored ${started}`)
     })),
 
+    scoped("a run id names one turn: a begin under one an earlier turn of the session, or of the history a fork inherits, was begun with is RunIdReused and opens nothing", "run-id", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      const under = (runId: string, key: string): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text: key }), runId, key, command: {} })
+      const reused = (at: SessionAddress, input: BeginTurn) => Effect.scoped(sessions.begin(at, input)).pipe(Effect.match({
+        onFailure: (error) => error._tag === "RunIdReused" ? `RunIdReused:${error.runId}:${error.turn}` : error._tag,
+        onSuccess: (writer) => `opened turn ${writer.admitted.turn}`,
+      }))
+      yield* Effect.scoped(sessions.begin(address, under("run-once", "k1")).pipe(Effect.tap((writer) => writer.end(completed))))
+      const again = [yield* reused(address, under("run-once", "k1")), yield* reused(address, under("run-once", "k2")), yield* reused(address, { _tag: "Inbox", runId: "run-once" })]
+      yield* expect("run-id", again.join() === "TurnDuplicate,RunIdReused:run-once:1,RunIdReused:run-once:1",
+        `the same key, a new key and an inbox turn under a used run id gave ${again.join()}`)
+      const view = yield* sessions.get(address)
+      yield* expect("run-id", view.turns === 1 && kindsOf(yield* sessions.read(address)) === "turn.started@1,turn.ended@1", `the refused begins moved the session to ${view.turns} turns`)
+      const fork = yield* sessions.fork(address, { origin: "conformance", inherit: true })
+      const child: SessionAddress = { id: fork.header.id, owner }
+      const inherited = [yield* reused(child, under("run-once", "k1")), yield* reused(child, under("run-fresh", "k1"))]
+      yield* expect("run-id", inherited.join() === "RunIdReused:run-once:1,opened turn 2", `in a fork, its parent's run id and a new one gave ${inherited.join()}`)
+    })),
+
     scoped("a turn's meta is stored, admitted and shown to the host's admission, {} when none is given, and the inbox's from drain", "meta", (owner) => Effect.gen(function* () {
       const seen = yield* Ref.make<ReadonlyArray<string>>([])
       const recording = TurnAdmission.of({ admit: (turn, open) => Ref.update(seen, (all) => [...all, canonicalJson(turn.meta)]).pipe(Effect.andThen(open)) })
@@ -368,7 +394,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("writer", view.turns === 4 && Option.isNone(view.open), `after four ended turns the session shows ${view.turns} turns${Option.isSome(view.open) ? " and one open" : ""}`)
     })),
 
-    scoped("transact records outside a turn, and the framework's kinds are refused as ReservedKind", "transact", (owner) => Effect.gen(function* () {
+    scoped("transact records outside a turn, and the framework's kinds are refused: as ReservedKind there, and to a turn's writer unless the framework's turn wrote them", "transact", (owner) => Effect.gen(function* () {
       const { sessions } = yield* leased()
       const address = yield* created(sessions, owner)
       const decided = yield* sessions.transact(address, (view) => Effect.succeed({ drafts: [{ kind: "conformance.note", data: { turns: view.turns } }], result: "noted" }))
@@ -377,6 +403,17 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("transact", reserved._tag === "ReservedKind", `recording turn.ended gave ${reserved._tag}`)
       const all = kindsOf(yield* sessions.read(address))
       yield* expect("transact", all === "conformance.note", `the session holds ${all}`)
+      const writer = yield* sessions.begin(address, say("in a turn"))
+      const refused = [
+        yield* Effect.flip(writer.append([{ kind: "conformance.note", data: {} }, { kind: "turn.ended", data: { reason: "completed", failure: null } }])),
+        yield* Effect.flip(writer.transact(() => Effect.succeed({ drafts: [{ kind: "memory.message", data: {} }], result: undefined }))),
+      ].map((error) => error.code)
+      yield* expect("transact", refused.every((code) => code === "events.reserved"), `a turn's writer recording turn.ended and memory.message gave ${refused.join()}`)
+      yield* expect("transact", Option.contains(yield* openTurn(sessions, address), 1), "a turn.ended a host appended closed the turn")
+      yield* writer.append([frameworkDraft("step.started", { step: 0 }), { kind: "conformance.answer", data: {} }])
+      yield* writer.end(completed)
+      const turn = kindsOf(yield* sessions.read(address, { after: 1 }))
+      yield* expect("transact", turn === "turn.started@1,step.started@1,conformance.answer@1,turn.ended@1", `the turn stored ${turn}`)
     })),
 
     scoped("a cancel ends exactly the open turn as cancelled and closes its writer, on its own instance at once and on another at its next write", "cancel", (owner) => Effect.gen(function* () {
@@ -399,6 +436,32 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
         "a cancel naming a turn that is not open closed something")
       const stored = endings(yield* holder.sessions.read(address, { kinds: ["turn.ended"] }))
       yield* expect("cancel", stored === "1:cancelled:none,2:cancelled:none", `the cancels stored ${stored}`)
+    })),
+
+    scoped("a turn nobody holds any more is reaped by a cancel as by a delivery: whichever comes first, it ends interrupted, its items as a reap leaves them, and nothing is cancelled", "cancel-unheld", (owner) => Effect.gen(function* () {
+      const [holder, other] = [yield* leased(SHORT), yield* leased(SHORT)]
+      // An inbox turn whose holder stopped writing: it took the item, and its lease ran out.
+      const stopped = Effect.gen(function* () {
+        const address = yield* created(holder.sessions, owner)
+        yield* holder.sessions.deliver(address, item("i1"))
+        yield* holder.sessions.begin(address, { _tag: "Inbox", runId: `run-${address.id}` })
+        yield* subject.advance(SHORT * 2)
+        return address
+      })
+      const outcome = (address: SessionAddress) => Effect.gen(function* () {
+        const view = yield* other.sessions.get(address)
+        return `${endings(yield* other.sessions.read(address, { kinds: ["turn.ended"] }))} open ${Option.isSome(view.open)} pending ${view.pending}`
+      })
+      const cancelFirst = yield* stopped
+      const cancelled = yield* other.sessions.cancel(cancelFirst, 1)
+      const reapFirst = yield* stopped
+      yield* other.sessions.deliver(reapFirst, item("i1"))
+      const afterReap = yield* other.sessions.cancel(reapFirst, 1)
+      yield* expect("cancel-unheld", !cancelled.cancelled && !afterReap.cancelled && cancelled.pending === afterReap.pending,
+        `a cancel before the reap answered ${canonicalJson(cancelled)}, after it ${canonicalJson(afterReap)}`)
+      const [first, second] = [yield* outcome(cancelFirst), yield* outcome(reapFirst)]
+      yield* expect("cancel-unheld", first === second && first.startsWith("1:interrupted:turn.lease open false"),
+        `a cancel before the reap left ${first}, after it ${second}`)
     })),
 
     scoped("removing a session closes its open turn and removes its children", "remove", (owner) => Effect.gen(function* () {

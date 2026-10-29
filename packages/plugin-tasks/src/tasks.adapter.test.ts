@@ -3,7 +3,11 @@ import { Clock, Context, Deferred, Effect, Exit, FiberSet, Layer, Logger, Option
 import type { Layer as LayerType } from "effect"
 import { TestClock } from "effect/testing"
 import {
+  ConversationId,
+  frameworkDraft,
   HarnessError,
+  SessionLog,
+  SessionLogError,
   SessionLogMemoryLive,
   Sessions,
   TaskExecutor,
@@ -22,6 +26,9 @@ import { tasksDefaults } from "./task-records.entity.js"
 import type { TasksConfig } from "./task-records.entity.js"
 import { TasksLive } from "./tasks.adapter.js"
 
+type SessionsService = Context.Service.Shape<typeof Sessions>
+type LogService = Context.Service.Shape<typeof SessionLog>
+
 const owner = "owner-1"
 const say = (text: string, key = text): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text }), runId: `run-${key}`, key, command: {} })
 const ended = { reason: "completed", failure: Option.none() } as const
@@ -39,6 +46,10 @@ const harness = (input: {
   readonly admission?: LayerType.Layer<TurnAdmission>
   readonly maxMs?: number
   readonly config?: Partial<TasksConfig>
+  /** The store, as the sessions see it: the in-memory log, or a careless wrapper of it. */
+  readonly log?: (inner: LogService) => LogService
+  /** The sessions, as the tasks see them. */
+  readonly sessions?: (inner: SessionsService) => SessionsService
 } = {}) => Effect.gen(function* () {
   const reactions = yield* Ref.make<ReadonlyArray<string>>([])
   const dropping = yield* Ref.make(false)
@@ -57,7 +68,9 @@ const harness = (input: {
     turn: input.turn ?? ((_writer, task) => Effect.succeed({ outcome: "completed", reply: Option.some(`found: ${task.instructions}`) })),
     react,
   }))
-  const sessionsLayer = SessionsLive(onCommit).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, input.admission ?? TurnAdmissionOpen)))
+  const logLayer = Layer.effect(SessionLog, Effect.map(Effect.service(SessionLog), input.log ?? ((log) => log))).pipe(Layer.provide(SessionLogMemoryLive))
+  const sessionsLayer = Layer.effect(Sessions, Effect.map(Effect.service(Sessions), input.sessions ?? ((sessions) => sessions))).pipe(
+    Layer.provide(SessionsLive(onCommit).pipe(Layer.provide(Layer.merge(logLayer, input.admission ?? TurnAdmissionOpen)))))
   const context = yield* Layer.build(TasksLive({ ...tasksDefaults, ...input.config }).pipe(Layer.provideMerge(Layer.mergeAll(sessionsLayer, runner, executor))))
   const sessions = Context.get(context, Sessions)
   const parent = yield* sessions.create({ owner }).pipe(Effect.map((view): SessionAddress => ({ id: view.header.id, owner })))
@@ -118,6 +131,79 @@ describe("results slot in after the turn in flight", () => {
     expect((yield* h.reactions).length).toBe(1)
     expect(yield* h.kinds({ id: first.child, owner })).toEqual(["turn.started@1", "task.result@1", "turn.ended@1"])
   })))
+})
+
+describe("starting and storing", () => {
+  const freshTask = Effect.sync(() => ConversationId.make(crypto.randomUUID()))
+
+  test("a start whose record the store refuses leaves no child session, and starting it again runs it once", () => scenario(Effect.gen(function* () {
+    const refusing = yield* Ref.make(true)
+    const h = yield* harness({
+      sessions: (inner) => Sessions.of({
+        ...inner,
+        // Decided, then refused: a commit that kept conflicting until it gave up.
+        transact: (address, decide) => Ref.get(refusing).pipe(Effect.flatMap((refuse) => refuse
+          ? inner.get(address).pipe(Effect.flatMap(decide), Effect.andThen(Effect.fail(new SessionLogError({ code: "session.contended", message: "3 conflicting writes" }))))
+          : inner.transact(address, decide))),
+      }),
+    })
+    const taskId = yield* freshTask
+    const refused = yield* Effect.flip(h.tasks.start(h.parent, { taskId, instructions: "not stored", mode: "fork" }))
+    expect([refused._tag, refused._tag === "SessionLogError" ? refused.code : null]).toEqual(["SessionLogError", "session.contended"])
+    expect((yield* h.sessions.list({ owner, parent: h.parent.id })).sessions).toEqual([])
+    yield* Ref.set(refusing, false)
+    const started = yield* h.tasks.start(h.parent, { taskId, instructions: "not stored", mode: "fork" })
+    yield* h.idle
+    expect((yield* h.tasks.status(h.parent, started.taskId)).status).toBe("completed")
+    expect((yield* h.sessions.list({ owner, parent: h.parent.id })).sessions.map((view) => view.header.id)).toEqual([taskId])
+    expect((yield* h.reactions).length).toBe(1)
+  })))
+
+  test("a start that stopped after its record, before its child, is finished by starting it again", () => scenario(Effect.gen(function* () {
+    const failing = yield* Ref.make(true)
+    const h = yield* harness({
+      sessions: (inner) => Sessions.of({
+        ...inner,
+        fork: (parent, input) => Ref.getAndSet(failing, false).pipe(Effect.flatMap((fail) => fail
+          ? Effect.fail(new SessionLogError({ code: "store.io", message: "the store is down" }))
+          : inner.fork(parent, input))),
+      }),
+    })
+    const taskId = yield* freshTask
+    expect((yield* Effect.flip(h.tasks.start(h.parent, { taskId, instructions: "half way", mode: "spawn" })))._tag).toBe("SessionLogError")
+    expect([(yield* h.tasks.list(h.parent)).length, (yield* h.reactions).length]).toEqual([1, 0])
+    const again = yield* h.tasks.start(h.parent, { taskId, instructions: "half way", mode: "spawn" })
+    yield* h.idle
+    expect((yield* h.tasks.status(h.parent, again.taskId)).status).toBe("completed")
+    expect(yield* h.kinds({ id: taskId, owner })).toEqual(["turn.started@1", "task.result@1", "turn.ended@1"])
+    expect((yield* h.reactions).length).toBe(1)
+    // Started and run: a third start runs nothing.
+    yield* h.tasks.start(h.parent, { taskId, instructions: "half way", mode: "spawn" })
+    yield* h.idle
+    expect((yield* h.reactions).length).toBe(1)
+  })))
+
+  test("a store failure while the task's turn is stored is logged as a failure, not as a turn closed under it", () => {
+    const logged: Array<readonly [string, string]> = []
+    const capture = Logger.layer([Logger.make((options) => logged.push([options.logLevel, [options.message].flat().join(" ")]))])
+    return scenario(Effect.gen(function* () {
+      const h = yield* harness({
+        log: (inner) => SessionLog.of({
+          ...inner,
+          commit: (id, commit) => commit.events.some((event) => event.kind === "task.result")
+            ? Effect.fail(new SessionLogError({ code: "store.io", message: "the store is down" }))
+            : inner.commit(id, commit),
+        }),
+      })
+      const task = yield* h.tasks.start(h.parent, { instructions: "unstored", mode: "spawn" })
+      yield* h.idle
+      expect(logged).toContainEqual(["Warn", `background task ${task.taskId} could not store its turn: session.log: the store is down`])
+      expect(logged.filter(([, message]) => message.includes("stopped"))).toEqual([])
+      // The turn ended without a result: the task is lost, and the parent hears of it.
+      const lost = yield* h.tasks.status(h.parent, task.taskId)
+      expect([lost.status, Option.map(lost.failure, (failure) => failure.code)]).toEqual(["interrupted", Option.some("task.lost")])
+    }).pipe(Effect.provide(capture)))
+  })
 })
 
 describe("recovery", () => {
@@ -305,7 +391,8 @@ describe("limits, failures and budgets", () => {
 
   test("a reaction cut after it recorded its answer is done: the parent does not answer twice", () => scenario(Effect.gen(function* () {
     const entered = yield* Deferred.make<void>()
-    const h = yield* harness({ maxMs: 1_000, react: (writer) => writer.append([{ kind: "turn.reply", data: { body: { outcome: "completed", reply: "noted" } } }]).pipe(
+    // The reaction stands in for the turn: memory records its answer as the framework's `turn.reply`.
+    const h = yield* harness({ maxMs: 1_000, react: (writer) => writer.append([frameworkDraft("turn.reply", { body: { outcome: "completed", reply: "noted" } })]).pipe(
       Effect.andThen(Deferred.succeed(entered, undefined)), Effect.andThen(Effect.never),
     ) })
     yield* h.tasks.start(h.parent, { instructions: "answered, then cut", mode: "spawn" })

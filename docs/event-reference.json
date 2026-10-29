@@ -5152,6 +5152,12 @@
       "meaning": "The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts)."
     },
     {
+      "tag": "RunIdReused",
+      "code": "turn.run-reused",
+      "http": "409",
+      "meaning": "The run id was used before, by an earlier turn of the session or of the history a fork inherits: a run id names one turn's run (memory numbers its entries from it). Begin again with a new run id, a retry under a new key included; nothing was opened."
+    },
+    {
       "tag": "NothingPending",
       "code": "session.nothing-pending",
       "http": "204",
@@ -5161,7 +5167,7 @@
       "tag": "NotResumable",
       "code": "turn.not-resumable",
       "http": "409",
-      "meaning": "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key."
+      "meaning": "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id)."
     },
     {
       "tag": "TurnRefused",
@@ -5240,8 +5246,8 @@
     },
     {
       "code": "events.reserved",
-      "where": "publishing a host event",
-      "meaning": "The host event's name is one of the reserved kinds."
+      "where": "publishing a host event; a turn writer's `append` or `transact`",
+      "meaning": "The host event's name, or the draft's kind, is one of the reserved kinds; only the framework's turn writes those (`frameworkDraft`)."
     },
     {
       "code": "events.depth",
@@ -5402,6 +5408,11 @@
       "code": "session.encode",
       "where": "the turn writer",
       "meaning": "The turn's closing `turn.ended` did not encode."
+    },
+    {
+      "code": "session.defect",
+      "where": "the turn writer",
+      "meaning": "Storing the turn's appended events died with a defect (a store or an encoder that threw); it is logged with its cause, and the writer refuses every later write and flush with this code."
     }
   ],
   "feed": {

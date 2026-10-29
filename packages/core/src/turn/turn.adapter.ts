@@ -10,7 +10,7 @@ import { ConversationMemory } from "../ports/memory.port.js"
 import type { LogHandle } from "../ports/memory.port.js"
 import { RunContext } from "../ports/run-context.port.js"
 import type { TurnDraft } from "../ports/sessions.port.js"
-import { draftOfTurnEvent, draftsOfEntries, entriesOfEvents } from "../session/session-event.entity.functions.js"
+import { draftOfTurnEvent, draftsOfEntries, entriesOfEvents, frameworkDraft } from "../session/session-event.entity.functions.js"
 import { MEMORY_KINDS, RESERVED_KINDS } from "../session/session-event.entity.js"
 import { ToolRegistry } from "../ports/tool-registry.port.js"
 import type { RunTools } from "../ports/tool-registry.port.js"
@@ -32,14 +32,15 @@ const inCaller = <A, E>(effect: Effect.Effect<A, E, unknown>): Effect.Effect<A, 
 /**
  * A bus event as the turn stores it, when it is stored. A host event may not
  * take a name only the framework writes (`events.reserved`); an event its
- * schema does not encode fails the turn with `events.encode`.
+ * schema does not encode fails the turn with `events.encode`. What the bus
+ * stores is the framework's draft.
  */
 const storedDraft = (turn: number) => (event: TurnEvent): Effect.Effect<Option.Option<TurnDraft>, HarnessError> =>
   event._tag === "host" && RESERVED_KINDS.includes(event.name)
     ? Effect.fail(failure("events.reserved", `${event.name} is the framework's kind`))
     : draftOfTurnEvent(turn, event).pipe(
       Effect.mapError((error) => failure("events.encode", `${event._tag} does not encode: ${error.message}`)),
-      Effect.map(Option.map((draft): TurnDraft => ({ kind: draft.kind, data: draft.data }))),
+      Effect.map(Option.map((draft): TurnDraft => frameworkDraft(draft.kind, draft.data))),
     )
 
 const contextBody = (entry: TurnContextEntry) => ({ _tag: "TurnContext" as const, sectionId: entry.id, version: entry.version, text: entry.text })
@@ -109,7 +110,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
           `memory took the message as ${started.map((entry) => `${entry.id} of turn ${entry.turn}`).join()}, the session stored ${String(writer.started.data.entry)} of turn ${admitted.turn}`))
       }
       const drafts = yield* draftsOfEntries(entries).pipe(Effect.mapError((error) => failure("memory.log", error.message)))
-      yield* writer.append(drafts.map((draft): TurnDraft => ({ kind: draft.kind, data: draft.data })))
+      yield* writer.append(drafts.map((draft): TurnDraft => frameworkDraft(draft.kind, draft.data)))
     }),
   }
   const session = yield* memory.open({ conversation: admitted.session.id, runId: admitted.runId, log })
@@ -167,7 +168,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     session,
     prepareRequest: (header) => Schema.encodeEffect(ModelRequestHeader)(header).pipe(
       Effect.mapError((error) => failure("request.encode", error.message)),
-      Effect.flatMap((data) => writer.append([{ kind: "request.prepared", data }])),
+      Effect.flatMap((data) => writer.append([frameworkDraft("request.prepared", data)])),
       Effect.andThen(writer.flush),
     ),
     requestSnapshot,

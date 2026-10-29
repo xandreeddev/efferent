@@ -63,8 +63,9 @@ const BEGIN_HTTP: Readonly<Record<string, { readonly status: string; readonly me
   SessionBusy: { status: "409", meaning: "Another turn is open in the session. Retry after it ends, or queue the message." },
   TurnDuplicate: { status: "200 once that turn ended, 409 while it is open", meaning: "The key was begun before with the same message, command and `resumes`: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it)." },
   KeyConflict: { status: "409", meaning: "The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts)." },
+  RunIdReused: { status: "409", meaning: "The run id was used before, by an earlier turn of the session or of the history a fork inherits: a run id names one turn's run (memory numbers its entries from it). Begin again with a new run id, a retry under a new key included; nothing was opened." },
   NothingPending: { status: "204", meaning: "An inbox turn found nothing to take (inbox turns only)." },
-  NotResumable: { status: "409", meaning: "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key." },
+  NotResumable: { status: "409", meaning: "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id)." },
   TurnRefused: { status: "429 for a quota or rate, 403 when not allowed, 503 while draining before a shutdown", meaning: "The host's `TurnAdmission` refused the turn; nothing was opened or counted." },
   SessionMissing: { status: "404", meaning: "No such session for this owner." },
   SessionLogError: { status: "503", meaning: "The session store failed. Retry later." },
@@ -89,7 +90,7 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "turn.unstarted", where: "the turn's memory", meaning: "Memory was asked to record, or for the turn's number, before the user's message was taken." },
   { code: "turn.persisted", where: "`TurnMemory.persistMessage`", meaning: "The user's message was taken twice in one turn." },
   { code: "turn.numbering", where: "the turn's memory", meaning: "Memory numbered the user's message differently from the turn the session stored." },
-  { code: "events.reserved", where: "publishing a host event", meaning: "The host event's name is one of the reserved kinds." },
+  { code: "events.reserved", where: "publishing a host event; a turn writer's `append` or `transact`", meaning: "The host event's name, or the draft's kind, is one of the reserved kinds; only the framework's turn writes those (`frameworkDraft`)." },
   { code: "events.depth", where: "publishing an event", meaning: "Reactions nested deeper than `maxEventDepth` (8 by default)." },
   { code: "events.background", where: "a background subscription", meaning: "A background handler was interrupted; the turn fails when the bus drains. One that dies with a defect fails it with that defect (`turn.defect`)." },
   { code: "events.encode", where: "a host event's `make` / `publish`; the turn storing a bus event", meaning: "The payload did not encode with the host event's schema, or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step)." },
@@ -122,6 +123,7 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "session.contended", where: "the turn writer, plugin-sessions", meaning: "Too many conflicting writes to the session in a row." },
   { code: "session.state", where: "the turn writer", meaning: "The session's state, kept in its head, did not decode." },
   { code: "session.encode", where: "the turn writer", meaning: "The turn's closing `turn.ended` did not encode." },
+  { code: "session.defect", where: "the turn writer", meaning: "Storing the turn's appended events died with a defect (a store or an encoder that threw); it is logged with its cause, and the writer refuses every later write and flush with this code." },
 ]
 
 /** The failure codes of a task's result or status (`@xandreed/plugin-tasks`). */
@@ -297,7 +299,7 @@ const body = (links: { readonly guide: string }) => [
   table(["Kind", "Body fields"], journal.filter((entry) => entry.body.length > 0).map((entry) => [code(entry.kind), entry.body.map((field) => `${code(field.name)}: ${code(field.type)}`).join(", ")])),
   "Any other kind is a host's or a plugin's own record (`defineHostEvent`, `Sessions.transact`, the tasks plugin's `task.*`).",
   "## Reserved kinds",
-  "A host event, or a `Sessions.transact` draft, may not use these names: the publish fails with `events.reserved`, the transact with `ReservedKind`. They are the journal kinds above and every bus event's name (`TURN_EVENT_NAMES`), the ones the journal never stores under their own name included (`assistant.message`, `assistant.delta`, `tool.progress`, `skills.activated`, `host`). The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.",
+  "A host event, a `Sessions.transact` draft, or a draft a host or plugin appends through a turn's writer (`TurnWriter.append`, `transact`), may not use these names: the publish and the writer fail with `events.reserved`, `Sessions.transact` with `ReservedKind`; only the framework's turn writes them (`frameworkDraft`). They are the journal kinds above and every bus event's name (`TURN_EVENT_NAMES`), the ones the journal never stores under their own name included (`assistant.message`, `assistant.delta`, `tool.progress`, `skills.activated`, `host`). The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.",
   fence("text", RESERVED_KINDS.join("\n")),
   "## Begin codes",
   "When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/sdk`). The HTTP status is a suggestion for a host serving turns over HTTP.",

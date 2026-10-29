@@ -11,6 +11,7 @@ import {
   InboxQueuedData,
   MemoryKindOf,
   RECORDED_ELSEWHERE,
+  RESERVED_KINDS,
   StepUsageData,
   TURN_EVENT_KINDS,
   TurnEndedData,
@@ -47,6 +48,26 @@ export const draftOfEntry = (entry: LogEntry): Effect.Effect<Option.Option<Sessi
 
 export const draftsOfEntries = (entries: ReadonlyArray<LogEntry>): Effect.Effect<ReadonlyArray<SessionDraft>, Schema.SchemaError> =>
   Effect.forEach(entries, draftOfEntry).pipe(Effect.map((drafts) => drafts.flatMap(Option.toArray)))
+
+/** What a framework draft carries; a symbol of the global registry, so every copy of core agrees on it. */
+const FRAMEWORK_DRAFT = Symbol.for("efferent/FrameworkDraft")
+
+/**
+ * A draft the framework's turn writes through its `TurnWriter`, marked as
+ * the framework's: the writer stores it under a reserved kind
+ * (`RESERVED_KINDS`), where it refuses any other draft. `TurnLive` marks
+ * memory's events, the bus's and `request.prepared`; a host or plugin never
+ * needs it (a test standing in for the turn does).
+ */
+export const frameworkDraft = (kind: string, data: JsonObject): { readonly kind: string; readonly data: JsonObject } =>
+  Object.assign({ kind, data }, { [FRAMEWORK_DRAFT]: true })
+
+/** Whether `frameworkDraft` made this draft. */
+export const isFrameworkDraft = (draft: { readonly kind: string }): boolean => FRAMEWORK_DRAFT in draft
+
+/** The first of these drafts under a reserved kind that the framework did not write (`frameworkDraft`), if any. */
+export const unmarkedReservedDraft = <D extends { readonly kind: string }>(drafts: ReadonlyArray<D>): Option.Option<D> =>
+  Option.fromNullishOr(drafts.find((draft) => RESERVED_KINDS.includes(draft.kind) && !isFrameworkDraft(draft)))
 
 /** The draft that opens a turn. */
 export const turnStartedDraft = (turn: number, data: TurnStarted): Effect.Effect<SessionDraft, Schema.SchemaError> =>

@@ -177,6 +177,8 @@ interface ChildTurn {
 }
 
 const ofKind = (events: ReadonlyArray<SessionLogEvent>, kind: string) => events.filter((event) => event.kind === kind)
+/** What a start failed with, as its tag, or `started`. */
+const startOutcome = <E extends { readonly _tag: string }>(start: Effect.Effect<TaskView, E>) => start.pipe(Effect.match({ onFailure: (error) => error._tag, onSuccess: () => "started" }))
 const reasons = (events: ReadonlyArray<SessionLogEvent>) => ofKind(events, "turn.ended").map((event) => String(event.data.reason)).join()
 
 /** The most items the kit delivers to fill a parent's inbox. */
@@ -198,8 +200,10 @@ const fillInbox = (sessions: Context.Service.Shape<typeof Sessions>, parent: Ses
  * (a spawn starts empty; a fork's history is the parent's up to its last
  * closed turn), its result reaches the parent's inbox once and the parent
  * reacts to it once, after the turn in flight; the parent records
- * `task.started` once per task, and starting a task again runs it once; a
- * failed turn's result says why; a cancel stops the child's turn and
+ * `task.started` once per task, and starting a task again runs it once (the
+ * same id with other instructions or another mode is `TaskConflict`, and an
+ * id naming a session that is not the parent's task child `SessionExists`,
+ * starting nothing); a failed turn's result says why; a cancel stops the child's turn and
  * delivers nothing; a task does not start tasks; and `reconcile` starts a
  * task whose runner never ran it, and delivers, once, a finished result
  * whose delivery was lost. The kit loses one by filling the parent's inbox
@@ -287,7 +291,7 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       yield* expect("run", listed === view.taskId, `the parent lists [${listed}]`)
     })),
 
-    scoped("starting a task again (by its id, while it runs or after) runs it once", "start-once", (owner) => Effect.gen(function* () {
+    scoped("starting a task again (by its id, while it runs or after) runs it once; its id with other instructions or another mode is TaskConflict", "start-once", (owner) => Effect.gen(function* () {
       const h = yield* harness(owner)
       const taskId = yield* freshId
       const input = { taskId, instructions: "once", mode: "spawn" as const }
@@ -297,6 +301,12 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       const after = yield* h.tasks.start(h.parent, input)
       yield* h.idle("start-once")
       yield* expect("start-once", [first, again, after].every((view) => view.taskId === taskId), "a start of the same task returned another task")
+      const conflicts = [
+        yield* startOutcome(h.tasks.start(h.parent, { ...input, instructions: "something else" })),
+        yield* startOutcome(h.tasks.start(h.parent, { ...input, mode: "fork" })),
+      ]
+      yield* expect("start-once", conflicts.every((outcome) => outcome === "TaskConflict"), `the task's id with other instructions and another mode gave ${conflicts.join()}`)
+      yield* h.idle("start-once")
       const counts = {
         listed: (yield* h.tasks.list(h.parent)).length,
         turns: (yield* h.turns).length,
@@ -305,6 +315,22 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
         delivered: ofKind(yield* h.read(h.parent), "inbox.queued").length,
       }
       yield* expect("start-once", Object.values(counts).every((count) => count === 1), `three starts of one task gave ${JSON.stringify(counts)}`)
+    })),
+
+    scoped("a task id naming a session that is not the parent's task child (the parent, another conversation) is SessionExists, and nothing starts or runs", "task-id", (owner) => Effect.gen(function* () {
+      const h = yield* harness(owner)
+      const other = yield* h.sessions.create({ owner })
+      const refused = [
+        yield* startOutcome(h.tasks.start(h.parent, { taskId: h.parent.id, instructions: "in the parent", mode: "spawn" })),
+        yield* startOutcome(h.tasks.start(h.parent, { taskId: other.header.id, instructions: "elsewhere", mode: "fork" })),
+      ]
+      yield* expect("task-id", refused.every((outcome) => outcome === "SessionExists"), `a task id naming the parent and another session gave ${refused.join()}`)
+      yield* h.idle("task-id")
+      const parentEvents = yield* h.read(h.parent)
+      const elsewhere = yield* h.read({ id: other.header.id, owner })
+      yield* expect("task-id", ofKind(parentEvents, "task.started").length === 0 && (yield* h.tasks.list(h.parent)).length === 0
+        && (yield* h.turns).length === 0 && elsewhere.length === 0 && ofKind(parentEvents, "turn.started").length === 0,
+      `the refused starts recorded ${ofKind(parentEvents, "task.started").length} tasks, ran ${(yield* h.turns).length} turns and wrote ${kindsOf(elsewhere) || "nothing"} in the other session`)
     })),
 
     scoped("a result that arrives during the parent's turn waits for it, and a fork's history is the parent's up to its last closed turn", "after-turn", (owner) => Effect.gen(function* () {

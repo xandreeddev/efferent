@@ -163,6 +163,18 @@ export class NotResumable extends Schema.TaggedError<NotResumable>()("NotResumab
   reason: Schema.Literals(["missing", "superseded", "finished", "inbox"]),
 }) {}
 
+/**
+ * The run id was used before, by `turn` of the session or of the history a
+ * fork inherits: a run id names one turn's run (memory numbers the turn's
+ * entries `<runId>:<n>` from it), so every begin needs a new one, a retry
+ * under a new key included. Nothing was opened.
+ */
+export class RunIdReused extends Schema.TaggedError<RunIdReused>()("RunIdReused", {
+  session: ConversationId,
+  runId: Schema.String,
+  turn: Schema.Int,
+}) {}
+
 /** An inbox turn found nothing to take. */
 export class NothingPending extends Schema.TaggedError<NothingPending>()("NothingPending", {
   session: ConversationId,

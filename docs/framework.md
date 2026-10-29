@@ -1614,7 +1614,11 @@ user's message, the host's `command`, the idempotency `key`, and the host's
 a second begin while a turn is open is `SessionBusy` (a host answers 409).
 The same key again is `TurnDuplicate` with that turn, and the same key with
 another message, command or `resumes` is `KeyConflict`: keys are found in the log, so
-the check holds across restarts. The writer (`TurnWriter`) is the turn's one
+the check holds across restarts. A run id names one turn's run (memory numbers
+the turn's entries `<runId>:<n>` from it): a begin under a run id an earlier
+turn of the session, or of the history a fork inherits, was begun with is
+`RunIdReused` (`Agent.turn`: `turn.run-reused`), checked right after the key,
+and opens nothing. The writer (`TurnWriter`) is the turn's one
 way to write: `append`, `write(op)` in queue order, `transact(decide)`
 (check, then append: decided again with the events others wrote when
 someone commits first), `flush` (committed to storage), `end` (the closing
@@ -1623,7 +1627,13 @@ later end tries again) and `closed` (completes when someone else closed the
 turn). A writer whose scope closes unended ends the turn as failed
 (`turn.unended`), or as interrupted (`turn.interrupted`) when the scope was
 interrupted; a begin interrupted after its opening commit ends it as
-interrupted (`turn.interrupted`) too. Outside a turn, `Sessions.transact(address,
+interrupted (`turn.interrupted`) too. An append the store fails, or whose
+commit dies with a defect (`session.defect`, logged with its cause), fails
+the writer's every later write and flush with that error, so nothing waits
+on it. The writer refuses a draft under a reserved kind (below) with
+`events.reserved`, storing nothing of that call, unless the framework's turn
+wrote it (`frameworkDraft`: memory's events, the bus's and
+`request.prepared`). Outside a turn, `Sessions.transact(address,
 decide)` is the same check-then-append (a page action, a setting); the
 framework's journal kinds (`JOURNAL_KINDS`; among them `request.prepared`
 holds each request's full system text and tool declarations, see durable
@@ -1698,9 +1708,13 @@ exits.
 A turn nobody holds any more reads as not open, and is closed as
 `interrupted` by the next `begin`, `cancel`, `deliver` or `drain`: never by
 a read, so loading or following a session runs nothing. `cancel(address,
-turn)` ends exactly that turn as cancelled, durably: every reader sees
-`turn.ended`, a holder on this instance is interrupted at once, and a
-holder elsewhere is refused at its next commit; a cancelled or interrupted
+turn)` ends exactly that turn as cancelled, durably, while it is held:
+every reader sees `turn.ended`, a holder on this instance is interrupted at
+once, and a holder elsewhere is refused at its next commit. A turn nobody holds any
+more (its lease ran out, its process stopped) is not open: the cancel reaps
+it, as the next begin or delivery would, as interrupted (`turn.lease`, its
+inbox items waiting again), and answers `cancelled: false`, so a cancel and
+a reap end it the same way whichever comes first; a cancelled or interrupted
 turn can be continued by the next user's turn ([resuming a
 turn](#resuming-a-turn)). `fork(parent, { inherit })`
 makes a child session (a background task's): with `inherit` its history is
@@ -1774,12 +1788,19 @@ during it included), stopping at the end that counts none.
 child session, a fork of the conversation or an empty spawn, whose id is the
 task's. `Tasks.start(parent, { instructions, mode })` records `task.started`
 in the parent, checked against the tasks stored (a task does not start
-tasks; a session runs `maxRunning`, two, at once), and hands the work to the
-host's `TaskRunner`: `InProcessTaskRunnerLive` forks it on this process (its
-own fiber, interrupted with the layer, counted by the `TaskActivity` the
-layer also provides), and a serverless host registers it with its
-`waitUntil`. The work begins the child's turn once (its key is the
-task's), runs it through the host's `TaskExecutor.turn` until the runner's
+tasks; a session runs `maxRunning`, two, at once), creates the child once
+that record is stored (a start refused or not stored leaves none), and
+hands the work to the host's `TaskRunner`: `InProcessTaskRunnerLive` forks
+it on this process (its own fiber, interrupted with the layer, counted by
+the `TaskActivity` the layer also provides), and a serverless host
+registers it with its `waitUntil`. Starting a `taskId` again starts it
+once, and also creates the child a start that stopped half way left
+without one; the same id with other instructions or another mode is
+`TaskConflict`, and an id naming a session that is not the parent's task
+child (the parent itself, another conversation) is `SessionExists`. A
+store failure while the child's result is stored is logged as a warning,
+and the task then reads as interrupted (`task.lost`). The work begins the
+child's turn once (its key is the task's), runs it through the host's `TaskExecutor.turn` until the runner's
 deadline, records `task.result` before the turn closes, delivers the result
 to the parent's inbox (`task:<id>`, once) and drains the parent, whose
 `TaskExecutor.react` answers it after the turn in flight. The notice frames
@@ -2003,7 +2024,8 @@ turn may call it again: a tool with side effects makes them safe to repeat,
 for example keyed by its input.
 
 **Keys.** `Agent.turn` keys a resume `resume:<n>` unless the host gives a
-key. A retry of the same resume is `turn.duplicate` once its turn has begun,
+key, and each try needs a new run id (`turn.run-reused` otherwise). A
+retry of the same resume is `turn.duplicate` once its turn has begun,
 however that turn ended (`lookup(address, "resume:<n>")` finds it), and
 the same key with another message or no `resumes` is
 `turn.key-conflict`; a begin refused before it opened anything
