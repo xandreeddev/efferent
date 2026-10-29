@@ -1,6 +1,7 @@
 import { Option, Schema } from "effect"
 import { Response } from "effect/ai"
 import type { Prompt } from "effect/ai"
+import { ENGINE_KEY, ResponseStamp } from "../domain/engine-stamp.entity.js"
 import type { ToolCallSummary } from "../domain/loop-event.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import { ProviderOptions, ToolCallId } from "../domain/message.entity.js"
@@ -63,10 +64,6 @@ export const safeKeepFrom = (
 
 type AssistantPart = AssistantMessage["content"][number]
 type ResponseToolResult = Extract<Response.AnyPart, { readonly type: "tool-result" }>
-
-/** The engine's own stamp inside `providerOptions` (see
- *  {@link withUsageOnAssistant}). */
-const ENGINE_KEY = "engine"
 
 const hasKeys = (blob: ProviderOptions): boolean => Object.keys(blob).length > 0
 
@@ -359,12 +356,7 @@ export const withUsageOnAssistant = (
 }
 
 /** A stamp's model: the resolved `provider:modelId`. */
-const decodeModelStamp = Schema.decodeUnknownOption(Schema.Struct({ model: Schema.NonEmptyString }))
-
-/** The resolved `provider:modelId` the router stamped onto the finish part. */
-export const extractModel = (content: ReadonlyArray<Response.AnyPart>): Option.Option<string> =>
-  Option.flatMap(Option.fromNullishOr(content.find(isFinish)), (finish) =>
-    Option.map(decodeModelStamp(finish.metadata["router"]), (stamp) => stamp.model))
+const decodeModelStamp = Schema.decodeUnknownOption(ResponseStamp)
 
 const decodeUsage = Schema.decodeUnknownOption(TokenUsage)
 

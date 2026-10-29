@@ -176,6 +176,15 @@ describe("effect-idioms gate over fixtures", () => {
     expect(await findingsFor(["effect/no-unknown-json", "effect/no-record-cast"], ["decoding.testing.ts"])).toHaveLength(2)
   })
 
+  test("effect/no-provider-namespace flags a provider's key written, typed, destructured or read, not the word as a value or a name", async () => {
+    const findings = await findingsFor(["effect/no-provider-namespace"], ["providerNamespace.ts"])
+    expect(at(findings)).toEqual([3, 4, 4, 5, 6, 7, 8].map((line) => ({ rule: "effect/no-provider-namespace", file: "providerNamespace.ts", line })))
+    expect(findings.map((f) => f.message)).toEqual(
+      ["anthropic", "openai", "google", "router", "anthropic", "openai", "google"].map((key) => `\`${key}\` names a provider's namespace`),
+    )
+    expect(await findingsFor(["effect/no-provider-namespace"], ["**/*.ts"])).toHaveLength(7)
+  })
+
   test("effect/no-cause-pretty-data flags Cause.pretty kept as data, not as an Effect.log* argument", async () => {
     const findings = await findingsFor(["effect/no-cause-pretty-data"], ["causePretty.ts"])
     expect(at(findings)).toEqual([

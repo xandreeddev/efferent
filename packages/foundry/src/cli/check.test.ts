@@ -84,6 +84,7 @@ const seedViolations = (dir: string): void => {
       "export const Open = Schema.Record(Schema.String, Schema.Unknown)",
       "export const written = Schema.encodeUnknownResult(Schema.fromJsonString(Schema.Unknown))({})",
       "export const shaped = value as { readonly id: string }",
+      'export const signed = { anthropic: { signature: "s" } }',
       "",
     ].join("\n"),
   )

@@ -36,7 +36,7 @@ The models plugin: the routed `LanguageModel` (opencode, google, anthropic, open
 
 ## Erasure files
 
-- `src/llm/router.ts`, `src/llm/providers.ts`: one routed `LanguageModel` over arbitrary provider services, with reshaped options and the generic `generateText`/`generateObject`/`streamText` signatures (for example `router.ts:271`, `:591-596`); `withImageLabels` re-wraps those three methods (`providers.ts:66-68`) and a cache-control message is rebuilt with `Prompt.makeMessage` (`providers.ts:120`).
+- `src/llm/router.ts`, `src/llm/providers.ts`: one routed `LanguageModel` over arbitrary provider services, with reshaped options and the generic `generateText`/`generateObject`/`streamText` signatures (for example `router.ts:271`, `:581-586`); `withImageLabels` re-wraps those three methods (`providers.ts:66-68`) and a cache-control message is rebuilt with `Prompt.makeMessage` (`providers.ts:120`).
 - `src/llm/compat.ts`, `src/llm/openAiCodex.ts`: effect/ai's generic `LanguageModel` surface over hand-built clients (`compat.ts:511`, `:530`; `openAiCodex.ts:207-218`), and `Tool.Any`'s description and schema (`compat.ts:298-299`).
 - `src/transport/undici-fetch.adapter.ts`: npm undici's fetch typed as the global one; its classes differ, so nothing downstream may rely on `instanceof Response` or `Headers`.
 

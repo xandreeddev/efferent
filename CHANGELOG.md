@@ -96,6 +96,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   cast.
 - Put only JSON in `providerOptions`, and handle `tool-result` parts in code
   that walks an assistant message's parts.
+- Read a response's model with `responseModelOf`; a model that wraps others
+  stamps its finish part with `stampResponseModel` (`stampPartModel` on a
+  stream), not under a key of its own.
+- Build `describeModel` settings as JSON; pass settings with optional
+  fields through `storedJson` first.
 
 ### Breaking
 
@@ -283,6 +288,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   usage metadata), and `responseToolResults` leaves out preliminary results.
 - `@xandreed/plugin-models`: `fromChatCompletion` returns
   `Response.PartEncoded`s, and `thinkingParams` returns a JSON object.
+- `@xandreed/core`: `ModelRequestDescriptor.settings` is
+  `Schema.JsonObject`; settings holding a value JSON cannot hold (an
+  `undefined` field included) fail each dispatch with `request.descriptor`.
+  Stored request headers decode as before.
+- `@xandreed/plugin-models`: the router stamps the resolved model on the
+  finish part as `metadata.engine.model`, not `metadata.router.model` (the
+  stamp was never stored).
 
 ### Added
 
@@ -344,6 +356,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   request's `runId` and `step`, never a user's message or its images.
 - `buildProvider`'s result names its route: `anthropic`,
   `openai-responses`, `openai-codex` or `compat`.
+
+### Changed
+
+- `@xandreed/core`: `extractModel` is deprecated in favour of
+  `responseModelOf`; it still reads `router.model` until the next minor
+  release.
 
 ### Fixed
 
@@ -674,6 +692,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   catalog entry, flags and descriptor settings to their earlier values.
 - `effect/no-record-cast` runs in every package, with its shrinking
   `RECORD_CAST_EDGES`; its per-package list is gone.
+- The `effect/no-provider-namespace` gate rule bans `anthropic`, `openai`,
+  `google` and `router` keys in core and the agent loop, tests and kits
+  aside.
 
 ## 0.14.0 — 2026-10-29
 
