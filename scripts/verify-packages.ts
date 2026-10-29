@@ -63,15 +63,62 @@ await rm(skillsWorkspace, { recursive: true, force: true })
 if (directorySkills.length !== 1 || directorySkills[0]?.id !== "greet" || directorySkills[0]?.references[0]?.id !== "references/tone.md") { console.error("The skills directory read " + JSON.stringify(directorySkills)); process.exit(1) }
 console.log("The skills directory plugin read a SKILL.md tree over the packed local file system on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
 `
+/**
+ * The workspace tools over the packed packages: one agent turn with
+ * `localSystemPlugin` and `workspaceToolsPlugin` in a fresh directory, a
+ * scripted model reading a file, loading the edit and shell skills, editing
+ * it and running a command with stdin and a host variable. Run by
+ * `verify.ts` on Bun and by `node-imports.mjs` on Node, which import the
+ * names it uses. The script is JSON, so the same text is TypeScript and
+ * JavaScript.
+ */
+const workspaceJourney = `
+const workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), "efferent-workspace-")))
+await writeFile(join(workspaceRoot, "notes.md"), "- buy milk\\n")
+const workspaceUsage = { inputTokens: { total: 3 }, outputTokens: { total: 1 } }
+const workspaceCalls = [
+ { name: "read", params: { path: "notes.md" } },
+ { name: "load_skill", params: { skills: ["workspace.edit", "workspace.shell"] } },
+ { name: "edit", params: { path: "notes.md", edits: [{ oldText: "milk", newText: "oat milk" }] } },
+ { name: "bash", params: { command: "cat notes.md -; echo \\"$WORKSPACE_PROBE\\"", stdin: "from stdin\\n" } },
+]
+const workspaceScript = JSON.parse(JSON.stringify([
+ ...workspaceCalls.map((step, at) => [{ type: "tool-call", id: "w" + at, name: step.name, params: step.params }, { type: "finish", reason: "tool-calls", usage: workspaceUsage }]),
+ [{ type: "text", text: "done" }, { type: "finish", reason: "stop", usage: workspaceUsage }],
+]))
+const workspacePrompts = JSON.parse("[]")
+const workspaceTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+ const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+ const agent = yield* Agent.define({
+  plugins: [memoryWindowPlugin, { plugin: toolDiscoveryPlugin, options: { grants: ["fs.write", "shell.exec"] } }, stepLoopPlugin, localSystemPlugin, { plugin: workspaceToolsPlugin, options: { bashEnv: { WORKSPACE_PROBE: "probe" } } }],
+  turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 6 }, workspace: workspaceRoot,
+ })
+ const model = yield* LanguageModel.make({
+  generateText: (options) => Effect.sync(() => workspaceScript[workspacePrompts.push(JSON.stringify(options.prompt.content)) - 1]),
+  streamText: () => Stream.die("not scripted"),
+ })
+ const view = yield* sessions.create({ owner: "consumer" })
+ return yield* agent.turn({ turn: { session: { id: view.header.id, owner: "consumer" }, userMessage: new UserMessage({ text: "make it oat milk" }), runId: "workspace-1" }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
+  (turn) => turn.tools.select(turn.userMessage).pipe(Effect.andThen(turn.run({})), Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+})))
+const workspaceNotes = await readFile(join(workspaceRoot, "notes.md"), "utf8")
+await rm(workspaceRoot, { recursive: true, force: true })
+const workspaceLast = String(workspacePrompts[workspacePrompts.length - 1] ?? "")
+if (workspaceTurn.outcome !== "completed" || workspaceNotes !== "- buy oat milk\\n" || !workspaceLast.includes("- buy oat milk\\\\nfrom stdin\\\\nprobe\\\\n[Exit code 0.]")) {
+ console.error("The workspace tools journey failed: " + JSON.stringify({ outcome: workspaceTurn.outcome, notes: workspaceNotes, last: workspaceLast.slice(-600) }))
+ process.exit(1)
+}
+console.log("The workspace tools read, edited and ran a command (stdin, host variable) in an Agent.turn on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
+`
 await writeFile(join(consumer, "verify.ts"), `
 import { Context, Deferred, Effect, Layer, Option, Ref, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Bash, bashConformance, Capabilities, FileSystem, fileSystemConformance, makeMemoryFileSystem, Sessions, SessionEnvironment, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
-import { BashLive, FileSystemLive, SkillsDirectoryPluginLive } from "@xandreed/plugin-workspace"
+import { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
 import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
@@ -142,6 +189,7 @@ if (fileSystemFailures.length > 0) { console.error(fileSystemFailures.join("\\n"
 console.log("The FileSystem kit passed over the packed in-memory file system (" + fileSystem.length + " checks)")
 const linkTo = (target: string, path: string) => Effect.tryPromise(() => symlink(target, path))
 ${localKits}
+${workspaceJourney}
 `)
 /**
  * The documentation's imports must exist in the packed packages: every
@@ -216,7 +264,7 @@ if (Bun.which("node") !== null) {
   await writeFile(join(consumer, "node-imports.mjs"), nodeReady.map((name) => `await import(${JSON.stringify(name)})`).join("\n") + `
 const { encodeSse, FeedReady, renderSurfacePlugin } = await import("@xandreed/plugin-render")
 if (renderSurfacePlugin.id !== "@xandreed/plugin-render/surface" || encodeSse(FeedReady.make({})) !== "event: ready\\ndata: {}\\n\\n") process.exit(1)
-const { Context, Effect, Layer, Stream } = await import("effect")
+const { Context, Effect, Layer, Option, Stream } = await import("effect")
 const { LanguageModel } = await import("effect/ai")
 const { fileSystemConformance, makeMemoryFileSystem, Sessions, SessionLog, SessionLogMemoryLive, sessionLogRecoveryConformance, StepLoop, stepLoopConformance, TurnAdmissionOpen, turnConformance } = await import("@xandreed/core")
 const { runSteps, STEP_LOOP, stepLoopPlugin } = await import("@xandreed/plugin-agent-loop")
@@ -245,11 +293,11 @@ const turnServices = await Effect.runPromise(Effect.scoped(Effect.gen(function* 
 })))
 const agent = Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], system: "Be brief." })
 const turn = await runKit("turn", turnConformance(agent, turnServices))
-const { mkdir, mkdtemp, rm, symlink, writeFile } = await import("node:fs/promises")
+const { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } = await import("node:fs/promises")
 const { tmpdir } = await import("node:os")
 const { join } = await import("node:path")
-const { Bash, bashConformance, Capabilities, FileSystem, SessionEnvironment } = await import("@xandreed/core")
-const { BashLive, FileSystemLive, SkillsDirectoryPluginLive } = await import("@xandreed/plugin-workspace")
+const { Bash, bashConformance, Capabilities, FileSystem, SessionEnvironment, UserMessage } = await import("@xandreed/core")
+const { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } = await import("@xandreed/plugin-workspace")
 const linkTo = (target, path) => Effect.tryPromise(() => symlink(target, path))
 // The model store kits over every adapter plugin-models ships: in memory, and on files in temporary directories.
 const { authStoreConformance, AuthStore, ModelCatalog, modelCatalogConformance, SettingsStore, settingsStoreConformance } = await import("@xandreed/core")
@@ -267,6 +315,7 @@ rmSync(kitHome, { recursive: true, force: true })
 rmSync(kitCwd, { recursive: true, force: true })
 console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + ") and the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + ")")
 ${localKits}
+${workspaceJourney}
 `)
   const node = Bun.spawn(["node", "node-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await node.exited !== 0) process.exit(1)

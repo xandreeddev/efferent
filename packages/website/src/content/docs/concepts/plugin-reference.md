@@ -394,6 +394,250 @@ Optional: `efferent/SessionEnvironment`
 }
 ```
 
+## @xandreed/plugin-workspace/tools
+
+Scope: **runtime** · API 2 · Version 0.13.0
+
+Provides: none
+
+Contributes: `efferent/Capabilities`
+
+Requires: `@xandreed/core/FileSystem`, `efferent/SessionEnvironment`
+
+Optional: `@xandreed/core/Bash`
+
+### Defaults
+
+```json
+{
+  "tools": [
+    "read",
+    "write",
+    "edit",
+    "ls",
+    "find",
+    "grep",
+    "bash"
+  ],
+  "always": [
+    "read"
+  ],
+  "confine": true,
+  "protect": [
+    ".git/**",
+    ".efferent/**"
+  ],
+  "exclude": [
+    "node_modules",
+    ".git",
+    ".efferent"
+  ],
+  "maxLines": 2000,
+  "maxBytes": 51200,
+  "lsEntries": 500,
+  "findResults": 1000,
+  "grepMatches": 100,
+  "grepLineChars": 500,
+  "maxFileBytes": 33554432,
+  "fuzzyEdit": true,
+  "bashTimeoutMs": 120000,
+  "bashMaxTimeoutMs": 600000,
+  "bashEnv": {},
+  "bashInheritEnv": false,
+  "bashEnvAllow": [
+    "PATH",
+    "HOME",
+    "USER",
+    "LOGNAME",
+    "LANG",
+    "LC_*",
+    "TERM",
+    "SHELL",
+    "TMPDIR",
+    "TZ"
+  ],
+  "bashSessionEnv": false,
+  "spillDir": ".efferent/runtime/tool-output",
+  "spillKeep": 50,
+  "progressMs": 250,
+  "environmentSection": true,
+  "sectionOrder": 800
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "read",
+          "write",
+          "edit",
+          "ls",
+          "find",
+          "grep",
+          "bash"
+        ]
+      }
+    },
+    "always": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "read",
+          "edit",
+          "shell"
+        ]
+      }
+    },
+    "confine": {
+      "type": "boolean"
+    },
+    "protect": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "exclude": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "maxLines": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "maxBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 10485760
+    },
+    "lsEntries": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "findResults": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 100000
+    },
+    "grepMatches": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "grepLineChars": {
+      "type": "integer",
+      "minimum": 16,
+      "maximum": 100000
+    },
+    "maxFileBytes": {
+      "type": "integer",
+      "minimum": 1024,
+      "maximum": 1073741824
+    },
+    "fuzzyEdit": {
+      "type": "boolean"
+    },
+    "bashTimeoutMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "bashMaxTimeoutMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "bashEnv": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "bashInheritEnv": {
+      "type": "boolean"
+    },
+    "bashEnvAllow": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "bashSessionEnv": {
+      "type": "boolean"
+    },
+    "spillDir": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "spillKeep": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10000
+    },
+    "progressMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 60000
+    },
+    "environmentSection": {
+      "type": "boolean"
+    },
+    "sectionOrder": {
+      "type": "integer",
+      "minimum": -9007199254740991,
+      "maximum": 9007199254740991
+    }
+  },
+  "required": [
+    "tools",
+    "always",
+    "confine",
+    "protect",
+    "exclude",
+    "maxLines",
+    "maxBytes",
+    "lsEntries",
+    "findResults",
+    "grepMatches",
+    "grepLineChars",
+    "maxFileBytes",
+    "fuzzyEdit",
+    "bashTimeoutMs",
+    "bashMaxTimeoutMs",
+    "bashEnv",
+    "bashInheritEnv",
+    "bashEnvAllow",
+    "bashSessionEnv",
+    "spillDir",
+    "spillKeep",
+    "progressMs",
+    "environmentSection",
+    "sectionOrder"
+  ],
+  "additionalProperties": true
+}
+```
+
 ## @xandreed/plugin-models
 
 Scope: **runtime** · API 2 · Version 0.13.0

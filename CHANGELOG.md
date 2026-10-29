@@ -191,8 +191,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the models plugin" (or "of a model endpoint") with its path, without its
   value. Code matching on the old texts matches the new ones.
 - **The plugin reference** (`docs/plugin-reference.json`) gains `optional`
-  (the services a plugin uses when present) for every plugin, and the models
-  plugin's entry its new scope and options; its graph fingerprint changes.
+  (the services a plugin uses when present) and `contributes` (the
+  multi-provider keys it adds to, such as `Capabilities`) for every plugin,
+  and the models plugin's entry its new scope and options; its graph
+  fingerprint changes.
 - **`@xandreed/core`, `@xandreed/plugin-sessions`, `@xandreed/sdk`:
   `Sessions.begin` can fail with `NotResumable`.** Its error union gains it,
   for a user's turn whose `resumes` names a turn that cannot be resumed.
@@ -472,6 +474,52 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `remove-paths` check (a trailing slash on a link, a linked parent, a last
   `.` or `..`) and checks which path a `rename` failure names;
   `FileSystemMemoryLive` refuses a `remove` ending in `.` or `..` too.
+- `@xandreed/plugin-workspace`: the workspace tools. `workspaceToolsPlugin`
+  (`@xandreed/plugin-workspace/tools`, runtime-scoped; `workspaceTools(config)`
+  builds the same capability, `WorkspaceToolsPluginLive` is its typed layer)
+  gives the model `read`, `ls`, `find` and `grep` (skill `workspace.read`,
+  always on), `write` and `edit` (`workspace.edit`, needing the grant
+  `fs.write`) and `bash` (`workspace.shell`, needing `shell.exec`;
+  `WORKSPACE_PERMISSIONS`) over the `FileSystem`, `Bash` and
+  `SessionEnvironment` of each call, plus a `workspace.environment` prompt
+  section. Without the grants, `load_skill` refuses the skills with
+  `capability.forbidden` and the tools stay inactive; without a `Bash`
+  service there is no `bash` tool. Failures are `Failure` data. `read` shows
+  windows of at most 2000 lines or 50 KB with the offset to continue from,
+  and reports binary files (a NUL byte in the first 8 KB) with the media type
+  their name suggests, and a file that is not valid UTF-8 with U+FFFD and a
+  notice (`lossy`); `ls`, `find` (globs through `walkGlob`) and `grep`
+  (regular expressions or literal text, case, context, lines cut to 500
+  characters before matching, a quarter of the limit per file; a pattern
+  that repeats a repeating group, such as `(a+)+`, is refused as
+  exponential) are capped; `edit` applies several exact, unique,
+  non-overlapping replacements matched against the original, with a
+  normalised fallback (`fuzzyEdit`), keeps a BOM and CRLF endings, refuses
+  a file that is not valid UTF-8 (`NotUtf8`) and returns a unified diff
+  (effect's `TextDiff`); `write` refuses to empty a file; both write through
+  a temporary file and a rename (in place for a file whose mode the rename
+  would change: execute or special bits, or a mode the temporary file did
+  not get under the umask) under a per-file lock shared by every session of
+  the agent; `read`, `write`, `edit` and `grep` refuse pipes, sockets and
+  devices (`NotAFile`). `bash` runs in the
+  workspace root with a timeout the model may raise up to
+  `bashMaxTimeoutMs`, stdin, the host's `bashEnv` over an allowlist of its
+  variables (`bashEnvAllow`; `bashInheritEnv` passes everything;
+  `bashSessionEnv` adds the session's ids), publishes output live as
+  `tool.progress` (one event per run of output from one stream every
+  `progressMs`), keeps its tail and saves a long output under
+  `.efferent/runtime/tool-output`, up to `maxFileBytes` (`fullOutputCut`
+  past that; the newest `spillKeep` files are kept).
+  Paths are confined to the workspace through the real path of the nearest
+  existing ancestor, `protect` globs (`.git/**`, `.efferent/**`) refuse
+  writes, and `find` and `grep` never enter links or `exclude` names (an
+  entry with a `/` is a path from the root): a guardrail, not a sandbox.
+  The configuration (`WorkspaceToolsConfig`, `workspaceToolsDefaults`) is
+  flat; its `protect` and `exclude` globs are checked when the options are
+  decoded. Also exported: the tools' parameter and
+  result schemas (`workspaceToolSchemas` for `onTool`), `applyTextEdits`
+  and `normalizeLine`. A new docs page, "Workspace tools", and a
+  packed-package journey on Bun and Node.
 
 - `@xandreed/core`: token usage counts cache writes and reasoning.
   `TokenUsage` gains `cacheWriteTokens` and `reasoningTokens` (both inside
@@ -810,6 +858,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   version reserved (a reserved bus name never stored as itself excepted).
   The event-reference generator lists the journal from `JOURNAL_KINDS` and
   fails on a reserved name that is neither a journal kind nor a bus event's.
+- The `@xandreed/plugin-workspace` tests run a key-free workspace-tools
+  journey through `Agent.define` with the step loop, memory window, tool
+  discovery and sessions plugins and `fast-check` (`foundry.config.ts`), as
+  the skills directory tests do; `verify:packages` runs a packed version of
+  that journey on Bun and Node.
 
 ## 0.13.0
 
