@@ -57,6 +57,14 @@ The models plugin keeps its credentials (`AuthStore`) and model settings
   provider. With `inheritPrevious` (default `true`), `~/.efferent/auth.json` and
   `<workspace>/.efferent/auth.json` are read as fallbacks; a refreshed
   inherited token is written to the runtime file.
+- A file that is missing reads as empty. One that cannot be read, or does not
+  hold a JSON object, fails every credential call with an `AuthError` of code
+  `auth.corrupt` naming the file (and a `config.json` like it, every settings
+  load, with a `SettingsError` of code `settings.corrupt`): the plugin never
+  takes a damaged file for an empty one and writes over the credentials it
+  could not read. Fix or remove the file. An entry it cannot read (from a
+  newer version, say) is not used, and is kept as it is when the file is
+  written.
 - The settings are the plugin's options (`model`, `fastModel`,
   `fallbackModel`), over the model settings of `~/.efferent/config.json` and
   `<workspace>/.efferent/config.json` when `inheritPrevious` is on. The files
@@ -151,12 +159,22 @@ a failed save of a refreshed token would fail the model call.
 ### Refresh, lifetime and precedence
 
 An OAuth token for `anthropic` or `openai-codex` is refreshed a minute before
-it expires. In memory, one refresh per provider runs at a time, and a login or
-logout made while the refresh's token request is in flight wins: the
-refreshed token is dropped, and the host never receives it. One made while a
-refreshed token is being committed (and handed to `HostCredentials.save`)
-waits for that commit, then applies. An expired token of any other provider
-fails the call with an `AuthError`.
+it expires. In memory and in the files alike, one refresh per provider runs
+at a time (concurrent calls share its token request), and a login or logout
+made while the refresh's token request is in flight wins: the refreshed token
+is dropped, and the host never receives it. One made while a refreshed token
+is being committed (and handed to `HostCredentials.save`) waits for that
+commit, then applies. A provider that does not rotate the refresh token
+leaves it out of its answer, and the stored one is kept; an answer without an
+access token or a lifetime fails the refresh with an `AuthError`, which never
+quotes the answer. An expired token of any other provider fails the call with
+an `AuthError`.
+
+The file stores lock each file within one process: every agent the process
+defines shares the locks, and each write replaces the file through a temp
+file of its own. Two processes that share these files are not coordinated: a
+refresh in one can spend the refresh token the other holds, so run one
+process over them at a time, or use `storage: "memory"`.
 
 The memory seeds are read in order, later winning: `HostCredentials.load`,
 then `credentialEnv`, then `credentials`. So an OAuth credential in

@@ -4,10 +4,12 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option } from "effect"
 import { EngineSettings, SettingsStore, settingsStoreConformance } from "@xandreed/core"
+import type { SettingsStoreConformanceOptions } from "@xandreed/core"
+import { damagedFile } from "../testing.js"
 import { LocalSettingsStoreLive } from "./localSettings.js"
 import { MemorySettingsStoreLive } from "./memory-settings.adapter.js"
 
-const runKit = (store: typeof SettingsStore.Service) => settingsStoreConformance(store, { writable: true }).map((check) => test(check.name, async () => {
+const runKit = (store: typeof SettingsStore.Service, options: Partial<SettingsStoreConformanceOptions> = {}) => settingsStoreConformance(store, { writable: true, ...options }).map((check) => test(check.name, async () => {
   const exit = await Effect.runPromise(Effect.result(check.run))
   expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
 }))
@@ -23,7 +25,8 @@ describe("LocalSettingsStoreLive conforms to the SettingsStore contract", () => 
   mkdirSync(join(home, ".efferent"), { recursive: true })
   // A global value under a local tier the kit writes: clearing the local key falls back to it.
   writeFileSync(join(home, ".efferent", "config.json"), JSON.stringify({ model: "opencode:glm-5.1", sandbox: false }))
-  runKit(Effect.runSync(Effect.service(SettingsStore).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home)))))
+  // The local file is the one the store writes: a write that ignored the damage would replace it.
+  runKit(Effect.runSync(Effect.service(SettingsStore).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home)))), { corrupt: damagedFile(join(cwd, ".efferent", "config.json")) })
 
   test("the kit puts every key back as it found it", () => {
     const local = JSON.parse(readFileSync(join(cwd, ".efferent", "config.json"), "utf8")) as Record<string, unknown>

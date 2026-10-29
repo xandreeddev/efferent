@@ -34,6 +34,11 @@ export class EngineSettings extends Schema.Class<EngineSettings>("EngineSettings
 
 export class SettingsError extends Schema.TaggedError<SettingsError>()("SettingsError", {
   message: Schema.String,
+  /**
+   * `settings.corrupt`: the store's backing data could not be read or
+   * decoded. Nothing was read as defaults and nothing was written over it.
+   */
+  code: Schema.optionalKey(Schema.Literal("settings.corrupt")),
 }) {}
 
 /** The three model roles a selection can be persisted under. */
@@ -57,7 +62,10 @@ export type SettingsKey = (typeof SETTINGS_KEYS)[number]
  * Read-through settings port. `load` re-reads the backing store on every call
  * so a value changed mid-session takes effect on the next turn — callers must
  * not cache the result across turns. A store may be read-only: then
- * `setRole` and `set` fail with a `SettingsError` and write nothing.
+ * `setRole` and `set` fail with a `SettingsError` and write nothing. A store
+ * whose backing data cannot be read or decoded fails `load` and every write
+ * with a `SettingsError` of code `settings.corrupt` instead of reading it as
+ * defaults, so no write replaces settings it could not read.
  * `settingsStoreConformance` checks a store against this contract.
  */
 export class SettingsStore extends Context.Service<SettingsStore, {

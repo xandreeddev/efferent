@@ -32,8 +32,8 @@ transports (see [render kits](#render-kits)).
 | `turnConformance(runner, services)` | the writer first, the message before the matcher's history, the reply and the end exactly once, tasks joined before the reply, a model-driven turn's usage equal to its stored `step.usage` records (`turnUsageOf`), the user's attachments stored with the turn and reaching the first request as image parts, the host layer seeing only earlier turns | a turn composition |
 | `fileSystemConformance(subject)` | round trips, `createParents`, byte ranges, append, rename, `stat` and links, sorted listings, `glob`, `mkdir`, `realPath`, the `remove` rules, the `reason` of every failure | a way to open a `FileSystem` over an empty directory |
 | `bashConformance(subject)` | exit codes as results, separate streams, output before exit, stdin, the inherited-environment allowlist, timeouts and interrupts that kill the process group, `cwd`, signals, UTF-8 | a way to open a `Bash` adapter |
-| `authStoreConformance(store)` | an absent provider, API key, `local` and OAuth credentials read back and resolve as they should (the key `Redacted`), an expired token the store cannot refresh fails with an `AuthError` naming the provider and never returns the stale token, `set` replaces, `remove` deletes everywhere and is a no-op for an absent provider, providers are isolated | an `AuthStore` |
-| `settingsStoreConformance(store, { writable })` | `load` is stable; writable: each role and key reads back typed, `None` clears back to the value before the set, a value that does not parse (through `set` or `setRole`) fails with a `SettingsError` and changes nothing; read-only: every write is refused and changes nothing | a `SettingsStore` |
+| `authStoreConformance(store, { refresh?, corrupt? })` | an absent provider, API key, `local` and OAuth credentials read back and resolve as they should (the key `Redacted`), an expired token the store cannot refresh fails with an `AuthError` naming the provider and never returns the stale token, `set` replaces, `remove` deletes everywhere and is a no-op for an absent provider, providers are isolated; with `refresh`, concurrent calls on one expired token send one token request and a `remove` during it sticks; with `corrupt`, damaged backing data fails every call with `auth.corrupt` | an `AuthStore` |
+| `settingsStoreConformance(store, { writable, corrupt? })` | `load` is stable; writable: each role and key reads back typed, `None` clears back to the value before the set, a value that does not parse (through `set` or `setRole`) fails with a `SettingsError` and changes nothing; read-only: every write is refused and changes nothing; with `corrupt`, damaged backing data fails `load` and every write with `settings.corrupt` | a `SettingsStore` |
 | `modelCatalogConformance(catalog, { includes? })` | entries decode, each selection is `"<provider>:<modelId>"` of its own provider, no selection twice, two lists agree, the expected selections are listed | a `ModelCatalog` |
 
 Every core kit returns `ReadonlyArray<ConformanceCheck>`. A check has a `name` and
@@ -620,6 +620,67 @@ declare const temporary: Effect.Effect<string, never, Scope.Scope> // as in the 
 const checks = bashConformance({
   open: (planted) => Effect.all({ root: temporary, bash: makeBash({ parentEnv: { ...process.env, ...planted } }) }),
 })
+```
+
+## The AuthStore and SettingsStore kits
+
+`authStoreConformance(store)` and `settingsStoreConformance(store, { writable })`
+call the store and nothing else. Two options reach further, and each turns on
+its checks:
+
+```ts
+interface AuthStoreConformanceOptions {
+  /** The token endpoint the store refreshes through, which the test controls. */
+  readonly refresh?: AuthStoreRefreshProbe
+  /** Damage the store's backing data for the scope's lifetime, repairing it when the scope closes. */
+  readonly corrupt?: Effect.Effect<void, never, Scope.Scope>
+}
+interface AuthStoreRefreshProbe {
+  /** A provider whose expired OAuth token the store refreshes through the endpoint. */
+  readonly provider: ProviderId
+  /** The token requests the endpoint has received. */
+  readonly requests: Effect.Effect<number>
+  /** Hold requests unanswered until the returned effect runs. */
+  readonly hold: Effect.Effect<Effect.Effect<void>>
+}
+```
+
+- **refresh-once**: four concurrent `resolveKey` calls on one expired token
+  send one token request, all get its new token, and the store keeps it.
+- **refresh-remove**: a `remove` made while the token request is held sticks:
+  the refreshed token is not stored.
+- **corrupt**: while the backing data is damaged, `get`, `all`,
+  `resolveKey`, `set` and `remove` fail with an `AuthError` of code
+  `auth.corrupt`, and the store reads its data again once it is repaired.
+
+The refresh checks write the probe's provider and put back what it held. They
+wait for the store's token requests on the live clock (up to two seconds), so
+run them without a `TestClock`. `SettingsStoreConformanceOptions` takes the
+same `corrupt` beside `writable`: `load`, and for a writable store `setRole`
+and `set`, fail with a `SettingsError` of code `settings.corrupt`. Damage what
+the store writes to, so that a write over the damage shows. A store in memory
+has nothing to damage and leaves `corrupt` out.
+
+`@xandreed/plugin-models` runs both kits with these options over its file
+stores (the probe is a `fetch` the store is built over, the damage is text that
+is not JSON written over `auth.json` or `config.json`) and the refresh checks
+over its memory store, on Bun and on Node:
+
+```ts
+import { Effect, Layer } from "effect"
+import type { Scope } from "effect"
+import { authStoreConformance, AuthStore } from "@xandreed/core"
+import type { AuthStoreRefreshProbe } from "@xandreed/core"
+import { LocalAuthStoreLive, ModelsTransport } from "@xandreed/plugin-models"
+import type { ModelsFetch } from "@xandreed/plugin-models"
+
+declare const cwd: string, home: string
+declare const endpoint: { readonly fetch: ModelsFetch; readonly probe: AuthStoreRefreshProbe } // a fetch that answers token requests
+declare const damaged: (path: string) => Effect.Effect<void, never, Scope.Scope> // writes "{ not json", restores on close
+
+const store = await Effect.runPromise(Effect.service(AuthStore).pipe(Effect.provide(
+  LocalAuthStoreLive(cwd, home, ".efferent/runtime").pipe(Layer.provide(Layer.succeed(ModelsTransport, ModelsTransport.of({ fetch: endpoint.fetch })))))))
+const checks = authStoreConformance(store, { refresh: endpoint.probe, corrupt: damaged(`${home}/.efferent/runtime/auth.json`) })
 ```
 
 ## Render kits

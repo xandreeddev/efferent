@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option } from "effect"
@@ -19,18 +19,58 @@ const setup = (global: Record<string, unknown>, local?: Record<string, unknown>)
 }
 
 describe("LocalSettingsStoreLive", () => {
-  test("a CORRUPT config degrades to defaults (with a warning) — never a crash", async () => {
+  test("a corrupt config fails load and every write with settings.corrupt, and is left as it was", async () => {
+    const { layer, cwd } = setup({ model: "opencode:kimi-k2.6" }, {})
+    const path = join(cwd, ".efferent", "config.json")
+    writeFileSync(path, "{ definitely not json")
+    const failures = await Effect.runPromise(Effect.gen(function* () {
+      const store = yield* SettingsStore
+      return yield* Effect.all([
+        Effect.flip(store.load),
+        Effect.flip(store.set("maxAttempts", Option.some("3"))),
+        Effect.flip(store.setRole("fast", Option.some("opencode:deepseek-v4-flash"))),
+      ])
+    }).pipe(Effect.provide(layer)))
+    expect(failures.map((error) => [error._tag, error.code])).toEqual([
+      ["SettingsError", "settings.corrupt"], ["SettingsError", "settings.corrupt"], ["SettingsError", "settings.corrupt"],
+    ])
+    expect(failures[0]?.message).toContain(path)
+    expect(readFileSync(path, "utf-8")).toBe("{ definitely not json")
+  })
+
+  test("a config that cannot be read, or holds no JSON object, is corrupt too", async () => {
     const home = mkdtempSync(join(tmpdir(), "engine-cfg-home-"))
     const cwd = mkdtempSync(join(tmpdir(), "engine-cfg-cwd-"))
-    mkdirSync(join(home, ".efferent"), { recursive: true })
-    writeFileSync(join(home, ".efferent", "config.json"), "{ definitely not json")
-    await Effect.runPromise(
-      Effect.gen(function* () {
-        const store = yield* SettingsStore
-        const settings = yield* store.load
-        expect(Option.isNone(settings.model)).toBe(true)
-      }).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home))),
-    )
+    // A directory where the file should be: reading it fails with EISDIR.
+    mkdirSync(join(home, ".efferent", "config.json"), { recursive: true })
+    mkdirSync(join(cwd, ".efferent"), { recursive: true })
+    writeFileSync(join(cwd, ".efferent", "config.json"), "[1, 2]")
+    const codes = await Effect.runPromise(Effect.gen(function* () {
+      const store = yield* SettingsStore
+      const load = yield* Effect.flip(store.load)
+      const write = yield* Effect.flip(store.set("sandbox", Option.some("true")))
+      return [load.code, load.message.includes("could not be read"), write.code, write.message.includes("does not hold a JSON object")]
+    }).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home))))
+    expect(codes).toEqual(["settings.corrupt", true, "settings.corrupt", true])
+  })
+
+  test("concurrent writes in one process all land", async () => {
+    const { layer, cwd } = setup({}, { theme: "efferent" })
+    const settings = await Effect.runPromise(Effect.gen(function* () {
+      const store = yield* SettingsStore
+      yield* Effect.all([
+        store.set("maxAttempts", Option.some("4")),
+        store.set("sandbox", Option.some("true")),
+        store.set("budgetMillis", Option.some("60000")),
+        store.set("reasoningEffort", Option.some("high")),
+        store.setRole("fast", Option.some("opencode:deepseek-v4-flash")),
+        store.setRole("code", Option.some("opencode:kimi-k2.7-code")),
+      ], { concurrency: "unbounded" })
+      return yield* store.load
+    }).pipe(Effect.provide(layer)))
+    expect([settings.maxAttempts, settings.sandbox, settings.budgetMillis, settings.reasoningEffort, settings.fastModel, settings.codeModel].map((value: Option.Option<unknown>) => Option.getOrNull(value)))
+      .toEqual([4, true, 60000, "high", "opencode:deepseek-v4-flash", "opencode:kimi-k2.7-code"])
+    expect(readdirSync(join(cwd, ".efferent"))).toEqual(["config.json"])
   })
 
   test("reads the model roles, local-over-global", async () => {

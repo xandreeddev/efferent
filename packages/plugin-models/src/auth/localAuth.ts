@@ -1,12 +1,13 @@
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises"
-import { dirname, join } from "node:path"
-import { Clock, Effect, Layer, Option, Redacted } from "effect"
+import { join } from "node:path"
+import { Effect, Layer, Option } from "effect"
 import type { Context } from "effect"
-import { asJsonRecord, AuthError, AuthStore, parseJsonWarn } from "@xandreed/core"
+import { AuthError, AuthStore } from "@xandreed/core"
 import type { Credential, ProviderId } from "@xandreed/core"
-import { isUsableAt, refreshCredential } from "./credential-refresh.entity.functions.js"
+import { isSameToken, resolveSlotKey } from "./credential-refresh.entity.functions.js"
+import type { CredentialSlot } from "./credential-refresh.entity.functions.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
+import { namedLock, readJsonObject, withFileLock, writeJsonObject } from "../storage/json-file.js"
 
 /**
  * The on-disk credential store — the SAME `auth.json` vocabulary the previous
@@ -20,6 +21,8 @@ import { ModelsTransport } from "../ports/models-transport.port.js"
 interface AuthFile {
   readonly path: string
   readonly entries: ReadonlyMap<string, Credential>
+  /** The entries this version cannot read: never listed, and written back as they are. */
+  readonly unread: ReadonlyMap<string, unknown>
 }
 
 const decodeCredential = (value: unknown): Option.Option<Credential> => {
@@ -57,121 +60,100 @@ const decodeCredential = (value: unknown): Option.Option<Credential> => {
   return Option.none()
 }
 
-const readAuthFile = (path: string): Effect.Effect<AuthFile> =>
-  Effect.tryPromise({ try: () => readFile(path, "utf-8"), catch: () => "missing" as const }).pipe(
-    // Corrupt ≠ absent: a malformed auth.json presenting as "logged out"
-    // with zero signal is the worst version of this failure — warn.
-    Effect.flatMap((text) => parseJsonWarn(text, path)),
-    Effect.map((parsed) => {
-      const record = asJsonRecord(parsed)
-      const entries = new Map(
-        Object.entries(record).flatMap(([provider, raw]) =>
-          Option.match(decodeCredential(raw), {
-            onNone: () => [] as ReadonlyArray<readonly [string, Credential]>,
-            onSome: (cred) => [[provider, cred] as const],
-          }),
-        ),
-      )
-      return { path, entries }
-    }),
-    Effect.orElseSucceed(() => ({ path, entries: new Map<string, Credential>() })),
-  )
+const corrupt = (path: string) => (reason: string) => new AuthError({
+  provider: "*",
+  code: "auth.corrupt",
+  message: `${path} ${reason}: fix or remove it; nothing was read from it or written to it`,
+})
 
-/** Atomic 0600 write: temp file in the same dir, then rename over. */
-const writeAuthFile = (
-  path: string,
-  entries: ReadonlyMap<string, Credential>,
-): Effect.Effect<void, AuthError> =>
-  Effect.tryPromise({
-    try: async () => {
-      await mkdir(dirname(path), { recursive: true })
-      const tmp = `${path}.tmp-${process.pid}`
-      await writeFile(tmp, JSON.stringify(Object.fromEntries(entries), null, 2), "utf-8")
-      await chmod(tmp, 0o600)
-      await rename(tmp, path)
-    },
-    catch: (e) =>
-      new AuthError({ provider: "*", message: `auth.json write failed: ${String(e)}` }),
-  })
+/** A file that is not there reads as empty; one that cannot be read or is not a JSON object fails with `auth.corrupt`. */
+const readAuthFile = (path: string): Effect.Effect<AuthFile, AuthError> =>
+  readJsonObject(path, corrupt(path)).pipe(Effect.map((record) => {
+    const decoded = Object.entries(Option.getOrElse(record, () => ({}))).map(([provider, raw]) => ({ provider, raw, credential: decodeCredential(raw) }))
+    return {
+      path,
+      entries: new Map(decoded.flatMap(({ provider, credential }) => Option.match(credential, {
+        onNone: () => [],
+        onSome: (found) => [[provider, found] as const],
+      }))),
+      unread: new Map(decoded.filter(({ credential }) => Option.isNone(credential)).map(({ provider, raw }) => [provider, raw] as const)),
+    }
+  }))
+
+/** Write `file` with `provider` set to `credential` (or removed), every other entry kept. Atomic, mode 0600. */
+const writeAuthFile = (file: AuthFile, provider: string, credential: Option.Option<Credential>): Effect.Effect<void, AuthError> => {
+  const others = (entries: ReadonlyMap<string, unknown>) => [...entries].filter(([key]) => key !== provider)
+  return writeJsonObject(
+    file.path,
+    Object.fromEntries([...others(file.unread), ...others(file.entries), ...Option.toArray(Option.map(credential, (value) => [provider, value] as const))]),
+    Option.some(0o600),
+    (reason) => new AuthError({ provider: "*", message: `auth.json write failed: ${reason}` }),
+  )
+}
 
 export const authPaths = (cwd: string, home: string, directory = ".efferent"): ReadonlyArray<string> => [
   join(home, directory, "auth.json"),
   join(cwd, directory, "auth.json"),
 ]
 
+/** The file a provider's credential is read from: the last of `files` that holds it. */
+const holderOf = (files: ReadonlyArray<AuthFile>, provider: ProviderId): Option.Option<{ readonly file: AuthFile; readonly credential: Credential }> =>
+  Option.firstSomeOf([...files].reverse().map((file) => Option.map(Option.fromNullishOr(file.entries.get(provider)), (credential) => ({ file, credential }))))
+
 /**
  * `LocalAuthStoreLive(cwd, home)` — read-through: every call re-reads disk,
  * so a credential added mid-session applies on the next request. A token
  * refresh goes through the `ModelsTransport` the layer is built over, if any.
+ *
+ * A file that cannot be read or is not a JSON object fails every call with
+ * an `AuthError` of code `auth.corrupt`; only a missing file reads as empty.
+ * Each write re-reads its file under that file's lock, which every store in
+ * the process shares, and replaces it through a temp file of its own. One
+ * refresh of a provider's token runs at a time, and stores its token only if
+ * the provider still holds the one it refreshed, so a login or logout made
+ * during the refresh wins. The locks hold within one process: two processes
+ * sharing these files can still lose an update.
  */
 export const LocalAuthStoreLive = (cwd: string, home: string, directory = ".efferent", fallbackDirectory?: string) => {
-  const paths = [...(fallbackDirectory === undefined ? [] : authPaths(cwd, home, fallbackDirectory)), ...authPaths(cwd, home, directory)]
+  const writable = authPaths(cwd, home, directory)
+  const loginPath = writable[0] ?? join(home, directory, "auth.json")
+  const paths = [...(fallbackDirectory === undefined ? [] : authPaths(cwd, home, fallbackDirectory)), ...writable]
+  const readAll = Effect.forEach(paths, readAuthFile)
+  /** Where a refreshed token is written: the runtime file that held it, else the global runtime file. */
+  const targetOf = (path: string) => writable.includes(path) ? path : loginPath
+
   return Layer.effect(AuthStore, Effect.map(Effect.serviceOption(ModelsTransport), (transport): Context.Service.Shape<typeof AuthStore> => {
-    // Token refreshes go through the transport the store was built over (the plugin's proxy), else the global fetch.
     const tokens: TokenRequestOptions = Option.match(transport, { onNone: () => ({}), onSome: ({ fetch }) => ({ fetch }) })
+
+    const slotOf = (provider: ProviderId): CredentialSlot => ({
+      current: Effect.map(readAll, (files) => Option.map(holderOf(files, provider), ({ credential }) => credential)),
+      refreshLock: namedLock(loginPath, `refresh:${provider}`),
+      commit: (stale, fresh) => Effect.map(readAll, (files) => holderOf(files, provider)).pipe(Effect.flatMap(Option.match({
+        onNone: () => Effect.succeed(false),
+        onSome: ({ file }) => {
+          const target = targetOf(file.path)
+          return withFileLock(target)(Effect.gen(function* () {
+            // Read again under the lock: only the token this refresh replaced may be replaced.
+            const now = holderOf(yield* readAll, provider)
+            if (!Option.exists(now, (held) => targetOf(held.file.path) === target && isSameToken(held.credential, stale))) return false
+            yield* writeAuthFile(yield* readAuthFile(target), provider, Option.some(fresh))
+            return true
+          }))
+        },
+      }))),
+    })
+
     return {
-      all: Effect.gen(function* () {
-        const files = yield* Effect.forEach(paths, readAuthFile)
-        return new Map(files.flatMap((f) => [...f.entries]))
-      }),
-      get: (provider: ProviderId) =>
-        Effect.gen(function* () {
-          // Local overrides global: read in order, later files win.
-          const files = yield* Effect.forEach(paths, readAuthFile)
-          const merged = new Map(files.flatMap((f) => [...f.entries]))
-          return Option.fromNullishOr(merged.get(provider))
-        }),
-      resolveKey: (provider: ProviderId) =>
-        Effect.gen(function* () {
-          const files = yield* Effect.forEach(paths, readAuthFile)
-          const holder = [...files]
-            .reverse()
-            .find((f) => f.entries.has(provider))
-          const cred = holder?.entries.get(provider)
-          if (cred === undefined) return Option.none<Redacted.Redacted<string>>()
-          if (cred.type === "api_key") return Option.some(Redacted.make(cred.key))
-          if (cred.type === "local") return Option.none<Redacted.Redacted<string>>()
-          // OAuth: refresh when near expiry, persisting back to the file that
-          // held the credential. Each subscription protocol stays in its auth
-          // module; `refreshCredential` dispatches by provider id.
-          if (isUsableAt(cred, yield* Clock.currentTimeMillis)) {
-            return Option.some(Redacted.make(cred.access))
-          }
-          const updated = yield* refreshCredential(provider, cred, tokens)
-          // Refresh inherited credentials into the current store, preserving the
-          // previous installation's files until the user explicitly logs out.
-          const target = holder !== undefined && authPaths(cwd, home, directory).includes(holder.path)
-            ? holder : yield* readAuthFile(authPaths(cwd, home, directory)[0] ?? "")
-          yield* writeAuthFile(
-            target.path,
-            new Map([...target.entries, [provider, updated] as const]),
-          )
-          return Option.some(Redacted.make(updated.access))
-        }),
+      all: Effect.map(readAll, (files) => new Map(files.flatMap((f) => [...f.entries]))),
+      get: (provider: ProviderId) => slotOf(provider).current,
+      resolveKey: (provider: ProviderId) => resolveSlotKey(provider, slotOf(provider), tokens),
       set: (provider: ProviderId, credential: Credential) =>
-        Effect.gen(function* () {
-          // Logins land in the GLOBAL file — credentials belong to the user,
-          // not one workspace (a local entry still overrides on read).
-          const globalPath = authPaths(cwd, home, directory)[0] ?? ""
-          const file = yield* readAuthFile(globalPath)
-          yield* writeAuthFile(
-            globalPath,
-            new Map([...file.entries, [provider, credential] as const]),
-          )
-        }),
-      remove: (provider: ProviderId) =>
-        // Logout removes the provider from EVERY tier that holds it, so a
-        // stale local override can't silently resurrect the credential.
-        Effect.forEach(paths, (path) =>
-          Effect.gen(function* () {
-            const file = yield* readAuthFile(path)
-            if (!file.entries.has(provider)) return
-            yield* writeAuthFile(
-              path,
-              new Map([...file.entries].filter(([p]) => p !== provider)),
-            )
-          }),
-        ).pipe(Effect.asVoid),
+        withFileLock(loginPath)(readAuthFile(loginPath).pipe(Effect.flatMap((file) => writeAuthFile(file, provider, Option.some(credential))))),
+      // Every file is read first, so a corrupt one fails the logout before any file changes.
+      remove: (provider: ProviderId) => readAll.pipe(
+        Effect.andThen(Effect.forEach(paths, (path) => withFileLock(path)(readAuthFile(path).pipe(Effect.flatMap((file) =>
+          file.entries.has(provider) || file.unread.has(provider) ? writeAuthFile(file, provider, Option.none()) : Effect.void))), { discard: true })),
+      ),
     }
   }))
 }

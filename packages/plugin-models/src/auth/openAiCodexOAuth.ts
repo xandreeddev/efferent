@@ -3,6 +3,7 @@ import { AuthError } from "@xandreed/core"
 import { generatePkce, tokenTime } from "./anthropicOAuth.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
+import { decodeTokenResponse } from "./token-response.entity.functions.js"
 
 /** ChatGPT Plus/Pro OAuth protocol used by the OpenAI Codex subscription. */
 export const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -59,10 +60,12 @@ export const openAiCodexAccountId = (accessToken: string): Option.Option<string>
   )
 }
 
+/** One token-endpoint POST; `previous` is the refresh token a refresh sends, kept when the response does not rotate it. */
 const postToken = (
   body: Record<string, string>,
   stage: string,
   options: TokenRequestOptions,
+  previous: Option.Option<string>,
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
   Effect.tryPromise({
     try: async () => {
@@ -80,21 +83,12 @@ const postToken = (
       (response) => response.ok,
       (response) => oauthError(stage, `status ${response.status}: ${response.text.slice(0, 200)}`),
     ),
-    Effect.flatMap((response) =>
-      Effect.try({
-        try: () => JSON.parse(response.text) as { access_token: string; refresh_token: string; expires_in: number },
-        catch: () => oauthError(stage, "the token response was not JSON"),
-      }),
-    ),
-    Effect.filterOrFail(
-      (token) => typeof token.access_token === "string" && typeof token.refresh_token === "string" && typeof token.expires_in === "number",
-      () => oauthError(stage, "the token response omitted required fields"),
-    ),
-    Effect.flatMap((token) => Effect.map(tokenTime(options), (now) => ({
-      access: token.access_token,
-      refresh: token.refresh_token,
-      expires: now + token.expires_in * 1000,
-      ...Option.match(openAiCodexAccountId(token.access_token), { onNone: () => ({}), onSome: (accountId) => ({ accountId }) }),
+    Effect.flatMap((response) => decodeTokenResponse(response.text, previous).pipe(Effect.mapError((reason) => oauthError(stage, reason)))),
+    Effect.flatMap((issued) => Effect.map(tokenTime(options), (now) => ({
+      access: issued.access,
+      refresh: issued.refresh,
+      expires: now + issued.lifetimeMs,
+      ...Option.match(openAiCodexAccountId(issued.access), { onNone: () => ({}), onSome: (accountId) => ({ accountId }) }),
     }))),
   )
 
@@ -125,10 +119,10 @@ export const exchangeOpenAiCodexCode = (
   verifier: string,
   options: TokenRequestOptions = {},
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
-  postToken({ grant_type: "authorization_code", client_id: OPENAI_CODEX_CLIENT_ID, code, code_verifier: verifier, redirect_uri: OPENAI_CODEX_REDIRECT_URI }, "code exchange", options)
+  postToken({ grant_type: "authorization_code", client_id: OPENAI_CODEX_CLIENT_ID, code, code_verifier: verifier, redirect_uri: OPENAI_CODEX_REDIRECT_URI }, "code exchange", options, Option.none())
 
 export const refreshOpenAiCodexToken = (
   refreshToken: string,
   options: TokenRequestOptions = {},
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
-  postToken({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: OPENAI_CODEX_CLIENT_ID }, "token refresh", options)
+  postToken({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: OPENAI_CODEX_CLIENT_ID }, "token refresh", options, Option.some(refreshToken))

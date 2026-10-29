@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import type { Context } from "effect"
+import type { Context, Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, fail } from "../conformance.functions.js"
 import { parseModelSelection } from "../domain/model-selection.entity.functions.js"
@@ -91,6 +91,46 @@ const BAD: ReadonlyArray<{ readonly key: SettingsKey; readonly text: string }> =
   { key: "reasoningEffort", text: "extreme" },
 ]
 
+/** What the kit is told about a store, and can do to it beyond calling it. */
+export interface SettingsStoreConformanceOptions {
+  /** Whether `setRole` and `set` write, or every write is refused. */
+  readonly writable: boolean
+  /**
+   * Damage the store's backing data (a file that is not JSON) for the
+   * scope's lifetime, and repair it when the scope closes: the corrupt check.
+   * Damage what the store writes to, so a write that ignores the damage shows.
+   * A store with nothing to damage, such as one in memory, leaves it out.
+   */
+  readonly corrupt?: Effect.Effect<void, never, Scope.Scope>
+}
+
+/** `effect` must fail with a `SettingsError` of code `settings.corrupt`. */
+const corrupted = (what: string, effect: Effect.Effect<unknown, unknown>) => Effect.result(effect).pipe(Effect.flatMap((result) => {
+  if (result._tag === "Success") return fail("corrupt", `${what} succeeded on a store whose backing data cannot be read`)
+  const error: unknown = result.failure
+  const tag = typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "an error"
+  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "no code"
+  return expect("corrupt", tag === "SettingsError" && code === "settings.corrupt", `${what} failed with ${tag} (${code}), not a SettingsError of code settings.corrupt`)
+}))
+
+const corruptCheck = (store: Store, writable: boolean, corrupt: Effect.Effect<void, never, Scope.Scope>): ConformanceCheck =>
+  check("a store whose backing data cannot be read fails load and every write with a SettingsError of code settings.corrupt, never reads it as defaults", "corrupt", () => {
+    const body = Effect.gen(function* () {
+      const before = snapshot(yield* store.load)
+      yield* Effect.scoped(Effect.gen(function* () {
+        yield* corrupt
+        yield* corrupted("load", store.load)
+        yield* writable ? Effect.all([
+          corrupted("setRole", store.setRole("general", Option.some(selection("corrupt")))),
+          corrupted("set", store.set("maxAttempts", Option.some("3"))),
+        ], { discard: true }) : Effect.void
+      }))
+      yield* expect("corrupt", snapshot(yield* store.load) === before, "once the backing data is repaired, the store does not read what it held before")
+    })
+    // A write that ignored the damage is put back like any other.
+    return writable ? body.pipe(restoringRole(store, "corrupt", "general"), restoringKey(store, "corrupt", "maxAttempts")) : body
+  })
+
 /**
  * The SettingsStore contract. Every store: `load` is stable. A writable
  * store: each role reads back what `setRole` wrote and clearing it returns
@@ -108,13 +148,18 @@ const BAD: ReadonlyArray<{ readonly key: SettingsKey; readonly text: string }> =
  * selection that is not `"<provider>:<modelId>"`, a count below 1, left by
  * an older, unchecked write) could not be put back, so the check that would
  * touch it fails before writing anything.
+ *
+ * With `options.corrupt`, a store whose backing data cannot be read fails
+ * `load` (and, writable, `setRole` and `set`) with a `SettingsError` of code
+ * `settings.corrupt` instead of reading it as defaults.
  */
-export const settingsStoreConformance = (store: Store, options: { readonly writable: boolean }): ReadonlyArray<ConformanceCheck> => [
+export const settingsStoreConformance = (store: Store, options: SettingsStoreConformanceOptions): ReadonlyArray<ConformanceCheck> => [
   check("load is stable: two loads with no write between them agree", "load", () => Effect.gen(function* () {
     const first = snapshot(yield* store.load)
     yield* expect("load", snapshot(yield* store.load) === first, "two loads disagree")
   })),
   ...(options.writable ? writableChecks(store) : readOnlyChecks(store)),
+  ...Option.match(Option.fromNullishOr(options.corrupt), { onNone: () => [], onSome: (corrupt) => [corruptCheck(store, options.writable, corrupt)] }),
 ]
 
 const writableChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [

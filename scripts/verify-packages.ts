@@ -401,15 +401,41 @@ if (busy !== JSON.stringify([1, 0, 1, true, false])) { console.error("busy signa
 const linkTo = (target, path) => Effect.tryPromise(() => symlink(target, path))
 // The model store kits over every adapter plugin-models ships: in memory, and on files in temporary directories.
 const { authStoreConformance, AuthStore, ModelCatalog, modelCatalogConformance, SettingsStore, settingsStoreConformance } = await import("@xandreed/core")
-const { ConfiguredModelCatalogLive, LocalAuthStoreLive, LocalSettingsStoreLive, MemoryAuthStoreLive, MemorySettingsStoreLive } = await import("@xandreed/plugin-models")
-const { mkdtempSync, rmSync } = await import("node:fs")
+const { ConfiguredModelCatalogLive, LocalAuthStoreLive, LocalSettingsStoreLive, MemoryAuthStoreLive, MemorySettingsStoreLive, ModelsTransport } = await import("@xandreed/plugin-models")
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = await import("node:fs")
+const { dirname } = await import("node:path")
 const serviceOf = (tag, layer) => Effect.runPromise(Effect.service(tag).pipe(Effect.provide(layer)))
 const kitHome = mkdtempSync(join(tmpdir(), "efferent-node-kits-home-"))
 const kitCwd = mkdtempSync(join(tmpdir(), "efferent-node-kits-cwd-"))
-const stores = await runKit("AuthStore (memory)", authStoreConformance(await serviceOf(AuthStore, MemoryAuthStoreLive())))
-  + await runKit("AuthStore (local)", authStoreConformance(await serviceOf(AuthStore, LocalAuthStoreLive(kitCwd, kitHome, ".efferent/runtime"))))
+// A token endpoint the refresh checks count and hold, and a file the corrupt checks damage, on Node's fetch and fs.
+const tokenEndpoint = (provider) => {
+  const state = { requests: 0, gate: Promise.resolve() }
+  const fetch = async () => {
+    state.requests += 1
+    const count = state.requests
+    await state.gate
+    return Response.json({ access_token: "node-access-" + count, refresh_token: "node-refresh-" + count, expires_in: 3600 })
+  }
+  const hold = Effect.sync(() => {
+    const gate = Promise.withResolvers()
+    state.gate = gate.promise
+    return Effect.sync(() => { state.gate = Promise.resolve(); gate.resolve() })
+  })
+  return { fetch, probe: { provider, requests: Effect.sync(() => state.requests), hold } }
+}
+const damagedFile = (path) => Effect.acquireRelease(Effect.sync(() => {
+  const before = existsSync(path) ? Option.some(readFileSync(path)) : Option.none()
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, "{ not json")
+  return before
+}), (before) => Effect.sync(() => Option.match(before, { onNone: () => rmSync(path, { force: true }), onSome: (bytes) => writeFileSync(path, bytes) })))
+const memoryEndpoint = tokenEndpoint("anthropic")
+const localEndpoint = tokenEndpoint("openai-codex")
+const localAuth = LocalAuthStoreLive(kitCwd, kitHome, ".efferent/runtime").pipe(Layer.provide(Layer.succeed(ModelsTransport, ModelsTransport.of({ fetch: localEndpoint.fetch }))))
+const stores = await runKit("AuthStore (memory)", authStoreConformance(await serviceOf(AuthStore, MemoryAuthStoreLive(new Map(), { fetch: memoryEndpoint.fetch })), { refresh: memoryEndpoint.probe }))
+  + await runKit("AuthStore (local)", authStoreConformance(await serviceOf(AuthStore, localAuth), { refresh: localEndpoint.probe, corrupt: damagedFile(join(kitHome, ".efferent", "runtime", "auth.json")) }))
   + await runKit("SettingsStore (memory)", settingsStoreConformance(await serviceOf(SettingsStore, MemorySettingsStoreLive()), { writable: true }))
-  + await runKit("SettingsStore (local)", settingsStoreConformance(await serviceOf(SettingsStore, LocalSettingsStoreLive(kitCwd, kitHome)), { writable: true }))
+  + await runKit("SettingsStore (local)", settingsStoreConformance(await serviceOf(SettingsStore, LocalSettingsStoreLive(kitCwd, kitHome)), { writable: true, corrupt: damagedFile(join(kitCwd, ".efferent", "config.json")) }))
   + await runKit("ModelCatalog", modelCatalogConformance(await serviceOf(ModelCatalog, ConfiguredModelCatalogLive.pipe(Layer.provide(MemoryAuthStoreLive(new Map([["opencode", { type: "api_key", key: "k" }]]))))), { includes: ["opencode:glm-5.2"] }))
 rmSync(kitHome, { recursive: true, force: true })
 rmSync(kitCwd, { recursive: true, force: true })
