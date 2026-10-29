@@ -1,7 +1,6 @@
 import { LanguageModel } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from "effect"
-import type { Scope } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scope, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { pixelPng, sameUsage } from "../conformance.functions.js"
@@ -20,6 +19,12 @@ import { UserMessage } from "./user-message.entity.js"
 
 const fail = (check: string) => (message: string) => Effect.fail(new ConformanceFailure({ check, message }))
 const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(check)(message)
+
+/** How long the checks that cancel a turn, or feed its bus past a queue's size, wait for it on the live clock. */
+const WAIT = "2 seconds"
+
+/** A Sessions failure in a check, as the HarnessError the check fails with. */
+const sessionFailure = (error: { readonly _tag: string }) => new HarnessError({ code: "conformance.session", message: error._tag })
 
 /** The conformance session: the Sessions of the turn services, and one session made for the check. */
 interface Session {
@@ -73,8 +78,14 @@ const billedTotal = (count: number) => Array.from({ length: count }, (_, index) 
  * and the turn ended exactly once on success, failure and interrupt; tasks
  * are joined before the reply; a model-driven turn's `TurnResult.usage` is
  * what its stored `step.usage` records sum to (`turnUsageOf`); the user's
- * attachments reach the first request as image parts; and the host layer
- * sees only earlier turns.
+ * attachments reach the first request as image parts; the host layer
+ * sees only earlier turns; a turn the runner begins and ends returns the
+ * inbox items its end left waiting (`TurnResult.pending`), for its caller
+ * to drain; an interrupted turn ends at once, its reply and end recorded,
+ * though a background reaction to its reply never returns; and a
+ * background reaction publishing what it takes past its queue's size does
+ * not hang the turn. Those last two wait up to two seconds on the live
+ * clock, so run the kit on it.
  *
  * `runner` is acquired afresh for each check. `services` are merged into
  * every turn's services (the model, the `Sessions` the turns begin with, and
@@ -231,6 +242,46 @@ export const turnConformance = (
       yield* turns.turn({ ...input(session, "run-2"), layer }, () => reply("second"))
       const built = (yield* Ref.get(seen)).join("; ")
       yield* expect("layer-before-message", built === "run-1:turn 0, own entries 0; run-2:turn 1, own entries 0", `the host layer saw ${built}`)
+    })),
+    check("a turn the runner begins and ends returns the inbox items left waiting for it, one delivered while it ran", "pending", (turns, session) => Effect.gen(function* () {
+      const result = yield* turns.turn(input(session, "run-1"), () => session.sessions.deliver(session.address, {
+        id: "conformance-result", source: { kind: "conformance" }, content: "a result delivered while the turn ran",
+      }).pipe(Effect.mapError(sessionFailure), Effect.andThen(reply("delivered"))))
+      yield* expect("pending", result.pending === 1, `the turn returned pending ${result.pending ?? "absent"} with one item delivered while it ran (its caller drains what waits)`)
+      const waiting = (yield* session.sessions.get(session.address).pipe(Effect.mapError(sessionFailure))).pending
+      yield* expect("pending", waiting === 1, `after the turn ${waiting} items wait in the session's inbox`)
+    })),
+    check("an interrupted turn ends at once, its reply and end recorded, while a background reaction to its reply never returns", "stuck-reaction", (turns, session) => Effect.gen(function* () {
+      const outer = yield* Effect.scope
+      const started = yield* Deferred.make<void>()
+      const fiber = yield* Effect.forkChild(turns.turn(input(session, "run-1"), (turn) => Effect.gen(function* () {
+        // Subscribed in the check's scope, so the subscription still takes the turn's reply after `use` is cut.
+        yield* turn.events.subscribe((event) => event._tag === "turn.ended" ? Option.some(event) : Option.none(), () => Effect.never, { mode: "background" }).pipe(Scope.provide(outer))
+        yield* Deferred.succeed(started, undefined)
+        return yield* Effect.never
+      })))
+      yield* Deferred.await(started)
+      const stopped = yield* Fiber.interrupt(fiber).pipe(Effect.timeoutOption(WAIT))
+      yield* expect("stuck-reaction", Option.isSome(stopped), `the interrupted turn did not end within ${WAIT} while a background reaction to its reply was stuck`)
+      const all = yield* stored(session)
+      const recorded = ["turn.reply", "turn.ended"].map((kind) => ofRun(all, "run-1").filter((event) => event.kind === kind).length).join()
+      yield* expect("stuck-reaction", recorded === "1,1", `the interrupted turn stored ${recorded} of turn.reply and turn.ended, not one each`)
+    })),
+    check("a background reaction that publishes what it takes, past its queue's size, does not hang the turn", "self-publication", (turns, session) => Effect.gen(function* () {
+      const handled = yield* Ref.make<ReadonlyArray<number>>([])
+      const echo = (n: number) => ({ _tag: "host" as const, name: "conformance.echo", data: { n } })
+      const result = yield* turns.turn(input(session, "run-1"), (turn) => Effect.gen(function* () {
+        yield* turn.events.subscribe(
+          (event) => event._tag === "host" && event.name === "conformance.echo" && typeof event.data.n === "number" ? Option.some(event.data.n) : Option.none(),
+          (n) => Ref.update(handled, (all) => [...all, n]).pipe(Effect.andThen(n === 0 ? Effect.forEach([1, 2, 3], (next) => turn.events.publish(echo(next)), { discard: true }) : Effect.void)),
+          { mode: "background", capacity: 1 },
+        )
+        yield* turn.events.publish(echo(0))
+        return yield* reply("echoed")
+      })).pipe(Effect.timeoutOption(WAIT))
+      yield* expect("self-publication", Option.isSome(result), `the turn did not end within ${WAIT}: a background reaction publishing to its own full queue hung it`)
+      const seen = (yield* Ref.get(handled)).join()
+      yield* expect("self-publication", seen === "0,1,2,3", `the reaction handled [${seen}], not each event once in order`)
     })),
   ]
 }

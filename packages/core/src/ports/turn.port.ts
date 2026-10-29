@@ -68,6 +68,16 @@ export interface TurnOutcome {
  */
 export interface TurnResult extends TurnOutcome {
   readonly usage: TokenUsage
+  /**
+   * How many inbox items wait once the turn's closing commit is stored
+   * (`TurnWriter.end`'s `pending`), when the runner ended the turn itself
+   * (`Agent.turn` with a `NewTurn`). A result delivered while the turn ran
+   * (a background task's) waits for it, and its deliverer's drain found the
+   * session busy: the turn's caller, its closer, drains them
+   * (`Sessions.drain`). Absent for a turn the host began and ends itself,
+   * whose own `end` returns the count.
+   */
+  readonly pending?: number
 }
 
 export interface TurnTools {

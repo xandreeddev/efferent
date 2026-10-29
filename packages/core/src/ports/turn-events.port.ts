@@ -14,7 +14,12 @@ import type { TurnEvent } from "../turn/turn-event.entity.js"
  */
 export interface SubscribeOptions {
   readonly mode?: "inline" | "background"
-  /** Background queue size; publishing waits when it is full. */
+  /**
+   * Background queue size; publishing waits when it is full (interruptibly,
+   * wherever the publisher runs). A background handler's own publications,
+   * to its own subscription or another's, never wait: they are queued past
+   * the size, so a handler that publishes what it takes cannot deadlock.
+   */
   readonly capacity?: number
 }
 

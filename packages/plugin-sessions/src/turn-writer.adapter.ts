@@ -13,7 +13,7 @@ import type {
   TurnWriter,
 } from "@xandreed/core"
 import type { Context } from "effect"
-import { closedState, droppedData, pendingOf, stateJson, stateOf } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, pendingOf, stateJson, stateOf, turnLogIds } from "./sessions-state.entity.functions.js"
 import type { SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
@@ -302,21 +302,34 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     const every = `${ownership.renew.everyMs} millis` as const
     const renew = inOrder(commitPlan((at) => Effect.gen(function* () {
       return { drafts: [], next: renewed(at.state, yield* storageNow, true), result: undefined }
-    }), { renew: false }), false).pipe(Effect.ignore)
+    }), { renew: false }), false).pipe(
+      // Refused as closed (the turn ended, or was closed elsewhere), there is nothing left to renew; anything else is logged.
+      Effect.catch((error) => (error.code === "turn.closed" ? Effect.logDebug : Effect.logWarning)(
+        `turn ${admitted.turn}'s keep-alive did not renew its lease: ${error.code}: ${error.message}`)),
+      Effect.annotateLogs(turnLogIds(id, admitted.turn)),
+    )
     yield* Effect.forkIn(Effect.sleep(every).pipe(Effect.andThen(renew), Effect.forever, Effect.asVoid), scope)
   }
 
   // Runs first when the scope closes (finalizers run last-added first). A turn whose end could not be
   // stored is ended again with that same ending; a turn never ended ends as interrupted
-  // (`turn.interrupted`) when its scope was interrupted, as failed (`turn.unended`) otherwise.
+  // (`turn.interrupted`) when its scope was interrupted, as failed (`turn.unended`) otherwise. An end
+  // still not stored within 10 s is logged (`ended` stays false: the sessions service lets the turn go).
   const unended = (exit: Exit.Exit<unknown, unknown>): TurnEnding => Exit.hasInterrupts(exit)
     ? { reason: "interrupted", failure: Option.some({ code: "turn.interrupted", message: "the turn's scope was interrupted before it ended" }) }
     : { reason: "failed", failure: Option.some({ code: "turn.unended", message: "the turn's scope closed before it ended" }) }
   yield* Scope.addFinalizerExit(scope, (exit) => Ref.get(ended).pipe(Effect.flatMap((done) => done ? Effect.void
     : Ref.get(attempted).pipe(
       Effect.flatMap((last) => end(Option.getOrElse(last, () => unended(exit)))),
-      Effect.timeout("10 seconds"),
-      Effect.ignore,
+      Effect.timeoutOption("10 seconds"),
+      Effect.flatMap(Option.match({
+        onSome: () => Effect.void,
+        onNone: () => Effect.logWarning(`turn ${admitted.turn}'s end was not stored within 10 seconds of its scope closing`),
+      })),
+      // Refused as closed, the turn was closed elsewhere: nothing was left to store.
+      Effect.catch((error) => (error.code === "turn.closed" ? Effect.logDebug : Effect.logWarning)(
+        `turn ${admitted.turn}'s end was not stored when its scope closed: ${error.code}: ${error.message}`)),
+      Effect.annotateLogs(turnLogIds(id, admitted.turn)),
     )), Effect.ensuring(Effect.gen(function* () {
       const error = harness("turn.closed", `turn ${admitted.turn}'s scope closed`)
       yield* Ref.update(failed, Option.orElse(() => Option.some(error)))

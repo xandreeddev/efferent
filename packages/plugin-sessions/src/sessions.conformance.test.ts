@@ -57,7 +57,7 @@ describe("the Sessions kit catches careless backends", () => {
         ),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "race", "resume"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "race", "resume", "tenure"])
   })
 
   test("one whose TurnActivity always reads idle fails only the activity check", async () => {
@@ -90,9 +90,9 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, unprobed)))).toEqual([])
   })
 
-  test("the dead-holder check runs only for a backend with process ownership", () => {
+  test("the dead-holder and tenure checks run only for a backend with process ownership", () => {
     const { processOwned: _, ...leaseOnly } = subjectOver(memoryLog)
     const ids = (subject: SessionsSubject) => sessionsConformance(subject).map((check) => check.name)
-    expect(ids(subjectOver(memoryLog)).length - ids(leaseOnly).length).toBe(1)
+    expect(ids(subjectOver(memoryLog)).length - ids(leaseOnly).length).toBe(2)
   })
 })

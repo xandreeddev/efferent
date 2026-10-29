@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { awaitIdle, HarnessError, MediaFingerprint, mediaFromBase64, SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnWriter } from "@xandreed/core"
@@ -39,6 +39,11 @@ const lease = (ttlMs: number, renew: SessionsConfig["ownership"] extends infer O
 
 /** Leases renewed only by writes (no keep-alive): the commit sequences a rebase sees are the turn's own. */
 const onCommit = lease(60_000, "on-commit")
+
+/** A leased instance over the log that names its own process (`self`) and asks which pids of its host run: how it judges a process-held turn. */
+const leasedOver = (log: Log, self: Option.Option<HolderProcess>, running: ReadonlyArray<number>) => Effect.service(Sessions).pipe(Effect.provide(
+  SessionsLive(onCommit, { liveness: { current: Effect.succeed(self), alive: (pid) => Effect.succeed(running.includes(pid)) } }).pipe(
+    Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)))))
 
 const created = (sessions: Service) => sessions.create({ owner }).pipe(Effect.map((view): SessionAddress => ({ id: view.header.id, owner })))
 const kinds = (events: ReadonlyArray<SessionLogEvent>) => events.map((event) => `${event.kind}${Option.match(event.turn, { onNone: () => "", onSome: (turn) => `@${turn}` })}`)
@@ -382,6 +387,56 @@ describe("leases", () => {
     expect(yield* all(holder, address)).toEqual(["turn.started@1", "inbox.queued", "inbox.queued", "inbox.queued", "answer.published@1", "turn.ended@1"])
   })))
 
+  test("a turn is judged as it was taken, whatever the reader's ownership: under a lease, a process-held turn is held while its process runs, then reaped", () => withLog((log) => Effect.gen(function* () {
+    const holder = yield* processOver(log, Option.some({ host: "h1", pid: 101, startedAt: 1 }), [101])
+    const address = yield* created(holder)
+    yield* holder.begin(address, say("process-held"))
+    const whileRunning = yield* leasedOver(log, Option.some({ host: "h1", pid: 202, startedAt: 2 }), [101, 202])
+    expect(Option.map((yield* whileRunning.get(address)).open, (open) => open.turn)).toEqual(Option.some(1))
+    expect((yield* Effect.flip(whileRunning.begin(address, say("while it runs"))))._tag).toBe("SessionBusy")
+    const afterIt = yield* leasedOver(log, Option.some({ host: "h1", pid: 202, startedAt: 2 }), [202])
+    expect(Option.isNone((yield* afterIt.get(address)).open)).toBe(true)
+    expect((yield* afterIt.begin(address, say("after it stopped"))).admitted.turn).toBe(2)
+    // A process-held turn that names no process holds nothing for a leased reader either.
+    const unnamed = yield* processOver(log, Option.none(), [])
+    const other = yield* created(unnamed)
+    yield* unnamed.begin(other, say("unnamed"))
+    expect((yield* afterIt.begin(other, say("after the unnamed one"))).admitted.turn).toBe(2)
+    const ended = (yield* afterIt.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason, (event.data.failure as JsonObject | null)?.code ?? null])
+    expect(ended).toEqual([[1, "interrupted", "turn.lease"]])
+  })))
+
+  test("under process ownership, a turn whose end the store refuses, at its scope's close too, is logged and let go of by its instance: the next begin reaps it", () => {
+    const logged: Array<readonly [string, unknown, unknown]> = []
+    const capture = Logger.layer([Logger.make((options) => {
+      const annotations = options.fiber.getRef(References.CurrentLogAnnotations)
+      logged.push([[options.message].flat().join(" "), annotations["efferent.session.id"], annotations["efferent.turn"]])
+    })])
+    return withLog((inner) => Effect.gen(function* () {
+      const refusing = yield* Ref.make(false)
+      const log = SessionLog.of({
+        ...inner,
+        commit: (id, commit) => Ref.get(refusing).pipe(Effect.flatMap((refuse) => refuse && commit.events.some((event) => event.kind === "turn.ended")
+          ? Effect.fail(new SessionLogError({ code: "store.busy", message: "the store is busy" }))
+          : inner.commit(id, commit))),
+      })
+      const sessions = yield* processOver(log, Option.some({ host: "h1", pid: 101, startedAt: 1 }), [101])
+      const address = yield* created(sessions)
+      const scope = yield* Scope.make()
+      const writer = yield* sessions.begin(address, say("never stored")).pipe(Scope.provide(scope))
+      yield* Ref.set(refusing, true)
+      expect((yield* Effect.flip(writer.end({ reason: "completed", failure: Option.none() }))).code).toBe("session.log")
+      yield* Scope.close(scope, Exit.void)
+      yield* Ref.set(refusing, false)
+      // This process still runs, but its instance let the turn go: not busy until the process exits.
+      expect(Option.isNone((yield* sessions.get(address)).open)).toBe(true)
+      expect((yield* Effect.scoped(sessions.begin(address, say("next")))).admitted.turn).toBe(2)
+      const ended = (yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason, (event.data.failure as JsonObject | null)?.code ?? null])
+      expect(ended).toEqual([[1, "interrupted", "turn.lease"], [2, "failed", "turn.unended"]])
+      expect(logged).toContainEqual(["turn 1's end was not stored when its scope closed: session.log: the store is busy", address.id, 1])
+    }).pipe(Effect.provide(capture)))
+  })
+
   test("the default liveness names this process and asks the host whether a pid runs", () => Effect.runPromise(Effect.gen(function* () {
     const current = Option.getOrThrow(yield* processLiveness.current)
     expect([current.pid, current.host.length > 0, current.startedAt <= Date.now()]).toEqual([process.pid, true, true])
@@ -706,6 +761,21 @@ describe("the inbox", () => {
     expect((yield* writer.end({ reason: "completed", failure: Option.none() })).pending).toBe(1)
     expect((yield* sessions!.drain(address, record("after"))).turns).toBe(1)
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "inbox.queued", "turn.ended@1", "turn.started@2", "answer.published@2", "turn.ended@2"])
+  })))
+
+  test("a drain goes on while its own turns' ends leave items waiting, and stops at the end that leaves none", () => withLog((log) => Effect.gen(function* () {
+    const admitted = yield* Ref.make(0)
+    const counting = Layer.succeed(TurnAdmission, TurnAdmission.of({ admit: (_turn, open) => Ref.update(admitted, (count) => count + 1).pipe(Effect.andThen(open)) }))
+    const { sessions } = yield* withActivity(log, sessionsDefaults, counting)
+    const address = yield* created(sessions)
+    yield* sessions.deliver(address, item("t1"))
+    // The first inbox turn's run delivers another item: its end counts it, so the drain takes it next.
+    const drained = yield* sessions.drain(address, (writer) => writer.admitted.claimed.some((claimed) => claimed.id === "t1")
+      ? sessions.deliver(address, item("t2")).pipe(Effect.asVoid)
+      : record("second")(writer))
+    // Two turns, two admissions: no begin after the end that left nothing waiting.
+    expect([drained.turns, yield* Ref.get(admitted), (yield* sessions.get(address)).pending]).toEqual([2, 2, 0])
+    expect(yield* all(sessions, address)).toEqual(["inbox.queued", "turn.started@1", "inbox.queued", "turn.ended@1", "turn.started@2", "answer.published@2", "turn.ended@2"])
   })))
 
   test("nothing is lost when a turn's end and a delivery race", () => withLog((log) => Effect.gen(function* () {

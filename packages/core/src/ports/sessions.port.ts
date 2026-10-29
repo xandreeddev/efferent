@@ -97,6 +97,10 @@ export interface TurnWriter {
  * `SessionBusy` — and a turn's writes are refused once it is closed, on any
  * instance. The inbox holds deliveries (a background task's result) for the
  * turns that follow: whoever closes a turn, and whoever delivers, drains it.
+ * A delivery commits before a turn's closing commit, whose `pending` counts
+ * it, or after it, and finds the session free. `Agent.turn` hands the count
+ * of a turn it ends to its caller (`TurnResult.pending`), the closer that
+ * drains; `drain` ends its own turns and drains what they leave.
  * Reads never write: loading or following a session runs nothing.
  */
 export class Sessions extends Context.Service<Sessions, {
@@ -169,7 +173,9 @@ export class Sessions extends Context.Service<Sessions, {
     Effect.Effect<{ readonly delivered: boolean; readonly pending: number }, InboxFull | SessionMissing | SessionLogError>
   /**
    * Run inbox turns while items wait, the session is free and the host
-   * admits them, at most `maxTurns` (3), each begun with `meta`. A turn whose
+   * admits them, at most `maxTurns` (3), each begun with `meta`: it goes on
+   * while the end of its last turn counts items waiting (ones delivered
+   * during that turn included) and stops once one counts none. A turn whose
    * `run` succeeds ends completed; one whose `run` fails ends with its
    * error's code (`turnEndingOf`, a `HarnessError` carried as a defect
    * included): `turn.failed`, `turn.defect` or `turn.interrupted` when it has

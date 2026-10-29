@@ -69,9 +69,13 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
         harnessDefectsAsFailures,
         Effect.exit,
       )
-      if (Exit.isSuccess(exit)) yield* writer.end(turnEndingOf(exit))
-      if (Exit.isFailure(exit)) yield* writer.end(turnEndingOf(exit)).pipe(Effect.ignore)
-      return yield* exit
+      if (Exit.isFailure(exit)) {
+        yield* writer.end(turnEndingOf(exit)).pipe(Effect.ignore({ log: "Warn", message: "the failed turn's end was not stored" }))
+        return yield* Effect.failCause(exit.cause)
+      }
+      // The inbox items the end leaves waiting are the caller's to drain, as `Agent.turn` returns them.
+      const { pending } = yield* writer.end(turnEndingOf(exit))
+      return { ...exit.value, pending }
     }).pipe(traceTurn(writer))
   })) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
   return { turn }

@@ -46,7 +46,8 @@ export interface SessionsSubject {
    * The same, holding its turns for as long as the process that began them
    * runs: the instance runs in `self`, and of the pids of its host only
    * `running` run (the liveness check it asks). Leave it out for a backend
-   * without process ownership: the dead-holder check is then not run.
+   * without process ownership: the dead-holder and tenure checks are then
+   * not run.
    */
   readonly processOwned?: (options: {
     readonly self: SessionsProcess
@@ -116,7 +117,9 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * cancelled); a turn whose lease ran out shown closed, left alone by a
  * drain with nothing to take and reaped by the next begin; a write renewing
  * the lease from that write; with `processOwned`, a turn whose process
- * stopped reaped, and one whose process runs held; and, for an instance
+ * stopped reaped, one whose process runs held, and a leased turn held by
+ * a process-owned instance within its lease (a turn is judged as it was
+ * taken, not by the reader's ownership); and, for an instance
  * with a `TurnActivity`, its activity agreeing with what is open, per
  * session and turn, a begin counting from the moment it is asked for (an
  * instance without one passes that check unchecked).
@@ -523,6 +526,21 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
           yield* expect("process", Option.contains(yield* openTurn(observer.sessions, other), 1), "a turn whose process runs is shown closed")
           const busy = yield* refusal(observer.sessions, other, say("second"))
           yield* expect("process", busy === "SessionBusy", `a begin while the holder's process runs gave ${busy}`)
+        })),
+        scoped("a turn is held as it was taken, whatever the reader's ownership: a leased turn is held by a process-owned instance within its lease, then reaped", "tenure", (owner) => Effect.gen(function* () {
+          const leasing = yield* leased(SHORT)
+          const process = yield* processOwned({ self: { host: "conformance-host", pid: 505, startedAt: 5 }, running: [505], admission: admitAll })
+          const address = yield* created(leasing.sessions, owner)
+          const writer = yield* leasing.sessions.begin(address, say("leased"))
+          yield* expect("tenure", Option.contains(yield* openTurn(process.sessions, address), 1), "a process-owned instance shows a turn within its lease closed")
+          const early = yield* refusal(process.sessions, address, say("too early"))
+          yield* expect("tenure", early === "SessionBusy", `a process-owned instance's begin within the lease gave ${early}`)
+          yield* expect("tenure", (yield* writeRefused(writer)) === "stored", "the leased turn's holder was refused a write within its lease")
+          yield* subject.advance(SHORT * 2)
+          const next = yield* process.sessions.begin(address, say("after the lease"))
+          const reaped = endings(yield* process.sessions.read(address, { kinds: ["turn.ended"] }))
+          yield* expect("tenure", next.admitted.turn === 2 && reaped === "1:interrupted:turn.lease",
+            `once the lease ran out the process-owned instance opened turn ${next.admitted.turn} and closed the leased one as ${reaped || "nothing"}`)
         })),
       ],
     }),

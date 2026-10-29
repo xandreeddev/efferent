@@ -215,7 +215,10 @@ clock (several instances) or by the process that began them, for as long as
 it runs (one host). The storage's clock is the backend's: the memory and
 SQLite logs read the committing process's Effect `Clock`, under the write
 lock, so instances sharing a lease over them need clocks in step; a host's
-own store may read its server's clock instead. Reading or following a session never runs anything.
+own store may read its server's clock instead. A turn keeps how it was
+taken, and every instance judges it by that, whatever its own ownership, so
+changing the ownership neither holds a turn forever nor reaps one still
+held. Reading or following a session never runs anything.
 
 By default a turn's lease is 60 s, extended by each of its writes and by a
 keep-alive every 20 s while its writer is open (`ownership: { mode: "lease",
@@ -235,7 +238,12 @@ depend on turn services. On success, tasks and background reactions settle
 between these dependency boundaries while `TurnLive` remains open. A completed
 reply is recorded only after finalizer work settles; a finalizer task failure
 produces a failed reply. Failure or interruption preserves the cause, and
-closing the turn's scope interrupts pending tasks. Subscriptions in those
+closing the turn's scope interrupts pending tasks; a cancelled turn does not
+wait for the background reactions to its failed reply, and a failed one
+waits for them ten seconds at most. A turn `Agent.turn` begins returns, as
+`TurnResult.pending`, the inbox items its end left waiting (a background
+task's result delivered while it ran): drain them with `Sessions.drain`.
+Subscriptions in those
 closing scopes cannot observe the final outcome: register an outcome observer
 in the caller's outer scope with `Scope.provide(observerScope)` and services
 that remain open there. The [events guide](/docs/guides/events/) shows which
@@ -299,7 +307,8 @@ only shuts the log under it. Stop the request fibers first (the server's
 shutdown): a turn interrupted while the log is open ends interrupted
 (`turn.interrupted`) and can be resumed. Closing the services then
 interrupts the runner's tasks before the log, so their turns end the same
-way. A turn whose end could not be stored is reaped by the next process as
+way. A turn whose end could not be stored is logged and let go of by its
+instance, which reaps it at its next begin; another process reaps it as
 interrupted (`turn.lease`) once its lease runs out. The framework guide's
 sessions section has the details.
 

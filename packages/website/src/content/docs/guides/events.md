@@ -147,11 +147,16 @@ A handler is part of the turn:
   fails it with `events.background`.
 - A background queue holds 256 events unless the subscription's `capacity`
   says otherwise. When it is full, `publish` waits: a slow handler slows the
-  step loop.
+  step loop. A background handler's own publications never wait, to its own
+  subscription or another's: they are queued past the capacity, so a
+  handler that publishes what it takes cannot deadlock. A publisher waiting
+  for room can always be interrupted.
 - On success the turn drains every background subscription before it
   records its reply. A handler that never returns keeps the reply from being
   recorded, and the turn holds its session until it is cancelled or its
-  process stops.
+  process stops. A cancelled turn does not wait for its handlers: it records
+  its failed reply and ends at once. A turn that failed waits ten seconds at
+  most for the reactions to its failed reply.
 
 So a push to a client never fails and is bounded in time. Once a write has
 waited too long, the client is gone for the rest of the turn: the stream is
@@ -438,12 +443,18 @@ Across requests, instances and processes:
   `deliver` or `drain` on that session reaps it, as interrupted with the code
   `turn.lease`. A follower waiting for `turn.ended` also watches
   `Sessions.get(address).open`.
+- A turn whose end the store refused, even at its scope's close, is logged
+  (with `efferent.session.id` and `efferent.turn`) and let go of by its
+  instance: it reads closed there at once, and is reaped the same way,
+  without waiting for its lease or for its process to exit.
 
 ## How a turn ended
 
 Three places say how a turn ended; two of them carry the failure's code:
 
-- `agent.turn`'s result: a `TurnResult` (`outcome`, `reply`, `usage`), or a
+- `agent.turn`'s result: a `TurnResult` (`outcome`, `reply`, `usage`, and,
+  for a turn it began, `pending`: the inbox items its end left waiting, a
+  background task's result delivered meanwhile, which you drain), or a
   failure with a `HarnessError` whose `code` says why.
 - The stored `turn.ended`: `reason` (completed, partial, failed, cancelled,
   interrupted) and `failure`, `{ code, message }`. A turn that `Agent.turn`

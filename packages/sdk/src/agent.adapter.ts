@@ -34,6 +34,7 @@ import {
   turnOf,
 } from "@xandreed/core"
 import type {
+  AdmittedTurn,
   Capability,
   HarnessConfig,
   LoopLimits,
@@ -141,12 +142,16 @@ export interface Agent {
    * begun here ends with `turnEndingOf` its exit: its outcome, or failed
    * with the error's code (`turn.failed` for an error without one,
    * `turn.defect`), or interrupted (`turn.interrupted`); on success, a
-   * failure to store that end fails the turn. A turn closed
+   * failure to store that end fails the turn, and on failure one is logged.
+   * A turn closed
    * elsewhere (cancelled, reaped) fails with `turn.closed`. `use` runs in
    * the turn's scope with the turn's services (RunContext, TurnEvents,
    * TurnTasks and the input's `layer`) provided: the same instances the
    * tools, policy and subscriptions see. It returns `use`'s outcome with
-   * the turn's usage (every run's provider calls, summed). From the moment
+   * the turn's usage (every run's provider calls, summed) and, for a turn
+   * begun here, `pending`: the inbox items its end left waiting (results
+   * delivered while it ran), which the caller drains (`Sessions.drain`).
+   * From the moment
    * the turn is admitted it runs under its `agent.turn` span (`traceTurn`),
    * and is counted in the `efferent.turns` and `efferent.turn.duration`
    * metrics by its `efferent.outcome`.
@@ -190,6 +195,13 @@ const measureTurn = <A extends TurnResult, E, R>(effect: Effect.Effect<A, E, R>)
 const entryOf = (item: Plugin | AgentPluginEntry): AgentPluginEntry => "plugin" in item ? item : { plugin: item }
 
 const isWriter = (turn: TurnWriter | NewTurn): turn is TurnWriter => "admitted" in turn
+
+/** The ids a log line about a turn carries, under the names its spans give them. */
+const turnIdsOf = (admitted: AdmittedTurn): Record<string, unknown> => ({
+  "efferent.session.id": admitted.session.id,
+  "efferent.run.id": admitted.runId,
+  "efferent.turn": admitted.turn,
+})
 
 /**
  * Why a turn could not begin (`Sessions.begin` failed, or, for
@@ -332,8 +344,9 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    *    the body or its finalizer work failed) and the turn's usage read,
    *    before TurnLive closes;
    * 9. a turn begun here is ended here, with `turnEndingOf` the turn's exit:
-   *    on success its outcome (a failed end fails the turn), on failure the
-   *    error's code (the end's own failure is ignored, the turn's cause kept);
+   *    on success its outcome (a failed end fails the turn; the inbox items
+   *    the end counts waiting are returned as `pending`), on failure the
+   *    error's code (the end's own failure is logged, the turn's cause kept);
    *    an end not stored is tried again, the same, when the turn's scope closes.
    * 1 to 9 run under the turn's `agent.turn` span (`traceTurn`), opened once
    * the turn is admitted (after 0), and are counted and timed by outcome.
@@ -408,10 +421,19 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
         harnessDefectsAsFailures,
         Effect.exit,
       )
-      // On success a failed end fails the turn; on failure the turn's own cause wins.
-      if (own && Exit.isSuccess(exit)) yield* writer.end(turnEndingOf(exit))
-      if (own && Exit.isFailure(exit)) yield* writer.end(turnEndingOf(exit)).pipe(Effect.ignore)
-      return yield* exit
+      if (!own) return yield* exit
+      // On failure the turn's own cause wins: an end not stored is logged (the scope's end tries it again).
+      if (Exit.isFailure(exit)) {
+        yield* writer.end(turnEndingOf(exit)).pipe(
+          Effect.catch((error) => (error.code === "turn.closed" ? Effect.logDebug : Effect.logWarning)(
+            `the failed turn's end was not stored: ${error.code}: ${error.message}`)),
+          Effect.annotateLogs(turnIdsOf(writer.admitted)),
+        )
+        return yield* Effect.failCause(exit.cause)
+      }
+      // On success a failed end fails the turn; the inbox items it leaves waiting are the caller's to drain.
+      const { pending } = yield* writer.end(turnEndingOf(exit))
+      return { ...exit.value, pending } satisfies TurnResult
     })
     // From admission to the end: the turn's span encloses its plugins, layer, tools, `use`, reply and end.
     return yield* admitted.pipe(measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] }))

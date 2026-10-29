@@ -48,6 +48,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   data (`AuthStoreConformanceOptions`, `AuthStoreRefreshProbe`,
   `SettingsStoreConformanceOptions`). `AuthError` and `SettingsError` have
   an optional `code`.
+- `TurnResult.pending`: the inbox items the end of a turn `Agent.turn`
+  began left waiting (a background task's result delivered while it ran,
+  for example). Drain them with `Sessions.drain`.
 
 ### Fixed
 
@@ -89,6 +92,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   refusal. From `load_skill` it fails the turn; from `apply` it fails the
   call and records no "rejected" decision. Only an unknown skill or a
   missing permission rejects an activation.
+- `Sessions.drain` stops at the end of a turn that leaves nothing waiting,
+  instead of trying one more begin.
+- A turn's reply is recorded, and its journal flushed, even when the turn is
+  interrupted after its body returned.
+- A cancelled turn no longer waits for the background reactions to its
+  failed reply, and a failed turn waits for them for 10 seconds at most.
+- A background event handler that publishes events a background
+  subscription takes (its own or another) no longer deadlocks on a full
+  queue, and a publisher waiting for room can always be interrupted.
+- A turn is judged by how it was taken, not by the reader's ownership
+  setting: changing ownership no longer holds a turn forever or reaps a live
+  one.
+- A turn end or lease write the store refuses is logged, and the instance
+  lets the turn go instead of answering `SessionBusy` until the process
+  exits.
 
 ### Repository
 
@@ -99,6 +117,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `OPENAI_CODEX_ORIGINATOR`.
 - `toolRegistryConformance` adds a `concurrent-load` check, and its writer
   yields before each write, as storage does.
+- The turn kit adds `pending`, `stuck-reaction` and `self-publication`
+  checks, and the sessions kit adds `tenure` (it needs `processOwned`).
 
 ## 0.14.0 — 2026-10-29
 
