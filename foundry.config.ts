@@ -95,61 +95,16 @@ const TEST_SCAFFOLDING = [
  */
 const ENVIRONMENT_EDGES = ["**/main.ts", "packages/plugin-workspace/src/bash.adapter.ts"]
 
-/** A package's source, by its directory name: one entry of the lists below. */
+/** A package's source, by its directory name: one entry of a list below. */
 const src = (name: string): string => `packages/${name}/src/**`
 
 /**
  * Rules that enter one package at a time, never through the baseline. Each
  * list names the packages already clean of its rule, one per line: a
  * cleanup change fixes one package's findings and adds its line. Once a
- * list names every package in CHECKED, its rule takes CHECKED instead.
+ * list names every package in CHECKED, its rule takes CHECKED instead and
+ * the list is deleted.
  */
-const STRINGIFIED_CAUSE_CLEAN = [
-  "core",
-  "sdk",
-  "evals",
-  "evals-cli",
-  "evals-langfuse",
-  "evals-langsmith",
-  "plugin-agent-loop",
-  "runtime",
-  "plugin-memory-window",
-  "plugin-memory-summary",
-  "plugin-memory-digest",
-  "plugin-tool-discovery",
-  "plugin-models",
-  "plugin-sessions",
-  "plugin-tasks",
-  "plugin-render",
-  "plugin-workspace",
-  "plugin-telemetry",
-  "plugin-session-sqlite",
-  "foundry",
-].map(src)
-
-const ERROR_CODE_COMPARE_CLEAN = [
-  "core",
-  "sdk",
-  "evals",
-  "evals-cli",
-  "evals-langfuse",
-  "evals-langsmith",
-  "plugin-agent-loop",
-  "runtime",
-  "plugin-memory-window",
-  "plugin-memory-summary",
-  "plugin-memory-digest",
-  "plugin-tool-discovery",
-  "plugin-models",
-  "plugin-sessions",
-  "plugin-tasks",
-  "plugin-render",
-  "plugin-workspace",
-  "plugin-telemetry",
-  "plugin-session-sqlite",
-  "foundry",
-].map(src)
-
 const EFFECT_FN_CLEAN = [
   "sdk",
   "plugin-memory-window",
@@ -333,10 +288,10 @@ const config: typeof GateSuiteConfig.Encoded = {
       exclude: ["**/*.adapter.ts", "**/*.conformance.ts", ...TEST_SCAFFOLDING],
       allow: NULLABLE_EDGES,
     },
-    // One package at a time (the lists above).
-    { rule: "effect/no-stringified-cause", include: STRINGIFIED_CAUSE_CLEAN, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-stringified-cause", include: CHECKED, exclude: TEST_SCAFFOLDING },
     // A kit asserts the codes its port publishes.
-    { rule: "effect/no-error-code-compare", include: ERROR_CODE_COMPARE_CLEAN, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
+    { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
+    // One package at a time (the list above).
     { rule: "effect/prefer-effect-fn", include: EFFECT_FN_CLEAN, exclude: TEST_SCAFFOLDING },
     { rule: "effect/require-concurrency-option", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "quality/no-skipped-tests", include: CHECKED },
