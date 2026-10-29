@@ -11,6 +11,8 @@ import {
   NothingPending,
   NotResumable,
   reasonOf,
+  readStored,
+  readStoredKeys,
   RESERVED_KINDS,
   resumeRefusal,
   ReservedKind,
@@ -202,12 +204,14 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   /** A session's own `turn.started` events. */
   const startsOf = (id: ConversationId) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started"] })
 
-  /** Of these `turn.started` events, the turn begun with `key`, and what it was begun with. */
-  const keyIn = (starts: ReadonlyArray<SessionLogEvent>, key: string) =>
-    Option.map(Option.fromNullishOr(starts.find((event) => event.data.key === key)), (event) => ({ turn: Option.getOrElse(event.turn, () => 0), event }))
+  /** Of these `turn.started` events (their keys decoded, never the message), the turn begun with `key`, and what it was begun with. */
+  const keyIn = (starts: ReadonlyArray<SessionLogEvent>, key: string) => readStoredKeys("turn.started", starts).pipe(
+    Effect.map((keyed) => Option.map(Option.fromNullishOr(keyed.find((started) => started.keys.key === key)), ({ event }) => ({ turn: Option.getOrElse(event.turn, () => 0), event }))),
+    Effect.mapError(storage("session.decode")),
+  )
 
   /** The turn begun with `key`, and what it was begun with. */
-  const keyed = (id: ConversationId, key: string) => startsOf(id).pipe(Effect.map((starts) => keyIn(starts, key)))
+  const keyed = (id: ConversationId, key: string) => startsOf(id).pipe(Effect.flatMap((starts) => keyIn(starts, key)))
 
   /**
    * The turn begun under `runId`: of the session's own `turn.started` events
@@ -216,17 +220,21 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * history.
    */
   const runOf = (header: SessionHead["header"], starts: ReadonlyArray<SessionLogEvent>, runId: string) => {
-    const begunIn = (events: ReadonlyArray<SessionLogEvent>, through: number) =>
-      Option.map(Option.fromNullishOr(events.find((event) => event.data.runId === runId && event.seq <= through)), (event) => Option.getOrElse(event.turn, () => 0))
+    const begunIn = (events: ReadonlyArray<SessionLogEvent>, through: number) => readStoredKeys("turn.started", events).pipe(
+      Effect.map((keyed) => Option.map(Option.fromNullishOr(keyed.find((started) => started.keys.runId === runId && started.event.seq <= through)),
+        ({ event }) => Option.getOrElse(event.turn, () => 0))),
+      Effect.mapError(storage("session.decode")),
+    )
     const inherited = (lineage: SessionHead["header"]["parent"]): Effect.Effect<Option.Option<number>, SessionMissing | SessionLogError> => Option.match(lineage, {
       onNone: () => Effect.succeed(Option.none()),
       onSome: (parent) => parent.through <= 0 ? Effect.succeed(Option.none()) : startsOf(parent.id).pipe(
-        Effect.flatMap((events) => Option.match(begunIn(events, parent.through), {
+        Effect.flatMap((events) => begunIn(events, parent.through)),
+        Effect.flatMap(Option.match({
           onSome: (turn) => Effect.succeed(Option.some(turn)),
           onNone: () => log.head(parent.id).pipe(Effect.flatMap((head) => inherited(head.header.parent))),
         }))),
     })
-    return Option.match(begunIn(starts, Number.POSITIVE_INFINITY), { onSome: (turn) => Effect.succeed(Option.some(turn)), onNone: () => inherited(header.parent) })
+    return begunIn(starts, Number.POSITIVE_INFINITY).pipe(Effect.flatMap(Option.match({ onSome: (turn) => Effect.succeed(Option.some(turn)), onNone: () => inherited(header.parent) })))
   }
 
   /**
@@ -248,12 +256,17 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     }).pipe(Effect.mapError(storage("session.decode")))),
   )
 
+  /** The session's `inbox.queued` records, decoded. */
+  const queuedIn = (id: ConversationId) => log.read(id, { after: 0, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(
+    Effect.flatMap((events) => readStored("inbox.queued", events).pipe(Effect.mapError(storage("session.decode")))),
+  )
+
   /** The inbox items with these ids, as delivered. */
-  const inboxItems = (id: ConversationId, ids: ReadonlyArray<string>) => log.read(id, { after: 0, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(
-    Effect.map((events) => ids.flatMap((wanted): ReadonlyArray<InboxItem> => Option.toArray(Option.fromNullishOr(events.find((event) => event.data.id === wanted))).map((event) => ({
+  const inboxItems = (id: ConversationId, ids: ReadonlyArray<string>) => queuedIn(id).pipe(
+    Effect.map((queued) => ids.flatMap((wanted): ReadonlyArray<InboxItem> => Option.toArray(Option.fromNullishOr(queued.find((item) => item.data.id === wanted))).map(({ data }) => ({
       id: wanted,
-      source: Option.getOrElse(Schema.decodeUnknownOption(Schema.JsonObject)(event.data.source), (): JsonObject => ({})),
-      content: typeof event.data.content === "string" && event.data.content.length > 0 ? event.data.content : `(inbox item ${wanted})`,
+      source: data.source,
+      content: data.content.length > 0 ? data.content : `(inbox item ${wanted})`,
     })))),
   )
 
@@ -316,7 +329,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         const state = reap.state
         const starts = yield* startsOf(address.id)
         if (input._tag === "User") {
-          const previous = keyIn(starts, input.key)
+          const previous = yield* keyIn(starts, input.key)
           if (Option.isSome(previous)) {
             const started = yield* turnStartedOf(previous.value.event).pipe(Effect.mapError(storage("session.decode")))
             // The key's fingerprint is the message, the command and the turn resumed, never `meta`: a retry with other metadata is the same turn.
@@ -557,8 +570,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const state = reap.state
       const reapedOnly = { drafts: reap.drafts, next: reap.drafts.length === 0 ? Option.none<SessionsState>() : Option.some(state) }
       if (state.inbox.some((slot) => slot.id === item.id)) return { ...reapedOnly, result: { delivered: false, pending: pendingOf(state).length } }
-      const earlier = yield* log.read(address.id, { after: 0, limit: Option.none(), kinds: ["inbox.queued"] })
-      if (earlier.some((event) => event.data.id === item.id)) return { ...reapedOnly, result: { delivered: false, pending: pendingOf(state).length } }
+      const earlier = yield* queuedIn(address.id)
+      if (earlier.some((queued) => queued.data.id === item.id)) return { ...reapedOnly, result: { delivered: false, pending: pendingOf(state).length } }
       if (pendingOf(state).length >= config.inbox.maxPending) return yield* Effect.fail(new InboxFull({ session: address.id, pending: pendingOf(state).length }))
       const next: SessionsState = { ...state, inbox: [...state.inbox, { id: item.id, attempts: 0, claimedBy: Option.none() }] }
       const queued = yield* queuedData(item).pipe(Effect.orDie)

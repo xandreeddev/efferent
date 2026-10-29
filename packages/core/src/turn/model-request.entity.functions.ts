@@ -9,7 +9,7 @@ import { toolParametersSchema } from "../loop/toolSchema.js"
 import { canonicalJson, buildContext } from "../memory/memory-log.entity.functions.js"
 import type { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
-import { entriesOfEvents } from "../session/session-event.entity.functions.js"
+import { entriesOfEvents, readStoredKeys } from "../session/session-event.entity.functions.js"
 import { ModelRequestDescriptor, ModelRequestHeader } from "./model-request.entity.js"
 import type { ModelRequestTool } from "./model-request.entity.js"
 
@@ -123,15 +123,24 @@ export const modelRequestTools = (tools: ReadonlyArray<Tool.Any>): ReadonlyArray
     : Option.none(),
 }))
 
+const requestDecode = (error: Schema.SchemaError) => new HarnessError({ code: "request.decode", message: error.message })
+
+/** The last `request.prepared` of this run and step, found by its keys alone (`readStoredKeys`). */
+const headerEventOf = (events: ReadonlyArray<SessionLogEvent>, runId: string, step: number): Effect.Effect<SessionLogEvent, HarnessError> =>
+  readStoredKeys("request.prepared", events).pipe(
+    Effect.mapError(requestDecode),
+    Effect.flatMap((headers) => Option.match(Option.fromNullishOr(headers.findLast((header) => header.keys.runId === runId && header.keys.step === step)), {
+      onNone: () => Effect.fail(new HarnessError({ code: "request.missing", message: `No durable request header for ${runId} step ${step}` })),
+      onSome: (header) => Effect.succeed(header.event),
+    })),
+  )
+
+const decodeHeader = (event: SessionLogEvent): Effect.Effect<ModelRequestHeader, HarnessError> =>
+  Schema.decodeUnknownEffect(ModelRequestHeader)(event.data).pipe(Effect.mapError(requestDecode))
+
 /** Last header for this run and step, decoded from a fresh durable snapshot. */
-export const modelRequestHeaderOf = (events: ReadonlyArray<SessionLogEvent>, runId: string, step: number): Effect.Effect<ModelRequestHeader, HarnessError> => {
-  const header = events.filter((event) => event.kind === "request.prepared" && event.data.runId === runId && event.data.step === step).at(-1)
-  return header === undefined
-    ? Effect.fail(new HarnessError({ code: "request.missing", message: `No durable request header for ${runId} step ${step}` }))
-    : Schema.decodeUnknownEffect(ModelRequestHeader)(header.data).pipe(
-      Effect.mapError((error) => new HarnessError({ code: "request.decode", message: error.message })),
-    )
-}
+export const modelRequestHeaderOf = (events: ReadonlyArray<SessionLogEvent>, runId: string, step: number): Effect.Effect<ModelRequestHeader, HarnessError> =>
+  headerEventOf(events, runId, step).pipe(Effect.flatMap(decodeHeader))
 
 /** A model request as a dispatch check compares it: the Effect AI prompt, and the parts the header declares. */
 export interface ComparedModelRequest {
@@ -178,9 +187,9 @@ export const reconstructModelRequest = (header: ModelRequestHeader, entries: Rea
 
 /** Reconstruct one historical request from the events up to its header, excluding later responses and turns. */
 export const replayModelRequest = (events: ReadonlyArray<SessionLogEvent>, runId: string, step: number) => Effect.gen(function* () {
-  const header = yield* modelRequestHeaderOf(events, runId, step)
-  const position = events.findLastIndex((event) => event.kind === "request.prepared" && event.data.runId === runId && event.data.step === step)
-  const entries = yield* entriesOfEvents(events.slice(0, position + 1)).pipe(
+  const found = yield* headerEventOf(events, runId, step)
+  const header = yield* decodeHeader(found)
+  const entries = yield* entriesOfEvents(events.slice(0, events.indexOf(found) + 1)).pipe(
     Effect.mapError((error) => new HarnessError({ code: "request.memory", message: error.message })),
   )
   return yield* reconstructModelRequest(header, entries)

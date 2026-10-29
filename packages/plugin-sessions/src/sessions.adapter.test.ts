@@ -909,7 +909,31 @@ describe("check, then append", () => {
   })))
 })
 
+/** The log, but every read hands back the events of `kind` with their data as `change` holds it: a store holding rows written by other code. */
+const rewritingReads = (inner: Log, kind: string, change: Ref.Ref<(data: JsonObject) => JsonObject>): Log => SessionLog.of({
+  ...inner,
+  read: (id, query) => inner.read(id, query).pipe(Effect.flatMap((events) => Ref.get(change).pipe(Effect.map((rewrite) =>
+    events.map((event) => event.kind === kind ? { ...event, data: rewrite(event.data) } : event))))),
+})
+
+/** A failure's tag and code, a `SessionLogError`'s or a turn's. */
+const tagAndCode = (error: { readonly _tag: string }) => [error._tag, "code" in error ? error.code : null]
+
 describe("contention and a broken log", () => {
+  test("a stored turn.started whose key does not decode fails a lookup and a begin with session.decode, never reads as another key", () => withLog((inner) => Effect.gen(function* () {
+    const change = yield* Ref.make((data: JsonObject): JsonObject => data)
+    const [sessions] = yield* instancesOver(rewritingReads(inner, "turn.started", change), sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* Effect.scoped(sessions!.begin(address, say("first", "k1")).pipe(Effect.flatMap((writer) => writer.end({ reason: "completed", failure: Option.none() }))))
+    expect(yield* sessions!.lookup(address, "k1")).toEqual(Option.some(1))
+    yield* Ref.set(change, (data) => ({ ...data, key: 1 }))
+    expect(tagAndCode(yield* Effect.flip(sessions!.lookup(address, "k1")))).toEqual(["SessionLogError", "session.decode"])
+    expect(tagAndCode(yield* Effect.flip(Effect.scoped(sessions!.begin(address, say("second", "k2")))))).toEqual(["SessionLogError", "session.decode"])
+    // The keys are all a lookup decodes: a message that does not decode does not stop one.
+    yield* Ref.set(change, (data) => ({ ...data, userMessage: { attachments: "none" } }))
+    expect(yield* sessions!.lookup(address, "k1")).toEqual(Option.some(1))
+  })))
+
   test("a write that keeps losing to other writers fails with SessionContended after the configured attempts, and stores nothing", () => withLog((inner) => Effect.gen(function* () {
     const conflicting = yield* Ref.make(false)
     const tries = yield* Ref.make(0)
@@ -1149,6 +1173,25 @@ describe("the inbox", () => {
     yield* sessions!.deliver(address, item("t1"))
     yield* sessions!.deliver(address, item("t2"))
     expect((yield* Effect.flip(sessions!.deliver(address, item("t3"))))._tag).toBe("InboxFull")
+  })))
+
+  test("an item stored without content is shown as its id; one whose source is not an object fails a drain and a delivery with session.decode", () => withLog((inner) => Effect.gen(function* () {
+    const change = yield* Ref.make((data: JsonObject): JsonObject => data)
+    const [sessions] = yield* instancesOver(rewritingReads(inner, "inbox.queued", change), sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* sessions!.deliver(address, item("t1"))
+    yield* Ref.set(change, (data) => ({ ...data, content: "" }))
+    const seen = yield* Deferred.make<string>()
+    expect((yield* sessions!.drain(address, (writer) => Deferred.succeed(seen, writer.admitted.userMessage.text).pipe(Effect.asVoid))).turns).toBe(1)
+    expect(yield* Deferred.await(seen)).toBe("(inbox item t1)")
+    yield* Ref.set(change, (data) => data)
+    yield* sessions!.deliver(address, item("t2"))
+    yield* Ref.set(change, (data) => ({ ...data, source: "a task" }))
+    expect(tagAndCode(yield* Effect.flip(sessions!.drain(address, record("never"))))).toEqual(["SessionLogError", "session.decode"])
+    expect(tagAndCode(yield* Effect.flip(sessions!.deliver(address, item("t3"))))).toEqual(["SessionLogError", "session.decode"])
+    // Nothing was taken or stored: the item still waits.
+    expect((yield* sessions!.get(address)).pending).toBe(1)
+    expect(yield* all(sessions!, address)).toEqual(["inbox.queued", "turn.started@1", "turn.ended@1", "inbox.queued"])
   })))
 })
 

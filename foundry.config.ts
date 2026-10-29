@@ -147,6 +147,7 @@ const RECORD_CAST_CLEAN = [
   "plugin-memory-digest",
   "plugin-tool-discovery",
   "plugin-models",
+  "plugin-sessions",
   "plugin-tasks",
   "plugin-render",
   "plugin-workspace",

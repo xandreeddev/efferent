@@ -10,7 +10,7 @@ import { ConversationMemory } from "../ports/memory.port.js"
 import type { LogHandle } from "../ports/memory.port.js"
 import { RunContext } from "../ports/run-context.port.js"
 import type { TurnDraft } from "../ports/sessions.port.js"
-import { draftOfTurnEvent, draftsOfEntries, entriesOfEvents, frameworkDraft } from "../session/session-event.entity.functions.js"
+import { draftOfTurnEvent, draftsOfEntries, entriesOfEvents, frameworkDraft, readStoredKeys } from "../session/session-event.entity.functions.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
 import { MEMORY_KINDS, RESERVED_KINDS } from "../session/session-event.entity.js"
 import { ToolRegistry } from "../ports/tool-registry.port.js"
@@ -96,6 +96,11 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const decoded = (stored: ReadonlyArray<SessionLogEvent>) =>
     entriesOfEvents(stored).pipe(Effect.mapError((error) => failure("memory.log", `undecodable memory events: ${error.message}`)))
   const readHistory = writer.history(MEMORY_KINDS).pipe(Effect.flatMap(decoded))
+  /** The memory entry the session stored the turn's message as: its `turn.started`'s keys. */
+  const storedEntry = readStoredKeys("turn.started", [writer.started]).pipe(
+    Effect.map((starts) => starts.map((started) => started.keys.entry)),
+    Effect.mapError((error) => failure("memory.log", `undecodable turn.started: ${error.message}`)),
+  )
   // Memory's log is the session's memory events before this turn; what it records goes to the
   // same queue. Its TurnStarted is the turn's own `turn.started`, stored when the turn began.
   const log: LogHandle = {
@@ -107,9 +112,10 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       }
       const started = entries.filter((entry) => entry.body._tag === "TurnStarted")
       // The stored message is entry `<runId>:0` of turn N: memory must number it the same.
-      if (started.some((entry) => entry.turn !== admitted.turn || entry.id !== writer.started.data.entry)) {
+      const stored = started.length === 0 ? [] : yield* storedEntry
+      if (started.some((entry) => entry.turn !== admitted.turn || !stored.includes(entry.id))) {
         return yield* Effect.fail(failure("turn.numbering",
-          `memory took the message as ${started.map((entry) => `${entry.id} of turn ${entry.turn}`).join()}, the session stored ${String(writer.started.data.entry)} of turn ${admitted.turn}`))
+          `memory took the message as ${started.map((entry) => `${entry.id} of turn ${entry.turn}`).join()}, the session stored ${stored.join()} of turn ${admitted.turn}`))
       }
       const drafts = yield* draftsOfEntries(entries).pipe(Effect.mapError((error) => failure("memory.log", error.message)))
       yield* writer.append(drafts.map((draft): TurnDraft => frameworkDraft(draft.kind, draft.data)))
@@ -152,9 +158,10 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       onSome: Effect.succeed,
     })
     const stored = yield* writer.snapshot(requestKinds, known.cursor)
+    const headers = yield* readStoredKeys("request.prepared", stored).pipe(Effect.mapError((error) => failure("request.decode", error.message)))
     const next = {
       entries: [...known.entries, ...(yield* decoded(stored.filter((event) => MEMORY_KINDS.includes(event.kind))))],
-      requests: [...known.requests, ...stored.filter((event) => event.kind === "request.prepared" && event.data.runId === admitted.runId)],
+      requests: [...known.requests, ...headers.flatMap((header) => header.keys.runId === admitted.runId ? [header.event] : [])],
       cursor: stored.reduce((last, event) => Math.max(last, event.seq), known.cursor),
     }
     yield* Ref.set(snapshot, Option.some(next))
