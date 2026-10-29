@@ -1,0 +1,6 @@
+export { BashLive, makeBash } from "./bash.adapter.js"
+export { FileSystemLive, localFileSystem } from "./file-system.adapter.js"
+export { LocalSystemConfig, localSystemDefaults } from "./local-system.entity.js"
+export type { BashLiveOptions } from "./local-system.entity.js"
+export { fsReasonOf } from "./local-system.entity.functions.js"
+export { localSystemPlugin, LocalSystemPluginLive } from "./plugin.adapter.js"

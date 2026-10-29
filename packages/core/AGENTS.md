@@ -23,9 +23,10 @@ the private helpers in `src/conformance.functions.ts` (`check`, `expect`,
 so it is not paired with `conformance.entity.ts`.
 
 The `FileSystem` and `Bash` ports are what agent tools work through. Core
-ships the ports, the in-memory `FileSystemMemoryLive` and the two kits; no
-disk-backed `FileSystem` or `Bash` adapter ships yet (they are to live
-outside core, which does no file-system or process IO). `walkGlob`
+ships the ports, the in-memory `FileSystemMemoryLive` and the two kits; the
+disk-backed `FileSystemLive` and `BashLive` live in
+`@xandreed/plugin-workspace`, since core does no file-system or process IO,
+and run both kits on Bun and Node. `walkGlob`
 (`src/domain/file-system.entity.functions.ts`, a sorted walk over the port's
 `list`) is how every backend implements `glob`, so it means the same
 everywhere; `fs.glob` differs between Bun and Node. `src/workspace` holds

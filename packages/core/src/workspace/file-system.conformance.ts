@@ -59,13 +59,16 @@ const globTree = ({ fs, root, symlink }: FileSystemFixture) => Effect.gen(functi
  * The FileSystem contract as checks, run against a fresh fixture each:
  * text and bytes round trips (UTF-8 included); `createParents`;
  * `readBytes` ranges; `append`; `rename` (over an existing file, of a
- * directory with what it holds, of a link and not its target); `stat`
- * kinds, sizes and links; `exists`;
+ * directory with what it holds, of a link and not its target, and which
+ * side a failure names); `stat` kinds, sizes and links; `exists`;
  * `list` sorted by name with each entry's kind; `glob` with `*`, `**`, `?`,
  * classes, braces, `exclude`, dot entries, `onlyFiles`, `limit` and a
  * linked directory it must not enter; `mkdir` with and without `recursive`;
- * `realPath` through links; the `remove` rules; and the `reason` and
- * `path` of every failure. Each must finish within 30 seconds.
+ * `realPath` through links; the `remove` rules, and the path `remove` acts
+ * on (a trailing slash, a linked parent, a last `.` or `..`); and the
+ * `reason` and `path` of every failure. Each must finish within 30 seconds;
+ * none acts outside the fixture's root, even on a backend that gets the
+ * path wrong.
  */
 export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray<ConformanceCheck> => {
   const fsCheck = (name: string, id: string, body: (fixture: FileSystemFixture, at: (relative: string) => string) => Effect.Effect<void, unknown>): ConformanceCheck =>
@@ -137,7 +140,7 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       yield* fs.mkdir(at("dir"))
       yield* refuses("append", "appending to a directory", fs.append(at("dir"), "x"), "IsDirectory", at("dir"))
     })),
-    fsCheck("rename moves a file, replaces an existing file at the target, moves a directory with what it holds, moves a link (not its target), and fails for a missing source", "rename", ({ fs, symlink }, at) => Effect.gen(function* () {
+    fsCheck("rename moves a file, replaces an existing file at the target, moves a directory with what it holds, moves a link (not its target), and names the side a failure came from", "rename", ({ fs, symlink }, at) => Effect.gen(function* () {
       yield* fs.write(at("from.txt"), "moved")
       yield* fs.rename(at("from.txt"), at("to.txt"))
       const moved = [yield* fs.exists(at("from.txt")), yield* fs.read(at("to.txt"))]
@@ -156,7 +159,12 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       const link = [yield* fs.exists(at("link")), (yield* fs.stat(at("moved-link"), { followSymlinks: false })).kind, yield* fs.read(at("moved-link")), yield* fs.read(at("target.txt"))]
       yield* expect("rename", show(link) === show([false, "symlink", "target", "target"]),
         `renaming a link: old exists ${show(link[0])}, the new path is a ${show(link[1])} reading ${show(link[2])}, its target reads ${show(link[3])}`)
-      yield* refuses("rename", "renaming a missing file", fs.rename(at("missing.txt"), at("elsewhere.txt")), "NotFound")
+      yield* refuses("rename", "renaming a missing file", fs.rename(at("missing.txt"), at("elsewhere.txt")), "NotFound", at("missing.txt"))
+      yield* refuses("rename", "renaming into a missing directory", fs.rename(at("to.txt"), at("missing/to.txt")), "NotFound", at("missing/to.txt"))
+      yield* refuses("rename", "renaming a file over a directory", fs.rename(at("to.txt"), at("moved-tree")), "IsDirectory", at("moved-tree"))
+      yield* refuses("rename", "renaming a directory over a file", fs.rename(at("moved-tree/inner"), at("to.txt")), "NotDirectory", at("to.txt"))
+      yield* fs.mkdir(at("other"))
+      yield* refuses("rename", "renaming a directory over one with entries", fs.rename(at("other"), at("moved-tree")), "NotEmpty", at("moved-tree"))
     })),
     fsCheck("stat reports kind, size and time, follows links unless told not to, and a missing path fails with NotFound", "stat", ({ fs, symlink }, at) => Effect.gen(function* () {
       yield* fs.write(at("file.txt"), "héllo")
@@ -284,6 +292,25 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       const gone = yield* Effect.forEach(["file.txt", "empty", "full", "link"], (path) => fs.exists(at(path)))
       yield* expect("remove", kept === "leaf" && afterLink && gone.every((exists) => !exists),
         `refused removal kept ${show(kept)}, removing the link kept its target ${show(afterLink)}, removed paths exist ${show(gone)}`)
+    })),
+    fsCheck("remove acts on the last name as written: a link named with a trailing slash goes without its target, links in the parent are followed, and a path ending in . or .. fails with Invalid", "remove-paths", ({ fs, symlink }, at) => Effect.gen(function* () {
+      yield* fs.write(at("dir/sub/leaf.txt"), "leaf", { createParents: true })
+      yield* fs.write(at("dir/other/kept.txt"), "kept", { createParents: true })
+      yield* symlink(at("dir"), at("link"))
+      yield* symlink(at("dir"), at("recursive-link"))
+      yield* symlink(at("dir"), at("via"))
+      // Only below the fixture's root: `link/..` is the root itself.
+      yield* refuses("remove-paths", "removing a path ending in ..", fs.remove(at("dir/sub/.."), { recursive: true }), "Invalid", at("dir/sub/.."))
+      yield* refuses("remove-paths", "removing a path ending in .", fs.remove(at("dir/sub/."), { recursive: true }), "Invalid", at("dir/sub/."))
+      yield* refuses("remove-paths", "removing a link's parent through ..", fs.remove(at("link/.."), { recursive: true }), "Invalid", at("link/.."))
+      yield* fs.remove(at("link/"))
+      yield* fs.remove(at("recursive-link/"), { recursive: true })
+      yield* fs.remove(at("via/sub"), { recursive: true })
+      const links = yield* Effect.forEach(["link", "recursive-link"], (name) => Effect.result(fs.stat(at(name), { followSymlinks: false })).pipe(
+        Effect.map((result) => result._tag === "Success" ? result.success.kind : result.failure.reason)))
+      const left = [yield* fs.exists(at("dir/sub")), yield* fs.read(at("dir/other/kept.txt")), (yield* fs.stat(at("via"), { followSymlinks: false })).kind]
+      yield* expect("remove-paths", show(links) === show(["NotFound", "NotFound"]) && show(left) === show([false, "kept", "symlink"]),
+        `after removing link/ and recursive-link/ they are ${show(links)}; after removing via/sub, dir/sub exists ${show(left[0])}, dir/other/kept.txt reads ${show(left[1])} and via is a ${show(left[2])}`)
     })),
   ]
 }

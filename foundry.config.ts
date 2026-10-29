@@ -44,6 +44,7 @@ const CHECKED = [
   "packages/plugin-sessions/src/**",
   "packages/plugin-tasks/src/**",
   "packages/plugin-render/src/**",
+  "packages/plugin-workspace/src/**",
   // The factory judges itself by the same profile (the dogfood).
   "packages/foundry/src/**",
 ]
@@ -292,6 +293,36 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect/",
                   "@xandreed/core",
                   "bun:test"
+            ]
+      },
+      {
+            "name": "plugin-workspace-tests",
+            "path": "packages/plugin-workspace/src/**/*.test.ts",
+            "canImport": [
+                  "plugin-workspace",
+                  "core",
+                  "runtime"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "node:",
+                  "@xandreed/core",
+                  "@xandreed/runtime",
+                  "bun:test"
+            ]
+      },
+      {
+            "name": "plugin-workspace",
+            "path": "packages/plugin-workspace/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "node:",
+                  "@xandreed/core"
             ]
       },
       {

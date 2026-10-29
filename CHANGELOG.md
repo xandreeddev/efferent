@@ -88,7 +88,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `mkdir` takes `{ recursive }` (without it, an existing path fails with
   `Exists` and a missing parent with `NotFound`; pass `recursive: true` for
   the old create-if-missing behaviour), and `remove` takes `{ recursive }`
-  and removes empty directories. Migration: implement `glob` as
+  and removes empty directories. `remove` follows links in the parent but
+  never the last name (`link/` removes the link) and refuses the root and a
+  path whose last segment is `.` or `..` with `Invalid`; a `rename` failure
+  names the side that caused it (`to` for a missing parent there or what is
+  in the way). Migration: implement `glob` as
   `walkGlob(list, pattern, options)` and run `fileSystemConformance`.
 - **`@xandreed/core`: `TurnEvent` gains `tool.progress`.** Code matching the
   union exhaustively (`Match.exhaustive`, a `switch` with a `never` default)
@@ -200,16 +204,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   reports as `Invalid`), `GlobOptions`, `FileSystemMemoryLive` and
   `makeMemoryFileSystem(seed)` (an in-memory tree with symbolic links), and
   `fileSystemConformance(subject)`, run over the memory backend on Bun and
-  Node. No disk-backed `FileSystem` ships yet.
+  Node. The disk-backed `FileSystemLive` is in `@xandreed/plugin-workspace`
+  (below).
 - `@xandreed/core`: the `Bash` port (`stream`, `exec`) with `BashOptions`
   (`cwd`, `env`, `inheritEnv`, `stdin` as text or bytes, `timeoutMs`), `BashChunk`,
   `BashExit`, `BashResult`, `BashError`, `collectBashResult`,
   `resolveBashEnv` and `BASH_ENV_ALLOWLIST`, and `bashConformance(subject)`:
   exit codes as results, separate streams, output before exit, stdin, the
   environment allowlist, timeouts and interrupts that kill the process
-  group, `cwd`, signals and UTF-8. No `Bash` adapter ships yet: core's
-  tests run the kit against fakes that run nothing, which fail every check.
-  `exec` keeps the whole output; there is no output cap yet.
+  group, `cwd`, signals and UTF-8. Core has no `Bash` adapter (its tests
+  run the kit against fakes that run nothing, which fail every check);
+  `BashLive` is in `@xandreed/plugin-workspace` (below). `exec` keeps the
+  whole output; there is no output cap yet.
 - `@xandreed/core`: `tool.progress` (`ToolProgressEvent`: `step`,
   `invocationId`, `tool`, `channel` and `text`), published from a handler
   with `publishToolProgress(channel, text)`: `stdout` or `stderr` for a
@@ -218,6 +224,37 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `CurrentToolInvocation`, which `@xandreed/plugin-tool-discovery` now sets
   around every handler call (innermost, so a nested agent's tools see their
   own call).
+- `@xandreed/plugin-workspace`, a new package for Node 24 and Bun on POSIX
+  systems (Linux and macOS; not Windows): the local machine as the
+  `FileSystem` and `Bash` ports. `FileSystemLive` (`localFileSystem`) is the
+  disk through `node:fs/promises`: absolute paths only, error codes mapped
+  to `FsReason`s by `fsReasonOf`, `glob` as `walkGlob` over its `list`,
+  ranges read through a file handle until they are full (so a `/proc` entry
+  that reports a size of 0 reads too), a `rename` that names the side a
+  failure came from, and a `remove` that resolves the parent first and acts
+  on the last name only, so it never follows that name, never removes the
+  root and refuses a path ending in `.` or `..`. `BashLive(options)`
+  (`makeBash`, options `BashLiveOptions`) runs `<shell> -c <command>`
+  through `node:child_process`, detached into its own process group:
+  `shell` (default `bash`, with no fallback; set `sh` where bash is
+  missing) is resolved once from the parent `PATH` (`ShellMissing`
+  otherwise), `cwd` is checked first (`CwdMissing`), stdin is written and
+  closed (a command that never reads it is fine), output is decoded per
+  stream, and a timeout, an interrupted stream and, with `killBackground`
+  (default `true`), the command's return kill the whole group; `exitGraceMs`
+  (default 500) bounds the wait for output a background process holds open,
+  after which the output pipes close (so a background process kept with
+  `killBackground: false` needs its own output, `cmd > log 2>&1 &`), and
+  `parentEnv` (default `process.env`) is what commands inherit from.
+  `localSystemPlugin` (`@xandreed/plugin-workspace/local`, runtime-scoped)
+  provides both, configured with `shell`, `killBackground` and
+  `exitGraceMs` (`LocalSystemConfig`, `localSystemDefaults`), and
+  `LocalSystemPluginLive` is its typed layer. Both adapters pass
+  `fileSystemConformance` and `bashConformance` on Bun and, in the
+  packed-package check, on Node. The `FileSystem` kit gains a
+  `remove-paths` check (a trailing slash on a link, a linked parent, a last
+  `.` or `..`) and checks which path a `rename` failure names;
+  `FileSystemMemoryLive` refuses a `remove` ending in `.` or `..` too.
 
 - `@xandreed/core`: token usage counts cache writes and reasoning.
   `TokenUsage` gains `cacheWriteTokens` and `reasoningTokens` (both inside

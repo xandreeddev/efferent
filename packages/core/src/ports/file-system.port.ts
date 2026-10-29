@@ -21,7 +21,12 @@ export class FileSystem extends Context.Service<FileSystem, {
     readonly write: (path: string, content: string | Uint8Array, options?: WriteOptions) => Effect.Effect<void, FsError>
     /** Add to the end of a file, creating it when missing. */
     readonly append: (path: string, content: string | Uint8Array, options?: WriteOptions) => Effect.Effect<void, FsError>
-    /** Move a file, directory or link (the link itself, not its target); an existing file at `to` is replaced. */
+    /**
+     * Move a file, directory or link (the link itself, not its target); an
+     * existing file at `to` is replaced. A failure names the side that caused
+     * it: `from` when it is missing, `to` for a missing parent there or what
+     * is in the way (`IsDirectory`, `NotDirectory`, `NotEmpty`).
+     */
     readonly rename: (from: string, to: string) => Effect.Effect<void, FsError>
     readonly stat: (path: string, options?: StatOptions) => Effect.Effect<FileInfo, FsError>
     /** Whether the path exists (a link whose target is missing does not). A missing path is `false`, not an error. */
@@ -37,7 +42,10 @@ export class FileSystem extends Context.Service<FileSystem, {
     /**
      * Delete a file, a link (not its target) or a directory. A missing path
      * is a no-op. Without `recursive`, an empty directory is removed and one
-     * with entries fails with `NotEmpty`.
+     * with entries fails with `NotEmpty`. Links in the parent are followed
+     * and the last name never is, trailing slash or not (`link/` removes
+     * the link). The root, and a path whose last segment is `.` or `..`,
+     * fail with `Invalid`.
      */
     readonly remove: (path: string, options?: RecursiveOptions) => Effect.Effect<void, FsError>
   }>()("@xandreed/core/FileSystem") {}

@@ -9,7 +9,8 @@ A port says what its methods take and return; a conformance kit says what an
 implementation must do. `@xandreed/core` ships each contract as a list of
 checks, so a host that writes its own session store, memory strategy, step
 loop, turn composition, file system or shell can prove it behaves like the
-first-party ones.
+first-party ones (`@xandreed/plugin-workspace`'s local file system and shell
+pass the file-system and shell kits on Bun and Node).
 `@xandreed/plugin-render` does the same for render surfaces, feeds and
 transports (see [render kits](#render-kits)).
 
@@ -157,10 +158,8 @@ interface FileSystemFixture {
 }
 ```
 
-For a backend on disk, `open` would make a temporary directory and remove it
-when the scope closes, with `fs.symlink` as `symlink`. No disk-backed
-`FileSystem` ships yet: `@xandreed/core` has the port, the in-memory backend
-and this kit, and gives the in-memory backend its own tree for each check:
+`@xandreed/core` runs the kit over its in-memory backend, giving it its own
+tree for each check:
 
 ```ts
 import { Effect } from "effect"
@@ -171,6 +170,32 @@ const checks = fileSystemConformance({
     Effect.tap((fs) => fs.mkdir("/work")),
     Effect.map((fs) => ({ fs, root: "/work", symlink: fs.symlink })),
   ),
+})
+```
+
+For a backend on disk, `open` makes a temporary directory and removes it
+when the scope closes, with `fs.symlink` as `symlink`. That is how
+`@xandreed/plugin-workspace` runs it over `FileSystemLive`, the local disk
+through `node:fs/promises`, on Bun and on Node:
+
+```ts
+import { mkdtemp, rm, symlink } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { Effect } from "effect"
+import { fileSystemConformance } from "@xandreed/core"
+import { localFileSystem } from "@xandreed/plugin-workspace"
+
+const temporary = Effect.acquireRelease(
+  Effect.promise(() => mkdtemp(join(tmpdir(), "fs-kit-"))),
+  (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })),
+)
+const checks = fileSystemConformance({
+  open: temporary.pipe(Effect.map((root) => ({
+    fs: localFileSystem,
+    root,
+    symlink: (target: string, path: string) => Effect.tryPromise(() => symlink(target, path)),
+  }))),
 })
 ```
 
@@ -187,7 +212,9 @@ The checks:
 - **append**: creates a missing file and adds text and bytes in order.
 - **rename**: moves a file, replaces an existing file at the target, moves a
   directory with what it holds, moves a link itself (not its target), and
-  fails for a missing source.
+  names the side a failure came from: the source when it is missing, the
+  target for a missing parent there or what is in the way (`IsDirectory`,
+  `NotDirectory`, `NotEmpty`).
 - **stat**: kind, size in bytes and time; a link is followed unless
   `followSymlinks: false`, which reports `symlink`.
 - **exists**: true for files and directories; false, never an error, for a
@@ -208,15 +235,25 @@ The checks:
 - **remove**: a missing path is a no-op, an empty directory goes without
   `recursive`, one with entries fails with `NotEmpty` until `recursive`, and
   removing a link leaves its target.
+- **remove-paths**: `remove` acts on the last name as written. A link named
+  with a trailing slash (`link/`) is removed and its target kept, with or
+  without `recursive`; a link in the parent (`via/sub`) is followed; a path
+  whose last segment is `.` or `..` fails with `Invalid`. A disk backend
+  that hands the path to `rmdir` or `rm` as given fails here: the kernel
+  follows the trailing slash and resolves the `..`, so `<link>/..` could
+  reach the root. Every path the check removes is under the fixture's root,
+  even on such a backend.
 
 Every backend should implement `glob` as `walkGlob(list, pattern, options)`
 over its own `list`. That is what makes the glob checks pass on Bun and on
 Node: `fs.glob` cannot list dot entries on Node and follows links on Bun. The
 kit's own tests show what it catches. A backend that lists in reverse order,
 refuses to remove a missing path and always follows links in `stat` fails
-`list`, `remove`, `stat` and `rename` (which reads the moved link without
-following it); a `rename` that moves a link's target instead of the link
-fails `rename`; a glob that follows links fails `glob`, `glob-recursive`,
+`list`, `remove`, `remove-paths`, `stat` and `rename` (`rename` and
+`remove-paths` read a link without following it); a `rename` that moves a link's target instead of
+the link, or that names the source for every failure, fails `rename`; a
+`remove` that resolves the whole path first fails `remove` and
+`remove-paths`; a glob that follows links fails `glob`, `glob-recursive`,
 `glob-dot` and `glob-limit`; one that lists dot entries whatever `dot` says
 fails every glob check with a dot entry in reach.
 
@@ -262,9 +299,24 @@ The checks:
 - **interrupt**: interrupting the stream returns, and kills the command and
   the child it started.
 
-No `Bash` adapter ships yet, in core or elsewhere: implement the port and
-run this kit against it. The kit's own tests run it against fakes that run
-nothing, which fail every check.
+Core has no `Bash` adapter: the kit's own tests run it against fakes that
+run nothing, which fail every check. `BashLive` from
+`@xandreed/plugin-workspace` (commands through `node:child_process`) passes
+it on Bun and on Node. Its `parentEnv` option is the environment commands
+inherit from, which is how a test plants variables:
+
+```ts
+import { Effect } from "effect"
+import type { Scope } from "effect"
+import { bashConformance } from "@xandreed/core"
+import { makeBash } from "@xandreed/plugin-workspace"
+
+declare const temporary: Effect.Effect<string, never, Scope.Scope> // as in the FileSystem kit above
+
+const checks = bashConformance({
+  open: (planted) => Effect.all({ root: temporary, bash: makeBash({ parentEnv: { ...process.env, ...planted } }) }),
+})
+```
 
 ## Render kits
 

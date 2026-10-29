@@ -96,6 +96,9 @@
       ],
       "@xandreed/plugin-tasks": [
         "packages/plugin-tasks/src/index.ts"
+      ],
+      "@xandreed/plugin-workspace": [
+        "packages/plugin-workspace/src/index.ts"
       ]
     }
   }

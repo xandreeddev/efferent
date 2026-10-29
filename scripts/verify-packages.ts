@@ -34,11 +34,33 @@ await writeFile(join(consumer, "package.json"), JSON.stringify({ private: true, 
 console.log(`Installing from temporary local registry into ${consumer}`)
 const install = Bun.spawn(["bun", "install", "--ignore-scripts", "--no-cache", "--cache-dir", join(consumer, ".install-cache")], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await install.exited !== 0) process.exit(1)
+/**
+ * The FileSystem and Bash kits over the packed `@xandreed/plugin-workspace`
+ * adapters, each check in a fresh directory under the system's temporary
+ * directory: run by `verify.ts` on Bun and by `node-imports.mjs` on Node,
+ * which import the names it uses and define `linkTo` (`fs.symlink`).
+ */
+const localKits = `
+const temporary = Effect.acquireRelease(Effect.promise(() => mkdtemp(join(tmpdir(), "efferent-kit-"))), (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })))
+const localFileSystem = await Effect.runPromise(Effect.service(FileSystem).pipe(Effect.provide(FileSystemLive)))
+const localKitChecks = [
+ ...fileSystemConformance({ open: temporary.pipe(Effect.map((root) => ({ fs: localFileSystem, root, symlink: linkTo }))) }),
+ ...bashConformance({ open: (planted) => Effect.all({ root: temporary, bash: Effect.service(Bash).pipe(Effect.provide(BashLive({ parentEnv: { ...process.env, ...planted } }))) }) }),
+]
+const localKitFailures = (await Effect.runPromise(Effect.forEach(localKitChecks, (check) => Effect.result(check.run).pipe(
+ Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
+if (localKitFailures.length > 0) { console.error(localKitFailures.join("\\n")); process.exit(1) }
+console.log("The FileSystem and Bash kits passed over the packed local adapters on " + (typeof Bun === "undefined" ? "Node" : "Bun") + " (" + localKitChecks.length + " checks)")
+`
 await writeFile(join(consumer, "verify.ts"), `
 import { Context, Deferred, Effect, Layer, Option, Ref, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
-import { fileSystemConformance, makeMemoryFileSystem, Sessions, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { mkdtemp, rm, symlink } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { Bash, bashConformance, FileSystem, fileSystemConformance, makeMemoryFileSystem, Sessions, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
+import { BashLive, FileSystemLive } from "@xandreed/plugin-workspace"
 import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
@@ -102,6 +124,8 @@ const fileSystemFailures = (await Effect.runPromise(Effect.forEach(fileSystem, (
  Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
 if (fileSystemFailures.length > 0) { console.error(fileSystemFailures.join("\\n")); process.exit(1) }
 console.log("The FileSystem kit passed over the packed in-memory file system (" + fileSystem.length + " checks)")
+const linkTo = (target: string, path: string) => Effect.tryPromise(() => symlink(target, path))
+${localKits}
 `)
 /**
  * The documentation's imports must exist in the packed packages: every
@@ -206,6 +230,13 @@ const turnServices = await Effect.runPromise(Effect.scoped(Effect.gen(function* 
 const agent = Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], system: "Be brief." })
 const turn = await runKit("turn", turnConformance(agent, turnServices))
 console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + ") and the turn kit over Agent.turn (" + turn + ")")
+const { mkdtemp, rm, symlink } = await import("node:fs/promises")
+const { tmpdir } = await import("node:os")
+const { join } = await import("node:path")
+const { Bash, bashConformance, FileSystem } = await import("@xandreed/core")
+const { BashLive, FileSystemLive } = await import("@xandreed/plugin-workspace")
+const linkTo = (target, path) => Effect.tryPromise(() => symlink(target, path))
+${localKits}
 `)
   const node = Bun.spawn(["node", "node-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await node.exited !== 0) process.exit(1)
