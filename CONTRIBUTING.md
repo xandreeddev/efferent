@@ -65,21 +65,21 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
 
 The framework packages are published from a maintainer's terminal; there is
 no release automation, and publishing needs explicit sign-off. All 19
-publishable packages share one version (`0.13.0` in the sources) and are
+publishable packages share one version (`0.14.0` in the sources) and are
 published under npm's `latest` tag. The previously published `efferent`,
 `@xandreed/cli` and `@xandreed/sdk-*` packages are a frozen earlier line.
 
 For a release, set the new version in every publishable `package.json` and in
 each plugin definition (`version:` in `definePlugin`), run
 `bun run docs:generate`, and turn the changelog's **Unreleased** section into
-the new version, with the release date. Set the version in the README's and
-the website getting-started page's "published at" sentence, and drop the
-README's exception for packages not yet on npm (today
-`@xandreed/plugin-workspace` and `@xandreed/plugin-telemetry`; npm holds
-older `@xandreed/plugin-telemetry` versions from an earlier line, so check
-with `npm view @xandreed/plugin-telemetry versions` that none is at or above
-the new version). Merge that, then publish from a clean
-checkout of the merge commit:
+the new version, with the release date. Set the version in the README's,
+the website getting-started page's and the website home page's "published
+at" sentences, and drop any README exception for a package not yet on npm
+(npm holds older `@xandreed/plugin-telemetry` versions, 0.3.0 and 0.4.0, from
+an earlier line: check with `npm view @xandreed/plugin-telemetry versions`
+that none is at or above the new version). Record the release's journal
+fixture with `bun scripts/record-journal-fixture.ts`. Merge that, then
+publish from a clean checkout of the merge commit:
 
 ```sh
 bun install --frozen-lockfile

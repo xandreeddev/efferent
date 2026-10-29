@@ -29,7 +29,8 @@ releases go through `bun run publish:packages`, a dry run unless
 `--publish` (CONTRIBUTING.md, "Publishing"). Every PR adds an entry under
 "Unreleased" in `CHANGELOG.md`. An event or stored-payload change regenerates
 the references (`bun run docs:generate`, which writes `docs/event-reference.*`)
-and must keep `packages/sdk/fixtures/journal-0.13.0.json` decoding. The events
+and must keep every release's `packages/sdk/fixtures/journal-<version>.json`
+decoding. The events
 guide (`docs/events.md`) quotes regions of `packages/sdk/src/events-guide.test.ts`:
 change its code there, and `bun run docs:generate` copies it into the guide
 and its website page (`scripts/sync-guides.ts`).

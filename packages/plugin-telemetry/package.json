@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/plugin-telemetry",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "engines": { "node": ">=24", "bun": ">=1.3.0" },
   "type": "module",
   "description": "Usage, cost and tool telemetry for efferent turns, and OTLP/HTTP export of traces and metrics over Effect's own exporters (Node 24 and Bun).",

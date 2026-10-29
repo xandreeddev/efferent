@@ -13,7 +13,7 @@ import { TurnTelemetryLive } from "./turn-telemetry.adapter.js"
  * `serviceName`) it refuses.
  */
 export const telemetryPlugin = definePlugin({
-  id: "@xandreed/plugin-telemetry", version: "0.13.0", scope: "session",
+  id: "@xandreed/plugin-telemetry", version: "0.14.0", scope: "session",
   config: TelemetryOptions, defaults: telemetryDefaults,
   requires: [RunContext, TurnEvents], provides: [],
   layer: (config) => TurnTelemetryLive(config),

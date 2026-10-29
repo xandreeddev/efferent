@@ -14,7 +14,7 @@ import { WorkspaceToolsConfig, workspaceToolsDefaults } from "./workspace-tools.
  * `resolveBashEnv`'s allowlist.
  */
 export const localSystemPlugin = definePlugin({
-  id: "@xandreed/plugin-workspace/local", version: "0.13.0", scope: "runtime",
+  id: "@xandreed/plugin-workspace/local", version: "0.14.0", scope: "runtime",
   config: LocalSystemConfig, defaults: localSystemDefaults,
   provides: [FileSystem, Bash],
   layer: (config) => Layer.merge(FileSystemLive, BashLive(config)),
@@ -32,7 +32,7 @@ export const LocalSystemPluginLive = localSystemPlugin.live
  * `PermissionGrants`.
  */
 export const workspaceToolsPlugin = definePlugin({
-  id: "@xandreed/plugin-workspace/tools", version: "0.13.0", scope: "runtime",
+  id: "@xandreed/plugin-workspace/tools", version: "0.14.0", scope: "runtime",
   config: WorkspaceToolsConfig, defaults: workspaceToolsDefaults,
   requires: [FileSystem, SessionEnvironment],
   optional: [Bash],
