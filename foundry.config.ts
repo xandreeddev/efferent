@@ -109,6 +109,7 @@ const EFFECT_FN_CLEAN = [
   "sdk",
   "plugin-memory-window",
   "plugin-memory-digest",
+  "plugin-session-sqlite",
 ].map(src)
 
 /**

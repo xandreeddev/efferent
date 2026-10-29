@@ -3,7 +3,7 @@ import { rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
-import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
+import { Context, Effect, Exit, Layer, Option, Scope, Tracer } from "effect"
 import { ConversationId, SessionLog, sessionLogConformance, sessionLogRecoveryConformance } from "@xandreed/core"
 import { makeSessionLogSqlite, openSessionDatabase, SessionLogSqliteLive } from "./session-log.adapter.js"
 
@@ -62,5 +62,44 @@ describe("the SQLite file", () => {
       return { read, nullState, head, list }
     })))
     expect(failures).toEqual({ read: "store.decode", nullState: "store.decode", head: "store.decode", list: "store.decode" })
+  })
+})
+
+describe("the SQLite session log's spans", () => {
+  test("opening and each call is a session_log span under the caller's, with efferent.session.id when the call names a session", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options)
+        spans.push(span)
+        return span
+      },
+    })
+    const id = ConversationId.make(crypto.randomUUID())
+    const missing = ConversationId.make(crypto.randomUUID())
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const traced = yield* makeSessionLogSqlite(join(directory, "spans.db"))
+      yield* traced.create({ id, owner: "owner-spans", origin: "user", createdAt: 1_767_225_600_000, meta: {}, parent: Option.none() })
+      yield* traced.head(id)
+      yield* traced.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: { n: 1 } }], state: Option.none() })
+      yield* traced.read(id, { after: 0, limit: Option.none(), kinds: [] })
+      yield* traced.list({ owner: "owner-spans", parent: Option.none(), before: Option.none(), limit: 10 })
+      yield* Effect.exit(traced.head(missing))
+      yield* traced.remove(id)
+    })).pipe(Effect.withSpan("host.request"), Effect.withTracer(tracer)))
+    const host = spans.find((span) => span.name === "host.request")
+    const calls = spans.filter((span) => span !== host)
+    expect(calls.map((span) => [span.name, span.attributes.get("efferent.session.id")])).toEqual([
+      ["session_log.open", undefined],
+      ["session_log.create", id],
+      ["session_log.head", id],
+      ["session_log.commit", id],
+      ["session_log.read", id],
+      ["session_log.list", undefined],
+      ["session_log.head", missing],
+      ["session_log.remove", id],
+    ])
+    expect(calls.every((span) => Option.exists(span.parent, (parent) => parent === host))).toBe(true)
+    expect(calls.map((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit))).toEqual([false, false, false, false, false, false, true, false])
   })
 })
