@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Context, Effect, Option, Ref, Stream } from "effect"
-import { addUsage, CurrentAgentStep, CurrentTraceContent, extractUsage, HarnessError, makeTurnEvents, makeTurnTasks, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, zeroUsage } from "@xandreed/core"
+import { addUsage, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, HarnessError, isHarnessError, makeTurnEvents, makeTurnTasks, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, zeroUsage } from "@xandreed/core"
 import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, TokenUsage, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
@@ -58,7 +58,7 @@ const minimalLoop = StepLoop.of({
         Effect.catch((error) => !Option.isSome(planned) && AiError.isAiError(error) && error.reason._tag === "InvalidRequestError" && /image/i.test(error.reason.message)
           ? request.onMediaRejected(error.reason.message).pipe(Effect.flatMap((retry) => retry ? attempt : Effect.fail(error)))
           : Effect.fail(error)),
-        Effect.mapError((error) => error instanceof HarnessError ? error : new HarnessError({ code: "loop.failed", message: String(error) })),
+        Effect.mapError((error) => isHarnessError(error) ? error : new HarnessError({ code: "loop.failed", message: String(error) })),
       )
       const content: ReadonlyArray<unknown> = response.content
       const entries = yield* request.record(index, responseToAgentMessages(content))
@@ -76,7 +76,8 @@ const minimalLoop = StepLoop.of({
       if (verdict.complete || responseToolCalls(content).length === 0) return { outcome: "completed", reason: "completed", text: reply, steps: index + 1, usage: total } satisfies RunResult
       return yield* step(index + 1, reply, total)
     })
-    return yield* step(0, "", zeroUsage)
+    // The request's cache key, for the dispatch check and the model calls to read.
+    return yield* step(0, "", zeroUsage).pipe(Effect.provideService(CurrentPromptCacheKey, request.cacheKey))
   }),
 })
 

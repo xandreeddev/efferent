@@ -1,6 +1,7 @@
 import { Cause, Context, Deferred, Effect, Fiber, Option, Queue, Ref, Semaphore } from "effect"
 import type { Scope } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
 import type { SubscribeOptions, TurnEventsService, TurnTasksService } from "../ports/turn-events.port.js"
 import type { TurnEvent } from "./turn-event.entity.js"
@@ -26,7 +27,7 @@ const failureOf = (cause: Cause.Cause<HarnessError>): Cause.Cause<HarnessError> 
   onSome: Cause.fail,
   onNone: () => {
     const defect = Cause.squash(cause)
-    return defect instanceof HarnessError ? Cause.fail(defect)
+    return isHarnessError(defect) ? Cause.fail(defect)
       : Cause.hasInterruptsOnly(cause) ? Cause.fail(new HarnessError({ code: "events.background", message: "a background handler was interrupted" }))
       : cause
   },
@@ -171,4 +172,4 @@ export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksServic
  * at the turn boundary so a subscriber failure fails the turn, typed.
  */
 export const harnessDefectsAsFailures = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError, R> =>
-  effect.pipe(Effect.catchDefect((defect) => defect instanceof HarnessError ? Effect.fail(defect) : Effect.die(defect)))
+  effect.pipe(Effect.catchDefect((defect) => isHarnessError(defect) ? Effect.fail(defect) : Effect.die(defect)))

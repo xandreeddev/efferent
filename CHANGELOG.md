@@ -22,6 +22,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   release fails with `request.diverged` (`context`), and a summarized
   session's cached prompt prefix changes once, because the summary handoff
   renders with new wording.
+- `makeSession` (`@xandreed/core`) is deprecated and will be removed in a
+  later release: use `Agent.define`/`Agent.turn` (`@xandreed/sdk`) over
+  `Sessions` (`@xandreed/plugin-sessions`). Its ledger is in memory only,
+  and its live `subscribe` tail drops the oldest events for a subscriber
+  more than 512 events behind; it never delivered "exactly once".
+- A custom `StepLoop` provides `request.cacheKey` as `CurrentPromptCacheKey`
+  to its dispatch checks and model calls; `stepLoopConformance` checks it.
+  On a loop that does not, a turn with a cache key fails the step with
+  `request.diverged` (`cacheKey`).
+- Install `effect` beside the packages: they declare it as a peer
+  (`^4.0.7`) and depend on each other with caret ranges, so other patch
+  versions install one copy of `effect` and of `@xandreed/core`.
 
 ### Breaking
 
@@ -67,6 +79,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `DigestTask` has `preserve`; `MemorySummaryConfig` has `summaryTimeoutMs`
   and `MemoryDigestConfig` has `digestTimeoutMs` (add them if you build
   these configs without the defaults).
+- `draftOfTurnEvent` returns an `Effect` that fails with the `SchemaError`
+  instead of throwing. A bus event that does not encode fails the turn with
+  `events.encode`, not `turn.defect`.
+- `toAgentFailure` classifies an `AiError` by its reason: the `code` is the
+  reason's tag (for example `RateLimitError:429`) instead of `AiError`, and
+  `retryable` is the reason's own (rate limits are retryable, exhausted
+  quotas are not).
+- `toFailure` names tagged values by their `_tag` and never produces
+  `[object Object]`.
 
 ### Added
 
@@ -90,6 +111,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `hostNote`, `framed`, `escapeFrame`, `clipTo` and `clippedMarker` in
   `@xandreed/core` for model-facing text; `recall_context` takes an
   `offset`; `summaryTimeoutMs` (60 s) and `digestTimeoutMs` (30 s).
+- `isHarnessError(value)` in `@xandreed/core`: matches a `HarnessError` from
+  any installed copy of core. The framework uses it, so a code from another
+  copy no longer becomes `loop.failed`, `task.turn` or a defect.
 
 ### Fixed
 
@@ -187,6 +211,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The `start_task` description says what a fork sees, task notices cannot
   be closed by a tag in any case, and task turns are admitted with the
   starter's `meta`.
+- The dispatch check compares the cache key and call policy with what the
+  model call reads, instead of comparing the turn's own inputs with
+  themselves.
+- Completion verdicts' `awaiting` tags are trimmed and empty ones dropped;
+  an untrimmed tag no longer ends the turn as `turn.defect`.
+- A plugin layer that dies with a `HarnessError` keeps its code, and
+  `stackPlugins` shares one memo map across its levels without leaking it to
+  the layers built over it.
+- `makeSession`: a turn interrupted together with its sender records its
+  interrupt once, and a later `interrupt` or `shutdown` adds no stale event.
 
 ### Repository
 
@@ -199,6 +233,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   yields before each write, as storage does.
 - The turn kit adds `pending`, `stuck-reaction` and `self-publication`
   checks, and the sessions kit adds `tenure` (it needs `processOwned`).
+- `stepLoopConformance` adds a `cache-key` check.
 
 ## 0.14.0 — 2026-10-29
 

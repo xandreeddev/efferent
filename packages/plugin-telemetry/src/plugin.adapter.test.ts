@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { LanguageModel } from "effect/ai"
 import { Effect, Exit, Layer } from "effect"
-import { HarnessError, RunContext, TurnEvents } from "@xandreed/core"
+import { isHarnessError, RunContext, TurnEvents } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
@@ -12,7 +12,7 @@ const codeOf = (exit: Exit.Exit<unknown, unknown>): string => Exit.match(exit, {
   onSuccess: () => "succeeded",
   onFailure: (cause) => {
     const error = cause.reasons.flatMap((reason) => reason._tag === "Fail" ? [reason.error] : [])[0]
-    return error instanceof HarnessError ? `${error.code}: ${error.message}` : String(cause)
+    return isHarnessError(error) ? `${error.code}: ${error.message}` : String(cause)
   },
 })
 

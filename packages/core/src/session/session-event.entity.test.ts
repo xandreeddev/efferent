@@ -92,11 +92,14 @@ describe("the memory log stored as session events", () => {
   })
 })
 
+/** A bus event's stored draft, encoded synchronously (the tests' events all encode). */
+const storedOf = (turn: number, event: TurnEvent) => Effect.runSync(draftOfTurnEvent(turn, event))
+
 describe("the turn's bus events as stored", () => {
   const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
   test("an assistant message keeps only its step, model and usage; memory holds the content", () => {
     const event: TurnEvent = { _tag: "assistant.message", step: 1, text: "hello", reasoning: "", model: Option.some("m"), toolCalls: [], usage }
-    const stored = draftOfTurnEvent(3, event)
+    const stored = storedOf(3, event)
     expect(Option.map(stored, (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data])).toEqual(Option.some(["step.usage", 3, { step: 1, model: "m", usage }]))
   })
   test("a completed tool drops its input and result; transient and duplicated events are not stored", () => {
@@ -104,7 +107,7 @@ describe("the turn's bus events as stored", () => {
       _tag: "tool.completed", step: 0, invocationId: "i", tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 },
       durationMs: 5, labels: {}, stage: Option.none(),
     }
-    const stored = Option.getOrThrow(draftOfTurnEvent(1, completed))
+    const stored = Option.getOrThrow(storedOf(1, completed))
     expect(Object.keys(stored.data).sort()).toEqual(["durationMs", "invocationId", "labels", "ok", "stage", "step", "tool"])
     const skipped: ReadonlyArray<TurnEvent> = [
       { _tag: "assistant.delta", step: 0, channel: "text", id: "d", delta: "x" },
@@ -113,18 +116,24 @@ describe("the turn's bus events as stored", () => {
       { _tag: "skills.activated", skills: [], tools: [], source: "always" },
       { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.none(), usage: zeroUsage },
     ]
-    expect(skipped.map((event) => draftOfTurnEvent(1, event)).every(Option.isNone)).toBe(true)
+    expect(skipped.map((event) => storedOf(1, event)).every(Option.isNone)).toBe(true)
   })
   test("a host event keeps its own name; reserved names are the framework's", () => {
-    const stored = draftOfTurnEvent(2, { _tag: "host", name: "answer.published", data: { id: "a" } })
+    const stored = storedOf(2, { _tag: "host", name: "answer.published", data: { id: "a" } })
     expect(Option.map(stored, (draft) => draft.kind)).toEqual(Option.some("answer.published"))
     expect(RESERVED_KINDS.includes("answer.published")).toBe(false)
     expect(["turn.started", "turn.ended", "memory.message", "step.usage", "inbox.queued"].every((kind) => RESERVED_KINDS.includes(kind))).toBe(true)
   })
+  test("an event its schema refuses fails with the SchemaError instead of throwing", () => {
+    const fractional: TurnEvent = { _tag: "step.started", step: 1.5, planned: false, activeTools: [] }
+    const untrimmed: TurnEvent = { _tag: "completion.evaluated", step: 0, verdict: { complete: false, awaiting: [" work "], facts: {} } }
+    const results = [fractional, untrimmed].map((event) => Effect.runSync(Effect.result(draftOfTurnEvent(1, event))))
+    expect(results.map((result) => result._tag === "Failure" ? result.failure._tag : "stored")).toEqual(["SchemaError", "SchemaError"])
+  })
   test("a refused tool call is stored without its input; a stream fallback whole", () => {
     const refused: TurnEvent = { _tag: "tool.refused", step: 1, invocationId: "run-1:call:3", tool: "archive", input: { id: "secret" }, reason: "forbidden", message: "archive requires records.write" }
     const fallback: TurnEvent = { _tag: "stream.fallback", step: 0, message: "the gateway closed the stream" }
-    expect([refused, fallback].map((event) => Option.map(draftOfTurnEvent(4, event), (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data]))).toEqual([
+    expect([refused, fallback].map((event) => Option.map(storedOf(4, event), (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data]))).toEqual([
       Option.some(["tool.refused", 4, { step: 1, invocationId: "run-1:call:3", tool: "archive", reason: "forbidden", message: "archive requires records.write" }]),
       Option.some(["stream.fallback", 4, { step: 0, message: "the gateway closed the stream" }]),
     ])
@@ -181,7 +190,7 @@ describe("the journal's schemas", () => {
       { _tag: "tool.refused", step: 0, invocationId: "i", tool: "lookup", input: { q: 1 }, reason: "call-limit", message: "limit" },
       { _tag: "stream.fallback", step: 0, message: "no stream" },
     ]
-    const stored = events.flatMap((event) => Option.toArray(draftOfTurnEvent(1, event)))
+    const stored = events.flatMap((event) => Option.toArray(storedOf(1, event)))
     expect(stored.map((draft) => [draft.kind, decodes(draft.kind, draft.data)])).toEqual([
       ["step.usage", true], ["tool.completed", true], ["step.started", true], ["tool.refused", true], ["stream.fallback", true],
     ])
@@ -202,7 +211,7 @@ describe("the journal's schemas", () => {
       { _tag: "skills.activated", skills: ["s"], tools: ["t"], source: "host" },
     ]
     expect(recordedElsewhere.map((event) => event._tag)).toEqual([...RECORDED_ELSEWHERE])
-    expect(recordedElsewhere.map((event) => draftOfTurnEvent(1, event)).every(Option.isNone)).toBe(true)
+    expect(recordedElsewhere.map((event) => storedOf(1, event)).every(Option.isNone)).toBe(true)
   })
 })
 

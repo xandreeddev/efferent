@@ -332,12 +332,12 @@ Besides the begin codes, these are common `HarnessError` codes a turn fails with
 | `events.reserved` | publishing a host event | The host event's name is one of the reserved kinds. |
 | `events.depth` | publishing an event | Reactions nested deeper than `maxEventDepth` (8 by default). |
 | `events.background` | a background subscription | A background handler was interrupted; the turn fails when the bus drains. One that dies with a defect fails it with that defect (`turn.defect`). |
-| `events.encode` | a host event's `make` / `publish` | The payload did not encode with the host event's schema. |
+| `events.encode` | a host event's `make` / `publish`; the turn storing a bus event | The payload did not encode with the host event's schema, or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step). |
 | `service.missing` | `Agent.turn` | A service the turn needs is not provided by the agent's plugins or the turn's services. |
 | `config.graph` | `Agent.define` | The plugin graph cannot be built (a missing provider, a cycle, a misplaced turn-dependent plugin). |
 | `config.options` | `Agent.define`, activating a plugin | A plugin's options did not decode with its schema. |
 | `plugin.activation` | activating a plugin (a session plugin's, every turn) | The plugin's layer failed to build with an error that is not a `HarnessError` (one that is keeps its own code: `skills.duplicate`, `skills.root`, ...). |
-| `plugin.defect` | activating a plugin (a session plugin's, every turn) | The plugin's layer died with a defect while it was built. |
+| `plugin.defect` | activating a plugin (a session plugin's, every turn) | The plugin's layer died with a defect that is not a `HarnessError` while it was built (one that is keeps its own code). |
 | `tools.duplicate` | building the tool registry | Two capabilities define a tool of the same name. |
 | `skills.duplicate` | building the tool registry | Two capabilities define a skill with the same id (a host's and a skills directory's: set the directory's `idPrefix`). |
 | `skills.tools` | building the tool registry | A skill names a tool no capability registers. |

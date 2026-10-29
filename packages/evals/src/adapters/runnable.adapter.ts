@@ -6,6 +6,7 @@ import type { EvaluationEnvironment } from "../ports/evaluation-environment.port
 import { TrialExecution } from "../ports/trial-execution.port.js"
 import type { Runnable } from "../domain/runnable.entity.js"
 import { EvaluationError } from "../domain/identity.entity.js"
+import { isEvaluationError } from "../domain/identity.entity.functions.js"
 
 /** Match filesystem JSON serialization while validating the portable value. */
 const portable = <A>(schema: Schema.Codec<A>, value: A) =>
@@ -51,7 +52,7 @@ export const defineRunnable = <I, O, E, W, R, H>(options: {
               output: portable(options.output, result.output),
               evidence: portable(options.evidence, result.evidence)
             })),
-            Effect.mapError((error) => error instanceof EvaluationError
+            Effect.mapError((error) => isEvaluationError(error)
               ? error
               : new EvaluationError({ code: "invalid", message: String(error) }))
           )).pipe(Effect.exit)

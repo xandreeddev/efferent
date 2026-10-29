@@ -1,5 +1,6 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
+import { distributionDependencies } from "./distribution-manifest.js"
 
 // Build an isolated publish tree; development keeps source exports and workspace links.
 const root = join(import.meta.dir, "..")
@@ -76,8 +77,9 @@ await Promise.all(names.map(async (name) => {
   if (exports["./*"]) exports["./*.js"] = exports["./*"]
   const missing = Object.entries(original.dependencies ?? {}).filter(([key, value]) => String(value).startsWith("workspace:") && !versions.has(key))
   if (missing.length > 0) { console.error(`Missing distribution dependencies for ${original.name}: ${missing.map(([key]) => key).join(", ")}`); process.exit(1) }
-  const dependencies = Object.fromEntries(Object.entries(original.dependencies ?? {}).map(([key, value]) => [key, String(value).startsWith("workspace:") ? versions.get(key) : value]))
-  const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies,
+  // Caret ranges, `effect` as a peer: mixed patch versions install one copy of core and of Effect.
+  const { dependencies, peerDependencies } = distributionDependencies(original, versions)
+  const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies, peerDependencies,
     files: ["dist", "skills", "profiles", "README.md", "LICENSE"], license: "MIT",
     ...(name === "evals-cli" ? { bin: { "efferent-eval": "dist/main.js" } } : {}),
   }

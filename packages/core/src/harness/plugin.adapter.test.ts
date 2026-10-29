@@ -59,6 +59,18 @@ describe("definePlugin", () => {
     expect(await built(new HarnessError({ code: "own.code", message: "inner", plugin: "inner/plugin" }))).toMatchObject({ code: "own.code", plugin: "inner/plugin" })
   })
 
+  test("build keeps the code of a HarnessError the layer dies with; any other defect is plugin.defect", async () => {
+    const dying = (defect: unknown) => definePlugin({
+      id: "test/dying", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {},
+      provides: [SessionEnvironment], layer: () => Layer.effect(SessionEnvironment, Effect.die(defect)),
+    })
+    const built = (defect: unknown) => Effect.runPromise(Effect.flip(Effect.scoped(dying(defect).build({}, Context.empty()))))
+    expect(await built(new HarnessError({ code: "skills.duplicate", message: "two skills x" }))).toMatchObject({
+      code: "skills.duplicate", message: "two skills x", plugin: "test/dying",
+    })
+    expect(await built(new Error("boom"))).toMatchObject({ code: "plugin.defect", plugin: "test/dying" })
+  })
+
   test("build matches a HarnessError by its tag and fields, so one from another copy of core keeps its code too", async () => {
     // What a plugin built against a second copy of @xandreed/core fails with: the same tag, another class.
     class OtherCopyHarnessError extends Schema.TaggedError<OtherCopyHarnessError>()("HarnessError", {

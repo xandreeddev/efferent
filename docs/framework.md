@@ -715,7 +715,12 @@ the actual Effect AI request. A memory write after the build (a reaction to
 system text, messages, schemas, tool choice or described model settings fail
 with `request.diverged` before the provider runs; its message starts with the
 first part that differs (`context`, `system`, `messages`, `tools`,
-`toolChoice`, `model`, `cacheKey` or `callPolicy`). Prompt data is frozen; a
+`toolChoice`, `model`, `cacheKey` or `callPolicy`). The header records the
+turn's cache key and the `CurrentModelCallPolicy` where the turn runs; the
+check compares them with what the model call reads, `CurrentPromptCacheKey`
+and `CurrentModelCallPolicy` where the loop dispatches, so a step loop that
+does not stamp the request's `cacheKey` on its calls fails the step (the
+`stepLoopConformance` kit checks that it does). Prompt data is frozen; a
 stream fallback checks the same contract again, and a failed check fails the
 step, streamed or not, instead of falling back. Host-planned batches make no
 provider request and create no request header.

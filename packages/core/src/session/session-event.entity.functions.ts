@@ -21,7 +21,7 @@ import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.en
 
 const encodeEntry = Schema.encodeEffect(LogEntry)
 const decodeEntry = Schema.decodeUnknownEffect(LogEntry)
-const encodeTurnEvent = Schema.encodeSync(TurnEvent)
+const encodeTurnEvent = Schema.encodeEffect(TurnEvent)
 const tagOfKind: ReadonlyMap<string, string> = new Map(Object.entries(MemoryKindOf).map(([tag, kind]) => [kind, tag]))
 
 /** Stored JSON read back with sorted keys: every store gives the same bytes, as the canonical log did. */
@@ -102,7 +102,7 @@ const storedPayload: ReadonlyMap<string, (data: Record<string, unknown>) => Json
   ["tool.refused", without(OMITTED_FROM_TOOL_REFUSED)],
 ])
 
-const encodeStepUsage = Schema.encodeSync(StepUsageData)
+const encodeStepUsage = Schema.encodeEffect(StepUsageData)
 const decodeStepUsage = Schema.decodeUnknownEffect(StepUsageData)
 
 /**
@@ -122,16 +122,22 @@ export const turnUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number
  * payload. Transient events are not stored; a host's event keeps its name
  * and data; an assistant message is stored only as the step's model and
  * usage (its content is memory's `memory.message`); `tool.completed` leaves
- * out its input and result, `tool.refused` its input.
+ * out its input and result, `tool.refused` its input. An event its schema
+ * does not encode (a value its type allows but a check refuses, such as a
+ * non-integer step) fails with the `SchemaError`, never throws.
  */
-export const draftOfTurnEvent = (turn: number, event: TurnEventType): Option.Option<SessionDraft> => {
-  if (TransientTurnEvents.includes(event._tag) || RECORDED_ELSEWHERE.has(event._tag)) return Option.none()
-  if (event._tag === "host") return Option.some({ kind: event.name, turn: Option.some(turn), data: event.data })
+export const draftOfTurnEvent = (turn: number, event: TurnEventType): Effect.Effect<Option.Option<SessionDraft>, Schema.SchemaError> => {
+  if (TransientTurnEvents.includes(event._tag) || RECORDED_ELSEWHERE.has(event._tag)) return Effect.succeed(Option.none())
+  if (event._tag === "host") return Effect.succeed(Option.some({ kind: event.name, turn: Option.some(turn), data: event.data }))
   if (event._tag === "assistant.message") {
-    return Option.some({ kind: "step.usage", turn: Option.some(turn), data: { ...encodeStepUsage({ step: event.step, model: event.model, usage: event.usage }) } })
+    return encodeStepUsage({ step: event.step, model: event.model, usage: event.usage }).pipe(
+      Effect.map((encoded) => Option.some({ kind: "step.usage", turn: Option.some(turn), data: { ...encoded } })),
+    )
   }
-  const { _tag, ...data } = encodeTurnEvent(event)
-  return Option.some({ kind: _tag, turn: Option.some(turn), data: Option.match(Option.fromNullishOr(storedPayload.get(_tag)), { onNone: () => data, onSome: (stored) => stored(data) }) })
+  return encodeTurnEvent(event).pipe(Effect.map(({ _tag, ...data }) => Option.some({
+    kind: _tag, turn: Option.some(turn),
+    data: Option.match(Option.fromNullishOr(storedPayload.get(_tag)), { onNone: () => data, onSome: (stored) => stored(data) }),
+  })))
 }
 
 /**

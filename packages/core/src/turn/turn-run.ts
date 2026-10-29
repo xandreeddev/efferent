@@ -15,6 +15,7 @@ import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
 import type { CompletionVerdict } from "./turn-event.entity.js"
 import type { MemoryRenderRecipe } from "./model-request.entity.js"
+import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
 import { CurrentModelCallPolicy } from "../loop/modelPolicy.js"
 import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
 import {
@@ -52,6 +53,11 @@ const defaultLimits: LoopLimits = { maxSteps: 50, toolConcurrency: 1, streaming:
 const defaultBudgetTokens = 64_000
 const incomplete: CompletionVerdict = { complete: false, awaiting: [], facts: {} }
 const noDirective: StepDirective = { context: Option.none(), toolChoice: Option.none() }
+/** A host's verdict as the loop awaits it and the journal stores it: each awaited tag trimmed, the empty ones dropped. */
+const normalVerdict = (verdict: CompletionVerdict): CompletionVerdict => ({
+  ...verdict,
+  awaiting: verdict.awaiting.map((tag) => tag.trim()).filter((tag) => tag.length > 0),
+})
 const failure = (code: string, message: string) => new HarnessError({ code, message })
 
 /** The tokens the active tools' descriptions and parameter schemas take in a request. */
@@ -83,7 +89,13 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  * build sent, and the step's next plan, that one only, rebuilds the context
  * with the same model choice, system prompt, directive and resolved model
  * (no second `policy.model` or `policy.step` call, no second
- * `StepContext`). Any other plan of a step calls the policy again.
+ * `StepContext`). Any other plan of a step calls the policy again. Each
+ * request header records the turn's cache key (`options.cacheKey`) and the
+ * `CurrentModelCallPolicy` where this runs; the dispatch check compares them
+ * with what the model call will read, `CurrentPromptCacheKey` and
+ * `CurrentModelCallPolicy` where the loop dispatches, so a loop that does not
+ * stamp the request's `cacheKey` (or changes the call policy) fails with
+ * `request.diverged` before the provider is called.
  */
 export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<StepRequest, HarnessError, P | TurnRunServices> =>
   Effect.gen(function* () {
@@ -102,6 +114,8 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
     const budget = policy.budgetTokens ?? options.budgetTokens ?? defaultBudgetTokens
     if (!isBudgetTokens(budget)) return yield* Effect.fail(failure("turn.budget", `budgetTokens must be an integer of at least 1, not ${budget}`))
     const stepContext = policy.stepContext ?? "tail"
+    const cacheKey = options.cacheKey ?? Option.none()
+    const callPolicy = yield* Effect.service(CurrentModelCallPolicy)
     yield* Option.match(Option.fromNullishOr(policy.initial), {
       onNone: () => Effect.void,
       onSome: (batch) => batch.skills.length === 0 ? Effect.void : tools.activate(batch.skills, "host").pipe(Effect.asVoid),
@@ -162,8 +176,8 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
         tools: modelRequestTools(info.activeTools.flatMap((name) => tools.toolkit.tools[name] === undefined ? [] : [tools.toolkit.tools[name]])),
         toolChoice: Option.getOrElse(directive.toolChoice, () => "auto"),
         model: yield* Option.match(model, { onNone: () => Effect.succeed(Option.none()), onSome: modelRequestDescriptorOf }),
-        cacheKey: options.cacheKey ?? Option.none(),
-        callPolicy: yield* Effect.service(CurrentModelCallPolicy),
+        cacheKey,
+        callPolicy,
       })
       return {
         model,
@@ -188,7 +202,8 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
           tools: modelRequestTools(actual.tools),
           toolChoice: actual.toolChoice,
           model: yield* modelRequestDescriptorOf(actual.model),
-          cacheKey: options.cacheKey ?? Option.none(),
+          // What the provider adapter reads at call time, not the turn's own inputs again.
+          cacheKey: yield* Effect.service(CurrentPromptCacheKey),
           callPolicy: yield* Effect.service(CurrentModelCallPolicy),
         })
       }),
@@ -208,12 +223,12 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
         yield* Ref.set(replanning, last)
         return true
       }),
-      completion: (info) => policy.completion === undefined ? Effect.succeed(incomplete) : inRun(policy.completion(info)),
+      completion: (info) => policy.completion === undefined ? Effect.succeed(incomplete) : inRun(policy.completion(info)).pipe(Effect.map(normalVerdict)),
       steering: options.steering ?? Effect.succeed(Option.none()),
       correctives: Option.fromNullishOr(policy.correctives),
       events,
       tasks,
-      cacheKey: options.cacheKey ?? Option.none(),
+      cacheKey,
       captureTraceContent: policy.captureTraceContent ?? options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent)),
     } satisfies StepRequest
   })

@@ -1,6 +1,6 @@
 import { Cause, Exit, Option, Schema } from "effect"
-import { framed, HarnessError } from "@xandreed/core"
-import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnOutcome } from "@xandreed/core"
+import { framed, isHarnessError } from "@xandreed/core"
+import type { HarnessError, SessionLogEvent, SessionView, TaskStatus, TaskView, TurnOutcome } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started } from "./task-records.entity.js"
 
@@ -68,7 +68,7 @@ export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option
     const error = Cause.squash(cause)
     return {
       taskId, outcome: "failed", reply: Option.none(),
-      failure: Option.some(error instanceof HarnessError ? { code: error.code, message: error.message } : { code: "task.turn", message: "the task's turn failed" }),
+      failure: Option.some(isHarnessError(error) ? { code: error.code, message: error.message } : { code: "task.turn", message: "the task's turn failed" }),
     }
   },
 })

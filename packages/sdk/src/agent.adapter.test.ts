@@ -3,6 +3,7 @@ import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Logger, Option, Ref, References, Schema, Scope, Stream } from "effect"
 import {
   ConversationId,
+  CurrentModelCallPolicy,
   CurrentPromptCacheKey,
   describeModel,
   DecisionRecord,
@@ -665,7 +666,7 @@ describe("Agent.turn", () => {
     expect(requests[0]?.prompt.content.some((message) => JSON.stringify(message).includes("later response"))).toBe(false)
   })
 
-  test.each(["system", "messages", "tools", "model", "toolChoice"] as const)("a changed %s request fails before the provider dispatch, naming it", async (changed) => {
+  test.each(["system", "messages", "tools", "model", "toolChoice", "cacheKey", "callPolicy"] as const)("a changed %s request fails before the provider dispatch, naming it", async (changed) => {
     const { result, calls } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { seen, model } = yield* scripted([stop("should not run")])
       const original = describeModel(model, { provider: "scripted", model: "fixture-v1", settings: { temperature: 0.25 } })
@@ -675,6 +676,8 @@ describe("Agent.turn", () => {
         layer: () => Layer.succeed(StepLoop, {
           id: "altered", version: "1", run: (request) => runSteps({
             ...request,
+            // The loop stamps the request's cache key on its calls: another one is not what the header recorded.
+            ...(changed === "cacheKey" ? { cacheKey: Option.some("unrecorded:key") } : {}),
             ...(changed === "tools" ? { tools: { ...request.tools, toolkit: Toolkit.make(...Object.values(request.tools.toolkit.tools).map((tool) =>
               tool.name === "lookup" ? tool.setParameters(Schema.Struct({ query: Schema.Int })) : tool)) } } : {}),
             plan: (info) => request.plan(info).pipe(Effect.map((plan) => ({
@@ -684,7 +687,7 @@ describe("Agent.turn", () => {
               ...(changed === "system" ? { system: "unrecorded system" } : {}),
               ...(changed === "toolChoice" ? { toolChoice: Option.some({ tool: "lookup" }) } : {}),
             }))),
-          }),
+          }).pipe(changed === "callPolicy" ? Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "high" as const })) : (run) => run),
         }),
       })
       const agent = yield* Agent.define({
@@ -750,6 +753,20 @@ describe("Agent.turn", () => {
     expect(seen).toHaveLength(3)
     expect(seen[0]!.prompt).not.toContain("BUILT NOTE 0")
     expect(seen[1]!.prompt).toContain("BUILT NOTE 0")
+  })
+
+  test("a verdict's awaited tags are trimmed and the empty ones dropped before they are awaited and stored", async () => {
+    const { result, verdicts } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([stop("done")])
+      const result = yield* agent.turn(inputFor(journal, "run-1", "hello", model), (turn) =>
+        turn.run({ completion: () => Effect.succeed({ complete: true, awaiting: [" notes ", "  "], facts: {} }) }).pipe(
+          Effect.map((run): TurnOutcome => ({ outcome: run.outcome, reply: Option.some(run.text) }))))
+      return { result, verdicts: named(yield* journal.stored, "completion.evaluated").map((event) => event.data.verdict) }
+    })))
+    expect(result.outcome).toBe("completed")
+    expect(verdicts).toEqual([{ complete: true, awaiting: ["notes"], facts: {} }])
   })
 
   test("a turn-dependent plugin's context recorded at activation follows the turn's message", async () => {

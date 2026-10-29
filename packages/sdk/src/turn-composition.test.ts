@@ -8,6 +8,7 @@ import {
   guardTurn,
   harnessDefectsAsFailures,
   HarnessError,
+  isHarnessError,
   Sessions,
   openTurnTools,
   stackPlugins,
@@ -51,7 +52,7 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
     const writer: TurnWriter = "admitted" in input.turn ? input.turn : yield* Effect.flatMap(Effect.service(Sessions), (sessions) => {
       const next = input.turn as Exclude<typeof input.turn, TurnWriter>
       return sessions.begin(next.session, { _tag: "User", userMessage: next.userMessage, runId: next.runId, key: next.key ?? next.runId, command: next.command ?? {} })
-    }).pipe(Effect.provide(input.services), Effect.mapError((error) => error instanceof HarnessError ? error : new HarnessError({ code: "session.begin", message: error._tag })))
+    }).pipe(Effect.provide(input.services), Effect.mapError((error) => isHarnessError(error) ? error : new HarnessError({ code: "session.begin", message: error._tag })))
     const body = Effect.gen(function* () {
       yield* (yield* TurnMemory).persistMessage
       yield* openTurnTools

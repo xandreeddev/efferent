@@ -1,4 +1,10 @@
-import { Cause, Option, Predicate } from "effect"
+import { Cause, Option, Predicate, Schema } from "effect"
+import { EvaluationError } from "./identity.entity.js"
+
+const evaluationErrorShape = Schema.is(Schema.Struct(EvaluationError.fields))
+
+/** An `EvaluationError` by its tag and fields, whichever installed copy of the package made it (`instanceof` is false across copies). */
+export const isEvaluationError = (value: unknown): value is EvaluationError => evaluationErrorShape(value)
 
 const stringField = (value: unknown, key: string): Option.Option<string> =>
   Predicate.isObject(value) ? Option.filter(Option.some(value[key]), Predicate.isString) : Option.none()

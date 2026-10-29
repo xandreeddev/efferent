@@ -8,6 +8,7 @@ import { Failure } from "../domain/failure.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
+import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
 import { CurrentAgentStep } from "../loop/stepContext.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
 import { entryId } from "../memory/memory-log.entity.functions.js"
@@ -62,6 +63,8 @@ interface Scenario {
   readonly captureTraceContent?: boolean
   /** `CurrentTraceContent` where the loop runs (off by default). */
   readonly ambientTraceContent?: boolean
+  /** The request's `cacheKey` (none by default). */
+  readonly cacheKey?: Option.Option<string>
   /** The provider refuses its first request over an image (an `InvalidRequestError` naming one). */
   readonly refuseFirst?: boolean
   /** The request's `onMediaRejected` (answers false by default). */
@@ -84,6 +87,8 @@ interface Observed {
   readonly dispatches: ReadonlyArray<number>
   /** `CurrentTraceContent` as each provider call read it. */
   readonly traceContent: ReadonlyArray<boolean>
+  /** `CurrentPromptCacheKey` as each dispatch check, then each provider call, read it. */
+  readonly cacheKeys: { readonly dispatched: ReadonlyArray<Option.Option<string>>; readonly called: ReadonlyArray<Option.Option<string>> }
 }
 
 const incomplete: CompletionVerdict = { complete: false, awaiting: [], facts: {} }
@@ -98,10 +103,15 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([])
   const dispatches = yield* Ref.make<ReadonlyArray<number>>([])
   const traceContent = yield* Ref.make<ReadonlyArray<boolean>>([])
+  const dispatchedKeys = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
+  const calledKeys = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
+  const readKey = (into: Ref.Ref<ReadonlyArray<Option.Option<string>>>) =>
+    Effect.service(CurrentPromptCacheKey).pipe(Effect.flatMap((key) => Ref.update(into, (all) => [...all, key])))
   const model = yield* LanguageModel.make({
     generateText: (options) => Ref.modify(calls, (all): [number, ReadonlyArray<unknown>] => [all.length, [...all, options.toolChoice]]).pipe(
       Effect.tap(() => scenario.providerCall ?? Effect.void),
       Effect.tap(() => Effect.service(CurrentTraceContent).pipe(Effect.flatMap((capture) => Ref.update(traceContent, (all) => [...all, capture])))),
+      Effect.tap(() => readKey(calledKeys)),
       Effect.flatMap((index) => scenario.refuseFirst === true && index === 0
         ? Effect.fail(imageRefusal)
         : Effect.succeed([...(scenario.script[index] ?? textReply("done"))])),
@@ -154,7 +164,7 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(Effect.as({
       model: Option.none(), system: "conformance", messages: [{ role: "user" as const, content: "go" }], toolChoice: Option.fromNullishOr(scenario.toolChoice),
     })),
-    dispatch: (step) => Ref.update(dispatches, (all) => [...all, step]).pipe(Effect.andThen(scenario.dispatch?.(step) ?? Effect.void)),
+    dispatch: (step) => Ref.update(dispatches, (all) => [...all, step]).pipe(Effect.andThen(readKey(dispatchedKeys)), Effect.andThen(scenario.dispatch?.(step) ?? Effect.void)),
     record,
     onMediaRejected: scenario.onMediaRejected ?? (() => Effect.succeed(false)),
     completion: (info) => scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete),
@@ -162,13 +172,14 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     correctives: Option.none(),
     events,
     tasks,
-    cacheKey: Option.none(),
+    cacheKey: scenario.cacheKey ?? Option.none(),
     captureTraceContent: scenario.captureTraceContent ?? false,
   }
   const result = yield* loop.run(request).pipe(Effect.provideService(CurrentTraceContent, scenario.ambientTraceContent ?? false))
   return {
     result, events: yield* Ref.get(seen), providerCalls: yield* Ref.get(calls), recorded: yield* Ref.get(recorded),
     dispatches: yield* Ref.get(dispatches), traceContent: yield* Ref.get(traceContent),
+    cacheKeys: { dispatched: yield* Ref.get(dispatchedKeys), called: yield* Ref.get(calledKeys) },
   }
 }).pipe(Effect.mapError((error) => new ConformanceFailure({ check: "run", message: error.message }))))
 
@@ -185,7 +196,9 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * without a provider call, forced tool choices, awaiting verdicts, no call
  * after completion, the run's usage, the step cap, the request's
  * `captureTraceContent` provided to its model calls as `CurrentTraceContent`,
- * and a request refused over an image planned again and sent once more
+ * the request's `cacheKey` provided to its dispatch checks and model calls as
+ * `CurrentPromptCacheKey` (the dispatch check compares it with the request's
+ * header), and a request refused over an image planned again and sent once more
  * when `onMediaRejected` answers true, failing the step when it answers false.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
@@ -297,6 +310,16 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
         `with captureTraceContent on under a caller's off, the model calls read ${JSON.stringify(on.traceContent)}`)
       yield* expect("trace-content", off.traceContent.length === 2 && off.traceContent.every((capture) => !capture),
         `with captureTraceContent off under a caller's on, the model calls read ${JSON.stringify(off.traceContent)}`)
+    }),
+  },
+  {
+    name: "provides the request's cacheKey to its dispatch checks and model calls as CurrentPromptCacheKey",
+    run: Effect.gen(function* () {
+      const key = Option.some("conformance:cache-key")
+      const { cacheKeys } = yield* observe(loop, { script: [probeCall("c1", 1), textReply("done")], cacheKey: key })
+      const all = [...cacheKeys.dispatched, ...cacheKeys.called]
+      yield* expect("cache-key", cacheKeys.dispatched.length === 2 && cacheKeys.called.length === 2 && all.every((read) => Option.getOrNull(read) === "conformance:cache-key"),
+        `with the request's cacheKey ${Option.getOrNull(key)}, the dispatch checks read ${JSON.stringify(cacheKeys.dispatched.map(Option.getOrNull))} and the model calls ${JSON.stringify(cacheKeys.called.map(Option.getOrNull))}`)
     }),
   },
   {

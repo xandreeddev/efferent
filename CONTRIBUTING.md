@@ -89,11 +89,15 @@ bun run publish:packages          # dry run: every check, then npm publish --dry
 bun run publish:packages --publish
 ```
 
-The distribution build resolves `workspace:*` dependencies to the matching
-package versions and stamps `build.json` with the commit, whether the working
-tree had changes, the shared version and the packages it built. Changes are
-tracked and untracked files anywhere, plus gitignored files in a package's
-`src`, `skills` or `profiles` folder, which the build copies too.
+The distribution build resolves `workspace:*` dependencies to caret ranges of
+the matching package versions (`^0.14.0`) and declares `effect` a peer
+dependency at a caret range (`^4.0.7`), never exact pins, so a host on other
+patch versions installs one copy of `@xandreed/core` and of `effect`
+(`scripts/distribution-manifest.ts`). It stamps `build.json` with the commit,
+whether the working tree had changes, the shared version and the packages it
+built. Changes are tracked and untracked files anywhere, plus gitignored files
+in a package's `src`, `skills` or `profiles` folder, which the build copies
+too.
 `publish:packages` refuses, before publishing anything, when:
 
 - the packages do not all share one version;
@@ -122,7 +126,7 @@ and 0.12.0 have none.
 Never publish from a commit whose version is already on npm for some
 packages, unless it is the commit those were published from (a run that
 stopped part-way). The skip above would then publish only what is missing,
-such as a package added since that release, pinned to the published
+such as a package added since that release, depending on the published
 `@xandreed/*` versions, which lack what it needs. A new package starts at
 the current shared version and first ships with the next version bump.
 

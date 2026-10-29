@@ -5255,8 +5255,8 @@
     },
     {
       "code": "events.encode",
-      "where": "a host event's `make` / `publish`",
-      "meaning": "The payload did not encode with the host event's schema."
+      "where": "a host event's `make` / `publish`; the turn storing a bus event",
+      "meaning": "The payload did not encode with the host event's schema, or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step)."
     },
     {
       "code": "service.missing",
@@ -5281,7 +5281,7 @@
     {
       "code": "plugin.defect",
       "where": "activating a plugin (a session plugin's, every turn)",
-      "meaning": "The plugin's layer died with a defect while it was built."
+      "meaning": "The plugin's layer died with a defect that is not a `HarnessError` while it was built (one that is keeps its own code)."
     },
     {
       "code": "tools.duplicate",

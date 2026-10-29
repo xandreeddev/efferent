@@ -17,6 +17,7 @@ import {
   fingerprintOf,
   HarnessError,
   IntentMatcher,
+  isHarnessError,
   mediaSlotsOf,
   reasonOf,
   recordDecision,
@@ -325,7 +326,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       // handler published (`tool.progress`, `skills.activated`), or the store failed load_skill's activation. Like a
       // failure on `tool.started`, it fails the turn once `tool.completed` is out, instead of reaching the model as a ToolDefect.
       const turnFailure = Exit.isSuccess(exit) ? Option.none<HarnessError>()
-        : Option.fromNullishOr(exit.cause.reasons.flatMap((reason) => Cause.isDieReason(reason) && reason.defect instanceof HarnessError ? [reason.defect] : [])[0])
+        : Option.fromNullishOr(exit.cause.reasons.flatMap((reason) => Cause.isDieReason(reason) && isHarnessError(reason.defect) ? [reason.defect] : [])[0])
       if (Exit.isFailure(exit) && Option.isNone(Cause.findErrorOption(exit.cause)) && Option.isNone(turnFailure)) {
         yield* Effect.logError(`${name} failed unexpectedly`, exit.cause).pipe(Effect.annotateLogs({ tool: name, invocationId }))
       }
