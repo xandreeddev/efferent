@@ -7,6 +7,7 @@ import {
   describeError,
   fillOperationIdOf,
   fromOutputError,
+  isFrozenRefusal,
   missingNodesOf,
   operationIdOf,
   outputScopeOf,
@@ -115,7 +116,7 @@ export const openSurface = (
       signature,
     })).pipe(
       Effect.as(true),
-      Effect.catchIf((error) => error.code === "frozen", () => Effect.succeed(false)),
+      Effect.catchIf(isFrozenRefusal, () => Effect.succeed(false)),
     )
     if (!planned) {
       yield* updateState((state) => ({ ...state, frozen: true }))

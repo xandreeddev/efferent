@@ -129,6 +129,7 @@ const ERROR_CODE_COMPARE_CLEAN = [
   "plugin-memory-digest",
   "plugin-tool-discovery",
   "plugin-models",
+  "plugin-render",
   "plugin-workspace",
   "plugin-telemetry",
   "foundry",

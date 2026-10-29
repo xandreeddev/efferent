@@ -44,6 +44,9 @@ export const proposalOf = (operationId: string, node: RenderNode): UiOutputPropo
 
 export const fromOutputError = (error: UiOutputError): RenderError => new RenderError({ code: error.code, message: error.message })
 
+/** Whether a store refused a write because the surface is frozen for the message (`RenderStore.plan`'s guard). */
+export const isFrozenRefusal = (error: RenderError): boolean => error.code === "frozen"
+
 const isPlanned = Schema.is(SurfacePlanned)
 const isCommitted = Schema.is(SurfaceCommitted)
 const isCompleted = Schema.is(SurfaceCompleted)
