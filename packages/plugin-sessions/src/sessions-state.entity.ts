@@ -22,7 +22,7 @@ export type InboxSlot = typeof InboxSlot.Type
 export const HolderProcess = Schema.Struct({ host: Schema.String, pid: Schema.Int, startedAt: Schema.Number })
 export type HolderProcess = typeof HolderProcess.Type
 
-/** The open turn as kept: under process ownership, also where its holder runs (none when an older version wrote it). */
+/** The open turn as kept: under a lease, when it ends (`expiresAt`); under process ownership, none, and where its holder runs (none when an older version, or a runtime without a process, wrote it). */
 export const HeldTurn = Schema.Struct({ ...OpenTurn.fields, process: Schema.OptionFromOptionalKey(HolderProcess) })
 export type HeldTurn = typeof HeldTurn.Type
 
@@ -36,7 +36,13 @@ export const SessionsState = Schema.Struct({
 })
 export type SessionsState = typeof SessionsState.Type
 
-/** How a session's turns are owned. */
+/**
+ * How the turns an instance begins are owned. A turn keeps how it was
+ * taken (a lease end, or none and the holder's process), and every instance
+ * judges it by that, whatever its own ownership: a change of ownership
+ * between restarts, or instances that differ in it, neither hold a turn
+ * forever nor reap one that is still held.
+ */
 export const Ownership = Schema.Union([
   Schema.Struct({
     mode: Schema.Literal("lease"),

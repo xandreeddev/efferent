@@ -2,7 +2,7 @@ import { Effect, Option, Schema } from "effect"
 import { InboxDroppedData, InboxQueuedData } from "@xandreed/core"
 import type { InboxItem, JsonObject, OpenTurn, SessionHead, SessionView, TurnEndReason } from "@xandreed/core"
 import { SessionsState } from "./sessions-state.entity.js"
-import type { HeldTurn, HolderProcess, InboxSlot, Ownership, ProcessLiveness, SessionsState as State } from "./sessions-state.entity.js"
+import type { HeldTurn, HolderProcess, InboxSlot, ProcessLiveness, SessionsState as State } from "./sessions-state.entity.js"
 
 const decodeState = Schema.decodeUnknownEffect(SessionsState)
 const encodeState = Schema.encodeSync(SessionsState)
@@ -32,44 +32,63 @@ export const queuedData = (item: InboxItem): JsonObject => ({ ...encodeQueued({ 
 /** What `inbox.dropped` stores of an item as many turns took and failed as the inbox allows. */
 export const droppedData = (id: string): JsonObject => ({ ...encodeDropped({ id, reason: "attempts" }) })
 
-/** Who asks whether a turn is held: this Sessions instance, and how it tells whether a process runs. */
+/**
+ * Who asks whether a turn is held: this Sessions instance, the process it
+ * runs in and how it tells whether another runs (whatever its own
+ * ownership: a turn is judged by how it was taken), and the turn of a
+ * session its writer let go of without storing the end.
+ */
 export interface Holder {
   readonly instance: string
   readonly liveness: ProcessLiveness
-  /** This process, as its turns record it. */
+  /** This process, as a process-owned turn records it (none where the runtime has no process to name). */
   readonly process: Option.Option<HolderProcess>
+  /** The turn of the session this instance let go of unended (its closing commit was not stored), if any. */
+  readonly released: (session: string) => Effect.Effect<Option.Option<number>>
 }
 
 /**
- * Whether a process-owned turn is still held: by this instance, or by a
- * process that runs. Another instance of this process holds it while this
- * process runs; a process that started later under the same pid is gone; a
- * process of this host is asked by its pid; one of another host cannot be
- * asked and holds. A holder recorded without its process (an older version)
- * holds nothing.
+ * Whether a turn another instance took under process ownership is still
+ * held, by a process that runs. Another instance of this process holds it
+ * while this process runs; a process that started later under the same pid
+ * is gone; a process of this host is asked by its pid; one of another host,
+ * or asked from where no process can be named, cannot be asked and holds. A
+ * holder recorded without its process (an older version, or a runtime
+ * without one) holds nothing.
  */
-const processHolds = (open: HeldTurn, holder: Holder): Effect.Effect<boolean> =>
-  open.holder === holder.instance ? Effect.succeed(true) : Option.match(open.process, {
-    onNone: () => Effect.succeed(false),
-    onSome: (running) => Option.match(holder.process, {
-      onNone: () => Effect.succeed(true),
-      onSome: (self) => running.host !== self.host ? Effect.succeed(true)
-        : running.pid === self.pid ? Effect.succeed(running.startedAt === self.startedAt)
-        : holder.liveness.alive(running.pid),
-    }),
+const processHolds = (open: HeldTurn, holder: Holder): Effect.Effect<boolean> => Option.match(open.process, {
+  onNone: () => Effect.succeed(false),
+  onSome: (running) => Option.match(holder.process, {
+    onNone: () => Effect.succeed(true),
+    onSome: (self) => running.host !== self.host ? Effect.succeed(true)
+      : running.pid === self.pid ? Effect.succeed(running.startedAt === self.startedAt)
+      : holder.liveness.alive(running.pid),
+  }),
+})
+
+/**
+ * Whether an open turn is still held, judged by what its record says and
+ * never by the reader's own ownership, so a change of ownership (or
+ * instances that differ in it) neither holds a turn forever nor reaps one
+ * that runs: a turn with a lease end was taken under a lease, and is held
+ * within it (storage time); one without was taken under process ownership,
+ * and is held by its own instance, or by a process that runs. A turn this
+ * instance let go of unended (`released`) is held by nobody.
+ */
+export const isHeld = (open: HeldTurn, now: number, holder: Holder, released: boolean): Effect.Effect<boolean> =>
+  released ? Effect.succeed(false) : Option.match(open.expiresAt, {
+    onSome: (end) => Effect.succeed(now <= end),
+    onNone: () => open.holder === holder.instance ? Effect.succeed(true) : processHolds(open, holder),
   })
 
-/** Whether an open turn is still held: within its lease (storage time), or by a process that runs. */
-export const isHeld = (open: HeldTurn, now: number, ownership: Ownership, holder: Holder): Effect.Effect<boolean> =>
-  ownership.mode === "process"
-    ? processHolds(open, holder)
-    : Effect.succeed(Option.match(open.expiresAt, { onNone: () => true, onSome: (end) => now <= end }))
-
 /** The turn a head has open and still held, if any. */
-export const heldTurn = (head: SessionHead, state: State, ownership: Ownership, holder: Holder): Effect.Effect<Option.Option<HeldTurn>> =>
+export const heldTurn = (head: SessionHead, state: State, holder: Holder): Effect.Effect<Option.Option<HeldTurn>> =>
   Option.match(state.open, {
     onNone: () => Effect.succeed(Option.none()),
-    onSome: (open) => isHeld(open, head.now, ownership, holder).pipe(Effect.map((held) => held ? Option.some(open) : Option.none())),
+    onSome: (open) => holder.released(head.header.id).pipe(
+      Effect.flatMap((released) => isHeld(open, head.now, holder, open.holder === holder.instance && Option.contains(released, open.turn))),
+      Effect.map((held) => held ? Option.some(open) : Option.none()),
+    ),
   })
 
 /** The open turn as hosts see it (where its holder runs is the plugin's). */
@@ -106,8 +125,8 @@ export const closedState = (state: State, reason: TurnEndReason, maxAttempts: nu
 }
 
 /** One session as a host sees it: an open turn nobody holds any more (its lease ran out, its process stopped) is shown as closed. */
-export const viewOf = (head: SessionHead, state: State, ownership: Ownership, holder: Holder): Effect.Effect<SessionView> =>
-  heldTurn(head, state, ownership, holder).pipe(Effect.map((open) => ({
+export const viewOf = (head: SessionHead, state: State, holder: Holder): Effect.Effect<SessionView> =>
+  heldTurn(head, state, holder).pipe(Effect.map((open) => ({
     header: head.header,
     seq: head.seq,
     updatedAt: head.updatedAt,
@@ -116,6 +135,9 @@ export const viewOf = (head: SessionHead, state: State, ownership: Ownership, ho
     open: Option.map(open, openTurnOf),
     pending: pendingOf(state).length,
   })))
+
+/** The ids a log line about a turn carries, under the names its spans give them. */
+export const turnLogIds = (session: string, turn: number): Record<string, unknown> => ({ "efferent.session.id": session, "efferent.turn": turn })
 
 /** The title a session takes from its first user message: its first `chars` characters. */
 export const titleOf = (text: string, chars: number): string => Array.from(text).slice(0, chars).join("")

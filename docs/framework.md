@@ -443,10 +443,15 @@ success, tasks and background subscriptions settle before the reply is
 recorded. The reply is recorded exactly once, with a `failed` outcome when
 `use` fails, is interrupted, or finalizer work fails. On failure or
 interruption, the original cause is preserved and pending tasks are
-interrupted when the turn's scope closes. On success `agent.turn` returns a
-`TurnResult`: the `TurnOutcome` `use` returned (`outcome`, `reply`) and the
+interrupted when the turn's scope closes. Once `use` has returned, its reply
+is recorded even when the turn is interrupted then; a cancelled turn does
+not wait for the background reactions to its failed reply, and a failed one
+waits for them ten seconds at most. On success `agent.turn` returns a
+`TurnResult`: the `TurnOutcome` `use` returned (`outcome`, `reply`), the
 turn's `usage`, every run's provider calls summed (see
-[token usage](#token-usage)).
+[token usage](#token-usage)), and, for a turn it began and ended, `pending`:
+the inbox items its end left waiting (a background task's result delivered
+while it ran), which its caller drains (see [the inbox](#sessions-one-log-per-session)).
 
 `input.turn` is either a turn the host already began (the `TurnWriter` from
 `Sessions.begin`: the host ends it, after its own closing records) or a
@@ -606,7 +611,12 @@ A subscription can instead run in the background:
 `subscribe(select, handle, { mode: "background" })`, or the same option on
 `onEvent`, `onTool` and a host event's `on`. It gets its own bounded queue and
 fiber. `publish` returns once the event is queued, and the handler sees events
-in publication order. A failed background handler is latched: the next
+in publication order. When the queue is full (`capacity`, 256 by default),
+`publish` waits for room, interruptibly wherever it runs; a background
+handler's own publications (to its own subscription or another's, and what
+it runs inline) never wait but are queued past the capacity, so a handler
+that publishes what it takes cannot deadlock, its reaction chains bounded by
+`maxEventDepth`. A failed background handler is latched: the next
 delivery to it fails, and so does the drain before `turn.ended`, which fails
 the turn. Use it for reactions whose effects the next step does not need,
 and for forwarding events to a client: one background subscription keeps
@@ -751,12 +761,15 @@ catalog store. The `Sessions` kit opens several instances over one store
 moves their clock with `advance` (`TestClock.adjust`); it checks the busy,
 key, resume, image and inbox rules, the writer's endings, cancel and
 removal, a write renewing a lease, a lease that ran out and a dead process
-holder reaped, and, for an instance with a `TurnActivity`, that it counts
+holder reaped, a leased turn held by a process-owned instance within its
+lease (a turn is judged as it was taken), and, for an instance with a
+`TurnActivity`, that it counts
 each begin from the moment it is asked for and each turn per session and
 turn until its scope closes. The Tasks kit gives the backend its own runner
 and executor; the TaskRunner kit checks a runner the host makes. Both wait
 up to two seconds on the live clock for background work, so run them
-without a `TestClock`. The registry kit runs each turn over `TurnLive` and
+without a `TestClock`; so do the turn kit's checks that cancel a turn or
+fill a background queue. The registry kit runs each turn over `TurnLive` and
 checks every `tool.refused` reason. `@xandreed/plugin-sessions`
 (over the memory log), `@xandreed/plugin-session-sqlite` (over SQLite),
 `@xandreed/plugin-tasks` and `@xandreed/plugin-tool-discovery` run them, and
@@ -1210,10 +1223,13 @@ and `RunContext` (which carries the turn's `session`). It provides:
 
 The lifecycle is functions over them: `openTurnTools`, `turnTools` (the
 host's view), `settleTurn` (join the tasks, drain the reactions, until quiet),
-`finishTurn(outcome)` (persist the reply, drain, flush), `guardTurn(body)`
-(settle on success, else finish as failed keeping the cause; on success it
-returns the `TurnResult`, the outcome with `RunContext.usage`; on failure it
-puts the usage so far on the current span), `turnOf(options)`
+`finishTurn(outcome)` (persist the reply, drain, flush; the reply and the
+flush happen even when the fiber is interrupted meanwhile, only the drain is
+cut), `guardTurn(body)` (settle on success, else finish as failed keeping
+the cause: the failed reply recorded, its reactions drained interruptibly
+and for ten seconds at most, a failure of that finishing logged; on success
+it returns the `TurnResult`, the outcome with `RunContext.usage`; on failure
+it puts the usage so far on the current span), `turnOf(options)`
 (the `Turn` a host's code gets), `stepRequestOf(policy, options)` and
 `runTurnLoop(policy, options)` for one run of the step loop, and
 `traceTurn(writer, { spanMeta })` (the turn's `agent.turn` span around
@@ -1277,14 +1293,18 @@ began with `writer.end(turnEndingOf(exit))`, taking the exit after
 success, as `Agent.turn` does), and wraps everything after its begin, that
 end included, in `traceTurn(writer, { spanMeta })` for the turn's
 `agent.turn` span, with `guardTurn` directly under it so a failed turn's
-usage lands on that span. `turnConformance`
+usage lands on that span; on success it returns the end's `pending` with the
+result. `turnConformance`
 checks a composition: the writer first, the message before the matcher's
 history, the reply and the turn's end exactly once on success, failure and
 interrupt, tasks joined before the reply, a model-driven turn's
 `TurnResult.usage` equal to its stored `step.usage` records (`turnUsageOf`),
 the user's attachments stored with the turn and reaching its first request
-as image parts, and the host layer seeing only
-earlier turns.
+as image parts, the host layer seeing only
+earlier turns, a turn it begins returning the inbox items its end left
+waiting (`TurnResult.pending`), an interrupted turn ending at once while a
+background reaction to its reply never returns, and a background reaction
+that publishes past its queue's size not hanging the turn.
 
 ## Images and multi-part messages
 
@@ -1538,6 +1558,9 @@ yield* Effect.scoped(Effect.gen(function* () {
   const { pending } = yield* writer.end({ reason: "completed", failure: Option.none() })
   if (pending > 0) yield* sessions.drain(address, react)       // inbox items that arrived meanwhile
 }))
+// Or a turn the agent begins and ends: its result counts what its end left waiting.
+const result = yield* agent.turn({ turn: { session: address, userMessage, runId }, services }, use)
+if ((result.pending ?? 0) > 0) yield* sessions.drain(address, react)
 ```
 
 **One turn at a time.** `begin` opens a turn with its `turn.started` (the
@@ -1612,6 +1635,21 @@ model requests) and every bus event's name are refused there
   the turn held. Hosts needing stronger identity checks can supply `liveness`
   or use lease ownership.
 
+**A turn is judged as it was taken.** It keeps how it was held, a lease end
+or none and its holder's process, and every instance judges it by that,
+whatever its own ownership: changing the ownership between restarts, or
+instances that differ in it, neither holds a turn forever nor reaps one that
+is still held. A process-owned instance leaves a leased turn alone until its
+lease runs out; a leased instance holds a process-held turn while its
+process runs, asked through its own `liveness` (a holder on another host
+holds, one that names no process holds nothing). A writer whose closing
+commit the store refuses, even when its scope closes, is logged (with
+`efferent.session.id` and `efferent.turn`) and let go of by its instance:
+the turn reads closed there at once, and the next `begin`, `deliver` or
+`drain` there reaps it as interrupted (`turn.lease`), rather than the
+session answering `SessionBusy` until the lease runs out or the process
+exits.
+
 A turn nobody holds any more reads as not open, and is closed as
 `interrupted` by the next `begin`, `cancel`, `deliver` or `drain`: never by
 a read, so loading or following a session runs nothing. `cancel(address,
@@ -1682,7 +1720,10 @@ the writer's scope, and counts one only if the turn wrote something.
 Whoever closes a turn and whoever delivers drains: the
 delivery either commits before the turn's closing commit (whose `pending`
 counts it) or after it (and finds the session free), so nothing waits
-unnoticed.
+unnoticed. `Agent.turn` ends a turn it began and hands that count to its
+caller as `TurnResult.pending`; a drain ends its own inbox turns, and goes
+on while the end of its last one counts items waiting (ones delivered
+during it included), stopping at the end that counts none.
 
 **Background tasks** (`@xandreed/plugin-tasks`). A task is one turn of a
 child session, a fork of the conversation or an empty spawn, whose id is the

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
-import { Cause, Deferred, Effect, Exit, Option, Ref, Schema, Tracer } from "effect"
+import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Tracer } from "effect"
 import { Failure } from "../domain/failure.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
@@ -161,6 +161,37 @@ describe("the turn event bus", () => {
       return drained._tag === "Failure" ? `${drained.failure.code}: ${drained.failure.message}` : "none"
     }))
     expect(codes).toEqual(["reaction.died: no", "events.background: a background handler was interrupted"])
+  })
+
+  test("a background handler that publishes what it takes, past its queue's size, neither deadlocks nor drops or reorders it", async () => {
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const seen = yield* Ref.make<ReadonlyArray<number>>([])
+      yield* onEvent("step.started", (event) => Ref.update(seen, (all) => [...all, event.step]).pipe(
+        Effect.andThen(event.step === 0 ? Effect.forEach([1, 2, 3], (step) => events.publish(started(step)), { discard: true }) : Effect.void),
+      ), { mode: "background", capacity: 1 })(events)
+      yield* events.publish(started(0))
+      const drained = yield* events.drain.pipe(Effect.timeoutOption("2 seconds"))
+      return { drained: Option.isSome(drained), seen: yield* Ref.get(seen) }
+    })))
+    expect(outcome).toEqual({ drained: true, seen: [0, 1, 2, 3] })
+  })
+
+  test("a publisher waiting for room in a full background queue can be interrupted, even where it is uninterruptible", async () => {
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const entered = yield* Deferred.make<void>()
+      yield* onEvent("step.started", () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)), { mode: "background", capacity: 1 })(events)
+      yield* events.publish(started(0))
+      yield* Deferred.await(entered)
+      // The handler is stuck on the first event; the second fills the queue; the third waits for room.
+      yield* events.publish(started(1))
+      const waiting = yield* Effect.forkChild(Effect.uninterruptible(events.publish(started(2))))
+      yield* Effect.yieldNow
+      const interrupted = yield* Fiber.interrupt(waiting).pipe(Effect.timeoutOption("2 seconds"))
+      return Option.isSome(interrupted)
+    })))
+    expect(outcome).toBe(true)
   })
 })
 

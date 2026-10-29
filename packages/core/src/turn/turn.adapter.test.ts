@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import type { Scope } from "effect"
+import { TestClock } from "effect/testing"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { openLogSession } from "../memory/memory-session.js"
 import type { MemoryPolicy } from "../memory/memory-session.js"
@@ -204,6 +205,64 @@ describe("guardTurn", () => {
       return yield* endings(recorded)
     }))
     expect(ended).toEqual(["failed"])
+  })
+
+  /** A subscription in the body's scope, so it takes the turn's reply: a background reaction to it that never returns. */
+  const stuckOnReply = (reacting: Deferred.Deferred<void>) => Effect.gen(function* () {
+    const events = yield* TurnEvents
+    yield* events.subscribe((event) => event._tag === "turn.ended" ? Option.some(event) : Option.none(),
+      () => Deferred.succeed(reacting, undefined).pipe(Effect.andThen(Effect.never)), { mode: "background" })
+  })
+
+  test("an interrupt is not held up by a background reaction to the failed reply that never returns", async () => {
+    const { stopped, ended } = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      const started = yield* Deferred.make<void>()
+      const reacting = yield* Deferred.make<void>()
+      const fiber = yield* Effect.forkChild(guarded(recorded, stuckOnReply(reacting).pipe(
+        Effect.andThen(Deferred.succeed(started, undefined)), Effect.andThen(Effect.never))))
+      yield* Deferred.await(started)
+      const stopped = yield* Fiber.interrupt(fiber).pipe(Effect.timeoutOption("2 seconds"))
+      return { stopped: Option.isSome(stopped), ended: yield* endings(recorded) }
+    }))
+    expect({ stopped, ended }).toEqual({ stopped: true, ended: ["failed"] })
+  })
+
+  test("a failure waits for the reactions to its failed reply ten seconds at most, then ends keeping its cause", async () => {
+    const { early, exit, ended } = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      const reacting = yield* Deferred.make<void>()
+      const fiber = yield* Effect.forkChild(guarded(recorded, stuckOnReply(reacting).pipe(Effect.andThen(Effect.fail({ _tag: "HostFailure" as const })))))
+      yield* Deferred.await(reacting)
+      yield* TestClock.adjust("9 seconds")
+      const early = (yield* Effect.sync(() => fiber.pollUnsafe())) !== undefined
+      yield* TestClock.adjust("1 second")
+      const exit = yield* Effect.result(Fiber.join(fiber))
+      return { early, exit, ended: yield* endings(recorded) }
+    }).pipe(Effect.provide(TestClock.layer())))
+    expect(early).toBe(false)
+    expect(exit).toMatchObject({ _tag: "Failure", failure: { _tag: "HostFailure" } })
+    expect(ended).toEqual(["failed"])
+  })
+
+  test("once the body has returned, its reply is recorded even when the turn is interrupted meanwhile", async () => {
+    const ended = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      // The reply's write waits: an interrupt arrives while the reply is being recorded.
+      const slow: Recorded = { ...recorded, writer: { ...recorded.writer, append: (drafts) => drafts.some((draft) => draft.kind === "turn.reply")
+        ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(recorded.writer.append(drafts)))
+        : recorded.writer.append(drafts) } }
+      const fiber = yield* Effect.forkChild(guarded(slow, Effect.succeed<TurnOutcome>({ outcome: "completed", reply: Option.some("done") })))
+      yield* Deferred.await(entered)
+      const interrupting = yield* Effect.forkChild(Fiber.interrupt(fiber))
+      yield* Effect.yieldNow
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(interrupting)
+      return yield* endings(recorded)
+    }))
+    expect(ended).toEqual(["completed"])
   })
 
   test("a HarnessError carried as a defect fails the turn, typed", async () => {

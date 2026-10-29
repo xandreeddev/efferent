@@ -1,4 +1,4 @@
-import { Effect, Exit, Option } from "effect"
+import { Cause, Effect, Exit, Option } from "effect"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { replayableContext } from "../loop/traceContent.js"
@@ -49,44 +49,99 @@ export const settleTurn: Effect.Effect<void, HarnessError, TurnEvents | TurnTask
   yield* settle
 })
 
-/** Record the reply (`persistReply`), drain the reactions to it, and flush the journal. */
-export const finishTurn = (outcome: TurnOutcome): Effect.Effect<void, HarnessError, TurnMemory | TurnEvents | RunContext> => Effect.gen(function* () {
+type Restore = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+
+/**
+ * Record the reply, then drain the reactions to it with `restore`'s
+ * interruptibility, then flush the journal whatever the drain did (a cut
+ * drain still leaves the reply stored). Runs where interruption is masked.
+ */
+const finishing = (restore: Restore, outcome: TurnOutcome): Effect.Effect<void, HarnessError, TurnMemory | TurnEvents | RunContext> => Effect.gen(function* () {
   yield* (yield* TurnMemory).persistReply(outcome)
-  yield* (yield* TurnEvents).drain
+  const drained = yield* Effect.exit(restore((yield* TurnEvents).drain))
   yield* (yield* RunContext).flush
+  return yield* drained
+})
+
+/**
+ * Record the reply (`persistReply`), drain the reactions to it, and flush
+ * the journal. The reply is recorded and the journal flushed even when the
+ * fiber is interrupted meanwhile; only the drain can be cut.
+ */
+export const finishTurn = (outcome: TurnOutcome): Effect.Effect<void, HarnessError, TurnMemory | TurnEvents | RunContext> =>
+  Effect.uninterruptibleMask((restore) => finishing(restore, outcome))
+
+/**
+ * How long a turn that failed waits for the background reactions to its
+ * failed reply: past it, the turn ends without them, so a stuck subscriber
+ * cannot hold up the end. A turn that was interrupted does not wait for them.
+ */
+const failedReactionsWait = "10 seconds"
+
+/** A secondary failure while a failed turn ends: logged, never replacing the turn's own cause (an interruption is not logged). */
+const logFailure = (message: string) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<void, never, R> => effect.pipe(
+  Effect.exit,
+  Effect.flatMap(Exit.match({
+    onSuccess: () => Effect.void,
+    onFailure: (cause) => Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.logWarning(message, cause),
+  })),
+)
+
+/**
+ * The end of a turn that failed or was interrupted: its reply recorded as
+ * failed, the reactions to it drained, interruptibly and within
+ * `failedReactionsWait`, the journal flushed, and the usage its provider
+ * calls spent so far put on the current span. Runs where interruption is
+ * masked; what fails here is logged.
+ */
+const finishFailed: Effect.Effect<void, never, TurnMemory | TurnEvents | RunContext> = Effect.gen(function* () {
+  const run = yield* RunContext
+  yield* (yield* TurnMemory).persistReply(failed).pipe(logFailure("the failed turn's reply was not recorded"))
+  // Interruptible around the bound: a cancel cuts the wait at once, rather than when the bound runs out.
+  const settled = yield* (yield* TurnEvents).drain.pipe(Effect.timeoutOption(failedReactionsWait), Effect.interruptible, Effect.exit)
+  yield* Exit.match(settled, {
+    onSuccess: Option.match({
+      onSome: () => Effect.void,
+      onNone: () => Effect.logWarning(`the reactions to the failed turn's reply did not settle within ${failedReactionsWait}; the turn ends without them`),
+    }),
+    onFailure: (cause) => Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.logWarning("the reactions to the failed turn's reply failed", cause),
+  })
+  yield* run.flush.pipe(logFailure("the failed turn's journal was not flushed"))
+  yield* Effect.annotateCurrentSpan(turnUsageAttributes(yield* run.usage))
 })
 
 /**
  * Run a turn's body to its end: once it succeeds, the turn settles (tasks
  * and background reactions) and finishes with its outcome, returned with
  * the turn's usage (`RunContext.usage`, the same total `turn.ended`
- * carries). When it fails or is interrupted, the turn finishes as failed
- * and keeps the body's cause, and the usage its provider calls spent so far
- * goes on the current span as `efferent.usage.*_tokens` (the turn's
- * `agent.turn` when `guardTurn` runs under `traceTurn` with no span between,
- * as in `Agent.turn`; `traceTurn` records it itself when the turn returns).
- * A HarnessError carried as a defect (a subscriber's failure behind a
- * `never` error channel) fails the turn, typed.
+ * carries). Once the body has returned, its reply is recorded and the
+ * journal flushed even when the turn is interrupted then; an interruption
+ * cuts only the drain of the reactions to the reply. When the body fails or
+ * is interrupted, the turn finishes as failed and keeps the body's cause:
+ * the failed reply is recorded, the reactions to it are waited for at most
+ * ten seconds (not at all once interrupted), a failure of that finishing is
+ * logged, and the usage its provider calls spent so far goes on the current
+ * span as `efferent.usage.*_tokens` (the turn's `agent.turn` when
+ * `guardTurn` runs under `traceTurn` with no span between, as in
+ * `Agent.turn`; `traceTurn` records it itself when the turn returns). A
+ * HarnessError carried as a defect (a subscriber's failure behind a `never`
+ * error channel) fails the turn, typed.
  */
 export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.Effect<
   TurnResult,
   E | HarnessError,
   R | TurnMemory | TurnEvents | TurnTasks | RunContext
-> => harnessDefectsAsFailures(body.pipe(Effect.tap(() => settleTurn))).pipe(
-  Effect.onExit(Exit.match({
-    onSuccess: () => Effect.void,
-    // The turn already failed; recording that must not replace its cause.
-    onFailure: () => finishTurn(failed).pipe(
-      Effect.catchCause(() => Effect.void),
-      Effect.andThen(RunContext.pipe(Effect.flatMap((run) => run.usage), Effect.flatMap((usage) => Effect.annotateCurrentSpan(turnUsageAttributes(usage))))),
-    ),
-  })),
-  Effect.tap(finishTurn),
-  Effect.flatMap((outcome) => RunContext.pipe(
-    Effect.flatMap((run) => run.usage),
-    Effect.map((usage): TurnResult => ({ outcome: outcome.outcome, reply: outcome.reply, usage })),
-  )),
-)
+> => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+  const exit = yield* Effect.exit(restore(harnessDefectsAsFailures(body.pipe(Effect.tap(() => settleTurn)))))
+  if (Exit.isFailure(exit)) {
+    yield* finishFailed
+    return yield* Effect.failCause(exit.cause)
+  }
+  const outcome = exit.value
+  yield* finishing(restore, outcome)
+  const usage = yield* (yield* RunContext).usage
+  return { outcome: outcome.outcome, reply: outcome.reply, usage } satisfies TurnResult
+}))
 
 /**
  * The `Turn` a host's code works with, over the turn's services (the one
