@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { Context, Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { ConversationId, SessionLogEvent, Sessions, turnEndedOf, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { ConversationId, errorCodeOf, isStoreBusy, SessionLogEvent, Sessions, turnEndedOf, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { BeginTurn, SessionHeader, SessionLog, SessionLogError } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { SessionsConfig } from "@xandreed/plugin-sessions"
@@ -113,14 +113,15 @@ describe("a commit waiting for another process's write lock", () => {
     expect(counted).toBeGreaterThan(20)
   })), 30_000)
 
-  test("fails with store.busy when the lock is held past the busy timeout, and goes on once the holder is gone", () => run(Effect.gen(function* () {
+  test("fails with store.busy, SQLite's error its cause, when the lock is held past the busy timeout, and goes on once the holder is gone", () => run(Effect.gen(function* () {
     const path = databasePath()
     const id = freshId()
     const log = yield* makeSessionLogSqlite(path)
     yield* log.create(header(id))
     const locked = yield* holder("hold-lock", path, "6000")
     const busy = yield* Effect.flip(log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "blocked", turn: Option.none(), data: {} }], state: Option.none() }))
-    expect(busy._tag === "SessionLogError" ? busy.code : busy._tag).toBe("store.busy")
+    expect(busy._tag === "SessionLogError" ? [busy.code, isStoreBusy(busy), Option.exists(errorCodeOf(busy.cause), (code) => code.startsWith("SQLITE_BUSY"))] : busy._tag)
+      .toEqual(["store.busy", true, true])
     // A holder that dies inside its transaction takes the lock with it.
     expect(yield* killed(locked)).toBe("SIGKILL")
     expect((yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [], state: Option.none() })).revision).toBe(1)

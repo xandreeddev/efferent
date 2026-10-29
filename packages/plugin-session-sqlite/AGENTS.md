@@ -7,7 +7,7 @@ Core's `SessionLog` port in one SQLite file (`session_heads` and `session_log_ev
 - Keep Bun-only imports in this package: every other published package must load on Node.
 - Both plugins default `path` to `.efferent/runtime/sessions.db`; the directory is created and the file set to mode `0600`.
 - A commit is one `IMMEDIATE` transaction: read the caller's `Clock` under the write lock, then check the revision and `notAfter`, then write; never read the time before the lock.
-- Map a SQLite failure in one place (`failure`): `SQLITE_BUSY*` is `store.busy`, anything else the operation's code (`store.open`, `store.io`); decode every row read (`decodeRow`), a bad one failing with `store.decode`, never a defect.
+- Map a SQLite failure in one place (`failure`): `SQLITE_BUSY*` (read with core's `errorCodeOf`) is `store.busy` (`isStoreBusy`), anything else the operation's code (`store.open`, `store.io`), SQLite's error kept as the `cause`, never as text; decode every row read (`decodeRow`), a bad one failing with `store.decode`, never a defect.
 - Never let SQLite wait on the thread (bun:sqlite is synchronous): `busy_timeout` stays 0 and a call held off by another connection's lock is retried by `busyRetry` (2 ms doubling to 100 ms, jittered) for up to `BUSY_WAIT` (5 s), then fails with `store.busy`; that wait also covers switching a new file to WAL.
 - Keep WAL with `synchronous = NORMAL`: a commit survives a crash of the process; a power loss may drop the last commits, never tear one.
 - Removal cascades through foreign keys (`foreign_keys = ON`): a session's events and child sessions go with its head.

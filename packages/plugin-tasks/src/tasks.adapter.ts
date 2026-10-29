@@ -4,7 +4,6 @@ import {
   HarnessError,
   MemoryKindOf,
   SessionExists,
-  SessionLogError,
   Sessions,
   TaskConflict,
   TaskExecutor,
@@ -14,19 +13,19 @@ import {
   Tasks,
   UserMessage,
 } from "@xandreed/core"
-import type { JsonObject, SessionAddress, TaskMode, TaskView, TurnOutcome, TurnRefused, TurnWriter } from "@xandreed/core"
+import type { JsonObject, ReservedKind, SessionAddress, TaskMode, TaskView, TurnOutcome, TurnRefused, TurnWriter } from "@xandreed/core"
 import { deliveredOf, deliveryId, endOf, goneEnd, isActive, isChildOf, isFinished, noticeOf, resultOf, startedOf } from "./task.entity.functions.js"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started, TasksConfig } from "./task-records.entity.js"
 
 const OUTCOME_KINDS = [TASK_RESULT, TASK_CANCELLED]
 
-const encodeFailure = (error: { readonly message: string }) => new SessionLogError({ code: "tasks.encode", message: error.message })
-const startedJson = (started: Started) => Schema.encodeEffect(TaskStarted)(started).pipe(Effect.map((data): JsonObject => data), Effect.mapError(encodeFailure))
-const resultJson = (result: Result) => Schema.encodeEffect(TaskResult)(result).pipe(Effect.map((data): JsonObject => data), Effect.mapError(encodeFailure))
+/** The plugin's own records always encode: a failure to encode one is a defect. */
+const startedJson = (started: Started) => Schema.encodeEffect(TaskStarted)(started).pipe(Effect.map((data): JsonObject => data), Effect.orDie)
+const resultJson = (result: Result) => Schema.encodeEffect(TaskResult)(result).pipe(Effect.map((data): JsonObject => data), Effect.orDie)
 
-/** Only the framework's kinds are reserved; the tasks plugin records its own. */
-const reservedAsStorage = (error: { readonly kind: string }) => Effect.fail(new SessionLogError({ code: "tasks.kind", message: `${error.kind} is reserved` }))
+/** Only the framework's kinds are reserved and the tasks plugin records its own: a refusal of one is a defect. */
+const reservedIsDefect = (error: ReservedKind) => Effect.die(error)
 
 /**
  * Background tasks over Sessions. A task is one turn of a child session
@@ -83,7 +82,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
   const recordEnd = (child: SessionAddress, result: Result) => sessions.transact(child, () => Effect.gen(function* () {
     const records = yield* sessions.read(child, { kinds: OUTCOME_KINDS })
     return { drafts: records.length > 0 ? [] : [{ kind: TASK_RESULT, data: yield* resultJson(result) }], result: undefined }
-  })).pipe(Effect.catchTag("ReservedKind", reservedAsStorage), Effect.asVoid)
+  })).pipe(Effect.catchTag("ReservedKind", reservedIsDefect), Effect.asVoid)
 
   /** The turn's body until its deadline (then none) or until someone else closes the turn. */
   const bounded = (body: Effect.Effect<TurnOutcome, HarnessError>, writer: TurnWriter, deadline: Option.Option<number>) => Effect.gen(function* () {
@@ -261,13 +260,14 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
       if (Option.exists(taken, (session) => !isChildOf(session, parent.id))) return yield* Effect.fail(new SessionExists({ session: taskId }))
       return { drafts: [{ kind: TASK_STARTED, data: yield* startedJson(started) }], result: true }
     })).pipe(
-      Effect.catchTag("ReservedKind", reservedAsStorage),
+      Effect.catchTag("ReservedKind", reservedIsDefect),
       // A retry also creates the child a start that stopped between the two left without one, and runs the task then.
       Effect.flatMap((decided) => childFor(parent, started).pipe(Effect.map((created) => decided.result || created))),
     ))
     if (begun) yield* runner.run(work(parent, taskId))
+    // Its `task.started` is stored: a parent that does not show it is a store that lost a commit it confirmed.
     return yield* taskOf(parent, taskId).pipe(Effect.catchTag("TaskMissing", () =>
-      Effect.fail(new SessionLogError({ code: "tasks.lost", message: `task ${taskId} was started but is not in ${parent.id}` }))))
+      Effect.die(new Error(`task ${taskId} was started but is not in ${parent.id}`))))
   })
 
   const cancel = (parent: SessionAddress, taskId: string) => Effect.gen(function* () {
@@ -277,11 +277,11 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     const decided = yield* sessions.transact(child, (view) => sessions.read(child, { kinds: OUTCOME_KINDS }).pipe(Effect.map((records) =>
       isActive(endOf(view, records).status)
         ? { drafts: [{ kind: TASK_CANCELLED, data: { taskId } }], result: { cancelled: true, open: Option.map(view.open, (open) => open.turn) } }
-        : { drafts: [], result: { cancelled: false, open: Option.none<number>() } }))).pipe(Effect.catchTag("ReservedKind", reservedAsStorage))
+        : { drafts: [], result: { cancelled: false, open: Option.none<number>() } }))).pipe(Effect.catchTag("ReservedKind", reservedIsDefect))
     if (!decided.result.cancelled) return false
     yield* Option.match(decided.result.open, { onNone: () => Effect.void, onSome: (turn) => sessions.cancel(child, turn).pipe(Effect.asVoid) })
     yield* sessions.transact(parent, () => Effect.succeed({ drafts: [{ kind: TASK_CANCELLED, data: { taskId } }], result: undefined }))
-      .pipe(Effect.catchTag("ReservedKind", reservedAsStorage))
+      .pipe(Effect.catchTag("ReservedKind", reservedIsDefect))
     return true
   })
 

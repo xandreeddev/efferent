@@ -2,11 +2,13 @@ import { Database } from "bun:sqlite"
 import { mkdir } from "node:fs/promises"
 import { chmodSync } from "node:fs"
 import { dirname } from "node:path"
-import { Array as Arr, Clock, Duration, Effect, Layer, Match, Option, Predicate, Schedule, Schema } from "effect"
+import { Array as Arr, Cause, Clock, Duration, Effect, Layer, Match, Option, Schedule, Schema } from "effect"
 import type { Scope } from "effect"
 import {
   ConversationId,
   definePlugin,
+  errorCodeOf,
+  isStoreBusy,
   JsonObject,
   LeaseExpired,
   RevisionConflict,
@@ -14,6 +16,7 @@ import {
   SessionLog,
   SessionLogError,
   SessionMissing,
+  reasonOf,
   storedJson,
 } from "@xandreed/core"
 import type { SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "@xandreed/core"
@@ -41,21 +44,25 @@ const HeadRow = Schema.Struct({
 const EventRow = Schema.Struct({ seq: Schema.Int, turn: Schema.NullOr(Schema.Int), kind: Schema.String, at: Schema.Number, data: JsonColumn })
 
 /** SQLite's busy result and its extended forms (`SQLITE_BUSY_SNAPSHOT`, …): another connection holds the lock. */
-const busy = (error: unknown): boolean =>
-  Predicate.hasProperty(error, "code") && Predicate.isString(error.code) && error.code.startsWith("SQLITE_BUSY")
-/** A store failure as a SessionLogError: `store.busy` when another connection held the lock, else `code`. */
-const failure = (code: string) => (error: unknown) => new SessionLogError({ code: busy(error) ? "store.busy" : code, message: String(error) })
+const busy = (error: unknown): boolean => Option.exists(errorCodeOf(error), (code) => code.startsWith("SQLITE_BUSY"))
+/**
+ * A store failure as a SessionLogError: `store.busy` when another connection
+ * held the lock, else `code`; SQLite's (or the file system's) error is its
+ * `cause`, and its message says what that error said.
+ */
+const failure = (code: string) => (error: unknown) =>
+  new SessionLogError({ code: busy(error) ? "store.busy" : code, message: `the SQLite store failed: ${reasonOf(Cause.die(error))}`, cause: error })
 /** A row decoded with `schema`, or `store.decode` naming the table. */
 const decodeRow = <S extends Schema.Decoder<unknown>>(schema: S, table: string) => {
   const decode = Schema.decodeUnknownEffect(schema)
   return (row: unknown): Effect.Effect<S["Type"], SessionLogError, S["DecodingServices"]> =>
-    decode(row).pipe(Effect.mapError((error) => new SessionLogError({ code: "store.decode", message: `a ${table} row does not decode: ${error.message}` })))
+    decode(row).pipe(Effect.mapError((error) => new SessionLogError({ code: "store.decode", message: `a ${table} row does not decode: ${error.message}`, cause: error })))
 }
 const decodeHead = decodeRow(HeadRow, "session_heads")
 const decodeEvent = decodeRow(EventRow, "session_log_events")
 /** The value as it is stored and read back (JSON), so a commit returns the events a later read does; a value JSON cannot hold fails with `store.encode`. */
 const asStored = (data: JsonObject): Effect.Effect<JsonObject, SessionLogError> =>
-  storedJson(data).pipe(Effect.mapError((error) => new SessionLogError({ code: "store.encode", message: `the data is not JSON: ${error.message}` })))
+  storedJson(data).pipe(Effect.mapError((error) => new SessionLogError({ code: "store.encode", message: `the data is not JSON: ${error.message}`, cause: error })))
 
 /**
  * How long a call waits in all for a lock another connection holds before
@@ -73,7 +80,7 @@ const busyRetry = Schedule.exponential("2 millis").pipe(
 
 /** `effect` again, by `busyRetry`, while it fails with `store.busy`. */
 const whileBusy = <A, R>(effect: Effect.Effect<A, SessionLogError, R>): Effect.Effect<A, SessionLogError, R> =>
-  effect.pipe(Effect.retry({ schedule: busyRetry, while: (error) => error.code === "store.busy" }))
+  effect.pipe(Effect.retry({ schedule: busyRetry, while: isStoreBusy }))
 
 /** One synchronous store call, tried again while another connection holds the lock it needs. */
 const operation = <A>(work: () => A) => whileBusy(Effect.try({ try: work, catch: failure("store.io") }))

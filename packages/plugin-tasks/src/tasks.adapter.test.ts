@@ -6,6 +6,8 @@ import {
   ConversationId,
   frameworkDraft,
   HarnessError,
+  ReservedKind,
+  SessionContended,
   SessionLog,
   SessionLogError,
   SessionLogMemoryLive,
@@ -143,13 +145,13 @@ describe("starting and storing", () => {
         ...inner,
         // Decided, then refused: a commit that kept conflicting until it gave up.
         transact: (address, decide) => Ref.get(refusing).pipe(Effect.flatMap((refuse) => refuse
-          ? inner.get(address).pipe(Effect.flatMap(decide), Effect.andThen(Effect.fail(new SessionLogError({ code: "session.contended", message: "3 conflicting writes" }))))
+          ? inner.get(address).pipe(Effect.flatMap(decide), Effect.andThen(Effect.fail(new SessionContended({ session: address.id, attempts: 3 }))))
           : inner.transact(address, decide))),
       }),
     })
     const taskId = yield* freshTask
     const refused = yield* Effect.flip(h.tasks.start(h.parent, { taskId, instructions: "not stored", mode: "fork" }))
-    expect([refused._tag, refused._tag === "SessionLogError" ? refused.code : null]).toEqual(["SessionLogError", "session.contended"])
+    expect([refused._tag, refused._tag === "SessionContended" ? refused.attempts : null]).toEqual(["SessionContended", 3])
     expect((yield* h.sessions.list({ owner, parent: h.parent.id })).sessions).toEqual([])
     yield* Ref.set(refusing, false)
     const started = yield* h.tasks.start(h.parent, { taskId, instructions: "not stored", mode: "fork" })
@@ -157,6 +159,28 @@ describe("starting and storing", () => {
     expect((yield* h.tasks.status(h.parent, started.taskId)).status).toBe("completed")
     expect((yield* h.sessions.list({ owner, parent: h.parent.id })).sessions.map((view) => view.header.id)).toEqual([taskId])
     expect((yield* h.reactions).length).toBe(1)
+  })))
+
+  test("sessions that refuse the plugin's own kinds, or lose a record they stored, are a defect, not a storage failure", () => scenario(Effect.gen(function* () {
+    const fault = yield* Ref.make<"none" | "reserved" | "lost">("none")
+    const h = yield* harness({
+      sessions: (inner) => Sessions.of({
+        ...inner,
+        transact: (address, decide) => Ref.get(fault).pipe(Effect.flatMap((now) => now === "reserved"
+          ? Effect.fail(new ReservedKind({ kind: "task.started" }))
+          : inner.transact(address, decide))),
+        read: (address, query) => Ref.get(fault).pipe(Effect.flatMap((now) => inner.read(address, query).pipe(
+          Effect.map((events) => now === "lost" ? events.filter((event) => event.kind !== "task.started") : events)))),
+      }),
+    })
+    // Only the start is under test: its work is not run.
+    yield* Ref.set(h.dropping, true)
+    const startExit = Effect.exit(h.tasks.start(h.parent, { instructions: "faulty", mode: "spawn" }))
+    yield* Ref.set(fault, "reserved")
+    const reserved = yield* startExit
+    yield* Ref.set(fault, "lost")
+    const lost = yield* startExit
+    expect([reserved, lost].map((exit) => [Exit.hasDies(exit), Option.isNone(Exit.findErrorOption(exit))])).toEqual([[true, true], [true, true]])
   })))
 
   test("a start that stopped after its record, before its child, is finished by starting it again", () => scenario(Effect.gen(function* () {

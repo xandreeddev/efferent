@@ -1,4 +1,5 @@
 import { Effect, Option } from "effect"
+import { errorCodeOf } from "@xandreed/core"
 import type { HolderProcess, ProcessLiveness } from "./sessions-state.entity.js"
 
 /** The runtime's process, where it has one. */
@@ -14,7 +15,7 @@ const hostOf = (current: typeof globalThis.process): Option.Option<string> => {
 }
 
 /** `kill(pid, 0)` signals nothing and tells whether the pid runs; only ESRCH says it does not (EPERM: another user's process). */
-const signalled = (error: unknown): boolean => !(typeof error === "object" && error !== null && "code" in error && error.code === "ESRCH")
+const signalled = (error: unknown): boolean => !Option.contains(errorCodeOf(error), "ESRCH")
 
 /**
  * Process ownership's default liveness: this process by its host, pid and

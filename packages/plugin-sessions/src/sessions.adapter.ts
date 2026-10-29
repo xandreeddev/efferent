@@ -16,6 +16,7 @@ import {
   RunIdReused,
   sameUserMessage,
   SessionBusy,
+  SessionContended,
   SessionLog,
   SessionLogError,
   SessionMissing,
@@ -67,13 +68,19 @@ interface Guarded<A> {
   readonly committed: Option.Option<SessionCommitted>
 }
 
-const storage = (code: string) => (error: { readonly message: string }) => new SessionLogError({ code, message: error.message })
+/**
+ * Stored data that does not decode, as the store's failure (`session.state`,
+ * `session.decode`). The plugin's own values (its state, the framework's
+ * drafts) always encode, so a failure to encode one is a defect
+ * (`Effect.orDie`), as is an answer the log's contract rules out.
+ */
+const storage = (code: string) => (error: Schema.SchemaError) => new SessionLogError({ code, message: error.message, cause: error })
 
 /** The `inbox.dropped` drafts of turn `turn` for the items its close dropped. */
-const droppedDrafts = (ids: ReadonlyArray<string>, turn: number): Effect.Effect<ReadonlyArray<SessionDraft>, SessionLogError> =>
+const droppedDrafts = (ids: ReadonlyArray<string>, turn: number): Effect.Effect<ReadonlyArray<SessionDraft>> =>
   Effect.forEach(ids, (id) => droppedData(id).pipe(
     Effect.map((data): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data })),
-    Effect.mapError(storage("session.encode")),
+    Effect.orDie,
   ), { concurrency: 1 })
 
 const standalone = (drafts: ReadonlyArray<TurnDraft>): ReadonlyArray<SessionDraft> =>
@@ -147,13 +154,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * and for what must follow a stored commit.
    */
   const guarded = <A, E>(address: SessionAddress, plan: (head: SessionHead, state: SessionsState) => Effect.Effect<GuardedPlan<A>, E>, stored: (result: A) => Effect.Effect<void> = () => Effect.void) => {
-    const attempt = (tries: number): Effect.Effect<Guarded<A>, E | SessionMissing | SessionLogError> => Effect.gen(function* () {
+    const attempt = (tries: number): Effect.Effect<Guarded<A>, E | SessionMissing | SessionContended | SessionLogError> => Effect.gen(function* () {
       const head = yield* owned(address)
       const planned = yield* plan(head, yield* stateFrom(head))
       if (planned.drafts.length === 0 && Option.isNone(planned.next)) return { result: planned.result, head, committed: Option.none() }
       const state = yield* Option.match(planned.next, {
         onNone: () => Effect.succeedNone,
-        onSome: (next) => stateJson(next).pipe(Effect.map(Option.some), Effect.mapError(storage("session.encode"))),
+        onSome: (next) => stateJson(next).pipe(Effect.map(Option.some), Effect.orDie),
       })
       const outcome = yield* Effect.uninterruptible(Effect.result(log.commit(address.id, {
         expect: head.revision, notAfter: Option.none(), events: planned.drafts, state,
@@ -166,10 +173,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const error = outcome.failure
       if (error._tag === "RevisionConflict") {
         return tries + 1 >= config.retries
-          ? yield* Effect.fail(new SessionLogError({ code: "session.contended", message: `${config.retries} conflicting writes to ${address.id}` }))
+          ? yield* Effect.fail(new SessionContended({ session: address.id, attempts: tries + 1 }))
           : yield* attempt(tries + 1)
       }
-      return yield* Effect.fail(error._tag === "LeaseExpired" ? new SessionLogError({ code: "session.expired", message: "an unguarded commit expired" }) : error)
+      // The commit has no `notAfter`: a log that says it expired broke its contract.
+      return yield* (error._tag === "LeaseExpired" ? Effect.die(error) : Effect.fail(error))
     })
     return attempt(0)
   }
@@ -185,7 +193,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     // A reaped turn counts as an attempt: its holder may have stopped on the items.
     const after = closedState(state, "interrupted", config.inbox.attempts, true)
     const closing = yield* turnEndedDraft(turn, { reason: "interrupted", failure: Option.some({ code: "turn.lease", message: "the turn's holder stopped writing" }) })
-      .pipe(Effect.mapError(storage("session.encode")))
+      .pipe(Effect.orDie)
     const dropped = yield* droppedDrafts(after.dropped, turn)
     return { drafts: [closing, ...dropped], state: after.state, closed: Option.some(turn) }
   })
@@ -263,7 +271,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       failure: Option.some(interrupted
         ? { code: "turn.interrupted", message: "the turn's begin was interrupted before its writer was handed over" }
         : { code: "turn.unended", message: "the turn's scope closed before it ended" }),
-    }).pipe(Effect.mapError(storage("session.encode")))
+    }).pipe(Effect.orDie)
     const dropped = yield* droppedDrafts(after.dropped, turn)
     return { drafts: [closing, ...dropped], next: Option.some(after.state), result: undefined }
   })).pipe(
@@ -351,19 +359,20 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           // Written only when given: a turn begun without metadata is stored as before.
           ...(input.meta === undefined ? {} : { meta: input.meta }),
           ...resuming,
-        }).pipe(Effect.mapError(storage("session.encode")))
+        }).pipe(Effect.orDie)
         const admitted: AdmittedTurn = {
           session: address, turn, runId: input.runId, key, origin: open.origin, userMessage,
           command: input._tag === "User" ? input.command : {}, claimed, meta, ...resuming,
         }
         return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next } }
       }), (opened) => Ref.set(unowned, Option.some(opened.admitted.turn)))))
+      // The opening plan always commits `turn.started`, last: neither can happen unless the log broke its contract.
       const committed = yield* Option.match(begun.committed, {
-        onNone: () => Effect.fail(new SessionLogError({ code: "session.begin", message: "the turn was not committed" })),
+        onNone: () => Effect.die(new Error("the opening commit of a turn committed nothing")),
         onSome: Effect.succeed,
       })
       const started = yield* Option.match(Option.fromNullishOr(committed.events.at(-1)), {
-        onNone: () => Effect.fail(new SessionLogError({ code: "session.begin", message: "the turn's start was not stored" })),
+        onNone: () => Effect.die(new Error("the log stored a turn's opening commit without its events")),
         onSome: Effect.succeed,
       })
       const turn = begun.result.admitted.turn
@@ -422,7 +431,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const maxTurns = options?.maxTurns ?? 3
     const meta = options?.meta
     /** One inbox turn, if one opens: then whether items still wait after it. */
-    const once: Effect.Effect<Option.Option<boolean>, SessionMissing | SessionLogError, R> = Effect.scoped(Effect.gen(function* () {
+    const once: Effect.Effect<Option.Option<boolean>, SessionMissing | SessionContended | SessionLogError, R> = Effect.scoped(Effect.gen(function* () {
       const runId = yield* Effect.sync(() => crypto.randomUUID())
       const open = yield* openTurn(address, meta === undefined ? { _tag: "Inbox", runId } : { _tag: "Inbox", runId, meta })
       // A HarnessError carried as a defect keeps its own code, as in `Agent.turn`.
@@ -459,7 +468,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         TurnRefused: (refused) => Effect.logWarning(`inbox turn of ${address.id} refused: ${refused.message}`).pipe(Effect.as(Option.none<boolean>())),
       }),
     )
-    const loop = (turns: number): Effect.Effect<{ readonly turns: number }, SessionMissing | SessionLogError, R> =>
+    const loop = (turns: number): Effect.Effect<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R> =>
       turns >= maxTurns ? Effect.succeed({ turns }) : once.pipe(Effect.flatMap(Option.match({
         onNone: () => Effect.succeed({ turns }),
         onSome: (more) => more ? loop(turns + 1) : Effect.succeed({ turns: turns + 1 }),
@@ -477,10 +486,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
 
   return Context.make(TurnActivity, activity).pipe(Context.add(Sessions, Sessions.of({
     create: (input) => Effect.gen(function* () {
+      // Created without a parent: a log that answers `SessionMissing` broke its contract.
       const head = yield* log.create({
         id: input.id ?? (yield* freshId), owner: input.owner, origin: input.origin ?? "user",
         createdAt: yield* Clock.currentTimeMillis, meta: input.meta ?? {}, parent: Option.none(),
-      }).pipe(Effect.catchTag("SessionMissing", (error) => Effect.fail(new SessionLogError({ code: "session.create", message: `no parent ${error.session}` }))))
+      }).pipe(Effect.catchTag("SessionMissing", Effect.die))
       return yield* viewFrom(head)
     }),
     fork: (parent, input) => Effect.gen(function* () {
@@ -537,7 +547,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       if (Option.isSome(reap.closed)) return { drafts: reap.drafts, next: Option.some(state), result: { cancelled: false, pending: pendingOf(state).length } }
       if (!Option.exists(state.open, (open) => open.turn === turn)) return { drafts: [], next: Option.none<SessionsState>(), result: { cancelled: false, pending: pendingOf(state).length } }
       const after = closedState(state, "cancelled", config.inbox.attempts, true)
-      const closing = yield* turnEndedDraft(turn, { reason: "cancelled", failure: Option.none() }).pipe(Effect.mapError(storage("session.encode")))
+      const closing = yield* turnEndedDraft(turn, { reason: "cancelled", failure: Option.none() }).pipe(Effect.orDie)
       return { drafts: [closing], next: Option.some(after.state), result: { cancelled: true, pending: pendingOf(after.state).length } }
     })).pipe(Effect.tap((done) => done.result.cancelled ? closeLocal(address.id, "cancelled", Option.some(turn)) : Effect.void), Effect.map((done) => done.result)),
     begin,
@@ -550,7 +560,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       if (earlier.some((event) => event.data.id === item.id)) return { ...reapedOnly, result: { delivered: false, pending: pendingOf(state).length } }
       if (pendingOf(state).length >= config.inbox.maxPending) return yield* Effect.fail(new InboxFull({ session: address.id, pending: pendingOf(state).length }))
       const next: SessionsState = { ...state, inbox: [...state.inbox, { id: item.id, attempts: 0, claimedBy: Option.none() }] }
-      const queued = yield* queuedData(item).pipe(Effect.mapError(storage("session.encode")))
+      const queued = yield* queuedData(item).pipe(Effect.orDie)
       return {
         drafts: [...reap.drafts, { kind: "inbox.queued", turn: Option.none(), data: queued }],
         next: Option.some(next),
