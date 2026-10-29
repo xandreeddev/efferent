@@ -16,6 +16,7 @@ There are two kinds of events. The **bus** carries a turn's typed events (`TurnE
 | `turn.started` | no | Recorded elsewhere: the session's own `turn.started`, written when the turn began |
 | `step.started` | no | `step.started` |
 | `tool.started` | no | `tool.started` |
+| `tool.refused` | no | `tool.refused`, without `input` |
 | `tool.progress` | yes | Not stored (transient) |
 | `tool.completed` | no | `tool.completed`, without `input`, `result`, `encoded` |
 | `step.ended` | no | `step.ended` |
@@ -25,6 +26,7 @@ There are two kinds of events. The **bus** carries a turn's typed events (`TurnE
 | `decision.recorded` | no | `decision.recorded` |
 | `assistant.message` | no | `step.usage`, without `text`, `reasoning`, `toolCalls` |
 | `assistant.delta` | yes | Not stored (transient) |
+| `stream.fallback` | no | `stream.fallback` |
 | `turn.ended` | no | Recorded elsewhere: memory's `turn.reply` and the session's own `turn.ended` |
 | `host` | no | Under its `name` |
 
@@ -52,7 +54,7 @@ Published by the step loop as each step starts. `planned` is true for step 0 of 
 
 ### `tool.started`
 
-Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes no `tool.*` event; `step.ended.results` lists every recorded result. Journaled as `tool.started`, input included.
+Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress` and `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes `tool.refused` instead, and no other `tool.*` event; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included.
 
 | Field | Type |
 | --- | --- |
@@ -62,6 +64,19 @@ Published by the tool registry just before a tool's handler runs. `invocationId`
 | `input` | `unknown` |
 | `labels` | `Record<string, string>` |
 | `stage` | `string \| null` |
+
+### `tool.refused`
+
+Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`.
+
+| Field | Type |
+| --- | --- |
+| `step` | `integer` |
+| `invocationId` | `string` |
+| `tool` | `string` |
+| `input` | `unknown` |
+| `reason` | `"inactive" \| "forbidden" \| "denied" \| "call-limit" \| "tool-call-limit"` |
+| `message` | `string` |
 
 ### `tool.progress`
 
@@ -162,7 +177,7 @@ Published by the step loop once per provider response, after that step's tools r
 
 ### `assistant.delta`
 
-Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call publishes none.
+Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none.
 
 | Field | Type |
 | --- | --- |
@@ -170,6 +185,15 @@ Published by the step loop for each streamed increment while `limits.streaming` 
 | `channel` | `"text" \| "reasoning" \| "tool-params"` |
 | `id` | `string` |
 | `delta` | `string` |
+
+### `stream.fallback`
+
+Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). Journaled as `stream.fallback`.
+
+| Field | Type |
+| --- | --- |
+| `step` | `integer` |
+| `message` | `string` |
 
 ### `turn.ended`
 
@@ -212,10 +236,12 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `step.ended` | The turn's bus (stored from `step.ended`) | None: entry ids and tool names. | `step`, `status`, `results` |
 | `step.usage` | The turn's bus (stored from `assistant.message`) | None: model name and token counts. | `step`, `model`, `usage` |
 | `tool.started` | The turn's bus (stored from `tool.started`) | Tool input. | `step`, `invocationId`, `tool`, `input`, `labels`, `stage` |
+| `tool.refused` | The turn's bus (stored from `tool.refused`) | The refusal message, which may name missing permissions or quote the host's denial; the input is left out. | `step`, `invocationId`, `tool`, `reason`, `message` |
 | `tool.completed` | The turn's bus (stored from `tool.completed`) | None: input and result are left out. | `step`, `invocationId`, `tool`, `ok`, `durationMs`, `labels`, `stage` |
 | `completion.evaluated` | The turn's bus (stored from `completion.evaluated`) | The host's facts behind the verdict. | `step`, `verdict` |
 | `context.built` | The turn's bus (stored from `context.built`) | None: fingerprints, counts and tool names. | `step`, `turn`, `strategy`, `strategyVersion`, `fingerprint`, `systemFingerprint`, `estimatedTokens`, `reservedTokens`, `budgetTokens`, `compactions`, `activeTools` |
 | `decision.recorded` | The turn's bus (stored from `decision.recorded`) | Candidate descriptions; the context itself only as a hash. | `record` |
+| `stream.fallback` | The turn's bus (stored from `stream.fallback`) | The stream's error text, which may quote the provider's error. | `step`, `message` |
 | `request.prepared` | The turn, before each provider call (`TurnMemory.prepareRequest`) | The full system prompt text and every active tool declaration (and step context in `system` mode). | `version`, `runId`, `step`, `strategyVersion`, `system`, `render`, `through`, `contextFingerprint`, `tools`, `toolChoice`, `model`, `cacheKey`, `callPolicy` |
 | `turn.ended` | plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap | Failure messages, which may quote errors. | `reason`, `failure` |
 | `inbox.queued` | plugin-sessions: `Sessions.deliver` (a task's result, a host's item) | The item's content and source. | `id`, `source`, `content` |
@@ -239,7 +265,7 @@ Any other kind is a host's or a plugin's own record (`defineHostEvent`, `Session
 
 ## Reserved kinds
 
-A host event, or a `Sessions.transact` draft, may not use these names: the publish fails with `events.reserved`, the transact with `ReservedKind`. The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.
+A host event, or a `Sessions.transact` draft, may not use these names: the publish fails with `events.reserved`, the transact with `ReservedKind`. They are the journal kinds above and every bus event's name (`TURN_EVENT_NAMES`), the ones the journal never stores under their own name included (`assistant.message`, `assistant.delta`, `tool.progress`, `skills.activated`, `host`). The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.
 
 ```text
 turn.started
@@ -256,14 +282,21 @@ step.started
 step.ended
 step.usage
 tool.started
+tool.refused
 tool.completed
 completion.evaluated
 context.built
 decision.recorded
+stream.fallback
 request.prepared
 turn.ended
 inbox.queued
 inbox.dropped
+tool.progress
+skills.activated
+assistant.message
+assistant.delta
+host
 ```
 
 ## Begin codes

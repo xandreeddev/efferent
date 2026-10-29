@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
+import { TURN_EVENT_NAMES } from "../turn/turn-event.entity.js"
 import type { TurnEventName } from "../turn/turn-event.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { JsonObject } from "./session-log.entity.js"
@@ -14,7 +15,8 @@ import { JsonObject } from "./session-log.entity.js"
  * - `turn.reply` and `memory.*`: the memory log, the entries every model
  *   request is rebuilt from (model-visible ⟺ logged);
  * - the turn's observable events (`step.*`, `tool.*`, `context.built`,
- *   `decision.recorded`, `completion.evaluated`), written from the bus;
+ *   `decision.recorded`, `completion.evaluated`, `stream.fallback`),
+ *   written from the bus;
  * - the inbox (`inbox.*`);
  * - anything else: a host's own records, under the host's own names.
  * `journalSchemaOf(kind)` (the paired functions file) gives the schema each
@@ -111,8 +113,8 @@ export const MEMORY_KINDS: ReadonlyArray<string> = ["turn.started", ...Object.va
 
 /** The turn's observable events stored from its bus (a host's records keep their own names). */
 export const TURN_EVENT_KINDS: ReadonlyArray<string> = [
-  "step.started", "step.ended", "step.usage", "tool.started", "tool.completed",
-  "completion.evaluated", "context.built", "decision.recorded",
+  "step.started", "step.ended", "step.usage", "tool.started", "tool.refused", "tool.completed",
+  "completion.evaluated", "context.built", "decision.recorded", "stream.fallback",
   "request.prepared",
 ]
 
@@ -123,10 +125,21 @@ export const RECORDED_ELSEWHERE: ReadonlySet<TurnEventName> = new Set<TurnEventN
 export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued", "inbox.dropped"]
 
 /**
- * Kinds only Efferent writes: a host record under one of these names is refused.
- * `request.prepared` holds each request's full system text and tool
- * declarations (and step context in "system" mode), next to the memory
- * events: a host that redacts memory, or exports or streams session events,
- * handles it the same way.
+ * Every kind the framework writes to a session's journal: memory's, the
+ * bus events it stores, and the session's own. `journalSchemaOf(kind)` has
+ * the schema of each. `request.prepared` holds each request's full system
+ * text and tool declarations (and step context in "system" mode), next to
+ * the memory events: a host that redacts memory, or exports or streams
+ * session events, handles it the same way.
  */
-export const RESERVED_KINDS: ReadonlyArray<string> = [...MEMORY_KINDS, ...TURN_EVENT_KINDS, ...SESSION_KINDS]
+export const JOURNAL_KINDS: ReadonlyArray<string> = [...MEMORY_KINDS, ...TURN_EVENT_KINDS, ...SESSION_KINDS]
+
+/**
+ * Names only Efferent uses: a host event or a host record under one of
+ * these is refused. They are the kinds the framework writes
+ * (`JOURNAL_KINDS`) and every bus event's name (`TURN_EVENT_NAMES`), the
+ * ones never stored under their own name included (`assistant.message`,
+ * `assistant.delta`, `tool.progress`, `skills.activated`, `host`), so a host
+ * event never reads as one of the framework's.
+ */
+export const RESERVED_KINDS: ReadonlyArray<string> = [...JOURNAL_KINDS, ...TURN_EVENT_NAMES.filter((name) => !JOURNAL_KINDS.includes(name))]

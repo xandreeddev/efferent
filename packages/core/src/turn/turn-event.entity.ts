@@ -54,7 +54,24 @@ export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
   labels: Labels,
   stage: Schema.OptionFromNullOr(Schema.String),
 }).annotate({
-  description: "Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes no `tool.*` event; `step.ended.results` lists every recorded result. Journaled as `tool.started`, input included.",
+  description: "Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress` and `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes `tool.refused` instead, and no other `tool.*` event; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included.",
+})
+
+/** Why the tool registry refused a call before its handler ran. */
+export const ToolRefusalReason = Schema.Literals(["inactive", "forbidden", "denied", "call-limit", "tool-call-limit"])
+export type ToolRefusalReason = typeof ToolRefusalReason.Type
+
+export const ToolRefusedEvent = Schema.TaggedStruct("tool.refused", {
+  step: Schema.Int,
+  invocationId: Schema.String,
+  tool: Schema.String,
+  /** The decoded parameters. Not journaled. */
+  input: Schema.Unknown,
+  reason: ToolRefusalReason,
+  /** What the model is told, as the call's failed result. */
+  message: Schema.String,
+}).annotate({
+  description: "Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`.",
 })
 
 export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
@@ -164,7 +181,15 @@ export const AssistantDeltaEvent = Schema.TaggedStruct("assistant.delta", {
   id: Schema.String,
   delta: Schema.String,
 }).annotate({
-  description: "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call publishes none.",
+  description: "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none.",
+})
+
+export const StreamFallbackEvent = Schema.TaggedStruct("stream.fallback", {
+  step: Schema.Int,
+  /** The stream's error or defect as text, cut to 300 characters. */
+  message: Schema.String,
+}).annotate({
+  description: "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). Journaled as `stream.fallback`.",
 })
 
 export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {
@@ -190,6 +215,7 @@ export const TurnEvent = Schema.Union(
   [TurnStartedEvent,
   StepStartedEvent,
   ToolStartedEvent,
+  ToolRefusedEvent,
   ToolProgressEvent,
   ToolCompletedEvent,
   StepEndedEvent,
@@ -199,6 +225,7 @@ export const TurnEvent = Schema.Union(
   DecisionRecordedEvent,
   AssistantMessageEvent,
   AssistantDeltaEvent,
+  StreamFallbackEvent,
   TurnEndedEvent,
   HostEvent],
 )
@@ -208,3 +235,14 @@ export type TurnEventOf<Name extends TurnEventName> = Extract<TurnEvent, { reado
 
 /** Events that exist only for live rendering and are never journaled. */
 export const TransientTurnEvents: ReadonlyArray<TurnEventName> = ["assistant.delta", "tool.progress"]
+
+/**
+ * Every bus event's name, in the union's order. All of them are reserved
+ * (`RESERVED_KINDS`): a host event may not take one, whether the journal
+ * stores the bus event under that name or not.
+ */
+export const TURN_EVENT_NAMES: ReadonlyArray<TurnEventName> = [
+  "turn.started", "step.started", "tool.started", "tool.refused", "tool.progress", "tool.completed",
+  "step.ended", "completion.evaluated", "skills.activated", "context.built", "decision.recorded",
+  "assistant.message", "assistant.delta", "stream.fallback", "turn.ended", "host",
+]

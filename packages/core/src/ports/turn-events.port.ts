@@ -26,7 +26,14 @@ export interface SubscribeOptions {
  */
 export interface TurnEventsService {
   readonly publish: (event: TurnEvent) => Effect.Effect<void, HarnessError>
-  /** Active until the caller's scope closes. `select` narrows and decodes. */
+  /**
+   * Active until the caller's scope closes. `select` narrows and decodes.
+   * The handler runs with the services where it subscribed, without their
+   * trace state (`replayableContext`): an inline handler's spans nest under
+   * the publisher's span, a background handler's under where it subscribed
+   * (its fiber starts there), and both read the publisher's
+   * `CurrentTraceContent`.
+   */
   readonly subscribe: <E, R>(
     select: (event: TurnEvent) => Option.Option<E>,
     handle: (event: E) => Effect.Effect<void, HarnessError, R>,

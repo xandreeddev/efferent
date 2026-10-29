@@ -9,6 +9,7 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import { CurrentAgentStep } from "../loop/stepContext.js"
+import { CurrentTraceContent } from "../loop/traceContent.js"
 import { entryId } from "../memory/memory-log.entity.functions.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { InitialBatch, ToolChoice } from "../ports/capability.port.js"
@@ -57,6 +58,10 @@ interface Scenario {
   readonly before?: (tasks: TurnTasksService) => Effect.Effect<void>
   readonly dispatch?: (step: number) => Effect.Effect<void, HarnessError>
   readonly providerCall?: Effect.Effect<void>
+  /** The request's `captureTraceContent` (off by default). */
+  readonly captureTraceContent?: boolean
+  /** `CurrentTraceContent` where the loop runs (off by default). */
+  readonly ambientTraceContent?: boolean
 }
 
 interface Observed {
@@ -65,6 +70,8 @@ interface Observed {
   readonly providerCalls: ReadonlyArray<unknown>
   readonly recorded: ReadonlyArray<LogEntry>
   readonly dispatches: ReadonlyArray<number>
+  /** `CurrentTraceContent` as each provider call read it. */
+  readonly traceContent: ReadonlyArray<boolean>
 }
 
 const incomplete: CompletionVerdict = { complete: false, awaiting: [], facts: {} }
@@ -78,9 +85,11 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
   yield* events.subscribe(Option.some, (event: TurnEvent) => Ref.update(seen, (all) => [...all, event]))
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([])
   const dispatches = yield* Ref.make<ReadonlyArray<number>>([])
+  const traceContent = yield* Ref.make<ReadonlyArray<boolean>>([])
   const model = yield* LanguageModel.make({
     generateText: (options) => Ref.modify(calls, (all): [number, ReadonlyArray<unknown>] => [all.length, [...all, options.toolChoice]]).pipe(
       Effect.tap(() => scenario.providerCall ?? Effect.void),
+      Effect.tap(() => Effect.service(CurrentTraceContent).pipe(Effect.flatMap((capture) => Ref.update(traceContent, (all) => [...all, capture])))),
       Effect.map((index) => [...(scenario.script[index] ?? textReply("done"))]),
     ),
     streamText: () => Stream.die("the conformance provider does not stream"),
@@ -137,9 +146,13 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     events,
     tasks,
     cacheKey: Option.none(),
+    captureTraceContent: scenario.captureTraceContent ?? false,
   }
-  const result = yield* loop.run(request)
-  return { result, events: yield* Ref.get(seen), providerCalls: yield* Ref.get(calls), recorded: yield* Ref.get(recorded), dispatches: yield* Ref.get(dispatches) }
+  const result = yield* loop.run(request).pipe(Effect.provideService(CurrentTraceContent, scenario.ambientTraceContent ?? false))
+  return {
+    result, events: yield* Ref.get(seen), providerCalls: yield* Ref.get(calls), recorded: yield* Ref.get(recorded),
+    dispatches: yield* Ref.get(dispatches), traceContent: yield* Ref.get(traceContent),
+  }
 }).pipe(Effect.mapError((error) => new ConformanceFailure({ check: "run", message: error.message }))))
 
 const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> =>
@@ -153,7 +166,8 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * The `StepLoop` contract, as checks any implementation must pass:
  * per-step event order, recorded results on `step.ended`, planned batches
  * without a provider call, forced tool choices, awaiting verdicts, no call
- * after completion, the run's usage, and the step cap.
+ * after completion, the run's usage, the step cap, and the request's
+ * `captureTraceContent` provided to its model calls as `CurrentTraceContent`.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
   {
@@ -252,6 +266,18 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
       yield* expect("usage", published.length === 2 && sameUsage(result.usage, total), `the run reported ${JSON.stringify(result.usage)}, its ${published.length} assistant messages ${JSON.stringify(total)}`)
       yield* expect("usage", total.inputTokens === 240 && total.cacheReadTokens === 40 && total.cacheWriteTokens === 20 && total.outputTokens === 30 && total.reasoningTokens === 6 && total.totalTokens === 270,
         `the assistant messages did not carry the provider's usage: ${JSON.stringify(total)}`)
+    }),
+  },
+  {
+    name: "provides the request's captureTraceContent to its model calls as CurrentTraceContent, whatever the caller's",
+    run: Effect.gen(function* () {
+      const script = [probeCall("c1", 1), textReply("done")]
+      const on = yield* observe(loop, { script, captureTraceContent: true, ambientTraceContent: false })
+      const off = yield* observe(loop, { script, captureTraceContent: false, ambientTraceContent: true })
+      yield* expect("trace-content", on.traceContent.length === 2 && on.traceContent.every((capture) => capture),
+        `with captureTraceContent on under a caller's off, the model calls read ${JSON.stringify(on.traceContent)}`)
+      yield* expect("trace-content", off.traceContent.length === 2 && off.traceContent.every((capture) => !capture),
+        `with captureTraceContent off under a caller's on, the model calls read ${JSON.stringify(off.traceContent)}`)
     }),
   },
   {

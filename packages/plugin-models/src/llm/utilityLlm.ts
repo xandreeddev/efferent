@@ -1,7 +1,7 @@
 import { Prompt } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Effect, Layer, Option } from "effect"
-import { AuthStore, extractUsage, parseModelSelection, SettingsStore, UtilityError, UtilityLlm } from "@xandreed/core"
+import { AuthStore, extractUsage, parseModelSelection, replayableContext, SettingsStore, UtilityError, UtilityLlm } from "@xandreed/core"
 import { generateWith } from "./router.js"
 
 /**
@@ -12,7 +12,8 @@ import { generateWith } from "./router.js"
 export const UtilityLlmLive = Layer.effect(
   UtilityLlm,
   Effect.gen(function* () {
-    const context = yield* Effect.context<AuthStore | SettingsStore>()
+    // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
+    const context = replayableContext(yield* Effect.context<AuthStore | SettingsStore>())
     const http = yield* HttpClient.HttpClient
     const settings = yield* SettingsStore
 

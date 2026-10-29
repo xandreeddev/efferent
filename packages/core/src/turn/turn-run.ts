@@ -14,6 +14,7 @@ import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
 import type { CompletionVerdict } from "./turn-event.entity.js"
 import { CurrentModelCallPolicy } from "../loop/modelPolicy.js"
+import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
 import {
   checkModelRequest,
   modelRequestDescriptorOf,
@@ -53,11 +54,14 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  * `context.budget` when they leave nothing. Everything
  * where this runs (the policy's services, the turn's, a host layer's) is
  * captured: the policy callbacks, the prompt sections and the tool handlers
- * run with it.
+ * run with it, without the span current here (`replayableContext`), so
+ * their spans nest under the step that calls them. Trace content is the
+ * policy's `captureTraceContent`, else the options', else
+ * `CurrentTraceContent` here.
  */
 export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<StepRequest, HarnessError, P | TurnRunServices> =>
   Effect.gen(function* () {
-    const runServices = yield* Effect.context<P>()
+    const runServices = replayableContext(yield* Effect.context<P>())
     const inRun = <A>(effect: Effect.Effect<A, HarnessError, P>): Effect.Effect<A, HarnessError> => effect.pipe(Effect.provide(runServices))
     const memory = yield* TurnMemory
     const prompt = yield* TurnPrompt
@@ -157,6 +161,7 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       events,
       tasks,
       cacheKey: options.cacheKey ?? Option.none(),
+      captureTraceContent: policy.captureTraceContent ?? options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent)),
     } satisfies StepRequest
   })
 

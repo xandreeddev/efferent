@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { Effect, Layer, Metric, Option, Redacted, Ref, Stream, Tracer } from "effect"
-import { AuthStore, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, SettingsStore } from "@xandreed/core"
+import { AuthStore, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, SettingsStore } from "@xandreed/core"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
-import { generateWith, LanguageModelLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
+import { generateWith, LanguageModelLive, LanguageModelSelectionLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
 
 const finish = {
   type: "finish",
@@ -330,5 +330,88 @@ describe("LanguageModelLive's step resolution", () => {
     expect(result.dispatched).toEqual(result.planned)
     // The call asks for the step's provider (it has no credential here), not the newly selected one.
     expect(result.called).toContain("no credential for opencode")
+  })
+})
+
+describe("trace content and span parents", () => {
+  test("a stream's reasoning reaches its span only while CurrentTraceContent is on, read when the stream runs", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const traced = (name: string) => Stream.runDrain(tapStreamTelemetry("test:stream-content")(Stream.fromIterable(streamedParts))).pipe(Effect.withSpan(name))
+    await Effect.runPromise(Effect.all([
+      traced("redacted"),
+      traced("captured").pipe(Effect.provideService(CurrentTraceContent, true)),
+    ]).pipe(Effect.withTracer(capturingTracer(spans))))
+    expect(["redacted", "captured"].map((name) => spans.find((span) => span.name === name)?.attributes.get("llm.reasoning"))).toEqual(["[redacted]", "because…"])
+  })
+
+  test("a routed call's spans nest where it is called, not where its layer was built; its content switch is the caller's", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: () => Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "ok", reasoning_content: "thinking it over" } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }),
+    })
+    const auth = Layer.succeed(AuthStore, AuthStore.of({
+      all: Effect.succeed(new Map()),
+      get: () => Effect.succeed(Option.some({ type: "local" as const, baseUrl: `http://127.0.0.1:${server.port}/v1` })),
+      resolveKey: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      remove: () => Effect.void,
+    }))
+    const spans: Array<Tracer.NativeSpan> = []
+    await Effect.runPromise(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection("span-local:parents"))
+      // Built under one span, with the switch on there: neither is the calls'.
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelSelectionLive(selection, Option.none()).pipe(Layer.provide(auth))),
+        Effect.provideService(CurrentTraceContent, true),
+        Effect.withSpan("built-here"),
+      )
+      yield* model.generateText({ prompt: "hi" }).pipe(Effect.withSpan("called-here"))
+      yield* model.generateText({ prompt: "hi" }).pipe(Effect.provideService(CurrentTraceContent, true), Effect.withSpan("called-with-content"))
+    }).pipe(Effect.withTracer(capturingTracer(spans)))).finally(() => server.stop(true))
+    const byId = new Map(spans.map((span) => [span.spanId, span] as const))
+    const calls = spans.filter((span) => span.name === "providers.generate")
+    const nearest = (span: Tracer.NativeSpan, names: ReadonlyArray<string>): string => Option.match(Option.flatMap(span.parent, (parent) => Option.fromNullishOr(byId.get(parent.spanId))), {
+      onNone: () => "none",
+      onSome: (parent) => names.includes(parent.name) ? parent.name : nearest(parent, names),
+    })
+    const outer = ["built-here", "called-here", "called-with-content"]
+    expect(calls.map((span) => [nearest(span, outer), span.attributes.get("llm.reasoning")])).toEqual([
+      ["called-here", "[redacted]"],
+      ["called-with-content", "thinking it over"],
+    ])
+  })
+
+  test("a routed call's spans carry the annotations of where it is called, not those of where its layer was built", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: () => Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "ok" } }],
+        usage: { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 },
+      }),
+    })
+    const auth = Layer.succeed(AuthStore, AuthStore.of({
+      all: Effect.succeed(new Map()),
+      get: () => Effect.succeed(Option.some({ type: "local" as const, baseUrl: `http://127.0.0.1:${server.port}/v1` })),
+      resolveKey: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      remove: () => Effect.void,
+    }))
+    const spans: Array<Tracer.NativeSpan> = []
+    const turnIds = { "efferent.session.id": "s-1", "efferent.run.id": "run-1", "efferent.turn": 1 }
+    await Effect.runPromise(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection("span-local:annotations"))
+      // Built inside the host's annotated region, as a layer built before the turn is.
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelSelectionLive(selection, Option.none()).pipe(Layer.provide(auth))),
+        Effect.annotateSpans({ "host.tenant": "t-1" }),
+      )
+      // Called inside the turn: the host's annotations and the turn's ids.
+      yield* model.generateText({ prompt: "hi" }).pipe(Effect.annotateSpans(turnIds), Effect.annotateSpans({ "host.tenant": "t-1" }))
+    }).pipe(Effect.withTracer(capturingTracer(spans)))).finally(() => server.stop(true))
+    const call = spans.find((span) => span.name === "providers.generate")
+    expect(["efferent.session.id", "efferent.run.id", "efferent.turn", "host.tenant"].map((key) => call?.attributes.get(key))).toEqual(["s-1", "run-1", 1, "t-1"])
   })
 })

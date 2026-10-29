@@ -6,6 +6,10 @@ import { TaskRunner } from "@xandreed/core"
  * keeps none of the starting turn's services), all interrupted when the
  * layer's scope closes: an interrupted task's turn ends as interrupted.
  * With `maxMs`, each piece of work must be done that long after it starts.
+ * The work runs with the services the layer was built with, its trace state
+ * included (no `replayableContext`: a new fiber has no other): its spans nest
+ * under the span current where the layer was built, and it reads the
+ * `CurrentTraceContent` set there.
  */
 export const InProcessTaskRunnerLive = (options?: { readonly maxMs?: number }): Layer.Layer<TaskRunner> => Layer.effect(TaskRunner, Effect.gen(function* () {
   const fibers = yield* FiberSet.make<void>()

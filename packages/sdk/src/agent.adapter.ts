@@ -1,7 +1,8 @@
-import { Context, Effect, Exit, Option, Schema } from "effect"
+import { Clock, Context, Duration, Effect, Exit, Metric, Option, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import {
   cacheKeyOf,
+  CurrentTraceContent,
   CapabilitiesLive,
   Capabilities,
   ConversationMemory,
@@ -12,6 +13,7 @@ import {
   isBudgetTokens,
   normalizeUserMessage,
   openTurnTools,
+  replayableContext,
   SessionEnvironment,
   Sessions,
   StepLoop,
@@ -24,6 +26,7 @@ import {
   TurnMemory,
   TurnPrompt,
   TurnToolbox,
+  traceTurn,
   turnEndingOf,
   turnOf,
 } from "@xandreed/core"
@@ -61,7 +64,11 @@ export interface AgentConfig {
   readonly bindings?: Readonly<Record<string, string>>
   /** The host's own tools, views, skills and prompt sections. */
   readonly capabilities?: ReadonlyArray<Capability>
-  /** Process-lifetime host services plugins may require. */
+  /**
+   * Process-lifetime host services plugins may require. Their trace state
+   * is not replayed into turns (`replayableContext`): a parent span, span
+   * annotations or `CurrentTraceContent` among them are ignored.
+   */
   readonly services?: Context.Context<never>
   /** Keys every turn's services must carry; session plugins may require them. */
   readonly turnServices?: ReadonlyArray<{ readonly key: string }>
@@ -88,6 +95,22 @@ export interface AgentConfig {
   readonly budgetTokens?: number
   /** How deep event reactions may nest before the bus fails the publisher. */
   readonly maxEventDepth?: number
+  /**
+   * Whether runs' spans may carry prompt and response content
+   * (`engine.step.input`, `engine.step.output`, the models plugin's
+   * `llm.reasoning`) when a policy does not say (`TurnPolicy.captureTraceContent`).
+   * Off by default, unless `CurrentTraceContent` is provided where a run
+   * starts: around `Agent.turn`, inside `use`, or in the turn's
+   * `TurnInput.services` (one in `services` is ignored: set this instead).
+   * Hosts own consent, masking and exporter retention.
+   */
+  readonly captureTraceContent?: boolean
+  /**
+   * The keys of a turn's metadata (`NewTurn.meta`, `AdmittedTurn.meta`) its
+   * `agent.turn` span carries, as `efferent.meta.<key>`; none by default
+   * (see `TurnTraceOptions`).
+   */
+  readonly spanMeta?: ReadonlyArray<string>
 }
 
 /** A defined agent: its graph is built; each turn is composed by the host. */
@@ -109,7 +132,10 @@ export interface Agent {
    * the turn's scope with the turn's services (RunContext, TurnEvents,
    * TurnTasks and the input's `layer`) provided: the same instances the
    * tools, policy and subscriptions see. It returns `use`'s outcome with
-   * the turn's usage (every run's provider calls, summed).
+   * the turn's usage (every run's provider calls, summed). From the moment
+   * the turn is admitted it runs under its `agent.turn` span (`traceTurn`),
+   * and is counted in the `efferent.turns` and `efferent.turn.duration`
+   * metrics by its `efferent.outcome`.
    */
   readonly turn: <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -119,6 +145,33 @@ export interface Agent {
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
 const missing = (key: string) => failure("service.missing", `The agent's plugins do not provide ${key}`)
+
+/**
+ * The turns `Agent.turn` ran, once each was admitted, by how they ended
+ * (`efferent.outcome`: the `TurnEnding` reason of the turn's exit,
+ * completed, partial, failed or interrupted; a turn cancelled or reaped
+ * while it ran shows as failed, `turn.closed`), and how long each took:
+ * from its admission to its end, or, for a turn the host began (its
+ * `TurnWriter` passed in), from when `Agent.turn` took it to when
+ * `Agent.turn` returned, before the host ends it. A turn that could not
+ * begin is in neither.
+ */
+const turnCount = Metric.counter("efferent.turns", {
+  description: "turns run by Agent.turn, by outcome",
+  incremental: true,
+})
+const turnDuration = Metric.timer("efferent.turn.duration", {
+  description: "how long each turn Agent.turn ran took, by outcome",
+})
+
+/** Count the turn and time it, by how it ended. */
+const measureTurn = <A extends TurnResult, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Clock.currentTimeMillis.pipe(Effect.flatMap((started) => effect.pipe(Effect.onExit((exit) => Effect.gen(function* () {
+    const outcome = { "efferent.outcome": turnEndingOf(exit).reason }
+    const ended = yield* Clock.currentTimeMillis
+    yield* Metric.update(Metric.withAttributes(turnCount, outcome), 1)
+    yield* Metric.update(Metric.withAttributes(turnDuration, outcome), Duration.millis(ended - started))
+  })))))
 
 const entryOf = (item: Plugin | AgentPluginEntry): AgentPluginEntry => "plugin" in item ? item : { plugin: item }
 
@@ -268,6 +321,8 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    *    on success its outcome (a failed end fails the turn), on failure the
    *    error's code (the end's own failure is ignored, the turn's cause kept);
    *    an end not stored is tried again, the same, when the turn's scope closes.
+   * 1 to 9 run under the turn's `agent.turn` span (`traceTurn`), opened once
+   * the turn is admitted (after 0), and are counted and timed by outcome.
    */
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -276,7 +331,9 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     const scope = yield* Effect.scope
     const absent = turnKeys.filter((key) => !input.services.mapUnsafe.has(key))
     if (absent.length > 0) return yield* Effect.fail(failure("service.missing", `The turn does not provide ${absent.join(", ")}`))
-    const merged = Context.merge(runtime, input.services)
+    // The host's services may be a captured context: spans nest under the turn's, not where it was captured.
+    // A trace content switch among the turn's own services is where its runs start, under the agent's and the policy's.
+    const merged = Context.merge(replayableContext(Context.merge(runtime, input.services)), Context.pick(CurrentTraceContent)(input.services))
     const context = perTurn ? yield* activateGraph(beforeTurn, "session", merged, scope) : merged
     const memory = yield* required(context, ConversationMemory)
     const registry = yield* required(context, ToolRegistry)
@@ -295,6 +352,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       ...(config.budgetTokens === undefined ? {} : { budgetTokens: config.budgetTokens }),
       cacheKey: Option.orElse(Option.fromNullishOr(input.cacheKey), () => cacheKeyOf(config.cacheKeyPrefix ?? "", writer.admitted.session.id)),
       ...(input.steering === undefined ? {} : { steering: input.steering }),
+      ...(config.captureTraceContent === undefined ? {} : { captureTraceContent: config.captureTraceContent }),
     }
 
     const body = Effect.gen(function* () {
@@ -312,33 +370,37 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
         return yield* effect.pipe(Effect.provide(activated))
       }))
     })
-    const exit = yield* body.pipe(
-      // Work using the body's scoped services finishes before those services are finalized.
-      Effect.tap(() => settleTurn),
-      Effect.scoped,
-      // The body's finalizers may fork work that still needs the host's services.
-      Effect.tap(() => settleTurn),
-      provideHostLayer(Option.fromNullishOr(input.layer)),
-      // The host's finalizer work finishes while its plugin dependencies remain open.
-      Effect.tap(() => settleTurn),
-      provideTurnPlugins,
-      // Includes scope teardown even without turn-dependent plugins: a finalizer task's failure
-      // must fail the final outcome rather than follow an already recorded completed reply.
-      guardTurn,
-      Effect.provide(TurnLive(live), { local: true }),
-      Effect.provideService(ConversationMemory, memory),
-      Effect.provideService(ToolRegistry, registry),
-      Effect.provideService(StepLoop, loop),
-      Effect.provide(context),
-      untilClosed(writer),
-      // A HarnessError carried as a defect is stored with its own code, not as `turn.defect`.
-      harnessDefectsAsFailures,
-      Effect.exit,
-    )
-    // On success a failed end fails the turn; on failure the turn's own cause wins.
-    if (own && Exit.isSuccess(exit)) yield* writer.end(turnEndingOf(exit))
-    if (own && Exit.isFailure(exit)) yield* writer.end(turnEndingOf(exit)).pipe(Effect.ignore)
-    return yield* exit
+    const admitted = Effect.gen(function* () {
+      const exit = yield* body.pipe(
+        // Work using the body's scoped services finishes before those services are finalized.
+        Effect.tap(() => settleTurn),
+        Effect.scoped,
+        // The body's finalizers may fork work that still needs the host's services.
+        Effect.tap(() => settleTurn),
+        provideHostLayer(Option.fromNullishOr(input.layer)),
+        // The host's finalizer work finishes while its plugin dependencies remain open.
+        Effect.tap(() => settleTurn),
+        provideTurnPlugins,
+        // Includes scope teardown even without turn-dependent plugins: a finalizer task's failure
+        // must fail the final outcome rather than follow an already recorded completed reply.
+        guardTurn,
+        Effect.provide(TurnLive(live), { local: true }),
+        Effect.provideService(ConversationMemory, memory),
+        Effect.provideService(ToolRegistry, registry),
+        Effect.provideService(StepLoop, loop),
+        Effect.provide(context),
+        untilClosed(writer),
+        // A HarnessError carried as a defect is stored with its own code, not as `turn.defect`.
+        harnessDefectsAsFailures,
+        Effect.exit,
+      )
+      // On success a failed end fails the turn; on failure the turn's own cause wins.
+      if (own && Exit.isSuccess(exit)) yield* writer.end(turnEndingOf(exit))
+      if (own && Exit.isFailure(exit)) yield* writer.end(turnEndingOf(exit)).pipe(Effect.ignore)
+      return yield* exit
+    })
+    // From admission to the end: the turn's span encloses its plugins, layer, tools, `use`, reply and end.
+    return yield* admitted.pipe(measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] }))
   }))) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
   return { fingerprint: graphFingerprint(graph), turn }

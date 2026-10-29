@@ -44,6 +44,13 @@ export interface TurnPolicy<R = never> {
   /** Where the step context goes: closing the messages, or appended to the system prompt. */
   readonly stepContext?: "tail" | "system"
   readonly correctives?: Correctives
+  /**
+   * Whether this run's spans may carry prompt and response content
+   * (`engine.step.input`, `engine.step.output`, the models plugin's
+   * `llm.reasoning`). Overrides the agent's `captureTraceContent`; off by
+   * default. Hosts own consent, masking and exporter retention.
+   */
+  readonly captureTraceContent?: boolean
 }
 
 export interface TurnOutcome {
@@ -145,7 +152,16 @@ export interface NewTurn {
  */
 export interface TurnInput<A = never, E = never> {
   readonly turn: TurnWriter | NewTurn
-  /** This turn's services: the model, per-turn budgets, data ports… */
+  /**
+   * This turn's services: the model, per-turn budgets, data ports… They may
+   * be a captured context: `Agent.turn` provides them without their trace
+   * state (`replayableContext`), so a parent span or span annotations among
+   * them are ignored (the turn's spans nest under the span where
+   * `Agent.turn` is called; wrap that call in `Effect.withParentSpan` for
+   * another parent). A `CurrentTraceContent` among them is kept: it is
+   * where the turn's runs start, under the agent's and the policy's
+   * `captureTraceContent`.
+   */
   readonly services: Context.Context<never>
   /** A system prompt prefix before the contributed sections. */
   readonly system?: string

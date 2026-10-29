@@ -71,6 +71,15 @@ export type LoopEvent =
       /** The schema-encoded result — the persisted, provider-visible form. */
       readonly encoded?: unknown
     }
+  /** A streamed call failed before its first part: this step, and every
+   *  later step of the run, is answered by `generateText` instead. Once per
+   *  run at most; `message` is the stream's error as text, cut to 300
+   *  characters. */
+  | {
+      readonly type: "stream_fallback"
+      readonly turnIndex: number
+      readonly message: string
+    }
   /** The mid-run fold: the buffer outgrew the healthy context range and the
    *  older turns were replaced by a handoff summary — `kept` verbatim
    *  messages survive after it. A load-side rewrite; nothing is deleted. */

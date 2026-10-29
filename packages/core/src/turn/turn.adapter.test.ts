@@ -114,6 +114,14 @@ describe("TurnLive", () => {
     expect(JSON.stringify(exit)).toContain("events.reserved")
   })
 
+  test.each(["assistant.message", "tool.progress", "tool.refused", "stream.fallback", "host"])("nor a bus event's name (%s), stored as itself or not", async (name) => {
+    const exit = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      return yield* Effect.result(inTurn(recorded, RunContext.pipe(Effect.flatMap((run) => run.events.publish({ _tag: "host", name, data: {} })))))
+    }))
+    expect(JSON.stringify(exit)).toContain("events.reserved")
+  })
+
   test("the tools open once, with the opener's services, and RunContext.activate uses them", async () => {
     const seen = await Effect.runPromise(Effect.gen(function* () {
       const recorded = yield* begun()

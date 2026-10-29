@@ -79,21 +79,108 @@ plugin on both. Publishing is a separate release action:
 against the current commit and a clean tree, then publishes in dependency order; it is a
 dry run unless `--publish` is passed (see [publishing](../CONTRIBUTING.md#publishing)).
 
-## Agent-loop trace content
+## Traces and metrics
 
-The loop retains provider-neutral `engine.run` and `engine.turn` spans. Each step has its one-based `engine.step`, selected tool names, finish reason and measured token usage. `captureTraceContent: true` explicitly enables `engine.step.input` (the exact Effect prompt and active tools) and `engine.step.output` (model/tool response content and usage). Content capture is disabled by default; hosts own consent, masking and exporter retention, and can map these attributes into their observability backend without changing the loop protocol. An image is never traced: a prompt's `file` part keeps its media type and the length of its data, a `Media` value its fingerprint.
+The packages record spans and metrics through Effect's own `Tracer` and
+metric registry, outside evals too. Nothing is exported until the host
+provides an exporter around its program, for example the OTLP layers of
+`effect/observability` (`OtlpTracer`, `OtlpMetrics`); a serverless host
+flushes them before it responds.
 
-```ts
-runLoop({
-  system,
-  messages,
-  toolkit,
-  captureTraceContent: true,
-  maxSteps: 8,
-})
+**The span tree.** Each turn `Agent.turn` runs is one trace subtree under the
+caller's span, if any:
+
+```text
+agent.turn                       Agent.turn, or a host's composition with traceTurn(writer)
+└─ engine.run                    one run of the step loop (turn.run)
+   └─ engine.turn                one step (engine.step is its one-based number)
+      └─ LanguageModel.*         effect/ai's span of the model call
+         ├─ providers.generate   the models plugin's call (model, usage, finish reason)
+         └─ tool.<name>          the tool registry's call, refused calls included
+            └─ (the handler's own spans)
 ```
 
-The trace snapshots do not modify the message buffer, tool arguments, persistence callbacks or cancellation scopes. Exporters should preserve parent IDs when naming steps or grouping use cases. A timed-out evaluation awaits scoped cleanup; browser/provider adapters must bound their own finalizers rather than leave paid work running in disconnected fibers.
+`agent.turn` starts once the turn is admitted (after `Sessions.begin`; a turn
+that could not begin has no span) and encloses the turn-dependent plugins,
+the host's layer, the tools opened, `use`, the reply and the end. It carries
+`efferent.session.id`, `efferent.run.id`, `efferent.turn`,
+`gen_ai.conversation.id` (the session), `efferent.origin` (user or inbox)
+and, on a resume, `efferent.resumes` (the turn it resumes),
+and ends with `efferent.outcome` (completed, partial, failed or interrupted,
+`turnEndingOf` the turn's exit; a turn cancelled or reaped while it ran
+shows as failed with `turn.closed`), `efferent.failure.code` when the turn
+failed or was interrupted (`turn.interrupted`), and the turn's usage as
+`efferent.usage.{input,output,cache_read,cache_write,reasoning,total}_tokens`:
+the `TurnResult`'s when it returned, what its provider calls spent before it
+failed otherwise (`guardTurn` records that on the span it runs under).
+Every span under it carries the first three, so a backend can find a turn's
+spans by session, run or turn. The turn's metadata (`NewTurn.meta`) stays
+out of the trace unless the agent names keys in `spanMeta`: each named key
+the turn has becomes `efferent.meta.<key>` (a string, number or boolean as
+is, anything else as JSON). A host composing its own turn wraps everything
+after its begin in `traceTurn(writer, { spanMeta })` to get the same span.
+
+Spans nest where their work runs, not where a context was captured. The
+framework captures contexts to run work later (the services a tool handler
+runs with, a policy's callbacks, a model layer's dependencies, the services
+`Turn.run` replays, a bus subscriber's, the turn's `TurnInput.services`)
+and drops the trace state of where it captured them before providing them
+again (`replayableContext`): the parent span (`Tracer.ParentSpan`), the
+span annotations and links, and `CurrentTraceContent` (`Agent.turn` keeps
+one the turn's `TurnInput.services` carry, see trace content). A tool call stays
+under the model call that made it and a handler's spans under its
+`tool.<name>`, a host span wrapped around `turn.run` is the parent of its
+`engine.run`, a model layer built under a span does not pull its calls
+there, and annotations the host set where it built a layer or captured the
+turn's services (`Effect.annotateSpans`) do not replace the turn's ids. An
+inline bus subscriber's spans nest under the publisher's. A parent span in
+`TurnInput.services` or `AgentConfig.services` is ignored: to put a turn
+under another span, wrap the `Agent.turn` call in `Effect.withParentSpan`.
+The in-process task runner is the exception: it starts each piece of work
+on a new fiber with the services it was built with, so the work nests under
+the span current where the runner was built. Host code that captures a
+context to provide it later passes it through `replayableContext` too.
+
+**Metrics** (Effect `Metric`s, exported with the spans' exporter):
+
+| Metric | Attributes | Counts |
+|---|---|---|
+| `efferent.turns` | `efferent.outcome` | turns `Agent.turn` ran, once admitted |
+| `efferent.turn.duration` | `efferent.outcome` | each such turn's time from admission to its end, in milliseconds; for a turn the host began (its `TurnWriter` passed in), from when `Agent.turn` took it to when `Agent.turn` returned, before the host ends it |
+| `engine.runs` | `engine.outcome`, `engine.reason` | step-loop runs |
+| `engine.tool_calls` | `engine.tool`, `engine.ok` | tool results the loop received |
+| `engine.corrections` | `engine.kind`: `malformed`, `degenerate-nudge`, `stream-fallback` | the loop's self-corrections, a stream falling back included |
+| `llm.requests` | `llm.model`, `outcome` (`ok`, `error`), `fallback` (`true` for the fallback model's call, `false` otherwise; non-streamed calls only) | the models plugin's calls, after retries, utility calls included |
+| `llm.request.duration`, `llm.usage.*_tokens` | `llm.model` | the same calls' time and tokens |
+
+No metric carries a session, run or turn id: those are on the spans.
+
+**Trace content.** Prompts and responses stay out of spans unless a run
+captures them: `engine.step.input` (the exact prompt and the active tools)
+and `engine.step.output` (the response content and usage) on each
+`engine.turn`, and the models plugin's `llm.reasoning` (the model's
+reasoning, first 500 characters; `[redacted]` otherwise). A run captures them
+when its policy's `captureTraceContent` says so, else the agent's
+(`AgentConfig.captureTraceContent`), else the `CurrentTraceContent`
+reference where the run starts (provided around `Agent.turn`, inside `use`,
+or in the turn's `TurnInput.services`; one in `AgentConfig.services` is
+ignored); all are off by default. The step loop
+provides the run's choice as `CurrentTraceContent` to everything the run
+calls, and the models plugin reads it per call (`EFFERENT_TRACE_CONTENT=1`
+still turns `llm.reasoning` on for the whole process). An image is never
+traced: a prompt's `file` part keeps its media type and the length of its
+data, a `Media` value its fingerprint. Hosts own consent, masking and
+exporter retention.
+
+```ts
+const agent = yield* Agent.define({ ...config, captureTraceContent: false, spanMeta: ["requestId"] })
+yield* agent.turn(input, (turn) => turn.run({ captureTraceContent: true }).pipe(/* … */))
+```
+
+Capturing trace content does not modify the message buffer, tool arguments,
+persistence callbacks or cancellation scopes. A timed-out evaluation awaits scoped
+cleanup; browser/provider adapters must bound their own finalizers rather
+than leave paid work running in disconnected fibers.
 
 ## Token usage
 
@@ -447,13 +534,22 @@ of it and keeps its `keepRatio`; the digester ignores it. Every step's
 and the messages' `estimatedTokens`.
 
 **Events and tasks.** `TurnEvent` is one typed union: `turn.started`,
-`step.started`, `tool.started`, `tool.progress` (transient), `tool.completed`
-(decoded result and encoded form), `step.ended` (the recorded results by entry
-id), `completion.evaluated`, `skills.activated`, `context.built`,
+`step.started`, `tool.started`, `tool.refused` (a call the registry refused
+before its handler ran: the tool is inactive, a permission is missing, the
+host's `ActionPolicy` denied it, or a call limit is reached),
+`tool.progress` (transient), `tool.completed` (decoded result and encoded
+form), `step.ended` (the recorded results by entry id, refused calls
+included), `completion.evaluated`, `skills.activated`, `context.built`,
 `decision.recorded`, `assistant.message`, `assistant.delta` (transient),
-`turn.ended`, and host events from `defineHostEvent`; the
-[event reference](event-reference.md) lists each one's payload, who
-publishes it and how it is stored. A tool handler reports progress with
+`stream.fallback` (a streamed call failed before its first part, and the run
+goes on without streaming), `turn.ended`, and host events from
+`defineHostEvent`; the [event reference](event-reference.md) lists each
+one's payload, who publishes it and how it is stored. Every call the
+registry handles has its `invocationId` (`<runId>:call:<n>`), a refused one
+too: its `tool.refused` carries it, and a call that runs shares it across
+`tool.started`, `tool.progress` and `tool.completed`. A host event may not
+take any of these names, nor a kind the journal stores (`RESERVED_KINDS`):
+its publish fails with `events.reserved`. A tool handler reports progress with
 `publishToolProgress(channel, text)` (`stdout` or `stderr` for a command's
 output as it arrives, `status` for anything else): it reads
 `CurrentToolInvocation`, which the tool registry sets around each call, so
@@ -479,8 +575,9 @@ the turn. Use it for reactions whose effects the next step does not need.
 **Where it is stored.** The turn's `TurnWriter` is the bus's first
 subscriber: every event except the transient ones (`assistant.delta`,
 `tool.progress`) is stored in the session's
-log under its own kind (see the vocabulary below), and `tool.completed` keeps
-neither the input nor the result, which memory holds. Events and memory
+log under its own kind (see the vocabulary below), `tool.completed` keeps
+neither the input nor the result, which memory holds, and `tool.refused`
+keeps no input. Events and memory
 entries go through the writer's one ordered write-behind queue. Producers
 queue and go on; one writer fiber stores items strictly in queue order,
 consecutive appends in one commit. The turn waits only at flushes:
@@ -713,8 +810,10 @@ A host can run the match alongside other work and apply it later, or drop
 it. Probabilistic selection never
 authorizes: `resolveCapabilities` checks every activation against the turn's
 `PermissionGrants` (or the configured grants). Every call passes one wrapper
-(active set, grants, `ActionPolicy`, per-turn budgets, read/write lanes) that
-publishes `tool.started` and `tool.completed` before it returns.
+(active set, grants, `ActionPolicy`, per-turn budgets, read/write lanes): a
+call that runs publishes `tool.started` and `tool.completed` before it
+returns (its handler's `tool.progress` between them), and a refused call
+publishes `tool.refused` instead.
 
 Tools only grow within a conversation and are sent in activation order.
 Restrict a step with a tool choice or a handler failure, never by removing a
@@ -883,9 +982,12 @@ The lifecycle is functions over them: `openTurnTools`, `turnTools` (the
 host's view), `settleTurn` (join the tasks, drain the reactions, until quiet),
 `finishTurn(outcome)` (persist the reply, drain, flush), `guardTurn(body)`
 (settle on success, else finish as failed keeping the cause; on success it
-returns the `TurnResult`, the outcome with `RunContext.usage`), `turnOf(options)`
-(the `Turn` a host's code gets), and `stepRequestOf(policy, options)` and
-`runTurnLoop(policy, options)` for one run of the step loop. `cacheKeyOf(prefix,
+returns the `TurnResult`, the outcome with `RunContext.usage`; on failure it
+puts the usage so far on the current span), `turnOf(options)`
+(the `Turn` a host's code gets), `stepRequestOf(policy, options)` and
+`runTurnLoop(policy, options)` for one run of the step loop, and
+`traceTurn(writer, { spanMeta })` (the turn's `agent.turn` span around
+everything after the begin, see traces and metrics). `cacheKeyOf(prefix,
 conversation)` builds the prompt-cache key.
 
 `Agent.turn` is, in order:
@@ -896,7 +998,7 @@ const body = Effect.gen(function* () {
   yield* openTurnTools                            // 5. inside the host layer: its services reach the handlers
   return yield* use(yield* turnOf(runOptions))    // 6. the host's code
 })
-body.pipe(
+const run = body.pipe(
   Effect.tap(() => settleTurn),                   // body tasks finish before its scoped services close
   Effect.scoped,
   Effect.tap(() => settleTurn),                   // body finalizer work still has the host's services
@@ -910,7 +1012,15 @@ body.pipe(
   Effect.provideService(StepLoop, loop),
   Effect.provide(context),                        // the graph's services and the turn's
   untilClosed(writer),
+  harnessDefectsAsFailures,
+  Effect.exit,
 )
+const admitted = Effect.gen(function* () {
+  const exit = yield* run
+  if (own) yield* writer.end(turnEndingOf(exit))  // 9. a turn begun here (its failure ignored when the turn failed)
+  return yield* exit
+})
+admitted.pipe(measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] })) // 1. to 9. under agent.turn, counted and timed
 ```
 
 The order matters. The message is persisted before the matcher runs, because
@@ -931,10 +1041,13 @@ needs the final outcome subscribes in the caller's outer scope, using
 `Scope.provide(observerScope)`, and uses services that remain open there.
 A host composing by hand uses the same pieces over a
 `stackPlugins` stack instead of a graph, builds session plugins such as
-`MemoryDigestLive()` per turn over the turn's services, and ends a turn it
+`MemoryDigestLive()` per turn over the turn's services, ends a turn it
 began with `writer.end(turnEndingOf(exit))`, taking the exit after
 `harnessDefectsAsFailures` (failing the turn when that end fails on
-success, as `Agent.turn` does). `turnConformance`
+success, as `Agent.turn` does), and wraps everything after its begin, that
+end included, in `traceTurn(writer, { spanMeta })` for the turn's
+`agent.turn` span, with `guardTurn` directly under it so a failed turn's
+usage lands on that span. `turnConformance`
 checks a composition: the writer first, the message before the matcher's
 history, the reply and the turn's end exactly once on success, failure and
 interrupt, tasks joined before the reply, a model-driven turn's
@@ -1120,10 +1233,11 @@ turn). A writer whose scope closes unended ends the turn as failed
 (`turn.unended`), or as interrupted (`turn.interrupted`) when the scope was
 interrupted; a begin interrupted after its opening commit ends it as
 interrupted (`turn.interrupted`) too. Outside a turn, `Sessions.transact(address,
-decide)` is the same check-then-append (a page action, a setting); kinds only
-the framework writes are refused there (`RESERVED_KINDS`; among them
-`request.prepared` holds each request's full system text and tool
-declarations, see durable model requests).
+decide)` is the same check-then-append (a page action, a setting); the
+framework's journal kinds (`JOURNAL_KINDS`; among them `request.prepared`
+holds each request's full system text and tool declarations, see durable
+model requests) and every bus event's name are refused there
+(`RESERVED_KINDS`).
 
 **Ownership** is configured:
 
@@ -1174,7 +1288,11 @@ duplicate, a key conflict, a busy session or a turn that cannot be resumed
 **The vocabulary.** Each kind has one durable producer (the generated
 [event reference](event-reference.md) has every kind's payload, its
 sensitive content, the exact `RESERVED_KINDS` and the begin codes;
-`journalSchemaOf(kind)` gives each framework kind's schema):
+`journalSchemaOf(kind)` gives each framework kind's schema). The kinds the
+framework writes are `JOURNAL_KINDS`; `RESERVED_KINDS` adds every bus
+event's name (`TURN_EVENT_NAMES`), the ones never stored as themselves
+included (`assistant.message`, `assistant.delta`, `tool.progress`,
+`skills.activated`, `host`), and a host record may take none of them:
 
 | Kind | Written by |
 | --- | --- |
@@ -1182,7 +1300,7 @@ sensitive content, the exact `RESERVED_KINDS` and the begin codes;
 | `turn.reply` | memory (`persistReply`) |
 | `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`: the failing error's code; otherwise one of the framework's codes, `turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`, or a code the closer passes to `end` itself, such as plugin-tasks' `task.turn` and `task.deadline`) | the writer's `end` (`turnEndingOf` the turn's exit), its scope, a cancel or a reap |
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
-| `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded` | the turn's bus |
+| `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.refused`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded`, `stream.fallback` | the turn's bus |
 | `request.prepared` (the request's header: system text, tool declarations, model, cache key) | the turn, before each provider call (`TurnMemory.prepareRequest`) |
 | `inbox.queued`, `inbox.dropped` | `deliver`; a claim that failed too often |
 | `task.started`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |

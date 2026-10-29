@@ -105,6 +105,20 @@ step's `context.built` event records it. The [event reference](/docs/concepts/ev
 lists the framework's stored failure codes; a turn that fails with a
 host's or a plugin's error stores that error's code.
 
+Each admitted turn runs under an `agent.turn` span carrying
+`efferent.session.id`, `efferent.run.id` and `efferent.turn`, which every
+span under it repeats (the step loop's `engine.run` and `engine.turn`, the
+model call, each `tool.<name>` and the handler's own spans, each nested
+where it runs). It ends with `efferent.outcome`, the failure's code and the
+turn's usage, and the metrics `efferent.turns` and `efferent.turn.duration`
+count it by outcome. The turn's metadata reaches the span only for the keys
+the agent names in `spanMeta`, and prompts and responses only when a run
+captures trace content (`captureTraceContent` on the agent or the policy;
+off by default). A host composing its own turn gets the same span with
+`traceTurn(writer)`. Spans and metrics are exported by whatever exporter the
+host provides around its program, such as `effect/observability`'s OTLP
+layers.
+
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere.
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores
 them in a SQLite file on Bun; any other store can implement the `SessionLog`

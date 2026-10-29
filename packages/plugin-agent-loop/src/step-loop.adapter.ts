@@ -20,7 +20,10 @@ const resultsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<StepResult> 
  * evaluates the host's completion (`completion.evaluated`). A verdict that
  * awaits tasks joins them and is evaluated once more. The plan for a step is
  * computed once and serves the model, the messages and the tool choice; a
- * host-planned first batch runs without a provider call or a plan.
+ * host-planned first batch runs without a provider call or a plan. A stream
+ * that fails before its first part publishes `stream.fallback` once, and the
+ * run goes on without streaming. The run's `captureTraceContent` is
+ * `CurrentTraceContent` for its model calls.
  */
 export const runSteps = (request: StepRequest): Effect.Effect<RunResult, HarnessError> => Effect.gen(function* () {
   const model = yield* Option.match(Context.getOption(request.handlers, LanguageModel.LanguageModel), {
@@ -80,6 +83,9 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
         })
       }).pipe(Effect.orDie)
     }
+    if (event.type === "stream_fallback") {
+      return request.events.publish({ _tag: "stream.fallback", step: event.turnIndex, message: event.message }).pipe(Effect.orDie)
+    }
     if (event.type === "turn_end") {
       const ending = endStep(event.turnIndex, event.status)
       // A step that already failed must not fail again on its way out.
@@ -96,6 +102,7 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
     toolConcurrency: request.limits.toolConcurrency,
     streaming: request.limits.streaming,
     requireCompletion: request.limits.requireCompletion,
+    captureTraceContent: request.captureTraceContent,
     pollableTools: request.tools.pollable,
     ...Option.match(request.correctives, { onNone: () => ({}), onSome: (correctives) => ({ correctives }) }),
     ...Option.match(request.initial, { onNone: () => ({}), onSome: (batch) => ({ initialStep: batch.calls }) }),

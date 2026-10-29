@@ -115,4 +115,10 @@ export interface TurnRunOptions {
   readonly cacheKey?: Option.Option<string>
   /** A mid-run user message, consulted between steps. */
   readonly steering?: Effect.Effect<Option.Option<string>, HarnessError>
+  /**
+   * Whether the run's spans may carry prompt and response content
+   * (`StepRequest.captureTraceContent`) when the policy does not say; when
+   * neither does, `CurrentTraceContent` where the run starts (off by default).
+   */
+  readonly captureTraceContent?: boolean
 }

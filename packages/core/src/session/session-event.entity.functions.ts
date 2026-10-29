@@ -4,7 +4,7 @@ import type { TokenUsage } from "../domain/token-usage.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { EntryId, LogBody, LogEntry } from "../memory/memory-log.entity.js"
 import { ModelRequestHeader } from "../turn/model-request.entity.js"
-import { ContextBuiltEvent, ToolCompletedEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
+import { ContextBuiltEvent, ToolCompletedEvent, ToolRefusedEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
 import type { TurnEvent as TurnEventType } from "../turn/turn-event.entity.js"
 import {
   InboxDroppedData,
@@ -90,8 +90,17 @@ export const entriesOfEvents = (events: ReadonlyArray<SessionLogEvent>): Effect.
 /** A completed tool's input and result are in the memory log (the call and its `memory.tool-result`). */
 const OMITTED_FROM_TOOL_COMPLETED = ["result", "encoded", "input"] as const
 
-const withoutPayload = (data: Record<string, unknown>): JsonObject =>
-  Object.fromEntries(Object.entries(data).filter(([key]) => !(OMITTED_FROM_TOOL_COMPLETED as ReadonlyArray<string>).includes(key)))
+/** A refused call's input is in the memory log too (the model's call); the refusal keeps why. */
+const OMITTED_FROM_TOOL_REFUSED = ["input"] as const
+
+const without = (omitted: ReadonlyArray<string>) => (data: Record<string, unknown>): JsonObject =>
+  Object.fromEntries(Object.entries(data).filter(([key]) => !omitted.includes(key)))
+
+/** What a bus event stored under its own name leaves out. */
+const storedPayload: ReadonlyMap<string, (data: Record<string, unknown>) => JsonObject> = new Map([
+  ["tool.completed", without(OMITTED_FROM_TOOL_COMPLETED)],
+  ["tool.refused", without(OMITTED_FROM_TOOL_REFUSED)],
+])
 
 const encodeStepUsage = Schema.encodeSync(StepUsageData)
 const decodeStepUsage = Schema.decodeUnknownEffect(StepUsageData)
@@ -112,7 +121,8 @@ export const turnUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number
  * The stored form of one bus event of turn `turn`: its name and encoded
  * payload. Transient events are not stored; a host's event keeps its name
  * and data; an assistant message is stored only as the step's model and
- * usage (its content is memory's `memory.message`).
+ * usage (its content is memory's `memory.message`); `tool.completed` leaves
+ * out its input and result, `tool.refused` its input.
  */
 export const draftOfTurnEvent = (turn: number, event: TurnEventType): Option.Option<SessionDraft> => {
   if (TransientTurnEvents.includes(event._tag) || RECORDED_ELSEWHERE.has(event._tag)) return Option.none()
@@ -121,7 +131,7 @@ export const draftOfTurnEvent = (turn: number, event: TurnEventType): Option.Opt
     return Option.some({ kind: "step.usage", turn: Option.some(turn), data: { ...encodeStepUsage({ step: event.step, model: event.model, usage: event.usage }) } })
   }
   const { _tag, ...data } = encodeTurnEvent(event)
-  return Option.some({ kind: _tag, turn: Option.some(turn), data: _tag === "tool.completed" ? withoutPayload(data) : data })
+  return Option.some({ kind: _tag, turn: Option.some(turn), data: Option.match(Option.fromNullishOr(storedPayload.get(_tag)), { onNone: () => data, onSome: (stored) => stored(data) }) })
 }
 
 /**
@@ -152,12 +162,13 @@ const laterKeys: ReadonlyMap<string, Schema.Codec<unknown, unknown>> = new Map<s
 /**
  * The stored schema of each bus event in `TURN_EVENT_KINDS` that is stored
  * whole under its own name (`step.usage` is `StepUsageData`, `tool.completed`
- * drops its payload). A bus event left out of `TURN_EVENT_KINDS` has none.
- * A key an older release did not store is optional (`laterKeys`).
+ * and `tool.refused` drop their payload). A bus event left out of
+ * `TURN_EVENT_KINDS` has none. A key an older release did not store is
+ * optional (`laterKeys`).
  */
 const busSchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unknown>]> = TurnEvent.members.flatMap((member) => {
   const tag = member.fields._tag.schema.literal
-  if (tag === "tool.completed" || !TURN_EVENT_KINDS.includes(tag)) return []
+  if (storedPayload.has(tag) || !TURN_EVENT_KINDS.includes(tag)) return []
   return [[tag, laterKeys.get(tag) ?? Schema.Struct(Struct.omit(member.fields, ["_tag"]))] as const]
 })
 
@@ -169,13 +180,16 @@ const journalSchemas: ReadonlyMap<string, Schema.Codec<unknown, unknown>> = new 
   ["inbox.queued", InboxQueuedData],
   ["inbox.dropped", InboxDroppedData],
   ["tool.completed", Schema.Struct(Struct.omit(ToolCompletedEvent.fields, ["_tag", ...OMITTED_FROM_TOOL_COMPLETED]))],
+  ["tool.refused", Schema.Struct(Struct.omit(ToolRefusedEvent.fields, ["_tag", ...OMITTED_FROM_TOOL_REFUSED]))],
   ...memorySchemas,
   ...busSchemas,
 ])
 
 /**
  * The schema the framework stores a journal kind's `data` with: every kind
- * in `RESERVED_KINDS` has one. None for any other kind (a host's records, a
- * plugin's own, such as the tasks plugin's `task.*`).
+ * in `JOURNAL_KINDS` has one. None for any other kind: a host's records, a
+ * plugin's own (such as the tasks plugin's `task.*`), and the reserved bus
+ * names never stored under their own name (`assistant.message`,
+ * `tool.progress`…).
  */
 export const journalSchemaOf = (kind: string): Option.Option<Schema.Codec<unknown, unknown>> => Option.fromNullishOr(journalSchemas.get(kind))

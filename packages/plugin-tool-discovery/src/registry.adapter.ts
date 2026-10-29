@@ -17,6 +17,7 @@ import {
   HarnessError,
   IntentMatcher,
   recordDecision,
+  replayableContext,
   resolveCapabilities,
   RunContext,
   ToolCallId,
@@ -32,6 +33,7 @@ import type {
   RunTools,
   SkillDefinition,
   SkillMatch,
+  ToolRefusalReason,
   ToolView,
   ToolViews,
   UserMessage,
@@ -94,7 +96,10 @@ export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Opti
  * The registry over every capability. Built once; each turn opens it
  * where its services are, which the handlers then run with: the RunContext
  * (events, memory), and the optional IntentMatcher, PermissionGrants and
- * ActionPolicy of that turn.
+ * ActionPolicy of that turn. Every call gets its invocation id first; a call
+ * refused before its handler runs (an inactive tool, a missing permission,
+ * a denial, a call limit) publishes `tool.refused` and fails with the
+ * refusal, which the model reads as the call's result.
  */
 export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArray<Capability>) => Effect.gen(function* () {
   // Tier 3 exists only when some skill ships references; otherwise its schema is dead weight.
@@ -172,8 +177,9 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
 
   const open = (session: MemorySession) => Effect.gen(function* () {
     const run = yield* RunContext
-    // What the handlers run with: everything where the tools are opened.
-    const runServices = yield* Effect.context<never>()
+    // What the handlers run with: everything where the tools are opened, but the span there:
+    // a call's spans nest under the step that makes it, a handler's under its `tool.*` span.
+    const runServices = replayableContext(yield* Effect.context<never>())
     const matcher = yield* Effect.serviceOption(IntentMatcher)
     const policy = yield* Effect.serviceOption(ActionPolicy)
     const grants = yield* Option.match(yield* Effect.serviceOption(PermissionGrants), {
@@ -226,27 +232,36 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
     const wrap = (entry: RegisteredTool, handler: (params: unknown) => Effect.Effect<unknown, unknown, unknown>) => (params: unknown) => Effect.gen(function* () {
       const name = entry.tool.name
       const isOwn = own.includes(entry)
-      if (!isOwn && !(yield* Ref.get(active)).includes(name)) {
-        const providers = skillsForTool(name)
-        return yield* Effect.fail(failure("ToolInactive", providers.length === 0 ? `${name} is not available in this conversation`
-          : `${name} is not loaded yet; call load_skill with one of: ${providers.join(", ")}`))
-      }
-      const missing = entry.annotations.permissions.filter((permission) => !grants.has(permission))
-      if (missing.length > 0) return yield* Effect.fail(failure("Forbidden", `${name} requires ${missing.join(", ")}`))
-      const authorized: Effect.Effect<void, HarnessError> = Option.match(policy, { onNone: () => Effect.void, onSome: (service) => service.authorize(name, params) })
-      yield* authorized.pipe(Effect.mapError((error) => failure("Denied", error.message)))
-      const counts = yield* Ref.get(calls)
-      const total = [...counts.values()].reduce((sum, value) => sum + value, 0)
-      if (total >= config.maxCallsPerRun) return yield* Effect.fail(failure("CallLimit", `The turn's ${config.maxCallsPerRun}-call limit is reached; deliver with what you have`))
-      if (Option.isSome(entry.annotations.maxCallsPerRun) && (counts.get(name) ?? 0) >= entry.annotations.maxCallsPerRun.value) {
-        return yield* Effect.fail(failure("ToolCallLimit", `${name} may be called at most ${entry.annotations.maxCallsPerRun.value} times per turn`))
-      }
-      yield* Ref.update(calls, (all) => new Map([...all, [name, (all.get(name) ?? 0) + 1]]))
+      // The call's id first: a refused call has one too, and its `tool.refused` carries it.
       const sequence = yield* Ref.getAndUpdate(invocation, (value) => value + 1)
       const invocationId = `${run.runId}:call:${sequence}`
+      const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => 0)
+      /** Publish the refusal, then fail the call with it: the model reads it as the call's result. */
+      const refuse = (reason: ToolRefusalReason, error: string, message: string) =>
+        run.events.publish({ _tag: "tool.refused", step, invocationId, tool: name, input: params, reason, message }).pipe(
+          // A subscriber failure fails the turn, never the tool call (which the model would see).
+          Effect.orDie,
+          Effect.andThen(Effect.fail(failure(error, message))),
+        )
+      if (!isOwn && !(yield* Ref.get(active)).includes(name)) {
+        const providers = skillsForTool(name)
+        return yield* refuse("inactive", "ToolInactive", providers.length === 0 ? `${name} is not available in this conversation`
+          : `${name} is not loaded yet; call load_skill with one of: ${providers.join(", ")}`)
+      }
+      const missing = entry.annotations.permissions.filter((permission) => !grants.has(permission))
+      if (missing.length > 0) return yield* refuse("forbidden", "Forbidden", `${name} requires ${missing.join(", ")}`)
+      const authorized: Effect.Effect<void, HarnessError> = Option.match(policy, { onNone: () => Effect.void, onSome: (service) => service.authorize(name, params) })
+      const denial = yield* authorized.pipe(Effect.match({ onFailure: Option.some, onSuccess: () => Option.none<HarnessError>() }))
+      if (Option.isSome(denial)) return yield* refuse("denied", "Denied", denial.value.message)
+      const counts = yield* Ref.get(calls)
+      const total = [...counts.values()].reduce((sum, value) => sum + value, 0)
+      if (total >= config.maxCallsPerRun) return yield* refuse("call-limit", "CallLimit", `The turn's ${config.maxCallsPerRun}-call limit is reached; deliver with what you have`)
+      if (Option.isSome(entry.annotations.maxCallsPerRun) && (counts.get(name) ?? 0) >= entry.annotations.maxCallsPerRun.value) {
+        return yield* refuse("tool-call-limit", "ToolCallLimit", `${name} may be called at most ${entry.annotations.maxCallsPerRun.value} times per turn`)
+      }
+      yield* Ref.update(calls, (all) => new Map([...all, [name, (all.get(name) ?? 0) + 1]]))
       const labels = entry.annotations.labels
       const stage = entry.annotations.stage
-      const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => 0)
       // A subscriber failure fails the turn, never the tool call (which the model would see).
       yield* run.events.publish({ _tag: "tool.started", step, invocationId, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
       const started = yield* Clock.currentTimeMillis

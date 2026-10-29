@@ -2,7 +2,7 @@ import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Clock, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
 import type { Context } from "effect"
-import { AuthStore, CurrentModelCallPolicy, describeModel, extractUsage, formatModelSelection, HarnessError, parseModelSelection, resolvingModel, SettingsStore } from "@xandreed/core"
+import { AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, HarnessError, parseModelSelection, replayableContext, resolvingModel, SettingsStore } from "@xandreed/core"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, endpointOwnKey, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
@@ -107,8 +107,14 @@ const countUsage = (label: string, usage: TokenUsage) =>
     { discard: true },
   )
 
-const tracedContent = (content: string): string =>
-  process.env["EFFERENT_TRACE_CONTENT"] === "1" ? content.slice(0, 500) : "[redacted]"
+/**
+ * The model's reasoning on the call's span: its first 500 characters when
+ * this call may carry content (`CurrentTraceContent`, which the step loop
+ * provides from the run's `captureTraceContent`, or `EFFERENT_TRACE_CONTENT=1`
+ * for the whole process), `[redacted]` otherwise. Read per call.
+ */
+const tracedContent = Effect.service(CurrentTraceContent).pipe(Effect.map((capture) =>
+  (content: string): string => capture || process.env["EFFERENT_TRACE_CONTENT"] === "1" ? content.slice(0, 500) : "[redacted]"))
 
 const shapeOptions = (
   selection: ModelSelection,
@@ -208,6 +214,7 @@ export const generateWith = (
 > =>
   Effect.gen(function* () {
     const label = formatModelSelection(selection)
+    const traced = yield* tracedContent
     const { credential, key } = yield* credentialFor(selection)
     const built = yield* buildProvider(selection, credential, key)
     return yield* (
@@ -235,7 +242,7 @@ export const generateWith = (
               return p.type === "tool-call" ? [p.name ?? ""] : []
             })
             .join(","),
-          "llm.reasoning": tracedContent(res.reasoningText ?? ""),
+          "llm.reasoning": traced(res.reasoningText ?? ""),
           "llm.fallback": isFallback,
         }),
       ),
@@ -356,6 +363,7 @@ export const tapStreamTelemetry =
           toolNames: [],
         })
         const startedAt = yield* Clock.currentTimeMillis
+        const traced = yield* tracedContent
         const recordDuration = Clock.currentTimeMillis.pipe(
           Effect.flatMap((now) =>
             Metric.update(byModel(llmDuration, label), Duration.millis(now - startedAt)),
@@ -378,7 +386,7 @@ export const tapStreamTelemetry =
                   ...usageAttributes(usageOf(p.usage)),
                   "llm.response_chars": s.textChars,
                   "llm.tool_calls": s.toolNames.join(","),
-                  "llm.reasoning": tracedContent(s.reasoning),
+                  "llm.reasoning": traced(s.reasoning),
                 }),
               ),
               Effect.andThen(countUsage(label, usageOf(p.usage))),
@@ -469,7 +477,8 @@ const selectionModel = (
 export const LanguageModelLive = Layer.effect(
   LanguageModel.LanguageModel,
   Effect.gen(function* () {
-    const context = yield* Effect.context<AuthStore | SettingsStore>()
+    // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
+    const context = replayableContext(yield* Effect.context<AuthStore | SettingsStore>())
     const http = yield* HttpClient.HttpClient
     // One settings read: the model of the selection it finds.
     const selected = currentSelection.pipe(
@@ -508,7 +517,8 @@ export const LanguageModelSelectionLive = (
 ) => Layer.effect(
   LanguageModel.LanguageModel,
   Effect.gen(function* () {
-    const context = yield* Effect.context<AuthStore>()
+    // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
+    const context = replayableContext(yield* Effect.context<AuthStore>())
     const http = yield* HttpClient.HttpClient
     return selectionModel(primary, fallback, Option.none(), context, http)
   }),
