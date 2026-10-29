@@ -130,7 +130,7 @@ export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Opti
  * a denial, a call limit) publishes `tool.refused` and fails with the
  * refusal, which the model reads as the call's result.
  */
-export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArray<Capability>) => Effect.gen(function* () {
+export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig, capabilities: ReadonlyArray<Capability>) {
   // Tier 3 exists only when some skill ships references; otherwise its schema is dead weight.
   const hasReferences = capabilities.some((capability) => capability.skills.some((skill) => skill.references.length > 0))
   const own: ReadonlyArray<RegisteredTool> = config.loadSkill ? [

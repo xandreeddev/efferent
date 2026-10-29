@@ -122,11 +122,11 @@ const decodePack = (
  * severity overrides ambiguous). Absent exports mean an empty registry — a
  * config that names no rules arms none.
  */
-export const decodeRegistry = (
-  configPath: string,
-  module: { readonly rulePacks?: unknown; readonly customRules?: unknown },
-): Effect.Effect<ReadonlyArray<IdiomRule>, ConfigError> =>
-  Effect.gen(function* () {
+export const decodeRegistry = Effect.fnUntraced(
+  function* (
+    configPath: string,
+    module: { readonly rulePacks?: unknown; readonly customRules?: unknown },
+  ): Effect.fn.Return<ReadonlyArray<IdiomRule>, ConfigError> {
     const packs = yield* module.rulePacks === undefined
       ? Effect.succeed<ReadonlyArray<IdiomRule>>([])
       : Array.isArray(module.rulePacks)
@@ -161,4 +161,5 @@ export const decodeRegistry = (
       )
     }
     return registry
-  })
+  },
+)

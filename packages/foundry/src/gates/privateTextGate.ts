@@ -149,8 +149,8 @@ export const makePrivateTextGate = (config: PrivateTextConfig): Gate => ({
   name: PRIVATE_TEXT_GATE,
   kind: "static",
   deterministic: true,
-  run: (workspace: Workspace) =>
-    Effect.gen(function* () {
+  run: Effect.fnUntraced(
+    function* (workspace: Workspace) {
       const rootDir = workspace.rootDir
       const placeholders = new Set(config.placeholders.map((name) => name.toLowerCase()))
       const denylist = Option.toArray(config.denylist)
@@ -182,5 +182,6 @@ export const makePrivateTextGate = (config: PrivateTextConfig): Gate => ({
         { concurrency: 16 },
       )
       return [...unignored, ...found.flat()]
-    }),
+    },
+  ),
 })

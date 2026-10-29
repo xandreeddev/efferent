@@ -17,7 +17,7 @@ type Generation<A> = {
  * A replacement builds while uses go on with the working generation, and
  * takes their gate only to swap; replacements run one at a time. Scopes are
  * closed outside the gate, so a slow finalizer holds up no use either. */
-export const makeLiveLayer = <A, E, R>(initial: Layer.Layer<A, E, R>) => Effect.gen(function* () {
+export const makeLiveLayer = Effect.fnUntraced(function* <A, E, R>(initial: Layer.Layer<A, E, R>) {
   // Each stage builds with these, traced where it is staged (a replacement under its caller's span).
   const dependencies = replayableContext(yield* Effect.context<R>())
   const gate = yield* Semaphore.make(1)

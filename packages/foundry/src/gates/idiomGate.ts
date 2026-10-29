@@ -91,8 +91,8 @@ export const makeIdiomGate = (
   name: IDIOM_GATE,
   kind: "static",
   deterministic: true,
-  run: (workspace: Workspace) =>
-    Effect.gen(function* () {
+  run: Effect.fnUntraced(
+    function* (workspace: Workspace) {
       const active = yield* activate(rules, configs)
       const tsp = yield* TsProject
       const project = yield* tsp
@@ -129,7 +129,8 @@ export const makeIdiomGate = (
           )
       })
       return [...findings, ...active.flatMap((a) => staleAllowances(a, sourceFiles, workspace.rootDir, matchesOf))]
-    }),
+    },
+  ),
 })
 
 /** The `allow` entries that no longer excuse anything: a path that is not

@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
-import { Effect, Option, Schema } from "effect"
+import { Effect, Option, Schema, Tracer } from "effect"
 import { BaselineFile, baselineRefusal } from "../domain/baseline.js"
 import { describeError } from "../domain/Errors.js"
 import { PrivateTextConfig, RuleConfig } from "../domain/Rules.js"
@@ -426,6 +426,35 @@ describe("the baseline policy", () => {
       allowGrow: true,
     })
     expect(ratchet.output).toContain("WARNING: --allow-grow grandfathered 1 NEW finding")
+  })
+})
+
+describe("tracing", () => {
+  test("a check is one `foundry.check` span, with the pipeline beneath it and each gate beneath that", async () => {
+    const dir = seedBaselineWorkspace({ fixme: false })
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options)
+        spans.push(span)
+        return span
+      },
+    })
+    const log = spyOn(console, "log").mockImplementation(() => undefined)
+    const code = await Effect.runPromise(
+      runCheck({ configPath: path.join(dir, "foundry.config.ts"), baselinePath: Option.none(), updateBaseline: false }).pipe(
+        Effect.provide(TsProjectCachedLive),
+        Effect.withTracer(tracer),
+      ),
+    ).finally(() => log.mockRestore())
+    expect(code).toBe(0)
+    const parentName = (span: Tracer.NativeSpan): Option.Option<string> =>
+      Option.flatMap(span.parent, (parent) =>
+        Option.fromNullishOr(spans.find((candidate) => candidate.spanId === parent.spanId)?.name))
+    const named = (name: string) => spans.filter((span) => span.name === name)
+    expect(named("foundry.check").map(parentName)).toEqual([Option.none()])
+    expect(named("foundry.pipeline").map(parentName)).toEqual([Option.some("foundry.check")])
+    expect(named("foundry.gate").map(parentName)).toEqual([Option.some("foundry.pipeline")])
   })
 })
 
