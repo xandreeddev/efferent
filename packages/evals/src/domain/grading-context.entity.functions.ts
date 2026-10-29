@@ -16,7 +16,7 @@ export const gradingContext = <I>(options: {
   readonly projection: string; readonly version: string; readonly input: I; readonly schema: Schema.Codec<I, unknown>
   readonly budget: ContextBudget; readonly references: ReadonlyArray<string>; readonly omissions: ReadonlyArray<string>
 }): Effect.Effect<GradingContext, EvaluationError> => Schema.encodeEffect(options.schema)(options.input).pipe(
-  Effect.mapError((error) => new EvaluationError({ code: "invalid", message: String(error) })),
+  Effect.mapError((error) => new EvaluationError({ code: "invalid", message: `Grading context ${options.projection} does not encode: ${error.message}`, cause: error })),
   Effect.flatMap((input) => {
     const bytes = new TextEncoder().encode(JSON.stringify(input)).byteLength
     return bytes + options.budget.reservedBytes > options.budget.maxBytes

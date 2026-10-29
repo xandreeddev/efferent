@@ -17,7 +17,9 @@ export const EvalPath = Schema.NonEmptyString.check(
 export type EvalPath = typeof EvalPath.Type
 export const Version = Schema.NonEmptyString
 export const Fingerprints = Schema.Record(Schema.String, Schema.String)
+/** `message` says what failed; `cause` keeps the failure it wraps (a schema or provider error) for an operator, never for a report. */
 export class EvaluationError extends Schema.TaggedError<EvaluationError>()("EvaluationError", {
   code: Schema.Literals(["invalid", "missing", "unavailable", "execution", "persistence", "provider", "budget", "timeout"]),
   message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {}

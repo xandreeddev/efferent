@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test"
-import { LanguageModel, Prompt } from "effect/ai"
-import { Effect, Fiber, Layer, Option, Ref, Schema, SchemaRepresentation, Stream } from "effect"
+import { AiError, LanguageModel, Prompt } from "effect/ai"
+import { Effect, Fiber, Layer, Option, Predicate, Ref, Schema, SchemaRepresentation, Stream } from "effect"
 import { assessAll, unknownEvaluationUsage } from "./assessment.usecase.functions.js"
 import { SemanticJudge } from "./ports/semantic-judge.port.js"
 import { SemanticInput } from "./semantic.entity.js"
-import { semanticResponseSchema } from "./semantic.entity.functions.js"
+import { semanticResponseSchema, validateSemanticAnswers } from "./semantic.entity.functions.js"
 import { semanticEvaluator } from "./evaluators/semantic.js"
 import { SemanticJevLive } from "./adapters/semantic-jev.adapter.js"
 import { SemanticLlmLive } from "./adapters/semantic-llm.adapter.js"
@@ -33,6 +33,30 @@ test("a single Jev request emits selected typed metrics and preserves unknown us
   expect(result?.metadata.backend).toBe("jev")
   expect(Option.isNone(result!.usage.costUsd)).toBe(true)
   expect(Option.isNone(result!.usage.inputTokens)).toBe(true)
+})
+
+/** A judge over a model whose every call fails with `reason`. */
+const failingJudge = (reason: AiError.AiErrorReason) => SemanticLlmLive({
+  id: "llm-failing", prompt: (request) => Prompt.make([{ role: "user", content: JSON.stringify(request) }]),
+}).pipe(Layer.provide(Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+  generateText: () => Effect.fail(AiError.make({ module: "Scripted", method: "generateObject", reason })),
+  streamText: () => Stream.die("unused"),
+}))))
+
+test("a provider failure the next call may not repeat is unavailable; a lasting one is an error; each is named by its reason", async () => {
+  const [limited] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(failingJudge(new AiError.RateLimitError({})))))
+  const [denied] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(failingJudge(new AiError.AuthenticationError({ kind: "InvalidKey" })))))
+  expect([limited?.status, Option.getOrThrow(limited!.reason)]).toEqual(["unavailable", "unavailable: RateLimitError: Scripted.generateObject: Rate limit exceeded"])
+  expect([denied?.status, Option.getOrThrow(denied!.reason)]).toEqual(["error", "provider: AuthenticationError: Scripted.generateObject: InvalidKey: Verify your API key is correct"])
+  expect([limited?.metrics, denied?.metrics]).toEqual([[], []])
+})
+
+test("a judge's provider failure keeps the AiError as its cause", async () => {
+  const error = await Effect.runPromise(Effect.flatMap(SemanticJudge, (judge) => judge.evaluate(input)).pipe(
+    Effect.provide(failingJudge(new AiError.AuthenticationError({ kind: "InvalidKey" }))), Effect.flip,
+  ))
+  expect(error.code).toBe("provider")
+  expect(AiError.isAiError(error.cause) && error.cause.reason._tag).toBe("AuthenticationError")
 })
 
 test("native LLM profiles pair distinct prompts and model Layers with the same rubric", async () => {
@@ -125,7 +149,19 @@ test("provider rejection stays a failed assessment with no implicit fallback", a
   const [result] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(SemanticJevLive({ evaluate: () => Promise.reject(new Error("offline")) }))))
   expect(result?.status).toBe("error")
   expect(result?.metrics).toEqual([])
-  expect(Option.getOrThrow(result!.reason)).toContain("offline")
+  expect(Option.getOrThrow(result!.reason)).toBe("provider: Jev request failed: offline")
+})
+
+test("a Jev transport failure and undecodable answers keep what failed as the cause", async () => {
+  const offline = new Error("offline")
+  const rejected = await Effect.runPromise(Effect.flatMap(SemanticJudge, (judge) => judge.evaluate(input)).pipe(
+    Effect.provide(SemanticJevLive({ evaluate: () => Promise.reject(offline) })), Effect.flip,
+  ))
+  expect([rejected.code, rejected.message, rejected.cause]).toEqual(["provider", "Jev request failed: offline", offline])
+  const malformed = await Effect.runPromise(validateSemanticAnswers(input, null).pipe(Effect.flip))
+  expect(malformed.code).toBe("invalid")
+  expect(malformed.message).toStartWith("Judge answers do not decode: ")
+  expect(Predicate.isTagged(malformed.cause, "SchemaError")).toBe(true)
 })
 
 test("Jev enforces UTF-8 byte limits before transport", async () => {

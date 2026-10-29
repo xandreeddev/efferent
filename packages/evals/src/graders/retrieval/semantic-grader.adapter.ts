@@ -69,7 +69,11 @@ export const semanticRetrievalGraders = (
           ).pipe(
             Effect.mapError(
               (error) =>
-                new EvaluationError({ code: "invalid", message: String(error) })
+                new EvaluationError({
+                  code: "invalid",
+                  message: `Retrieval context does not decode: ${error.message}`,
+                  cause: error
+                })
             )
           )
           const items = retrievalItems(measure, input)
@@ -97,7 +101,11 @@ export const semanticRetrievalGraders = (
           ).pipe(
             Effect.mapError(
               (error) =>
-                new EvaluationError({ code: "invalid", message: String(error) })
+                new EvaluationError({
+                  code: "invalid",
+                  message: `Judge verdict does not decode: ${error.message}`,
+                  cause: error
+                })
             )
           )
           if (

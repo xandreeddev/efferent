@@ -279,6 +279,14 @@ that alter scoring criteria need a new rubric version. `makeSemanticLlmJudge`
 exposes the same service constructor as an Effect for hosts that wrap generation
 with their own prompt-provenance or observability hooks.
 
+A failed model call becomes an `AssessmentError` whose message starts with the
+provider's reason (`RateLimitError: …`) and whose `cause` is the `AiError`. When
+the provider may answer on a retry (a rate limit, a network or server failure,
+output that did not parse), the assessment is `unavailable`, a missing
+measurement; otherwise it is an `error` with the `provider` code. A host's own
+evaluator over a `LanguageModel` maps its failures the same way with
+`assessmentOfAiError`.
+
 These three Effects can assess the same saved evidence and feed the same
 calibration and pairwise helpers. The built-in adapters do not claim equivalent
 quality: that must be measured on held-out, reviewed labels. Arbitrary structured

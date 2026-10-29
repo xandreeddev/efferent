@@ -3,12 +3,14 @@ import { AssessmentError } from "./assessment.entity.js"
 import { SemanticAnswers, SemanticInput } from "./semantic.entity.js"
 import type { SemanticQuestions } from "./semantic.entity.js"
 
-const invalid = (error: unknown) => new AssessmentError({ code: "invalid", message: String(error) })
-export const validateSemanticInput = (input: SemanticInput) => Schema.decodeEffect(Schema.toType(SemanticInput))(input).pipe(Effect.mapError(invalid))
+const invalid = (message: string, cause?: unknown) => new AssessmentError({ code: "invalid", message, cause })
+export const validateSemanticInput = (input: SemanticInput) => Schema.decodeEffect(Schema.toType(SemanticInput))(input).pipe(
+  Effect.mapError((error) => invalid(`Semantic input does not decode: ${error.message}`, error)),
+)
 
 export const validateSemanticAnswers = (input: SemanticInput, value: unknown) => Effect.gen(function* () {
   yield* validateSemanticInput(input)
-  const answers = yield* Schema.decodeUnknownEffect(SemanticAnswers)(value).pipe(Effect.mapError(invalid))
+  const answers = yield* Schema.decodeUnknownEffect(SemanticAnswers)(value).pipe(Effect.mapError((error) => invalid(`Judge answers do not decode: ${error.message}`, error)))
   const ids = Object.keys(input.questions)
   if (Object.keys(answers).length !== ids.length || ids.some((id) => {
     const question = input.questions[id]!

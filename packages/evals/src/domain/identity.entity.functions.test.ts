@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Effect, Schema } from "effect"
+import { AssessmentError } from "../assessment.entity.js"
 import { EvaluationError } from "./identity.entity.js"
-import { reasonOf } from "./identity.entity.functions.js"
+import { isEvaluationError, isUnavailable, reasonOf } from "./identity.entity.functions.js"
 
 class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { message: Schema.String }) {}
 class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
@@ -34,9 +35,32 @@ describe("reasonOf", () => {
     expect(reasonOf(Cause.combine(Cause.fail(new EvaluationError({ code: "provider", message: "one" })), Cause.die(new Error("two"))))).toBe("provider: one; two")
   })
 
+  test("reads the error's own message, never its cause's", () => {
+    // Made here, so its stack names this file.
+    const inner = new Error("socket closed")
+    const reason = reasonOf(Cause.fail(new EvaluationError({ code: "provider", message: "Export failed", cause: inner })))
+    expect(reason).toBe("provider: Export failed")
+    expect(reason).not.toContain(import.meta.dir)
+  })
+
   test("says interrupted for interruptions alone, and leaves them out beside an error", () => {
     expect(reasonOf(causeOf(Effect.interrupt))).toBe("interrupted")
     expect(reasonOf(Cause.combine(Cause.interrupt(), Cause.fail(new NotFound({ message: "missing" }))))).toBe("NotFound: missing")
     expect(reasonOf(Cause.empty)).toBe("failed without an error")
+  })
+})
+
+describe("isEvaluationError and isUnavailable", () => {
+  test("an EvaluationError is recognized with or without a cause, and as a plain copy", () => {
+    expect(isEvaluationError(new EvaluationError({ code: "invalid", message: "bad" }))).toBe(true)
+    expect(isEvaluationError(new EvaluationError({ code: "invalid", message: "bad", cause: new Error("inner") }))).toBe(true)
+    expect(isEvaluationError({ _tag: "EvaluationError", code: "invalid", message: "bad" })).toBe(true)
+    expect(isEvaluationError(new NotFound({ message: "bad" }))).toBe(false)
+  })
+
+  test("a missing measurement is unavailable, whichever error carries it", () => {
+    expect(isUnavailable(new EvaluationError({ code: "unavailable", message: "over budget" }))).toBe(true)
+    expect(isUnavailable(new AssessmentError({ code: "unavailable", message: "RateLimitError: rate limited" }))).toBe(true)
+    expect(isUnavailable(new AssessmentError({ code: "provider", message: "AuthenticationError: bad key" }))).toBe(false)
   })
 })
