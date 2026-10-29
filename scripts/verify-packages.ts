@@ -85,15 +85,20 @@ const turned = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
   (turn) => Ref.set(admittedMeta, turn.admitted.meta).pipe(Effect.andThen(turn.run({})), Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
  const started = yield* sessions.read(address, { kinds: ["turn.started"] })
  const fork = yield* sessions.fork(address, { origin: "fork", inherit: true })
- return { outcome, forked: fork.header.parent, meta: JSON.stringify([yield* Ref.get(admittedMeta), started[0]?.data.meta]) }
+ yield* Effect.scoped(sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "world" }), runId: "run-2", key: "run-2", command: {} }).pipe(Effect.andThen(sessions.cancel(address, 2))))
+ const resumed = yield* agent.turn({ turn: { session: address, userMessage: new UserMessage({ text: "Continue." }), runId: "run-3", resumes: 2 }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
+  (turn) => turn.reply("resumes " + String(turn.admitted.resumes)))
+ const resumedStart = (yield* sessions.read(address, { kinds: ["turn.started"] })).at(-1)?.data
+ return { outcome, forked: fork.header.parent, meta: JSON.stringify([yield* Ref.get(admittedMeta), started[0]?.data.meta]), resume: JSON.stringify([Option.getOrNull(resumed.reply), resumedStart?.key, resumedStart?.resumes]) }
 })) )
 if (turned.outcome.outcome !== "completed" || Option.getOrNull(turned.outcome.reply) !== "hello world" || Option.isNone(turned.forked)) process.exit(1)
 if (turned.meta !== JSON.stringify([{ request: "r-1" }, { request: "r-1" }])) process.exit(1)
+if (turned.resume !== JSON.stringify(["resumes 2", "resume:2", 2])) process.exit(1)
 if (turned.outcome.usage.totalTokens !== 5 || turned.outcome.usage.cacheWriteTokens !== 1 || turned.outcome.usage.reasoningTokens !== 1) process.exit(1)
 const rubric = semanticEvaluator({id:"external-quality",version:"1",questions:{supported:{type:"boolean",instructions:"Is the answer supported?"}},state:(input:{answer:string})=>input.answer})
 const assessments = await Effect.runPromise(assessAll([{evaluator:rubric,select:["supported"]}],{answer:"fixture"}).pipe(Effect.provide(SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))))
 if(assessments[0]?.status!=="scored" || assessments[0]?.metadata.backend!=="jev") process.exit(1)
-console.log("Composable agent turn with host meta, session fork, eval composition and optional rubric adapter passed")
+console.log("Composable agent turn with host meta, session fork, resumed turn, eval composition and optional rubric adapter passed")
 const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const done = yield* Deferred.make<string>()
  const react = (writer: TurnWriter) => Deferred.succeed(done, writer.admitted.userMessage.text).pipe(Effect.asVoid)

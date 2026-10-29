@@ -132,17 +132,24 @@ export const turnBeginCodes = {
   TurnDuplicate: "turn.duplicate",
   KeyConflict: "turn.key-conflict",
   NothingPending: "session.nothing-pending",
+  NotResumable: "turn.not-resumable",
   TurnRefused: "turn.refused",
   SessionMissing: "session.missing",
   SessionLogError: "session.log",
 } as const
 
+/** A new turn's idempotency key: the host's, else `resume:<n>` for a resume of turn `n`, else the run id. */
+const keyOf = (turn: NewTurn): string => turn.key ?? (turn.resumes === undefined ? turn.runId : `resume:${turn.resumes}`)
+
 /** Begin a turn with the Sessions of the turn's services; its writer lives in the turn's scope. */
 const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effect<TurnWriter, HarnessError, Scope.Scope> =>
   required(context, Sessions).pipe(Effect.flatMap((sessions) => sessions.begin(turn.session, {
-    _tag: "User", userMessage: turn.userMessage, runId: turn.runId, key: turn.key ?? turn.runId, command: turn.command ?? {},
+    _tag: "User", userMessage: turn.userMessage, runId: turn.runId, key: keyOf(turn), command: turn.command ?? {},
     ...(turn.meta === undefined ? {} : { meta: turn.meta }),
-  })), Effect.mapError((error) => error instanceof HarnessError ? error : failure(turnBeginCodes[error._tag], `the turn could not begin (${error._tag}) in session ${turn.session.id}`)))
+    ...(turn.resumes === undefined ? {} : { resumes: turn.resumes }),
+  })), Effect.mapError((error) => error instanceof HarnessError ? error : failure(turnBeginCodes[error._tag], error._tag === "NotResumable"
+    ? `turn ${error.turn} of session ${turn.session.id} cannot be resumed (${error.reason})`
+    : `the turn could not begin (${error._tag}) in session ${turn.session.id}`)))
 
 /** The turn's body, until someone else closes the turn: then the body is interrupted and the turn fails. */
 const untilClosed = (writer: TurnWriter) => <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError, R> =>

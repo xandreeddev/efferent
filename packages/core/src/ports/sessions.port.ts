@@ -10,6 +10,7 @@ import type {
   InboxItem,
   KeyConflict,
   NothingPending,
+  NotResumable,
   ReservedKind,
   SessionAddress,
   SessionBusy,
@@ -145,9 +146,19 @@ export class Sessions extends Context.Service<Sessions, {
    * as interrupted (`turn.interrupted`) when the scope was interrupted.
    * The input's `meta` is stored in `turn.started` and shown on the writer's
    * `admitted`; it is not part of the key's fingerprint.
+   * A user's turn with `resumes: n` resumes turn `n`: it must be the
+   * session's last turn begun by a user (only inbox turns, and resumes of it
+   * that failed, were cancelled or were interrupted, may have run since) and
+   * have ended cancelled or interrupted (reaped included), or the begin
+   * fails with `NotResumable` and opens nothing. The check runs after the
+   * key's (a retried resume is `TurnDuplicate`) and after `SessionBusy`, in
+   * the opening commit; an `n` that is not a whole number of at least 1 is
+   * `NotResumable` (`missing`) before anything else, the admission included.
+   * `resumes` is stored in `turn.started`, shown on `admitted` and part of
+   * the key's fingerprint.
    */
   readonly begin: (address: SessionAddress, input: BeginTurn) =>
-    Effect.Effect<TurnWriter, SessionBusy | TurnDuplicate | KeyConflict | NothingPending | TurnRefused | SessionMissing | SessionLogError, Scope.Scope>
+    Effect.Effect<TurnWriter, SessionBusy | TurnDuplicate | KeyConflict | NothingPending | NotResumable | TurnRefused | SessionMissing | SessionLogError, Scope.Scope>
   /** Put an item in the inbox (once per id); `pending` counts what waits after it. */
   readonly deliver: (address: SessionAddress, item: InboxItem) =>
     Effect.Effect<{ readonly delivered: boolean; readonly pending: number }, InboxFull | SessionMissing | SessionLogError>

@@ -1,5 +1,6 @@
 import { Cause, Exit, Formatter, Option, Predicate, Result } from "effect"
-import type { TurnEnding } from "./sessions.entity.js"
+import type { TurnEndReason } from "./session-event.entity.js"
+import type { NotResumable, TurnEnding } from "./sessions.entity.js"
 
 /** The longest failure message a stored `turn.ended` keeps. */
 const MESSAGE_CHARS = 500
@@ -58,3 +59,45 @@ export const turnEndingOf = (exit: Exit.Exit<{ readonly outcome: "completed" | "
     }),
   }),
 })
+
+/**
+ * One turn of a session as a resume is checked against it: who began it, the
+ * turn it resumed (when it resumed one) and, once it ended, how.
+ */
+export interface ResumableTurn {
+  readonly turn: number
+  readonly origin: "user" | "inbox"
+  readonly resumes: Option.Option<number>
+  readonly ended: Option.Option<TurnEndReason>
+}
+
+const stopped = (ended: Option.Option<TurnEndReason>) => Option.exists(ended, (reason) => reason === "cancelled" || reason === "interrupted")
+
+/**
+ * A later user's turn supersedes `target`, unless it resumed `target` and
+ * did not complete (it failed, was cancelled or was interrupted): such a
+ * resume can be tried again, with a new key.
+ */
+const supersedes = (target: number) => (later: ResumableTurn) => later.turn > target && later.origin === "user"
+  && !(Option.contains(later.resumes, target) && (stopped(later.ended) || Option.contains(later.ended, "failed")))
+
+/**
+ * Why turn `target` cannot be resumed, or none when it can, from the
+ * session's own turns (each `turn.started`, with the turn it resumed and its
+ * `turn.ended`'s reason when it has them): `missing` when no turn has that
+ * number (a number that is not a whole number of at least 1 never does),
+ * `inbox` when an inbox turn has it, `superseded` when a user's turn was
+ * begun after it (only inbox turns, and resumes of it that failed, were
+ * cancelled or were interrupted, may follow), `finished` unless it ended
+ * cancelled or interrupted (a turn reaped because its holder stopped ended
+ * interrupted; one with no end yet is open, which `SessionBusy` answers
+ * first).
+ */
+export const resumeRefusal = (target: number, turns: ReadonlyArray<ResumableTurn>): Option.Option<NotResumable["reason"]> =>
+  Option.match(Option.fromNullishOr(turns.find((candidate) => candidate.turn === target)), {
+    onNone: () => Option.some("missing" as const),
+    onSome: (found) => found.origin === "inbox" ? Option.some("inbox" as const)
+      : turns.some(supersedes(target)) ? Option.some("superseded" as const)
+      : stopped(found.ended) ? Option.none()
+      : Option.some("finished" as const),
+  })

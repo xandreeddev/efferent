@@ -67,6 +67,18 @@ export type SessionPage = typeof SessionPage.Type
  */
 const TurnMeta = Schema.optionalKey(JsonObject)
 
+/**
+ * The earlier turn a user's turn resumes: the number of the session's last
+ * turn begun by a user, which ended cancelled or interrupted (only inbox
+ * turns, and resumes of it that failed, were cancelled or were interrupted,
+ * may have run since). Memory is unchanged by it: the model sees what a
+ * plain new turn would, the earlier turn's message and whole steps, then the
+ * new turn's own message. Stored in the new turn's `turn.started` and shown
+ * on `AdmittedTurn`, `TurnToAdmit` and the bus `turn.started`, only when
+ * given; part of the key's fingerprint.
+ */
+const Resumes = Schema.optionalKey(Schema.Int)
+
 /** How a turn begins: a user's message, or the inbox's pending items. */
 export const BeginTurn = Schema.Union([
   Schema.TaggedStruct("User", {
@@ -76,6 +88,8 @@ export const BeginTurn = Schema.Union([
     key: Schema.String,
     command: JsonObject,
     meta: TurnMeta,
+    /** The turn this one resumes (see `NotResumable` for which turns can be). */
+    resumes: Resumes,
   }),
   Schema.TaggedStruct("Inbox", { runId: Schema.String, meta: TurnMeta }),
 ])
@@ -93,6 +107,8 @@ export const AdmittedTurn = Schema.Struct({
   claimed: Schema.Array(InboxItem),
   /** The host's metadata the turn was begun with (`{}` when none was given). */
   meta: JsonObject,
+  /** The turn this one resumes, when it resumes one. */
+  resumes: Resumes,
 })
 export type AdmittedTurn = typeof AdmittedTurn.Type
 
@@ -116,18 +132,35 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy"
   turn: Schema.Int,
 }) {}
 
-/** The key was begun before, with the same message: that turn is the answer. */
+/** The key was begun before with the same message, command and `resumes`: that turn is the answer. */
 export class TurnDuplicate extends Schema.TaggedError<TurnDuplicate>()("TurnDuplicate", {
   session: ConversationId,
   turn: Schema.Int,
   open: Schema.Boolean,
 }) {}
 
-/** The key was begun before with another message or command. */
+/** The key was begun before with another message, command or `resumes`. */
 export class KeyConflict extends Schema.TaggedError<KeyConflict>()("KeyConflict", {
   session: ConversationId,
   key: Schema.String,
   turn: Schema.Int,
+}) {}
+
+/**
+ * A user's turn asked to resume a turn that cannot be resumed: `missing`, no
+ * such turn in the session's own log (a fork's inherited turns are its
+ * parent's; a `resumes` that is not a whole number of at least 1 names no
+ * turn); `inbox`, an inbox turn; `superseded`, a user's turn was begun after
+ * it (other than a resume of it that failed, was cancelled or was
+ * interrupted); `finished`, it ended completed, partial or failed. Only the
+ * last user's turn, ended cancelled or interrupted (a turn reaped because
+ * its holder stopped is interrupted), can be resumed. Nothing was opened.
+ * `turn` is the `resumes` asked for, as given.
+ */
+export class NotResumable extends Schema.TaggedError<NotResumable>()("NotResumable", {
+  session: ConversationId,
+  turn: Schema.Number,
+  reason: Schema.Literals(["missing", "superseded", "finished", "inbox"]),
 }) {}
 
 /** An inbox turn found nothing to take. */

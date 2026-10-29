@@ -58,9 +58,10 @@ const RECORDED_AS: Readonly<Record<string, string>> = {
 /** A suggested HTTP status for each begin code, for a host that serves turns over HTTP. */
 const BEGIN_HTTP: Readonly<Record<string, { readonly status: string; readonly meaning: string }>> = {
   SessionBusy: { status: "409", meaning: "Another turn is open in the session. Retry after it ends, or queue the message." },
-  TurnDuplicate: { status: "200 once that turn ended, 409 while it is open", meaning: "The key was begun before with the same message and command: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it)." },
-  KeyConflict: { status: "409", meaning: "The key was begun before with another message or command." },
+  TurnDuplicate: { status: "200 once that turn ended, 409 while it is open", meaning: "The key was begun before with the same message, command and `resumes`: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it)." },
+  KeyConflict: { status: "409", meaning: "The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts)." },
   NothingPending: { status: "204", meaning: "An inbox turn found nothing to take (inbox turns only)." },
+  NotResumable: { status: "409", meaning: "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key." },
   TurnRefused: { status: "429 for a quota or rate, 403 when not allowed", meaning: "The host's `TurnAdmission` refused the turn; nothing was opened or counted." },
   SessionMissing: { status: "404", meaning: "No such session for this owner." },
   SessionLogError: { status: "503", meaning: "The session store failed. Retry later." },

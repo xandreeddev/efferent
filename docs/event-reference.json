@@ -26,7 +26,7 @@
   "bus": [
     {
       "name": "turn.started",
-      "description": "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model). Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` only when it was given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
+      "description": "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model), and `resumes`, present only on a turn that resumes an earlier one, is that turn's number. Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` and `resumes` only when they were given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
       "transient": false,
       "stored": {
         "as": "recorded-elsewhere",
@@ -52,6 +52,11 @@
           "name": "meta",
           "type": "object",
           "required": true
+        },
+        {
+          "name": "resumes",
+          "type": "integer",
+          "required": false
         }
       ],
       "schema": {
@@ -77,6 +82,11 @@
           },
           "meta": {
             "type": "object"
+          },
+          "resumes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
@@ -87,7 +97,7 @@
           "meta"
         ],
         "additionalProperties": true,
-        "description": "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model). Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` only when it was given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
+        "description": "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model), and `resumes`, present only on a turn that resumes an earlier one, is that turn's number. Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` and `resumes` only when they were given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
         "definitions": {
           "UserMessageEncoded": {
             "type": "object",
@@ -1587,6 +1597,11 @@
           "name": "meta",
           "type": "object",
           "required": false
+        },
+        {
+          "name": "resumes",
+          "type": "integer",
+          "required": false
         }
       ],
       "body": [],
@@ -1641,6 +1656,11 @@
           },
           "meta": {
             "type": "object"
+          },
+          "resumes": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
           }
         },
         "required": [
@@ -4524,19 +4544,25 @@
       "tag": "TurnDuplicate",
       "code": "turn.duplicate",
       "http": "200 once that turn ended, 409 while it is open",
-      "meaning": "The key was begun before with the same message and command: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it)."
+      "meaning": "The key was begun before with the same message, command and `resumes`: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it)."
     },
     {
       "tag": "KeyConflict",
       "code": "turn.key-conflict",
       "http": "409",
-      "meaning": "The key was begun before with another message or command."
+      "meaning": "The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts)."
     },
     {
       "tag": "NothingPending",
       "code": "session.nothing-pending",
       "http": "204",
       "meaning": "An inbox turn found nothing to take (inbox turns only)."
+    },
+    {
+      "tag": "NotResumable",
+      "code": "turn.not-resumable",
+      "http": "409",
+      "meaning": "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key."
     },
     {
       "tag": "TurnRefused",

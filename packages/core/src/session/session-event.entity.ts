@@ -40,6 +40,11 @@ export const TurnStartedData = Schema.Struct({
    * given: not part of the key's fingerprint and never shown to the model.
    */
   meta: Schema.optionalKey(JsonObject),
+  /**
+   * The earlier turn this one resumes (`BeginTurn.User.resumes`), written
+   * only when given: part of the key's fingerprint.
+   */
+  resumes: Schema.optionalKey(Schema.Int),
 })
 export type TurnStartedData = typeof TurnStartedData.Type
 

@@ -193,6 +193,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - **The plugin reference** (`docs/plugin-reference.json`) gains `optional`
   (the services a plugin uses when present) for every plugin, and the models
   plugin's entry its new scope and options; its graph fingerprint changes.
+- **`@xandreed/core`, `@xandreed/plugin-sessions`, `@xandreed/sdk`:
+  `Sessions.begin` can fail with `NotResumable`.** Its error union gains it,
+  for a user's turn whose `resumes` names a turn that cannot be resumed.
+  Code handling the union exhaustively (`Effect.catchTags` over every
+  member, `Match.exhaustive`) adds a case; for a begin that never sets
+  `resumes` it is never raised (`Sessions.drain` and plugin-tasks map it to
+  "nothing begun"). `@xandreed/sdk`'s `turnBeginCodes` gains `NotResumable:
+  "turn.not-resumable"`, so a host mapping its codes exhaustively
+  (`Record<keyof typeof turnBeginCodes, …>`) adds one. A host's own
+  implementation of the `Sessions` port honours the new optional
+  `BeginTurn.User.resumes`: it refuses what `resumeRefusal` refuses (a
+  `resumes` that is not a whole number of at least 1 as `missing`), stores
+  `resumes` in `turn.started`, shows it on `admitted` and `TurnToAdmit`, and
+  compares it in the key's fingerprint. The new `resumes` fields are
+  optional keys, present only on a turn that resumes one, so turns, stored
+  records and events without it are unchanged.
 
 ### Added
 
@@ -355,6 +371,37 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `AgentConfig.budgetTokens` and `MaintainSignal.budgetTokens` say what the
   budget is (the target memory compaction keeps each request under, not a
   provider limit) and what each memory strategy does with it.
+- `@xandreed/core`, `@xandreed/plugin-sessions`, `@xandreed/sdk`: resuming
+  a cancelled or interrupted turn. A user's turn begun with `resumes: n`
+  (`BeginTurn.User.resumes`, `NewTurn.resumes` for `Agent.turn`) continues
+  turn `n`, which must be the session's last turn begun by a user (only
+  inbox turns, and resumes of it that failed, were cancelled or were
+  interrupted, may follow it) and must have ended cancelled or interrupted,
+  a reaped turn included; otherwise the begin fails with `NotResumable`
+  (`session`, `turn`, `reason`: `missing`, `inbox`, `superseded`,
+  `finished`) and `Agent.turn` with `turn.not-resumable` (409 in the event
+  reference). The check runs in the opening commit, after the key's and
+  after `SessionBusy`; a `resumes` that is not a whole number of at least 1
+  is `missing` before anything else, the host's admission included. Memory
+  is unchanged: the model sees turn `n`'s message and whole steps, then the
+  new turn's message, exactly what a plain new turn would see. `resumes` is stored
+  in `turn.started` (`TurnStartedData.resumes`, only when given) and shown
+  on `AdmittedTurn.resumes` (`RunContext.admitted`, `Turn.admitted`),
+  `TurnToAdmit.resumes` and the bus `turn.started`, and is part of the key's
+  fingerprint. `Agent.turn` keys a resume `resume:<n>` unless given a key,
+  so a retried resume is `turn.duplicate`; a resume that failed is tried
+  again with a new key, and a host passing its own keys needs a new one for
+  each attempt. `resumeRefusal(n, turns)` and `ResumableTurn` are the rule
+  as a function.
+- Docs: `docs/framework.md` "Resuming a turn" (the rule, the keys, and what
+  is durable after a cancel or an interrupt: the turn's start, its whole
+  steps, of the step in flight only what was already stored (its tool
+  events included, never its assistant message or tool results), its end;
+  no reply after a cancel, and possibly a failed reply with no text after an
+  interrupt) and the website's SDK and sessions page; the event reference
+  lists `turn.started.resumes` and the `NotResumable` begin code, and its
+  `TurnDuplicate` and `KeyConflict` meanings name `resumes` as part of the
+  key's fingerprint.
 - Docs: `docs/framework.md` (the host's metadata, how a turn ends and its
   stored codes, the token budget) and the website's SDK and sessions page;
   the event reference lists `turn.started.meta`, `context.built.budgetTokens`
@@ -442,6 +489,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the removed journey driver.
 - `bun run verify:packages` runs `stepLoopConformance` over the packed step
   loop (`runSteps`) and `turnConformance` over a packed `Agent` on Node.
+- A key-free `bun:test` journey with scripted models (`packages/sdk/src/resume.journey.test.ts`):
+  a turn cancelled while a tool call runs is resumed with its message, the
+  resume retried, and a finished turn refused; and a resume whose provider
+  was down is tried again with a new key, after which the turn is answered. `bun run verify:packages`
+  resumes a cancelled turn through the packed packages.
 - The sdk golden journal and model files are regenerated: `context.built`
   records carry `budgetTokens`, and the failed turn's `turn.ended` carries
   its error's code (`host.failed`).

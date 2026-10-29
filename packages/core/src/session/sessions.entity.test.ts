@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Exit, Option, Schema } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
-import { turnEndingOf } from "./sessions.entity.functions.js"
+import { resumeRefusal, turnEndingOf } from "./sessions.entity.functions.js"
+import type { ResumableTurn } from "./sessions.entity.functions.js"
+import type { TurnEndReason } from "./session-event.entity.js"
 
 class Untold extends Schema.TaggedError<Untold>()("Untold", { attempt: Schema.Number }) {}
 class Explained extends Schema.TaggedError<Explained>()("Explained", { message: Schema.String }) {}
@@ -46,5 +48,59 @@ describe("turnEndingOf", () => {
     const cause = Cause.combine(Cause.interrupt(), Cause.fail(new HarnessError({ code: "turn.closed", message: "turn 1 was cancelled" })))
     expect(failure(Exit.failCause(cause))).toEqual(["failed", { code: "turn.closed", message: "turn 1 was cancelled" }])
     expect(failure(Exit.failCause(Cause.combine(Cause.interrupt(), Cause.die("lost"))))[1]).toMatchObject({ code: "turn.defect" })
+  })
+})
+
+describe("resumeRefusal", () => {
+  const user = (turn: number, ended?: TurnEndReason): ResumableTurn =>
+    ({ turn, origin: "user", resumes: Option.none(), ended: Option.fromNullishOr(ended) })
+  const resuming = (turn: number, resumes: number, ended?: TurnEndReason): ResumableTurn =>
+    ({ ...user(turn, ended), resumes: Option.some(resumes) })
+  const inbox = (turn: number): ResumableTurn => ({ turn, origin: "inbox", resumes: Option.none(), ended: Option.some("completed") })
+
+  test("the last user's turn, ended cancelled or interrupted, can be resumed, even with inbox turns after it", () => {
+    expect(resumeRefusal(2, [user(1, "completed"), user(2, "cancelled")])).toEqual(Option.none())
+    expect(resumeRefusal(2, [user(1, "completed"), user(2, "interrupted")])).toEqual(Option.none())
+    expect(resumeRefusal(1, [user(1, "interrupted"), inbox(2), inbox(3)])).toEqual(Option.none())
+  })
+
+  test("a turn the session does not hold is missing", () => {
+    expect(resumeRefusal(3, [user(1, "cancelled")])).toEqual(Option.some("missing"))
+    expect(resumeRefusal(0, [user(1, "cancelled")])).toEqual(Option.some("missing"))
+    expect(resumeRefusal(1, [])).toEqual(Option.some("missing"))
+    expect(resumeRefusal(1.5, [user(1, "cancelled"), user(2, "cancelled")])).toEqual(Option.some("missing"))
+    expect(resumeRefusal(Number.NaN, [user(1, "cancelled")])).toEqual(Option.some("missing"))
+  })
+
+  test("an inbox turn is refused as inbox, before anything else", () => {
+    expect(resumeRefusal(2, [user(1, "completed"), { turn: 2, origin: "inbox", resumes: Option.none(), ended: Option.some("interrupted") }, user(3, "completed")])).toEqual(Option.some("inbox"))
+  })
+
+  test("a turn a user's turn followed is superseded, however each ended", () => {
+    expect(resumeRefusal(1, [user(1, "cancelled"), user(2, "cancelled")])).toEqual(Option.some("superseded"))
+    expect(resumeRefusal(1, [user(1, "interrupted"), inbox(2), user(3, "failed")])).toEqual(Option.some("superseded"))
+  })
+
+  test("a resume of the turn that failed, was cancelled or was interrupted does not supersede it: the resume can be tried again", () => {
+    expect(resumeRefusal(1, [user(1, "cancelled"), resuming(2, 1, "failed")])).toEqual(Option.none())
+    expect(resumeRefusal(1, [user(1, "cancelled"), resuming(2, 1, "cancelled"), inbox(3), resuming(4, 1, "interrupted")])).toEqual(Option.none())
+    // The stopped resume itself can be resumed too, and then the turn it resumed is superseded by that resume's resume.
+    expect(resumeRefusal(2, [user(1, "cancelled"), resuming(2, 1, "cancelled")])).toEqual(Option.none())
+    expect(resumeRefusal(1, [user(1, "cancelled"), resuming(2, 1, "cancelled"), resuming(3, 2, "failed")])).toEqual(Option.some("superseded"))
+    expect(resumeRefusal(2, [user(1, "cancelled"), resuming(2, 1, "cancelled"), resuming(3, 2, "failed")])).toEqual(Option.none())
+  })
+
+  test("a resume of the turn that completed, ended partial or has no end supersedes it, and so does any other user's turn", () => {
+    expect(resumeRefusal(1, [user(1, "cancelled"), resuming(2, 1, "completed")])).toEqual(Option.some("superseded"))
+    expect(resumeRefusal(1, [user(1, "cancelled"), resuming(2, 1, "partial")])).toEqual(Option.some("superseded"))
+    expect(resumeRefusal(1, [user(1, "cancelled"), resuming(2, 1)])).toEqual(Option.some("superseded"))
+    expect(resumeRefusal(1, [user(1, "cancelled"), resuming(2, 1, "failed"), user(3, "completed")])).toEqual(Option.some("superseded"))
+  })
+
+  test("a turn that ended completed, partial or failed, or has not ended, is finished", () => {
+    expect(resumeRefusal(1, [user(1, "completed")])).toEqual(Option.some("finished"))
+    expect(resumeRefusal(1, [user(1, "partial")])).toEqual(Option.some("finished"))
+    expect(resumeRefusal(1, [user(1, "failed")])).toEqual(Option.some("finished"))
+    expect(resumeRefusal(1, [user(1)])).toEqual(Option.some("finished"))
   })
 })

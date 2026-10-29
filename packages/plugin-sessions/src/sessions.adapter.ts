@@ -7,7 +7,9 @@ import {
   InboxFull,
   KeyConflict,
   NothingPending,
+  NotResumable,
   RESERVED_KINDS,
+  resumeRefusal,
   ReservedKind,
   SessionBusy,
   SessionLog,
@@ -17,6 +19,7 @@ import {
   TurnAdmission,
   TurnDuplicate,
   turnEndedDraft,
+  turnEndedOf,
   turnEndingOf,
   turnStartedDraft,
   turnStartedOf,
@@ -27,6 +30,7 @@ import type {
   BeginTurn,
   InboxItem,
   JsonObject,
+  ResumableTurn,
   SessionAddress,
   SessionCommitted,
   SessionDraft,
@@ -115,16 +119,20 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     return attempt(0)
   }
 
-  /** An open turn nobody holds any more (its lease ran out, or its process is gone) is closed as interrupted. */
+  /**
+   * An open turn nobody holds any more (its lease ran out, or its process is
+   * gone) is closed as interrupted: the drafts that close it, the state
+   * after them, and the turn they close.
+   */
   const reaped = (head: SessionHead, state: SessionsState) => Effect.gen(function* () {
-    if (Option.isNone(state.open) || Option.isSome(yield* heldTurn(head, state, ownership, holder))) return { drafts: [] as ReadonlyArray<SessionDraft>, state }
+    if (Option.isNone(state.open) || Option.isSome(yield* heldTurn(head, state, ownership, holder))) return { drafts: [] as ReadonlyArray<SessionDraft>, state, closed: Option.none<number>() }
     const turn = state.open.value.turn
     // A reaped turn counts as an attempt: its holder may have stopped on the items.
     const after = closedState(state, "interrupted", config.inbox.attempts, true)
     const closing = yield* turnEndedDraft(turn, { reason: "interrupted", failure: Option.some({ code: "turn.lease", message: "the turn's holder stopped writing" }) })
       .pipe(Effect.mapError(storage("session.encode")))
     const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: droppedData(id) }))
-    return { drafts: [closing, ...dropped], state: after.state }
+    return { drafts: [closing, ...dropped], state: after.state, closed: Option.some(turn) }
   })
 
   /** The turn begun with `key`, and what it was begun with. */
@@ -133,6 +141,25 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       onNone: () => Effect.succeed(Option.none<{ readonly turn: number; readonly event: SessionLogEvent }>()),
       onSome: (event) => Effect.succeed(Option.some({ turn: Option.getOrElse(event.turn, () => 0), event })),
     })),
+  )
+
+  /**
+   * The session's own turns, each as begun (with the turn it resumed) and as
+   * ended (when it was), for a resume's check; `reapedNow`, a turn this
+   * commit closes as interrupted, counts as ended so.
+   */
+  const turnsOf = (id: ConversationId, reapedNow: Option.Option<number>) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started", "turn.ended"] }).pipe(
+    Effect.flatMap((events) => Effect.gen(function* () {
+      const numbered = (event: SessionLogEvent) => Option.getOrElse(event.turn, () => 0)
+      const endings = new Map(yield* Effect.forEach(events.filter((event) => event.kind === "turn.ended"), (event) =>
+        turnEndedOf(event).pipe(Effect.map((ended) => [numbered(event), ended.reason] as const))))
+      return yield* Effect.forEach(events.filter((event) => event.kind === "turn.started"), (event) => turnStartedOf(event).pipe(Effect.map((started): ResumableTurn => ({
+        turn: numbered(event),
+        origin: started.origin,
+        resumes: Option.fromNullishOr(started.resumes),
+        ended: Option.contains(reapedNow, numbered(event)) ? Option.some("interrupted") : Option.fromNullishOr(endings.get(numbered(event))),
+      }))))
+    }).pipe(Effect.mapError(storage("session.decode")))),
   )
 
   /** The inbox items with these ids, as delivered. */
@@ -170,7 +197,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const scope = yield* Effect.scope
     const at = yield* Clock.currentTimeMillis
     const meta = input.meta ?? {}
-    const toAdmit = { session: address, origin: input._tag === "User" ? "user" as const : "inbox" as const, runId: input.runId, key: input._tag === "User" ? input.key : input.runId, meta }
+    const resumes = input._tag === "User" ? Option.fromNullishOr(input.resumes) : Option.none<number>()
+    // `resumes` is typed only as a number: one that is not a whole number of at least 1 names no turn, refused before the host's admission sees it.
+    const unnumbered = Option.filter(resumes, (turn) => !(Number.isSafeInteger(turn) && turn >= 1))
+    if (Option.isSome(unnumbered)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: unnumbered.value, reason: "missing" }))
+    // Written only when given, like `meta`: a turn that resumes nothing is stored and admitted as before.
+    const resuming = Option.match(resumes, { onNone: () => ({}), onSome: (turn) => ({ resumes: turn }) })
+    const toAdmit = { session: address, origin: input._tag === "User" ? "user" as const : "inbox" as const, runId: input.runId, key: input._tag === "User" ? input.key : input.runId, meta, ...resuming }
     const unowned = yield* Ref.make(Option.none<number>())
     yield* Scope.addFinalizerExit(scope, (exit) => Ref.get(unowned).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (turn) => unhanded(address, turn, exit) }))))
     // Only the opening commit is admitted: the writer's later commits run outside the host's admission.
@@ -181,14 +214,20 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         const previous = yield* keyed(address.id, input.key)
         if (Option.isSome(previous)) {
           const started = yield* turnStartedOf(previous.value.event).pipe(Effect.mapError(storage("session.decode")))
-          // The key's fingerprint is the message and the command, never `meta`: a retry with other metadata is the same turn.
+          // The key's fingerprint is the message, the command and the turn resumed, never `meta`: a retry with other metadata is the same turn.
           const same = started.userMessage.text === input.userMessage.text && canonicalJson(started.command) === canonicalJson(input.command)
+            && started.resumes === input.resumes
           return yield* Effect.fail(same
             ? new TurnDuplicate({ session: address.id, turn: previous.value.turn, open: Option.exists(state.open, (open) => open.turn === previous.value.turn) })
             : new KeyConflict({ session: address.id, key: input.key, turn: previous.value.turn }))
         }
       }
       if (Option.isSome(state.open)) return yield* Effect.fail(new SessionBusy({ session: address.id, turn: state.open.value.turn }))
+      // A resume is checked in the commit that opens it, against the turns as stored (a turn reaped by this commit is interrupted).
+      if (Option.isSome(resumes)) {
+        const refusal = resumeRefusal(resumes.value, yield* turnsOf(address.id, reap.closed))
+        if (Option.isSome(refusal)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: resumes.value, reason: refusal.value }))
+      }
       const waiting = input._tag === "Inbox" ? pendingOf(state).map((slot) => slot.id) : []
       if (input._tag === "Inbox" && waiting.length === 0) return yield* Effect.fail(new NothingPending({ session: address.id }))
       const claimed = yield* inboxItems(address.id, waiting)
@@ -212,10 +251,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         claimed: waiting, entry: EntryId.make(`${input.runId}:0`), at,
         // Written only when given: a turn begun without metadata is stored as before.
         ...(input.meta === undefined ? {} : { meta: input.meta }),
+        ...resuming,
       }).pipe(Effect.mapError(storage("session.encode")))
       const admitted: AdmittedTurn = {
         session: address, turn, runId: input.runId, key, origin: open.origin, userMessage,
-        command: input._tag === "User" ? input.command : {}, claimed, meta,
+        command: input._tag === "User" ? input.command : {}, claimed, meta, ...resuming,
       }
       return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next } }
     }), (opened) => Ref.set(unowned, Option.some(opened.admitted.turn)))))
@@ -272,6 +312,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         SessionBusy: () => Effect.succeed(false),
         TurnDuplicate: () => Effect.succeed(false),
         KeyConflict: () => Effect.succeed(false),
+        // An inbox turn resumes nothing: never raised here.
+        NotResumable: () => Effect.succeed(false),
         TurnRefused: (refused) => Effect.logWarning(`inbox turn of ${address.id} refused: ${refused.message}`).pipe(Effect.as(false)),
       }),
     )
