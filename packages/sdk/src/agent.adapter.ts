@@ -216,6 +216,7 @@ export const turnBeginCodes = {
   SessionBusy: "session.busy",
   TurnDuplicate: "turn.duplicate",
   KeyConflict: "turn.key-conflict",
+  RunIdReused: "turn.run-reused",
   NothingPending: "session.nothing-pending",
   NotResumable: "turn.not-resumable",
   TurnRefused: "turn.refused",
@@ -243,6 +244,8 @@ const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effec
 }).pipe(Effect.mapError((error) => isHarnessError(error) ? error
   : failure(turnBeginCodes[error._tag], error._tag === "NotResumable"
     ? `turn ${error.turn} of session ${turn.session.id} cannot be resumed (${error.reason})`
+    : error._tag === "RunIdReused"
+    ? `run id ${error.runId} was used by turn ${error.turn} of session ${turn.session.id}: each turn needs a new one`
     : error._tag === "AttachmentRejected"
     ? `the turn could not begin (AttachmentRejected, ${error.reason}: ${error.message}) in session ${turn.session.id}`
     : `the turn could not begin (${error._tag}) in session ${turn.session.id}`)))

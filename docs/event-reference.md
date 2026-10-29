@@ -262,7 +262,7 @@ Any other kind is a host's or a plugin's own record (`defineHostEvent`, `Session
 
 ## Reserved kinds
 
-A host event, or a `Sessions.transact` draft, may not use these names: the publish fails with `events.reserved`, the transact with `ReservedKind`. They are the journal kinds above and every bus event's name (`TURN_EVENT_NAMES`), the ones the journal never stores under their own name included (`assistant.message`, `assistant.delta`, `tool.progress`, `skills.activated`, `host`). The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.
+A host event, a `Sessions.transact` draft, or a draft a host or plugin appends through a turn's writer (`TurnWriter.append`, `transact`), may not use these names: the publish and the writer fail with `events.reserved`, `Sessions.transact` with `ReservedKind`; only the framework's turn writes them (`frameworkDraft`). They are the journal kinds above and every bus event's name (`TURN_EVENT_NAMES`), the ones the journal never stores under their own name included (`assistant.message`, `assistant.delta`, `tool.progress`, `skills.activated`, `host`). The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.
 
 ```text
 turn.started
@@ -306,8 +306,9 @@ When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.be
 | `SessionBusy` | `session.busy` | 409 | Another turn is open in the session. Retry after it ends, or queue the message. |
 | `TurnDuplicate` | `turn.duplicate` | 200 once that turn ended, 409 while it is open | The key was begun before with the same message, command and `resumes`: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it). |
 | `KeyConflict` | `turn.key-conflict` | 409 | The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts). |
+| `RunIdReused` | `turn.run-reused` | 409 | The run id was used before, by an earlier turn of the session or of the history a fork inherits: a run id names one turn's run (memory numbers its entries from it). Begin again with a new run id, a retry under a new key included; nothing was opened. |
 | `NothingPending` | `session.nothing-pending` | 204 | An inbox turn found nothing to take (inbox turns only). |
-| `NotResumable` | `turn.not-resumable` | 409 | The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key. |
+| `NotResumable` | `turn.not-resumable` | 409 | The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id). |
 | `TurnRefused` | `turn.refused` | 429 for a quota or rate, 403 when not allowed, 503 while draining before a shutdown | The host's `TurnAdmission` refused the turn; nothing was opened or counted. |
 | `SessionMissing` | `session.missing` | 404 | No such session for this owner. |
 | `SessionLogError` | `session.log` | 503 | The session store failed. Retry later. |
@@ -329,7 +330,7 @@ Besides the begin codes, these are common `HarnessError` codes a turn fails with
 | `turn.unstarted` | the turn's memory | Memory was asked to record, or for the turn's number, before the user's message was taken. |
 | `turn.persisted` | `TurnMemory.persistMessage` | The user's message was taken twice in one turn. |
 | `turn.numbering` | the turn's memory | Memory numbered the user's message differently from the turn the session stored. |
-| `events.reserved` | publishing a host event | The host event's name is one of the reserved kinds. |
+| `events.reserved` | publishing a host event; a turn writer's `append` or `transact` | The host event's name, or the draft's kind, is one of the reserved kinds; only the framework's turn writes those (`frameworkDraft`). |
 | `events.depth` | publishing an event | Reactions nested deeper than `maxEventDepth` (8 by default). |
 | `events.background` | a background subscription | A background handler was interrupted; the turn fails when the bus drains. One that dies with a defect fails it with that defect (`turn.defect`). |
 | `events.encode` | a host event's `make` / `publish`; the turn storing a bus event | The payload did not encode with the host event's schema, or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step). |
@@ -362,6 +363,7 @@ Besides the begin codes, these are common `HarnessError` codes a turn fails with
 | `session.contended` | the turn writer, plugin-sessions | Too many conflicting writes to the session in a row. |
 | `session.state` | the turn writer | The session's state, kept in its head, did not decode. |
 | `session.encode` | the turn writer | The turn's closing `turn.ended` did not encode. |
+| `session.defect` | the turn writer | Storing the turn's appended events died with a defect (a store or an encoder that threw); it is logged with its cause, and the writer refuses every later write and flush with this code. |
 
 ## Feed and socket frames
 

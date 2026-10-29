@@ -274,6 +274,7 @@ const beginStatus = {
   [turnBeginCodes.SessionBusy]: 409, // another turn is open: retry once it ends
   [turnBeginCodes.TurnDuplicate]: 409, // that key's turn is still running (an ended one is replayed)
   [turnBeginCodes.KeyConflict]: 409, // the key was begun with another message
+  [turnBeginCodes.RunIdReused]: 409, // the run id names an earlier turn: each turn needs a new one
   [turnBeginCodes.NothingPending]: 204, // inbox turns only
   [turnBeginCodes.NotResumable]: 409, // `resumes` names a turn that cannot be resumed
   [turnBeginCodes.TurnRefused]: 429, // your TurnAdmission refused it (its reason may call for 403 or 503)

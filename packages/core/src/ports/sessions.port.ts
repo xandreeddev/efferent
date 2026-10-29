@@ -13,6 +13,7 @@ import type {
   NothingPending,
   NotResumable,
   ReservedKind,
+  RunIdReused,
   SessionAddress,
   SessionBusy,
   SessionPage,
@@ -46,7 +47,13 @@ export interface Decided<A> {
  * order by one writer, consecutive appends in one commit, each commit
  * guarded by the session's revision and the turn's lease: a write the
  * session no longer accepts (cancelled, reaped, removed) closes the writer,
- * and every later write fails with `turn.closed`.
+ * and every later write fails with `turn.closed`. An append the store
+ * fails, or whose commit dies with a defect (`session.defect`, logged with
+ * its cause), fails every later write and flush with that error. `append`
+ * and `transact` refuse a draft under one of the framework's kinds
+ * (`RESERVED_KINDS`) with `events.reserved`, storing nothing of that call,
+ * unless the framework's turn wrote it (`frameworkDraft`): only the turn
+ * records memory, the bus's events and `request.prepared`.
  */
 export interface TurnWriter {
   readonly admitted: AdmittedTurn
@@ -141,7 +148,15 @@ export class Sessions extends Context.Service<Sessions, {
   /** Check, then append outside a turn (a user's action on a page, a setting): decided again on a conflict. */
   readonly transact: <A, E>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>) =>
     Effect.Effect<Decided<A>, E | ReservedKind | SessionMissing | SessionLogError>
-  /** End exactly `turn` as cancelled, if it is the open one. */
+  /**
+   * End exactly `turn` as cancelled, if it is the open one and still held:
+   * its inbox items are done. A turn nobody holds any more (its lease ran
+   * out, its process stopped) is not open (`get` shows none): the cancel
+   * reaps it, as a begin or a delivery would, as interrupted (`turn.lease`),
+   * its items waiting again (or dropped after too many attempts), and
+   * answers `cancelled: false`. Either order of a cancel and a reap ends
+   * such a turn the same way.
+   */
   readonly cancel: (address: SessionAddress, turn: number) =>
     Effect.Effect<{ readonly cancelled: boolean; readonly pending: number }, SessionMissing | SessionLogError>
   /**
@@ -161,13 +176,17 @@ export class Sessions extends Context.Service<Sessions, {
    * `NotResumable` (`missing`) before anything else, the admission included.
    * `resumes` is stored in `turn.started`, shown on `admitted` and part of
    * the key's fingerprint.
+   * A run id names one turn: a begin under one an earlier turn of the
+   * session (or of the history a fork inherits) was begun with fails with
+   * `RunIdReused` and opens nothing, checked in the opening commit right
+   * after the key's (a retry under the same key is `TurnDuplicate`).
    * A user message is normalised first (`normalizeUserMessage`), before
    * anything else: an image its bytes do not support fails with
    * `AttachmentRejected`, and the normalised message is what is stored,
    * admitted and compared with an earlier turn of the same key.
    */
   readonly begin: (address: SessionAddress, input: BeginTurn) =>
-    Effect.Effect<TurnWriter, AttachmentRejected | SessionBusy | TurnDuplicate | KeyConflict | NothingPending | NotResumable | TurnRefused | SessionMissing | SessionLogError, Scope.Scope>
+    Effect.Effect<TurnWriter, AttachmentRejected | SessionBusy | TurnDuplicate | KeyConflict | RunIdReused | NothingPending | NotResumable | TurnRefused | SessionMissing | SessionLogError, Scope.Scope>
   /** Put an item in the inbox (once per id); `pending` counts what waits after it. */
   readonly deliver: (address: SessionAddress, item: InboxItem) =>
     Effect.Effect<{ readonly delivered: boolean; readonly pending: number }, InboxFull | SessionMissing | SessionLogError>

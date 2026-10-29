@@ -23,9 +23,9 @@ transports (see [render kits](#render-kits)).
 | --- | --- | --- |
 | `sessionLogConformance(log)` | dense sequence numbers, one revision per commit, compare-and-swap, the `notAfter` clock check, JSON kept by value, an event as large as a message's images at their limit (`MEDIA_LIMITS.requestChars` base64 characters), reads by position and kind, listing order, children and their removal | a `SessionLog` |
 | `sessionLogRecoveryConformance(subject)` | reopening, several open handles, interrupted commits, a handle whose scope never closed, the exact `notAfter` boundary | a way to open a `SessionLog` |
-| `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; `meta` stored and admitted; every `NotResumable` reason; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds; cancel and removal; the inbox; a write renewing a lease, a lease that ran out and a dead process holder reaped; a turn judged as it was taken, not by the reader's ownership; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
+| `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; a reused run id (`RunIdReused`) opening nothing; `meta` stored and admitted; every `NotResumable` reason; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds, refused to a turn's writer too unless the framework's turn wrote them; cancel and removal, and a turn nobody holds reaped alike by a cancel or a delivery; the inbox; a write renewing a lease, a lease that ran out and a dead process holder reaped; a turn judged as it was taken, not by the reader's ownership; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
 | `taskRunnerConformance(make, { interruptsOnClose? })` | `run` hands the work over and returns, the work runs once, outlives its caller, is told a deadline not in the past and runs without the caller's services; `TaskActivity` counts it from the hand-over; closing the runner's scope interrupts it | a way to make a `TaskRunner` (and its `TaskActivity`) |
-| `tasksConformance(make)` | a task runs as one turn of a child session (spawn empty, fork with the parent's closed turns), its result reaches the parent's inbox once and the parent reacts once, after the turn in flight; `task.started` once per task, a second start runs nothing; a failed task says why; cancel; no task starts tasks; `reconcile` starting a task that never ran and delivering a result whose delivery was lost | a way to build `Sessions` and `Tasks` over the kit's runner and executor |
+| `tasksConformance(make)` | a task runs as one turn of a child session (spawn empty, fork with the parent's closed turns), its result reaches the parent's inbox once and the parent reacts once, after the turn in flight; `task.started` once per task, a second start runs nothing, the same id with other instructions `TaskConflict` and an id naming another session `SessionExists`; a failed task says why; cancel; no task starts tasks; `reconcile` starting a task that never ran and delivering a result whose delivery was lost | a way to build `Sessions` and `Tasks` over the kit's runner and executor |
 | `toolRegistryConformance(make)` | the catalog, activation (always-on, on demand, unknown, ungranted, only growing), concurrent `load_skill` calls each leaving their tools active, activated once, one invocation id per call minted before the checks, `CurrentToolInvocation` and the opener's services in the handler, events published on the run's bus only (never written to the journal by the registry), `PermissionGrants`, a `tool.refused` for each reason (`inactive`, `forbidden`, `denied`, `call-limit`, `tool-call-limit`) | a way to build a `ToolRegistry` over the kit's capabilities |
 | `memoryConformance(memory, services)` | own entry ids, a log that reads back exactly after a reopen, views and artifacts kept, a pure build, append-only maintenance, a message's images through a reopen (the current turn's built as image parts, an earlier turn's as image parts or label lines), a tool result's images stored once and the current turn's built as the result's images | a memory strategy |
 | `stepLoopConformance(loop)` | per-step event order, validation before dispatch, planned batches, forced tool choices, no call after completion, the run's usage (the sum of its `assistant.message` usage), the step cap, the request's `captureTraceContent` reaching its model calls as `CurrentTraceContent`, the request's `cacheKey` reaching its dispatch checks and model calls as `CurrentPromptCacheKey`, a request refused over an image planned again and sent once more when `onMediaRejected` answers true (failing when it answers false) | a `StepLoop` |
@@ -239,6 +239,10 @@ The checks:
 - **duplicate**: a key's retry is `TurnDuplicate` (open, then not) whatever
   its `meta`; another message or command under the key is `KeyConflict`;
   `lookup` finds the key's turn.
+- **run-id**: a begin under a run id an earlier turn used, under a new key
+  or as an inbox turn, is `RunIdReused` (the same key is still
+  `TurnDuplicate`) and stores nothing; in a fork, its parent's run ids are
+  refused too and a new one opens the fork's next turn.
 - **meta**: `meta` is stored in `turn.started`, admitted and shown to the
   host's admission; `{}` when none is given; the inbox's from `drain`.
 - **resume**: a cancelled turn is resumed (`resumes` admitted and stored), a
@@ -254,9 +258,15 @@ The checks:
   without an end and `turn.interrupted` for an interrupted one; a write after
   the end is `turn.closed`.
 - **transact**: records outside a turn; `turn.*` kinds are `ReservedKind`.
+  A turn's writer refuses a `turn.ended` or a `memory.message` with
+  `events.reserved`, storing nothing of that call and leaving the turn open,
+  and stores a reserved kind the framework's turn wrote (`frameworkDraft`).
 - **cancel**: ends exactly the open turn as cancelled; the holder's writer
   is closed at once on its own instance, and at its next write when the
   cancel came from another.
+- **cancel-unheld**: an inbox turn whose lease ran out is reaped by a
+  cancel as by a delivery: whichever comes first, nothing is cancelled, the
+  turn ends `interrupted` (`turn.lease`) and its item waits alike.
 - **remove**: removing a session closes its open turn (`removed`) and
   removes its children.
 - **inbox**: an item is stored once per id (even after it was taken), taken
@@ -290,7 +300,9 @@ The kit's own tests run it against careless wrappers of `SessionsLive`: a
 `tenure`; a
 `TurnActivity` that always reads idle fails `activity`; a `begin` that drops
 `meta` fails `meta`; leases that writes do not renew (`renew: "none"`) fail
-`lease-renewal`.
+`lease-renewal`; writers that take the framework's kinds from anyone fail
+`transact`; a `begin` that opens a reused run id's turn under a new one
+fails `run-id`.
 
 ## The task kits
 
@@ -366,7 +378,10 @@ const checks = tasksConformance(({ runner, executor }) => Layer.build(TasksLive(
   the parent reacts once, to an inbox turn whose item carries the reply; the
   parent records one `task.started`, and lists the task.
 - **start-once**: three starts of one task id, while it runs and after, run
-  it once.
+  it once; the id with other instructions or another mode is
+  `TaskConflict`.
+- **task-id**: a task id naming the parent or another of the owner's
+  sessions is `SessionExists`; nothing is recorded, run or written there.
 - **after-turn**: a result that arrives while the parent's turn is open
   waits for that turn, whose end reports it; a fork's history is the
   parent's up to its last closed turn.
@@ -389,7 +404,7 @@ const checks = tasksConformance(({ runner, executor }) => Layer.build(TasksLive(
   that takes them all it passes unchecked.
 
 `TasksLive` passes them; a `cancel` that stops nothing fails `cancel`, a
-`start` that ignores the task id fails `start-once`, a `list` that returns
+`start` that ignores the task id fails `start-once` and `task-id`, a `list` that returns
 nothing fails `run` and `start-once`, a `reconcile` that does nothing fails
 `reconcile` and `reconcile-delivery`, and one that leaves a result whose
 delivery was lost undelivered fails `reconcile-delivery`.

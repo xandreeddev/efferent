@@ -4,7 +4,7 @@ import type { ConversationId } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { JsonObject, SessionExists, SessionLogError, SessionMissing } from "../session/session-log.entity.js"
 import type { SessionAddress } from "../session/sessions.entity.js"
-import type { TaskMissing, TaskMode, TaskRefused, TaskView } from "../session/tasks.entity.js"
+import type { TaskConflict, TaskMissing, TaskMode, TaskRefused, TaskView } from "../session/tasks.entity.js"
 import type { TurnWriter } from "./sessions.port.js"
 import type { TurnOutcome } from "./turn.port.js"
 
@@ -18,13 +18,23 @@ import type { TurnOutcome } from "./turn.port.js"
  * finishes what a lost runner left undone; its caller drains.
  */
 export class Tasks extends Context.Service<Tasks, {
+  /**
+   * Start a task. The child session is created once `task.started` is
+   * stored, so a start that is refused or not stored leaves no child.
+   */
   readonly start: (parent: SessionAddress, input: {
-    /** Stable across retries: starting the same task twice starts it once. */
+    /**
+     * Stable across retries: starting the same task twice starts it once (a
+     * retry also creates the child a start that stopped half way left
+     * without one). The same id with other instructions or another mode is
+     * `TaskConflict`; an id naming a session that is not this parent's task
+     * child is `SessionExists`.
+     */
     readonly taskId?: ConversationId
     readonly instructions: string
     readonly mode: TaskMode
     readonly meta?: JsonObject
-  }) => Effect.Effect<TaskView, TaskRefused | SessionExists | SessionMissing | SessionLogError>
+  }) => Effect.Effect<TaskView, TaskRefused | TaskConflict | SessionExists | SessionMissing | SessionLogError>
   readonly status: (parent: SessionAddress, taskId: string) => Effect.Effect<TaskView, TaskMissing | SessionMissing | SessionLogError>
   readonly list: (parent: SessionAddress) => Effect.Effect<ReadonlyArray<TaskView>, SessionMissing | SessionLogError>
   /** Stop a task: its child's turn is cancelled and nothing is delivered. */

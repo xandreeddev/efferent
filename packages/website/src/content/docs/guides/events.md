@@ -350,7 +350,10 @@ export const reportStage = (events: TurnEventsService, stage: string, done: numb
   kinds, the bus events the writer stores, `turn.ended`, `inbox.queued`,
   `inbox.dropped`) or any bus event's name, matched exactly. Its publish
   fails with `events.reserved`, and so does the turn unless the caller
-  handles it.
+  handles it. A record appended through the turn's writer
+  (`TurnWriter.append` or `transact`) under one of those names is refused
+  the same way, and nothing of that call is stored: only the framework's
+  turn writes them.
 - Nothing else is refused: other names in those namespaces, and the kinds a
   plugin records for itself, are accepted. Never use them: plugin-tasks
   reads the first `task.result` or `task.cancelled` in a task's child
@@ -474,7 +477,9 @@ Three places say how a turn ended; two of them carry the failure's code:
   on the bus and in the journal, carries `resumes`; a turn that cannot be
   resumed fails to begin with `turn.not-resumable`. Without a key of its
   own, a resume is keyed `resume:<n>`, so a retry is `turn.duplicate` (the
-  turn route below answers it from the journal). See
+  turn route below answers it from the journal). Every turn needs a run id
+  of its own: one an earlier turn of the session was begun with fails to
+  begin with `turn.run-reused`. See
   [resuming a turn](https://github.com/xandreeddev/efferent/blob/main/docs/framework.md#resuming-a-turn).
 - **Leases.** By default a turn's lease is 60 s, renewed by its writes and by
   a keep-alive every 20 s while it runs, so a step that writes nothing for
@@ -578,6 +583,7 @@ const beginStatus = {
   [turnBeginCodes.SessionBusy]: 409, // another turn is open: retry once it ends
   [turnBeginCodes.TurnDuplicate]: 409, // that key's turn is still running (an ended one is replayed)
   [turnBeginCodes.KeyConflict]: 409, // the key was begun with another message
+  [turnBeginCodes.RunIdReused]: 409, // the run id names an earlier turn: each turn needs a new one
   [turnBeginCodes.NothingPending]: 204, // inbox turns only
   [turnBeginCodes.NotResumable]: 409, // `resumes` names a turn that cannot be resumed
   [turnBeginCodes.TurnRefused]: 429, // your TurnAdmission refused it (its reason may call for 403 or 503)

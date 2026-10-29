@@ -38,6 +38,12 @@ export class TaskRefused extends Schema.TaggedError<TaskRefused>()("TaskRefused"
   message: Schema.String,
 }) {}
 
+/** The task id was started before with other instructions or another mode: a retry of a start is the same task, anything else under its id is refused. */
+export class TaskConflict extends Schema.TaggedError<TaskConflict>()("TaskConflict", {
+  session: ConversationId,
+  taskId: Schema.String,
+}) {}
+
 export class TaskMissing extends Schema.TaggedError<TaskMissing>()("TaskMissing", {
   session: ConversationId,
   taskId: Schema.String,

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Option } from "effect"
 import { TestClock } from "effect/testing"
-import { SessionLog, SessionLogMemoryLive, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
+import { frameworkDraft, SessionLog, SessionLogMemoryLive, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
 import type { ConformanceCheck, SessionsInstance, SessionsSubject } from "@xandreed/core"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
@@ -79,6 +79,35 @@ describe("the Sessions kit catches careless backends", () => {
       }),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, forgetful)))).toEqual(["meta"])
+  })
+
+  test("one whose turn writers take the framework's kinds from anyone fails only the transact check", async () => {
+    const trusting = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer) => ({
+          ...writer,
+          append: (drafts) => writer.append(drafts.map((draft) => frameworkDraft(draft.kind, draft.data))),
+          transact: (decide) => writer.transact((foreign) => decide(foreign).pipe(Effect.map((decision) => ({
+            ...decision, drafts: decision.drafts.map((draft) => frameworkDraft(draft.kind, draft.data)),
+          })))),
+        }))),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, trusting)))).toEqual(["transact"])
+  })
+
+  test("one that begins a reused run id's turn under a new one fails only the run-id check", async () => {
+    const renaming = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        begin: (address, input) => instance.sessions.begin(address, input).pipe(
+          Effect.catchTag("RunIdReused", () => instance.sessions.begin(address, { ...input, runId: `${input.runId}:again` }))),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, renaming)))).toEqual(["run-id"])
   })
 
   test("one whose writes do not renew the lease fails only the lease-renewal check", async () => {

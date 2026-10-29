@@ -13,6 +13,7 @@ import {
   RESERVED_KINDS,
   resumeRefusal,
   ReservedKind,
+  RunIdReused,
   sameUserMessage,
   SessionBusy,
   SessionLog,
@@ -178,13 +179,35 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     return { drafts: [closing, ...dropped], state: after.state, closed: Option.some(turn) }
   })
 
+  /** A session's own `turn.started` events. */
+  const startsOf = (id: ConversationId) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started"] })
+
+  /** Of these `turn.started` events, the turn begun with `key`, and what it was begun with. */
+  const keyIn = (starts: ReadonlyArray<SessionLogEvent>, key: string) =>
+    Option.map(Option.fromNullishOr(starts.find((event) => event.data.key === key)), (event) => ({ turn: Option.getOrElse(event.turn, () => 0), event }))
+
   /** The turn begun with `key`, and what it was begun with. */
-  const keyed = (id: ConversationId, key: string) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started"] }).pipe(
-    Effect.flatMap((events) => Option.match(Option.fromNullishOr(events.find((event) => event.data.key === key)), {
-      onNone: () => Effect.succeed(Option.none<{ readonly turn: number; readonly event: SessionLogEvent }>()),
-      onSome: (event) => Effect.succeed(Option.some({ turn: Option.getOrElse(event.turn, () => 0), event })),
-    })),
-  )
+  const keyed = (id: ConversationId, key: string) => startsOf(id).pipe(Effect.map((starts) => keyIn(starts, key)))
+
+  /**
+   * The turn begun under `runId`: of the session's own `turn.started` events
+   * (`starts`), or of the history a fork inherits (each parent up to its fork
+   * point). Memory numbers a turn's entries from its run id over that whole
+   * history.
+   */
+  const runOf = (header: SessionHead["header"], starts: ReadonlyArray<SessionLogEvent>, runId: string) => {
+    const begunIn = (events: ReadonlyArray<SessionLogEvent>, through: number) =>
+      Option.map(Option.fromNullishOr(events.find((event) => event.data.runId === runId && event.seq <= through)), (event) => Option.getOrElse(event.turn, () => 0))
+    const inherited = (lineage: SessionHead["header"]["parent"]): Effect.Effect<Option.Option<number>, SessionMissing | SessionLogError> => Option.match(lineage, {
+      onNone: () => Effect.succeed(Option.none()),
+      onSome: (parent) => parent.through <= 0 ? Effect.succeed(Option.none()) : startsOf(parent.id).pipe(
+        Effect.flatMap((events) => Option.match(begunIn(events, parent.through), {
+          onSome: (turn) => Effect.succeed(Option.some(turn)),
+          onNone: () => log.head(parent.id).pipe(Effect.flatMap((head) => inherited(head.header.parent))),
+        }))),
+    })
+    return Option.match(begunIn(starts, Number.POSITIVE_INFINITY), { onSome: (turn) => Effect.succeed(Option.some(turn)), onNone: () => inherited(header.parent) })
+  }
 
   /**
    * The session's own turns, each as begun (with the turn it resumed) and as
@@ -271,8 +294,9 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const begun = yield* restore(admission.admit(toAdmit, guarded(address, (head, stored) => Effect.gen(function* () {
         const reap = yield* reaped(head, stored)
         const state = reap.state
+        const starts = yield* startsOf(address.id)
         if (input._tag === "User") {
-          const previous = yield* keyed(address.id, input.key)
+          const previous = keyIn(starts, input.key)
           if (Option.isSome(previous)) {
             const started = yield* turnStartedOf(previous.value.event).pipe(Effect.mapError(storage("session.decode")))
             // The key's fingerprint is the message, the command and the turn resumed, never `meta`: a retry with other metadata is the same turn.
@@ -283,6 +307,9 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
               : new KeyConflict({ session: address.id, key: input.key, turn: previous.value.turn }))
           }
         }
+        // A run id names one turn's run: a begin reusing one (a retry under a new key, say) is refused before it opens anything.
+        const reused = yield* runOf(head.header, starts, input.runId)
+        if (Option.isSome(reused)) return yield* Effect.fail(new RunIdReused({ session: address.id, runId: input.runId, turn: reused.value }))
         if (Option.isSome(state.open)) return yield* Effect.fail(new SessionBusy({ session: address.id, turn: state.open.value.turn }))
         // A resume is checked in the commit that opens it, against the turns as stored (a turn reaped by this commit is interrupted).
         if (Option.isSome(resumes)) {
@@ -414,6 +441,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         SessionBusy: () => Effect.succeedNone,
         TurnDuplicate: () => Effect.succeedNone,
         KeyConflict: () => Effect.succeedNone,
+        // Each inbox turn's run id is new: never raised here.
+        RunIdReused: () => Effect.succeedNone,
         // An inbox turn resumes nothing: never raised here.
         NotResumable: () => Effect.succeedNone,
         TurnRefused: (refused) => Effect.logWarning(`inbox turn of ${address.id} refused: ${refused.message}`).pipe(Effect.as(Option.none<boolean>())),
@@ -489,7 +518,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       if (reserved !== undefined) return yield* Effect.fail(new ReservedKind({ kind: reserved.kind }))
       return { drafts: standalone(decision.drafts), next: Option.none<SessionsState>(), result: decision.result }
     })).pipe(Effect.map((done) => ({ result: done.result, events: Option.match(done.committed, { onNone: () => [], onSome: (committed) => committed.events }) }))),
-    cancel: (address, turn) => guarded(address, (_head, state) => Effect.gen(function* () {
+    // A turn nobody holds any more is reaped, as by a begin or a delivery, whichever comes first: it is not open, so the
+    // cancel cancels nothing, and the outcome (interrupted, its items waiting again) does not depend on the order.
+    cancel: (address, turn) => guarded(address, (head, stored) => Effect.gen(function* () {
+      const reap = yield* reaped(head, stored)
+      const state = reap.state
+      if (Option.isSome(reap.closed)) return { drafts: reap.drafts, next: Option.some(state), result: { cancelled: false, pending: pendingOf(state).length } }
       if (!Option.exists(state.open, (open) => open.turn === turn)) return { drafts: [], next: Option.none<SessionsState>(), result: { cancelled: false, pending: pendingOf(state).length } }
       const after = closedState(state, "cancelled", config.inbox.attempts, true)
       const closing = yield* turnEndedDraft(turn, { reason: "cancelled", failure: Option.none() }).pipe(Effect.mapError(storage("session.encode")))

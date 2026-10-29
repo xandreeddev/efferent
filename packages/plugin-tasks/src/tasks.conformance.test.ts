@@ -53,10 +53,10 @@ describe("the Tasks kit catches careless backends", () => {
     expect(await failedChecks(tasksConformance(careless(() => ({ cancel: () => Effect.succeed(true) }))))).toEqual(["cancel"])
   }, 30_000)
 
-  test("one that starts a new task whatever id it is given fails only starting a task again", async () => {
+  test("one that starts a new task whatever id it is given fails only the checks that start a task by its id", async () => {
     expect(await failedChecks(tasksConformance(careless((tasks) => ({
       start: (parent, input) => tasks.start(parent, { instructions: input.instructions, mode: input.mode }),
-    }))))).toEqual(["start-once"])
+    }))))).toEqual(["start-once", "task-id"])
   }, 30_000)
 
   test("one whose reconcile does nothing fails only the reconcile checks", async () => {

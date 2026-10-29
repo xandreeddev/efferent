@@ -98,6 +98,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `resolveGraph` refuses `profile`/`profiles` (`config.profile`) instead of
   ignoring them.
 - Agent fingerprints change once: they now hash canonical JSON.
+- `Sessions.begin` refuses a run id that an earlier turn of the session, or
+  of history a fork inherits, was begun with: `RunIdReused`, or
+  `turn.run-reused` (409) from `Agent.turn`. Every turn and every retry
+  needs a new run id.
+- `Tasks.start` fails with `TaskConflict` for a known task id with other
+  instructions or mode, and with `SessionExists` for an id naming a session
+  that is not the parent's task child.
+- A turn's writer refuses framework kinds from hosts and plugins
+  (`events.reserved`); only drafts made with `frameworkDraft` are accepted.
 
 ### Added
 
@@ -125,6 +134,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   any installed copy of core. The framework uses it, so a code from another
   copy no longer becomes `loop.failed`, `task.turn` or a defect.
 - `mergeOptions` and `PartialOptions` in `@xandreed/core`.
+- `frameworkDraft`, `isFrameworkDraft`, `unmarkedReservedDraft`,
+  `RunIdReused`, `TaskConflict` and `turnBeginCodes.RunIdReused`.
 
 ### Fixed
 
@@ -239,6 +250,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   registry closed mid-replacement no longer leaks the staged generation.
 - The agent fingerprint no longer depends on the key order of options or
   bindings.
+- An end the store refused no longer lets writes in after a later end.
+- A store write that dies with a defect fails later writes with
+  `session.defect` and is logged, instead of leaving them waiting.
+- `cancel` reaps a turn nobody holds, the same way a reap does, whichever
+  comes first.
+- A task's child session is created only after `task.started` is stored, a
+  retried start finishes a half-done one, and task store failures are
+  logged as warnings.
 
 ### Repository
 
@@ -252,6 +271,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The turn kit adds `pending`, `stuck-reaction` and `self-publication`
   checks, and the sessions kit adds `tenure` (it needs `processOwned`).
 - `stepLoopConformance` adds a `cache-key` check.
+- The sessions kit adds `run-id` and `cancel-unheld` and extends its
+  `transact` checks; the tasks kit adds `task-id` and extends `start-once`.
 
 ## 0.14.0 — 2026-10-29
 
