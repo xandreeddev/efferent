@@ -308,7 +308,7 @@ When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.be
 | `KeyConflict` | `turn.key-conflict` | 409 | The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts). |
 | `NothingPending` | `session.nothing-pending` | 204 | An inbox turn found nothing to take (inbox turns only). |
 | `NotResumable` | `turn.not-resumable` | 409 | The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key. |
-| `TurnRefused` | `turn.refused` | 429 for a quota or rate, 403 when not allowed | The host's `TurnAdmission` refused the turn; nothing was opened or counted. |
+| `TurnRefused` | `turn.refused` | 429 for a quota or rate, 403 when not allowed, 503 while draining before a shutdown | The host's `TurnAdmission` refused the turn; nothing was opened or counted. |
 | `SessionMissing` | `session.missing` | 404 | No such session for this owner. |
 | `SessionLogError` | `session.log` | 503 | The session store failed. Retry later. |
 

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { HarnessError, MediaFingerprint, mediaFromBase64, SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import { awaitIdle, HarnessError, MediaFingerprint, mediaFromBase64, SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnWriter } from "@xandreed/core"
+import { SessionsPluginLive } from "./plugin.adapter.js"
 import { processLiveness } from "./process-liveness.adapter.js"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
@@ -19,6 +20,10 @@ const say = (text: string, key = text, command: Record<string, unknown> = {}): B
 const instancesOver = (log: Log, ...configs: ReadonlyArray<SessionsConfig>) => Effect.forEach(configs, (config) =>
   Effect.service(Sessions).pipe(Effect.provide(SessionsLive(config).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))))
 
+/** One instance over the log with the turns it has in flight (its TurnActivity). */
+const withActivity = (log: Log, config: SessionsConfig, admission: Layer.Layer<TurnAdmission> = TurnAdmissionOpen) => Layer.build(SessionsLive(config).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), admission)))).pipe(
+  Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.get(context, TurnActivity) })))
+
 const processMode: SessionsConfig = { ...sessionsDefaults, ownership: { mode: "process" } }
 
 /** A process-owned instance over the log as if in a process of its own: `self` names it, `running` are the pids its host runs. */
@@ -31,6 +36,9 @@ const withLog = <A, E>(body: (log: Log) => Effect.Effect<A, E, Scope.Scope>) =>
 
 const lease = (ttlMs: number, renew: SessionsConfig["ownership"] extends infer O ? O extends { readonly renew: infer R } ? R : never : never): SessionsConfig =>
   ({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs, renew } })
+
+/** Leases renewed only by writes (no keep-alive): the commit sequences a rebase sees are the turn's own. */
+const onCommit = lease(60_000, "on-commit")
 
 const created = (sessions: Service) => sessions.create({ owner }).pipe(Effect.map((view): SessionAddress => ({ id: view.header.id, owner })))
 const kinds = (events: ReadonlyArray<SessionLogEvent>) => events.map((event) => `${event.kind}${Option.match(event.turn, { onNone: () => "", onSome: (turn) => `@${turn}` })}`)
@@ -288,6 +296,51 @@ describe("leases", () => {
     expect((yield* Fiber.join(noticed)).reason).toBe("cancelled")
   })))
 
+  test("the default keep-alive renews an idle turn one interval after its begin, bumping the head's updatedAt", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    const writer = yield* sessions!.begin(address, say("idle"))
+    const begun = yield* log.head(address.id)
+    // The begin's own commit set the lease: no renewal follows it at once.
+    yield* TestClock.adjust("19 seconds")
+    expect((yield* log.head(address.id)).revision).toBe(begun.revision)
+    yield* TestClock.adjust("1 second")
+    yield* writer.flush
+    const renewed = yield* log.head(address.id)
+    expect([renewed.revision, renewed.seq, renewed.updatedAt - begun.updatedAt]).toEqual([begun.revision + 1, begun.seq, 20_000])
+    expect(Option.flatMap((yield* sessions!.get(address)).open, (open) => open.expiresAt)).toEqual(Option.some(renewed.updatedAt + 60_000))
+    yield* writer.end({ reason: "completed", failure: Option.none() })
+    yield* TestClock.adjust("40 seconds")
+    // An ended turn renews nothing.
+    expect((yield* log.head(address.id)).revision).toBe(begun.revision + 2)
+  })))
+
+  test("a silent step longer than the lease keeps it with the keep-alive, and loses it when only commits renew", () => withLog((log) => Effect.gen(function* () {
+    const silentStep = (config: SessionsConfig) => Effect.gen(function* () {
+      const [holder, other] = yield* instancesOver(log, config, config)
+      const address = yield* created(holder!)
+      const writer = yield* holder!.begin(address, say("a slow model call"))
+      // Ninety seconds without a write: longer than the 60 s lease.
+      yield* Effect.forEach([1, 2, 3, 4, 5, 6, 7, 8, 9], () => TestClock.adjust("10 seconds"), { discard: true })
+      yield* writer.append([{ kind: "step.ended", data: { step: 0 } }])
+      const stored = yield* Effect.result(writer.flush)
+      const next = yield* Effect.result(other!.begin(address, say("next")))
+      return [stored._tag === "Success" ? "stored" : stored.failure.code, next._tag === "Failure" ? next.failure._tag : `turn ${next.success.admitted.turn}`]
+    })
+    expect(yield* silentStep(sessionsDefaults)).toEqual(["stored", "SessionBusy"])
+    expect(yield* silentStep(lease(60_000, "on-commit"))).toEqual(["turn.closed", "turn 2"])
+  })))
+
+  test("a keep-alive slower than half the lease is refused when the layer is built, as the plugin's options", () => withLog((log) => Effect.gen(function* () {
+    const services = Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)
+    const direct = yield* Effect.flip(Layer.build(SessionsLive(lease(1_000, { everyMs: 600 })).pipe(Layer.provide(services))))
+    expect([direct.code, direct.message]).toEqual(["config.options", expect.stringContaining("renew.everyMs (600) must be at most half of ttlMs (1000)")])
+    const options = yield* Effect.flip(Layer.build(SessionsPluginLive({ ownership: { mode: "lease", ttlMs: 60_000, renew: { everyMs: 40_000 } } }).pipe(Layer.provide(services))))
+    expect([options.code, options.message]).toEqual(["config.options", expect.stringContaining("renew.everyMs (40000) must be at most half of ttlMs (60000)")])
+    const half = yield* instancesOver(log, lease(1_000, { everyMs: 500 }))
+    expect(half).toHaveLength(1)
+  })))
+
   test("under process ownership, a turn whose process stopped is reaped at the first touch, as is one that names no process", () => withLog((log) => Effect.gen(function* () {
     const crashed = yield* processOver(log, Option.some({ host: "h1", pid: 101, startedAt: 1 }), [202])
     const restarted = yield* processOver(log, Option.some({ host: "h1", pid: 202, startedAt: 2 }), [202])
@@ -355,6 +408,98 @@ describe("leases", () => {
     yield* TestClock.adjust("1 second")
     yield* writer.append([{ kind: "late", data: {} }])
     expect((yield* Effect.flip(writer.flush)).code).toBe("turn.closed")
+  })))
+})
+
+describe("activity", () => {
+  test("TurnActivity lists the turns this instance holds open, oldest first, each from its begin until its writer's scope closes", () => withLog((log) => Effect.gen(function* () {
+    const { sessions, activity } = yield* withActivity(log, sessionsDefaults)
+    const [other] = yield* instancesOver(log, sessionsDefaults)
+    const first = yield* created(sessions)
+    const second = yield* created(sessions)
+    const opened = activity.current.pipe(Effect.map((now) => now.open.map((open) => [open.session, open.turn])))
+    expect(yield* activity.current).toEqual({ open: [], beginning: 0 })
+    yield* activity.idle
+    yield* TestClock.adjust("1 second")
+    const scope = yield* Scope.make()
+    const writer = yield* sessions.begin(first, say("one")).pipe(Scope.provide(scope))
+    yield* TestClock.adjust("1 second")
+    yield* Effect.scoped(Effect.gen(function* () {
+      yield* sessions.begin(second, say("two"))
+      expect(yield* activity.current).toEqual({ open: [{ session: first.id, turn: 1, since: 1_000 }, { session: second.id, turn: 1, since: 2_000 }], beginning: 0 })
+    }))
+    // A turn another instance holds is that instance's.
+    const elsewhere = yield* created(other!)
+    yield* Effect.scoped(other!.begin(elsewhere, say("elsewhere")).pipe(Effect.andThen(Effect.gen(function* () {
+      expect(yield* opened).toEqual([[first.id, 1]])
+    }))))
+    const idle = yield* Effect.forkChild(activity.idle)
+    yield* writer.end({ reason: "completed", failure: Option.none() })
+    yield* Effect.yieldNow
+    // Ended but its scope still open: it still counts, and so does the session's next turn, begun meanwhile.
+    expect([yield* opened, idle.pollUnsafe()]).toEqual([[[first.id, 1]], undefined])
+    const next = yield* Scope.make()
+    yield* sessions.begin(first, say("three")).pipe(Scope.provide(next))
+    expect(yield* opened).toEqual([[first.id, 1], [first.id, 2]])
+    yield* Scope.close(scope, Exit.void)
+    expect([yield* opened, idle.pollUnsafe()]).toEqual([[[first.id, 2]], undefined])
+    yield* Scope.close(next, Exit.void)
+    yield* Fiber.join(idle)
+    expect(yield* activity.current).toEqual({ open: [], beginning: 0 })
+  })))
+
+  test("a begin counts from before the host's admission, through a slow commit, until its writer is held: awaitIdle waits for it", () => withLog((log) => Effect.gen(function* () {
+    const mode = yield* Ref.make<"queue" | "refuse" | "refuse after opening">("queue")
+    const queued = yield* Deferred.make<void>()
+    const admitted = yield* Deferred.make<void>()
+    const storing = yield* Deferred.make<void>()
+    const stored = yield* Deferred.make<void>()
+    // The opening commit waits on the store, as one on SQLite waits out another connection's lock.
+    const slow: Log = { ...log, commit: (id, input) => (input.events.some((event) => event.kind === "turn.started")
+      ? Deferred.succeed(storing, undefined).pipe(Effect.andThen(Deferred.await(stored)))
+      : Effect.void).pipe(Effect.andThen(log.commit(id, input))) }
+    const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
+      admit: (turn, open) => Ref.get(mode).pipe(Effect.flatMap((now) => now === "refuse"
+        ? Effect.fail(new TurnRefused({ session: turn.session.id, reason: "draining", message: "draining" }))
+        : now === "refuse after opening"
+          ? open.pipe(Effect.andThen(Effect.fail(new TurnRefused({ session: turn.session.id, reason: "draining", message: "refused after it opened" }))))
+          : Deferred.succeed(queued, undefined).pipe(Effect.andThen(Deferred.await(admitted)), Effect.andThen(open)))),
+    }))
+    const { sessions, activity } = yield* withActivity(slow, sessionsDefaults, admission)
+    const address = yield* created(sessions)
+    const scope = yield* Scope.make()
+    const beginning = yield* Effect.forkChild(sessions.begin(address, say("queued")).pipe(Scope.provide(scope)))
+    yield* Deferred.await(queued)
+    // Queued in the host's admission: no turn yet, but the begin counts.
+    expect(yield* activity.current).toEqual({ open: [], beginning: 1 })
+    const drained = yield* Effect.forkChild(awaitIdle().pipe(Effect.provideService(TurnActivity, activity)))
+    yield* Deferred.succeed(admitted, undefined)
+    yield* Deferred.await(storing)
+    // Admitted, its commit waiting on the store: it still counts.
+    yield* TestClock.adjust("3 seconds")
+    expect([yield* activity.current, drained.pollUnsafe()]).toEqual([{ open: [], beginning: 1 }, undefined])
+    yield* Deferred.succeed(stored, undefined)
+    const writer = yield* Fiber.join(beginning)
+    // Handed over: one update moves it from beginning to open, since after its commit.
+    expect(yield* activity.current).toEqual({ open: [{ session: address.id, turn: 1, since: 3_000 }], beginning: 0 })
+    yield* writer.end({ reason: "completed", failure: Option.none() })
+    yield* Effect.yieldNow
+    expect(drained.pollUnsafe()).toBeUndefined()
+    yield* Scope.close(scope, Exit.void)
+    expect(yield* Fiber.join(drained)).toEqual({ openTurns: [], beginningTurns: 0, runningTasks: 0, busy: false })
+
+    // A refused begin stops counting at once, though its scope stays open.
+    const kept = yield* Scope.make()
+    yield* Ref.set(mode, "refuse")
+    const refused = yield* Effect.flip(sessions.begin(address, say("refused")).pipe(Scope.provide(kept)))
+    expect([refused._tag, yield* activity.current]).toEqual(["TurnRefused", { open: [], beginning: 0 }])
+    // One refused after its turn was committed counts until its scope has closed that turn.
+    yield* Ref.set(mode, "refuse after opening")
+    const late = yield* Effect.flip(sessions.begin(address, say("refused late")).pipe(Scope.provide(kept)))
+    expect([late._tag, yield* activity.current]).toEqual(["TurnRefused", { open: [], beginning: 1 }])
+    yield* Scope.close(kept, Exit.void)
+    expect(yield* activity.current).toEqual({ open: [], beginning: 0 })
+    expect((yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "completed"], [2, "failed"]])
   })))
 })
 
@@ -476,7 +621,7 @@ describe("check, then append", () => {
     : { drafts: [{ kind: "canvas.planned", data: { page: "p1" } }], result: "planned" })
 
   test("a decision is taken again when someone else wrote first", () => withLog((log) => Effect.gen(function* () {
-    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const [sessions] = yield* instancesOver(log, onCommit)
     const address = yield* created(sessions!)
     const writer = yield* sessions!.begin(address, say("show a page"))
     yield* sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "canvas.frozen", data: { page: "p1" } }], result: undefined }))
@@ -495,7 +640,7 @@ describe("check, then append", () => {
         ? Effect.fail(new SessionLogError({ code: "read.unavailable", message: "history unavailable" }))
         : inner.read(id, query))),
     })
-    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const [sessions] = yield* instancesOver(log, onCommit)
     const address = yield* created(sessions!)
     const writer = yield* sessions!.begin(address, say("show a page"))
     yield* sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "canvas.frozen", data: { page: "p1" } }], result: undefined }))
@@ -518,7 +663,7 @@ describe("check, then append", () => {
         return yield* inner.read(id, query)
       }),
     })
-    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const [sessions] = yield* instancesOver(log, onCommit)
     const address = yield* created(sessions!)
     const writer = yield* sessions!.begin(address, say("show a page"))
     yield* sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "canvas.frozen", data: {} }], result: undefined }))
@@ -528,7 +673,7 @@ describe("check, then append", () => {
   })))
 
   test("a host may not record under the framework's kinds", () => withLog((log) => Effect.gen(function* () {
-    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const [sessions] = yield* instancesOver(log, onCommit)
     const address = yield* created(sessions!)
     const refused = yield* Effect.flip(sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "turn.ended", data: {} }], result: undefined })))
     expect(refused._tag).toBe("ReservedKind")

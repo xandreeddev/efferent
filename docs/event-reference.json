@@ -5024,7 +5024,7 @@
     {
       "tag": "TurnRefused",
       "code": "turn.refused",
-      "http": "429 for a quota or rate, 403 when not allowed",
+      "http": "429 for a quota or rate, 403 when not allowed, 503 while draining before a shutdown",
       "meaning": "The host's `TurnAdmission` refused the turn; nothing was opened or counted."
     },
     {

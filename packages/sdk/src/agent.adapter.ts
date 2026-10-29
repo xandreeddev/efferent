@@ -13,13 +13,16 @@ import {
   isBudgetTokens,
   normalizeUserMessage,
   openTurnTools,
+  processActivity,
   replayableContext,
   SessionEnvironment,
   Sessions,
   StepLoop,
+  TaskActivity,
   ToolRegistry,
   RunContext,
   settleTurn,
+  TurnActivity,
   TurnEvents,
   TurnTasks,
   TurnLive,
@@ -36,6 +39,7 @@ import type {
   LoopLimits,
   NewTurn,
   Plugin,
+  ProcessActivity,
   Turn,
   TurnInput,
   TurnLiveInput,
@@ -116,6 +120,16 @@ export interface AgentConfig {
 /** A defined agent: its graph is built; each turn is composed by the host. */
 export interface Agent {
   readonly fingerprint: string
+  /**
+   * What this process is busy with (`processActivity`), as the agent's
+   * runtime services see it: the `TurnActivity` of a runtime-scoped
+   * sessions plugin in its graph (or one in `services`), and the
+   * `TaskActivity` of a task runner in `services` (`InProcessTaskRunnerLive`
+   * built into them). A probe that is not there counts nothing: a Sessions
+   * the host passes only in a turn's services is not seen here (read
+   * `processActivity` with the host's own services instead).
+   */
+  readonly activity: Effect.Effect<ProcessActivity>
   /**
    * Run one turn: one the host began (its `TurnWriter`; the host ends it),
    * or one begun and ended here through the `Sessions` in the turn's
@@ -403,7 +417,11 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     return yield* admitted.pipe(measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] }))
   }))) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
-  return { fingerprint: graphFingerprint(graph), turn }
+  // The probes are the runtime's alone, wherever this is read (a turn's own services hold others).
+  const activity = processActivity.pipe(Effect.updateContext((current: Context.Context<never>) =>
+    Context.merge(Context.omit(TurnActivity, TaskActivity)(current), Context.pick(TurnActivity, TaskActivity)(runtime))))
+
+  return { fingerprint: graphFingerprint(graph), activity, turn }
 })
 
 export const Agent = { define: makeAgent }

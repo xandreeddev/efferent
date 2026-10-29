@@ -150,6 +150,10 @@ export * from "./ports/turn-admission.port.js"
 export { TurnAdmissionOpen } from "./session/turn-admission.open.adapter.js"
 export * from "./session/tasks.entity.js"
 export * from "./ports/tasks.port.js"
+// what this process is busy with: open turns and running background work, for a `/ping` or a drain
+export { ActiveTurn, ProcessActivity, TurnsInFlight } from "./session/activity.entity.js"
+export { awaitIdle, processActivity } from "./session/activity.entity.functions.js"
+export { TaskActivity, TurnActivity } from "./ports/activity.port.js"
 
 // spec (the spec-driven pipeline's shared vocabulary — re-homed from the old line)
 export {

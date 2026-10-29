@@ -77,7 +77,7 @@ Requires: none
 
 Scope: **runtime** · API 2 · Version 0.13.0
 
-Provides: `efferent/Sessions`
+Provides: `efferent/Sessions`, `efferent/TurnActivity`
 
 Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
 
@@ -88,7 +88,9 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
   "ownership": {
     "mode": "lease",
     "ttlMs": 60000,
-    "renew": "on-commit"
+    "renew": {
+      "everyMs": 20000
+    }
   },
   "titleChars": 80,
   "inbox": {
@@ -157,7 +159,8 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
             "ttlMs",
             "renew"
           ],
-          "additionalProperties": true
+          "additionalProperties": true,
+          "description": "A turn is held for ttlMs (storage time) after its begin and after each renewal. renew: \"none\" fixes the lease at begin, \"on-commit\" extends it with each write, { everyMs } also extends it with a keep-alive every everyMs while the turn is open (the first one interval after the begin). everyMs must be at most half of ttlMs (everyMs * 2 <= ttlMs), or the options fail with config.options."
         },
         {
           "type": "object",

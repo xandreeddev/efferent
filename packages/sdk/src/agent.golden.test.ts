@@ -193,7 +193,7 @@ export const runGolden = (
   log: Layer.Layer<SessionLog, unknown> = SessionLogMemoryLive,
 ) => Effect.scoped(Effect.gen(function* () {
   const agent = yield* runner
-  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(log, TurnAdmissionOpen)))), Sessions)
+  const sessions = Context.get(yield* Layer.build(SessionsLive({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } }).pipe(Layer.provide(Layer.merge(log, TurnAdmissionOpen)))), Sessions)
   const address = { id: conversation, owner: "golden" }
   yield* sessions.create({ owner: address.owner, id: conversation })
   const requests = yield* Ref.make<ReadonlyArray<unknown>>([])

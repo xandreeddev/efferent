@@ -42,9 +42,22 @@ export const Ownership = Schema.Union([
     mode: Schema.Literal("lease"),
     /** How long an open turn is held without a write (storage time). */
     ttlMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1_000)),
-    /** `none`: the lease is fixed at begin; `on-commit`: each write extends it; `everyMs`: a keep-alive also extends it. */
+    /**
+     * `none`: the lease is fixed at begin; `on-commit`: each write extends it;
+     * `everyMs`: each write extends it, and so does a keep-alive every
+     * `everyMs` while the turn is open (the first one interval after the
+     * begin), so a silent step (a slow model call, a long tool) keeps it.
+     * `everyMs` is at most half of `ttlMs`, so a renewal lands before the
+     * lease runs out even when one is late. A renewal is queued in order
+     * with the turn's writes: it cannot pass a `write` or `transact` still
+     * running, so keep those shorter than the lease.
+     */
     renew: Schema.Union([Schema.Literals(["none", "on-commit"]), Schema.Struct({ everyMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(100)) })]),
-  }),
+  }).annotate({
+    description: "A turn is held for ttlMs (storage time) after its begin and after each renewal. renew: \"none\" fixes the lease at begin, \"on-commit\" extends it with each write, { everyMs } also extends it with a keep-alive every everyMs while the turn is open (the first one interval after the begin). everyMs must be at most half of ttlMs (everyMs * 2 <= ttlMs), or the options fail with config.options.",
+  }).check(Schema.makeFilter((lease) => typeof lease.renew !== "object" || lease.renew.everyMs * 2 <= lease.ttlMs
+    ? undefined
+    : `renew.everyMs (${lease.renew.everyMs}) must be at most half of ttlMs (${lease.ttlMs}), so a keep-alive lands before the lease runs out`)),
   /**
    * One process per host: a turn is held, without expiry, for as long as the
    * process that began it runs. A turn left open by a process of this host
@@ -86,8 +99,9 @@ export const SessionsConfig = Schema.Struct({
 })
 export type SessionsConfig = typeof SessionsConfig.Type
 
+/** By default a turn is leased for 60 s, renewed by every write and by a keep-alive every 20 s. */
 export const sessionsDefaults: SessionsConfig = {
-  ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" },
+  ownership: { mode: "lease", ttlMs: 60_000, renew: { everyMs: 20_000 } },
   titleChars: 80,
   inbox: { maxPending: 20, attempts: 2 },
   writer: { capacity: 1_024, batch: 64 },

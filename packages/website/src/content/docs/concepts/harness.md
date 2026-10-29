@@ -213,6 +213,19 @@ SQLite logs read the committing process's Effect `Clock`, under the write
 lock, so instances sharing a lease over them need clocks in step; a host's
 own store may read its server's clock instead. Reading or following a session never runs anything.
 
+By default a turn's lease is 60 s, extended by each of its writes and by a
+keep-alive every 20 s while its writer is open (`ownership: { mode: "lease",
+ttlMs: 60_000, renew: { everyMs: 20_000 } }`). The keep-alive is what lets a
+step write nothing for longer than the lease, a slow model call or a long
+tool, without losing its turn; the first renewal comes one interval after
+the begin, so a short turn costs no extra commit. `everyMs` must be at most
+half of `ttlMs` (a slower one fails with `config.options`). Each renewal is a
+commit, so it moves the session's `updatedAt` (and its place in `list`).
+A renewal is queued in order with the turn's writes, so it cannot pass a
+`write` or `transact` still running: keep those shorter than the lease.
+`renew: "on-commit"` renews on writes only, as before the keep-alive was the
+default.
+
 `Agent.turn` closes the body scope, the host's layer, then the plugins that
 depend on turn services. On success, tasks and background reactions settle
 between these dependency boundaries while `TurnLive` remains open. A completed
@@ -228,6 +241,61 @@ a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`.
 Its result lands in the parent's inbox once, and the parent answers it after
 the turn in flight. See the framework guide's sessions section for the
 contract, the event vocabulary and the inbox protocol.
+
+### Busy signal and graceful shutdown
+
+`SessionsPluginLive` also provides `TurnActivity` (the turns this process
+holds open, with session, turn and since when, and the begins still in
+progress, from before the host's admission until the writer is handed over)
+and `InProcessTaskRunnerLive` provides `TaskActivity` (the background work
+it runs). `processActivity` from `@xandreed/core` reads both into
+`{ openTurns, beginningTurns, runningTasks, busy }`, and `agent.activity`
+does so over the agent's runtime services: what a `/ping` reports.
+`awaitIdle({ timeout })` waits until nothing is open, beginning or running
+and returns the activity then (`busy: true` with what is left when the
+timeout comes first). A SIGTERM drain stops admitting turns, waits, stops
+the host's own request fibers, then closes the services' scope:
+
+```ts
+// Inside the host's Effect.gen, in the scope the process closes last.
+import { Effect, Layer, Ref } from "effect"
+import { LanguageModel } from "effect/ai"
+import { awaitIdle, SessionLogMemoryLive, TurnAdmission, TurnRefused } from "@xandreed/core"
+import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+import { SessionsPluginLive } from "@xandreed/plugin-sessions"
+import { InProcessTaskRunnerLive } from "@xandreed/plugin-tasks"
+import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
+import { Agent } from "@xandreed/sdk"
+
+const draining = yield* Ref.make(false)
+const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
+  admit: (turn, open) => Effect.gen(function* () {
+    if (yield* Ref.get(draining)) return yield* Effect.fail(new TurnRefused({ session: turn.session.id, reason: "draining", message: "shutting down" }))
+    return yield* open
+  }),
+}))
+const sessions = SessionsPluginLive().pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, admission)))
+// The runner on top of the sessions: closing interrupts its tasks while the log is still open.
+const services = yield* Layer.build(InProcessTaskRunnerLive().pipe(Layer.provideMerge(sessions)))
+const agent = yield* Agent.define({ services, plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel] })
+
+// GET /ping
+const ping = agent.activity.pipe(Effect.map((now) => ({ busy: now.busy, openTurns: now.openTurns.length, runningTasks: now.runningTasks })))
+
+// SIGTERM: new turns fail with turn.refused; wait at most 25 s; then stop the server, then close the scope `services` lives in.
+const drain = Ref.set(draining, true).pipe(Effect.andThen(awaitIdle({ timeout: "25 seconds" }).pipe(Effect.provide(services))))
+```
+
+Closing the services does not stop a turn still running: its writer lives
+in the turn's own scope, in the fiber serving the request, and the close
+only shuts the log under it. Stop the request fibers first (the server's
+shutdown): a turn interrupted while the log is open ends interrupted
+(`turn.interrupted`) and can be resumed. Closing the services then
+interrupts the runner's tasks before the log, so their turns end the same
+way. A turn whose end could not be stored is reaped by the next process as
+interrupted (`turn.lease`) once its lease runs out. The framework guide's
+sessions section has the details.
 
 The models plugin is runtime-scoped: `Agent.define` builds it once, and a
 turn's own services (a per-turn `LanguageModel`) win over it. With the default

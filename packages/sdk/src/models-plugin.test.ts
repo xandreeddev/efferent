@@ -42,7 +42,7 @@ const chatServer = () => {
 const conversation = ConversationId.make("00000000-0000-4000-8000-0000000000aa")
 
 const sessionsWith = Effect.gen(function* () {
-  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+  const sessions = Context.get(yield* Layer.build(SessionsLive({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
   yield* sessions.create({ owner: "test", id: conversation })
   return sessions
 })

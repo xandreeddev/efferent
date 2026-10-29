@@ -11,7 +11,8 @@ in separate packages. `@xandreed/sdk` reexports the contracts for application au
 
 The replaceable services include `StepLoop`, `ConversationMemory`,
 `ResultDigester`, `ToolRegistry`, `Sessions`, `SessionLog`, `TurnAdmission`,
-`Tasks` and `ActionPolicy`.
+`Tasks` and `ActionPolicy`, and the optional busy-signal probes
+`TurnActivity` and `TaskActivity`.
 
 The step loop is `stepLoopPlugin` from `@xandreed/plugin-agent-loop`.
 `@xandreed/plugin-sessions` owns serialized turns, durable events and forks;

@@ -372,6 +372,46 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   keyed on root spans or parent names follow the new tree
   (`docs/framework.md`, "Traces and metrics").
 
+- **`@xandreed/plugin-sessions`: the default lease renews itself.**
+  `sessionsDefaults.ownership` is `{ mode: "lease", ttlMs: 60_000, renew:
+  { everyMs: 20_000 } }` (it renewed `"on-commit"`): while a turn's writer
+  is open, a state-only commit extends its lease every 20 s, the first one
+  20 s after the begin. A silent step longer than the lease (a slow model
+  call, a long tool) no longer loses its turn; a renewal is queued in order
+  with the turn's writes, so it waits for a `write` or `transact` still
+  running, and those must stay shorter than the lease. Each renewal is a commit: it
+  bumps the head's `updatedAt` (and so a session's place in `list`), costs
+  a write on SQLite, and keeps a hung turn held while its process runs
+  (`Sessions.cancel` still closes it). Tests that advance a `TestClock`
+  past a lease with a writer left open, or that assert exact commit
+  sequences or `updatedAt` over minutes, see the renewals. To keep the old
+  behaviour, pass `ownership: { mode: "lease", ttlMs: 60_000, renew:
+  "on-commit" }`.
+- **`@xandreed/plugin-sessions`: the keep-alive's first renewal comes one
+  interval after the begin.** With `renew: { everyMs }`, a renewal commit
+  followed the begin at once; now the first one comes `everyMs` later (the
+  begin's own commit set the lease), so a turn shorter than `everyMs`
+  costs no extra commit. A host that already configured `{ everyMs }` sees
+  one commit fewer per turn; a test that counted commits or revisions right
+  after a begin, or waited for that first renewal, advances its clock by
+  `everyMs` first.
+- **`@xandreed/plugin-sessions`: a keep-alive slower than half the lease is
+  refused.** `renew: { everyMs }` with `everyMs * 2 > ttlMs` fails the
+  plugin's options with `config.options`, and so does `SessionsLive(config)`
+  when its layer is built (it decodes `config.ownership`): such a renewal
+  could land after the lease ran out. Lower `everyMs` or raise `ttlMs`.
+- **`@xandreed/plugin-sessions`, `@xandreed/plugin-tasks`: wider layers.**
+  `SessionsLive` and `SessionsPluginLive` provide `Sessions | TurnActivity`
+  and fail with `HarnessError` (`SessionsLive` was `Layer<Sessions, never,
+  …>`); `sessionsPlugin.provides` is `[Sessions, TurnActivity]`, so a graph
+  with another plugin providing `TurnActivity` needs a binding.
+  `InProcessTaskRunnerLive` provides `TaskRunner | TaskActivity`. Code that
+  annotates these layers' types widens the annotation; built contexts carry
+  one more service each.
+- **`@xandreed/sdk`: `Agent` has an `activity` member.** A hand-written
+  `Agent` value (a test fake) adds it, for example `activity:
+  processActivity`.
+
 ### Added
 
 - `@xandreed/core`: every `TurnEvent` member carries a `description`
@@ -793,6 +833,29 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   span, where spans nest, the metrics, trace content), the event list and
   the journal vocabulary; the website's SDK and providers pages; the event
   reference lists `tool.refused`, `stream.fallback` and the reserved names.
+
+- `@xandreed/core`: the busy signal. `TurnActivity` (the turns this
+  process has in flight, read at one moment as `TurnsInFlight`: the turns
+  held open, each `{ session, turn, since }`, and the begins still in
+  progress) and `TaskActivity` (the background work it runs) are optional
+  ports; `processActivity` reads them into a `ProcessActivity` (`{
+  openTurns, beginningTurns, runningTasks, busy }`, a missing port counting
+  nothing), and `awaitIdle({ timeout })` waits until nothing is open,
+  beginning or running at once, returning what is still in flight when the
+  timeout comes first. `SessionsLive` provides `TurnActivity`: a begin
+  counts from before the host's admission until its writer is handed over,
+  then the turn until its writer's scope closes, per session and turn.
+  `InProcessTaskRunnerLive` provides `TaskActivity` (a piece of work is
+  forked and counted in one step, so an interrupted caller leaves none
+  uncounted), and `@xandreed/sdk`'s `agent.activity` reads them from the
+  agent's runtime services. The framework guide and the website show a
+  `/ping` and a SIGTERM drain (stop admitting, wait until idle, stop the
+  requests, close the services, with the task runner built on top of the
+  sessions so its tasks end before the log closes), which an sdk test runs,
+  including a drain that times out. The framework guide explains the lease
+  keep-alive and the `everyMs <= ttlMs / 2` rule, which the plugin
+  reference now shows as the lease's description. The event reference
+  suggests 503 for `TurnRefused` while draining.
 
 ### Fixed
 

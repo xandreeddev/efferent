@@ -125,7 +125,9 @@ over typed services (`TurnLive`, `persistMessage`, `openTurnTools`,
 sessions: one event log each, in storage the host provides (`SessionLog`),
 read and written through `@xandreed/plugin-sessions`, with an inbox and
 background tasks (`@xandreed/plugin-tasks`) the agent answers after the turn
-in flight. See [the framework guide](docs/framework.md). Every event a turn
+in flight. `agent.activity` (and `processActivity`, `awaitIdle`) says what
+the process still has in flight, for a `/ping` or a SIGTERM drain. See
+[the framework guide](docs/framework.md). Every event a turn
 publishes and every kind a session's journal stores, with its payload, is in
 the generated [event reference](docs/event-reference.md), with the begin and
 error codes and the feed frames a host serves them with.

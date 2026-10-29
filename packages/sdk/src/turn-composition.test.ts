@@ -121,7 +121,7 @@ const services = Effect.gen(function* () {
     generateText: () => Effect.die("not called") as never,
     streamText: () => Stream.die("not called") as never,
   })
-  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+  const sessions = Context.get(yield* Layer.build(SessionsLive({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
   return Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), unused), Context.make(Sessions, sessions))
 })
 
