@@ -110,6 +110,9 @@ const EFFECT_FN_CLEAN = [
   "plugin-memory-window",
   "plugin-memory-digest",
   "plugin-session-sqlite",
+  "plugin-render",
+  "plugin-workspace",
+  "plugin-telemetry",
 ].map(src)
 
 /**

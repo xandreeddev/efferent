@@ -38,7 +38,7 @@ export const renderTransportConformance = (transports: {
 }]
 
 /** An appendable journal for feed checks: `tail` polls only, `wakingTail` also signals each append. */
-export const makeMemoryJournal = (initial: ReadonlyArray<JournalRecord>) => Effect.gen(function* () {
+export const makeMemoryJournal = Effect.fnUntraced(function* (initial: ReadonlyArray<JournalRecord>) {
   const records = yield* Ref.make(initial)
   const appended = yield* PubSub.unbounded<void>()
   const tail: typeof JournalTail.Service = {

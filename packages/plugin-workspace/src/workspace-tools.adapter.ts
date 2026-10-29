@@ -41,7 +41,7 @@ const invalid = (message: string) => new HarnessError({ code: "config.options", 
  * given guidance as skill instructions: it is in their descriptions and the
  * section, since an always-on skill's instructions never reach the model.
  */
-export const workspaceTools = (config: WorkspaceToolsConfig): Effect.Effect<Capability, HarnessError, Scope.Scope> => Effect.gen(function* () {
+export const workspaceTools = Effect.fnUntraced(function* (config: WorkspaceToolsConfig): Effect.fn.Return<Capability, HarnessError, Scope.Scope> {
   const path = yield* Effect.service(Path.Path).pipe(Effect.provide(Path.layer))
   const protect = yield* Effect.fromResult(compileProtect(config.protect)).pipe(Effect.mapError(invalid))
   const badExclude = config.exclude.find((glob) => Result.isFailure(compileGlob(glob, { dot: true })))
