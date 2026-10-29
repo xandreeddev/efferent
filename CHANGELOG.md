@@ -317,6 +317,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   changelog headings, re-recording the sdk golden, when to run
   `docs:generate`, and tags resuming at `v0.14.0`. The foundry and core
   notes are brought up to date.
+- The `commit-style` skill covers squash-merged PR titles and bodies as well
+  as commits, with current examples and no title prefix.
+- New contributor skills in `.agents/skills`: `add-plugin`, `add-port`,
+  `write-model-text`, `effect-idioms`, `domain-entity`, `change-event`,
+  `journey-test` and `release`. They cover registering a package or plugin,
+  ports with their conformance kits, text the model reads, Effect 4 idioms
+  (including `Effect.fn` spans at service boundaries), domain schemas,
+  events and stored payloads, key-free journey tests, and the release order.
 
 ## 0.14.0 — 2026-10-29
 
