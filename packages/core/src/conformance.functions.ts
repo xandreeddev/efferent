@@ -1,10 +1,11 @@
 import { Clock, Effect, Option } from "effect"
+import type { Fiber } from "effect"
 import { ConformanceFailure } from "./conformance.entity.js"
 import type { ConformanceCheck } from "./conformance.entity.js"
 import { ConversationId } from "./domain/message.entity.js"
 import { zeroUsage } from "./domain/token-usage.entity.functions.js"
 import type { TokenUsage } from "./domain/token-usage.entity.js"
-import type { SessionHeader } from "./session/session-log.entity.js"
+import type { SessionHeader, SessionLogEvent } from "./session/session-log.entity.js"
 
 /*
  * The helpers the conformance kits share. Private to core: the kits are
@@ -20,6 +21,21 @@ export const sameUsage = (a: TokenUsage, b: TokenUsage): boolean =>
 
 /** A 1x1 PNG, as base64: the image the kits attach. */
 export const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+/** Each event as `kind@turn` (`kind` alone outside a turn), joined. */
+export const kindsOf = (events: ReadonlyArray<SessionLogEvent>): string =>
+  events.map((event) => `${event.kind}${Option.match(event.turn, { onNone: () => "", onSome: (turn) => `@${turn}` })}`).join()
+
+/** Whether `fiber` completes within a few turns of the scheduler (an `idle` that should be settled). */
+export const settles = (fiber: Fiber.Fiber<unknown, unknown>, tries = 50): Effect.Effect<boolean> =>
+  fiber.pollUnsafe() !== undefined ? Effect.succeed(true)
+    : tries <= 0 ? Effect.succeed(false)
+    : Effect.yieldNow.pipe(Effect.andThen(Effect.suspend(() => settles(fiber, tries - 1))))
+
+/** Read `value` until `holds`, letting other fibers run in between; the last value read. */
+export const eventually = <A>(value: Effect.Effect<A>, holds: (a: A) => boolean, tries = 200): Effect.Effect<A> =>
+  value.pipe(Effect.flatMap((now) => holds(now) || tries <= 0 ? Effect.succeed(now)
+    : Effect.yieldNow.pipe(Effect.andThen(Effect.suspend(() => eventually(value, holds, tries - 1))))))
 
 /** A fresh id per session, so a kit can run against a shared store. */
 export const freshId = Effect.sync(() => ConversationId.make(crypto.randomUUID()))

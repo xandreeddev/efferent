@@ -38,7 +38,11 @@ export class Tasks extends Context.Service<Tasks, {
  * Where background work runs: a fiber of this process, or the host's own
  * mechanism (e.g. a serverless waitUntil). `run` returns once the work is
  * handed over; the work is told when it must be done by (Clock time), if
- * the runner has a limit, so a task ends interrupted rather than lost.
+ * the runner has a limit, so a task ends interrupted rather than lost. The
+ * work goes on after its caller (the turn that started a task) ends, and
+ * runs without the caller's services; on fibers of this process, it is
+ * interrupted when the runner's scope closes. `taskRunnerConformance`
+ * checks a runner.
  */
 export class TaskRunner extends Context.Service<TaskRunner, {
   readonly run: (work: (deadline: Option.Option<number>) => Effect.Effect<void>) => Effect.Effect<void>

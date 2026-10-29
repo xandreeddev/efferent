@@ -18,9 +18,20 @@ Port contracts ship as conformance kits (`*.conformance.ts`, each exported
 from `src/index.ts`). Run a port's kit against every adapter of it, and when
 the port changes, on Node too (`verify:packages`). The kits share
 the private helpers in `src/conformance.functions.ts` (`check`, `expect`,
-`fail`, `freshId`, `headerOf`, `atTime`), and the step-loop and turn kits
-`sameUsage`; they are not exported, and new kits use them too. That file is test support for the kits, not an entity's behaviour,
+`fail`, `freshId`, `headerOf`, `atTime`), the step-loop and turn kits
+`sameUsage`, and the sessions and task kits `kindsOf`, `settles` and
+`eventually`; they are not exported, and new kits use them too. That file is test support for the kits, not an entity's behaviour,
 so it is not paired with `conformance.entity.ts`.
+Core has no adapter of `Sessions`, `Tasks` or `ToolRegistry`: their kits
+(`sessionsConformance`, `tasksConformance`, `toolRegistryConformance`) run
+in the plugins that implement them (`plugin-sessions` and
+`plugin-session-sqlite`, `plugin-tasks`, `plugin-tool-discovery`), whose
+tests also hold the kits' self-tests, careless wrappers of the plugin's own
+adapter that must fail; `taskRunnerConformance` has its self-test here,
+over fiber runners written in the test. The registry kit builds its turns
+over `TurnLive` and a writer of its own that keeps the turn in memory: a
+kit ships in the build, which leaves `testing.ts` files out, so it cannot
+import `recordingTurnWriter`.
 
 The `FileSystem` and `Bash` ports are what agent tools work through. Core
 ships the ports, the in-memory `FileSystemMemoryLive` and the two kits; the

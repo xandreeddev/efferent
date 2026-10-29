@@ -104,6 +104,11 @@ Core ships the port contracts as conformance kits, checks any test runner can
 run against your own implementation: `sessionLogConformance` and
 `sessionLogRecoveryConformance` (reopening, two handles, interrupted commits,
 a handle whose scope never closed) for a session store,
+`sessionsConformance` (one open turn per session, keys, resume, the inbox,
+leases and dead holders reaped, `TurnActivity`) for a `Sessions` backend,
+`taskRunnerConformance` and `tasksConformance` for background work and
+tasks, `toolRegistryConformance` (activation, invocation ids, every
+`tool.refused` reason) for a tool registry,
 `memoryConformance`, `stepLoopConformance` and `turnConformance`, and
 `fileSystemConformance` and `bashConformance` for the `FileSystem` and `Bash`
 ports agent tools work through (`FileSystemMemoryLive` is an in-memory file

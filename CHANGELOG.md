@@ -510,6 +510,41 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   process and lease ownership. A new docs page, "Conformance kits", lists
   core's kits and `@xandreed/plugin-render`'s, and how to run them against
   your own adapter.
+- `@xandreed/core`: conformance kits for the ports that had none with an
+  adapter in the repository, each with self-tests that careless backends
+  fail. `sessionsConformance(subject)` (`SessionsSubject`: `leased` and,
+  optionally, `processOwned` instances over one store, and `advance` to move
+  its clock; `SessionsInstance`, whose `activity` is optional, and
+  `SessionsProcess`) checks a `Sessions` backend: create, get, list and
+  fork; one open turn per session on every instance and one winner of a
+  race; key retries and `KeyConflict` (`meta` not in the fingerprint);
+  `meta` stored and admitted; every `NotResumable` reason;
+  `AttachmentRejected` and `NothingPending` opening nothing; the writer's
+  order and endings; `transact`; cancel and removal; the inbox (an item
+  given back when its turn is interrupted, done when it is cancelled); a
+  write renewing a lease; a turn whose lease ran out (left alone by a drain
+  with nothing to take) and one whose process stopped reaped by the next
+  begin; and, for an instance with one, `TurnActivity` counting each begin
+  from the moment it is asked for and each turn per session and turn until
+  its scope closes. `taskRunnerConformance(make, { interruptsOnClose? })`
+  (`TaskRunnerFixture`) checks the hand-over, work outliving its caller, the
+  deadline, work running without the caller's services, `TaskActivity` from
+  the hand-over and the scope's close. `tasksConformance(make)`
+  (`TasksDependencies`, `TasksFixture`) checks a task as one child turn
+  delivered to the parent's inbox once, starting once, the result after the
+  parent's turn, a fork's history, failure, cancel, depth, and `reconcile`
+  starting a task that never ran and delivering a result the parent's full
+  inbox refused, over the kit's own runner and executor.
+  `toolRegistryConformance(make)` (`ToolRegistryLimits`) checks the catalog,
+  activation, invocation ids minted before the checks,
+  `CurrentToolInvocation` and the opener's services in handlers, events
+  published on the run's bus only (never written to the journal by the
+  registry), `PermissionGrants`, and a `tool.refused` for each reason. They
+  run over `SessionsLive` (in-memory log and SQLite, under a `TestClock`),
+  `InProcessTaskRunnerLive` (with and without `maxMs`), `TasksLive` and the
+  tool discovery plugin's registry. The `TaskRunner` port's description
+  says what the kit checks (no change to its type). The conformance page
+  describes the four kits.
 - `@xandreed/core`: the `FileSystem` port's new calls (`readBytes` ranges,
   `append`, `rename`, `stat` with `FileInfo` and `followSymlinks`, `glob`
   with `cwd`, `exclude`, `dot`, `onlyFiles` and `limit`), `walkGlob` (the
@@ -1047,6 +1082,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `storage: "memory"`, two turns, a login, a role edit, a logout, the catalog
   and a utility call leave both empty. `@xandreed/sdk` tests the plugin at
   the agent level (a dev dependency).
+- `bun run verify:packages` runs the Sessions kit over the packed
+  `SessionsLive` and in-memory log, each check under a `TestClock`, and the
+  TaskRunner, Tasks and ToolRegistry kits over `InProcessTaskRunnerLive`,
+  `TasksLive` and the tool discovery plugin's registry, on Node.
 - `bun run verify:packages` loads a `SKILL.md` tree with the packed
   `SkillsDirectoryPluginLive` over `FileSystemLive`, on Bun and on Node. The
   plugin reference page says what each plugin contributes and reads when
