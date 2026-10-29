@@ -2,14 +2,17 @@ import { LanguageModel, Prompt } from "effect/ai"
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
-import { Config, Effect, Option, Redacted } from "effect"
-import type { Context, Scope } from "effect"
-import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, formatModelSelection, modelRequestDescriptorOf } from "@xandreed/core"
+import { Config, Effect, Match, Option, Predicate, Redacted } from "effect"
+import type { Context, Schema, Scope } from "effect"
+import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, modelRequestDescriptorOf } from "@xandreed/core"
 import type { Credential, ModelCallPolicy, ModelSelection } from "@xandreed/core"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { makeCompatLanguageModel, promptWithImageLabels } from "./compat.js"
-import { imageInputFor, publicReasoningEffort, reasoningEffortsFor, usesOpenCodeResponses } from "./modelCatalog.js"
+import { publicReasoningEffort, usesOpenCodeResponses } from "./modelCatalog.js"
 import { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL } from "./openAiCodex.js"
+import { BuiltInProvider } from "./provider-profile.entity.js"
+import type { ChatRoute, ModelProfile, ResponsesRoute, Route } from "./provider-profile.entity.js"
+import { profileOf } from "./provider-profile.entity.functions.js"
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import type { ModelEndpoint } from "../ports/model-endpoints.port.js"
@@ -21,19 +24,16 @@ import type { WebSocketProxy } from "../ports/models-transport.port.js"
  * freshly-resolved key (never captured at layer build), so a credential or
  * model switch applies on the next call.
  *
- * v1 providers: opencode (OpenAI-compatible gateway — the default), google
- * (Gemini's OpenAI-compatible endpoint), anthropic (api key or subscription
- * OAuth), openai (api key), openai-codex (subscription OAuth). A configured
- * endpoint, or a `local` credential with a `baseUrl`, sends its provider's
- * models to that OpenAI-compatible URL, with or without a key.
+ * The built-in providers are their profiles (`PROVIDER_PROFILES`): opencode
+ * (OpenAI-compatible gateway — the default), google (Gemini's
+ * OpenAI-compatible endpoint), anthropic (api key or subscription OAuth),
+ * openai (api key), openai-codex (subscription OAuth). A model is built by
+ * its route, one builder each. A configured endpoint, or a `local`
+ * credential with a `baseUrl`, sends its provider's models to that
+ * OpenAI-compatible URL, with or without a key.
  */
 
-export const OPENCODE_CHAT_URL = "https://opencode.ai/zen/go/v1/chat/completions"
-/** OpenCode serves GPT models through the OpenAI Responses protocol. */
-export const OPENCODE_RESPONSES_API_URL = "https://opencode.ai/zen/v1"
-
-/** Gemini through its OpenAI-compatible chat completions (Bearer API key). */
-export const GOOGLE_CHAT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+export { GOOGLE_CHAT_URL, OPENCODE_CHAT_URL, OPENCODE_RESPONSES_API_URL } from "./provider-profile.entity.functions.js"
 
 export { usesOpenCodeResponses }
 
@@ -43,19 +43,29 @@ export interface BuiltProvider {
   readonly prependClaudeCode: boolean
   /** The route sends images; when it does not, `buildProvider` has the model send them as label lines. */
   readonly images: boolean
+  /** The route the model is sent over: a configured endpoint's and a `local` credential's URL are `compat`. */
+  readonly route: Route["_tag"]
 }
+
+/** The options of a model call, as far as the plugin rewrites them: the prompt. */
+export interface PromptOptions {
+  readonly prompt: Prompt.RawInput
+}
+
+/** A call's options with the prompt `f` made of it; every other option is kept. */
+export const withPrompt = <O extends PromptOptions>(
+  options: O,
+  f: (prompt: Prompt.Prompt) => Prompt.Prompt,
+): Omit<O, "prompt"> & { readonly prompt: Prompt.Prompt } => ({ ...options, prompt: f(Prompt.make(options.prompt)) })
 
 /** Every call of the model sent with its prompt's file parts as label lines (`promptWithImageLabels`). */
 const withImageLabels = (model: LanguageModel.LanguageModel): LanguageModel.LanguageModel => {
-  const relabeled = (options: unknown): unknown => ({
-    ...(options as Record<string, unknown>),
-    prompt: promptWithImageLabels(Prompt.make((options as { readonly prompt: Prompt.RawInput }).prompt)),
-  })
+  const relabeled = (options: PromptOptions) => withPrompt(options, promptWithImageLabels)
   return {
     ...model,
-    generateText: ((options: unknown) => model.generateText(relabeled(options) as never)) as never,
-    generateObject: ((options: unknown) => model.generateObject(relabeled(options) as never)) as never,
-    streamText: ((options: unknown) => model.streamText(relabeled(options) as never)) as never,
+    generateText: ((options: PromptOptions) => model.generateText(relabeled(options) as never)) as never,
+    generateObject: ((options: PromptOptions) => model.generateObject(relabeled(options) as never)) as never,
+    streamText: ((options: PromptOptions) => model.streamText(relabeled(options) as never)) as never,
   }
 }
 
@@ -78,13 +88,8 @@ const anthropicOAuthTransform =
 const claudeCodePrompt = Prompt.make([{ role: "system", content: CLAUDE_CODE_SYSTEM }])
 
 /** Prepend the Claude Code system block (subscription-auth requirement). */
-export const prependClaudeCode = (options: unknown): unknown => ({
-  ...(options as Record<string, unknown>),
-  prompt: Prompt.concat(
-    claudeCodePrompt,
-    Prompt.make((options as { prompt: Prompt.RawInput }).prompt),
-  ),
-})
+export const prependClaudeCode = <O extends PromptOptions>(options: O) =>
+  withPrompt(options, (prompt) => Prompt.concat(claudeCodePrompt, prompt))
 
 /**
  * Anthropic prompt caching is OPT-IN per request: stamp ephemeral
@@ -94,43 +99,45 @@ export const prependClaudeCode = (options: unknown): unknown => ({
  * prefixes. Messages already carrying an explicit `cacheControl` are left
  * alone.
  */
-export const withAnthropicCacheBreakpoints = (options: unknown): unknown => {
-  const prompt = Prompt.make((options as { prompt: Prompt.RawInput }).prompt)
-  const messages = prompt.content
-  if (messages.length === 0) return options
+export const withAnthropicCacheBreakpoints = <O extends PromptOptions>(options: O) =>
+  withPrompt(options, (prompt) => {
+    const messages = prompt.content
+    const lastSystem = messages.reduce(
+      (acc: number, m, i) => (m.role === "system" ? i : acc),
+      -1,
+    )
+    const nonSystem = messages.flatMap((m, i) => (m.role === "system" ? [] : [i]))
+    const stampIdx = new Set([
+      ...(lastSystem >= 0 ? [lastSystem] : []),
+      ...nonSystem.slice(-2),
+    ])
 
-  const lastSystem = messages.reduce(
-    (acc: number, m, i) => (m.role === "system" ? i : acc),
-    -1,
-  )
-  const nonSystem = messages.flatMap((m, i) => (m.role === "system" ? [] : [i]))
-  const stampIdx = new Set([
-    ...(lastSystem >= 0 ? [lastSystem] : []),
-    ...nonSystem.slice(-2),
-  ])
-
-  const stamped = messages.map((msg, i) => {
-    if (!stampIdx.has(i)) return msg
-    const anthropic = (msg.options["anthropic"] ?? {}) as Record<string, unknown>
-    if (anthropic["cacheControl"] !== undefined) return msg
-    return Prompt.makeMessage(msg.role, {
-      ...msg,
-      options: {
-        ...msg.options,
-        anthropic: { ...anthropic, cacheControl: { type: "ephemeral" } },
-      },
-    } as never)
+    const stamped = messages.map((msg, i) => {
+      if (!stampIdx.has(i)) return msg
+      const own = msg.options["anthropic"]
+      const anthropic: { readonly [key: string]: unknown } = Predicate.isObject(own) ? own : {}
+      if (anthropic["cacheControl"] !== undefined) return msg
+      return Prompt.makeMessage(msg.role, {
+        ...msg,
+        options: {
+          ...msg.options,
+          anthropic: { ...anthropic, cacheControl: { type: "ephemeral" } },
+        },
+      } as never)
+    })
+    return Prompt.fromMessages(stamped)
   })
-  return {
-    ...(options as Record<string, unknown>),
-    prompt: Prompt.fromMessages(stamped),
-  }
-}
 
 const missingKey = (selection: ModelSelection): AuthError =>
   new AuthError({
     provider: selection.provider,
     message: `no credential for ${selection.provider} — sign in through the AuthStore (storage "local" keeps it in ~/.efferent/runtime/auth.json), or give the models plugin one in credentials or credentialEnv (storage "memory")`,
+  })
+
+const notWired = (selection: ModelSelection): AuthError =>
+  new AuthError({
+    provider: selection.provider,
+    message: `provider "${selection.provider}" is not wired (built in: ${BuiltInProvider.literals.join(", ")}; add others as models plugin endpoints)`,
   })
 
 /**
@@ -147,27 +154,6 @@ const responsesPolicy = (policy: Option.Option<ModelCallPolicy>, sendsEffort: bo
       : { max_output_tokens: value.maxOutputTokens }),
     ...(sendsEffort ? { reasoning: { effort: publicReasoningEffort(value.effort) } } : {}),
   }),
-})
-
-/** The OpenCode Responses options: what the model is built with, and what its descriptor records. */
-const openCodeResponsesConfig = (cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>) => ({
-  // UI tools contain genuinely optional fields. OpenAI strict
-  // schemas require every property, so use normal function
-  // calling and let Effect decode the domain schema.
-  strictJsonSchema: false,
-  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
-  ...responsesPolicy(policy, true),
-})
-
-/**
- * The OpenAI API options: what the model is built with, and what its
- * descriptor records. The effort is sent to a model that takes one
- * (`reasoningEffortsFor`), clamped to the public vocabulary; a model that
- * takes none (a non-reasoning one) is sent none, which it would refuse.
- */
-const openAiConfig = (selection: ModelSelection, cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>) => ({
-  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
-  ...responsesPolicy(policy, reasoningEffortsFor(formatModelSelection(selection)).length > 0),
 })
 
 /** `<url>/chat/completions` of an OpenAI-compatible base URL. */
@@ -214,13 +200,32 @@ const compatFetch = (transport: Transport) =>
  * applies that the runtime cannot tunnel a WebSocket through) fails the call
  * with the provider's `AuthError`, which is not retried and does not fall back.
  */
-const codexWebSocketProxy = (transport: Transport): Effect.Effect<Option.Option<WebSocketProxy>, AuthError> =>
+const codexWebSocketProxy = (selection: ModelSelection, transport: Transport): Effect.Effect<Option.Option<WebSocketProxy>, AuthError> =>
   Option.match(Option.flatMap(transport, (found) => Option.fromNullishOr(found.webSocketAgent)), {
     onNone: () => Effect.succeed(Option.none()),
     onSome: (route) => route(new URL(OPENAI_CODEX_API_URL)).pipe(
-      Effect.mapError((error) => new AuthError({ provider: "openai-codex", message: error.message })),
+      Effect.mapError((error) => new AuthError({ provider: selection.provider, message: error.message })),
     ),
   })
+
+/**
+ * What a route builds: the model, the settings its descriptor records, as
+ * JSON (none for a client that describes itself), and whether its calls take
+ * the Claude Code block first.
+ */
+interface RouteModel {
+  readonly svc: LanguageModel.LanguageModel
+  readonly settings: Option.Option<Schema.JsonObject>
+  readonly prependClaudeCode: boolean
+}
+
+/** A model as `buildProvider` describes and wraps it. */
+interface Built extends RouteModel {
+  readonly images: boolean
+  readonly route: Route["_tag"]
+}
+
+type Building<A> = Effect.Effect<A, AuthError, HttpClient.HttpClient | Scope.Scope>
 
 const endpointModel = (
   selection: ModelSelection,
@@ -229,7 +234,7 @@ const endpointModel = (
   standardOnly: boolean,
   images: boolean,
   transport: Transport,
-): Effect.Effect<BuiltProvider> =>
+): Effect.Effect<Built> =>
   makeCompatLanguageModel({
     moduleName: selection.provider,
     chatUrl: chatCompletionsUrl(url),
@@ -238,14 +243,14 @@ const endpointModel = (
     images,
     ...compatFetch(transport),
     ...Option.match(key, { onNone: () => ({}), onSome: (apiKey) => ({ apiKey }) }),
-  }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false, images })))
+  }).pipe(Effect.map((svc) => ({ svc, settings: Option.none(), prependClaudeCode: false, images, route: "compat" as const })))
 
 /** A configured endpoint first, then a `local` credential's URL, then the built-in providers. */
 const buildProviderService = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
-): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> =>
+): Building<Built> =>
   Effect.flatMap(Effect.all({ endpoints: Effect.service(CurrentModelEndpoints), transport: Effect.serviceOption(ModelsTransport) }, { concurrency: 1 }), ({ endpoints, transport }) => {
     const endpoint = Option.fromNullishOr(endpoints[selection.provider])
     if (Option.isSome(endpoint)) {
@@ -259,144 +264,142 @@ const buildProviderService = (
     return buildBuiltInProvider(selection, credential, key, transport)
   })
 
+/** What a route builder is given: the selection, its model's profile, the credential and its key, the transport. */
+interface RouteCall {
+  readonly selection: ModelSelection
+  readonly model: ModelProfile
+  readonly credential: Credential | undefined
+  readonly key: Redacted.Redacted<string>
+  readonly transport: Transport
+}
+
+/** Anthropic's Messages API over an API key, or over the subscription's OAuth token, whose calls take the Claude Code block first. */
+const anthropicModel = ({ selection, credential, key }: RouteCall): Building<RouteModel> => {
+  const oauth = credential?.type === "oauth"
+  return (
+    oauth
+      ? AnthropicClient.make({
+          apiKey: undefined,
+          transformClient: anthropicOAuthTransform(key),
+        })
+      : AnthropicClient.make({ apiKey: key })
+  ).pipe(
+    Effect.flatMap((client) =>
+      AnthropicLanguageModel.make({ model: selection.modelId }).pipe(
+        Effect.provideService(AnthropicClient.AnthropicClient, client),
+      ),
+    ),
+    Effect.map((svc) => ({ svc, settings: Option.some({ systemPrelude: oauth ? CLAUDE_CODE_SYSTEM : null }), prependClaudeCode: oauth })),
+  )
+}
+
+/**
+ * The OpenAI Responses API (`openai`, OpenCode's GPT models), built with the
+ * options its descriptor records: the route's JSON-schema mode, the call's
+ * cache key, and its policy. The effort goes to every model of an `always`
+ * route, and on a `listed` one only to a model whose profile lists efforts,
+ * clamped to the public vocabulary; a model that takes none (a
+ * non-reasoning one) would refuse it.
+ */
+const responsesModel = (route: ResponsesRoute, { selection, model, key }: RouteCall): Building<RouteModel> =>
+  Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }, { concurrency: 1 }).pipe(
+    Effect.flatMap(({ cacheKey, policy }) => {
+      // The per-conversation cache lane, same as the compat path — one
+      // shared constant lane cross-evicts between conversations
+      // (construction happens per call, inside the run's fiber, so the
+      // reference and the call policy are set here). The descriptor records
+      // these exact values, captured at construction.
+      const config = {
+        ...Option.match(route.strictJsonSchema, { onNone: () => ({}), onSome: (strictJsonSchema) => ({ strictJsonSchema }) }),
+        prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
+        ...responsesPolicy(policy, route.effort === "always" || model.efforts.length > 0),
+      }
+      return OpenAiClient.make({ apiKey: key, ...Option.match(route.apiUrl, { onNone: () => ({}), onSome: (apiUrl) => ({ apiUrl }) }) }).pipe(
+        Effect.flatMap((client) =>
+          OpenAiLanguageModel.make({ model: selection.modelId, config }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
+        ),
+        Effect.map((svc) => ({ svc, settings: Option.some(config), prependClaudeCode: false })),
+      )
+    }),
+  )
+
+/** The OpenAI subscription's Codex dialect, over its OAuth token and the ChatGPT account it names. */
+const codexModel = ({ selection, credential, key, transport }: RouteCall): Building<RouteModel> => {
+  if (credential?.type !== "oauth") return Effect.fail(missingKey(selection))
+  const accountId = Option.orElse(Option.fromNullishOr(credential.accountId), () => openAiCodexAccountId(Redacted.value(key)))
+  if (Option.isNone(accountId)) {
+    return Effect.fail(new AuthError({ provider: selection.provider, message: "the OpenAI subscription token has no ChatGPT account id — sign in to the subscription again and store the new token" }))
+  }
+  return codexWebSocketProxy(selection, transport).pipe(
+    Effect.flatMap((webSocketProxy) => makeOpenAiCodexLanguageModel({ model: selection.modelId, accessToken: key, accountId: accountId.value, webSocketProxy })),
+    Effect.map((svc) => ({ svc, settings: Option.none(), prependClaudeCode: false })),
+  )
+}
+
+/** An OpenAI-compatible gateway's chat completions (OpenCode's other models, Gemini). */
+const chatModel = (route: ChatRoute, { selection, model, key, transport }: RouteCall): Building<RouteModel> =>
+  makeCompatLanguageModel({
+    moduleName: route.moduleName,
+    chatUrl: route.chatUrl,
+    apiKey: Redacted.value(key),
+    model: selection.modelId,
+    standardOnly: route.standardOnly,
+    usage: route.usage,
+    images: model.images,
+    ...compatFetch(transport),
+  }).pipe(Effect.map((svc) => ({ svc, settings: Option.none(), prependClaudeCode: false })))
+
+/** A built-in provider's model, by the route its profile names; every route needs a key. */
 const buildBuiltInProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
   transport: Transport,
-): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => {
-  const oauth = credential?.type === "oauth"
-  const images = imageInputFor(formatModelSelection(selection))
-  if (selection.provider === "opencode") {
-    if (key === undefined) return Effect.fail(missingKey(selection))
-    if (usesOpenCodeResponses(selection.modelId)) {
-      return Effect.all({
-        cacheKey: Effect.service(CurrentPromptCacheKey),
-        policy: Effect.service(CurrentModelCallPolicy),
-      }, { concurrency: 1 }).pipe(
-        Effect.flatMap(({ cacheKey, policy }) =>
-          OpenAiClient.make({ apiKey: key, apiUrl: OPENCODE_RESPONSES_API_URL }).pipe(
-            Effect.flatMap((client) =>
-              OpenAiLanguageModel.make({
-                model: selection.modelId,
-                config: openCodeResponsesConfig(cacheKey, policy),
-              }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
-            ),
-            Effect.map((svc) => ({ svc, prependClaudeCode: false, images })),
-          ),
-        ),
-      )
-    }
-    return makeCompatLanguageModel({
-      moduleName: "OpenCode",
-      chatUrl: OPENCODE_CHAT_URL,
-      apiKey: Redacted.value(key),
-      model: selection.modelId,
-      images,
-      ...compatFetch(transport),
-    }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false, images })))
-  }
-  if (selection.provider === "google") {
-    return key === undefined
-      ? Effect.fail(missingKey(selection))
-      : makeCompatLanguageModel({
-          moduleName: "Google",
-          chatUrl: GOOGLE_CHAT_URL,
-          apiKey: Redacted.value(key),
-          model: selection.modelId,
-          // As before: no cache key, thinking defaults or call policy for Gemini.
-          standardOnly: true,
-          // Gemini's completion_tokens may leave its thoughts out: its reasoning reads 0.
-          usage: { reasoning: false },
-          images,
-          ...compatFetch(transport),
-        }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false, images })))
-  }
-  if (selection.provider === "anthropic") {
-    if (key === undefined) return Effect.fail(missingKey(selection))
-    return (
-      oauth
-        ? AnthropicClient.make({
-            apiKey: undefined,
-            transformClient: anthropicOAuthTransform(key),
-          })
-        : AnthropicClient.make({ apiKey: key })
-    ).pipe(
-      Effect.flatMap((client) =>
-        AnthropicLanguageModel.make({ model: selection.modelId }).pipe(
-          Effect.provideService(AnthropicClient.AnthropicClient, client),
-        ),
-      ),
-      Effect.map((svc) => ({ svc, prependClaudeCode: oauth, images })),
-    )
-  }
-  if (selection.provider === "openai-codex") {
-    if (key === undefined || credential?.type !== "oauth") return Effect.fail(missingKey(selection))
-    const accountId = Option.orElse(Option.fromNullishOr(credential.accountId), () => openAiCodexAccountId(Redacted.value(key)))
-    if (Option.isNone(accountId)) {
-      return Effect.fail(new AuthError({ provider: selection.provider, message: "the OpenAI subscription token has no ChatGPT account id — sign in to the subscription again and store the new token" }))
-    }
-    return codexWebSocketProxy(transport).pipe(
-      Effect.flatMap((webSocketProxy) => makeOpenAiCodexLanguageModel({ model: selection.modelId, accessToken: key, accountId: accountId.value, webSocketProxy })),
-      Effect.map((svc) => ({ svc, prependClaudeCode: false, images })),
-    )
-  }
-  if (selection.provider === "openai") {
-    return key === undefined
-      ? Effect.fail(missingKey(selection))
-      : Effect.flatMap(Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }, { concurrency: 1 }), ({ cacheKey, policy }) =>
-          OpenAiClient.make({ apiKey: key }).pipe(
-            Effect.flatMap((client) =>
-              OpenAiLanguageModel.make({
-                model: selection.modelId,
-                // The per-conversation cache lane, same as the compat path —
-                // one shared constant lane cross-evicts between conversations
-                // (construction happens per call, inside the run's fiber, so
-                // the reference and the call policy are set here).
-                config: openAiConfig(selection, cacheKey, policy),
-              }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
-            ),
-            Effect.map((svc) => ({ svc, prependClaudeCode: false, images })),
-          ),
-        )
-  }
-  return Effect.fail(
-    new AuthError({
-      provider: selection.provider,
-      message: `provider "${selection.provider}" is not wired (built in: opencode, google, anthropic, openai, openai-codex; add others as models plugin endpoints)`,
+): Building<Built> =>
+  Option.match(profileOf(selection.provider), {
+    onNone: () => Effect.fail(notWired(selection)),
+    onSome: (profile) => Option.match(Option.fromNullishOr(key), {
+      onNone: () => Effect.fail(missingKey(selection)),
+      onSome: (found) => {
+        const call: RouteCall = { selection, model: profile.modelOf(selection.modelId), credential, key: found, transport }
+        const route = profile.routeOf(selection.modelId)
+        const built: Building<RouteModel> = Match.valueTags(route, {
+          anthropic: () => anthropicModel(call),
+          "openai-responses": (responses) => responsesModel(responses, call),
+          "openai-codex": () => codexModel(call),
+          compat: (chat) => chatModel(chat, call),
+        })
+        return Effect.map(built, (routed) => ({ ...routed, images: call.model.images, route: route._tag }))
+      },
     }),
-  )
-}
+  })
+
+/** The model's descriptor: the settings its route built it with, or the one a client that describes itself states, under the selection's provider. */
+const descriptorOf = (selection: ModelSelection, built: Built) =>
+  Option.match(built.settings, {
+    onSome: (settings) => Effect.succeed({ provider: selection.provider, model: selection.modelId, settings }),
+    onNone: () => modelRequestDescriptorOf(built.svc).pipe(Effect.map(Option.match({
+      // Every client built here describes itself; one that did not would record no settings.
+      onNone: () => ({ provider: selection.provider, model: selection.modelId, settings: {} }),
+      onSome: (value) => ({ ...value, provider: selection.provider }),
+    }))),
+  })
 
 /**
  * Preserve adapter descriptors and describe the public configuration of
- * SDK-backed models. On a route that reads no images (`imageInputFor`, a
- * configured endpoint's `images`), every request is sent with its images as
- * label lines (`promptWithImageLabels`) instead of a provider error.
+ * SDK-backed models. On a route that reads no images (the model's profile,
+ * a configured endpoint's `images`), every request is sent with its images
+ * as label lines (`promptWithImageLabels`) instead of a provider error.
  */
 export const buildProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
 ): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key).pipe(
-  Effect.flatMap((built) => Effect.gen(function* () {
-      // SDK model configuration was captured at construction; preserve those exact values.
-      const cacheKey = yield* Effect.service(CurrentPromptCacheKey)
-      const policy = yield* Effect.service(CurrentModelCallPolicy)
-      const responses = selection.provider === "opencode" && usesOpenCodeResponses(selection.modelId)
-      const settings = selection.provider === "anthropic"
-        ? { systemPrelude: built.prependClaudeCode ? CLAUDE_CODE_SYSTEM : null }
-        : responses
-          ? openCodeResponsesConfig(cacheKey, policy)
-          : selection.provider === "openai"
-            ? openAiConfig(selection, cacheKey, policy)
-            : { prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent") }
-      const descriptor = { provider: selection.provider, model: selection.modelId, settings }
-      return {
-        ...built,
-        svc: describeModel(built.images ? built.svc : withImageLabels(built.svc), modelRequestDescriptorOf(built.svc).pipe(Effect.map((existing) =>
-          Option.match(existing, { onNone: () => descriptor, onSome: (value) => ({ ...value, provider: selection.provider }) }),
-        ))),
-      }
+  Effect.map((built) => ({
+    svc: describeModel(built.images ? built.svc : withImageLabels(built.svc), descriptorOf(selection, built)),
+    prependClaudeCode: built.prependClaudeCode,
+    images: built.images,
+    route: built.route,
   })),
 )

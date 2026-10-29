@@ -1,10 +1,12 @@
 import { AiError, LanguageModel } from "effect/ai"
+import type { Response } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Cause, Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
+import { Cause, Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Predicate, Ref, Stream } from "effect"
 import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, harnessError, parseModelSelection, reasonOf, replayableContext, resolvingModel, SettingsStore } from "@xandreed/core"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, endpointOwnKey, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
+import type { BuiltProvider, PromptOptions } from "./providers.js"
 import { CurrentOpenAiCodexSessions, makeOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
@@ -127,14 +129,10 @@ const traceContentVariable: Effect.Effect<boolean> = Config.option(Config.String
 const tracedContent = Effect.all([Effect.service(CurrentTraceContent), traceContentVariable], { concurrency: 1 }).pipe(Effect.map(([capture, variable]) =>
   (content: string): string => capture || variable ? content.slice(0, 500) : "[redacted]"))
 
-const shapeOptions = (
-  selection: ModelSelection,
-  shouldPrependClaudeCode: boolean,
-  options: unknown,
-): unknown => {
-  const cached =
-    selection.provider === "anthropic" ? withAnthropicCacheBreakpoints(options) : options
-  return shouldPrependClaudeCode ? prependClaudeCode(cached) : cached
+/** A call's options as the built model takes them: Anthropic's route adds its cache breakpoints, the subscription's token the Claude Code block. */
+const shapeOptions = <O extends PromptOptions>(built: BuiltProvider, options: O) => {
+  const cached = built.route === "anthropic" ? withAnthropicCacheBreakpoints(options) : options
+  return built.prependClaudeCode ? prependClaudeCode(cached) : cached
 }
 
 /** Resolve the general-role selection from settings, plus the OPTIONAL
@@ -255,9 +253,9 @@ const recorded = (label: string, isFallback: boolean) =>
 /** Build + call one provider generateText for an explicit selection.
  *  `isFallback` only labels telemetry — the fallback rung must be visible
  *  in Grafana without changing the metric identities. */
-export const generateWith = (
+export const generateWith = <O extends PromptOptions>(
   selection: ModelSelection,
-  options: unknown,
+  options: O,
   isFallback = false,
 ): Effect.Effect<
   { readonly content: ReadonlyArray<unknown>; readonly usage: unknown },
@@ -270,7 +268,7 @@ export const generateWith = (
     const built = yield* providerFor(selection)
     return yield* (
       built.svc.generateText(
-        shapeOptions(selection, built.prependClaudeCode, options) as never,
+        shapeOptions(built, options) as never,
       ) as Effect.Effect<{
         readonly content: ReadonlyArray<unknown>
         readonly usage: unknown
@@ -288,10 +286,7 @@ export const generateWith = (
           ...usageAttributes(usageOf(res.usage)),
           "llm.response_chars": res.text.length,
           "llm.tool_calls": res.content
-            .flatMap((part) => {
-              const p = part as { readonly type?: string; readonly name?: string }
-              return p.type === "tool-call" ? [p.name ?? ""] : []
-            })
+            .flatMap((part: Response.AnyPart) => part.type === "tool-call" ? [part.name] : [])
             .join(","),
           "llm.reasoning": traced(res.reasoningText ?? ""),
           "llm.fallback": isFallback,
@@ -304,9 +299,9 @@ export const generateWith = (
 /** Build + call one provider generateObject for an explicit selection: the
  *  resolution, option shaping, retries and telemetry of {@link generateWith}
  *  (an object has no empty response to reject and no message to stamp). */
-export const objectWith = (
+export const objectWith = <O extends PromptOptions>(
   selection: ModelSelection,
-  options: unknown,
+  options: O,
   isFallback = false,
 ): Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Effect.gen(function* () {
@@ -314,7 +309,7 @@ export const objectWith = (
     const built = yield* providerFor(selection)
     // The schema's decoding services are the caller's, erased with its options.
     const call: Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError> = built.svc.generateObject(
-      shapeOptions(selection, built.prependClaudeCode, options) as never,
+      shapeOptions(built, options) as never,
     ) as never
     return yield* call.pipe(
       retryableLlm(label),
@@ -394,20 +389,25 @@ interface StreamStats {
   readonly toolNames: ReadonlyArray<string>
 }
 
+/** A stream part's field, read without trusting the part's shape: `undefined` when it has none. */
+const fieldOf = (part: unknown, key: string): unknown => Predicate.hasProperty(part, key) ? part[key] : undefined
+
+/** A stream part's text field, "" when it has none. */
+const textOf = (part: unknown, key: string): string => {
+  const value = fieldOf(part, key)
+  return Predicate.isString(value) ? value : ""
+}
+
 const accumulateStats = (stats: StreamStats, part: unknown): StreamStats => {
-  const p = part as {
-    readonly type?: string
-    readonly delta?: string
-    readonly name?: string
+  const type = textOf(part, "type")
+  if (type === "text-delta") {
+    return { ...stats, textChars: stats.textChars + textOf(part, "delta").length }
   }
-  if (p.type === "text-delta") {
-    return { ...stats, textChars: stats.textChars + (p.delta ?? "").length }
+  if (type === "reasoning-delta") {
+    return { ...stats, reasoning: stats.reasoning + textOf(part, "delta") }
   }
-  if (p.type === "reasoning-delta") {
-    return { ...stats, reasoning: stats.reasoning + (p.delta ?? "") }
-  }
-  if (p.type === "tool-call") {
-    return { ...stats, toolNames: [...stats.toolNames, p.name ?? ""] }
+  if (type === "tool-call") {
+    return { ...stats, toolNames: [...stats.toolNames, textOf(part, "name")] }
   }
   return stats
 }
@@ -421,7 +421,7 @@ const accumulateStats = (stats: StreamStats, part: unknown): StreamStats => {
  */
 export const tapStreamTelemetry =
   (label: string) =>
-  <E, R>(stream: Stream.Stream<unknown, E, R>): Stream.Stream<unknown, E, R> =>
+  <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
     Stream.unwrap(
       Effect.gen(function* () {
         const stats = yield* Ref.make<StreamStats>({
@@ -438,25 +438,21 @@ export const tapStreamTelemetry =
         )
         return stream.pipe(
           Stream.mapEffect((part) => {
-            const p = part as {
-              readonly type?: string
-              readonly reason?: string
-              readonly usage?: unknown
-            }
-            if (p.type !== "finish") {
+            if (textOf(part, "type") !== "finish") {
               return Ref.update(stats, (s) => accumulateStats(s, part)).pipe(Effect.as(part))
             }
+            const usage = usageOf(fieldOf(part, "usage"))
             return Ref.get(stats).pipe(
               Effect.flatMap((s) =>
                 Effect.annotateCurrentSpan({
-                  "llm.finish_reason": String(p.reason),
-                  ...usageAttributes(usageOf(p.usage)),
+                  "llm.finish_reason": String(fieldOf(part, "reason")),
+                  ...usageAttributes(usage),
                   "llm.response_chars": s.textChars,
                   "llm.tool_calls": s.toolNames.join(","),
                   "llm.reasoning": traced(s.reasoning),
                 }),
               ),
-              Effect.andThen(countUsage(label, usageOf(p.usage))),
+              Effect.andThen(countUsage(label, usage)),
               Effect.as(part),
             )
           }),
@@ -470,9 +466,9 @@ export const tapStreamTelemetry =
  *  stream twin of {@link generateWith}: same resolution, same option
  *  shaping (anthropic cache breakpoints inherit for free), same stamp, the
  *  stream-aware retry, and finish-part telemetry. */
-export const streamWith = (
+export const streamWith = <O extends PromptOptions>(
   selection: ModelSelection,
-  options: unknown,
+  options: O,
 ): Stream.Stream<unknown, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Stream.unwrap(
     Effect.gen(function* () {
@@ -480,7 +476,7 @@ export const streamWith = (
       const built = yield* providerFor(selection)
       return (
         built.svc.streamText(
-          shapeOptions(selection, built.prependClaudeCode, options) as never,
+          shapeOptions(built, options) as never,
         ) as Stream.Stream<unknown, AiError.AiError>
       ).pipe(
         retryableLlmStream(label),
@@ -540,7 +536,7 @@ const selectionModel = (
 ): LanguageModel.LanguageModel => {
   const service = {
     [LanguageModel.TypeId]: LanguageModel.TypeId,
-    generateText: (options: unknown) =>
+    generateText: (options: PromptOptions) =>
       withConfiguredEffort(
         withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)),
         effort,
@@ -549,7 +545,7 @@ const selectionModel = (
         Effect.provide(context),
         Effect.provideService(HttpClient.HttpClient, http),
       ) as never,
-    generateObject: ((options: unknown) =>
+    generateObject: ((options: PromptOptions) =>
       withConfiguredEffort(
         withFallbackRung(primary, fallback, (selection, isFallback) => objectWith(selection, options, isFallback)),
         effort,
@@ -561,7 +557,7 @@ const selectionModel = (
     // No stream-level fallback rung: a pre-first-part stream failure
     // already falls back to generateText in the engine loop, and THAT
     // call rides this router's fallback — one rung, no double-hop.
-    streamText: ((options: unknown) =>
+    streamText: ((options: PromptOptions) =>
       withConfiguredEffortStream(streamWith(primary, options), effort).pipe(
         withFetchStream(fetch),
         Stream.provideContext(context),
