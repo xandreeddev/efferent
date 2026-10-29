@@ -6,7 +6,8 @@ import { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
-import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, turnStartedDraft } from "./session-event.entity.functions.js"
+import { zeroUsage } from "../domain/token-usage.entity.functions.js"
+import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
 import { MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
 import type { SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 
@@ -91,7 +92,7 @@ describe("the memory log stored as session events", () => {
 })
 
 describe("the turn's bus events as stored", () => {
-  const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0 }
+  const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
   test("an assistant message keeps only its step, model and usage; memory holds the content", () => {
     const event: TurnEvent = { _tag: "assistant.message", step: 1, text: "hello", reasoning: "", model: Option.some("m"), toolCalls: [], usage }
     const stored = draftOfTurnEvent(3, event)
@@ -107,7 +108,7 @@ describe("the turn's bus events as stored", () => {
     const skipped: ReadonlyArray<TurnEvent> = [
       { _tag: "assistant.delta", step: 0, channel: "text", id: "d", delta: "x" },
       { _tag: "skills.activated", skills: [], tools: [], source: "always" },
-      { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.none() },
+      { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.none(), usage: zeroUsage },
     ]
     expect(skipped.map((event) => draftOfTurnEvent(1, event)).every(Option.isNone)).toBe(true)
   })
@@ -137,7 +138,7 @@ describe("the journal's schemas", () => {
     expect(tags.filter((tag) => Option.isSome(journalSchemaOf(tag)) && !RESERVED_KINDS.includes(tag))).toEqual([])
   })
   test("what the bus stores decodes with its kind's schema, and nothing it omits is required", () => {
-    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0 }
+    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
     const events: ReadonlyArray<TurnEvent> = [
       { _tag: "assistant.message", step: 1, text: "hello", reasoning: "", model: Option.none(), toolCalls: [], usage },
       { _tag: "tool.completed", step: 0, invocationId: "i", tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 }, durationMs: 5, labels: {}, stage: Option.none() },
@@ -158,10 +159,41 @@ describe("the journal's schemas", () => {
     expect([...RECORDED_ELSEWHERE]).toEqual(["turn.started", "turn.ended", "skills.activated"])
     const recordedElsewhere: ReadonlyArray<TurnEvent> = [
       { _tag: "turn.started", runId: "r", turn: 1, userMessage: new UserMessage({ text: "hello" }) },
-      { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.some("hi") },
+      { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.some("hi"), usage: zeroUsage },
       { _tag: "skills.activated", skills: ["s"], tools: ["t"], source: "host" },
     ]
     expect(recordedElsewhere.map((event) => event._tag)).toEqual([...RECORDED_ELSEWHERE])
     expect(recordedElsewhere.map((event) => draftOfTurnEvent(1, event)).every(Option.isNone)).toBe(true)
+  })
+})
+
+describe("a turn's usage from the stored events", () => {
+  const stepUsage = (seq: number, turn: number, data: Record<string, unknown>): SessionLogEvent =>
+    ({ session, seq, turn: Option.some(turn), kind: "step.usage", at: 0, data })
+  const full = (input: number) => ({ inputTokens: input, outputTokens: 20, totalTokens: input + 20, cacheReadTokens: 30, cacheWriteTokens: 10, reasoningTokens: 5 })
+
+  test("sums only its own turn's step.usage records", async () => {
+    const events: ReadonlyArray<SessionLogEvent> = [
+      stepUsage(1, 1, { step: 0, model: null, usage: full(100) }),
+      stepUsage(2, 2, { step: 0, model: "m", usage: full(200) }),
+      { session, seq: 3, turn: Option.some(2), kind: "step.started", at: 0, data: { step: 1, planned: false, activeTools: [] } },
+      stepUsage(4, 2, { step: 1, model: "m", usage: full(300) }),
+    ]
+    expect(await Effect.runPromise(turnUsageOf(events, 2))).toEqual({
+      inputTokens: 500, outputTokens: 40, totalTokens: 540, cacheReadTokens: 60, cacheWriteTokens: 20, reasoningTokens: 10,
+    })
+    expect(await Effect.runPromise(turnUsageOf(events, 3))).toEqual(zeroUsage)
+  })
+
+  test("a record written before 0.14.0 reads 0 cache-write and reasoning tokens", async () => {
+    const old = stepUsage(1, 1, { step: 0, model: "m", usage: { inputTokens: 100, outputTokens: 7, totalTokens: 107, cacheReadTokens: 90 } })
+    expect(await Effect.runPromise(turnUsageOf([old], 1))).toEqual({
+      inputTokens: 100, outputTokens: 7, totalTokens: 107, cacheReadTokens: 90, cacheWriteTokens: 0, reasoningTokens: 0,
+    })
+  })
+
+  test("a step.usage record with a malformed usage fails", async () => {
+    const broken = stepUsage(1, 1, { step: 0, model: null, usage: { inputTokens: "many" } })
+    expect((await Effect.runPromise(Effect.result(turnUsageOf([broken], 1))))._tag).toBe("Failure")
   })
 })

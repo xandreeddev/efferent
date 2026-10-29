@@ -22,6 +22,45 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   timeout fails with `SessionLogError` code `store.busy`; it was `store.io`.
   A host that matched `store.io` to retry on lock contention matches
   `store.busy` now; `store.io` is left for other storage failures.
+- **`@xandreed/core`: `TokenUsage` has two more `Type` fields**,
+  `cacheWriteTokens` and `reasoningTokens`. Stored data still decodes:
+  records without them read 0. Object literals (a `UtilityCompletion`'s
+  usage, a `UtilityLlm` fake) must add them; build them with
+  `tokenUsage({ inputTokens, outputTokens, ... })` or spread `zeroUsage`.
+- **`@xandreed/core`: `RunResult.usage`, `AgentResult.usage`,
+  `RunContext.usage` and `Turn.usage` are required.** A custom `StepLoop`
+  returns the sum of the usage its `assistant.message` events carried;
+  hand-written `RunContext` or `Turn` fakes add `usage`.
+- **`@xandreed/core`, `@xandreed/sdk`: `Agent.turn`, `TurnRunner.turn` and
+  `guardTurn` return `TurnResult`.** A host-composed runner built on
+  `guardTurn` gets it as is; one that is not adds `usage`, for example from
+  `RunContext.usage`. `use` still returns a `TurnOutcome`.
+- **`@xandreed/core`: `TurnEndedEvent` requires `usage`.** Code constructing
+  the bus event adds it; the stored `turn.ended` record is unchanged.
+- **`@xandreed/core`: `step.usage` records and the usage stamp on stored
+  assistant messages gain the two keys.** A reader that compares stored
+  usage byte for byte (a golden) sees them. The memory context's token
+  estimate and fingerprint include the stamp, so for new turns they change
+  (the estimate grows by a few tokens per assistant message); requests sent
+  to the model do not change.
+- **`@xandreed/core`: `extractUsage` and `assistantUsage` hold the usage
+  invariants.** `extractUsage` raises an input reported below its cache
+  reads plus writes to them, and an output reported below its reasoning to
+  it. Its last fallback, Gemini's raw usage metadata (used only when neither
+  the response nor its finish part carries effect/ai usage, which no
+  provider shipped here does), reads `thoughtsTokenCount` as reasoning
+  inside the output: output = candidates + thoughts, total = input + output
+  (it read `totalTokenCount`, and left thoughts out of the output).
+  `assistantUsage` decodes the stamp: a malformed stamp reads `None` (it was
+  `Some` of the stamp as found), and the usage it returns no longer carries
+  the stamp's `model` key (`assistantModel` reads it).
+- **`@xandreed/plugin-models`**: the finish part of `fromChatCompletion`
+  and of the streaming client reports `cacheWrite`, `text` and `reasoning`
+  beside the old counts; `fromChatCompletion` takes an optional
+  `UsageReading` (`{ reasoning }`). The router reads each call's usage
+  through `extractUsage`, so its `llm.usage.input_tokens` counter and span
+  attribute are raised to the cache reads plus writes when the provider
+  reports less, and `llm.usage.output_tokens` to the reasoning.
 
 ### Added
 
@@ -65,6 +104,42 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   core's kits and `@xandreed/plugin-render`'s, and how to run them against
   your own adapter.
 
+- `@xandreed/core`: token usage counts cache writes and reasoning.
+  `TokenUsage` gains `cacheWriteTokens` and `reasoningTokens` (both inside
+  the input and output totals). New `tokenUsage(counts)` (a usage with the
+  invariants held), `uncachedInputTokens`, `usageBreakdown` (the five billed
+  kinds, which sum to `totalTokens`), `sumUsage`, `ModelPrice` and
+  `costOf(usage, price)`. `extractUsage` reads `cacheWrite` and `reasoning`
+  from effect/ai's usage.
+- `@xandreed/core`, `@xandreed/sdk`: turn and run totals.
+  `RunResult.usage` (one run of the step loop), `RunContext.usage` and
+  `Turn.usage` (the turn's running total), `TurnResult` (`TurnOutcome` plus
+  `usage`, returned by `Agent.turn` and `guardTurn`), `usage` on the bus
+  `turn.ended` event, and `turnUsageOf(events, turn)`, which sums a turn's
+  stored `step.usage` records to the same total. `stepLoopConformance` and
+  `turnConformance` check both totals.
+- `@xandreed/plugin-models`: the chat-completions client reads
+  `prompt_tokens_details.cache_write_tokens` and
+  `completion_tokens_details.reasoning_tokens`. The built-in `google`
+  provider reads no reasoning (0), since Gemini's `completion_tokens` may
+  leave its thoughts out; configured endpoints and `local` credentials read
+  it. The router adds the counters `llm.usage.cache_read_tokens`,
+  `llm.usage.cache_write_tokens` and `llm.usage.reasoning_tokens`, and the
+  same span attributes on `providers.generate`.
+- `@xandreed/plugin-agent-loop`: each step's `engine.turn` span carries the
+  OpenTelemetry GenAI usage attributes `gen_ai.usage.input_tokens`,
+  `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`,
+  `gen_ai.usage.cache_creation.input_tokens` and
+  `gen_ai.usage.reasoning.output_tokens`. The `engine.run` span carries the
+  run's sums as `engine.usage.input_tokens`, `engine.usage.output_tokens`,
+  `engine.usage.cache_read_tokens`, `engine.usage.cache_write_tokens` and
+  `engine.usage.reasoning_tokens`, beside `engine.usage.total_tokens`, so a
+  backend summing `gen_ai.usage.*` does not count a step twice.
+- Docs: `docs/framework.md` "Token usage" (the invariants, where totals
+  appear, what they leave out, the span attributes, what each provider
+  reports) and the same table on the website's providers page; the
+  conformance page lists the usage checks.
+
 ### Fixed
 
 - `@xandreed/plugin-session-sqlite`: processes opening one new database file
@@ -99,6 +174,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `LanguageModel.Service`, which Effect 4 calls `LanguageModel.LanguageModel`.
   `docs/framework.md` and `docs/service-generations.md` no longer describe
   the removed journey driver.
+- `bun run verify:packages` runs `stepLoopConformance` over the packed step
+  loop (`runSteps`) and `turnConformance` over a packed `Agent` on Node.
 
 ## 0.13.0
 

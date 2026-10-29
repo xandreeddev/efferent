@@ -1,4 +1,6 @@
 import { Effect, Option, Schema, Struct } from "effect"
+import { sumUsage } from "../domain/token-usage.entity.functions.js"
+import type { TokenUsage } from "../domain/token-usage.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { EntryId, LogBody, LogEntry } from "../memory/memory-log.entity.js"
 import { ModelRequestHeader } from "../turn/model-request.entity.js"
@@ -89,6 +91,19 @@ const withoutPayload = (data: Record<string, unknown>): JsonObject =>
   Object.fromEntries(Object.entries(data).filter(([key]) => !(OMITTED_FROM_TOOL_COMPLETED as ReadonlyArray<string>).includes(key)))
 
 const encodeStepUsage = Schema.encodeSync(StepUsageData)
+const decodeStepUsage = Schema.decodeUnknownEffect(StepUsageData)
+
+/**
+ * Turn `turn`'s usage from a session's stored events: its `step.usage`
+ * records summed, which is what the turn's `assistant.message` events
+ * carried (`TurnResult.usage`, `turn.ended.usage`). A record written before
+ * 0.14.0 reads 0 cache-write and reasoning tokens.
+ */
+export const turnUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number): Effect.Effect<TokenUsage, Schema.SchemaError> =>
+  Effect.forEach(
+    events.filter((event) => event.kind === "step.usage" && Option.contains(event.turn, turn)),
+    (event) => decodeStepUsage(canonical(event.data)),
+  ).pipe(Effect.map((records) => sumUsage(records.map((record) => record.usage))))
 
 /**
  * The stored form of one bus event of turn `turn`: its name and encoded

@@ -169,6 +169,38 @@ const tagged = <Input, State>(
 ): Metric.Metric<Input, State> => Metric.withAttributes(metric, tags)
 
 /**
+ * One provider call's usage as `engine.turn` span attributes, under the
+ * OpenTelemetry GenAI semantic-convention names: the full input (its cache
+ * reads and writes inside it), the full output (its reasoning inside it),
+ * and the cache and reasoning shares. effect/ai's own `LanguageModel` span
+ * of the call carries the same input and output counts (and
+ * `@effect/ai-anthropic` names its cache writes
+ * `gen_ai.usage.cache_write.input_tokens`), so a backend should not sum
+ * `gen_ai.usage.*` across span levels.
+ */
+const stepUsageAttributes = (usage: TokenUsage): Record<string, number> => ({
+  "gen_ai.usage.input_tokens": usage.inputTokens,
+  "gen_ai.usage.output_tokens": usage.outputTokens,
+  "gen_ai.usage.cache_read.input_tokens": usage.cacheReadTokens,
+  "gen_ai.usage.cache_creation.input_tokens": usage.cacheWriteTokens,
+  "gen_ai.usage.reasoning.output_tokens": usage.reasoningTokens,
+})
+
+/**
+ * A run's summed usage as `engine.run` span attributes, under efferent's
+ * own names: the GenAI names belong to the calls, and a backend summing
+ * them over a trace would count every step twice.
+ */
+const runUsageAttributes = (usage: TokenUsage): Record<string, number> => ({
+  "engine.usage.input_tokens": usage.inputTokens,
+  "engine.usage.output_tokens": usage.outputTokens,
+  "engine.usage.cache_read_tokens": usage.cacheReadTokens,
+  "engine.usage.cache_write_tokens": usage.cacheWriteTokens,
+  "engine.usage.reasoning_tokens": usage.reasoningTokens,
+  "engine.usage.total_tokens": usage.totalTokens,
+})
+
+/**
  * A response the loop can correct: it does not decode (an unknown tool, a
  * part that does not parse) or a tool call's parameters do not.
  */
@@ -510,7 +542,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         yield* Effect.annotateCurrentSpan({
           "engine.step.finish_reason": outcome.finishReason,
           "engine.step.usage_available": !planned,
-          ...(!planned ? { "engine.step.usage": JSON.stringify(usage) } : {}),
+          ...(!planned ? { "engine.step.usage": JSON.stringify(usage), ...stepUsageAttributes(usage) } : {}),
           ...(options.captureTraceContent === true
             ? { "engine.step.output": JSON.stringify({ content, usage, finishReason: outcome.finishReason }) }
             : {}),
@@ -690,7 +722,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
       "engine.outcome": outcome,
       "engine.reason": reason,
       "engine.turns": final.turnIndex,
-      "engine.usage.total_tokens": final.usage.totalTokens,
+      ...runUsageAttributes(final.usage),
       "engine.tool_calls": final.toolCalls,
       "engine.tool_calls.failed": final.toolFailures,
       "engine.corrections": final.corrections,
@@ -702,5 +734,6 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
       newTail: final.newTail,
       outcome,
       reason,
+      usage: final.usage,
     } satisfies AgentResult
   }).pipe(Effect.withSpan("engine.run"))

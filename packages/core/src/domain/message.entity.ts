@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { TokenUsage } from "./token-usage.entity.js"
 
 /**
  * The persisted conversation vocabulary — a stable, provider-agnostic shape
@@ -96,5 +97,7 @@ export const AgentResult = Schema.Struct({
    *  degenerate-loop breaker stopped it, so `finalText` is NOT a deliverable. */
   outcome: Schema.Literals(["ok", "partial"]),
   reason: Schema.Literals(["completed", "step-cap", "degenerate-loop"]),
+  /** The run's provider calls summed (its assistant messages' usage). */
+  usage: TokenUsage,
 })
 export type AgentResult = typeof AgentResult.Type

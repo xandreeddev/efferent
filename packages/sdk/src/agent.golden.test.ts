@@ -153,7 +153,7 @@ const fixedClock: Clock.Clock = {
 
 const conversation = ConversationId.make("00000000-0000-4000-8000-00000000601d")
 const digester = Context.make(UtilityLlm, UtilityLlm.of({
-  complete: () => Effect.succeed(new UtilityCompletion({ text: "- record-alpha-b\nrecord-unknown", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0 } })),
+  complete: () => Effect.succeed(new UtilityCompletion({ text: "- record-alpha-b\nrecord-unknown", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } })),
 }))
 const matcher = Context.make(IntentMatcher, IntentMatcher.of({
   id: "keyword", version: "1",

@@ -18,8 +18,16 @@ export { toFailure } from "./domain/failure.entity.functions.js"
 export { AgentFailure, AgentFailureCategory } from "./domain/agent-failure.entity.js"
 export type { AgentFailure as AgentFailureType, AgentFailureCategory as AgentFailureCategoryType } from "./domain/agent-failure.entity.js"
 export { toAgentFailure, toolResultFailure } from "./domain/agent-failure.entity.functions.js"
-export { TokenUsage } from "./domain/token-usage.entity.js"
-export { addUsage, zeroUsage } from "./domain/token-usage.entity.functions.js"
+export { ModelPrice, TokenUsage, UsageBreakdown } from "./domain/token-usage.entity.js"
+export {
+  addUsage,
+  costOf,
+  sumUsage,
+  tokenUsage,
+  uncachedInputTokens,
+  usageBreakdown,
+  zeroUsage,
+} from "./domain/token-usage.entity.functions.js"
 export {
   ModelId,
   ModelSelection,
@@ -90,6 +98,7 @@ export { sessionLogRecoveryConformance } from "./session/session-log.recovery.co
 export type { SessionLogSubject } from "./session/session-log.recovery.conformance.js"
 export * from "./session/session-event.entity.js"
 export * from "./session/session-event.entity.functions.js"
+export { turnUsageOf } from "./session/session-event.entity.functions.js"
 export * from "./session/sessions.entity.js"
 export * from "./ports/sessions.port.js"
 export * from "./ports/turn-admission.port.js"
@@ -156,6 +165,7 @@ export * from "./turn/turn-bus.js"
 export * from "./ports/turn-events.port.js"
 export * from "./ports/step-loop.port.js"
 export * from "./ports/turn.port.js"
+export type { TurnResult } from "./ports/turn.port.js"
 export * from "./ports/turn-scope.port.js"
 export * from "./turn/prompt-sections.js"
 export * from "./turn/turn.adapter.js"

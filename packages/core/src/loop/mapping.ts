@@ -1,4 +1,4 @@
-import { Option } from "effect"
+import { Option, Schema } from "effect"
 import type { ToolCallSummary } from "../domain/loop-event.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import type {
@@ -8,7 +8,8 @@ import type {
   ToolCallPart,
   ToolResultPart,
 } from "../domain/message.entity.js"
-import type { TokenUsage } from "../domain/token-usage.entity.js"
+import { TokenUsage } from "../domain/token-usage.entity.js"
+import { tokenUsage } from "../domain/token-usage.entity.functions.js"
 
 /**
  * Bridges the persisted `AgentMessage` with `@effect/ai`'s `Prompt`/`Response`
@@ -280,10 +281,14 @@ export const responseToolResults = (
       result: p.result,
     }))
 
-/** Effect v4 usage: input and output totals, cache reads inside the input. */
+/** Effect v4 usage: the input total with its cache reads and writes inside, the output total with its reasoning inside. */
 interface ProviderUsage {
-  readonly inputTokens?: { readonly total?: number | undefined; readonly cacheRead?: number | undefined } | undefined
-  readonly outputTokens?: { readonly total?: number | undefined } | undefined
+  readonly inputTokens?: {
+    readonly total?: number | undefined
+    readonly cacheRead?: number | undefined
+    readonly cacheWrite?: number | undefined
+  } | undefined
+  readonly outputTokens?: { readonly total?: number | undefined; readonly reasoning?: number | undefined } | undefined
 }
 
 const carriesUsage = (usage: ProviderUsage | undefined): boolean =>
@@ -291,9 +296,14 @@ const carriesUsage = (usage: ProviderUsage | undefined): boolean =>
 
 /**
  * Token usage from a response's `usage` + the finish part's. Effect's
- * providers report the FULL input (cache reads and writes included, e.g.
- * Anthropic's `input_tokens` plus both cache counts) with the cache reads
- * beside it; Gemini's raw usage metadata is the last fallback.
+ * providers report the FULL input with the cache reads and writes inside it
+ * (Anthropic's `input_tokens` plus both cache counts; OpenAI's
+ * `input_tokens`, whose `input_tokens_details` give the cached and written
+ * shares) and the full output with the reasoning inside it. Each count is
+ * read from the response's usage, then the finish part's; the result holds
+ * the `TokenUsage` invariants (`tokenUsage`), so an output reported below
+ * its reasoning is raised to it. Gemini's raw usage metadata is the last
+ * fallback: its output is candidates plus thoughts, the thoughts as reasoning.
  */
 export const extractUsage = (
   usage: unknown,
@@ -304,16 +314,26 @@ export const extractUsage = (
   // usage-only finish part — scan all of them, prefer the one carrying usage.
   const finishes = (content as ReadonlyArray<AnyPart>).filter((p) => p.type === "finish")
   const finish = finishes.find((p) => carriesUsage(p.usage as ProviderUsage | undefined)) ?? finishes[0]
+  const fu = finish?.usage as ProviderUsage | undefined
+  if (carriesUsage(u) || carriesUsage(fu)) {
+    return tokenUsage({
+      inputTokens: u.inputTokens?.total ?? fu?.inputTokens?.total ?? 0,
+      outputTokens: u.outputTokens?.total ?? fu?.outputTokens?.total ?? 0,
+      cacheReadTokens: u.inputTokens?.cacheRead ?? fu?.inputTokens?.cacheRead ?? 0,
+      cacheWriteTokens: u.inputTokens?.cacheWrite ?? fu?.inputTokens?.cacheWrite ?? 0,
+      reasoningTokens: u.outputTokens?.reasoning ?? fu?.outputTokens?.reasoning ?? 0,
+    })
+  }
   const gm = (finish?.metadata as
     | { readonly google?: { readonly usageMetadata?: Record<string, number> } }
     | undefined)?.google?.usageMetadata
-  const fu = finish?.usage as ProviderUsage | undefined
-  const inputTokens = u.inputTokens?.total ?? fu?.inputTokens?.total ?? gm?.["promptTokenCount"] ?? 0
-  const outputTokens = u.outputTokens?.total ?? fu?.outputTokens?.total ?? gm?.["candidatesTokenCount"] ?? 0
-  const totalTokens = carriesUsage(u) || carriesUsage(fu) ? inputTokens + outputTokens : gm?.["totalTokenCount"] ?? 0
-  const cacheReadTokens =
-    u.inputTokens?.cacheRead ?? fu?.inputTokens?.cacheRead ?? gm?.["cachedContentTokenCount"] ?? 0
-  return { inputTokens, outputTokens, totalTokens, cacheReadTokens }
+  const thoughts = gm?.["thoughtsTokenCount"] ?? 0
+  return tokenUsage({
+    inputTokens: gm?.["promptTokenCount"] ?? 0,
+    outputTokens: (gm?.["candidatesTokenCount"] ?? 0) + thoughts,
+    cacheReadTokens: gm?.["cachedContentTokenCount"] ?? 0,
+    reasoningTokens: thoughts,
+  })
 }
 
 /**
@@ -347,12 +367,15 @@ export const extractModel = (content: ReadonlyArray<unknown>): Option.Option<str
   return typeof model === "string" && model.length > 0 ? Option.some(model) : Option.none()
 }
 
-/** The turn usage embedded on a persisted assistant message, if any. */
+const decodeUsage = Schema.decodeUnknownOption(TokenUsage)
+
+/** The turn usage embedded on a persisted assistant message, if any,
+ *  decoded: a stamp written before 0.14.0 reads 0 cache-write and reasoning tokens. */
 export const assistantUsage = (msg: AgentMessage): Option.Option<TokenUsage> => {
   if (msg.role !== "assistant") return Option.none()
   const opts = msg.providerOptions as Record<string, unknown> | undefined
   const usage = opts?.[USAGE_KEY]
-  return hasKeys(usage) ? Option.some(usage as TokenUsage) : Option.none()
+  return hasKeys(usage) ? decodeUsage(usage) : Option.none()
 }
 
 /** The `provider:modelId` embedded alongside the usage stamp, if any. */

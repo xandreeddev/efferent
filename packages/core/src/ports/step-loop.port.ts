@@ -2,6 +2,7 @@ import { Context } from "effect"
 import type { Effect, Option } from "effect"
 import type { LanguageModel, Prompt, Tool } from "effect/ai"
 import type { AgentMessage } from "../domain/message.entity.js"
+import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { CompletionVerdict } from "../turn/turn-event.entity.js"
@@ -68,6 +69,8 @@ export interface RunResult {
   readonly reason: "completed" | "step-cap" | "degenerate-loop"
   readonly text: string
   readonly steps: number
+  /** The run's provider calls summed: exactly the usage its `assistant.message` events carried. */
+  readonly usage: TokenUsage
 }
 
 /**
@@ -77,7 +80,8 @@ export interface RunResult {
  * (after the tail is recorded) < `completion.evaluated`; a planned batch
  * makes no provider call; a forced tool choice is honoured; a verdict
  * awaiting tasks joins them and is evaluated once more; no provider call
- * follows a complete verdict.
+ * follows a complete verdict; `RunResult.usage` is the sum of the usage
+ * the run's `assistant.message` events carried.
  * Every real provider attempt runs `request.dispatch` immediately before
  * invoking the model; a failed durable check prevents the call. Planned
  * batches skip that hook because they make no provider request.

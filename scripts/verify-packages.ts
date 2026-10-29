@@ -48,7 +48,7 @@ import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { assessAll, semanticEvaluator } from "@xandreed/evals"
 import { SemanticJevLive } from "@xandreed/evals"
-const usage = { inputTokens: { total: 3 }, outputTokens: { total: 2 } }
+const usage = { inputTokens: { total: 3, cacheRead: 1, cacheWrite: 1 }, outputTokens: { total: 2, reasoning: 1 } }
 const turned = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
  const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 2 }, system: "Be brief." })
@@ -64,6 +64,7 @@ const turned = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  return { outcome, forked: fork.header.parent }
 })) )
 if (turned.outcome.outcome !== "completed" || Option.getOrNull(turned.outcome.reply) !== "hello world" || Option.isNone(turned.forked)) process.exit(1)
+if (turned.outcome.usage.totalTokens !== 5 || turned.outcome.usage.cacheWriteTokens !== 1 || turned.outcome.usage.reasoningTokens !== 1) process.exit(1)
 const rubric = semanticEvaluator({id:"external-quality",version:"1",questions:{supported:{type:"boolean",instructions:"Is the answer supported?"}},state:(input:{answer:string})=>input.answer})
 const assessments = await Effect.runPromise(assessAll([{evaluator:rubric,select:["supported"]}],{answer:"fixture"}).pipe(Effect.provide(SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))))
 if(assessments[0]?.status!=="scored" || assessments[0]?.metadata.backend!=="jev") process.exit(1)
@@ -167,15 +168,35 @@ if (Bun.which("node") !== null) {
   await writeFile(join(consumer, "node-imports.mjs"), nodeReady.map((name) => `await import(${JSON.stringify(name)})`).join("\n") + `
 const { encodeSse, FeedReady, renderSurfacePlugin } = await import("@xandreed/plugin-render")
 if (renderSurfacePlugin.id !== "@xandreed/plugin-render/surface" || encodeSse(FeedReady.make({})) !== "event: ready\\ndata: {}\\n\\n") process.exit(1)
-const { Effect } = await import("effect")
-const { SessionLog, SessionLogMemoryLive, sessionLogRecoveryConformance } = await import("@xandreed/core")
+const { Context, Effect, Layer, Stream } = await import("effect")
+const { LanguageModel } = await import("effect/ai")
+const { Sessions, SessionLog, SessionLogMemoryLive, sessionLogRecoveryConformance, StepLoop, stepLoopConformance, TurnAdmissionOpen, turnConformance } = await import("@xandreed/core")
+const { runSteps, STEP_LOOP, stepLoopPlugin } = await import("@xandreed/plugin-agent-loop")
+const { memoryWindowPlugin } = await import("@xandreed/plugin-memory-window")
+const { SessionsPluginLive } = await import("@xandreed/plugin-sessions")
+const { toolDiscoveryPlugin } = await import("@xandreed/plugin-tool-discovery")
+const { Agent } = await import("@xandreed/sdk")
+// Run a kit's checks; any failure prints them all and fails the verification.
+const runKit = async (kit, checks) => {
+  const failures = (await Effect.runPromise(Effect.forEach(checks, (check) => Effect.result(check.run).pipe(
+    Effect.map((result) => result._tag === "Failure" ? [kit + ": " + check.name + ": " + result.failure.message] : []))))).flat()
+  if (failures.length > 0) { console.error(failures.join("\\n")); process.exit(1) }
+  return checks.length
+}
 // An in-memory log reopens only when every open shares its store: build it once.
 const memoryLog = await Effect.runPromise(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
-const recovery = sessionLogRecoveryConformance({ open: Effect.succeed(memoryLog), callerClock: true })
-const recoveryFailures = (await Effect.runPromise(Effect.forEach(recovery, (check) => Effect.result(check.run).pipe(
-  Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
-if (recoveryFailures.length > 0) { console.error(recoveryFailures.join("\\n")); process.exit(1) }
-console.log("${nodeReady.length} packages import on Node; plugin-render encodes and the SessionLog recovery kit passes over the memory log on Node")
+const recovery = await runKit("SessionLog recovery", sessionLogRecoveryConformance({ open: Effect.succeed(memoryLog), callerClock: true }))
+// The StepLoop and TurnRunner contracts (their usage totals among them) hold on Node too.
+const stepLoop = await runKit("StepLoop", stepLoopConformance(StepLoop.of({ ...STEP_LOOP, run: runSteps })))
+// The turn kit brings its own model where it runs the loop; the one here is never called.
+const turnServices = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const model = yield* LanguageModel.make({ generateText: () => Effect.die("not called"), streamText: () => Stream.die("not called") })
+  const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+  return Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions))
+})))
+const agent = Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], system: "Be brief." })
+const turn = await runKit("turn", turnConformance(agent, turnServices))
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the StepLoop kit over runSteps (" + stepLoop + ") and the turn kit over Agent.turn (" + turn + ")")
 `)
   const node = Bun.spawn(["node", "node-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await node.exited !== 0) process.exit(1)

@@ -56,6 +56,12 @@ and a scoped Layer. The runtime rejects invalid options, missing dependencies,
 cycles, ambiguous providers, and incompatible plugin API versions before use.
 Override a service through an explicit binding.
 
+`agent.turn` returns `use`'s outcome with the turn's token `usage`: every model
+call the step loop handled in the turn, input with its cache reads and writes,
+output with its reasoning. [Token usage](docs/framework.md#token-usage) lists
+what it leaves out (utility calls, failed or retried attempts) and what each
+provider reports.
+
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere;
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores them
 in a SQLite file on Bun, and any other store can implement the `SessionLog` port.

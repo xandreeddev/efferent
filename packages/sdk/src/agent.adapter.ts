@@ -34,6 +34,7 @@ import type {
   TurnInput,
   TurnLiveInput,
   TurnOutcome,
+  TurnResult,
   TurnRunOptions,
   TurnServices,
   TurnWriter,
@@ -88,12 +89,13 @@ export interface Agent {
    * elsewhere (cancelled, reaped) fails with `turn.closed`. `use` runs in
    * the turn's scope with the turn's services (RunContext, TurnEvents,
    * TurnTasks and the input's `layer`) provided: the same instances the
-   * tools, policy and subscriptions see.
+   * tools, policy and subscriptions see. It returns `use`'s outcome with
+   * the turn's usage (every run's provider calls, summed).
    */
   readonly turn: <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
     use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
-  ) => Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  ) => Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 }
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
@@ -215,13 +217,14 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    *    still open: on success, what their finalizers publish or fork is
    *    settled and stored before TurnLive closes;
    * 8. on success finalizer work settled, then the final reply recorded (failed when
-   *    the body or its finalizer work failed), before TurnLive closes;
+   *    the body or its finalizer work failed) and the turn's usage read,
+   *    before TurnLive closes;
    * 9. a turn begun here is ended here, with the outcome.
    */
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
     use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
-  ): Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
+  ): Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
     const scope = yield* Effect.scope
     const absent = turnKeys.filter((key) => !input.services.mapUnsafe.has(key))
     if (absent.length > 0) return yield* Effect.fail(failure("service.missing", `The turn does not provide ${absent.join(", ")}`))
@@ -283,7 +286,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     )
     if (own) yield* writer.end({ reason: outcome.outcome, failure: Option.none() })
     return outcome
-  }))) as Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  }))) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
   return { fingerprint: graphFingerprint(graph), turn }
 })

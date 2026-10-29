@@ -26,10 +26,13 @@ import {
   TurnAdmissionOpen,
   TurnEvents,
   TurnMemory,
+  tokenUsage,
   TurnTasks,
+  turnUsageOf,
   UserMessage,
   UtilityCompletion,
   UtilityLlm,
+  zeroUsage,
 } from "@xandreed/core"
 import type { LogEntry, Plugin, SessionLogEvent, Turn, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { runSteps, stepLoopPlugin } from "@xandreed/plugin-agent-loop"
@@ -124,7 +127,7 @@ const scripted = (script: ReadonlyArray<Part>) => Effect.gen(function* () {
 
 const conversation = ConversationId.make("00000000-0000-4000-8000-000000000001")
 const utilityText = (text: string) => Context.make(UtilityLlm, UtilityLlm.of({
-  complete: () => Effect.succeed(new UtilityCompletion({ text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0 } })),
+  complete: () => Effect.succeed(new UtilityCompletion({ text, usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } })),
 }))
 
 const define = (memory: Plugin | AgentPluginEntry, extra: Partial<AgentConfig> = {}) => Agent.define({
@@ -208,7 +211,8 @@ describe("Agent.turn", () => {
       const outcome = yield* agent.turn(inputFor(journal, "run-1", "find alpha", model), answer())
       return { outcome, seen: yield* Ref.get(seen), events: yield* journal.stored }
     })))
-    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("record-alpha-a") })
+    // The turn's usage is its provider calls' usage summed: 100 in and 10 out each.
+    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("record-alpha-a"), usage: tokenUsage({ inputTokens: 100 * seen.length, outputTokens: 10 * seen.length }) })
     expect(seen.map((request) => request.tools)).toEqual([
       ["load_skill", "lookup", "recall_context"],
       ["load_skill", "lookup", "recall_context"],
@@ -250,7 +254,7 @@ describe("Agent.turn", () => {
         turn.memory.transcript("reference").pipe(Effect.flatMap((messages) => turn.reply(JSON.stringify(messages)))))
       return { outcome, seen: yield* Ref.get(seen), events: yield* journal.stored, transcript }
     })))
-    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("Hello there.") })
+    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("Hello there."), usage: zeroUsage })
     expect(seen).toHaveLength(0)
     expect(named(events, "turn.reply").map(body)).toContainEqual({ outcome: "completed", reply: "Hello there." })
     expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual(["completed", "completed"])
@@ -650,7 +654,7 @@ describe("Agent.turn", () => {
       const outcome = yield* agent.turn(inputFor(journal, "run-1", "find alpha", model), answer())
       return { outcome, seen: yield* Ref.get(seen) }
     })))
-    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("record-alpha-a") })
+    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("record-alpha-a"), usage: tokenUsage({ inputTokens: 100 * seen.length, outputTokens: 10 * seen.length }) })
     expect(seen).toHaveLength(3)
     expect(seen[0]!.prompt).not.toContain("BUILT NOTE 0")
     expect(seen[1]!.prompt).toContain("BUILT NOTE 0")
@@ -745,7 +749,7 @@ describe("Agent.turn", () => {
       return { outcome, events: yield* journal.stored }
     })))
     const names = events.map((event) => event.kind)
-    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("hello") })
+    expect(outcome).toEqual({ outcome: "completed", reply: Option.some("hello"), usage: zeroUsage })
     expect(names.indexOf("host.task")).toBeGreaterThan(-1)
     expect(names.indexOf("host.task")).toBeLessThan(names.indexOf("turn.reply"))
     expect(named(events, "turn.reply").map(body)).toEqual([{ outcome: "completed", reply: "hello" }])
@@ -891,5 +895,38 @@ describe("Agent.turn", () => {
     })))
     expect(result._tag === "Failure" ? result.failure.code : "success").toBe("session.log")
     expect({ checks, calls }).toEqual({ checks: 1, calls: 0 })
+  })
+})
+
+describe("a turn's usage", () => {
+  test("Agent.turn returns the turn's usage: every run's calls, cache writes and reasoning included; turn.ended and the stored step.usage records agree", async () => {
+    // What a provider reports with prompt caching and reasoning on: the cache counts inside the input, the reasoning inside the output.
+    const billed = { inputTokens: { total: 1000, uncached: 100, cacheRead: 800, cacheWrite: 100 }, outputTokens: { total: 50, text: 20, reasoning: 30 } }
+    const reply = (text: string): Part => [{ type: "text", text }, { type: "finish", reason: "stop", usage: billed }]
+    const { result, ended, events, during } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const observerScope = yield* Effect.scope
+      const ended = yield* Ref.make<ReadonlyArray<unknown>>([])
+      const during = yield* Ref.make<ReadonlyArray<unknown>>([])
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([reply("first"), reply("second")])
+      const result = yield* agent.turn(inputFor(journal, "run-1", "hello", model), (turn) => Effect.gen(function* () {
+        yield* turn.events.subscribe((event) => event._tag === "turn.ended" ? Option.some(event.usage) : Option.none(),
+          (usage) => Ref.update(ended, (all) => [...all, usage])).pipe(Scope.provide(observerScope))
+        const first = yield* turn.run({})
+        const second = yield* turn.run({})
+        yield* Ref.set(during, [first.usage, second.usage, yield* turn.usage, yield* (yield* RunContext).usage])
+        return { outcome: second.outcome, reply: Option.some(second.text) }
+      }))
+      return { result, ended: yield* Ref.get(ended), events: yield* journal.stored, during: yield* Ref.get(during) }
+    })))
+    const one = tokenUsage({ inputTokens: 1000, outputTokens: 50, cacheReadTokens: 800, cacheWriteTokens: 100, reasoningTokens: 30 })
+    const two = tokenUsage({ inputTokens: 2000, outputTokens: 100, cacheReadTokens: 1600, cacheWriteTokens: 200, reasoningTokens: 60 })
+    expect(result).toEqual({ outcome: "completed", reply: Option.some("second"), usage: two })
+    expect(during).toEqual([one, one, two, two])
+    expect(ended).toEqual([two])
+    const number = Option.getOrThrow(named(events, "turn.started")[0]?.turn ?? Option.none())
+    expect(await Effect.runPromise(turnUsageOf(events, number))).toEqual(two)
+    expect(named(events, "step.usage").map((event) => event.data.usage)).toEqual([one, one])
   })
 })

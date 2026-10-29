@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
+import { uncachedInputTokens } from "../domain/token-usage.entity.functions.js"
 import {
   assistantUsage,
   extractUsage,
@@ -104,7 +105,49 @@ describe("extractUsage", () => {
       outputTokens: 5,
       totalTokens: 15,
       cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      reasoningTokens: 0,
     })
+  })
+
+  test("Anthropic's shape: the input total holds input_tokens and both cache counts; no reasoning count", () => {
+    // What @effect/ai-anthropic reports for input_tokens 3, cache_read_input_tokens 90, cache_creation_input_tokens 7.
+    const usage = extractUsage(undefined, [{
+      type: "finish", reason: "stop",
+      usage: { inputTokens: { uncached: 3, total: 100, cacheRead: 90, cacheWrite: 7 }, outputTokens: { total: 12 } },
+    }])
+    expect(usage).toEqual({ inputTokens: 100, outputTokens: 12, totalTokens: 112, cacheReadTokens: 90, cacheWriteTokens: 7, reasoningTokens: 0 })
+    expect(uncachedInputTokens(usage)).toBe(3)
+  })
+
+  test("OpenAI Responses' shape: input_tokens with its cached and written details, output_tokens with its reasoning", () => {
+    // What @effect/ai-openai reports for input_tokens 1200 (cached 1000, cache_write 150), output_tokens 300 (reasoning 220).
+    const usage = extractUsage({
+      inputTokens: { uncached: 200, total: 1200, cacheRead: 1000, cacheWrite: 150 },
+      outputTokens: { total: 300, text: 80, reasoning: 220 },
+    }, [])
+    expect(usage).toEqual({ inputTokens: 1200, outputTokens: 300, totalTokens: 1500, cacheReadTokens: 1000, cacheWriteTokens: 150, reasoningTokens: 220 })
+    expect(uncachedInputTokens(usage)).toBe(50)
+  })
+
+  test("an output reported below its reasoning is raised to it", () => {
+    const usage = extractUsage({ inputTokens: { total: 10 }, outputTokens: { total: 4, reasoning: 9 } }, [])
+    expect([usage.outputTokens, usage.reasoningTokens, usage.totalTokens]).toEqual([9, 9, 19])
+  })
+
+  test("the finish part's usage fills what the response's usage lacks", () => {
+    const usage = extractUsage({ inputTokens: { total: 50 }, outputTokens: { total: 5 } }, [
+      { type: "finish", reason: "stop", usage: { inputTokens: { total: 50, cacheRead: 20, cacheWrite: 10 }, outputTokens: { total: 5, reasoning: 2 } } },
+    ])
+    expect(usage).toEqual({ inputTokens: 50, outputTokens: 5, totalTokens: 55, cacheReadTokens: 20, cacheWriteTokens: 10, reasoningTokens: 2 })
+  })
+
+  test("Gemini's raw usage metadata is the last fallback: thoughts are reasoning inside the output", () => {
+    const usage = extractUsage(undefined, [{
+      type: "finish", reason: "stop", usage: { inputTokens: {}, outputTokens: {} },
+      metadata: { google: { usageMetadata: { promptTokenCount: 40, cachedContentTokenCount: 30, candidatesTokenCount: 6, thoughtsTokenCount: 4, totalTokenCount: 50 } } },
+    }])
+    expect(usage).toEqual({ inputTokens: 40, outputTokens: 10, totalTokens: 50, cacheReadTokens: 30, cacheWriteTokens: 0, reasoningTokens: 4 })
   })
 
   test("reads the provider's full input and its cache reads, never folding them twice", () => {
@@ -128,8 +171,17 @@ describe("extractUsage", () => {
 })
 
 describe("withUsageOnAssistant / assistantUsage", () => {
+  test("a stamp written before 0.14.0 decodes with 0 cache writes and reasoning; a broken one reads None", () => {
+    const stamped = (engine: unknown): AgentMessage => ({ role: "assistant", content: [{ type: "text", text: "hi" }], providerOptions: { engine } })
+    const old = stamped({ inputTokens: 100, outputTokens: 7, totalTokens: 107, cacheReadTokens: 90, model: "anthropic:claude" })
+    expect(Option.getOrNull(assistantUsage(old))).toEqual({
+      inputTokens: 100, outputTokens: 7, totalTokens: 107, cacheReadTokens: 90, cacheWriteTokens: 0, reasoningTokens: 0,
+    })
+    expect(Option.isNone(assistantUsage(stamped({ inputTokens: "a lot" })))).toBe(true)
+  })
+
   test("embeds and recovers; non-assistant reads None", () => {
-    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0 }
+    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
     const tail: ReadonlyArray<AgentMessage> = [
       { role: "assistant", content: [{ type: "text", text: "hi" }] },
       { role: "tool", content: [] },
@@ -143,7 +195,7 @@ describe("withUsageOnAssistant / assistantUsage", () => {
   })
 
   test("toPromptMessages STRIPS the engine stamp outbound; provider blobs survive", () => {
-    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0 }
+    const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
     const stamped = withUsageOnAssistant(
       [
         {
@@ -192,7 +244,7 @@ describe("the model stamp", () => {
     expect(Option.getOrThrow(model)).toBe("opencode:kimi-k2.7-code")
     const messages = withUsageOnAssistant(
       [{ role: "assistant", content: [{ type: "text", text: "hi" }] }],
-      { inputTokens: 5, outputTokens: 3, totalTokens: 8, cacheReadTokens: 0 },
+      { inputTokens: 5, outputTokens: 3, totalTokens: 8, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
       model,
     )
     const stamped = messages[0]?.providerOptions as { engine?: { model?: string } }

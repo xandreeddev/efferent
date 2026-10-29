@@ -19,7 +19,7 @@ import {
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
-import type { Turn, TurnInput, TurnOutcome, TurnServices, TurnWriter } from "@xandreed/core"
+import type { Turn, TurnInput, TurnOutcome, TurnResult, TurnServices, TurnWriter } from "@xandreed/core"
 import { StepLoopLive } from "@xandreed/plugin-agent-loop"
 import { MemoryDigestLive } from "@xandreed/plugin-memory-digest"
 import { MemoryWindowLive } from "@xandreed/plugin-memory-window"
@@ -61,7 +61,7 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
     )
     yield* writer.end({ reason: outcome.outcome, failure: Option.none() })
     return outcome
-  })) as Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  })) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
   return { turn }
 })
 
@@ -75,7 +75,7 @@ describe("a turn composed by hand", () => {
 
 /** The turn services the golden agent requires; the conformance turns never call them. */
 const unused = Context.make(UtilityLlm, UtilityLlm.of({
-  complete: () => Effect.succeed(new UtilityCompletion({ text: "", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0 } })),
+  complete: () => Effect.succeed(new UtilityCompletion({ text: "", usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } })),
 }))
 const services = Effect.gen(function* () {
   const model = yield* LanguageModel.make({
