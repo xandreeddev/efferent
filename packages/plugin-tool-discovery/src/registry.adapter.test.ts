@@ -14,6 +14,7 @@ import {
   EntryId,
   Failure,
   HarnessError,
+  harnessCodeOf,
   isHarnessError,
   harnessDefectsAsFailures,
   IntentMatcher,
@@ -30,7 +31,7 @@ import {
   turnStartedDraft,
   UserMessage,
 } from "@xandreed/core"
-import type { Capability, MemoryPolicy, RunTools, SessionLogEvent, ToolInvocation, ToolRefusalReason, TurnDraft, TurnEvent, TurnWriter } from "@xandreed/core"
+import type { Capability, MemoryPolicy, RunTools, SessionLogEvent, ToolInvocation, ToolRefusalReason, TurnDraft, TurnError, TurnEvent, TurnWriter } from "@xandreed/core"
 import { makeRegistry } from "./registry.adapter.js"
 import type { DiscoveryConfig } from "./registry.adapter.js"
 
@@ -392,7 +393,7 @@ const message = new UserMessage({ text: "file the records" })
  * restored as at the turn boundary. With `refuses`, the store fails to write
  * that kind. Returns how `body` ended, the decisions published and what memory holds.
  */
-const matchedTurn = <A>(picks: ReadonlyArray<ReadonlyArray<string>>, body: (tools: RunTools) => Effect.Effect<A, HarnessError>, refuses: Option.Option<string> = Option.none()) =>
+const matchedTurn = <A>(picks: ReadonlyArray<ReadonlyArray<string>>, body: (tools: RunTools) => Effect.Effect<A, TurnError>, refuses: Option.Option<string> = Option.none()) =>
   Effect.scoped(Effect.gen(function* () {
     const recorded = yield* recordingWriter(refuses)
     const registry = yield* makeRegistry(config, [selectable])
@@ -429,7 +430,7 @@ const callTool = (tools: RunTools, name: string, params: unknown): Effect.Effect
   return results.at(-1)?.result
 }).pipe(Effect.provideService(CurrentAgentStep, Option.some(1))) as never
 
-const codeOf = <A>(outcome: Result.Result<A, HarnessError>): string => outcome._tag === "Failure" ? outcome.failure.code : `succeeded with ${JSON.stringify(outcome.success)}`
+const codeOf = <A>(outcome: Result.Result<A, TurnError>): string => outcome._tag === "Failure" ? Option.getOrElse(harnessCodeOf(outcome.failure), () => outcome.failure._tag) : `succeeded with ${JSON.stringify(outcome.success)}`
 
 describe("the matcher's choice, applied", () => {
   test("a skill the turn may not use is refused, and the decision recorded as rejected", async () => {

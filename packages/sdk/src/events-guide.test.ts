@@ -13,6 +13,7 @@ import {
   defineTool,
   Failure,
   HarnessError,
+  harnessCodeOf,
   onEvent,
   onTool,
   SessionLogMemoryLive,
@@ -26,7 +27,7 @@ import {
   TurnEvents,
   UserMessage,
 } from "@xandreed/sdk"
-import type { Capability, SessionAddress, SessionLog, Turn, TurnEvent, TurnEventOf, TurnEventsService, TurnOutcome } from "@xandreed/sdk"
+import type { Capability, SessionAddress, SessionLog, Turn, TurnError, TurnEvent, TurnEventOf, TurnEventsService, TurnOutcome } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { decodeSse, RenderFeed, RenderFeedLive, renderFeedDefaults, SessionsJournalTailLive, sseHeaders, SseTransport } from "@xandreed/plugin-render"
@@ -111,7 +112,7 @@ export type Push = (frame: Frame) => Effect.Effect<void>
  * ordered lane, off the loop's path) for every frame, each tagged with the
  * turn's number, then the run.
  */
-export const streamTo = (push: Push) => (turn: Turn): Effect.Effect<TurnOutcome, HarnessError, Scope.Scope> => Effect.gen(function* () {
+export const streamTo = (push: Push) => (turn: Turn): Effect.Effect<TurnOutcome, TurnError, Scope.Scope> => Effect.gen(function* () {
   yield* turn.events.subscribe(progressOf, (frame) => push({ event: frame.event, data: { turn: turn.turn, ...frame.data } }), { mode: "background" })
   yield* turn.tools.select(turn.userMessage) // the always-on skills, and the matcher's choice
   const result = yield* turn.run({}) // streamed by default (limits.streaming)
@@ -607,7 +608,7 @@ describe("tools and host events", () => {
       // #region reserved
       const Clash = defineHostEvent("tool.progress", Schema.Struct({ text: Schema.String })) // a bus event's name
       const published = yield* Clash.publish(turn.events, { text: "50%" }).pipe(
-        Effect.match({ onFailure: (error) => error.code, onSuccess: () => "published" })) // "events.reserved"
+        Effect.match({ onFailure: (error) => Option.getOrElse(harnessCodeOf(error), () => error._tag), onSuccess: () => "published" })) // "events.reserved"
       // #endregion reserved
       yield* Ref.set(code, published)
       return yield* turn.reply("Done.")

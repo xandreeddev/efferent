@@ -1,9 +1,8 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
-import type { HarnessError } from "../harness/plugin.entity.js"
 import type { JsonObject, SessionExists, SessionLogError, SessionMissing } from "../session/session-log.entity.js"
-import type { SessionAddress, SessionContended } from "../session/sessions.entity.js"
+import type { SessionAddress, SessionContended, TurnError } from "../session/sessions.entity.js"
 import type { TaskConflict, TaskMissing, TaskMode, TaskRefused, TaskView } from "../session/tasks.entity.js"
 import type { TurnWriter } from "./sessions.port.js"
 import type { TurnOutcome } from "./turn.port.js"
@@ -61,7 +60,7 @@ export class TaskRunner extends Context.Service<TaskRunner, {
 /** How the host runs the turns tasks need: the child's one turn, and the parent's reaction to results. */
 export class TaskExecutor extends Context.Service<TaskExecutor, {
   /** Run the child's turn on its writer (the tasks plugin ends it). */
-  readonly turn: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, HarnessError>
+  readonly turn: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, TurnError>
   /** Run the parent's inbox turn on its writer. */
-  readonly react: (writer: TurnWriter) => Effect.Effect<void, HarnessError>
+  readonly react: (writer: TurnWriter) => Effect.Effect<void, TurnError>
 }>()("efferent/TaskExecutor") {}

@@ -1,7 +1,7 @@
 import { Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Scope } from "effect"
 import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, expect, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
+import { check, expect, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import type { TurnActivity } from "../ports/activity.port.js"
@@ -98,7 +98,7 @@ const refusal = (sessions: Service, address: SessionAddress, input: BeginTurn) =
 /** What a write after the turn was closed failed with: a flush, so a write that is queued is tried. */
 const writeRefused = (writer: TurnWriter) => writer.append([{ kind: "conformance.late", data: {} }]).pipe(
   Effect.andThen(writer.flush),
-  Effect.match({ onFailure: (error) => error.code, onSuccess: () => "stored" }),
+  Effect.match({ onFailure: failureCode, onSuccess: () => "stored" }),
 )
 /** A scope of the check's own, closed when the check ends if it is still open. */
 const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(scope, Exit.void))
@@ -410,7 +410,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const refused = [
         yield* Effect.flip(writer.append([{ kind: "conformance.note", data: {} }, { kind: "turn.ended", data: { reason: "completed", failure: null } }])),
         yield* Effect.flip(writer.transact(() => Effect.succeed({ drafts: [{ kind: "memory.message", data: {} }], result: undefined }))),
-      ].map((error) => error.code)
+      ].map(failureCode)
       yield* expect("transact", refused.every((code) => code === "events.reserved"), `a turn's writer recording turn.ended and memory.message gave ${refused.join()}`)
       yield* expect("transact", Option.contains(yield* openTurn(sessions, address), 1), "a turn.ended a host appended closed the turn")
       yield* writer.append([frameworkDraft("step.started", { step: 0 }), { kind: "conformance.answer", data: {} }])

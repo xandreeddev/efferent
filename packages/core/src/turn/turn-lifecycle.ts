@@ -1,6 +1,5 @@
 import { Cause, Effect, Exit, Option } from "effect"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
-import type { HarnessError } from "../harness/plugin.entity.js"
 import { replayableContext } from "../loop/traceContent.js"
 import { RunContext } from "../ports/run-context.port.js"
 import type { TurnWriter } from "../ports/sessions.port.js"
@@ -10,7 +9,7 @@ import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
 import { TurnMemory, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
 import type { Turn, TurnOutcome, TurnResult, TurnTools } from "../ports/turn.port.js"
-import type { AdmittedTurn } from "../session/sessions.entity.js"
+import type { AdmittedTurn, TurnError } from "../session/sessions.entity.js"
 import { turnEndingOf } from "../session/sessions.entity.functions.js"
 import { harnessDefectsAsFailures } from "./turn-bus.js"
 import { runTurnLoop } from "./turn-run.js"
@@ -19,11 +18,11 @@ import type { TurnRunServices } from "./turn-run.js"
 const failed: TurnOutcome = { outcome: "failed", reply: Option.none() }
 
 /** Open the turn's tools (once). Their handlers run with the services of where this runs: open them inside the host's layer. */
-export const openTurnTools: Effect.Effect<RunTools, HarnessError, TurnToolbox> =
+export const openTurnTools: Effect.Effect<RunTools, TurnError, TurnToolbox> =
   TurnToolbox.pipe(Effect.flatMap((toolbox) => toolbox.open))
 
 /** The host's view of the open tools; skills the host activates are recorded as its own. */
-export const turnTools: Effect.Effect<TurnTools, HarnessError, TurnToolbox> = TurnToolbox.pipe(
+export const turnTools: Effect.Effect<TurnTools, TurnError, TurnToolbox> = TurnToolbox.pipe(
   Effect.flatMap((toolbox) => toolbox.tools),
   Effect.map((tools): TurnTools => ({
     match: tools.match,
@@ -36,11 +35,11 @@ export const turnTools: Effect.Effect<TurnTools, HarnessError, TurnToolbox> = Tu
 )
 
 /** Await the tasks, then drain the background reactions, again until a round starts nothing new. */
-export const settleTurn: Effect.Effect<void, HarnessError, TurnEvents | TurnTasks> = Effect.gen(function* () {
+export const settleTurn: Effect.Effect<void, TurnError, TurnEvents | TurnTasks> = Effect.gen(function* () {
   const events = yield* TurnEvents
   const tasks = yield* TurnTasks
   const activity = Effect.zipWith(tasks.activity, events.activity, (forked, delivered) => forked + delivered)
-  const settle: Effect.Effect<void, HarnessError> = Effect.gen(function* () {
+  const settle: Effect.Effect<void, TurnError> = Effect.gen(function* () {
     const before = yield* activity
     yield* tasks.await([])
     yield* events.drain
@@ -56,7 +55,7 @@ type Restore = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, 
  * interruptibility, then flush the journal whatever the drain did (a cut
  * drain still leaves the reply stored). Runs where interruption is masked.
  */
-const finishing = (restore: Restore, outcome: TurnOutcome): Effect.Effect<void, HarnessError, TurnMemory | TurnEvents | RunContext> => Effect.gen(function* () {
+const finishing = (restore: Restore, outcome: TurnOutcome): Effect.Effect<void, TurnError, TurnMemory | TurnEvents | RunContext> => Effect.gen(function* () {
   yield* (yield* TurnMemory).persistReply(outcome)
   const drained = yield* Effect.exit(restore((yield* TurnEvents).drain))
   yield* (yield* RunContext).flush
@@ -68,7 +67,7 @@ const finishing = (restore: Restore, outcome: TurnOutcome): Effect.Effect<void, 
  * the journal. The reply is recorded and the journal flushed even when the
  * fiber is interrupted meanwhile; only the drain can be cut.
  */
-export const finishTurn = (outcome: TurnOutcome): Effect.Effect<void, HarnessError, TurnMemory | TurnEvents | RunContext> =>
+export const finishTurn = (outcome: TurnOutcome): Effect.Effect<void, TurnError, TurnMemory | TurnEvents | RunContext> =>
   Effect.uninterruptibleMask((restore) => finishing(restore, outcome))
 
 /**
@@ -129,7 +128,7 @@ const finishFailed: Effect.Effect<void, never, TurnMemory | TurnEvents | RunCont
  */
 export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.Effect<
   TurnResult,
-  E | HarnessError,
+  E | TurnError,
   R | TurnMemory | TurnEvents | TurnTasks | RunContext
 > => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
   const exit = yield* Effect.exit(restore(harnessDefectsAsFailures(body.pipe(Effect.tap(() => settleTurn)))))
@@ -149,7 +148,7 @@ export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.
  * its spans under the span current where `run` is called. The message must
  * be persisted and the tools open.
  */
-export const turnOf = (options: TurnRunOptions = {}): Effect.Effect<Turn, HarnessError, TurnRunServices | RunContext | StepLoop> =>
+export const turnOf = (options: TurnRunOptions = {}): Effect.Effect<Turn, TurnError, TurnRunServices | RunContext | StepLoop> =>
   Effect.gen(function* () {
     const services = replayableContext(yield* Effect.context<TurnRunServices | StepLoop>())
     const run = yield* RunContext

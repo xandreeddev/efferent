@@ -7,6 +7,7 @@ import {
   defineSkill,
   defineTool,
   Failure,
+  harnessCodeOf,
   onTool,
   SessionLogMemoryLive,
   Sessions,
@@ -65,6 +66,9 @@ const toolsOf = (slow: Ref.Ref<boolean>, fetching: Deferred.Deferred<void>, fetc
   ],
   skills: [defineSkill({ id: "records", summary: "Find records and deliver their pages.", tools: ["lookup", "fetch_page", "deliver"], always: true })],
 })
+
+/** A failure by its framework code (`harnessCodeOf`), else its tag. */
+const codeOf = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
 
 const usage = { inputTokens: { total: 100 }, outputTokens: { total: 10 } }
 type Part = ReadonlyArray<unknown>
@@ -160,7 +164,7 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
 
     // 1-2. The cancel closed turn 1 while fetch_page ran; the turn failed with turn.closed.
     expect(observed.cancelled.cancelled).toBe(true)
-    expect(Option.map(Exit.findErrorOption(observed.asked), (error) => error.code)).toEqual(Option.some("turn.closed"))
+    expect(Option.map(Exit.findErrorOption(observed.asked), codeOf)).toEqual(Option.some("turn.closed"))
     // What is durable after the cancel: the turn's start, its whole first step, the turn's end as cancelled,
     // and no reply. Of the step in flight, only events its writer stored before the cancel remain (here at most
     // fetch_page's tool.started, depending on whether its commit won the race): never its call or result in memory.
@@ -188,8 +192,8 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
     expect(turnTwo.filter((event) => event.kind === "turn.ended").map((event) => event.data.reason)).toEqual(["completed"])
 
     // 4-5. A retried resume is the turn it began; a finished turn cannot be resumed; neither opened a turn.
-    expect(observed.retried.code).toBe("turn.duplicate")
-    expect([observed.refused.code, observed.refused.message]).toEqual(["turn.not-resumable", "turn 2 of session 00000000-0000-4000-8000-0000000000aa cannot be resumed (finished)"])
+    expect(codeOf(observed.retried)).toBe("turn.duplicate")
+    expect([codeOf(observed.refused), observed.refused.message]).toEqual(["turn.not-resumable", "turn 2 of session 00000000-0000-4000-8000-0000000000aa cannot be resumed (finished)"])
     expect([observed.view.turns, Option.isNone(observed.view.open)]).toEqual([2, true])
   })
 
@@ -214,14 +218,14 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
     })))
 
     expect(observed.all.filter((event) => event.kind === "turn.ended").map((event) => [turnOf(event), event.data.reason])).toEqual([[1, "cancelled"], [2, "failed"], [3, "completed"]])
-    expect(observed.failed.code).toBe("loop.failed")
-    expect(observed.duplicate.code).toBe("turn.duplicate")
+    expect(codeOf(observed.failed)).toBe("loop.failed")
+    expect(codeOf(observed.duplicate)).toBe("turn.duplicate")
     expect([observed.retried.outcome, Option.getOrNull(observed.retried.reply)]).toEqual(["completed", "PAGE of record-alpha-a"])
     expect(ofTurn(observed.all, 3)[0]?.data).toMatchObject({ key: "resume:1:2", resumes: 1, runId: "run-4", origin: "user" })
     // The retry sees what a plain new turn would: turn 1's message and whole step, then the messages after it.
     const prompt = observed.prompt
     expect(prompt.indexOf("FOUND record-alpha-a")).toBeGreaterThan(prompt.indexOf("find alpha and fetch its page"))
     expect(prompt.lastIndexOf("find alpha and fetch its page")).toBeGreaterThan(prompt.indexOf("FOUND record-alpha-a"))
-    expect([observed.answered.code, observed.answered.message]).toEqual(["turn.not-resumable", "turn 1 of session 00000000-0000-4000-8000-0000000000aa cannot be resumed (superseded)"])
+    expect([codeOf(observed.answered), observed.answered.message]).toEqual(["turn.not-resumable", "turn 1 of session 00000000-0000-4000-8000-0000000000aa cannot be resumed (superseded)"])
   })
 })

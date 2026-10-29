@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option } from "effect"
-import { ConversationId, ConversationMemory, inMemoryLog, MEDIA_LIMITS, memoryConformance, openLogSession, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { ConversationId, ConversationMemory, harnessCodeOf, inMemoryLog, MEDIA_LIMITS, memoryConformance, openLogSession, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 import type { MemoryPolicy, Plugin } from "@xandreed/core"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+
+/** A failure by its framework code (`harnessCodeOf`), else its tag. */
+const codeOf = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
 
 /** A test-only strategy: keep the last two turns, drop the rest. */
 const rollingPolicy: MemoryPolicy = {
@@ -53,7 +56,7 @@ describe("the summary strategy reads its summarizer where the session is opened"
       const stored = yield* inMemoryLog
       return yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005a1"), runId: "run-1", log: stored.log })
     }))))
-    expect(exit._tag === "Failure" ? exit.failure.code : "opened").toBe("memory.summary")
+    expect(exit._tag === "Failure" ? codeOf(exit.failure) : "opened").toBe("memory.summary")
   })
 })
 

@@ -20,7 +20,7 @@ import {
   TurnRefused,
   UserMessage,
 } from "@xandreed/core"
-import type { BeginTurn, SessionAddress, SessionLogEvent, TaskView, TurnOutcome, TurnWriter } from "@xandreed/core"
+import type { BeginTurn, SessionAddress, SessionLogEvent, TaskView, TurnError, TurnOutcome, TurnWriter } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { SessionsConfig } from "@xandreed/plugin-sessions"
 import { noticeOf } from "./task.entity.functions.js"
@@ -43,8 +43,8 @@ const kinds = (events: ReadonlyArray<SessionLogEvent>) => events.map((event) => 
  * recorded as the text of the turn's message.
  */
 const harness = (input: {
-  readonly turn?: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, HarnessError>
-  readonly react?: (writer: TurnWriter) => Effect.Effect<void, HarnessError>
+  readonly turn?: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, TurnError>
+  readonly react?: (writer: TurnWriter) => Effect.Effect<void, TurnError>
   readonly admission?: LayerType.Layer<TurnAdmission>
   readonly maxMs?: number
   readonly config?: Partial<TasksConfig>

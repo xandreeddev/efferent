@@ -6,13 +6,14 @@ import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogQuery } from "../memory/memory-log.entity.functions.js"
 import type { ArtifactRef, BuiltContext, EntryId, LogBody, LogEntry, Subject } from "../memory/memory-log.entity.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { MemoryRenderRecipe } from "../turn/model-request.entity.js"
 
 /** A conversation's memory log for one turn: the entries stored before it, and one atomic append. */
 export interface LogHandle {
-  readonly read: Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
-  readonly append: (entries: ReadonlyArray<LogEntry>) => Effect.Effect<void, HarnessError>
+  readonly read: Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
+  readonly append: (entries: ReadonlyArray<LogEntry>) => Effect.Effect<void, TurnError>
 }
 
 /** One tool result as the model sees it, supplied by whoever owns the tools. */
@@ -102,11 +103,11 @@ export interface MemorySession extends MemoryReader {
   readonly strategy: { readonly id: string; readonly version: string }
   /** The pure render recipe of this session, saved with every outgoing request for version-independent replay. */
   readonly renderRecipe: (stepContext: "tail" | "none") => Effect.Effect<MemoryRenderRecipe>
-  readonly record: (bodies: ReadonlyArray<LogBody>, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
+  readonly record: (bodies: ReadonlyArray<LogBody>, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /** The loop's appended messages → Message and ToolResult entries (views, and digests the strategy asks for, at write time). */
-  readonly recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
+  readonly recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /** The only place compaction is decided; the decision is recorded before it applies. */
-  readonly maintain: (signal: MaintainSignal) => Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
+  readonly maintain: (signal: MaintainSignal) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /** A pure fold of the log: what the next request sends. */
   readonly build: (request: { readonly stepContext: "tail" | "none" }) => Effect.Effect<BuiltContext, HarnessError>
 }
@@ -124,5 +125,5 @@ export class ConversationMemory extends Context.Service<ConversationMemory, {
     readonly conversation: ConversationId
     readonly runId: string
     readonly log: LogHandle
-  }) => Effect.Effect<MemorySession, HarnessError, Scope.Scope>
+  }) => Effect.Effect<MemorySession, TurnError, Scope.Scope>
 }>()("efferent/ConversationMemory") {}

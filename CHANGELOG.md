@@ -44,6 +44,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Handle `SessionContended` (503, retry later) where you matched
   `SessionLogError` code `session.contended`, and treat `SessionLogError`
   as a store failure only.
+- Read a failure's code with `harnessCodeOf(error)`, not `error.code` (the
+  same code for a `HarnessError` and for the tag it stands for), and widen
+  `HarnessError` annotations on a turn's `use`, or on code calling these
+  ports, to `TurnError`; implementations returning `HarnessError` still
+  satisfy the ports.
 
 ### Breaking
 
@@ -143,6 +148,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   plugin's own that does not encode (`session.encode`), is a defect.
 - `@xandreed/plugin-tasks`: `tasks.encode`, `tasks.kind` and `tasks.lost`
   are defects, no longer `SessionLogError`s.
+- The turn's writer and the ports on the turn's path fail with `TurnError`
+  (`HarnessError | TurnClosed | ReservedKind | SessionContended |
+  SessionLogError`) instead of `HarnessError`: `TurnWriter`, `RunContext`,
+  `TurnEvents`/`TurnTasks` and subscription handlers, memory's log and
+  session writes, `TurnMemory`, `TurnToolbox`, `TurnPrompt`, `StepRequest`
+  and `StepLoop.run`, `RunTools` and `ToolRegistry.open`, `TaskExecutor`,
+  `Turn`, `TurnRunner.turn` and `Agent.turn` (which fails with
+  `TurnError | E`). Types only: what is raised and stored is unchanged.
 
 ### Added
 

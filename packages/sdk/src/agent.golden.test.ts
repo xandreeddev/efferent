@@ -3,7 +3,7 @@ import { LanguageModel, Prompt, Tool } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
 import { join } from "node:path"
 import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, isHarnessError, LogEntry, onTool, RunContext, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
-import type { Turn, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import type { Turn, TurnError, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -207,7 +207,7 @@ export const runGolden = (
   })
 
   /** Run one turn; its host subscribes to every event first and counts the memory it ends with. */
-  const turnOf = <A, E>(turnInput: TurnInput<A, E>, use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, Scope.Scope | A>) => Effect.gen(function* () {
+  const turnOf = <A, E>(turnInput: TurnInput<A, E>, use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, Scope.Scope | A>) => Effect.gen(function* () {
     const events = yield* Ref.make<ReadonlyArray<string>>([])
     const built = yield* Ref.make<ReadonlyArray<unknown>>([])
     const entries = yield* Ref.make(0)

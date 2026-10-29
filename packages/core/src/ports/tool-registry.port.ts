@@ -6,6 +6,7 @@ import type { CapabilityCatalog } from "../harness/capability.entity.js"
 import type { SkillDefinition } from "../harness/capability.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { ActivationSource } from "../memory/memory-log.entity.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { MemorySession, ToolViews } from "./memory.port.js"
 import type { RunContext } from "./run-context.port.js"
@@ -36,13 +37,13 @@ export interface RunTools {
    * `skills.unknown` or `capability.forbidden`; any other failure is the
    * store's, and activates nothing.
    */
-  readonly activate: (skills: ReadonlyArray<string>, source: ActivationSource) => Effect.Effect<ReadonlyArray<string>, HarnessError>
+  readonly activate: (skills: ReadonlyArray<string>, source: ActivationSource) => Effect.Effect<ReadonlyArray<string>, TurnError>
   /** Ask the matcher, without writing anything. */
   readonly match: (userMessage: UserMessage) => Effect.Effect<SkillMatch, HarnessError>
   /** Always-on skills plus a match: activated, recorded as a decision, seeded as a load_skill exchange. */
-  readonly apply: (match: SkillMatch) => Effect.Effect<ReadonlyArray<string>, HarnessError>
+  readonly apply: (match: SkillMatch) => Effect.Effect<ReadonlyArray<string>, TurnError>
   /** `match` then `apply`. */
-  readonly select: (userMessage: UserMessage) => Effect.Effect<ReadonlyArray<string>, HarnessError>
+  readonly select: (userMessage: UserMessage) => Effect.Effect<ReadonlyArray<string>, TurnError>
   readonly views: ToolViews
   readonly pollable: ReadonlyArray<string>
   readonly skills: ReadonlyArray<SkillDefinition>
@@ -55,5 +56,5 @@ export class ToolRegistry extends Context.Service<ToolRegistry, {
    * it is opened (host services, run layers, RunContext), captured at open;
    * an IntentMatcher, ActionPolicy and PermissionGrants there are used.
    */
-  readonly open: (session: MemorySession) => Effect.Effect<RunTools, HarnessError, RunContext | Scope.Scope>
+  readonly open: (session: MemorySession) => Effect.Effect<RunTools, TurnError, RunContext | Scope.Scope>
 }>()("efferent/ToolRegistry") {}

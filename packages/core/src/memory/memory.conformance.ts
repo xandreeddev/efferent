@@ -2,7 +2,7 @@ import { Array as Arr, Context, Effect, Option, Ref, Schema } from "effect"
 import type { Scope } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { pixelPng } from "../conformance.functions.js"
+import { failureCode, pixelPng } from "../conformance.functions.js"
 import { mediaFromBase64, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import type { Media } from "../domain/media.entity.js"
 import { ConversationId, ToolCallId } from "../domain/message.entity.js"
@@ -11,6 +11,7 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import type { ConversationMemory, LogHandle, MemorySession, ToolViews } from "../ports/memory.port.js"
 import { draftOfEntry, entriesOfEvents, turnStartedDraft } from "../session/session-event.entity.functions.js"
 import type { SessionDraft, SessionLogEvent } from "../session/session-log.entity.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { canonicalJson } from "./memory-log.entity.functions.js"
@@ -91,12 +92,12 @@ const recordTurn = (session: MemorySession, userMessage: string, reply: string) 
  * session is opened with them provided.
  */
 export const memoryConformance = (memory: Memory, services: Context.Context<never> = Context.empty()): ReadonlyArray<ConformanceCheck> => {
-  const check = (name: string, id: string, body: (open: (log: LogHandle, runId: string) => Effect.Effect<MemorySession, HarnessError, Scope.Scope>, log: LogHandle) => Effect.Effect<void, ConformanceFailure | HarnessError, Scope.Scope>): ConformanceCheck => ({
+  const check = (name: string, id: string, body: (open: (log: LogHandle, runId: string) => Effect.Effect<MemorySession, TurnError, Scope.Scope>, log: LogHandle) => Effect.Effect<void, ConformanceFailure | TurnError, Scope.Scope>): ConformanceCheck => ({
     name,
     run: Effect.scoped(Effect.gen(function* () {
       const stored = yield* inMemoryLog
       yield* body((log, runId) => memory.open({ conversation, runId, log }).pipe(Effect.provide(services)), stored.log)
-    })).pipe(Effect.catchTag("HarnessError", (error) => fail(id)(`${error.code}: ${error.message}`))),
+    })).pipe(Effect.catch((error) => error._tag === "ConformanceFailure" ? Effect.fail(error) : fail(id)(`${failureCode(error)}: ${error.message}`))),
   })
   return [
     check("entries get their own ids, <runId>:<n>, continuing across reopens", "ids", (open, log) => Effect.gen(function* () {

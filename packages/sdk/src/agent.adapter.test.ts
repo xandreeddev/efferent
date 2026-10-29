@@ -14,6 +14,7 @@ import {
   defineTool,
   Failure,
   HarnessError,
+  harnessCodeOf,
   IntentMatcher,
   Media,
   MediaFingerprint,
@@ -23,6 +24,7 @@ import {
   RunContext,
   replayModelRequest,
   SessionLog,
+  SessionContended,
   SessionLogError,
   SessionLogMemoryLive,
   Sessions,
@@ -43,7 +45,7 @@ import {
   UtilityLlm,
   zeroUsage,
 } from "@xandreed/core"
-import type { LogEntry, Plugin, SessionLogEvent, Turn, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import type { LogEntry, Plugin, SessionLogEvent, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { runSteps, stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
@@ -56,6 +58,9 @@ import type { AgentConfig, AgentPluginEntry } from "./agent.adapter.js"
 import { Stamp, Tally } from "./testing.port.js"
 
 /* ── the host's definitions: thin tools with views, skills and sections ── */
+
+/** A failure by its framework code (`harnessCodeOf`), else its tag. */
+const codeOf = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
 
 const Item = Schema.Struct({ id: Schema.String, detail: Schema.String })
 const Lookup = Tool.make("lookup", {
@@ -166,7 +171,7 @@ const named = (events: ReadonlyArray<SessionLogEvent>, name: string) => events.f
 const body = (event: SessionLogEvent | undefined) => event?.data.body as Record<string, unknown> | undefined
 
 /** The ordinary answer: select tools, react to delivery, run until delivered. */
-const answer = (policy: TurnPolicy = {}) => (turn: Turn): Effect.Effect<TurnOutcome, HarnessError, Scope.Scope> => Effect.gen(function* () {
+const answer = (policy: TurnPolicy = {}) => (turn: Turn): Effect.Effect<TurnOutcome, TurnError, Scope.Scope> => Effect.gen(function* () {
   const delivered = yield* Ref.make(Option.none<string>())
   yield* subscribeAll(turn.events, [onTool(Deliver, ({ input }) => Ref.set(delivered, Option.some(input.text)))])
   yield* turn.tools.select(turn.userMessage)
@@ -279,10 +284,23 @@ describe("Agent.turn", () => {
       const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "fail", model), () => Effect.fail(new HarnessError({ code: "host.failed", message: "no" }))))
       return { exit, events: yield* journal.stored }
     })))
-    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("host.failed")
+    expect(exit._tag === "Failure" ? codeOf(exit.failure) : "none").toBe("host.failed")
     expect(named(events, "turn.reply").map((event) => body(event)?.outcome)).toEqual(["failed"])
     // The stored end carries the error's own code and message.
     expect(named(events, "turn.ended").map((event) => [event.data.reason, event.data.failure])).toEqual([["failed", { code: "host.failed", message: "no" }]])
+  })
+
+  test("use may fail with any TurnError: the turn fails with it, typed, and ends with the code its tag stands for", async () => {
+    const { exit, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "contended", model), () =>
+        Effect.fail(new SessionContended({ session: journal.address.id, attempts: 8 }))))
+      return { exit, events: yield* journal.stored }
+    })))
+    expect(exit._tag === "Failure" ? exit.failure._tag : "none").toBe("SessionContended")
+    expect(named(events, "turn.ended").map((event) => [event.data.reason, event.data.failure])).toMatchObject([["failed", { code: "session.contended" }]])
   })
 
   test("a failing subscriber's code is the one the stored turn.ended carries", async () => {
@@ -307,7 +325,7 @@ describe("Agent.turn", () => {
       const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "hello", model), (turn) => turn.reply("Hello there.")))
       return { exit, events: yield* journal.stored }
     })))
-    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("session.log")
+    expect(exit._tag === "Failure" ? codeOf(exit.failure) : "none").toBe("session.log")
     expect(named(events, "turn.reply").map((event) => body(event)?.outcome)).toEqual(["completed"])
     expect(named(events, "turn.ended")).toHaveLength(0)
   })
@@ -328,7 +346,7 @@ describe("Agent.turn", () => {
       const { model } = yield* scripted([])
       const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "hello", model), use))
       const stored = named(yield* journal.stored, "turn.ended").map((event) => [event.data.reason, event.data.failure ?? null])
-      return { code: exit._tag === "Failure" ? exit.failure.code : "none", stored }
+      return { code: exit._tag === "Failure" ? codeOf(exit.failure) : "none", stored }
     })))
     expect(await ended(() => Effect.fail(new HarnessError({ code: "host.failed", message: "no" }))))
       .toEqual({ code: "host.failed", stored: [["failed", { code: "host.failed", message: "no" }]] })
@@ -361,7 +379,7 @@ describe("Agent.turn", () => {
       yield* Ref.set(refusing, false)
       const second = yield* agent.turn(inputFor(journal, "run-2", "again", model), (turn) => turn.reply("Hello again."))
       const ended = named(yield* journal.stored, "turn.ended").map((event) => [Option.getOrNull(event.turn), event.data.reason])
-      return { codes: [first.code, second.outcome], ended }
+      return { codes: [codeOf(first), second.outcome], ended }
     })).pipe(Effect.provide(capture)))
     expect(codes).toEqual(["host.failed", "completed"])
     expect(ended).toEqual([[1, "interrupted"], [2, "completed"]])
@@ -379,7 +397,7 @@ describe("Agent.turn", () => {
       })))
       return { exit, seen: yield* Ref.get(seen) }
     })))
-    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("reaction.failed")
+    expect(exit._tag === "Failure" ? codeOf(exit.failure) : "none").toBe("reaction.failed")
     expect(seen).toHaveLength(1)
   })
 
@@ -563,7 +581,7 @@ describe("Agent.turn", () => {
       const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "find alpha", model), answer()))
       return { exit, events: yield* journal.stored }
     })))
-    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("session.log")
+    expect(exit._tag === "Failure" ? codeOf(exit.failure) : "none").toBe("session.log")
     expect(named(events, "tool.completed")).toHaveLength(0)
     expect(named(events, "turn.reply")).toHaveLength(0)
   })
@@ -700,7 +718,7 @@ describe("Agent.turn", () => {
       return { result, calls: (yield* Ref.get(seen)).length }
     })))
     expect(result._tag).toBe("Failure")
-    expect(result._tag === "Failure" ? [result.failure.code, result.failure.message.split(":")[0]] : "success").toEqual(["request.diverged", changed])
+    expect(result._tag === "Failure" ? [codeOf(result.failure), result.failure.message.split(":")[0]] : "success").toEqual(["request.diverged", changed])
     expect(calls).toBe(0)
   })
 
@@ -881,7 +899,7 @@ describe("Agent.turn", () => {
       const result = yield* Effect.result(agent.turn({ ...inputFor(journal, "run-1", "hello", model), layer: hostLayer }, (turn) => turn.reply("hello")))
       return { result, events: yield* journal.stored }
     })))
-    expect(result._tag === "Failure" ? result.failure.code : "success").toBe("host.cleanup")
+    expect(result._tag === "Failure" ? codeOf(result.failure) : "success").toBe("host.cleanup")
     expect(named(events, "turn.reply").map(body)).toEqual([{ outcome: "failed", reply: null }])
     expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual(["failed"])
   })
@@ -901,7 +919,7 @@ describe("Agent.turn", () => {
       const result = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "hello", model), (turn) => turn.reply("hello")))
       return { result, events: yield* journal.stored }
     })))
-    expect(result._tag === "Failure" ? result.failure.code : "success").toBe("plugin.cleanup")
+    expect(result._tag === "Failure" ? codeOf(result.failure) : "success").toBe("plugin.cleanup")
     expect(named(events, "turn.reply").map(body)).toEqual([{ outcome: "failed", reply: null }])
     expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual(["failed"])
   })
@@ -946,7 +964,7 @@ describe("Agent.turn", () => {
       return { order: yield* Ref.get(seen), result, events: yield* journal.stored }
     })))
     expect(order).toEqual(["body.closed", "host.closed", "host.task", "plugin.closed", `outcome:${fails ? "failed" : "completed"}`])
-    expect(result._tag === "Failure" ? result.failure.code : "completed").toBe(fails ? "host.cleanup" : "completed")
+    expect(result._tag === "Failure" ? codeOf(result.failure) : "completed").toBe(fails ? "host.cleanup" : "completed")
     expect(named(events, "turn.reply").map((event) => body(event)?.outcome)).toEqual([fails ? "failed" : "completed"])
     expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual([fails ? "failed" : "completed"])
   })
@@ -1003,7 +1021,7 @@ describe("Agent.turn", () => {
         turn.run({}).pipe(Effect.map((run): TurnOutcome => ({ outcome: run.outcome, reply: Option.some(run.text) })))))
       return { result, checks: yield* Ref.get(checks), calls: yield* Ref.get(calls) }
     })))
-    expect(result._tag === "Failure" ? result.failure.code : "success").toBe("session.log")
+    expect(result._tag === "Failure" ? codeOf(result.failure) : "success").toBe("session.log")
     expect({ checks, calls }).toEqual({ checks: 1, calls: 0 })
   })
 })
@@ -1042,7 +1060,7 @@ describe("a turn's metadata", () => {
       yield* agent.turn({ ...input, turn: { ...input.turn, key: "client-1", meta: { attempt: 1 } } }, (turn) => turn.reply("Hello there."))
       return yield* Effect.result(agent.turn({ ...input, turn: { ...input.turn, runId: "run-2", key: "client-1", meta: { attempt: 2 } } }, (turn) => turn.reply("Hello again.")))
     })))
-    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("turn.duplicate")
+    expect(exit._tag === "Failure" ? codeOf(exit.failure) : "none").toBe("turn.duplicate")
   })
 })
 
@@ -1067,7 +1085,7 @@ describe("resuming a turn", () => {
       }))
       const retried = yield* Effect.flip(agent.turn({ ...resumed, turn: { ...resumed.turn, runId: "run-3" } }, (turn) => turn.reply("Again.")))
       const started = named(yield* journal.stored, "turn.started").map((event) => [event.data.key, event.data.resumes ?? null])
-      return { seen: yield* Ref.get(seen), started, retried: retried.code }
+      return { seen: yield* Ref.get(seen), started, retried: codeOf(retried) }
     })))
     expect(seen).toEqual([["bus", 1], ["run", 1], ["turn", [1, "resume:1", 2]]])
     expect(started).toEqual([["run-1", null], ["resume:1", 1]])
@@ -1111,7 +1129,7 @@ describe("resuming a turn", () => {
       }
       // `resumes` is typed only as a number: a host's `Number(query.resumes)` may be anything, and the turn fails, it does not die.
       return yield* Effect.forEach([[1, "run-2"], [9, "run-3"], [1.5, "run-4"], [Number.NaN, "run-5"]] as const, ([turn, runId]) =>
-        resume(turn, runId).pipe(Effect.map((error) => [error.code, error.message])))
+        resume(turn, runId).pipe(Effect.map((error) => [codeOf(error), error.message])))
     })))
     expect(failures).toEqual([
       ["turn.not-resumable", `turn 1 of session ${conversation} cannot be resumed (finished)`],
@@ -1161,7 +1179,7 @@ describe("a turn's images", () => {
       const error = yield* Effect.flip(agent.turn({ ...input, turn: { ...input.turn, userMessage: new UserMessage({ text: "look", attachments: [{ ...pixel, data: "aGVsbG8gd29ybGQ=" }] }) } }, (turn) => turn.reply("never")))
       return { error, events: yield* journal.stored }
     })))
-    expect(error.code).toBe("turn.attachment-rejected")
+    expect(codeOf(error)).toBe("turn.attachment-rejected")
     expect(error.message).toContain("UnsupportedType")
     expect(events).toEqual([])
   })
@@ -1346,7 +1364,7 @@ describe("the token budget", () => {
       const codes = yield* Effect.forEach([0, -1, 1.5], (budgetTokens, index) =>
         Effect.flip(agent.turn(inputFor(journal, `run-${index}`, "hello", model), (turn) =>
           turn.run({ budgetTokens }).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) }))))).pipe(
-          Effect.map((error) => error.code)))
+          Effect.map(codeOf)))
       return { codes, seen: yield* Ref.get(seen) }
     })))
     expect(codes).toEqual(["turn.budget", "turn.budget", "turn.budget"])
@@ -1369,7 +1387,7 @@ describe("the token budget", () => {
       const built = named(yield* journal.stored, "context.built").map((event) => [Option.getOrNull(event.turn), event.data.budgetTokens, event.data.reservedTokens])
       return { tight: tight.result, calls: tight.calls, built }
     })))
-    expect(tight._tag === "Failure" ? [tight.failure.code, tight.failure.message] : "none")
+    expect(tight._tag === "Failure" ? [codeOf(tight.failure), tight.failure.message] : "none")
       .toEqual(["context.budget", expect.stringMatching(/^The system prompt and tool schemas take \d+ tokens, all of the 150-token context budget/)])
     expect(calls).toBe(0)
     expect(built.map(([turn, budget]) => [turn, budget])).toEqual([[2, 20_000], [2, 20_000], [2, 20_000], [3, 30_000], [3, 30_000], [3, 30_000]])

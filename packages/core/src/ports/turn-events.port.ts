@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope } from "effect"
-import type { HarnessError } from "../harness/plugin.entity.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import type { TurnEvent } from "../turn/turn-event.entity.js"
 
 /**
@@ -30,7 +30,7 @@ export interface SubscribeOptions {
  * are queued. Background work that is not a reaction belongs in `TurnTasks`.
  */
 export interface TurnEventsService {
-  readonly publish: (event: TurnEvent) => Effect.Effect<void, HarnessError>
+  readonly publish: (event: TurnEvent) => Effect.Effect<void, TurnError>
   /**
    * Active until the caller's scope closes. `select` narrows and decodes.
    * The handler runs with the services where it subscribed, without their
@@ -41,11 +41,11 @@ export interface TurnEventsService {
    */
   readonly subscribe: <E, R>(
     select: (event: TurnEvent) => Option.Option<E>,
-    handle: (event: E) => Effect.Effect<void, HarnessError, R>,
+    handle: (event: E) => Effect.Effect<void, TurnError, R>,
     options?: SubscribeOptions,
   ) => Effect.Effect<void, never, R | Scope.Scope>
   /** Wait until every background subscription has handled what was published to it. */
-  readonly drain: Effect.Effect<void, HarnessError>
+  readonly drain: Effect.Effect<void, TurnError>
   /** Background deliveries so far: a caller can tell whether a drain left new work. */
   readonly activity: Effect.Effect<number>
 }
@@ -55,11 +55,11 @@ export interface TurnEventsService {
  * awaits them before it ends and interrupts them when it fails.
  */
 export interface TurnTasksService {
-  readonly fork: <R>(tag: string, task: Effect.Effect<void, HarnessError, R>) => Effect.Effect<void, never, R>
+  readonly fork: <R>(tag: string, task: Effect.Effect<void, TurnError, R>) => Effect.Effect<void, never, R>
   /** True while any task with this tag is still running. */
   readonly pending: (tag: string) => Effect.Effect<boolean>
   /** Join every task with one of these tags (all tasks when empty). */
-  readonly await: (tags: ReadonlyArray<string>) => Effect.Effect<void, HarnessError>
+  readonly await: (tags: ReadonlyArray<string>) => Effect.Effect<void, TurnError>
   /** Tasks forked so far: a caller can tell whether joining them started more. */
   readonly activity: Effect.Effect<number>
 }

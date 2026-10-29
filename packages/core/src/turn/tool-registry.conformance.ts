@@ -2,7 +2,7 @@ import { Tool } from "effect/ai"
 import { Array as Arr, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, expect, freshId } from "../conformance.functions.js"
+import { check, expect, failureCode, freshId } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import { defineCapability, defineSkill, defineTool } from "../harness/capability.entity.functions.js"
 import type { CapabilityCatalog } from "../harness/capability.entity.js"
@@ -323,7 +323,7 @@ export const toolRegistryConformance = (
       yield* expect("activation", activated.filter((event) => event.skills.includes("kit.archiving")).length === 1
         && activated.some((event) => event.tools.includes(Archive.name)), `kit.archiving's activation published ${activated.length} skills.activated`)
       const unknown = yield* Effect.flip(turn.tools.activate(["kit.no-such-skill"], "host"))
-      yield* expect("activation", unknown.code === "skills.unknown", `activating an unknown skill failed with ${unknown.code}`)
+      yield* expect("activation", failureCode(unknown) === "skills.unknown", `activating an unknown skill failed with ${failureCode(unknown)}`)
       yield* Effect.result(turn.tools.activate(["kit.vault"], "host"))
       const after = yield* turn.tools.active
       yield* expect("activation", !after.includes(Vault.name) && grown.every((tool) => after.includes(tool)), `after asking for a skill whose permission is not granted the active tools are ${after.join()}`)

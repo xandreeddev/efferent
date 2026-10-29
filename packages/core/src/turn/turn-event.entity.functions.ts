@@ -3,6 +3,7 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentToolInvocation } from "../loop/stepContext.js"
 import { RunContext } from "../ports/run-context.port.js"
 import type { SubscribeOptions, Subscription, TurnEventsService } from "../ports/turn-events.port.js"
+import type { TurnError } from "../session/sessions.entity.js"
 
 import type { TurnEvent, TurnEventName, TurnEventOf } from "./turn-event.entity.js"
 
@@ -11,7 +12,7 @@ const isNamed = <Name extends TurnEventName>(name: Name) => (event: TurnEvent): 
 /** Subscribe to one event kind by name, typed by the event's schema (inline unless `options.mode` says background). */
 export const onEvent = <Name extends TurnEventName, R>(
   name: Name,
-  handle: (event: TurnEventOf<Name>) => Effect.Effect<void, HarnessError, R>,
+  handle: (event: TurnEventOf<Name>) => Effect.Effect<void, TurnError, R>,
   options?: SubscribeOptions,
 ): Subscription<R> => (events) => events.subscribe((event) => Option.liftPredicate(event, isNamed(name)), handle, options)
 
@@ -28,7 +29,7 @@ export interface ToolCall<Input, Result> {
 
 export const onTool = <Params extends Schema.Top, Success extends Schema.Top, R>(
   tool: { readonly name: string; readonly parametersSchema: Params; readonly successSchema: Success },
-  handle: (call: ToolCall<Params["Type"], Success["Type"]>) => Effect.Effect<void, HarnessError, R>,
+  handle: (call: ToolCall<Params["Type"], Success["Type"]>) => Effect.Effect<void, TurnError, R>,
   options?: SubscribeOptions,
 ): Subscription<R> => {
   const isInput = Schema.is(tool.parametersSchema)
@@ -64,7 +65,7 @@ export const defineHostEvent = <A, I extends Readonly<Record<string, unknown>>>(
     make,
     select,
     publish: (events: TurnEventsService, data: A) => make(data).pipe(Effect.flatMap(events.publish)),
-    on: <R>(handle: (data: A) => Effect.Effect<void, HarnessError, R>, options?: SubscribeOptions): Subscription<R> =>
+    on: <R>(handle: (data: A) => Effect.Effect<void, TurnError, R>, options?: SubscribeOptions): Subscription<R> =>
       (events) => events.subscribe(select, handle, options),
   }
 }

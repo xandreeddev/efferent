@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Tracer } from "effect"
+import { failureCode } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
@@ -42,7 +43,7 @@ describe("the turn event bus", () => {
       yield* onEvent("step.started", (event) => events.publish(started(event.step + 1)))(events)
       yield* events.publish(started(0))
     })))
-    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("events.depth")
+    expect(exit._tag === "Failure" ? failureCode(exit.failure) : "none").toBe("events.depth")
   })
 
   test("a failing handler fails the publisher, and a subscription ends with its scope", async () => {
@@ -53,7 +54,7 @@ describe("the turn event bus", () => {
         yield* events.publish(started(0))
       })))
       const afterScope = yield* Effect.result(events.publish(started(1)))
-      return { failing: failing._tag === "Failure" ? failing.failure.code : "none", afterScope: afterScope._tag }
+      return { failing: failing._tag === "Failure" ? failureCode(failing.failure) : "none", afterScope: afterScope._tag }
     })))
     expect(outcome).toEqual({ failing: "reaction.failed", afterScope: "Success" })
   })
@@ -125,8 +126,8 @@ describe("the turn event bus", () => {
       const drained = yield* Effect.result(events.drain)
       const next = yield* Effect.result(events.publish(started(3)))
       return {
-        drained: drained._tag === "Failure" ? drained.failure.code : "none",
-        next: next._tag === "Failure" ? next.failure.code : "none",
+        drained: drained._tag === "Failure" ? failureCode(drained.failure) : "none",
+        next: next._tag === "Failure" ? failureCode(next.failure) : "none",
         seen: yield* Ref.get(seen),
       }
     })))
@@ -158,7 +159,7 @@ describe("the turn event bus", () => {
     })))
     const codes = await Promise.all([() => Effect.die(new HarnessError({ code: "reaction.died", message: "no" })), () => Effect.interrupt].map(async (handle) => {
       const drained = await drainedAfter(handle)
-      return drained._tag === "Failure" ? `${drained.failure.code}: ${drained.failure.message}` : "none"
+      return drained._tag === "Failure" ? `${failureCode(drained.failure)}: ${drained.failure.message}` : "none"
     }))
     expect(codes).toEqual(["reaction.died: no", "events.background: a background handler was interrupted"])
   })
@@ -231,7 +232,7 @@ describe("turn tasks", () => {
         yield* tasks.fork("broken", Effect.fail(new HarnessError({ code: "task.failed", message: "no" })))
         yield* tasks.await([])
       })))
-      return { interrupted: yield* Deferred.isDone(interrupted), failed: failed._tag === "Failure" ? failed.failure.code : "none" }
+      return { interrupted: yield* Deferred.isDone(interrupted), failed: failed._tag === "Failure" ? failureCode(failed.failure) : "none" }
     }))
     expect(outcome).toEqual({ interrupted: true, failed: "task.failed" })
   })

@@ -13,6 +13,7 @@ import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
 import type { TurnPolicy } from "../ports/turn.port.js"
 import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import type { CompletionVerdict } from "./turn-event.entity.js"
 import type { MemoryRenderRecipe } from "./model-request.entity.js"
 import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
@@ -97,10 +98,10 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  * stamp the request's `cacheKey` (or changes the call policy) fails with
  * `request.diverged` before the provider is called.
  */
-export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<StepRequest, HarnessError, P | TurnRunServices> =>
+export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<StepRequest, TurnError, P | TurnRunServices> =>
   Effect.gen(function* () {
     const runServices = replayableContext(yield* Effect.context<P>())
-    const inRun = <A>(effect: Effect.Effect<A, HarnessError, P>): Effect.Effect<A, HarnessError> => effect.pipe(Effect.provide(runServices))
+    const inRun = <A, E>(effect: Effect.Effect<A, E, P>): Effect.Effect<A, E> => effect.pipe(Effect.provide(runServices))
     const memory = yield* TurnMemory
     const prompt = yield* TurnPrompt
     const events = yield* TurnEvents
@@ -128,7 +129,7 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
     // prompt, directive and resolved model; any other plan of a step decides again.
     const planned = yield* Ref.make(Option.none<PlannedStep>())
     const replanning = yield* Ref.make(Option.none<PlannedStep>())
-    const decide = (info: StepInfo): Effect.Effect<StepDecision, HarnessError> => Effect.gen(function* () {
+    const decide = (info: StepInfo): Effect.Effect<StepDecision, TurnError> => Effect.gen(function* () {
       const choice = policy.model === undefined ? Option.none<ModelChoice>() : yield* inRun(policy.model(info))
       const system = yield* inRun(prompt.system(Option.flatMap(choice, (value) => value.variant)))
       const directive = policy.step === undefined ? noDirective : yield* inRun(policy.step(info))
@@ -139,7 +140,7 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
       return { choice, system, directive }
     })
 
-    const plan = (info: StepInfo): Effect.Effect<StepPlan, HarnessError> => Effect.gen(function* () {
+    const plan = (info: StepInfo): Effect.Effect<StepPlan, TurnError> => Effect.gen(function* () {
       const again = Option.filter(yield* Ref.getAndSet(replanning, Option.none()), (last) => last.step === info.stepIndex)
       const { choice, system, directive } = Option.isSome(again) ? again.value.decision : yield* decide(info)
       const reserved = estimateTokens(system) + schemaTokens(tools, info.activeTools)
@@ -234,5 +235,5 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
   })
 
 /** One run of the turn: `stepRequestOf`, then the StepLoop. */
-export const runTurnLoop = <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<RunResult, HarnessError, P | TurnRunServices | StepLoop> =>
+export const runTurnLoop = <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<RunResult, TurnError, P | TurnRunServices | StepLoop> =>
   stepRequestOf(policy, options).pipe(Effect.flatMap((request) => StepLoop.pipe(Effect.flatMap((loop) => loop.run(request)))))

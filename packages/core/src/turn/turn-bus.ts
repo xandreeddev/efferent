@@ -4,27 +4,28 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
 import type { SubscribeOptions, TurnEventsService, TurnTasksService } from "../ports/turn-events.port.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import type { TurnEvent } from "./turn-event.entity.js"
 import { randomUuid } from "../util/random-id.js"
 
 interface Subscriber {
   readonly id: number
-  readonly deliver: (event: TurnEvent) => Effect.Effect<void, HarnessError>
+  readonly deliver: (event: TurnEvent) => Effect.Effect<void, TurnError>
   /** Background subscriptions: wait until everything queued so far is handled. */
-  readonly drain: Effect.Effect<void, HarnessError>
+  readonly drain: Effect.Effect<void, TurnError>
 }
 
 /** One queued delivery (`roomed`: it took a place of the lane's capacity), or a marker the drain waits on. */
 type Queued<E> =
   | { readonly _tag: "Event"; readonly event: E; readonly depth: number; readonly traceContent: boolean; readonly roomed: boolean }
-  | { readonly _tag: "Marker"; readonly done: Deferred.Deferred<void, HarnessError> }
+  | { readonly _tag: "Marker"; readonly done: Deferred.Deferred<void, TurnError> }
 
 /**
  * A background handler's failure as the turn fails with it: its typed error,
  * or a HarnessError it carried as a defect, as a failure; any other defect
  * stays the defect it is; an interruption alone fails with `events.background`.
  */
-const failureOf = (cause: Cause.Cause<HarnessError>): Cause.Cause<HarnessError> => Option.match(Cause.findErrorOption(cause), {
+const failureOf = (cause: Cause.Cause<TurnError>): Cause.Cause<TurnError> => Option.match(Cause.findErrorOption(cause), {
   onSome: Cause.fail,
   onNone: () => {
     const defect = Cause.squash(cause)
@@ -60,7 +61,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
   const inLane = Context.Reference<boolean>(`@xandreed/core/TurnEvents/lane/${busId}`, { defaultValue: () => false })
   /** Background deliveries so far: the drain repeats until a pass queues nothing new. */
   const queued = yield* Ref.make(0)
-  const publish = (event: TurnEvent): Effect.Effect<void, HarnessError> => Effect.gen(function* () {
+  const publish = (event: TurnEvent): Effect.Effect<void, TurnError> => Effect.gen(function* () {
     const current = yield* Effect.service(depth)
     if (current >= options.maxDepth) {
       return yield* Effect.fail(new HarnessError({ code: "events.depth", message: `${event._tag} published ${current} levels deep; a reaction cycle?` }))
@@ -76,10 +77,10 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
    * the lane gives it back as it takes the event. A background handler
    * queues without a place (it never waits), markers too.
    */
-  const background = <E>(handle: (event: E) => Effect.Effect<void, HarnessError>, capacity: number) => Effect.gen(function* () {
+  const background = <E>(handle: (event: E) => Effect.Effect<void, TurnError>, capacity: number) => Effect.gen(function* () {
     const queue = yield* Queue.unbounded<Queued<E>>()
     const room = yield* Semaphore.make(capacity)
-    const failed = yield* Ref.make(Option.none<Cause.Cause<HarnessError>>())
+    const failed = yield* Ref.make(Option.none<Cause.Cause<TurnError>>())
     const take: Effect.Effect<void> = Queue.take(queue).pipe(Effect.flatMap((item) => Effect.gen(function* () {
       const failure = yield* Ref.get(failed)
       if (item._tag === "Marker") {
@@ -96,7 +97,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
       )
     })))
     yield* Effect.forkScoped(Effect.forever(take))
-    const deliver = (event: E): Effect.Effect<void, HarnessError> => Effect.gen(function* () {
+    const deliver = (event: E): Effect.Effect<void, TurnError> => Effect.gen(function* () {
       const failure = yield* Ref.get(failed)
       if (Option.isSome(failure)) return yield* Effect.failCause(failure.value)
       yield* Ref.update(queued, (value) => value + 1)
@@ -107,12 +108,12 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
       // a place taken is always used.
       yield* Effect.uninterruptible(Effect.interruptible(room.take(1)).pipe(Effect.andThen(Queue.offer(queue, { ...item, roomed: true }))))
     })
-    const drain = Deferred.make<void, HarnessError>().pipe(Effect.flatMap((done) =>
+    const drain = Deferred.make<void, TurnError>().pipe(Effect.flatMap((done) =>
       Queue.offer(queue, { _tag: "Marker", done }).pipe(Effect.andThen(Deferred.await(done)))))
     return { deliver, drain }
   })
 
-  const subscribe = <E, R>(select: (event: TurnEvent) => Option.Option<E>, handle: (event: E) => Effect.Effect<void, HarnessError, R>, subscribeOptions?: SubscribeOptions) =>
+  const subscribe = <E, R>(select: (event: TurnEvent) => Option.Option<E>, handle: (event: E) => Effect.Effect<void, TurnError, R>, subscribeOptions?: SubscribeOptions) =>
     Effect.gen(function* () {
       // Traced where it runs: an inline handler under the publisher's span, with the publisher's trace content.
       const context = replayableContext(yield* Effect.context<R>())
@@ -122,7 +123,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
       const lane = mode === "background"
         ? yield* background(handled, subscribeOptions?.capacity ?? defaultCapacity)
         : { deliver: handled, drain: Effect.void }
-      const deliver = (event: TurnEvent): Effect.Effect<void, HarnessError> => Option.match(select(event), {
+      const deliver = (event: TurnEvent): Effect.Effect<void, TurnError> => Option.match(select(event), {
         onNone: () => Effect.void,
         onSome: lane.deliver,
       })
@@ -131,7 +132,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
     })
 
   /** Drain every background subscription; again while draining queued more (reactions of reactions). */
-  const drain: Effect.Effect<void, HarnessError> = Effect.gen(function* () {
+  const drain: Effect.Effect<void, TurnError> = Effect.gen(function* () {
     const before = yield* Ref.get(queued)
     yield* Effect.forEach(yield* Ref.get(subscribers), (subscriber) => subscriber.drain, { concurrency: 1, discard: true })
     if ((yield* Ref.get(queued)) !== before) yield* Effect.suspend(() => drain)
@@ -141,13 +142,13 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
 
 interface Task {
   readonly tag: string
-  readonly fiber: Fiber.Fiber<void, HarnessError>
+  readonly fiber: Fiber.Fiber<void, TurnError>
 }
 
 /** Background work forked in `scope`: interrupted when it closes, joined on demand. `activity` counts tasks forked so far. */
 export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksService> => Effect.gen(function* () {
   const tasks = yield* Ref.make<ReadonlyArray<Task>>([])
-  const fork = <R>(tag: string, task: Effect.Effect<void, HarnessError, R>) => Effect.gen(function* () {
+  const fork = <R>(tag: string, task: Effect.Effect<void, TurnError, R>) => Effect.gen(function* () {
     const context = yield* Effect.context<R>()
     const fiber = yield* Effect.forkIn(task.pipe(Effect.provide(context)), scope)
     yield* Ref.update(tasks, (all) => [...all, { tag, fiber }])
@@ -157,7 +158,7 @@ export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksServic
     Effect.map((polls) => polls.some((exit) => exit === undefined)),
   )
   /** Joins from `from` on, then again for tasks the joined ones forked meanwhile. */
-  const awaitFrom = (tags: ReadonlyArray<string>, from: number): Effect.Effect<void, HarnessError> => Ref.get(tasks).pipe(
+  const awaitFrom = (tags: ReadonlyArray<string>, from: number): Effect.Effect<void, TurnError> => Ref.get(tasks).pipe(
     Effect.flatMap((all) => all.length === from ? Effect.void : Effect.forEach(
       all.slice(from).filter((task) => tags.length === 0 || tags.includes(task.tag)),
       (task) => Fiber.join(task.fiber),

@@ -42,6 +42,7 @@ import type {
   ToolRefusalReason,
   ToolView,
   ToolViews,
+  TurnError,
   UserMessage,
 } from "@xandreed/core"
 
@@ -62,7 +63,7 @@ const harness = (code: string, message: string) => new HarnessError({ code, mess
 
 /** The codes an activation is refused with: an unknown skill, a permission not granted. Any other failure (the store's) is not a refusal. */
 const refusalCodes: ReadonlySet<string> = new Set(["skills.unknown", "capability.forbidden"])
-const isRefusal = (error: HarnessError): boolean => refusalCodes.has(error.code)
+const isRefusal = (error: TurnError): boolean => isHarnessError(error) && refusalCodes.has(error.code)
 
 const LoadSkill = Tool.make("load_skill", {
   description: "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
@@ -266,7 +267,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       if (loads >= config.maxSkillLoadsPerRun) return yield* Effect.fail(failure("SkillLoadLimit", `At most ${config.maxSkillLoadsPerRun} skill loads per turn`))
       // A refusal is the model's to correct; anything else (the store failing) is the turn's.
       const step = yield* activation(requested, "load_skill").pipe(
-        Effect.catch((error) => isRefusal(error) ? Effect.fail(failure(error.code, error.message)) : Effect.die(error)),
+        Effect.catch((error) => isHarnessError(error) && isRefusal(error) ? Effect.fail(failure(error.code, error.message)) : Effect.die(error)),
       )
       return skillInstructions(skills.filter((skill) => requested.includes(skill.id)), step.tools)
     })

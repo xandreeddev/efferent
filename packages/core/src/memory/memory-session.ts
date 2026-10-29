@@ -4,6 +4,7 @@ import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
 import type { LogHandle, MaintainSignal, MemoryReader, MemorySession, ToolViews } from "../ports/memory.port.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { CompactionAction, EntryId, LogBody, LogEntry } from "./memory-log.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
@@ -76,7 +77,7 @@ export const openLogSession = (
   log: LogHandle,
   policy: MemoryPolicy,
   scope: { readonly runId: string },
-): Effect.Effect<MemorySession, HarnessError> =>
+): Effect.Effect<MemorySession, TurnError> =>
   Effect.gen(function* () {
     const runId = scope.runId
     const digester = yield* Effect.serviceOption(ResultDigester)

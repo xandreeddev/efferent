@@ -18,6 +18,7 @@ import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
 import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { RequestSnapshot, TurnContextEntry, TurnLiveInput } from "../ports/turn-scope.port.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import { renderSections } from "./prompt-sections.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
 import type { TurnEvent } from "./turn-event.entity.js"
@@ -65,7 +66,7 @@ type MessageState =
  */
 export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   RunContext | TurnEvents | TurnTasks | TurnMemory | TurnToolbox | TurnPrompt,
-  HarnessError,
+  TurnError,
   ConversationMemory | ToolRegistry
 > => Layer.effectContext(Effect.gen(function* () {
   const scope = yield* Effect.scope
@@ -141,7 +142,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const requestKinds = [...MEMORY_KINDS, "request.prepared"]
   const snapshots = yield* Semaphore.make(1)
   const snapshot = yield* Ref.make(Option.none<RequestSnapshot & { readonly cursor: number }>())
-  const requestSnapshot: Effect.Effect<RequestSnapshot, HarnessError> = snapshots.withPermits(1)(Effect.gen(function* () {
+  const requestSnapshot: Effect.Effect<RequestSnapshot, TurnError> = snapshots.withPermits(1)(Effect.gen(function* () {
     const known = yield* Option.match(yield* Ref.get(snapshot), {
       onNone: () => Ref.get(history).pipe(
         Effect.flatMap(Option.match({ onNone: () => readHistory, onSome: Effect.succeed })),

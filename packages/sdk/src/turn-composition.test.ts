@@ -23,7 +23,7 @@ import {
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
-import type { Turn, TurnInput, TurnOutcome, TurnResult, TurnServices, TurnWriter } from "@xandreed/core"
+import type { Turn, TurnError, TurnInput, TurnOutcome, TurnResult, TurnServices, TurnWriter } from "@xandreed/core"
 import { StepLoopLive } from "@xandreed/plugin-agent-loop"
 import { MemoryDigestLive } from "@xandreed/plugin-memory-digest"
 import { MemoryWindowLive } from "@xandreed/plugin-memory-window"
@@ -48,7 +48,7 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
     stackPlugins(ToolDiscoveryLive()),
     stackPlugins(StepLoopLive),
   ))
-  const turn = <A = never, E = never, R = never>(input: TurnInput<A, E>, use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>) => Effect.scoped(Effect.gen(function* () {
+  const turn = <A = never, E = never, R = never>(input: TurnInput<A, E>, use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>) => Effect.scoped(Effect.gen(function* () {
     const writer: TurnWriter = "admitted" in input.turn ? input.turn : yield* Effect.flatMap(Effect.service(Sessions), (sessions) => {
       const next = input.turn as Exclude<typeof input.turn, TurnWriter>
       return sessions.begin(next.session, { _tag: "User", userMessage: next.userMessage, runId: next.runId, key: next.key ?? next.runId, command: next.command ?? {} })
@@ -78,7 +78,7 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
       const { pending } = yield* writer.end(turnEndingOf(exit))
       return { ...exit.value, pending }
     }).pipe(traceTurn(writer))
-  })) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  })) as Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
   return { turn }
 })
 

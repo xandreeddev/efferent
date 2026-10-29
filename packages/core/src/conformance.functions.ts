@@ -5,6 +5,7 @@ import type { ConformanceCheck } from "./conformance.entity.js"
 import { ConversationId } from "./domain/message.entity.js"
 import { zeroUsage } from "./domain/token-usage.entity.functions.js"
 import type { TokenUsage } from "./domain/token-usage.entity.js"
+import { harnessCodeOf } from "./harness/harness-code.entity.functions.js"
 import type { SessionHeader, SessionLogEvent } from "./session/session-log.entity.js"
 import { randomUuid } from "./util/random-id.js"
 
@@ -18,6 +19,9 @@ const isConformanceFailure = (value: unknown): value is ConformanceFailure => Sc
 
 export const fail = (check: string, message: string) => Effect.fail(new ConformanceFailure({ check, message }))
 export const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(check, message)
+
+/** A port's failure as a kit compares and reports it: its framework code (`harnessCodeOf`), else its tag. */
+export const failureCode = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
 
 /** Two usages with every count equal. */
 export const sameUsage = (a: TokenUsage, b: TokenUsage): boolean =>

@@ -8,6 +8,7 @@ import {
   ConversationMemory,
   definePlugin,
   guardTurn,
+  harnessCodeOf,
   harnessDefectsAsFailures,
   HarnessError,
   isBudgetTokens,
@@ -44,6 +45,7 @@ import type {
   Plugin,
   ProcessActivity,
   Turn,
+  TurnError,
   TurnInput,
   TurnLiveInput,
   TurnOutcome,
@@ -160,8 +162,8 @@ export interface Agent {
    */
   readonly turn: <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
-    use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
-  ) => Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+    use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
+  ) => Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 }
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
@@ -347,8 +349,8 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    */
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
-    use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
-  ): Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
+    use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
+  ): Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>> => harnessDefectsAsFailures(Effect.scoped(Effect.gen(function* () {
     const scope = yield* Effect.scope
     const absent = turnKeys.filter((key) => !input.services.mapUnsafe.has(key))
     if (absent.length > 0) return yield* Effect.fail(failure("service.missing", `The turn does not provide ${absent.join(", ")}`))
@@ -419,8 +421,10 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       // On failure the turn's own cause wins: an end not stored is logged (the scope's end tries it again).
       if (Exit.isFailure(exit)) {
         yield* writer.end(turnEndingOf(exit)).pipe(
-          Effect.catch((error) => (error.code === "turn.closed" ? Effect.logDebug : Effect.logWarning)(
-            `the failed turn's end was not stored: ${error.code}: ${error.message}`)),
+          Effect.catch((error) => {
+            const code = Option.getOrElse(harnessCodeOf(error), () => error._tag)
+            return (code === "turn.closed" ? Effect.logDebug : Effect.logWarning)(`the failed turn's end was not stored: ${code}: ${error.message}`)
+          }),
           Effect.annotateLogs(turnIdsOf(writer.admitted)),
         )
         return yield* Effect.failCause(exit.cause)
@@ -431,7 +435,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     })
     // From admission to the end: the turn's span encloses its plugins, layer, tools, `use`, reply and end.
     return yield* admitted.pipe(measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] }))
-  }))) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  }))) as Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
   // The probes are the runtime's alone, wherever this is read (a turn's own services hold others).
   const activity = processActivity.pipe(Effect.updateContext((current: Context.Context<never>) =>

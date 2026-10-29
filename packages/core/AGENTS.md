@@ -22,6 +22,10 @@ store: add a new one there, with its meaning in the event reference's
 `ERROR_CODES` (`scripts/generate-event-reference.ts`, which fails on a
 raised code the list lacks), and never rename or remove one; first-party
 code builds a `HarnessError` of one with `harnessError(code, message, cause)`.
+The writer and the ports on the turn's path over it fail with `TurnError`
+(`src/session/sessions.entity.ts`), most of whose members have no `code`
+field: read a turn failure's code with `harnessCodeOf`, and widen a port
+to `TurnError` only when its implementations reach the writer.
 
 The step loop lives in `@xandreed/plugin-agent-loop`, plugin activation in
 `@xandreed/runtime`, sessions in `@xandreed/plugin-sessions`, and the

@@ -3,6 +3,7 @@ import { Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
+import { failureCode } from "../conformance.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { openLogSession } from "../memory/memory-session.js"
 import type { MemoryPolicy } from "../memory/memory-session.js"
@@ -87,7 +88,7 @@ describe("TurnLive", () => {
         return {
           before: before._tag === "Failure" ? before.failure.code : "started",
           recordedBefore, number, numberAfter: yield* turn.number, entries: (yield* turn.entries).map((entry) => `${entry.id}:${entry.body._tag}`),
-          again: again._tag === "Failure" ? again.failure.code : "twice",
+          again: again._tag === "Failure" ? failureCode(again.failure) : "twice",
           stored: yield* recorded.kinds,
           storedFirst: yield* Ref.get(storedFirst),
         }
@@ -135,8 +136,8 @@ describe("TurnLive", () => {
         const again = yield* Effect.result(openTurnTools)
         return {
           before: before._tag === "Failure" ? before.failure.code : "open",
-          activateBefore: activateBefore._tag === "Failure" ? activateBefore.failure.code : "activated",
-          again: again._tag === "Failure" ? again.failure.code : "twice",
+          activateBefore: activateBefore._tag === "Failure" ? failureCode(activateBefore.failure) : "activated",
+          again: again._tag === "Failure" ? failureCode(again.failure) : "twice",
           active: yield* run.activate(["notes"]),
         }
       }))

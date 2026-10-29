@@ -81,8 +81,7 @@ Then `use`, the turn's body, for a streamed turn:
 <!-- snippet: packages/sdk/src/events-guide.test.ts#stream -->
 ```ts
 import { Effect, Option, Scope } from "effect"
-import { HarnessError } from "@xandreed/sdk"
-import type { Turn, TurnOutcome } from "@xandreed/sdk"
+import type { Turn, TurnError, TurnOutcome } from "@xandreed/sdk"
 
 /** Sends one frame to the client. It must never fail (see `clientPush`). */
 export type Push = (frame: Frame) => Effect.Effect<void>
@@ -92,7 +91,7 @@ export type Push = (frame: Frame) => Effect.Effect<void>
  * ordered lane, off the loop's path) for every frame, each tagged with the
  * turn's number, then the run.
  */
-export const streamTo = (push: Push) => (turn: Turn): Effect.Effect<TurnOutcome, HarnessError, Scope.Scope> => Effect.gen(function* () {
+export const streamTo = (push: Push) => (turn: Turn): Effect.Effect<TurnOutcome, TurnError, Scope.Scope> => Effect.gen(function* () {
   yield* turn.events.subscribe(progressOf, (frame) => push({ event: frame.event, data: { turn: turn.turn, ...frame.data } }), { mode: "background" })
   yield* turn.tools.select(turn.userMessage) // the always-on skills, and the matcher's choice
   const result = yield* turn.run({}) // streamed by default (limits.streaming)
@@ -368,12 +367,12 @@ export const reportStage = (events: TurnEventsService, stage: string, done: numb
 
 <!-- snippet: packages/sdk/src/events-guide.test.ts#reserved -->
 ```ts
-import { Effect, Schema } from "effect"
-import { defineHostEvent } from "@xandreed/sdk"
+import { Effect, Option, Schema } from "effect"
+import { defineHostEvent, harnessCodeOf } from "@xandreed/sdk"
 
 const Clash = defineHostEvent("tool.progress", Schema.Struct({ text: Schema.String })) // a bus event's name
 const published = yield* Clash.publish(turn.events, { text: "50%" }).pipe(
-  Effect.match({ onFailure: (error) => error.code, onSuccess: () => "published" })) // "events.reserved"
+  Effect.match({ onFailure: (error) => Option.getOrElse(harnessCodeOf(error), () => error._tag), onSuccess: () => "published" })) // "events.reserved"
 ```
 
 ## Reading the journal

@@ -2,8 +2,7 @@ import { Context } from "effect"
 import type { Effect } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
-import type { HarnessError } from "../harness/plugin.entity.js"
-import type { AdmittedTurn, SessionAddress } from "../session/sessions.entity.js"
+import type { AdmittedTurn, SessionAddress, TurnError } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { MemoryReader } from "./memory.port.js"
 import type { TurnEventsService, TurnTasksService } from "./turn-events.port.js"
@@ -21,11 +20,11 @@ export class RunContext extends Context.Service<RunContext, {
   readonly events: TurnEventsService
   readonly tasks: TurnTasksService
   /** Host-initiated skill activation (e.g. a handler that needs another skill next step). */
-  readonly activate: (skills: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, HarnessError>
+  readonly activate: (skills: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, TurnError>
   /** Wait until every journal write queued so far is stored (before an externally visible action). */
-  readonly flush: Effect.Effect<void, HarnessError>
+  readonly flush: Effect.Effect<void, TurnError>
   /** Run a host store write in journal order (after everything queued before it). */
-  readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | HarnessError>
+  readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | TurnError>
   /** The turn's usage so far: the usage of every `assistant.message` published in the turn, summed. */
   readonly usage: Effect.Effect<TokenUsage>
 }>()("efferent/RunContext") {}
