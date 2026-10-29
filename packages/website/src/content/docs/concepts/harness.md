@@ -116,8 +116,9 @@ the agent names in `spanMeta`, and prompts and responses only when a run
 captures trace content (`captureTraceContent` on the agent or the policy;
 off by default). A host composing its own turn gets the same span with
 `traceTurn(writer)`. Spans and metrics are exported by whatever exporter the
-host provides around its program, such as `effect/observability`'s OTLP
-layers.
+host provides around its program, such as `OtlpTelemetryLive` from
+`@xandreed/plugin-telemetry`, whose `telemetryPlugin` also records each
+turn's usage, cost and tool metrics (see [observability](/docs/concepts/observability/)).
 
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere.
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores

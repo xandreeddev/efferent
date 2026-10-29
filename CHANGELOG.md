@@ -412,6 +412,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `Agent` value (a test fake) adds it, for example `activity:
   processActivity`.
 
+- **`@xandreed/plugin-telemetry` is a new plugin under the old id.** The
+  package and its plugin id, `@xandreed/plugin-telemetry`, belonged to a
+  plugin shipped before 0.11.0 (`{ enabled, serviceName }`, exporting
+  through the OpenTelemetry Node SDK). The new `telemetryPlugin` takes
+  `{ prices, metricAttributes, spanEvents }` and refuses the old options
+  with `config.options`. The earlier package's other exports are removed
+  too: `TracingLive`, `FileLoggerLive`, `FileLoggerAddLive`, the default
+  export, and the `TurnHooks` its plugin provided. Migration: drop the
+  plugin's options and import it by name (`telemetryPlugin`);
+  `TracingLive(serviceName)` becomes `OtlpTelemetryLive({ baseUrl,
+  serviceName })` around the program, or `OtlpTelemetryFromEnv({
+  serviceName })` for the `OTEL_EXPORTER_OTLP_*` endpoint it read (with
+  `baseUrl: "http://localhost:4318"` in the defaults for its fallback); a
+  file log is Effect's own `Logger.toFile`. npm's `@xandreed/plugin-telemetry`
+  0.3.0 and 0.4.0 are that earlier plugin.
+
 ### Added
 
 - `@xandreed/core`: every `TurnEvent` member carries a `description`
@@ -857,6 +873,52 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   reference now shows as the lease's description. The event reference
   suggests 503 for `TurnRefused` while draining.
 
+- **`@xandreed/plugin-telemetry`** (new; Node 24 and Bun, no `node:`
+  imports): usage, cost and tool telemetry per turn, and OTLP/HTTP export.
+  - `telemetryPlugin` / `TurnTelemetryLive` (session-scoped; requires
+    `RunContext` and `TurnEvents`): records `efferent.llm.tokens` by
+    `efferent.model` and `efferent.token.kind` (`input`, `cache_read`,
+    `cache_write`, `reasoning`, `output`, from `usageBreakdown`, summing to
+    each response's total), `efferent.llm.cost` (`costOf` at the host's
+    `prices`, keyed by the models plugin's selection), `efferent.steps` (by
+    `efferent.step.status`), `efferent.tool.calls` and
+    `efferent.tool.duration` (by `efferent.tool` and `efferent.ok`),
+    `efferent.tool.refused` (by `efferent.tool` and
+    `efferent.refusal.reason`) and `efferent.stream.fallbacks`, each with
+    the host's `metricAttributes` and never a session, run or turn id
+    (`TelemetryMetrics`). The cost names carry no currency (the prices'
+    currency is the host's). With `spanEvents` (the default) it sets the
+    turn's ids on the span current where it is built (`agent.turn` under
+    `Agent.turn`) and adds `efferent.step.usage`, `efferent.tool.refused`
+    and `efferent.stream.fallback` events (each with the zero-based
+    `efferent.step`) and the running `efferent.cost` attribute.
+  - `OtlpTelemetryLive(options)` (global `fetch`) and
+    `OtlpTelemetryHttpLive(options)` (the host's `HttpClient`): Effect's
+    `OtlpTracer` and `OtlpMetrics` (`effect/observability`) with one
+    `Flusher`; `serviceName` (else `resourceAttributes["service.name"]`,
+    else `"efferent"`; it wins over `OTEL_SERVICE_NAME`), `baseUrl` or
+    per-signal `tracesUrl`/`metricsUrl`, `headers` and per-signal
+    `tracesHeaders`/`metricsHeaders`, `protocol` (`http/protobuf` by
+    default, or `http/json`), `compression`, `exportInterval`,
+    `shutdownTimeout`, `metricsTemporality`.
+  - `OtlpTelemetryFromEnv(defaults?)` (global `fetch`) and
+    `OtlpTelemetryHttpFromEnv(defaults?)` (the host's `HttpClient`): the
+    standard environment (`OTEL_EXPORTER_OTLP_ENDPOINT`, the per-signal
+    endpoints, headers, compression and protocol, `OTEL_SERVICE_NAME`,
+    `OTEL_SERVICE_VERSION`, `OTEL_RESOURCE_ATTRIBUTES`,
+    `OTEL_{TRACES,METRICS}_EXPORTER`, `OTEL_SDK_DISABLED`, the export
+    intervals and temporality; not `OTEL_EXPORTER_OTLP_TIMEOUT`). Disabled
+    or with no endpoint it exports nothing and reads nothing further; a
+    signal's own endpoint, compression and protocol are read first, so an
+    invalid shared one does not fail a signal that sets its own; a variable
+    it reads that holds an invalid value fails with its `ConfigError`.
+  - `flushTelemetry`, for a serverless host before it responds.
+- Docs: the website's `concepts/observability.md` (export, the environment
+  variables, the span tree, the metrics, cost, serverless flushing), a
+  pointer from `docs/framework.md` "Traces and metrics" and the SDK page,
+  and the package in the README, the getting-started table and the plugin
+  reference.
+
 ### Fixed
 
 - `@xandreed/plugin-session-sqlite`: processes opening one new database file
@@ -926,6 +988,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   discovery and sessions plugins and `fast-check` (`foundry.config.ts`), as
   the skills directory tests do; `verify:packages` runs a packed version of
   that journey on Bun and Node.
+
+- `@xandreed/plugin-telemetry` joins the build, the foundry gates (with a
+  `plugin-telemetry-tests` layer that may import the sdk and the plugins a
+  scripted turn needs), `tsconfig.base.json` and the plugin reference. Its
+  tests run a key-free scripted turn (usage kinds, cost, tools, refusals,
+  span events, a stream fallback) and export to a `Bun.serve` collector.
+  `bun run verify:packages` runs `scripts/telemetry-consumer.fixture.mjs`
+  on Node and on Bun: a turn with the packed plugin under
+  `OtlpTelemetryLive` posts nothing before `flushTelemetry` and, by the time
+  it returns (the export layer still open), its `agent.turn` span (with its
+  ids and `engine.run` under it) and its token and cost metrics have reached
+  a `node:http` collector. The plugin reference prints `Provides: none` for a
+  plugin that provides nothing.
 
 ## 0.13.0
 
