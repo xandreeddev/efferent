@@ -1141,6 +1141,30 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and the package in the README, the getting-started table and the plugin
   reference.
 
+- Docs: the events guide, `docs/events.md` and its website page
+  (`/docs/guides/events/`, in a new Guides group; the plugin and event
+  references move to a Reference group). It answers how to use the events:
+  the live bus against the durable journal; streaming a turn to a client
+  through one background subscription; which subscription sees
+  `turn.started` and `turn.ended` (the host's per-turn layer, a scope that
+  outlives the turn) and what settles when; handlers that must neither fail
+  nor block (a push bounded with `Effect.timeoutOption` and a gone latch);
+  `onTool`, `tool.refused` and `step.ended.results`; host events and the
+  reserved names; reading the journal across processes (a shared
+  `SessionLog`, polling, write-behind and reaped turns); stored failure
+  codes; resume, the lease keep-alive and the busy signal; and a Fetch API
+  HTTP recipe for Next.js and other servers: one host per instance, session
+  creation, a turn streamed over SSE with begin codes mapped to statuses and
+  `Idempotency-Key` retries (and a keyless resume's) answered from the
+  journal, the journal over SSE through plugin-render's feed with a client
+  projection and a write bound that drops a client that stopped reading,
+  and `/ping`. Every snippet but the Next.js glue is a region of
+  `packages/sdk/src/events-guide.test.ts`, which runs key-free with scripted
+  models (streamed deltas reaching a client through `Agent.turn` among
+  them). The README, `docs/framework.md` (events, background subscriptions,
+  following a session), the website's SDK page and the event reference link
+  to it.
+
 ### Fixed
 
 - `@xandreed/plugin-session-sqlite`: processes opening one new database file
@@ -1246,6 +1270,28 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `undici-fetch.adapter.ts` joins the declared type-erasure boundary. The
   packed READMEs name the Node version a package's `engines` declares
   (`plugin-models`: Node 24.5).
+
+- `scripts/sync-guides.ts`, chained into `bun run docs:generate`: it copies
+  each `<!-- snippet: <file>#<region> -->` region of a test into the guide,
+  with the import lines its code uses (from the test's own imports,
+  `scripts/guide-snippets.ts`), and mirrors the guide to the website,
+  rewriting each link to a repository file to its website page or to
+  GitHub. It fails on a snippet that imports from a relative path, the test
+  runner (`bun:`) or test scaffolding (a `testing` module), a region no
+  guide quotes, a snippet marker not followed by a `ts` fence, a TypeScript
+  or JavaScript fence that is neither a snippet nor marked
+  `<!-- unchecked: why -->`, and a link to a missing file or heading. CI's
+  generated-docs check covers the guide and its page.
+- `bun run verify:packages` compiles the events guide's HTTP recipe (its
+  regions of `events-guide.test.ts`, composed with their imports) against
+  the packed packages, and runs `scripts/events-consumer.fixture.mjs` over it
+  on Node (stripping the recipe's types) and on Bun: a session created, a
+  turn streamed from `started` through its deltas to `done` while the
+  journal route follows the session over SSE, its retry answered from the
+  journal, and `/ping` idle.
+- The `sdk-tests` foundry layer may import `@xandreed/sdk` by name and
+  `@xandreed/plugin-render` (an sdk dev dependency), so the guide's snippets
+  import only what a consumer can.
 
 ## 0.13.0
 

@@ -579,7 +579,10 @@ goes on without streaming; a refusal over an image is no stream failure: it
 has no fallback, and the turn sends the step again without the images,
 `onMediaRejected`), `turn.ended`, and host events from
 `defineHostEvent`; the [event reference](event-reference.md) lists each
-one's payload, who publishes it and how it is stored. Every call the
+one's payload, who publishes it and how it is stored, and the
+[events guide](events.md) shows how to use them: streaming a turn to a
+client, which subscription sees `turn.started` and `turn.ended`, refused
+calls, host events, and following a session over HTTP. Every call the
 registry handles has its `invocationId` (`<runId>:call:<n>`), a refused one
 too: its `tool.refused` carries it, and a call that runs shares it across
 `tool.started`, `tool.progress` and `tool.completed`. A host event may not
@@ -605,7 +608,11 @@ A subscription can instead run in the background:
 fiber. `publish` returns once the event is queued, and the handler sees events
 in publication order. A failed background handler is latched: the next
 delivery to it fails, and so does the drain before `turn.ended`, which fails
-the turn. Use it for reactions whose effects the next step does not need.
+the turn. Use it for reactions whose effects the next step does not need,
+and for forwarding events to a client: one background subscription keeps
+them in order, and its handler must neither fail nor wait on the client
+without a bound (the [events guide](events.md#handlers-must-not-fail-or-block)
+has a push that does neither).
 
 **Where it is stored.** The turn's `TurnWriter` is the bus's first
 subscriber: every event except the transient ones (`assistant.delta`,
@@ -1685,7 +1692,11 @@ delivered as interrupted. With `tools`, the model gets `start_task` and
 
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events
-after a cursor, then follows `changes` and polls.
+after a cursor, then follows `changes` and polls. The events guide
+[serves it over SSE](events.md#serving-turns-over-http) with a projection
+that keeps prompts and tool input and output on the server, and shows
+[what another process needs to follow a session](events.md#reading-the-journal)
+(the same `SessionLog`, and polling).
 
 ### Busy signal and graceful shutdown
 

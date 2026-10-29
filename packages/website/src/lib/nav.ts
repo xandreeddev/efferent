@@ -34,6 +34,10 @@ export const docsNav: DocGroup[] = [
     items: [{ slug: "getting-started", label: "Getting started" }],
   },
   {
+    group: "Guides",
+    items: [{ slug: "guides/events", label: "Events" }],
+  },
+  {
     group: "Concepts",
     items: [
       { slug: "concepts/architecture", label: "Architecture" },
@@ -44,9 +48,14 @@ export const docsNav: DocGroup[] = [
       { slug: "concepts/workspace", label: "Workspace tools" },
       { slug: "concepts/observability", label: "Observability" },
       { slug: "concepts/providers", label: "Plugin configuration" },
+      { slug: "concepts/evals", label: "Evals — calibrations and journeys" },
+    ],
+  },
+  {
+    group: "Reference",
+    items: [
       { slug: "concepts/plugin-reference", label: "Plugin reference" },
       { slug: "concepts/event-reference", label: "Event reference" },
-      { slug: "concepts/evals", label: "Evals — calibrations and journeys" },
     ],
   },
 ]

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, relative } from "node:path"
+import { importsFor, importsOf, regionsOf } from "./guide-snippets.js"
 const root = join(import.meta.dir, "..")
 /** The consumer installs the Effect the packages were built against, and the repo's TypeScript. */
 const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { readonly dependencies: { readonly effect: string }, readonly devDependencies: { readonly typescript: string } }
@@ -285,7 +286,24 @@ const aliased = docImports.flatMap((entry, index) => {
 })
 await writeFile(join(consumer, "doc-imports.ts"), `// Every @xandreed import of the documentation, as written there (scripts/verify-packages.ts).\n${aliased.join("\n")}\nexport {}\n`)
 console.log(`Checking ${docImports.length} documented imports from ${documented.length} files`)
-await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, target: "ESNext", module: "ESNext", moduleResolution: "bundler", types: ["bun"] }, include: ["verify.ts", "doc-imports.ts"] }))
+/**
+ * The events guide's HTTP recipe, as the guide shows it: its regions of the
+ * test that runs it, with the imports they use, as one module the consumer
+ * compiles against the packed packages and `events-consumer.mjs` runs on
+ * Node and on Bun.
+ */
+const guideTest = await readFile(join(root, "packages/sdk/src/events-guide.test.ts"), "utf8")
+const recipeRegions = ["host", "progress", "stream", "push", "journal", "project", "turn-route", "create-route", "events-route", "ping"]
+const { regions: guideRegions } = regionsOf(guideTest)
+const missingRegions = recipeRegions.filter((name) => !guideRegions.has(name))
+const recipeCode = recipeRegions.map((name) => guideRegions.get(name) ?? "").join("\n\n")
+const recipeImports = importsFor(importsOf(guideTest), recipeCode)
+if (missingRegions.length > 0 || recipeImports.problems.length > 0) {
+  console.error(`The events guide's recipe: ${[...missingRegions.map((name) => `no #region ${name}`), ...recipeImports.problems].join("; ")}`)
+  process.exit(1)
+}
+await writeFile(join(consumer, "events-recipe.ts"), `// The events guide's HTTP recipe: regions of packages/sdk/src/events-guide.test.ts (scripts/verify-packages.ts).\n${recipeImports.lines.join("\n")}\n\n${recipeCode}\n`)
+await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOptions: { strict: true, noEmit: true, skipLibCheck: true, target: "ESNext", module: "ESNext", moduleResolution: "bundler", types: ["bun"] }, include: ["verify.ts", "doc-imports.ts", "events-recipe.ts"] }))
 const typecheck = Bun.spawn(["bun", "node_modules/typescript/bin/tsc", "--noEmit"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await typecheck.exited !== 0) process.exit(1)
 const verify = Bun.spawn(["bun", "verify.ts"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
@@ -430,6 +448,13 @@ const telemetryNode = Bun.spawn(["node", "telemetry-consumer.mjs"], { cwd: consu
 if (await telemetryNode.exited !== 0) process.exit(1)
 const telemetryBun = Bun.spawn(["bun", "telemetry-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await telemetryBun.exited !== 0) process.exit(1)
+// The events guide's HTTP recipe (events-recipe.ts, compiled above) serves a streamed turn, its retry and its
+// journal over SSE through the packed packages: on Node, which runs the recipe's TypeScript by stripping its types, then on Bun.
+await writeFile(join(consumer, "events-consumer.mjs"), await readFile(join(root, "scripts/events-consumer.fixture.mjs"), "utf8"))
+const eventsNode = Bun.spawn(["node", "events-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await eventsNode.exited !== 0) process.exit(1)
+const eventsBun = Bun.spawn(["bun", "events-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await eventsBun.exited !== 0) process.exit(1)
 // The models plugin with storage "memory" never touches disk: on Node, in a process of its own whose HOME
 // and working directory are fresh empty directories (the consumer's own already holds files) that must stay empty.
 await writeFile(join(consumer, "models-consumer.mjs"), await readFile(join(root, "scripts/models-consumer.fixture.mjs"), "utf8"))

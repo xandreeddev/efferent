@@ -162,7 +162,12 @@ the process still has in flight, for a `/ping` or a SIGTERM drain. See
 [the framework guide](docs/framework.md). Every event a turn
 publishes and every kind a session's journal stores, with its payload, is in
 the generated [event reference](docs/event-reference.md), with the begin and
-error codes and the feed frames a host serves them with.
+error codes and the feed frames a host serves them with. How to use them is
+the [events guide](docs/events.md): streaming a turn to a client, which
+subscription sees a turn start and end, reacting to tools and refusals,
+publishing your own events, following a session from another process, and
+serving turns and their journal over HTTP (SSE), its snippets taken from a
+test that runs.
 
 Skills can be files: `skillsDirectoryPlugin` from `@xandreed/plugin-workspace`
 reads every `SKILL.md` under `.agents/skills` (the Agent Skills layout) when
@@ -264,10 +269,12 @@ package on Node, and runs the `FileSystem` and `Bash` kits over the local
 adapters, loads a `SKILL.md` tree through the skills directory plugin, and
 runs an agent turn that reads, edits and runs a command through the
 workspace tools, and flushes a turn's span and usage metric through the
-telemetry plugin to a local OTLP collector, on both. It also compiles every `@xandreed/*` import in the README,
+telemetry plugin to a local OTLP collector, and serves a streamed turn, its
+retry and its journal through the events guide's HTTP recipe, on both. It also compiles every `@xandreed/*` import in the README,
 the guides and the website docs against the packed packages, and checks that
 each plugin's version is its package's. `bun run docs:generate` writes the
-plugin and event references.
+plugin and event references, and copies the events guide's snippets from the
+test that runs them into the guide and its website page.
 
 Releases are published with `bun run publish:packages`, which checks the build
 against the current commit and is a dry run unless `--publish` is passed; see
@@ -275,6 +282,7 @@ against the current commit and is a dry run unless `--publish` is passed; see
 [changelog](CHANGELOG.md).
 
 See [the framework guide](docs/framework.md), the
+[events guide](docs/events.md), the
 [event reference](docs/event-reference.md), the
 [evaluation domain](docs/evaluation-domain.md) and [contributing](CONTRIBUTING.md).
 
