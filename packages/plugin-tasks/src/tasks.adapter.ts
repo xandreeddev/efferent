@@ -113,6 +113,8 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
         TurnDuplicate: () => Effect.void,
         KeyConflict: () => Effect.void,
         NothingPending: () => Effect.void,
+        // A task's turn resumes nothing: never raised here.
+        NotResumable: () => Effect.void,
         TurnRefused: (refused: TurnRefused) => recordEnd(child, {
           taskId: task.taskId, outcome: "failed", reply: Option.none(), failure: Option.some({ code: "task.refused", message: refused.message }),
         }),

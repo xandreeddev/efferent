@@ -30,7 +30,7 @@ There are two kinds of events. The **bus** carries a turn's typed events (`TurnE
 
 ### `turn.started`
 
-Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model). Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` only when it was given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.
+Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model), and `resumes`, present only on a turn that resumes an earlier one, is that turn's number. Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` and `resumes` only when they were given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.
 
 | Field | Type |
 | --- | --- |
@@ -38,6 +38,7 @@ Published once per turn when memory takes the user's message as turn `turn` (`Tu
 | `turn` | `integer` |
 | `userMessage` | `{ text }` |
 | `meta` | `object` |
+| `resumes` | `integer` (optional) |
 
 ### `step.started`
 
@@ -197,7 +198,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 
 | Kind | Written by | Sensitive content | Fields |
 | --- | --- | --- | --- |
-| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message, the host's command and the host's metadata (`meta`), when given. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `entry`, `at`, `meta` |
+| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message, the host's command and the host's metadata (`meta`), when given. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `entry`, `at`, `meta`, `resumes` |
 | `memory.system` | Memory, when the turn's system prompt (or a variant) changes | The full system prompt text. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.section` | Memory: `turn.context(…)` and turn-tier prompt sections | Turn sections: the host's context for this turn, as the model sees it. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.step` | Memory: the step policy's step context | Step context text. | `entry`, `runId`, `step`, `at`, `body` |
@@ -272,9 +273,10 @@ When `Agent.turn` begins the turn itself and `Sessions.begin` refuses it, the tu
 | Begin error | Code | Suggested HTTP status | Meaning |
 | --- | --- | --- | --- |
 | `SessionBusy` | `session.busy` | 409 | Another turn is open in the session. Retry after it ends, or queue the message. |
-| `TurnDuplicate` | `turn.duplicate` | 200 once that turn ended, 409 while it is open | The key was begun before with the same message and command: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it). |
-| `KeyConflict` | `turn.key-conflict` | 409 | The key was begun before with another message or command. |
+| `TurnDuplicate` | `turn.duplicate` | 200 once that turn ended, 409 while it is open | The key was begun before with the same message, command and `resumes`: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it). |
+| `KeyConflict` | `turn.key-conflict` | 409 | The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts). |
 | `NothingPending` | `session.nothing-pending` | 204 | An inbox turn found nothing to take (inbox turns only). |
+| `NotResumable` | `turn.not-resumable` | 409 | The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key. |
 | `TurnRefused` | `turn.refused` | 429 for a quota or rate, 403 when not allowed | The host's `TurnAdmission` refused the turn; nothing was opened or counted. |
 | `SessionMissing` | `session.missing` | 404 | No such session for this owner. |
 | `SessionLogError` | `session.log` | 503 | The session store failed. Retry later. |

@@ -54,6 +54,25 @@ turn's start, given to the host's `TurnAdmission`, and shown on
 model never sees it, and a retry with the same key and other metadata is
 still the same turn (`turn.duplicate`).
 
+A turn that was cancelled or interrupted (its process stopped, its lease
+was reaped) can be resumed by the next one:
+`turn: { session, userMessage, runId, resumes: 1 }`. Turn 1 must be the
+session's last turn begun by a user, with only inbox turns (and resumes
+of it that did not complete) after it, and must have ended cancelled or
+interrupted; otherwise the turn fails to begin with `turn.not-resumable`.
+Memory keeps what turn 1 stored: its message and its whole steps (a step's
+tool calls and their results are stored together once its tools return, so
+a call that was still running is gone), then the new turn's message, which
+may be the original message again or "Continue where you stopped.". That is
+what a plain new turn would see too: `resumes` records which turn the new
+one continues, and changes nothing the model is sent. A cancelled turn
+stores no reply; an interrupted one may keep a failed reply with no text.
+What a tool already did is not undone. The key defaults to `resume:1`, so a
+retried resume is `turn.duplicate`; a resume that failed (its provider was
+down, say) is tried again with a new key. The new turn's `admitted.resumes`
+and its `turn.started` carry `1`. The framework guide's sessions section
+has the rules and the keys in full.
+
 The turn's stored end says how it ended: completed, partial or failed as
 `use` returned it; failed with the error's own code (a `HarnessError`'s),
 `turn.failed` (an error without a code) or `turn.defect`; or interrupted,

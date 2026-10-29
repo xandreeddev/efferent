@@ -82,7 +82,7 @@ describe("one turn at a time", () => {
     const writer = yield* sessions!.begin(address, meta({ request: "r1", tenant: "acme" }))
     expect(writer.admitted.meta).toEqual({ request: "r1", tenant: "acme" })
     expect(writer.started.data.meta).toEqual({ request: "r1", tenant: "acme" })
-    // The key's fingerprint is the message and the command: other metadata, or none, is a retry of the same turn.
+    // The key's fingerprint is the message, the command and `resumes`: other metadata, or none, is a retry of the same turn.
     const retried = yield* Effect.flip(sessions!.begin(address, meta({ request: "r2" })))
     expect([retried._tag, retried._tag === "TurnDuplicate" ? retried.turn : null]).toEqual(["TurnDuplicate", 1])
     yield* writer.end({ reason: "completed", failure: Option.none() })
@@ -654,6 +654,166 @@ describe("the inbox", () => {
     yield* sessions!.deliver(address, item("t1"))
     yield* sessions!.deliver(address, item("t2"))
     expect((yield* Effect.flip(sessions!.deliver(address, item("t3"))))._tag).toBe("InboxFull")
+  })))
+})
+
+describe("resuming a turn", () => {
+  const resume = (turn: number, text = "Continue.", key = `resume:${turn}`): BeginTurn =>
+    ({ _tag: "User", userMessage: new UserMessage({ text }), runId: `run-${key}-${text}`, key, command: {}, resumes: turn })
+  const completed = (writer: TurnWriter) => writer.end({ reason: "completed", failure: Option.none() })
+  /** The turn the begin opened and the turn it resumes, as admitted and as stored; the begin's scope closes the turn. */
+  const opened = (sessions: Service, address: SessionAddress, input: BeginTurn) => Effect.scoped(sessions.begin(address, input).pipe(
+    Effect.tap(completed), Effect.map((writer) => [writer.admitted.turn, writer.admitted.resumes ?? null, writer.started.data.resumes ?? null])))
+  const refusal = (sessions: Service, address: SessionAddress, input: BeginTurn) => Effect.flip(Effect.scoped(sessions.begin(address, input))).pipe(
+    Effect.map((error) => error._tag === "NotResumable" ? [error._tag, error.turn, error.reason] : [error._tag]))
+
+  test("a cancelled turn is resumed by a new user's turn: resumes is stored, admitted and part of the key's fingerprint", () => withLog((log) => Effect.gen(function* () {
+    const seen = yield* Ref.make<ReadonlyArray<unknown>>([])
+    const recording = Layer.succeed(TurnAdmission, TurnAdmission.of({
+      admit: (turn, open) => Ref.update(seen, (all) => [...all, [turn.key, turn.resumes ?? null]]).pipe(Effect.andThen(open)),
+    }))
+    const sessions = yield* Effect.service(Sessions).pipe(Effect.provide(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), recording)))))
+    const address = yield* created(sessions)
+    const writer = yield* sessions.begin(address, say("find alpha", "k1"))
+    yield* writer.append([{ kind: "answer.published", data: { text: "half" } }])
+    yield* writer.flush
+    expect((yield* sessions.cancel(address, 1)).cancelled).toBe(true)
+    expect(yield* opened(sessions, address, resume(1))).toEqual([2, 1, 1])
+    // A retry with the resume's key is the turn it began, however that turn ended; the same key for anything else conflicts.
+    const retried = yield* Effect.flip(Effect.scoped(sessions.begin(address, resume(1))))
+    expect([retried._tag, retried._tag === "TurnDuplicate" ? retried.turn : null]).toEqual(["TurnDuplicate", 2])
+    expect((yield* Effect.flip(Effect.scoped(sessions.begin(address, say("Continue.", "resume:1")))))._tag).toBe("KeyConflict")
+    // A turn that resumes nothing is stored and admitted without the key.
+    yield* Effect.scoped(sessions.begin(address, say("next", "k3")).pipe(Effect.flatMap(completed)))
+    const stored = yield* sessions.read(address, { kinds: ["turn.started"] })
+    expect(stored.map((event) => [event.data.key, "resumes" in event.data ? event.data.resumes : "absent"])).toEqual([["k1", "absent"], ["resume:1", 1], ["k3", "absent"]])
+    expect(yield* Ref.get(seen)).toEqual([["k1", null], ["resume:1", 1], ["resume:1", 1], ["resume:1", null], ["k3", null]])
+    expect(yield* all(sessions, address)).toEqual(["turn.started@1", "answer.published@1", "turn.ended@1", "turn.started@2", "turn.ended@2", "turn.started@3", "turn.ended@3"])
+  })))
+
+  test("an interrupted turn is resumed, and so is one reaped when its lease ran out, by the begin that reaps it or after", () => withLog((log) => Effect.gen(function* () {
+    const [sessions, first, second] = yield* instancesOver(log, sessionsDefaults, lease(1_000, "none"), lease(1_000, "none"))
+    const address = yield* created(sessions!)
+    const begun = yield* Deferred.make<void>()
+    const held = yield* Effect.forkChild(Effect.scoped(sessions!.begin(address, say("interrupted")).pipe(Effect.andThen(Deferred.succeed(begun, undefined)), Effect.andThen(Effect.never))))
+    yield* Deferred.await(begun)
+    yield* Fiber.interrupt(held)
+    expect(yield* opened(sessions!, address, resume(1))).toEqual([2, 1, 1])
+    // A holder that stops writing: the resume's own begin reaps its turn and resumes it.
+    yield* first!.begin(address, say("abandoned"))
+    yield* TestClock.adjust("2 seconds")
+    expect(yield* opened(second!, address, resume(3))).toEqual([4, 3, 3])
+    // Reaped earlier, by another begin's touch (a delivery): still interrupted, still resumable.
+    yield* first!.begin(address, say("abandoned again"))
+    yield* TestClock.adjust("2 seconds")
+    yield* second!.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    expect(yield* opened(second!, address, resume(5))).toEqual([6, 5, 5])
+    const ended = yield* sessions!.read(address, { kinds: ["turn.ended"] })
+    expect(ended.map((event) => [Option.getOrNull(event.turn), event.data.reason, (event.data.failure as JsonObject | null)?.code ?? null])).toEqual([
+      [1, "interrupted", "turn.interrupted"], [2, "completed", null], [3, "interrupted", "turn.lease"], [4, "completed", null], [5, "interrupted", "turn.lease"], [6, "completed", null],
+    ])
+  })))
+
+  test("inbox turns after the resumed turn do not supersede it", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* sessions!.begin(address, say("stop me"))
+    yield* sessions!.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    yield* sessions!.cancel(address, 1)
+    expect((yield* sessions!.drain(address, () => Effect.void)).turns).toBe(1)
+    expect(yield* opened(sessions!, address, resume(1))).toEqual([3, 1, 1])
+  })))
+
+  test("a turn that cannot be resumed is refused with why, after a duplicate key and a busy session, and nothing is opened", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* Effect.scoped(sessions!.begin(address, say("one")).pipe(Effect.flatMap(completed)))
+    expect(yield* refusal(sessions!, address, resume(1))).toEqual(["NotResumable", 1, "finished"])
+    expect(yield* refusal(sessions!, address, resume(7))).toEqual(["NotResumable", 7, "missing"])
+    // A scope that closed without an end failed (turn.unended): not resumable.
+    yield* Effect.scoped(sessions!.begin(address, say("left open")))
+    expect(yield* refusal(sessions!, address, resume(2))).toEqual(["NotResumable", 2, "finished"])
+    // An inbox turn is never resumed, even when it was interrupted.
+    yield* sessions!.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    yield* sessions!.drain(address, () => Effect.interrupt, { maxTurns: 1 })
+    expect(yield* refusal(sessions!, address, resume(3))).toEqual(["NotResumable", 3, "inbox"])
+    // A cancelled turn a later user's turn followed is superseded.
+    yield* sessions!.begin(address, say("cancelled"))
+    yield* sessions!.cancel(address, 4)
+    yield* Effect.scoped(sessions!.begin(address, say("after it")).pipe(Effect.flatMap(completed)))
+    expect(yield* refusal(sessions!, address, resume(4))).toEqual(["NotResumable", 4, "superseded"])
+    // A busy session answers SessionBusy first, and a used key before anything else: here KeyConflict, the key "open" was begun without `resumes`.
+    const writer = yield* sessions!.begin(address, say("open"))
+    expect(yield* refusal(sessions!, address, resume(5))).toEqual(["SessionBusy"])
+    expect(yield* refusal(sessions!, address, resume(4, "open", "open"))).toEqual(["KeyConflict"])
+    yield* writer.end({ reason: "cancelled", failure: Option.none() })
+    const before = yield* sessions!.get(address)
+    expect(yield* refusal(sessions!, address, resume(1))).toEqual(["NotResumable", 1, "superseded"])
+    const after = yield* sessions!.get(address)
+    expect([after.turns, after.seq, Option.isNone(after.open)]).toEqual([before.turns, before.seq, true])
+  })))
+
+  test("a retried resume while the resuming turn is open is that turn (TurnDuplicate, open), not SessionBusy", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* sessions!.begin(address, say("stop me"))
+    yield* sessions!.cancel(address, 1)
+    const writer = yield* sessions!.begin(address, resume(1))
+    const retried = yield* Effect.flip(Effect.scoped(sessions!.begin(address, resume(1))))
+    expect([retried._tag, retried._tag === "TurnDuplicate" ? [retried.turn, retried.open] : null]).toEqual(["TurnDuplicate", [2, true]])
+    // Another message under the open resume's key conflicts; a begin with a new key is busy.
+    expect(yield* refusal(sessions!, address, resume(1, "other"))).toEqual(["KeyConflict"])
+    expect(yield* refusal(sessions!, address, resume(1, "Continue.", "resume:1:again"))).toEqual(["SessionBusy"])
+    yield* completed(writer)
+  })))
+
+  test("a resume that failed, was cancelled or was interrupted can be tried again with a new key; a completed one supersedes the turn", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* sessions!.begin(address, say("stop me"))
+    yield* sessions!.cancel(address, 1)
+    // The resume fails (its provider was down): its key is that failed turn, and a new key tries the resume again.
+    const failed = (writer: TurnWriter) => writer.end({ reason: "failed", failure: Option.some({ code: "provider.unavailable", message: "the provider was down" }) })
+    yield* Effect.scoped(sessions!.begin(address, resume(1)).pipe(Effect.flatMap(failed)))
+    expect(yield* refusal(sessions!, address, resume(1))).toEqual(["TurnDuplicate"])
+    expect(yield* refusal(sessions!, address, resume(2))).toEqual(["NotResumable", 2, "finished"])
+    // Tried again and cancelled: turn 1 can still be resumed with a new key.
+    yield* sessions!.begin(address, resume(1, "Continue.", "resume:1:2"))
+    yield* sessions!.cancel(address, 3)
+    // Tried again and interrupted (its holder stopped): the same.
+    const begun = yield* Deferred.make<void>()
+    const held = yield* Effect.forkChild(Effect.scoped(sessions!.begin(address, resume(1, "Continue.", "resume:1:3")).pipe(Effect.andThen(Deferred.succeed(begun, undefined)), Effect.andThen(Effect.never))))
+    yield* Deferred.await(begun)
+    yield* Fiber.interrupt(held)
+    expect(yield* opened(sessions!, address, resume(1, "Continue.", "resume:1:4"))).toEqual([5, 1, 1])
+    // The completed resume supersedes turn 1 and the resumes before it.
+    expect(yield* refusal(sessions!, address, resume(1, "Continue.", "resume:1:5"))).toEqual(["NotResumable", 1, "superseded"])
+    expect(yield* refusal(sessions!, address, resume(3))).toEqual(["NotResumable", 3, "superseded"])
+    const ended = yield* sessions!.read(address, { kinds: ["turn.ended"] })
+    expect(ended.map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "cancelled"], [2, "failed"], [3, "cancelled"], [4, "interrupted"], [5, "completed"]])
+  })))
+
+  test("a resumes that is not a whole number of at least 1 is missing, refused before the host's admission", () => withLog((log) => Effect.gen(function* () {
+    const admitted = yield* Ref.make(0)
+    const counting = Layer.succeed(TurnAdmission, TurnAdmission.of({ admit: (_turn, open) => Ref.update(admitted, (count) => count + 1).pipe(Effect.andThen(open)) }))
+    const sessions = yield* Effect.service(Sessions).pipe(Effect.provide(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), counting)))))
+    const address = yield* created(sessions)
+    yield* sessions.begin(address, say("stop me"))
+    yield* sessions.cancel(address, 1)
+    const refused = yield* Effect.forEach([1.5, Number.NaN, 0, -1, Number.POSITIVE_INFINITY], (turn) => refusal(sessions, address, resume(turn)))
+    expect(refused).toEqual([1.5, Number.NaN, 0, -1, Number.POSITIVE_INFINITY].map((turn) => ["NotResumable", turn, "missing"]))
+    expect(yield* Ref.get(admitted)).toBe(1)
+    expect(yield* opened(sessions, address, resume(1))).toEqual([2, 1, 1])
+  })))
+
+  test("a fork's inherited turns are its parent's: the fork cannot resume them", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* sessions!.begin(address, say("cancelled"))
+    yield* sessions!.cancel(address, 1)
+    const child = yield* sessions!.fork(address, { origin: "task", inherit: true })
+    expect(yield* refusal(sessions!, { id: child.header.id, owner }, resume(1))).toEqual(["NotResumable", 1, "missing"])
+    expect(yield* opened(sessions!, address, resume(1))).toEqual([2, 1, 1])
   })))
 })
 

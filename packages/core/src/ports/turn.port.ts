@@ -106,9 +106,10 @@ export type TurnServices = RunContext | TurnEvents | TurnTasks
 /** A turn to begin: the session (through the `Sessions` in the turn's services), the message and the run. */
 export interface NewTurn {
   readonly session: SessionAddress
+  /** The user's message; when resuming, what the model sees after the resumed turn's steps (its own message again, or "Continue."). */
   readonly userMessage: UserMessage
   readonly runId: string
-  /** The idempotency key; the run id by default. */
+  /** The idempotency key; `resume:<n>` when resuming turn `n`, the run id otherwise. */
   readonly key?: string
   /** The host's input beside the message, part of the key's fingerprint. */
   readonly command?: JsonObject
@@ -119,6 +120,20 @@ export interface NewTurn {
    * fingerprint, and never shown to the model.
    */
   readonly meta?: JsonObject
+  /**
+   * Resume turn `n`: the session's last turn begun by a user, which ended
+   * cancelled or interrupted (only inbox turns, and resumes of it that
+   * failed, were cancelled or were interrupted, may have run since);
+   * otherwise, or when `n` is not a whole number of at least 1, the turn
+   * fails to begin with `turn.not-resumable`. Memory is what a plain new
+   * turn would see: what turn `n` stored (its message and whole steps), then
+   * this turn's message. Stored in `turn.started`, shown on `admitted` and
+   * the bus `turn.started`, and part of the key's fingerprint. With the
+   * default key `resume:<n>`, a retry is `turn.duplicate` once the resuming
+   * turn has begun, however it ended: to try a resume that failed again,
+   * pass a new key.
+   */
+  readonly resumes?: number
 }
 
 /**

@@ -988,6 +988,82 @@ describe("a turn's metadata", () => {
   })
 })
 
+describe("resuming a turn", () => {
+  test("a cancelled turn is resumed: resumes is on the turn, RunContext, the bus and the stored turn.started, the key is resume:<n>, and a retry is turn.duplicate", async () => {
+    const { seen, started, retried } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      yield* journal.sessions.begin(journal.address, { _tag: "User", userMessage: new UserMessage({ text: "find alpha" }), runId: "run-1", key: "run-1", command: {} })
+      yield* journal.sessions.cancel(journal.address, 1)
+      const seen = yield* Ref.make<ReadonlyArray<unknown>>([])
+      const note = (label: string, value: unknown) => Ref.update(seen, (all) => [...all, [label, value]])
+      const observer = Layer.effectDiscard(TurnEvents.pipe(Effect.flatMap((events) =>
+        events.subscribe((event) => event._tag === "turn.started" ? Option.some(event.resumes ?? null) : Option.none(), (resumes) => note("bus", resumes)))))
+      const input = inputFor(journal, "run-2", "Continue.", model)
+      const resumed = { ...input, turn: { ...input.turn, resumes: 1 }, layer: observer }
+      yield* agent.turn(resumed, (turn) => Effect.gen(function* () {
+        yield* note("run", (yield* RunContext).admitted.resumes ?? null)
+        yield* note("turn", [turn.admitted.resumes ?? null, turn.admitted.key, turn.turn])
+        return yield* turn.reply("Resumed.")
+      }))
+      const retried = yield* Effect.flip(agent.turn({ ...resumed, turn: { ...resumed.turn, runId: "run-3" } }, (turn) => turn.reply("Again.")))
+      const started = named(yield* journal.stored, "turn.started").map((event) => [event.data.key, event.data.resumes ?? null])
+      return { seen: yield* Ref.get(seen), started, retried: retried.code }
+    })))
+    expect(seen).toEqual([["bus", 1], ["run", 1], ["turn", [1, "resume:1", 2]]])
+    expect(started).toEqual([["run-1", null], ["resume:1", 1]])
+    expect(retried).toBe("turn.duplicate")
+  })
+
+  test("an interrupted turn keeps a failed reply with no text; the turn resuming it sees its message and nothing for that reply", async () => {
+    const { replies, prompt } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const first = yield* scripted([])
+      const waiting = yield* Deferred.make<void>()
+      const fiber = yield* Effect.forkChild(agent.turn(inputFor(journal, "run-1", "find alpha", first.model), () =>
+        Deferred.succeed(waiting, undefined).pipe(Effect.andThen(Effect.never))))
+      yield* Deferred.await(waiting)
+      yield* Fiber.interrupt(fiber)
+      const second = yield* scripted([stop("found it")])
+      const input = inputFor(journal, "run-2", "Continue where you stopped.", second.model)
+      yield* agent.turn({ ...input, turn: { ...input.turn, resumes: 1 } }, (turn) =>
+        turn.run({}).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+      const replies = named(yield* journal.stored, "turn.reply").map((event) => [Option.getOrNull(event.turn), body(event)?.outcome, body(event)?.reply ?? null])
+      return { replies, prompt: (yield* Ref.get(second.seen))[0]?.prompt ?? "" }
+    })))
+    expect(replies).toEqual([[1, "failed", null], [2, "completed", "found it"]])
+    expect(prompt.indexOf("find alpha")).toBeGreaterThan(-1)
+    expect(prompt.indexOf("find alpha")).toBeLessThan(prompt.indexOf("Continue where you stopped."))
+    // The failed reply has no text: no assistant message stands for it.
+    expect(prompt).toContain("\"role\":\"user\"")
+    expect(prompt).not.toContain("\"role\":\"assistant\"")
+  })
+
+  test("a turn that cannot be resumed fails with turn.not-resumable, naming the turn and why", async () => {
+    const failures = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      yield* agent.turn(inputFor(journal, "run-1", "hello", model), (turn) => turn.reply("Hello there."))
+      const resume = (turn: number, runId: string) => {
+        const input = inputFor(journal, runId, "Continue.", model)
+        return Effect.flip(agent.turn({ ...input, turn: { ...input.turn, resumes: turn } }, (next) => next.reply("Resumed.")))
+      }
+      // `resumes` is typed only as a number: a host's `Number(query.resumes)` may be anything, and the turn fails, it does not die.
+      return yield* Effect.forEach([[1, "run-2"], [9, "run-3"], [1.5, "run-4"], [Number.NaN, "run-5"]] as const, ([turn, runId]) =>
+        resume(turn, runId).pipe(Effect.map((error) => [error.code, error.message])))
+    })))
+    expect(failures).toEqual([
+      ["turn.not-resumable", `turn 1 of session ${conversation} cannot be resumed (finished)`],
+      ["turn.not-resumable", `turn 9 of session ${conversation} cannot be resumed (missing)`],
+      ["turn.not-resumable", `turn 1.5 of session ${conversation} cannot be resumed (missing)`],
+      ["turn.not-resumable", `turn NaN of session ${conversation} cannot be resumed (missing)`],
+    ])
+  })
+})
+
 describe("the token budget", () => {
   test("Agent.define refuses a budget that is not an integer of at least 1 (config.budget)", async () => {
     const codes = await Effect.runPromise(Effect.forEach([0, -1, 1.5], (budgetTokens) =>

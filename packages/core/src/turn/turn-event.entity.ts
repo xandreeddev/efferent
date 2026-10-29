@@ -31,8 +31,10 @@ export const TurnStartedEvent = Schema.TaggedStruct("turn.started", {
   userMessage: UserMessage,
   /** The host's metadata the turn was begun with (`{}` when none was given). */
   meta: JsonObject,
+  /** The earlier turn this one resumes, only when it resumes one. */
+  resumes: Schema.optionalKey(Schema.Int),
 }).annotate({
-  description: "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model). Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` only when it was given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
+  description: "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model), and `resumes`, present only on a turn that resumes an earlier one, is that turn's number. Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` and `resumes` only when they were given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
 })
 
 export const StepStartedEvent = Schema.TaggedStruct("step.started", {

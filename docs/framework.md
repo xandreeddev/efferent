@@ -329,10 +329,12 @@ turn's `usage`, every run's provider calls summed (see
 
 `input.turn` is either a turn the host already began (the `TurnWriter` from
 `Sessions.begin`: the host ends it, after its own closing records) or a
-`NewTurn` (`{ session, userMessage, runId, key?, command?, meta? }`) that the agent
-begins through the `Sessions` in its services and ends. A
+`NewTurn` (`{ session, userMessage, runId, key?, command?, meta?, resumes? }`) that the agent
+begins through the `Sessions` in its services and ends. With `resumes: n`
+the turn resumes turn `n`, a turn that was cancelled or interrupted, and
+its key defaults to `resume:<n>` (see [resuming a turn](#resuming-a-turn)). A
 turn that cannot begin fails with the reason as its code (`session.busy`,
-`turn.duplicate`, `turn.key-conflict`, `turn.refused`; all of them are
+`turn.duplicate`, `turn.key-conflict`, `turn.not-resumable`, `turn.refused`; all of them are
 `turnBeginCodes` from `@xandreed/sdk`, with suggested HTTP statuses in the
 [event reference](event-reference.md#begin-codes)); a turn someone else
 closes (a cancel, a reaped lease, a removed session) fails with
@@ -345,9 +347,9 @@ given to `TurnAdmission` (`TurnToAdmit.meta`), and shown on the writer's
 `admitted`, on `RunContext.admitted` and `Turn.admitted` (with the turn's
 number, key, origin, command and claimed inbox items) and on the bus
 `turn.started` event; it is `{}` when none was given. The model never sees
-it, and it is not part of the idempotency key's fingerprint (the message
-and the command are): a retry with the same key and other metadata is
-still `turn.duplicate`. `Sessions.drain(address, run, { meta })` begins its
+it, and it is not part of the idempotency key's fingerprint (the message,
+the command and `resumes` are): a retry with the same key and other
+metadata is still `turn.duplicate`. `Sessions.drain(address, run, { meta })` begins its
 inbox turns with it.
 
 **How a turn ends.** A turn the agent began is ended with
@@ -911,10 +913,10 @@ yield* Effect.scoped(Effect.gen(function* () {
 
 **One turn at a time.** `begin` opens a turn with its `turn.started` (the
 user's message, the host's `command`, the idempotency `key`, and the host's
-`meta` when given) in one commit;
+`meta` and the turn it `resumes` when given) in one commit;
 a second begin while a turn is open is `SessionBusy` (a host answers 409).
 The same key again is `TurnDuplicate` with that turn, and the same key with
-another message or command is `KeyConflict`: keys are found in the log, so
+another message, command or `resumes` is `KeyConflict`: keys are found in the log, so
 the check holds across restarts. The writer (`TurnWriter`) is the turn's one
 way to write: `append`, `write(op)` in queue order, `transact(decide)`
 (check, then append: decided again with the events others wrote when
@@ -961,7 +963,9 @@ A turn nobody holds any more reads as not open, and is closed as
 a read, so loading or following a session runs nothing. `cancel(address,
 turn)` ends exactly that turn as cancelled, durably: every reader sees
 `turn.ended`, a holder on this instance is interrupted at once, and a
-holder elsewhere is refused at its next commit. `fork(parent, { inherit })`
+holder elsewhere is refused at its next commit; a cancelled or interrupted
+turn can be continued by the next user's turn ([resuming a
+turn](#resuming-a-turn)). `fork(parent, { inherit })`
 makes a child session (a background task's): with `inherit` its history is
 the parent's up to its last closed turn, and its turns count on from there.
 `changes(address)` signals each commit this instance makes (a feed polls
@@ -970,8 +974,9 @@ for the others), and `lookup(address, key)` finds a key's turn.
 **Admission.** `TurnAdmission.admit(turn, open)` runs around the one commit
 that opens every turn (a user's, the inbox's, a task's), never around the
 turn's later writes, so a host can count and open in one transaction: a
-duplicate or a busy session fails inside it and counts nothing, and a
-refusal (`TurnRefused`) opens nothing. `TurnAdmissionOpen` admits all.
+duplicate, a key conflict, a busy session or a turn that cannot be resumed
+(`NotResumable`) fails inside it and counts nothing, and a refusal
+(`TurnRefused`) opens nothing. `TurnAdmissionOpen` admits all.
 
 **The vocabulary.** Each kind has one durable producer (the generated
 [event reference](event-reference.md) has every kind's payload, its
@@ -980,7 +985,7 @@ sensitive content, the exact `RESERVED_KINDS` and the begin codes;
 
 | Kind | Written by |
 | --- | --- |
-| `turn.started` (`runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, and `meta` when given) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
+| `turn.started` (`runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, and `meta` and `resumes` when given) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
 | `turn.reply` | memory (`persistReply`) |
 | `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`: the failing error's code; otherwise one of the framework's codes, `turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`, or a code the closer passes to `end` itself, such as plugin-tasks' `task.turn` and `task.deadline`) | the writer's `end` (`turnEndingOf` the turn's exit), its scope, a cancel or a reap |
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
@@ -1069,3 +1074,82 @@ delivered as interrupted. With `tools`, the model gets `start_task` and
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events
 after a cursor, then follows `changes` and polls.
+
+### Resuming a turn
+
+A turn that was cancelled or interrupted can be continued by a new user's
+turn that names it: `begin(address, { _tag: "User", userMessage, runId, key,
+command, resumes: n })`, or with the agent `agent.turn({ turn: { session,
+userMessage, runId, resumes: n }, services }, use)`. Turn `n` must be the
+session's last turn begun by a user and must have ended `cancelled` or
+`interrupted`. Two kinds of turn may have run since: inbox turns (a task
+result delivered meanwhile is answered first and does not stand in the
+way), and earlier resumes of turn `n` that failed, were cancelled or were
+interrupted, so a resume that did not complete can be tried again (see
+keys, below). A turn reaped because its holder stopped (`turn.lease`)
+counts as interrupted, including one the resuming begin reaps itself.
+Otherwise the begin fails with `NotResumable` (`session`, `turn` and a
+`reason`) and opens nothing: `missing` (no such turn in this session's own
+log; a fork's inherited turns are its parent's), `inbox` (an inbox turn),
+`superseded` (another user's turn began after it, a resume of it that
+completed or ended partial included) or `finished` (it ended completed,
+partial or failed, a `turn.unended` scope included). `Agent.turn` fails
+with `turn.not-resumable`. The check runs in the commit that opens the
+turn, after the key's (`TurnDuplicate`, `KeyConflict`) and after
+`SessionBusy`. `resumes` is typed as a number: one that is not a whole
+number of at least 1 names no turn, and is refused as `missing` before
+anything else, the host's admission included. `resumeRefusal(n, turns)`
+from `@xandreed/core` is the rule, for a host that checks before it asks.
+
+The new turn is an ordinary user's turn (origin `user`, numbered next) whose
+`turn.started` carries `resumes: n`; `resumes` is shown on `admitted`
+(`RunContext.admitted`, `Turn.admitted`), on `TurnToAdmit` and on the bus
+`turn.started`, only when given, and it is part of the key's fingerprint.
+Memory is not rewritten: the new turn's requests are rebuilt from the log as
+always, so the model sees turn `n`'s message and every step it stored,
+then the new turn's message. A plain new turn, without `resumes`, sees
+exactly the same memory: `resumes` records which turn the new one
+continues, and refuses to continue one that has been answered since; it
+changes nothing the model is sent. Send the original message again to
+re-run the request, or a short instruction such as "Continue where you
+stopped.".
+
+**What is durable after a cancel or an interrupt** is what the turn's
+writer committed before the turn was closed:
+
+- `turn.started`;
+- every whole step: a step's assistant message and its tool results are
+  recorded together, once the step's tools have returned (`memory.message`,
+  `memory.tool-result`), beside its `step.*`, `tool.*`, `step.usage` and
+  `context.built` events and its `request.prepared`;
+- of the step in flight, only what was already stored: its `step.started`,
+  `context.built` and `request.prepared` (flushed before the provider call),
+  and possibly the `tool.started` and `tool.completed` events (and the
+  host's own events) that were queued before the close: a step's tool
+  calls run one after another or concurrently (`toolConcurrency`), so one
+  may have returned while another still runs. Never its assistant message
+  or its tool results, so
+  memory holds no tool call without its result;
+- `turn.ended`: `cancelled` with no failure after a cancel; `interrupted`
+  with `turn.interrupted` after an interruption, or `turn.lease` when reaped.
+
+A cancelled turn has no `turn.reply`: its writes are refused once it is
+closed. An interrupted turn may keep a failed `turn.reply` with no text (the
+turn recorded its reply as failed before its end), which the model never
+sees. What a tool did in the step in flight is not undone, and the resuming
+turn may call it again: a tool with side effects makes them safe to repeat,
+for example keyed by its input.
+
+**Keys.** `Agent.turn` keys a resume `resume:<n>` unless the host gives a
+key. A retry of the same resume is `turn.duplicate` once its turn has begun,
+however that turn ended (`lookup(address, "resume:<n>")` finds it), and
+the same key with another message or no `resumes` is
+`turn.key-conflict`; a begin refused before it opened anything
+(`NotResumable`, `SessionBusy`, `TurnRefused`) stored nothing and can be
+retried with the same key. A resume whose turn failed (a provider error,
+say) does not stand in the way of turn `n`: resume turn `n` again with a
+new key, such as `resume:<n>:2`. A resume that was itself cancelled or
+interrupted can be tried again the same way, or resumed in its turn
+(`resumes: m`, the resuming turn's own number, on `admitted.turn`; its
+default key, `resume:<m>`, is new). A host that passes its own keys needs
+a new key for each attempt.
