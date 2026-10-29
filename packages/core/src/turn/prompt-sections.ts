@@ -23,4 +23,4 @@ export const renderSections = (
 ): Effect.Effect<ReadonlyArray<{ readonly section: PromptSection; readonly text: string }>, HarnessError, unknown> =>
   Effect.forEach(orderSections(sections), (section) => section.render(context).pipe(
     Effect.map((text) => Option.map(text, (value) => ({ section, text: value }))),
-  )).pipe(Effect.map((rendered) => rendered.flatMap(Option.toArray)))
+  ), { concurrency: 1 }).pipe(Effect.map((rendered) => rendered.flatMap(Option.toArray)))

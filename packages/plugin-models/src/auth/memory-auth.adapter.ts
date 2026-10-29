@@ -58,7 +58,7 @@ export const MemoryAuthStoreLive = (
 
     const locksOf = (provider: ProviderId) => SynchronizedRef.modifyEffect(locks, (all) => Option.match(Option.fromNullishOr(all.get(provider)), {
       onSome: (found) => Effect.succeed([found, all] as const),
-      onNone: () => Effect.all({ commit: Semaphore.make(1), refresh: Semaphore.make(1) }).pipe(
+      onNone: () => Effect.all({ commit: Semaphore.make(1), refresh: Semaphore.make(1) }, { concurrency: 1 }).pipe(
         Effect.map((made) => [made, new Map([...all, [provider, made]])] as const),
       ),
     }))

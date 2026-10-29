@@ -47,7 +47,7 @@ export const settleSkills = (found: SkillsFound, config: Pick<SkillsDirectoryCon
   if (config.strict && found.issues.length > 0) {
     return yield* Effect.fail(new HarnessError({ code: "skills.files", message: skillIssuesText(found.issues) }))
   }
-  yield* Effect.forEach(found.issues, (issue) => Effect.logWarning(`skills: ${issue.path}: ${issue.message} (${issue.severity === "error" ? "skill left out" : "read without it"})`), { discard: true })
+  yield* Effect.forEach(found.issues, (issue) => Effect.logWarning(`skills: ${issue.path}: ${issue.message} (${issue.severity === "error" ? "skill left out" : "read without it"})`), { concurrency: 1, discard: true })
   if (found.skills.length > config.maxSkills) {
     return yield* Effect.fail(new HarnessError({ code: "skills.limit", message: `found ${found.skills.length} skills, more than ${config.maxSkills} (maxSkills)` }))
   }

@@ -48,7 +48,7 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
   const missing = (id: ConversationId) => new SessionMissing({ session: id })
 
   return SessionLog.of({
-    create: (header) => Effect.all([encoded(header.meta), now]).pipe(Effect.flatMap(([meta, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
+    create: (header) => Effect.all([encoded(header.meta), now], { concurrency: 1 }).pipe(Effect.flatMap(([meta, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
       if (all.has(header.id)) return [Effect.fail(new SessionExists({ session: header.id })), all]
       if (Option.isSome(header.parent) && !all.has(header.parent.value.id)) return [Effect.fail(missing(header.parent.value.id)), all]
       const head = { header: { ...header, meta, parent: Option.map(header.parent, (parent) => ({ ...parent })) }, seq: 0, revision: 0, state: {}, updatedAt: at }
@@ -78,10 +78,10 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
       return Effect.succeed(Option.match(query.limit, { onNone: () => events, onSome: (limit) => events.slice(0, Math.max(0, limit)) }).map(copyEvent))
     })),
     commit: (id, commit) => Effect.all([
-      Effect.forEach(commit.events, (draft) => encoded(draft.data)),
+      Effect.forEach(commit.events, (draft) => encoded(draft.data), { concurrency: 1 }),
       Option.match(commit.state, { onNone: () => Effect.succeedNone, onSome: (state) => Effect.map(encoded(state), Option.some) }),
       now,
-    ]).pipe(Effect.flatMap(([data, state, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing>, Store] => {
+    ], { concurrency: 1 }).pipe(Effect.flatMap(([data, state, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing>, Store] => {
       const session = all.get(id)
       if (session === undefined) return [Effect.fail(missing(id)), all]
       if (session.head.revision !== commit.expect) {

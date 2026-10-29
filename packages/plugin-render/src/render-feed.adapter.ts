@@ -43,7 +43,7 @@ const waitOf = (tail: typeof JournalTail.Service, feed: FeedScope): Effect.Effec
  * `maxDurationMs`.
  */
 export const makeRenderFeed = (tail: typeof JournalTail.Service, options: FeedOptions) => RenderFeed.of({
-  frames: (feed, after, project) => Stream.unwrap(Effect.all([Clock.currentTimeMillis, waitOf(tail, feed)]).pipe(Effect.map(([now, wait]) =>
+  frames: (feed, after, project) => Stream.unwrap(Effect.all([Clock.currentTimeMillis, waitOf(tail, feed)], { concurrency: 1 }).pipe(Effect.map(([now, wait]) =>
     Stream.paginate({ after, ready: false, delayMs: 0, quietSince: now, startedAt: now } satisfies Cursor, (cursor): Effect.Effect<Step, RenderError> => Effect.gen(function* () {
       yield* wait(cursor.delayMs)
       const at = yield* Clock.currentTimeMillis
@@ -51,7 +51,7 @@ export const makeRenderFeed = (tail: typeof JournalTail.Service, options: FeedOp
       const fresh = (yield* tail.read(feed, cursor.after)).filter((record) => record.sequence > cursor.after)
       if (fresh.length > 0) {
         const projected = yield* Effect.forEach(fresh, (record) => project(record).pipe(Effect.map(Option.map((payload) =>
-          FeedRecord.make({ sequence: record.sequence, event: payload.event, data: payload.data })))))
+          FeedRecord.make({ sequence: record.sequence, event: payload.event, data: payload.data })))), { concurrency: 1 })
         const frames = projected.flatMap(Option.toArray)
         const next: Cursor = {
           ...cursor,

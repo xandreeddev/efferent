@@ -118,7 +118,7 @@ export const LocalAuthStoreLive = (cwd: string, home: string, directory = ".effe
   const writable = authPaths(cwd, home, directory)
   const loginPath = writable[0] ?? join(home, directory, "auth.json")
   const paths = [...(fallbackDirectory === undefined ? [] : authPaths(cwd, home, fallbackDirectory)), ...writable]
-  const readAll = Effect.forEach(paths, readAuthFile)
+  const readAll = Effect.forEach(paths, readAuthFile, { concurrency: 1 })
   /** Where a refreshed token is written: the runtime file that held it, else the global runtime file. */
   const targetOf = (path: string) => writable.includes(path) ? path : loginPath
 
@@ -152,7 +152,7 @@ export const LocalAuthStoreLive = (cwd: string, home: string, directory = ".effe
       // Every file is read first, so a corrupt one fails the logout before any file changes.
       remove: (provider: ProviderId) => readAll.pipe(
         Effect.andThen(Effect.forEach(paths, (path) => withFileLock(path)(readAuthFile(path).pipe(Effect.flatMap((file) =>
-          file.entries.has(provider) || file.unread.has(provider) ? writeAuthFile(file, provider, Option.none()) : Effect.void))), { discard: true })),
+          file.entries.has(provider) || file.unread.has(provider) ? writeAuthFile(file, provider, Option.none()) : Effect.void))), { concurrency: 1, discard: true })),
       ),
     }
   }))

@@ -46,7 +46,7 @@ tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 `require-concurrency-option` skip test code (`*.test.ts`, `*.bench.ts`,
 `testing.ts`, `*.testing.ts`, `testing.port.ts`, `testing/`). A rule marked
 "per package" runs in the packages its list in `foundry.config.ts` names
-(`MATCH_CHAINS_CLEAN`, `STRINGIFIED_CAUSE_CLEAN`, …): to add a package, fix
+(`STRINGIFIED_CAUSE_CLEAN`, `EFFECT_FN_CLEAN`, …): to add a package, fix
 its findings and add its line, never the baseline. An `allow` list
 (`ROLELESS_FILES`, `NULLABLE_EDGES`) only shrinks: an entry that excuses
 nothing fails.
@@ -57,7 +57,7 @@ nothing fails.
 | `effect/no-let` | `let`, `var` | a fold: `Effect.reduce`, a recursive Effect step, Array combinators, or a `Ref` |
 | `effect/no-loop-statements` | `for`, `for…of`, `for…in`, `while`, `do` | `Effect.forEach`, `Effect.repeat({ while })`, `Effect.whileLoop`, Array combinators (`Effect.iterate` does not exist) |
 | `effect/no-nullable-return` | an exported function returning `A \| undefined` or `A \| null` | `Option<A>` (`Option.fromNullishOr` at the edge) |
-| `effect/match-over-tag-switch` | `switch` or an else-if ladder on `_tag`; per package, also ternary chains, and any of the three on `.type`, `.role` or `.mode` | `Match.valueTags(x, { … })`, `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Match.discriminators("type")`, `Option.match`, `Result.match`, `Exit.match` |
+| `effect/match-over-tag-switch` | a `switch`, an else-if ladder or a ternary chain on `_tag`, `.type`, `.role` or `.mode` | `Match.valueTags(x, { … })`, `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Match.discriminators("type")`, `Option.match`, `Result.match`, `Exit.match` |
 | `effect/no-as-any` | `as any`, `as unknown as T` | decode with Schema, or fix the type |
 | `effect/no-as-never` | `as never` outside the `ERASURE_BOUNDARY` files; `as never as T` everywhere, those files included | fix the type; a file added to `ERASURE_BOUNDARY` states its reason in the PR |
 | `effect/no-parallel-interface` | an interface shadowing a same-named schema | `type X = typeof X.Type` |
@@ -77,7 +77,7 @@ nothing fails.
 | `effect/no-stringified-cause` | per package: `String(e)`, `${e}` or `"…" + e` of a failure inside a tagged error's fields | keep the failure as a value (a `cause` field) and say what failed; text from `reasonOf(cause)` |
 | `effect/no-error-code-compare` | per package: `x.code === "<literal>"` outside the file that declares the error and its `.functions.ts` (kits may compare) | a guard the owning module exports, or a tagged error matched with `Effect.catchTag` |
 | `effect/prefer-effect-fn` | per package: an exported function or a service method that only returns `Effect.gen(…)` | `Effect.fn("area.op")(function* (…) { … })`; `Effect.fnUntraced` for a hot helper |
-| `effect/require-concurrency-option` | per package: `Effect.forEach` or `Effect.all` over more than one effect without `concurrency` | state it: a number or a config value for I/O, `1` when order matters |
+| `effect/require-concurrency-option` | `Effect.forEach` or `Effect.all` over more than one effect without `concurrency` | state it: `1` when order, a shared resource or the first failure matters; a number or a config value for independent I/O |
 | `effect/branded-id-fields` | an unbranded id field, in core's `src/domain` and `src/spec` | a brand; elsewhere reuse the sibling fields' brand |
 | `quality/no-skipped-tests` | `.skip`, `.todo`, `.only`, `xit`, `xdescribe`, `xtest` | fix or delete the test; one that needs an environment uses `test.skipIf` |
 | `quality/no-empty-catch` | an empty `catch` block | handle the failure as a value |

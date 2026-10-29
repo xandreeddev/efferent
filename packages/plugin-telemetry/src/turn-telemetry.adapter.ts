@@ -48,7 +48,7 @@ export const TurnTelemetryLive = (options: Partial<TelemetryOptions> = {}): Laye
       "assistant.message": (message) => message.usage.totalTokens === 0 ? Effect.void : Effect.gen(function* () {
         const model = modelAttribute(message.model)
         yield* Effect.forEach(tokenCounts(message.usage), (tokens) =>
-          count(TelemetryMetrics.tokens, { "efferent.model": model, "efferent.token.kind": tokens.kind }, tokens.count), { discard: true })
+          count(TelemetryMetrics.tokens, { "efferent.model": model, "efferent.token.kind": tokens.kind }, tokens.count), { concurrency: 1, discard: true })
         const cost = responseCost(config.prices, message.model, message.usage)
         const total = yield* Option.match(cost, {
           onNone: () => Effect.succeed(Option.none<number>()),

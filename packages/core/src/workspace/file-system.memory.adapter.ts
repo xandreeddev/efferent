@@ -1,4 +1,4 @@
-import { Clock, Effect, Layer, Option, Ref, Result } from "effect"
+import { Clock, Effect, Layer, Match, Option, Ref, Result } from "effect"
 import type { Context } from "effect"
 import { FsError } from "../domain/file-system.entity.js"
 import type { DirEntry, FileInfo, FileKind, FsReason, ReadRange, RecursiveOptions, StatOptions, WriteOptions } from "../domain/file-system.entity.js"
@@ -54,7 +54,11 @@ const concat = (left: Uint8Array, right: Uint8Array): Uint8Array => {
   joined.set(right, left.length)
   return joined
 }
-const sizeOf = (node: Node): number => node._tag === "File" ? node.bytes.length : node._tag === "Symlink" ? encoder.encode(node.target).length : 0
+const sizeOf = (node: Node): number => Match.valueTags(node, {
+  File: (file) => file.bytes.length,
+  Symlink: (link) => encoder.encode(link.target).length,
+  Directory: () => 0,
+})
 const withNode = (tree: Tree, path: string, node: Node): Tree => new Map([...tree, [path, node]])
 const inside = (tree: Tree, dir: string): ReadonlyArray<string> => [...tree.keys()].filter((key) => key.startsWith(dir === "/" ? "/" : `${dir}/`) && key !== dir)
 
@@ -117,12 +121,14 @@ export const makeMemoryFileSystem = (initial: Readonly<Record<string, MemorySeed
     onFailure: (error) => error.reason === "NotFound" && !retried ? [Result.succeed("parent-missing"), all] : refused(all, error),
     onSuccess: (place) => Option.match(Option.fromNullishOr(all.get(place)), {
       onNone: () => [Result.succeed("done"), withNode(all, place, { _tag: "Directory", mtimeMs: now })],
-      onSome: (node) => node._tag === "Directory" ? [Result.succeed("done"), all]
-        : node._tag === "File" ? refused(all, failure(asked, "Exists", `exists and is not a directory: ${asked}`))
-        : Result.match(nodeAt(all, place), {
+      onSome: (node) => Match.value(node).pipe(Match.withReturnType<Change<"done" | "parent-missing">>(), Match.tagsExhaustive({
+        Directory: () => [Result.succeed("done"), all],
+        File: () => refused(all, failure(asked, "Exists", `exists and is not a directory: ${asked}`)),
+        Symlink: () => Result.match(nodeAt(all, place), {
           onFailure: (error) => refused(all, failure(asked, error.reason, error.reason === "NotFound" ? `a symbolic link to a missing directory: ${asked}` : error.message)),
           onSuccess: (target) => target.node._tag === "Directory" ? [Result.succeed("done"), all] : refused(all, failure(asked, "Exists", `exists and is not a directory: ${asked}`)),
         }),
+      })),
     }),
   })).pipe(Effect.flatMap((outcome) => outcome === "done" ? Effect.void : makeDirectories(writtenParent(asked)).pipe(Effect.andThen(makeDirectories(asked, true)))))
 
@@ -221,7 +227,7 @@ export const makeMemoryFileSystem = (initial: Readonly<Record<string, MemorySeed
   yield* Effect.forEach(Object.entries(initial).toSorted(([left], [right]) => left < right ? -1 : left > right ? 1 : 0), ([path, seed]) =>
     typeof seed === "string" || seed instanceof Uint8Array
       ? fs.write(path, seed, { createParents: true })
-      : makeDirectories(writtenParent(path)).pipe(Effect.andThen(symlink(seed.symlink, path))), { discard: true })
+      : makeDirectories(writtenParent(path)).pipe(Effect.andThen(symlink(seed.symlink, path))), { concurrency: 1, discard: true })
   return fs
 })
 

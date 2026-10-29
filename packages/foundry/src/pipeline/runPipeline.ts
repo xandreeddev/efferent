@@ -109,7 +109,7 @@ const runStage = <R>(
   workspace: Workspace,
   fold: Fold,
 ): Effect.Effect<Fold, never, R> =>
-  Effect.forEach(stage, (gate) => runGate(gate, workspace)).pipe(
+  Effect.forEach(stage, (gate) => runGate(gate, workspace), { concurrency: 1 }).pipe(
     Effect.map((verdicts) => {
       const failed = verdicts.filter((v): v is typeof FailVerdict.Type => v._tag === "fail")
       return {

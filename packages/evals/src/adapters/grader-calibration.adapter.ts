@@ -35,7 +35,7 @@ export const defineGraderCalibration = <I>(options: GraderCalibrationOptions<I>)
   const encode = Schema.encodeEffect(Schema.toCodecJson(options.input))
   return Effect.forEach(options.cases, (item) => encode(item.input).pipe(
     Effect.mapError((error) => new EvaluationError({ code: "invalid", message: `calibration ${options.id}, case ${item.id}: the input does not encode: ${error.message}` })),
-  )).pipe(Effect.map((inputs) => calibrationOf(options, inputs)))
+  ), { concurrency: 1 }).pipe(Effect.map((inputs) => calibrationOf(options, inputs)))
 }
 
 /** The calibration over cases whose inputs are already encoded (`inputs`, in case order). */

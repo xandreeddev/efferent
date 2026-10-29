@@ -142,7 +142,7 @@ export const openLogSession = (
               ...(media.labels.length === 0 ? {} : { mediaNotes: media.labels }),
             })))),
           )
-        }))
+        }, { concurrency: 1 }), { concurrency: 1 })
       const recorded = yield* record(bodies.flat(), step)
       const onWrite = policy.digestOnWrite
       const targets = Option.isNone(onWrite) ? [] : recorded.filter((entry) =>

@@ -150,8 +150,13 @@ describe("the AuthStore kit catches stores that break the contract", () => {
     const store = Effect.runSync(reference)
     const stale = AuthStore.of({
       ...store,
-      resolveKey: (provider) => store.get(provider).pipe(Effect.map(Option.flatMap((credential) =>
-        credential.type === "oauth" ? Option.some(Redacted.make(credential.access)) : credential.type === "api_key" ? Option.some(Redacted.make(credential.key)) : Option.none()))),
+      resolveKey: (provider) => store.get(provider).pipe(Effect.map(Option.flatMap((credential) => Match.value(credential).pipe(
+        Match.discriminatorsExhaustive("type")({
+          oauth: (oauth) => Option.some(Redacted.make(oauth.access)),
+          api_key: (apiKey) => Option.some(Redacted.make(apiKey.key)),
+          local: () => Option.none(),
+        }),
+      )))),
     })
     expect(await failedChecks(stale)).toEqual(["oauth-expired"])
   })

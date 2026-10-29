@@ -51,7 +51,7 @@ export const defineRunnable = <I, O, E, W, R, H>(options: {
             Effect.flatMap((result) => Effect.all({
               output: portable(options.output, result.output),
               evidence: portable(options.evidence, result.evidence)
-            })),
+            }, { concurrency: 1 })),
             Effect.mapError((error) => isEvaluationError(error)
               ? error
               : new EvaluationError({ code: "invalid", message: String(error) }))

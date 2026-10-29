@@ -1,4 +1,4 @@
-import { Clock, Context, Duration, Effect, Exit, Metric, Option, Schema } from "effect"
+import { Clock, Context, Duration, Effect, Exit, Match, Metric, Option, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import {
   cacheKeyOf,
@@ -242,13 +242,12 @@ const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effec
     ...(turn.resumes === undefined ? {} : { resumes: turn.resumes }),
   })
 }).pipe(Effect.mapError((error) => isHarnessError(error) ? error
-  : failure(turnBeginCodes[error._tag], error._tag === "NotResumable"
-    ? `turn ${error.turn} of session ${turn.session.id} cannot be resumed (${error.reason})`
-    : error._tag === "RunIdReused"
-    ? `run id ${error.runId} was used by turn ${error.turn} of session ${turn.session.id}: each turn needs a new one`
-    : error._tag === "AttachmentRejected"
-    ? `the turn could not begin (AttachmentRejected, ${error.reason}: ${error.message}) in session ${turn.session.id}`
-    : `the turn could not begin (${error._tag}) in session ${turn.session.id}`)))
+  : failure(turnBeginCodes[error._tag], Match.value(error).pipe(
+    Match.tag("NotResumable", (refused) => `turn ${refused.turn} of session ${turn.session.id} cannot be resumed (${refused.reason})`),
+    Match.tag("RunIdReused", (reused) => `run id ${reused.runId} was used by turn ${reused.turn} of session ${turn.session.id}: each turn needs a new one`),
+    Match.tag("AttachmentRejected", (rejected) => `the turn could not begin (AttachmentRejected, ${rejected.reason}: ${rejected.message}) in session ${turn.session.id}`),
+    Match.orElse((other) => `the turn could not begin (${other._tag}) in session ${turn.session.id}`),
+  ))))
 
 /** The turn's body, until someone else closes the turn: then the body is interrupted and the turn fails. */
 const untilClosed = (writer: TurnWriter) => <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError, R> =>

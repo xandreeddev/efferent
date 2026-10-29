@@ -77,10 +77,11 @@ const discoverPackages = (
                 : Effect.succeed<ReadonlyArray<WorkspacePackage>>([]),
             ),
           )
-        }),
+        }, { concurrency: 1 }),
       ),
       Effect.map((found) => found.flat()),
     ),
+    { concurrency: 1 },
   ).pipe(Effect.map((found) => found.flat()))
 
 const readWorkspaceFile = (rootDir: string, file: string): Effect.Effect<string, GateCrash> =>
@@ -284,6 +285,7 @@ export const makeRegistrationGate = (config: GateSuiteConfig, registration: Regi
       Effect.flatMap((packages) =>
         Effect.forEach(registration.registries, (registry) =>
           checkRegistry(workspace.rootDir, config, registration, registry, packages),
+          { concurrency: 1 },
         ),
       ),
       Effect.map((findings) => findings.flat()),

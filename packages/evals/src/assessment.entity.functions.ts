@@ -10,7 +10,7 @@ export const validateDataset = <I, Ref>(dataset: Dataset<I, Ref>) => Effect.gen(
   if (invalid) return yield* Effect.fail(new AssessmentError({ code: "invalid", message: "Dataset needs unique cases, provenance and disjoint calibration/validation families" }))
   yield* Effect.forEach(dataset.cases, (item) => Effect.all([
     Schema.decodeEffect(Schema.toType(dataset.input))(item.input), Schema.decodeEffect(Schema.toType(dataset.reference))(item.reference),
-  ]).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) }))))
+  ], { concurrency: 1 }).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) }))), { concurrency: 1 })
   return dataset
 })
 

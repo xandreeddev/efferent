@@ -74,7 +74,7 @@ const droppedDrafts = (ids: ReadonlyArray<string>, turn: number): Effect.Effect<
   Effect.forEach(ids, (id) => droppedData(id).pipe(
     Effect.map((data): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data })),
     Effect.mapError(storage("session.encode")),
-  ))
+  ), { concurrency: 1 })
 
 const standalone = (drafts: ReadonlyArray<TurnDraft>): ReadonlyArray<SessionDraft> =>
   drafts.map((draft) => ({ kind: draft.kind, turn: Option.none(), data: draft.data }))
@@ -229,13 +229,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     Effect.flatMap((events) => Effect.gen(function* () {
       const numbered = (event: SessionLogEvent) => Option.getOrElse(event.turn, () => 0)
       const endings = new Map(yield* Effect.forEach(events.filter((event) => event.kind === "turn.ended"), (event) =>
-        turnEndedOf(event).pipe(Effect.map((ended) => [numbered(event), ended.reason] as const))))
+        turnEndedOf(event).pipe(Effect.map((ended) => [numbered(event), ended.reason] as const)), { concurrency: 1 }))
       return yield* Effect.forEach(events.filter((event) => event.kind === "turn.started"), (event) => turnStartedOf(event).pipe(Effect.map((started): ResumableTurn => ({
         turn: numbered(event),
         origin: started.origin,
         resumes: Option.fromNullishOr(started.resumes),
         ended: Option.contains(reapedNow, numbered(event)) ? Option.some("interrupted") : Option.fromNullishOr(endings.get(numbered(event))),
-      }))))
+      }))), { concurrency: 1 })
     }).pipe(Effect.mapError(storage("session.decode")))),
   )
 
@@ -504,7 +504,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const heads = yield* log.list({
         owner: query.owner, limit, before: Option.fromNullishOr(query.before), parent: Option.fromNullishOr(query.parent),
       })
-      const sessions = yield* Effect.forEach(heads, viewFrom)
+      const sessions = yield* Effect.forEach(heads, viewFrom, { concurrency: 1 })
       const last = Option.fromNullishOr(heads.at(-1))
       return {
         sessions,

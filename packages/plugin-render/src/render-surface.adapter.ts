@@ -65,7 +65,7 @@ export const openSurface = (
 
   const commitNodes = (versionId: string, generation: number, nodes: ReadonlyArray<RenderNode>) => Effect.forEach(nodes, (node) =>
     commitNode(versionId, operationIdOf(scope.runId, scope.surfaceId, generation, node.nodeId), node).pipe(Effect.andThen(recordCommitted(node))),
-  { discard: true })
+  { concurrency: 1, discard: true })
 
   const snapshotResult = (frozen: boolean) => Ref.get(progress).pipe(Effect.map((current): PublishResult => ({
     version: current.state.version, generation: current.state.generation, changed: false, frozen,
@@ -172,11 +172,11 @@ export const openSurface = (
     yield* options.fork(`render:${scope.surfaceId}`, run)
   })
 
-  const settled = Ref.get(preparations).pipe(Effect.flatMap((all) => Effect.forEach(all, Deferred.await, { discard: true })))
+  const settled = Ref.get(preparations).pipe(Effect.flatMap((all) => Effect.forEach(all, Deferred.await, { concurrency: 1, discard: true })))
 
   const state = Effect.gen(function* () {
     const current = yield* Ref.get(progress)
-    const finished = yield* Effect.forEach(yield* Ref.get(preparations), Deferred.isDone)
+    const finished = yield* Effect.forEach(yield* Ref.get(preparations), Deferred.isDone, { concurrency: 1 })
     return { ...current.state, pending: finished.some((done) => !done) } satisfies SurfaceState
   })
 

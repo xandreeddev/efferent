@@ -66,8 +66,8 @@ const keyOf = (id: string, resolved: Option.Option<Redacted.Redacted<string>>) =
 
 /** Run `body` with `count` fresh providers, removing them afterwards so a shared store keeps nothing of the kit. */
 const withProviders = (store: Store, count: number, body: (providers: ReadonlyArray<ProviderId>) => Effect.Effect<void, unknown>) =>
-  Effect.forEach(Array.from({ length: count }), () => freshProvider).pipe(
-    Effect.flatMap((providers) => body(providers).pipe(Effect.ensuring(Effect.forEach(providers, (provider) => store.remove(provider).pipe(Effect.ignore({ log: "Warn", message: `the kit could not remove its provider ${provider}` })), { discard: true })))),
+  Effect.forEach(Array.from({ length: count }), () => freshProvider, { concurrency: 1 }).pipe(
+    Effect.flatMap((providers) => body(providers).pipe(Effect.ensuring(Effect.forEach(providers, (provider) => store.remove(provider).pipe(Effect.ignore({ log: "Warn", message: `the kit could not remove its provider ${provider}` })), { concurrency: 1, discard: true })))),
   )
 
 /** Run `body` on the probe's provider, then put back the credential it held before (or none). */
@@ -105,7 +105,7 @@ const refreshChecks = (store: Store, probe: AuthStoreRefreshProbe): ReadonlyArra
     yield* store.set(provider, stale)
     const before = yield* probe.requests
     const keys = yield* Effect.acquireUseRelease(probe.hold, (release) => Effect.gen(function* () {
-      const callers = yield* Effect.forEach(Array.from({ length: CALLERS }), () => Effect.forkChild(store.resolveKey(provider)))
+      const callers = yield* Effect.forEach(Array.from({ length: CALLERS }), () => Effect.forkChild(store.resolveKey(provider)), { concurrency: 1 })
       yield* expect("refresh-once", (yield* requestsAbove(probe, before, WAIT)) > before, `no refresh request reached the endpoint within ${WAIT}`)
       // Give every caller the time to reach the endpoint (or the store's lock) before the first answer.
       yield* requestsAbove(probe, before + 1, SETTLE)
@@ -114,7 +114,7 @@ const refreshChecks = (store: Store, probe: AuthStoreRefreshProbe): ReadonlyArra
     }), (release) => release)
     const sent = (yield* probe.requests) - before
     yield* expect("refresh-once", sent === 1, `${CALLERS} concurrent calls on one expired token sent ${sent} refresh requests`)
-    const values = yield* Effect.forEach(keys, (key) => keyOf("refresh-once", key))
+    const values = yield* Effect.forEach(keys, (key) => keyOf("refresh-once", key), { concurrency: 1 })
     const first = Option.getOrUndefined(values[0] ?? Option.none())
     yield* expect("refresh-once", first !== undefined && first !== stale.access, "the first call did not get a new token")
     yield* expect("refresh-once", values.every((value) => Option.getOrUndefined(value) === first), "the concurrent calls got different keys")

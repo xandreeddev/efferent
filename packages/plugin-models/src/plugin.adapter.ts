@@ -61,7 +61,7 @@ const overlaid = (config: Config) => (previous: EngineSettings) => new EngineSet
 const memoryStores = (config: Config) => Layer.unwrap(Effect.gen(function* () {
   const fromEnv = yield* Effect.forEach(Object.entries(config.credentialEnv), ([provider, name]) =>
     EffectConfig.option(EffectConfig.Redacted(name)).pipe(Effect.map(Option.map((key): readonly [string, Credential] =>
-      [provider, { type: "api_key", key: Redacted.value(key) }]))))
+      [provider, { type: "api_key", key: Redacted.value(key) }]))), { concurrency: 1 })
   const seed = new Map<string, Credential>([...fromEnv.flatMap(Option.toArray), ...credentialsOf(config.credentials)])
   return Layer.mergeAll(MemoryAuthStoreLive(seed), MemorySettingsStoreLive(overlaid(config)(new EngineSettings({}))))
 }))

@@ -244,6 +244,7 @@ const flush = (moduleName: string, reading: UsageReading, state: SseState): Effe
               ),
             ),
           ),
+          { concurrency: 1 },
         )
         const finish: Part = {
           type: "finish",

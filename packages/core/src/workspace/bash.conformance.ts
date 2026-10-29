@@ -154,7 +154,7 @@ export const bashConformance = (subject: BashSubject): ReadonlyArray<Conformance
       const probe = `printf '%s|%s|%s' "\${EFFERENT_KIT_SECRET-unset}" "\${LC_EFFERENT_KIT-unset}" "\${PATH:+path}"`
       const settings: ReadonlyArray<Option.Option<boolean | ReadonlyArray<string>>> = [Option.none(), Option.some(true), Option.some(false), Option.some(["EFFERENT_KIT_*"])]
       const seen = yield* Effect.forEach(settings, (inheritEnv) =>
-        run(fixture, probe, Option.match(inheritEnv, { onNone: () => ({}), onSome: (value) => ({ inheritEnv: value }) })).pipe(Effect.map((result) => result.stdout)))
+        run(fixture, probe, Option.match(inheritEnv, { onNone: () => ({}), onSome: (value) => ({ inheritEnv: value }) })).pipe(Effect.map((result) => result.stdout)), { concurrency: 1 })
       const expected = [
         "unset|planted-locale|path",
         "planted-secret|planted-locale|path",

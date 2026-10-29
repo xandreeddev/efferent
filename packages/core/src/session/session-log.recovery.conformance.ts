@@ -36,7 +36,7 @@ const range = (length: number) => Array.from({ length }, (_, n) => n)
 const rich: JsonObject = { zeta: 1, alpha: { b: [true, false, { y: "ü", x: 0.5 }], a: "text ✓" }, empty: {}, list: [] }
 
 /** A session as one handle reads it, and as text without the read time: what every handle must agree on. */
-const seen = (log: Log, id: ConversationId) => Effect.all([log.head(id), log.read(id, everything)]).pipe(Effect.map(([head, events]) => ({
+const seen = (log: Log, id: ConversationId) => Effect.all([log.head(id), log.read(id, everything)], { concurrency: 1 }).pipe(Effect.map(([head, events]) => ({
   seq: head.seq,
   revision: head.revision,
   state: head.state,
@@ -108,7 +108,7 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
         return { session: yield* seen(log, id), listing: yield* listed(log, owner) }
       }))
       yield* expect("reopen", before.session.seq === 3 && before.session.revision === 2, `the writing handle read seq ${before.session.seq}, revision ${before.session.revision}`)
-      const after = yield* subject.open.pipe(Effect.flatMap((log) => Effect.all({ session: seen(log, id), listing: listed(log, owner) })))
+      const after = yield* subject.open.pipe(Effect.flatMap((log) => Effect.all({ session: seen(log, id), listing: listed(log, owner) }, { concurrency: 1 })))
       yield* expect("reopen", after.session.text === before.session.text, `after reopening the session reads ${after.session.text}, not ${before.session.text}`)
       yield* expect("reopen", after.listing === before.listing, `after reopening the listing is ${after.listing}, not ${before.listing}`)
     })),
@@ -155,7 +155,7 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
       const refused = attempts.filter((attempt) => attempt._tag === "Failure" && attempt.failure._tag === "RevisionConflict")
       yield* expect("cross-handle-race", won.length === 1 && refused.length === 7, `of eight commits against one revision, ${won.length} won and ${refused.length} were refused`)
       const rounds = 12
-      const stored = yield* Effect.forEach(handles, (log, side) => Effect.forEach(range(rounds), (n) => increment(log, id, `handle-${side}`, n)), { concurrency: "unbounded" })
+      const stored = yield* Effect.forEach(handles, (log, side) => Effect.forEach(range(rounds), (n) => increment(log, id, `handle-${side}`, n), { concurrency: 1 }), { concurrency: "unbounded" })
       const revisions = stored.flat().toSorted((left, right) => left - right)
       yield* expect("cross-handle-race", revisions.join() === range(rounds * 2).map((n) => n + 2).join(), `the increments stored revisions ${revisions.join()}`)
       const final = yield* reading(id)
@@ -178,7 +178,7 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
           const fiber = yield* Effect.forkChild(log.commit(id, {
             expect: head.revision, notAfter: Option.none(), events: range(parts).map((n) => draft("part", { batch, n })), state: Option.some({ batch }),
           }))
-          yield* Effect.forEach(range(yields), () => Effect.yieldNow, { discard: true })
+          yield* Effect.forEach(range(yields), () => Effect.yieldNow, { concurrency: 1, discard: true })
           yield* Fiber.interrupt(fiber)
           const after = yield* seen(log, id)
           const written = after.events.filter((event) => event.data.batch === batch).length
@@ -186,7 +186,7 @@ export const sessionLogRecoveryConformance = (subject: SessionLogSubject): Reado
           const nothing = written === 0 && after.revision === head.revision && after.seq === head.seq
           yield* expect("interrupted-commit", whole || nothing, `an interrupted commit left ${written} of its ${parts} events at revision ${after.revision}`)
           yield* expect("interrupted-commit", after.events.every((event, index) => event.seq === index + 1) && after.seq === after.events.length, "the sequence has a gap")
-        }), { discard: true })
+        }), { concurrency: 1, discard: true })
         return yield* seen(log, id)
       }))
       const log = yield* subject.open

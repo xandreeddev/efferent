@@ -365,6 +365,7 @@ export const fromChatCompletion = (
           invalidOutput(moduleName, "generateText", `tool call ${tc.function?.name ?? "?"} carried unparseable JSON arguments`),
         ),
       ),
+      { concurrency: 1 },
     )
     return [
       ...(reasoning !== null && reasoning !== undefined && reasoning.length > 0
@@ -413,7 +414,7 @@ const chatRequestBody = (
   options: LanguageModel.ProviderOptions,
   streaming: boolean,
 ): Effect.Effect<Json> =>
-  Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }).pipe(
+  Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }, { concurrency: 1 }).pipe(
     Effect.map(({ cacheKey, policy }) => {
       const tools = toChatTools(options.tools)
       const settings = requestSettings(config, cacheKey, policy)
@@ -528,7 +529,7 @@ export const makeCompatLanguageModel = (
         }),
       ) as never,
   }).pipe(Effect.map((model) => describeModel(model,
-    Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }).pipe(
+    Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }, { concurrency: 1 }).pipe(
       Effect.map(({ cacheKey, policy }) => {
         const settings = requestSettings(config, cacheKey, policy)
         return { provider: config.moduleName, model: config.model, settings: { ...settings.sampling, ...settings.extensions } }

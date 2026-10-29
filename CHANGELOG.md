@@ -365,6 +365,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `type`/`role`/`mode` discriminants. Rules with findings enter one package
   at a time through `include` lists, and a rule's `allow` list can only
   shrink.
+- `effect/match-over-tag-switch` refuses ternary chains and
+  `type`/`role`/`mode` branching in every package, and
+  `effect/require-concurrency-option` runs in every package: every
+  `Effect.forEach` and `Effect.all` states its concurrency (sequential where
+  order, a shared resource or the first failure matters).
+- `foundry check` reads the source files behind findings and the run
+  history eight at a time instead of one by one.
 
 ## 0.14.0 — 2026-10-29
 

@@ -19,6 +19,9 @@ import type { Gate } from "../ports/Gate.js"
  * baseline, so the finding stays. Fail-open toward STRICTNESS.
  */
 
+/** Source files read at once: each finding's read stands alone and never fails. */
+const READ_CONCURRENCY = 8
+
 const sourceLineOf = (
   rootDir: string,
   finding: Finding,
@@ -53,6 +56,7 @@ export const withBaselineRatchet = <R>(
                     baseline.has(fingerprint(finding, line)) ? [] : [finding],
                 ),
               ),
+          { concurrency: READ_CONCURRENCY },
         ).pipe(Effect.map((kept) => kept.flat())),
       ),
     ),

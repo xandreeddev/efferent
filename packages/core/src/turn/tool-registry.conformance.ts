@@ -125,7 +125,7 @@ const memoryWriter = Effect.gen(function* () {
   const started: SessionLogEvent = { session, seq: 1, turn: draft.turn, kind: draft.kind, at: 0, data: draft.data }
   const stored = yield* Ref.make<ReadonlyArray<SessionLogEvent>>([started])
   const append = (drafts: ReadonlyArray<TurnDraft>) => Effect.yieldNow.pipe(
-    Effect.andThen(Effect.forEach(drafts, (next) => storedJson(next.data))),
+    Effect.andThen(Effect.forEach(drafts, (next) => storedJson(next.data), { concurrency: 1 })),
     Effect.mapError((error) => new HarnessError({ code: "session.encode", message: error.message })),
     Effect.flatMap((data) => Ref.update(stored, (all) => [...all, ...Arr.zip(drafts, data).map(([next, json], index): SessionLogEvent => ({
       session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: json,
@@ -274,7 +274,7 @@ export const toolRegistryConformance = (
       inTurn(setup, (turn) => Effect.gen(function* () {
         const refusedAt = calls.length - 1
         const [tool, input] = calls[refusedAt]!
-        const results = yield* Effect.forEach(calls, ([name, params]) => turn.call(name, params))
+        const results = yield* Effect.forEach(calls, ([name, params]) => turn.call(name, params), { concurrency: 1 })
         const events = yield* turn.published
         const refused = events.flatMap((event) => event._tag === "tool.refused" ? [event] : [])
         yield* expect(id, refused.length === 1, `the calls published ${refused.length} tool.refused`)
@@ -339,7 +339,7 @@ export const toolRegistryConformance = (
       const active = yield* turn.tools.active
       yield* expect("concurrent-load", active.includes(Archive.name) && active.includes(Vault.name),
         `after loading kit.archiving and kit.vault concurrently the active tools are ${active.join()}`)
-      const used = yield* Effect.all([turn.call(Archive.name, { id: "r1" }), turn.call(Vault.name, { key: "k" })])
+      const used = yield* Effect.all([turn.call(Archive.name, { id: "r1" }), turn.call(Vault.name, { key: "k" })], { concurrency: 1 })
       yield* expect("concurrent-load", used.every((call) => !call.isFailure), `the loaded tools returned ${JSON.stringify(used.map((call) => call.result))}`)
       const loaded = [Archive.name, Vault.name]
       const once = (tools: ReadonlyArray<string>) => loaded.every((tool) => tools.filter((other) => other === tool).length === 1)

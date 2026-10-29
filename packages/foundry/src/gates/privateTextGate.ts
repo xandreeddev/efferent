@@ -150,8 +150,8 @@ export const makePrivateTextGate = (config: PrivateTextConfig): Gate => ({
       const rootDir = workspace.rootDir
       const placeholders = new Set(config.placeholders.map((name) => name.toLowerCase()))
       const denylist = Option.toArray(config.denylist)
-      const terms = (yield* Effect.forEach(denylist, (file) => denylistTerms(rootDir, file))).flat()
-      const unignored = (yield* Effect.forEach(denylist, (file) => denylistUnignored(rootDir, file))).flat()
+      const terms = (yield* Effect.forEach(denylist, (file) => denylistTerms(rootDir, file), { concurrency: 1 })).flat()
+      const unignored = (yield* Effect.forEach(denylist, (file) => denylistUnignored(rootDir, file), { concurrency: 1 })).flat()
       const patterns: ReadonlyArray<Pattern> = [
         {
           regexp: HOME_PATH,

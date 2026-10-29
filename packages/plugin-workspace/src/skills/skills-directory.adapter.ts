@@ -37,7 +37,7 @@ const readRoot = (root: string, config: SkillsDirectoryConfig): Effect.Effect<Op
  * contributes; a host that composes capabilities itself can call it.
  */
 export const loadSkillsDirectory = (config: SkillsDirectoryConfig, workspace: string): Effect.Effect<ReadonlyArray<SkillDefinition>, HarnessError, FileSystem> =>
-  Effect.forEach(config.roots, (root) => readRoot(resolve(workspace, root), config)).pipe(
+  Effect.forEach(config.roots, (root) => readRoot(resolve(workspace, root), config), { concurrency: 1 }).pipe(
     Effect.map((roots) => mergeSkillRoots(roots.flatMap(Option.toArray), config.idPrefix)),
     Effect.flatMap((found) => settleSkills(found, config)),
   )
