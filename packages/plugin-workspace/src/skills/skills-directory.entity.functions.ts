@@ -43,7 +43,7 @@ export const mergeSkillRoots = (roots: ReadonlyArray<SkillRoot>, idPrefix: strin
  * `skills.files` naming each one; otherwise each is logged as a warning.
  * More than `maxSkills` fails with `skills.limit`.
  */
-export const settleSkills = (found: SkillsFound, config: Pick<SkillsDirectoryConfig, "strict" | "maxSkills">): Effect.Effect<ReadonlyArray<SkillDefinition>, HarnessError> => Effect.gen(function* () {
+export const settleSkills = Effect.fn("skills.settle")(function* (found: SkillsFound, config: Pick<SkillsDirectoryConfig, "strict" | "maxSkills">): Effect.fn.Return<ReadonlyArray<SkillDefinition>, HarnessError> {
   if (config.strict && found.issues.length > 0) {
     return yield* Effect.fail(new HarnessError({ code: "skills.files", message: skillIssuesText(found.issues) }))
   }

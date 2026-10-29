@@ -158,7 +158,7 @@ const signalFromEnv = (name: OtlpSignal, defaults: OtlpTelemetryOptions): Effect
  * signal's are set (headers merge, so both are read). A variable that
  * is read and set to a value it cannot use fails with its `ConfigError`.
  */
-export const otlpExportFromEnv = (defaults: OtlpTelemetryOptions = {}): Effect.Effect<OtlpExport, Config.ConfigError> => Effect.gen(function* () {
+export const otlpExportFromEnv = Effect.fnUntraced(function* (defaults: OtlpTelemetryOptions = {}): Effect.fn.Return<OtlpExport, Config.ConfigError> {
   const disabled = yield* Config.Boolean("OTEL_SDK_DISABLED").pipe(Config.withDefault(false))
   const traces = disabled ? Option.none<OtlpSignalExport>() : yield* signalFromEnv("traces", defaults)
   const metrics = disabled ? Option.none<OtlpSignalExport>() : yield* signalFromEnv("metrics", defaults)

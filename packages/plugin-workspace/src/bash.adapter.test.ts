@@ -3,7 +3,7 @@ import { mkdtemp, realpath, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { PassThrough } from "node:stream"
-import { Cause, Clock, Effect, Fiber, Option, Queue, Ref, Stream } from "effect"
+import { Cause, Clock, Effect, Exit, Fiber, Option, Queue, Ref, Stream, Tracer } from "effect"
 import type { Context } from "effect"
 import { Bash, BashError, bashConformance } from "@xandreed/core"
 import type { BashEvent, BashSubject } from "@xandreed/core"
@@ -109,6 +109,21 @@ describe("the local Bash", () => {
     }))
     expect(outcome).toEqual({ events: [{ _tag: "BashChunk", stream: "stdout", text: "first" }], shell: "gone", child: "gone" })
   }, 20_000)
+
+  test("each exec is one bash.exec span, ended with its failure; building the adapter and streaming open none", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({ span: (options) => { const span = new Tracer.NativeSpan(options); spans.push(span); return span } })
+    await Effect.runPromise(Effect.scoped(Effect.all({ root: temporary, bash: makeBash({}) }).pipe(
+      Effect.flatMap(({ bash, root }) => Effect.all([
+        bash.exec("printf ok", { cwd: root }),
+        Effect.flip(bash.exec("true", { cwd: `${root}/missing` })),
+        Stream.runDrain(bash.stream("printf ok", { cwd: root })),
+      ], { concurrency: 1 })),
+      Effect.withTracer(tracer),
+    )))
+    expect(spans.map((span) => span.name)).toEqual(["bash.exec", "bash.exec"])
+    expect(spans.map((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit))).toEqual([false, true])
+  })
 })
 
 describe("the output relay", () => {

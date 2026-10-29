@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Effect, Fiber, Layer } from "effect"
+import { Effect, Exit, Fiber, Layer, Tracer } from "effect"
 import { UiOutput, UiOutputAdmission, UiOutputContext, UiOutputJournal } from "./ports/render-output.port.js"
 import { UiOutputError } from "./domain/render-output.entity.js"
 import { UiOutputLive } from "./render-output.adapter.js"
@@ -49,4 +49,19 @@ test("storage failure cannot produce a successful tool receipt", async () => {
     Effect.provide(provide(() => Effect.void, () => Effect.fail(new UiOutputError({ code: "storage", message: "Unavailable" })))), Effect.result,
   ))
   expect(result._tag).toBe("Failure")
+})
+
+test("each emit is one render.emit span, ended with the refusal", async () => {
+  const spans: Array<Tracer.NativeSpan> = []
+  const tracer = Tracer.make({ span: (options) => { const span = new Tracer.NativeSpan(options); spans.push(span); return span } })
+  await Effect.runPromise(Effect.gen(function* () {
+    const output = yield* UiOutput
+    yield* output.emit(proposal)
+    yield* Effect.result(output.emit({ ...proposal, operationId: "refused" }))
+  }).pipe(Effect.provide(provide(
+    (_, actual) => actual.operationId === "refused" ? Effect.fail(new UiOutputError({ code: "unavailable", message: "Release revoked" })) : Effect.void,
+    () => Effect.succeed(receipt),
+  )), Effect.withTracer(tracer)))
+  expect(spans.map((span) => span.name)).toEqual(["render.emit", "render.emit"])
+  expect(spans.map((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit))).toEqual([false, true])
 })

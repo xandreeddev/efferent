@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option } from "effect"
+import { Effect, Exit, Option, Tracer } from "effect"
 import { defineSkill, readSkillFiles } from "@xandreed/core"
 import type { HarnessError } from "@xandreed/core"
 import { alwaysSkillsText, mergeSkillRoots, settleSkills, skillsCapability } from "./skills-directory.entity.functions.js"
@@ -29,6 +29,14 @@ describe("settleSkills", () => {
 
   test("more skills than maxSkills fails with skills.limit", async () => {
     expect(await Effect.runPromise(Effect.flip(settleSkills(found, { strict: false, maxSkills: 1 })))).toMatchObject({ code: "skills.limit", message: "found 2 skills, more than 1 (maxSkills)" })
+  })
+
+  test("each settle is one skills.settle span, ended with its failure", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({ span: (options) => { const span = new Tracer.NativeSpan(options); spans.push(span); return span } })
+    await Effect.runPromise(Effect.all([settleSkills(found, { strict: false, maxSkills: 10 }), Effect.flip(settleSkills(found, { strict: true, maxSkills: 10 }))], { concurrency: 1 }).pipe(Effect.withTracer(tracer)))
+    expect(spans.map((span) => span.name)).toEqual(["skills.settle", "skills.settle"])
+    expect(spans.map((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit))).toEqual([false, true])
   })
 })
 

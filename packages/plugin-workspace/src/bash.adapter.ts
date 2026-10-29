@@ -95,7 +95,7 @@ export interface OutputRelay {
  * background process writes in `exitGraceMs`). An error on a pipe fails the
  * stream with `SpawnFailed`.
  */
-export const relayOutput = (queue: Queue.Queue<BashEvent, BashError | Cause.Done>): Effect.Effect<OutputRelay, never, Scope.Scope> => Effect.gen(function* () {
+export const relayOutput = Effect.fnUntraced(function* (queue: Queue.Queue<BashEvent, BashError | Cause.Done>): Effect.fn.Return<OutputRelay, never, Scope.Scope> {
   const waiting = yield* Queue.unbounded<Held>()
   /** Events waiting or on their way in: while there are any, a new event waits behind them. */
   const behind = MutableRef.make(0)
@@ -165,7 +165,7 @@ export const relayOutput = (queue: Queue.Queue<BashEvent, BashError | Cause.Done
  * macOS): it relies on process groups. Passes `bashConformance` on Bun and
  * Node (on Bun without the hold-back half of `backpressure`).
  */
-export const makeBash = (options: BashLiveOptions = {}): Effect.Effect<BashShape, BashError> => Effect.gen(function* () {
+export const makeBash = Effect.fnUntraced(function* (options: BashLiveOptions = {}): Effect.fn.Return<BashShape, BashError> {
   const { shell, killBackground, exitGraceMs } = { ...localSystemDefaults, ...options }
   const parentEnv = (): Readonly<Record<string, string | undefined>> => options.parentEnv ?? process.env
   const shellPath = yield* resolveShell(shell, Option.fromNullishOr(parentEnv()["PATH"]))
@@ -228,7 +228,12 @@ export const makeBash = (options: BashLiveOptions = {}): Effect.Effect<BashShape
     output.finish(bashExitOf({ code: end.code, signal: end.signal, timedOut, durationMs: end.at - started }))
   }), { bufferSize: OUTPUT_BUFFER })
 
-  return Bash.of({ stream, exec: (command, run) => collectBashResult(stream(command, run)) })
+  return Bash.of({
+    stream,
+    exec: Effect.fn("bash.exec")(function* (command: string, run: BashOptions) {
+      return yield* collectBashResult(stream(command, run))
+    }),
+  })
 })
 
 /** The local `Bash` (`makeBash`) as a layer; building it fails with `ShellMissing` when the shell is not installed. */

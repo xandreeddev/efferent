@@ -9,7 +9,7 @@ export const UiOutputLive = (maxBytes = 32_768) => Layer.effect(UiOutput, Effect
   const journal = yield* UiOutputJournal
   const scope = yield* UiOutputContext
   return UiOutput.of({
-    emit: (input) => Effect.gen(function* () {
+    emit: Effect.fn("render.emit")(function* (input: UiOutputProposal) {
       const proposal = yield* Schema.decodeUnknownEffect(UiOutputProposal)(input, { onExcessProperty: "error" }).pipe(
         Effect.mapError(() => new UiOutputError({ code: "invalid", message: "Invalid component proposal" })),
       )

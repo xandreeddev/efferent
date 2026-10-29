@@ -361,6 +361,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   ends with the call's failure; calls that name a session carry
   `efferent.session.id`, and opening the SQLite file is a
   `session_log.open` span.
+- Spans at three more boundaries: the local `Bash`'s `exec` opens
+  `bash.exec`, the `render_component` tool's output `render.emit`, and the
+  skills directory `skills.settle` when an agent is built; each records its
+  failure.
 
 ### Changed
 
@@ -701,6 +705,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `google` and `router` keys in core and the agent loop, tests and kits
   aside.
 - `effect/prefer-effect-fn` runs in `plugin-session-sqlite`.
+- `effect/prefer-effect-fn` runs on `plugin-workspace`, `plugin-render` and
+  `plugin-telemetry`.
 
 ## 0.14.0 — 2026-10-29
 

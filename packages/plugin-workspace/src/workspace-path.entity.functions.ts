@@ -30,7 +30,7 @@ export const isWithin = (root: string, path: string): boolean => path === root |
  * absolute (against the process's directory) and resolved by the file
  * system; one that cannot be resolved fails with `WorkspaceMissing`.
  */
-export const openWorkspace = (path: Path.Path): Effect.Effect<WorkspaceAccess, Failure, FileSystem | SessionEnvironment> => Effect.gen(function* () {
+export const openWorkspace = Effect.fnUntraced(function* (path: Path.Path): Effect.fn.Return<WorkspaceAccess, Failure, FileSystem | SessionEnvironment> {
   const fs = yield* FileSystem
   const { workspace } = yield* SessionEnvironment
   const lexicalRoot = path.resolve(workspace)
@@ -74,7 +74,7 @@ const canonicalOf = (access: WorkspaceAccess, target: string): Effect.Effect<str
  * (`OutsideWorkspace`). This is a guardrail against mistakes, not a
  * sandbox: what a path names can change between this check and its use.
  */
-export const resolveTarget = (access: WorkspaceAccess, input: string, options: { readonly confine: boolean }): Effect.Effect<WorkspaceTarget, Failure> => Effect.gen(function* () {
+export const resolveTarget = Effect.fnUntraced(function* (access: WorkspaceAccess, input: string, options: { readonly confine: boolean }): Effect.fn.Return<WorkspaceTarget, Failure> {
   const lexical = access.path.resolve(access.root, input.length === 0 ? "." : input)
   const display = displayOf(access, lexical)
   const inside = (path: string) => isWithin(access.root, path) || isWithin(access.lexicalRoot, path)
