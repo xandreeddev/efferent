@@ -5251,7 +5251,7 @@
     {
       "code": "events.background",
       "where": "a background subscription",
-      "meaning": "A background handler died with a defect; the turn fails when the bus drains."
+      "meaning": "A background handler was interrupted; the turn fails when the bus drains. One that dies with a defect fails it with that defect (`turn.defect`)."
     },
     {
       "code": "events.encode",

@@ -42,6 +42,17 @@ test("provider failure is unavailable, never a measured zero", async () => {
   expect(Option.isNone(result[0]!.usage.costUsd)).toBe(true)
   expect(summarizeAssessments(result).scored).toBe(0)
 })
+test("a failed assessment's reason is its error's code and message, or a defect's message, never a stack frame or a path", async () => {
+  // Made here, so its stack names this file.
+  const crashed = new Error("judge crashed")
+  const [died, unavailable] = await Effect.runPromise(assessAll([
+    { evaluator: { ...judge, id: "crashing", run: () => Effect.die(crashed) }, select: ["supported"] },
+    { evaluator: { ...judge, run: () => Effect.fail(new AssessmentError({ code: "unavailable", message: "missing evidence" })) }, select: ["supported"] },
+  ], { output: "", reference: false }))
+  expect([died?.status, Option.getOrNull(died!.reason)]).toEqual(["error", "judge crashed"])
+  expect([unavailable?.status, Option.getOrNull(unavailable!.reason)]).toEqual(["unavailable", "unavailable: missing evidence"])
+  expect(JSON.stringify([died, unavailable])).not.toContain(import.meta.dir)
+})
 test("invalid judge output is an execution error, not clamped", async () => {
   const result = await Effect.runPromise(assessAll([{ evaluator: { ...judge, metrics: ["helpful"], run: () => Effect.succeed({ metrics: [{ kind: "score", name: "helpful", value: 7, min: 0, max: 1 }], reason: "invalid" }) }, select: ["helpful"] }], { output: "", reference: false }))
   expect(result[0]?.status).toBe("error")

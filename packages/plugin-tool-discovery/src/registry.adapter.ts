@@ -18,6 +18,7 @@ import {
   HarnessError,
   IntentMatcher,
   mediaSlotsOf,
+  reasonOf,
   recordDecision,
   replayableContext,
   resolveCapabilities,
@@ -55,6 +56,7 @@ export interface DiscoveryConfig {
 }
 
 const failure = (error: string, message: string) => ({ error, message })
+const firstLine = (text: string): string => text.split("\n", 1)[0] ?? ""
 const harness = (code: string, message: string) => new HarnessError({ code, message })
 
 const LoadSkill = Tool.make("load_skill", {
@@ -300,13 +302,18 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       const exit = yield* lane.withPermits(1)(Effect.exit(call.pipe(Effect.provide(runServices))))
       const durationMs = (yield* Clock.currentTimeMillis) - started
       const ok = Exit.isSuccess(exit)
+      // A defect reaches the model (and the journal, through `tool.completed`) as the first line of its message;
+      // its stack, with the host's paths, goes to the log only.
       const value: unknown = Exit.isSuccess(exit) ? exit.value
-        : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${Cause.pretty(exit.cause).slice(0, 300)}`))
+        : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${firstLine(reasonOf(exit.cause)).slice(0, 300)}`))
       // A HarnessError the handler died with is the turn's, not the tool's: a subscriber failed on an event the
       // handler published (`tool.progress`, `skills.activated`). Like a failure on `tool.started`, it fails the turn
       // once `tool.completed` is out, instead of reaching the model as a ToolDefect.
       const turnFailure = Exit.isSuccess(exit) ? Option.none<HarnessError>()
         : Option.fromNullishOr(exit.cause.reasons.flatMap((reason) => Cause.isDieReason(reason) && reason.defect instanceof HarnessError ? [reason.defect] : [])[0])
+      if (Exit.isFailure(exit) && Option.isNone(Cause.findErrorOption(exit.cause)) && Option.isNone(turnFailure)) {
+        yield* Effect.logError(`${name} failed unexpectedly`, exit.cause).pipe(Effect.annotateLogs({ tool: name, invocationId }))
+      }
       const encoded = yield* Schema.encodeUnknownEffect(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(Effect.orElseSucceed(() => value))
       yield* run.events.publish({ _tag: "tool.completed", step, invocationId, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
       if (Option.isSome(turnFailure)) return yield* Effect.die(turnFailure.value)

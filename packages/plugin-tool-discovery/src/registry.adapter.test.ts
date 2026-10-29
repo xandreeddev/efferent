@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
-import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Cause, Effect, Layer, Logger, Option, Ref, References, Schema, Stream } from "effect"
 import type { Context } from "effect"
 import {
   ActionPolicy,
@@ -330,6 +330,35 @@ describe("the registry refuses a call before its handler runs", () => {
     expect(turn.events.map((event) => `${event._tag}:${"invocationId" in event ? event.invocationId : ""}`)).toEqual([
       "tool.refused:run-1:call:0", "tool.started:run-1:call:1", "tool.completed:run-1:call:1",
     ])
+  })
+})
+
+describe("a handler that dies", () => {
+  const Crash = Tool.make("crash", { description: "Always dies.", parameters: Schema.Struct({}), success: Schema.String, failure: Failure, failureMode: "return" })
+  // Made here, so its stack names this file: none of it may reach the model, the bus or the journal.
+  const defect = new Error("disk on fire\nwhile writing the cache")
+  const crashing = defineCapability({
+    id: "crashing", version: "1",
+    tools: [defineTool({ tool: Crash, handler: () => Effect.die(defect) })],
+    skills: [defineSkill({ id: "crashing", summary: "Crash.", tools: [Crash.name], always: true })],
+  })
+
+  test("returns the first line of its message as a ToolDefect, with no stack frame or path, and logs the whole cause", async () => {
+    const logged: Array<{ readonly message: string; readonly cause: Cause.Cause<unknown>; readonly annotations: Readonly<Record<string, unknown>> }> = []
+    const capture = Logger.layer([Logger.make((options) => logged.push({
+      message: [options.message].flat().join(" "), cause: options.cause, annotations: options.fiber.getRef(References.CurrentLogAnnotations),
+    }))])
+    const turn = await Effect.runPromise(refusalTurn([[Crash.name, {}]], { capabilities: [crashing] }).pipe(Effect.provide(capture)))
+    expect(turn.results).toEqual([{ error: "ToolDefect", message: "crash failed unexpectedly: disk on fire" }])
+    const completed = turn.events.find((event) => event._tag === "tool.completed")
+    expect(completed).toMatchObject({ ok: false, result: turn.results[0], encoded: turn.results[0] })
+    const written = JSON.stringify([turn.results, turn.events, turn.stored])
+    expect(written).not.toContain(import.meta.dir)
+    expect(written).not.toContain("registry.adapter.test")
+    expect(written).not.toMatch(/\bat\s/)
+    expect(logged).toHaveLength(1)
+    expect(logged[0]).toMatchObject({ message: "crash failed unexpectedly", annotations: { tool: "crash", invocationId: "run-1:call:0" } })
+    expect(Cause.squash(logged[0]!.cause)).toBe(defect)
   })
 })
 

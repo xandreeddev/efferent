@@ -8,6 +8,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `reasonOf(cause)` in `@xandreed/core`: a cause as one line of text that is
+  safe for reports, stored records and model-facing failures (`code:
+  message`, `interrupted`, or the defect's message; never a stack).
+
+### Fixed
+
+- Failure text no longer carries stack traces or the local paths in them. A
+  failed trial, grade or assessment records `code: message`, `interrupted`,
+  or the defect's message, so `report.json`, CLI output and the Langfuse and
+  LangSmith exports change wording. A tool handler that dies returns
+  `ToolDefect` with the first line of its message only; the full cause is
+  logged at error level with `tool` and `invocationId`.
+- A background event handler that dies with a defect now fails the turn with
+  that defect (`turn.defect` in `turn.ended`) instead of `events.background`
+  carrying the stack. `events.background` now means a background handler was
+  interrupted.
+
 ### Repository
 
 - The contributor guidance (`AGENTS.md` and the `commit-style` skill) states

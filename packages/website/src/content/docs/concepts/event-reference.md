@@ -334,7 +334,7 @@ Besides the begin codes, these are common `HarnessError` codes a turn fails with
 | `turn.numbering` | the turn's memory | Memory numbered the user's message differently from the turn the session stored. |
 | `events.reserved` | publishing a host event | The host event's name is one of the reserved kinds. |
 | `events.depth` | publishing an event | Reactions nested deeper than `maxEventDepth` (8 by default). |
-| `events.background` | a background subscription | A background handler died with a defect; the turn fails when the bus drains. |
+| `events.background` | a background subscription | A background handler was interrupted; the turn fails when the bus drains. One that dies with a defect fails it with that defect (`turn.defect`). |
 | `events.encode` | a host event's `make` / `publish` | The payload did not encode with the host event's schema. |
 | `service.missing` | `Agent.turn` | A service the turn needs is not provided by the agent's plugins or the turn's services. |
 | `config.graph` | `Agent.define` | The plugin graph cannot be built (a missing provider, a cycle, a misplaced turn-dependent plugin). |
