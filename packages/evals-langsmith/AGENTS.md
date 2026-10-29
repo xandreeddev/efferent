@@ -10,7 +10,7 @@ Exports a saved `EvaluationRun` to LangSmith through its official client (`langs
 - Keep exports repeatable: a create refused as a conflict (`LangSmithConflictError`, HTTP 409) becomes an update of the same id (`upsert`).
 - Export only `scored` grades' `boolean`, `score` and `probability` metrics, as feedback keyed `<grader>@<version>/<scope>/<metric>` with the grade's context and usage.
 - Flush the runs before sending feedback; keep both fan-outs bounded (`concurrency: 8`).
-- Fail with an `EvaluationError` (`invalid` when the run does not encode, `provider` for the service); the local report is never touched.
+- Fail with an `EvaluationError` (`invalid` when the run does not encode, `provider` for the service) that keeps the schema or client error as `cause`; the message is `LangSmith export: ` and the client's reason (`reasonOf(Cause.die(error))`), never `String(error)`. The local report is never touched.
 
 ## Public surface
 
@@ -35,6 +35,7 @@ None.
 ## Tests
 
 - `src/export.test.ts:96` and `:107`: the evals fixture app (`@xandreed/evals/testing/fixture.testing`) exported to a key-free `Bun.serve` stand-in that answers a repeated create with 409; the second export must update, not duplicate.
+- `src/export.test.ts:129`: a request refused with 401 fails as `provider`, the client's error as its cause.
 - `bun run verify:packages` imports the packed exporter on Node (`scripts/evaluation-consumer.fixture.mjs`).
 - Run: `env -u HTTP_PROXY -u HTTPS_PROXY bun test packages/evals-langsmith`.
 

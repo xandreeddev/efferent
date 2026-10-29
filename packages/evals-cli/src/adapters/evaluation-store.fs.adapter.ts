@@ -1,10 +1,13 @@
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { randomUUID } from "node:crypto"
-import { Effect, Layer, Predicate, Schema } from "effect"
-import { EvaluationRunStore, EvaluationError, EvaluationRun, Trial } from "@xandreed/evals"
+import { Cause, Effect, Layer, Predicate, Schema } from "effect"
+import { EvaluationRunStore, EvaluationError, EvaluationRun, Trial, reasonOf } from "@xandreed/evals"
 
-export const fileIo = <A>(action: () => Promise<A>) => Effect.tryPromise({ try: action, catch: (error) => new EvaluationError({ code: "persistence", message: String(error) }) })
+/** A failed file operation as `persistence`: `what` failed, then Node's reason (`EACCES: permission denied, mkdir '…'`); the error is the cause. */
+const persistence = (what: string, error: unknown) =>
+  new EvaluationError({ code: "persistence", message: `${what}: ${reasonOf(Cause.die(error))}`, cause: error })
+export const fileIo = <A>(action: () => Promise<A>) => Effect.tryPromise({ try: action, catch: (error) => persistence("File operation failed", error) })
 /** Write to a temporary file, then rename it into place; a failed write removes the temporary file. */
 export const writeJson = (path: string, value: unknown) => Effect.gen(function* () {
   yield* fileIo(() => mkdir(dirname(path), { recursive: true }))
@@ -20,7 +23,7 @@ export const readText = (path: string) => Effect.tryPromise({
   try: () => readFile(path, "utf8"),
   catch: (error) => Predicate.hasProperty(error, "code") && error.code === "ENOENT"
     ? new EvaluationError({ code: "missing", message: `No file at ${path}` })
-    : new EvaluationError({ code: "persistence", message: String(error) }),
+    : persistence(`Cannot read ${path}`, error),
 })
 /** A JSON file decoded with `schema`: `missing`, `persistence`, or `invalid` when its content does not decode. */
 export const readJson = <A, I>(path: string, schema: Schema.Codec<A, I>) => readText(path).pipe(
@@ -30,6 +33,6 @@ export const readJson = <A, I>(path: string, schema: Schema.Codec<A, I>) => read
 )
 export const readRun = (path: string) => readJson(path, EvaluationRun)
 export const EvaluationRunStoreFsLive = (directory: string) => Layer.succeed(EvaluationRunStore, {
-  writeTrial: (trial) => Schema.encodeEffect(Trial)(trial).pipe(Effect.mapError((error) => new EvaluationError({ code: "persistence", message: String(error) })), Effect.flatMap((encoded) => writeJson(join(directory, "trials", `${encodeURIComponent(trial.id)}.json`), encoded))),
-  writeRun: (run) => Schema.encodeEffect(EvaluationRun)(run).pipe(Effect.mapError((error) => new EvaluationError({ code: "persistence", message: String(error) })), Effect.flatMap((encoded) => writeJson(join(directory, run.phase === "executed" ? "execution.json" : "report.json"), encoded))),
+  writeTrial: (trial) => Schema.encodeEffect(Trial)(trial).pipe(Effect.mapError((error) => new EvaluationError({ code: "persistence", message: `Trial ${trial.id} does not encode: ${error.message}`, cause: error })), Effect.flatMap((encoded) => writeJson(join(directory, "trials", `${encodeURIComponent(trial.id)}.json`), encoded))),
+  writeRun: (run) => Schema.encodeEffect(EvaluationRun)(run).pipe(Effect.mapError((error) => new EvaluationError({ code: "persistence", message: `Run ${run.id} does not encode: ${error.message}`, cause: error })), Effect.flatMap((encoded) => writeJson(join(directory, run.phase === "executed" ? "execution.json" : "report.json"), encoded))),
 })

@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
 import { LangfuseClient } from "@langfuse/client"
-import { Effect, Layer, Option, Schema } from "effect"
+import { Cause, Effect, Layer, Option, Schema } from "effect"
 import {
   EvaluationError,
   EvaluationExport,
   EvaluationRun,
+  reasonOf,
   type ExportReceipt,
   type ExporterRegistration
 } from "@xandreed/evals"
@@ -27,13 +28,17 @@ const exportService = (options: LangfuseExportOptions) => ({
       const encoded = yield* Schema.encodeEffect(EvaluationRun)(run).pipe(
         Effect.mapError(
           (error) =>
-            new EvaluationError({ code: "invalid", message: String(error) })
+            new EvaluationError({
+              code: "invalid",
+              message: `Run ${run.id} does not encode: ${error.message}`,
+              cause: error
+            })
         )
       )
       const mappings = Object.fromEntries(
         run.trials.map((trial) => [trial.id, remoteId(trial.id)])
       )
-      const failed = (error: unknown) => new EvaluationError({ code: "provider", message: `Langfuse export: ${String(error)}` })
+      const failed = (error: unknown) => new EvaluationError({ code: "provider", message: `Langfuse export: ${reasonOf(Cause.die(error))}`, cause: error })
       const client = yield* Effect.try({
         try: () => new LangfuseClient({
           baseUrl: options.baseUrl,

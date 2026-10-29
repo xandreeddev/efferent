@@ -184,6 +184,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `isStoreBusy` and `errorCodeOf`.
 - `turnBeginCodes` comes from `@xandreed/core` (still exported by
   `@xandreed/sdk`) and gains `SessionContended: "session.contended"`.
+- `reasonOf` is exported from `@xandreed/evals`: a failure's cause as
+  report text (`code: message`), never a stack.
 
 ### Fixed
 
@@ -338,6 +340,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the temporary workspace, the claude implementor and the registration and
   private-text gates. `foundry check`, `foundry demo` and a crashed gate's
   finding still show the wrapped error's message.
+- The evals CLI and the Langfuse and LangSmith exporters keep the failure
+  they wrap as the error's `cause` and say what failed (`Cannot read
+  <path>: …`, `Run <id> does not encode: …`, `LangSmith export: …`). Error
+  codes are unchanged, and export receipts still hold the message only.
 
 ### Repository
 
@@ -419,6 +425,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/evals` passes `effect/no-stringified-cause` and
   `effect/no-error-code-compare`.
 - `effect/no-stringified-cause` runs over `packages/foundry`.
+- `@xandreed/evals-cli`, `@xandreed/evals-langfuse` and
+  `@xandreed/evals-langsmith` pass `effect/no-stringified-cause`.
 
 ## 0.14.0 — 2026-10-29
 

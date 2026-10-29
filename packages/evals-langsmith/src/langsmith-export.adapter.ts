@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
 import { Client } from "langsmith"
-import { Effect, Layer, Predicate, Schema } from "effect"
+import { Cause, Effect, Layer, Predicate, Schema } from "effect"
 import {
   EvaluationError,
   EvaluationExport,
   EvaluationRun,
+  reasonOf,
   type ExportReceipt,
   type ExporterRegistration
 } from "@xandreed/evals"
@@ -22,7 +23,8 @@ const remoteId = (id: string) => {
 const providerError = (error: unknown) =>
   new EvaluationError({
     code: "provider",
-    message: `LangSmith export: ${String(error)}`
+    message: `LangSmith export: ${reasonOf(Cause.die(error))}`,
+    cause: error
   })
 const sdk = <A>(request: () => Promise<A>) =>
   Effect.tryPromise({ try: request, catch: (error) => error })
@@ -51,7 +53,11 @@ const exportService = (options: LangSmithExportOptions) => ({
       const encoded = yield* Schema.encodeEffect(EvaluationRun)(run).pipe(
         Effect.mapError(
           (error) =>
-            new EvaluationError({ code: "invalid", message: String(error) })
+            new EvaluationError({
+              code: "invalid",
+              message: `Run ${run.id} does not encode: ${error.message}`,
+              cause: error
+            })
         )
       )
       const mappings = Object.fromEntries(

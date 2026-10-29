@@ -107,6 +107,9 @@ const src = (name: string): string => `packages/${name}/src/**`
 const STRINGIFIED_CAUSE_CLEAN = [
   "sdk",
   "evals",
+  "evals-cli",
+  "evals-langfuse",
+  "evals-langsmith",
   "plugin-memory-window",
   "plugin-memory-summary",
   "plugin-memory-digest",

@@ -125,3 +125,26 @@ test("feedback carries encoded values, and exporting a report again updates what
   expect(patched).toContain(`/runs/${remote}`)
   expect(patched.filter((path) => path.startsWith("/feedback/"))).toHaveLength(1)
 })
+
+test("a refused request is a provider error that keeps the client's error as its cause", async () => {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json({ detail: "Invalid token" }, { status: 401 })
+  })
+  const run = await report()
+  const refused = await Effect.runPromise(
+    Effect.gen(function* () {
+      const port = yield* EvaluationExport
+      return yield* port.exportRun(run)
+    }).pipe(
+      Effect.provide(langsmithExporter({ apiUrl: `http://127.0.0.1:${server.port}`, apiKey: "fixture", project: "fixture" }).layer),
+      Effect.scoped,
+      Effect.flip,
+      Effect.ensuring(Effect.sync(() => server.stop(true)))
+    )
+  )
+  expect(refused.code).toBe("provider")
+  expect(refused.message).toStartWith("LangSmith export: Failed to create project. Received status [401]")
+  expect(refused.cause).toBeInstanceOf(Error)
+})

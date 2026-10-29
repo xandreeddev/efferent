@@ -93,3 +93,32 @@ test("official SDK exports linked trial metadata and measured scores", async () 
   expect(JSON.stringify(requests)).toContain("correct")
   expect(JSON.stringify(requests)).toContain("projection")
 })
+
+test("a refused ingestion is a provider error that keeps the client's error as its cause", async () => {
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => Response.json({ message: "Invalid credentials" }, { status: 401 })
+  })
+  const report = await Effect.runPromise(
+    runEvaluation(fixture(), "fixture-run", { ids: [], split: "validation" }).pipe(
+      Effect.provide(EvaluationServicesLive(fixture())),
+      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void }))
+    )
+  )
+  const refused = await Effect.runPromise(
+    Effect.gen(function* () {
+      const port = yield* EvaluationExport
+      return yield* port.exportRun(report)
+    }).pipe(
+      Effect.provide(langfuseExporter({ baseUrl: `http://127.0.0.1:${server.port}`, publicKey: "fixture", secretKey: "fixture" }).layer),
+      Effect.scoped,
+      Effect.flip,
+      Effect.ensuring(Effect.sync(() => server.stop(true)))
+    )
+  )
+  expect(refused.code).toBe("provider")
+  expect(refused.message).toStartWith("Langfuse export: UnauthorizedError")
+  expect(refused.message).toContain("Status code: 401")
+  expect(refused.cause).toBeInstanceOf(Error)
+})
