@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test"
 import { Effect } from "effect"
-import { resolveCapabilities } from "./capability.entity.functions.js"
+import { defineSkill, resolveCapabilities } from "./capability.entity.functions.js"
 
 const tool = { id: "account", version: "1", description: "Read account", returns: "Account", permissions: ["account.read"], inputSchema: {}, outputSchema: {} }
 const catalog = { version: "1", tools: [tool], recipes: [{ id: "personal", version: "1", instructions: "Read the verified account", tools: ["account"] }] }
@@ -16,4 +16,12 @@ test("selection resolves the exact catalog version and deduplicates tool closure
   const result = await Effect.runPromise(resolveCapabilities(catalog, { recipes: ["personal"], tools: ["account", "account"] }, new Set(["account.read"])))
   expect(result.catalogVersion).toBe("1")
   expect(result.tools).toEqual([tool])
+})
+test("an always-on skill takes no instructions: nothing would show them to the model", () => {
+  // @ts-expect-error -- an always-on skill is never loaded, so its instructions could never reach the model.
+  const refused = defineSkill({ id: "style", summary: "House style.", instructions: "Write short sentences.", tools: [], always: true })
+  const always = defineSkill({ id: "core", summary: "Look records up.", tools: ["lookup"], always: true })
+  const loadable = defineSkill({ id: "delivery", summary: "Deliver a final answer.", instructions: "Deliver once.", tools: ["deliver"] })
+  const either = (on: boolean) => defineSkill({ id: "read", summary: "Read files.", tools: ["read"], always: on })
+  expect([refused.always, always.always, always.instructions, loadable.always, loadable.instructions, either(true).always]).toEqual([true, true, "", false, "Deliver once.", true])
 })

@@ -195,13 +195,13 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
         if (digest._tag === "Summarize") {
           const preserve = digest.preserve(result)
           return Option.some({
-            ...base, mode: "summarize", items: [],
+            ...base, mode: "summarize", items: [], preserve,
             apply: (outcome) => Option.filter(outcome.summary, (summary) => summary.trim().length > 0 && preserve.every((id) => summary.includes(id))),
           })
         }
         const items = digest.items(result)
         return items.length === 0 ? Option.none() : Option.some({
-          ...base, mode: "select", items,
+          ...base, mode: "select", items, preserve: [],
           apply: (outcome) => {
             const keep = outcome.keep.filter((key) => items.some((item) => item.key === key))
             return keep.length === 0 ? Option.none() : Option.some(digest.render(result, params, keep))

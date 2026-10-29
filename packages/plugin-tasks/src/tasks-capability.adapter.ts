@@ -3,7 +3,7 @@ import { Effect, Option, Schema } from "effect"
 import { defineCapability, defineSkill, defineTool, Failure, RunContext, TaskMode, Tasks, TaskStatus } from "@xandreed/core"
 
 const StartTask = Tool.make("start_task", {
-  description: "Start a background task: another run of you works on the instructions while this conversation goes on, and its result comes back here when it finishes, for you to answer then. Use it for long work the user need not wait for, and say that you started it. mode fork: the task sees this conversation so far; spawn: it sees only the instructions.",
+  description: "Start a background task: another run of you works on the instructions while this conversation goes on, and its result comes back here when it finishes, for you to answer then. Use it for long work the user need not wait for, and say that you started it. Put everything the task needs in instructions: with mode spawn it sees only them; with mode fork it also sees this conversation up to the user's latest message, but not that message or anything you did since. A background task cannot start another.",
   parameters: Schema.Struct({ instructions: Schema.String, mode: TaskMode }),
   success: Schema.Struct({ taskId: Schema.String, status: TaskStatus }),
   failure: Failure,
@@ -30,7 +30,8 @@ export const tasksCapability = defineCapability({
       handler: ({ instructions, mode }) => Effect.gen(function* () {
         const run = yield* RunContext
         const tasks = yield* Tasks
-        const task = yield* tasks.start(run.session, { instructions, mode, meta: { runId: run.runId } }).pipe(Effect.mapError((error) =>
+        // The turn's own metadata (a tenant, a quota key) goes with the task, so its turns are admitted as the starter's.
+        const task = yield* tasks.start(run.session, { instructions, mode, meta: { ...run.admitted.meta, runId: run.runId } }).pipe(Effect.mapError((error) =>
           error._tag === "TaskRefused" ? { error: "TaskRefused", message: error.message } : unavailable(error)))
         return { taskId: task.taskId, status: task.status }
       }),

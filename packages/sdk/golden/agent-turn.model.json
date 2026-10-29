@@ -56,7 +56,7 @@
           "fingerprint": "9c48f5e0cc",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 68,
-          "reservedTokens": 303,
+          "reservedTokens": 397,
           "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
@@ -74,7 +74,7 @@
           "fingerprint": "c07c91772d8",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 242,
-          "reservedTokens": 303,
+          "reservedTokens": 397,
           "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
@@ -92,7 +92,7 @@
           "fingerprint": "9464a1884d4",
           "systemFingerprint": "3f61f4eeed",
           "estimatedTokens": 412,
-          "reservedTokens": 347,
+          "reservedTokens": 441,
           "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
@@ -196,7 +196,7 @@
           "fingerprint": "69e6bd65b09",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 941,
-          "reservedTokens": 387,
+          "reservedTokens": 481,
           "budgetTokens": 64000,
           "compactions": 1,
           "activeTools": [
@@ -216,7 +216,7 @@
           "fingerprint": "fe6f6322c9e",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 1076,
-          "reservedTokens": 387,
+          "reservedTokens": 481,
           "budgetTokens": 64000,
           "compactions": 1,
           "activeTools": [
@@ -301,12 +301,19 @@
         },
         {
           "name": "recall_context",
-          "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
           "parameters": {
             "type": "object",
             "properties": {
               "locator": {
-                "type": "string"
+                "type": "string",
+                "description": "The locator the shortened result shows."
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "The first character to return; 0 by default."
               }
             },
             "required": [
@@ -424,12 +431,19 @@
         },
         {
           "name": "recall_context",
-          "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
           "parameters": {
             "type": "object",
             "properties": {
               "locator": {
-                "type": "string"
+                "type": "string",
+                "description": "The locator the shortened result shows."
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "The first character to return; 0 by default."
               }
             },
             "required": [
@@ -580,12 +594,19 @@
         },
         {
           "name": "recall_context",
-          "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
           "parameters": {
             "type": "object",
             "properties": {
               "locator": {
-                "type": "string"
+                "type": "string",
+                "description": "The locator the shortened result shows."
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "The first character to return; 0 by default."
               }
             },
             "required": [
@@ -862,12 +883,19 @@
         },
         {
           "name": "recall_context",
-          "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
           "parameters": {
             "type": "object",
             "properties": {
               "locator": {
-                "type": "string"
+                "type": "string",
+                "description": "The locator the shortened result shows."
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "The first character to return; 0 by default."
               }
             },
             "required": [
@@ -1193,12 +1221,19 @@
         },
         {
           "name": "recall_context",
-          "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+          "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
           "parameters": {
             "type": "object",
             "properties": {
               "locator": {
-                "type": "string"
+                "type": "string",
+                "description": "The locator the shortened result shows."
+              },
+              "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991,
+                "description": "The first character to return; 0 by default."
               }
             },
             "required": [

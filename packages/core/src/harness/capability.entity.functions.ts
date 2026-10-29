@@ -36,16 +36,26 @@ export const defineTool = <T extends Tool.Any, R>(definition: {
   annotations: { ...defaultAnnotations, ...definition.annotations },
 })
 
-export const defineSkill = (skill: {
+/**
+ * A skill, as `defineSkill` takes it. An always-on skill is active from
+ * every turn's first step and is never loaded, so nothing shows the model
+ * instructions on it: it takes none (`instructions` does not compile with
+ * `always: true`). Give the model what such a skill's tools need in their
+ * descriptions or in a prompt section.
+ */
+export type SkillInput = {
   readonly id: string
   readonly summary: string
-  readonly instructions?: string
   readonly tools: ReadonlyArray<string>
   readonly version?: string
-  readonly always?: boolean
   readonly permissions?: ReadonlyArray<string>
   readonly references?: SkillDefinition["references"]
-}): SkillDefinition => ({
+} & (
+  | { readonly always: true; readonly instructions?: never }
+  | { readonly always?: false; readonly instructions?: string }
+)
+
+export const defineSkill = (skill: SkillInput): SkillDefinition => ({
   id: skill.id,
   version: skill.version ?? "1",
   summary: skill.summary,

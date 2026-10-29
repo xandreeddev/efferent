@@ -4,6 +4,7 @@ import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage, ToolResultPart, UserContentPart } from "../domain/message.entity.js"
 import { handoffToMessage } from "../loop/mapping.js"
+import { clippedMarker, clipTo } from "../turn/model-text.js"
 import { attachmentsOf, userMessageText } from "../turn/user-message.entity.functions.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { ArtifactRef, BuiltContext, CompactionAction, EntryId, LogBody, LogEntry, Subject } from "./memory-log.entity.js"
@@ -425,24 +426,45 @@ export const pendingCompaction = (strategy: { readonly id: string; readonly vers
 
 const clipText = (text: string, max: number): string => text.length <= max ? text : `${text.slice(0, max)}…`
 
+/** One transcript entry: its label, then its text with every further line indented, so no line inside it can pass for another entry. */
+const transcriptEntry = (label: string, text: string): string => `${label}: ${text.replaceAll("\n", "\n  ")}`
+
 /**
- * A compact, human-readable transcript of the given turns for digests and
- * ledgers: user messages, assistant text, each tool result clipped, and replies.
- * The head (the first request) always survives the cap.
+ * A compact, human-readable transcript of the given turns for summaries:
+ * user messages, assistant text, each tool result clipped to `caps.result`
+ * (with a counted marker), and replies; each entry starts a line, and its
+ * further lines are indented. It is never longer than `caps.total`: over
+ * it, the first entry (its text clipped to about a quarter of the cap) is
+ * followed by a counted marker of what was left out and the newest entries
+ * that fit (the end of the newest one, when even it does not).
  */
 export const digestTranscript = (entries: ReadonlyArray<LogEntry>, caps: { readonly result: number; readonly total: number }): string => {
-  const lines = entries.flatMap((entry): ReadonlyArray<string> => {
+  const parts = entries.flatMap((entry): ReadonlyArray<readonly [label: string, text: string]> => {
     const body = entry.body
-    if (body._tag === "TurnStarted") return [`User: ${userMessageText(body.userMessage)}`]
-    if (body._tag === "Message") return Option.toArray(Option.map(assistantText(body.message), (text) => `Assistant: ${text}`))
-    if (body._tag === "ToolResult") return [`Tool ${body.toolName}${body.isError ? " (failed)" : ""}: ${clipText(body.view, caps.result)}`]
-    if (body._tag === "TurnEnded") return Option.toArray(Option.map(body.reply, (reply) => `Reply: ${reply}`))
+    if (body._tag === "TurnStarted") return [["User", userMessageText(body.userMessage)]]
+    if (body._tag === "Message") return Option.toArray(Option.map(assistantText(body.message), (text) => ["Assistant", text] as const))
+    if (body._tag === "ToolResult") return [[`Tool ${body.toolName}${body.isError ? " (failed)" : ""}`, clipTo(body.view, caps.result)]]
+    if (body._tag === "TurnEnded") return Option.toArray(Option.map(body.reply, (reply) => ["Reply", reply] as const))
     return []
   })
+  const lines = parts.map(([label, text]) => transcriptEntry(label, text))
   const joined = lines.join("\n")
   if (joined.length <= caps.total) return joined
-  const head = lines[0] ?? ""
-  return `${head}\n[…earlier transcript clipped…]\n${lines.slice(1).join("\n").slice(-(caps.total - head.length))}`
+  const head = Option.match(Option.fromNullishOr(parts[0]), {
+    onNone: () => "",
+    onSome: ([label, text]) => transcriptEntry(label, clipTo(text, Math.floor(caps.total / 4) - label.length - 2)),
+  })
+  const rest = lines.slice(1)
+  const restChars = rest.join("\n").length
+  // What the newest entries may take: the cap less the head, the marker (at its longest) and two line breaks.
+  const room = Math.max(0, caps.total - head.length - clippedMarker(restChars).length - 2)
+  const fit = rest.reduceRight<{ readonly kept: number; readonly chars: number; readonly open: boolean }>((state, line) => {
+    const chars = state.chars + line.length + (state.kept === 0 ? 0 : 1)
+    return state.open && chars <= room ? { kept: state.kept + 1, chars, open: true } : { ...state, open: false }
+  }, { kept: 0, chars: 0, open: true })
+  const tail = fit.kept > 0 ? rest.slice(rest.length - fit.kept).join("\n") : room === 0 ? "" : (rest.at(-1) ?? "").slice(-room)
+  // Only a cap shorter than the marker itself needs the last cut.
+  return [head, clippedMarker(restChars - tail.length), ...(tail.length === 0 ? [] : [tail])].join("\n").slice(0, caps.total)
 }
 
 /** A generic ledger of condensed turns: what was asked, what was replied, what was found. */

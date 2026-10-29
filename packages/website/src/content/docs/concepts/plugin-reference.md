@@ -973,7 +973,8 @@ Requires: none
   "media": "inline",
   "maxImages": 8,
   "maxMediaChars": 20000000,
-  "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript."
+  "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
+  "summaryTimeoutMs": 60000
 }
 ```
 
@@ -1051,6 +1052,11 @@ Requires: none
     },
     "instructions": {
       "type": "string"
+    },
+    "summaryTimeoutMs": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 600000
     }
   },
   "required": [
@@ -1063,7 +1069,8 @@ Requires: none
     "media",
     "maxImages",
     "maxMediaChars",
-    "instructions"
+    "instructions",
+    "summaryTimeoutMs"
   ],
   "additionalProperties": true
 }
@@ -1081,7 +1088,8 @@ Requires: `@xandreed/core/UtilityLlm`
 
 ```json
 {
-  "maxSourceChars": 48000
+  "maxSourceChars": 48000,
+  "digestTimeoutMs": 30000
 }
 ```
 
@@ -1096,10 +1104,16 @@ Requires: `@xandreed/core/UtilityLlm`
       "type": "integer",
       "minimum": 1000,
       "maximum": 400000
+    },
+    "digestTimeoutMs": {
+      "type": "integer",
+      "minimum": 100,
+      "maximum": 600000
     }
   },
   "required": [
-    "maxSourceChars"
+    "maxSourceChars",
+    "digestTimeoutMs"
   ],
   "additionalProperties": true
 }

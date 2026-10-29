@@ -65,11 +65,15 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
   const listOf = (parent: SessionAddress) => parentRecords(parent).pipe(Effect.flatMap((events) =>
     Effect.forEach(startedOf(events), (started) => viewOf(parent, started, deliveredOf(events)))))
 
-  const taskOf = (parent: SessionAddress, taskId: string) => Effect.gen(function* () {
+  /** The task as its parent started it, and where it stands. */
+  const recordOf = (parent: SessionAddress, taskId: string) => Effect.gen(function* () {
     const events = yield* parentRecords(parent)
     const started = startedOf(events).find((record) => record.taskId === taskId)
-    return started === undefined ? yield* Effect.fail(new TaskMissing({ session: parent.id, taskId })) : yield* viewOf(parent, started, deliveredOf(events))
+    return started === undefined ? yield* Effect.fail(new TaskMissing({ session: parent.id, taskId }))
+      : { started, task: yield* viewOf(parent, started, deliveredOf(events)) }
   })
+
+  const taskOf = (parent: SessionAddress, taskId: string) => recordOf(parent, taskId).pipe(Effect.map(({ task }) => task))
 
   /** The task's result in its child, recorded outside a turn (a child the host would not admit): unless it has ended. */
   const recordEnd = (child: SessionAddress, result: Result) => sessions.transact(child, () => Effect.gen(function* () {
@@ -88,13 +92,17 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
       Effect.fail(new HarnessError({ code: "turn.closed", message: `turn ${closed.turn} was ${closed.reason}` })))))
   })
 
-  /** The child's one turn: begun once (its key is the task's), its result recorded before it ends unless it was cancelled. */
-  const runChild = (parent: SessionAddress, task: TaskView, deadline: Option.Option<number>) => {
+  /**
+   * The child's one turn: begun once (its key is the task's) with the
+   * starter's `meta`, its result recorded before it ends unless it was
+   * cancelled.
+   */
+  const runChild = (parent: SessionAddress, task: TaskView, meta: JsonObject, deadline: Option.Option<number>) => {
     const child = childOf(parent, task.child)
     return Effect.scoped(Effect.gen(function* () {
       const writer = yield* sessions.begin(child, {
         _tag: "User", userMessage: new UserMessage({ text: task.instructions }), runId: yield* Effect.sync(() => crypto.randomUUID()),
-        key: deliveryId(task.taskId), command: { task: task.taskId },
+        key: deliveryId(task.taskId), command: { task: task.taskId }, meta,
       })
       // A cancel that landed after the task was read, before its turn began.
       if ((yield* sessions.read(child, { kinds: [TASK_CANCELLED] })).length > 0) return yield* writer.end({ reason: "cancelled", failure: Option.none() })
@@ -163,15 +171,15 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     yield* writer.end({ reason: (yield* Ref.get(answered)) ? "partial" : "interrupted", failure: Option.some(cut) })
   })
 
-  /** Deliver the task if it finished and was not delivered, then let the parent react to what waits. */
-  const settle = (parent: SessionAddress, taskId: string, deadline: Option.Option<number>) => Effect.gen(function* () {
+  /** Deliver the task if it finished and was not delivered, then let the parent react to what waits, its turns begun with the starter's `meta`. */
+  const settle = (parent: SessionAddress, taskId: string, meta: JsonObject, deadline: Option.Option<number>) => Effect.gen(function* () {
     const task = yield* taskOf(parent, taskId)
     if (!isFinished(task.status) || task.delivered) return
     const delivered = yield* deliverNotice(parent, task)
     const now = yield* Clock.currentTimeMillis
     const remaining = Option.map(deadline, (at) => at - now)
     if (delivered.pending === 0 || (Option.isSome(remaining) && remaining.value <= 0)) return
-    yield* sessions.drain(parent, (writer) => reaction(writer, deadline), Option.isSome(deadline) ? { maxTurns: 1 } : {})
+    yield* sessions.drain(parent, (writer) => reaction(writer, deadline), Option.isSome(deadline) ? { maxTurns: 1, meta } : { meta })
   })
 
   /**
@@ -184,9 +192,9 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     const started = yield* Clock.currentTimeMillis
     const executeBy = Option.map(deadline, (at) => at - Math.min(config.closingReserveMs, Math.floor(Math.max(0, at - started) / 2)))
     const execution = Effect.gen(function* () {
-      const task = yield* taskOf(parent, taskId)
-      if (task.status === "pending") yield* runChild(parent, task, executeBy)
-      yield* settle(parent, taskId, executeBy)
+      const { started: record, task } = yield* recordOf(parent, taskId)
+      if (task.status === "pending") yield* runChild(parent, task, record.meta, executeBy)
+      yield* settle(parent, taskId, record.meta, executeBy)
     })
     yield* Option.match(deadline, {
       onNone: () => execution,

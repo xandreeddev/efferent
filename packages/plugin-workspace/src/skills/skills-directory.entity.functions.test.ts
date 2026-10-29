@@ -33,9 +33,10 @@ describe("settleSkills", () => {
 })
 
 describe("the always-on section", () => {
+  // An always-on skill with instructions, as a SKILL.md with `always: true` reads (defineSkill takes none for one).
   const skills = [
-    defineSkill({ id: "style", summary: "House style.", instructions: "Write short sentences.", tools: [], always: true,
-      references: [{ id: "references/words.md", title: "Words", text: "..." }] }),
+    { ...defineSkill({ id: "style", summary: "House style.", instructions: "Write short sentences.", tools: [],
+      references: [{ id: "references/words.md", title: "Words", text: "..." }] }), always: true },
     defineSkill({ id: "rare", summary: "Rarely needed.", tools: [] }),
   ]
 

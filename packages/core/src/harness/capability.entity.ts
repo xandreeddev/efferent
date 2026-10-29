@@ -33,12 +33,17 @@ export type SkillReference = typeof SkillReference.Type
 export const SkillDefinition = Schema.Struct({
   id: Schema.Trimmed.check(Schema.isNonEmpty()),
   version: Schema.Trimmed.check(Schema.isNonEmpty()),
-  /** Tier 1: one line in the catalogue, always in context. */
+  /** Tier 1: the skill's line in tool discovery's catalogue, which lists only the skills loaded on demand. */
   summary: Schema.Trimmed.check(Schema.isNonEmpty()),
-  /** Tier 2: returned by load_skill together with the skill's tools. */
+  /**
+   * Tier 2: returned by load_skill together with the skill's tools. Tool
+   * discovery never shows an always-on skill's instructions, so
+   * `defineSkill` takes none for one; skills read from files deliver theirs
+   * in the skills directory's own section.
+   */
   instructions: Schema.String,
   tools: Schema.Array(Schema.Trimmed.check(Schema.isNonEmpty())),
-  /** Active from the first step of every turn. */
+  /** Active from the first step of every turn; not in the catalogue. */
   always: Schema.Boolean,
   permissions: Schema.Array(Schema.String),
   references: Schema.Array(SkillReference),

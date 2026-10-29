@@ -59,6 +59,14 @@ Anything that turns a log into text (search, transcripts, traces,
 fingerprints, estimates) goes through `elideMediaData` or
 `userMessageText`, never the base64.
 
+Text the model reads that no user typed uses the frames in
+`src/turn/model-text.ts`: `hostNote` for a note the host adds as a
+user-role message (`[Host note: …]`, never "system" or "source of
+truth"), `framed(tag, text)` for untrusted text such as tool output,
+transcripts and summaries (the tag inside it escaped in any case or
+spacing), and `clipTo` / `clippedMarker` for a cut that says how much it
+dropped. Pin every such text with an exact test beside it.
+
 Skills as files: `harness/skill-files.entity.ts` and its functions read a
 tree of `SKILL.md` files without IO (`readSkillFiles`, which never fails and
 returns the issues; `skillsFromFiles`, strict) and collect one through the

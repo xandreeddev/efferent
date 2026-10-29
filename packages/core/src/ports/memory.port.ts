@@ -50,6 +50,12 @@ export interface DigestTask {
   readonly items: ReadonlyArray<{ readonly key: string; readonly text: string }>
   /** The full rendered result (summarize mode's input). */
   readonly source: string
+  /**
+   * Summarize mode: the identifiers the summary must contain verbatim, or
+   * `apply` refuses it (empty in select mode, which keeps whole items).
+   * The digester shows them to its model.
+   */
+  readonly preserve: ReadonlyArray<string>
   /** The text the model will see for this outcome; None keeps the original view. */
   readonly apply: (outcome: DigestOutcome) => Option.Option<string>
 }

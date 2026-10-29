@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
-import { entryId, estimateMessageTokens, renderLog, ToolCallId, UserMessage } from "@xandreed/core"
+import { entryId, estimateMessageTokens, renderLog, RunContext, ToolCallId, toolParametersSchema, UserMessage } from "@xandreed/core"
 import type { LogBody, LogEntry, ToolViews } from "@xandreed/core"
-import { WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
+import { RECALL_PAGE_CHARS, recallCapability, recallPage, spillPreview, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
 const config = {
   compactPreviousTurn: true, turnContext: "current" as const, replies: true, spillMinChars: 100, previewChars: 20, ledgerTurnChars: 40,
@@ -14,8 +14,8 @@ const views: ToolViews = {
   digest: () => Effect.succeed(Option.none()),
 }
 const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(`run-${turn}`, seq), runId: `run-${turn}`, turn, step: 0, at: seq, body })
-const result = (seq: number, turn: number, view: string): LogEntry => at(seq, turn, {
-  _tag: "ToolResult", toolCallId: ToolCallId.make(`c${seq}`), toolName: "lookup", isError: false, encoded: view, view, viewVersion: "1", subjects: [], artifacts: [], pinned: false,
+const result = (seq: number, turn: number, view: string, toolName = "lookup"): LogEntry => at(seq, turn, {
+  _tag: "ToolResult", toolCallId: ToolCallId.make(`c${seq}`), toolName, isError: false, encoded: view, view, viewVersion: "1", subjects: [], artifacts: [], pinned: false,
 })
 const call = (seq: number, turn: number, id: number): LogEntry => at(seq, turn, { _tag: "Message", message: { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(`c${id}`), toolName: "lookup", input: {} }] } })
 const log = (big: string): ReadonlyArray<LogEntry> => [
@@ -42,5 +42,45 @@ describe("window memory policy", () => {
     expect(dropped).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill" }, { _tag: "DropTurns", throughTurn: 1 }] } })
     const impossible = await maintain(entries, 5, "step")
     expect(impossible).toMatchObject({ _tag: "Failure", failure: { code: "context.budget" } })
+  })
+})
+
+describe("reading a spilled result back", () => {
+  const recall = recallCapability.tools[0]!
+  const stored = result(2, 1, "x".repeat(RECALL_PAGE_CHARS + 500))
+  // The registry erases a handler's requirements; this one needs only the run's memory.
+  const recalled = (params: { readonly locator: string; readonly offset?: number }) => Effect.runPromise(Effect.result(recall.handler(params).pipe(
+    Effect.provideService(RunContext, RunContext.of({ memory: { resolve: (id: string) => Effect.succeed(Option.some(stored).pipe(Option.filter((entry) => entry.id === id))) } } as never)),
+  ) as Effect.Effect<unknown, unknown>))
+
+  test("the preview says how many characters it left out and the offset to read them from, never a negative count", () => {
+    expect(spillPreview(stored, "abcdef", 4)).toBe(`abcd\n[… 2 more characters kept out of context; call recall_context with locator "run-1:2" and offset 4 to read them]`)
+    expect(spillPreview(stored, "abc", 10)).toBe(`abc\n[… 0 more characters kept out of context; call recall_context with locator "run-1:2" and offset 3 to read them]`)
+  })
+
+  test("recall_context says what it returns and how to page", () => {
+    expect(recall.tool.description).toBe(`Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most ${RECALL_PAGE_CHARS} characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.`)
+    expect(toolParametersSchema(recall.tool)).toMatchObject({
+      properties: {
+        locator: { type: "string", description: "The locator the shortened result shows." },
+        offset: { description: "The first character to return; 0 by default." },
+      },
+      required: ["locator"],
+    })
+  })
+
+  test("a result comes back a page at a time, each page ending with the offset of the next", async () => {
+    expect(recallPage("run-1:2", "abcdef", 2)).toBe("cdef")
+    expect(await recalled({ locator: "run-1:2" })).toMatchObject({ _tag: "Success", success: `${"x".repeat(RECALL_PAGE_CHARS)}\n[… 500 more characters; call recall_context with locator "run-1:2" and offset ${RECALL_PAGE_CHARS}]` })
+    expect(await recalled({ locator: "run-1:2", offset: RECALL_PAGE_CHARS })).toMatchObject({ _tag: "Success", success: "x".repeat(500) })
+    expect(await recalled({ locator: "run-1:2", offset: RECALL_PAGE_CHARS + 500 })).toMatchObject({ _tag: "Failure", failure: { error: "OffsetOutOfRange" } })
+    expect(await recalled({ locator: "run-9:9" })).toMatchObject({ _tag: "Failure", failure: { error: "UnknownLocator" } })
+  })
+
+  test("a recalled page is never spilled again: under pressure the other results are", async () => {
+    // The recalled page is the largest result of the turn, which would be spilled first.
+    const entries = [...log("x".repeat(3_000)), call(7, 2, 8), result(8, 2, "y".repeat(4_000), "recall_context")]
+    const decided = await maintain(entries, estimateMessageTokens(render(entries)) - 500, "step")
+    expect(decided).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill", entry: "run-2:6" }] } })
   })
 })
