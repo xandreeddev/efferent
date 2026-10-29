@@ -149,29 +149,28 @@ export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.
  * its spans under the span current where `run` is called. The message must
  * be persisted and the tools open.
  */
-export const turnOf = (options: TurnRunOptions = {}): Effect.Effect<Turn, TurnError, TurnRunServices | RunContext | StepLoop> =>
-  Effect.gen(function* () {
-    const services = replayableContext(yield* Effect.context<TurnRunServices | StepLoop>())
-    const run = yield* RunContext
-    const memory = yield* TurnMemory
-    return {
-      conversation: run.conversation,
-      runId: run.runId,
-      turn: yield* memory.number,
-      userMessage: run.userMessage,
-      admitted: run.admitted,
-      memory: run.memory,
-      events: run.events,
-      tasks: run.tasks,
-      tools: yield* turnTools,
-      context: memory.context,
-      reply: (text) => Effect.succeed<TurnOutcome>({ outcome: "completed", reply: Option.some(text) }),
-      run: (policy) => runTurnLoop(policy, options).pipe(Effect.provide(services)),
-      usage: run.usage,
-      flush: run.flush,
-      write: run.write,
-    } satisfies Turn
-  })
+export const turnOf = Effect.fnUntraced(function* (options: TurnRunOptions = {}): Effect.fn.Return<Turn, TurnError, TurnRunServices | RunContext | StepLoop> {
+  const services = replayableContext(yield* Effect.context<TurnRunServices | StepLoop>())
+  const run = yield* RunContext
+  const memory = yield* TurnMemory
+  return {
+    conversation: run.conversation,
+    runId: run.runId,
+    turn: yield* memory.number,
+    userMessage: run.userMessage,
+    admitted: run.admitted,
+    memory: run.memory,
+    events: run.events,
+    tasks: run.tasks,
+    tools: yield* turnTools,
+    context: memory.context,
+    reply: (text) => Effect.succeed<TurnOutcome>({ outcome: "completed", reply: Option.some(text) }),
+    run: (policy) => runTurnLoop(policy, options).pipe(Effect.provide(services)),
+    usage: run.usage,
+    flush: run.flush,
+    write: run.write,
+  } satisfies Turn
+})
 
 /** What a turn's span (`traceTurn`) shows besides the turn's ids. */
 export interface TurnTraceOptions {

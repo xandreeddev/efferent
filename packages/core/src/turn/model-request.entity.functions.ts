@@ -173,7 +173,7 @@ const entriesThrough = (entries: ReadonlyArray<LogEntry>, through: Option.Option
  * not rebuild the context the header was prepared from (a fork's own log
  * without its parent's history, say).
  */
-export const reconstructModelRequest = (header: ModelRequestHeader, entries: ReadonlyArray<LogEntry>) => Effect.gen(function* () {
+export const reconstructModelRequest = Effect.fnUntraced(function* (header: ModelRequestHeader, entries: ReadonlyArray<LogEntry>) {
   const context = buildContext(yield* entriesThrough(entries, header.through), header.render)
   if (context.fingerprint !== header.contextFingerprint) {
     return yield* Effect.fail(diverged("context", `the memory events rebuild context ${context.fingerprint}, the request was prepared from ${header.contextFingerprint}`))
@@ -186,7 +186,7 @@ export const reconstructModelRequest = (header: ModelRequestHeader, entries: Rea
 })
 
 /** Reconstruct one historical request from the events up to its header, excluding later responses and turns. */
-export const replayModelRequest = (events: ReadonlyArray<SessionLogEvent>, runId: string, step: number) => Effect.gen(function* () {
+export const replayModelRequest = Effect.fnUntraced(function* (events: ReadonlyArray<SessionLogEvent>, runId: string, step: number) {
   const found = yield* headerEventOf(events, runId, step)
   const header = yield* decodeHeader(found)
   const entries = yield* entriesOfEvents(events.slice(0, events.indexOf(found) + 1)).pipe(

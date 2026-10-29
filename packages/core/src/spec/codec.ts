@@ -120,57 +120,56 @@ const parseCheckBullet = (bullet: string): Effect.Effect<{ name: string; command
  * owns identity — it is not repeated in the frontmatter). Round-trip law:
  * `decodeSpecDocText(slug, encodeSpecDocText(doc)) ≡ doc`.
  */
-export const decodeSpecDocText = (
+export const decodeSpecDocText = Effect.fnUntraced(function* (
   slug: string,
   text: string,
-): Effect.Effect<SpecDoc, SpecDocParseError> =>
-  Effect.gen(function* () {
-    const fm = yield* Option.match(parseFrontmatter(text), {
-      onNone: () =>
-        Effect.fail(
-          new SpecDocParseError({ message: "missing/unterminated frontmatter fence" }),
-        ),
-      onSome: Effect.succeed,
-    })
-    const sections = yield* parseSections(fm.body)
-    const checks = yield* Effect.forEach(sections.bullets.Checks, parseCheckBullet, { concurrency: 1 })
-    const fields = fm.fields
-    const numeric = (key: string, fallback: number): number => {
-      const raw = fields[key]
-      return raw === undefined || raw.length === 0 ? fallback : Number(raw)
-    }
-    const candidate = {
-      slug,
-      status: fields["status"] ?? "draft",
-      created: fields["created"] ?? "",
-      ...(fields["locked"] !== undefined && fields["locked"].length > 0
-        ? { locked: fields["locked"] }
-        : {}),
-      goal: sections.goal,
-      acceptance: sections.bullets.Acceptance,
-      constraints: sections.bullets.Constraints,
-      nonGoals: sections.bullets["Non-goals"],
-      checks,
-      limits: {
-        maxAttempts: numeric("maxAttempts", 3),
-        budgetMinutes: numeric("budgetMinutes", 15),
-      },
-      gates: {
-        ...(fields["gatesConfig"] !== undefined && fields["gatesConfig"].length > 0
-          ? { config: fields["gatesConfig"] }
-          : {}),
-        ...(fields["testCommand"] !== undefined && fields["testCommand"].length > 0
-          ? { testCommand: fields["testCommand"] }
-          : {}),
-        ...(fields["noTest"] !== undefined ? { noTest: fields["noTest"] === "true" } : {}),
-        ...(fields["judge"] !== undefined ? { judge: fields["judge"] === "true" } : {}),
-      },
-    }
-    // The message names the rejected value, so a bad spec says what it holds.
-    return yield* Schema.decodeUnknownEffect(SpecDoc)(candidate, { reportInput: true }).pipe(
-      Effect.mapError((error) => new SpecDocParseError({ message: error.message, cause: error })),
-    )
+): Effect.fn.Return<SpecDoc, SpecDocParseError> {
+  const fm = yield* Option.match(parseFrontmatter(text), {
+    onNone: () =>
+      Effect.fail(
+        new SpecDocParseError({ message: "missing/unterminated frontmatter fence" }),
+      ),
+    onSome: Effect.succeed,
   })
+  const sections = yield* parseSections(fm.body)
+  const checks = yield* Effect.forEach(sections.bullets.Checks, parseCheckBullet, { concurrency: 1 })
+  const fields = fm.fields
+  const numeric = (key: string, fallback: number): number => {
+    const raw = fields[key]
+    return raw === undefined || raw.length === 0 ? fallback : Number(raw)
+  }
+  const candidate = {
+    slug,
+    status: fields["status"] ?? "draft",
+    created: fields["created"] ?? "",
+    ...(fields["locked"] !== undefined && fields["locked"].length > 0
+      ? { locked: fields["locked"] }
+      : {}),
+    goal: sections.goal,
+    acceptance: sections.bullets.Acceptance,
+    constraints: sections.bullets.Constraints,
+    nonGoals: sections.bullets["Non-goals"],
+    checks,
+    limits: {
+      maxAttempts: numeric("maxAttempts", 3),
+      budgetMinutes: numeric("budgetMinutes", 15),
+    },
+    gates: {
+      ...(fields["gatesConfig"] !== undefined && fields["gatesConfig"].length > 0
+        ? { config: fields["gatesConfig"] }
+        : {}),
+      ...(fields["testCommand"] !== undefined && fields["testCommand"].length > 0
+        ? { testCommand: fields["testCommand"] }
+        : {}),
+      ...(fields["noTest"] !== undefined ? { noTest: fields["noTest"] === "true" } : {}),
+      ...(fields["judge"] !== undefined ? { judge: fields["judge"] === "true" } : {}),
+    },
+  }
+  // The message names the rejected value, so a bad spec says what it holds.
+  return yield* Schema.decodeUnknownEffect(SpecDoc)(candidate, { reportInput: true }).pipe(
+    Effect.mapError((error) => new SpecDocParseError({ message: error.message, cause: error })),
+  )
+})
 
 /** Prose bullets are single-line BY GRAMMAR — collapse any whitespace runs
  *  (incl. newlines) a model slipped in. Safe for prose; NEVER applied to

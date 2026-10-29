@@ -61,7 +61,7 @@ export interface Session<E> {
  * tail drops events for a subscriber that falls behind; it will be removed
  * in a later release.
  */
-export const makeSession = <E, RS = never>(args: {
+export const makeSession = Effect.fnUntraced(function* <E, RS = never>(args: {
   readonly conversationId: ConversationId
   /** Run one turn, publishing events through the sink. Errors/defects are
    *  contained by the chassis via `onError`. */
@@ -77,90 +77,89 @@ export const makeSession = <E, RS = never>(args: {
   /** Route matching events to the lossy `transient` channel INSTEAD of the
    *  ledger — a delta flood must never grow the replay log. */
   readonly isTransient?: (event: E) => boolean
-}): Effect.Effect<Session<E>, never, RS> =>
-  Effect.gen(function* () {
-    // Each turn runs with these, traced where it runs: under the span of `send`'s caller.
-    const context = replayableContext(yield* Effect.context<RS>())
-    const log = yield* Ref.make<ReadonlyArray<SeqEvent<E>>>([])
-    const hub = yield* PubSub.sliding<SeqEvent<E>>(512)
-    const transientHub = yield* PubSub.sliding<E>(128)
-    const running = yield* Ref.make(Option.none<Fiber.Fiber<void>>())
-    const gate = yield* Semaphore.make(1)
+}): Effect.fn.Return<Session<E>, never, RS> {
+  // Each turn runs with these, traced where it runs: under the span of `send`'s caller.
+  const context = replayableContext(yield* Effect.context<RS>())
+  const log = yield* Ref.make<ReadonlyArray<SeqEvent<E>>>([])
+  const hub = yield* PubSub.sliding<SeqEvent<E>>(512)
+  const transientHub = yield* PubSub.sliding<E>(128)
+  const running = yield* Ref.make(Option.none<Fiber.Fiber<void>>())
+  const gate = yield* Semaphore.make(1)
 
-    const publish = (event: E): Effect.Effect<void> =>
-      args.isTransient?.(event) === true
-        ? PubSub.publish(transientHub, event).pipe(Effect.asVoid)
-        : Ref.modify(log, (entries) => {
-            const entry: SeqEvent<E> = { seq: entries.length, event }
-            return [entry, [...entries, entry]] as const
-          }).pipe(
-            Effect.flatMap((entry) => PubSub.publish(hub, entry)),
-            Effect.asVoid,
-          )
+  const publish = (event: E): Effect.Effect<void> =>
+    args.isTransient?.(event) === true
+      ? PubSub.publish(transientHub, event).pipe(Effect.asVoid)
+      : Ref.modify(log, (entries) => {
+          const entry: SeqEvent<E> = { seq: entries.length, event }
+          return [entry, [...entries, entry]] as const
+        }).pipe(
+          Effect.flatMap((entry) => PubSub.publish(hub, entry)),
+          Effect.asVoid,
+        )
 
-    const runContained = (text: string): Effect.Effect<void> =>
-      args.runTurn(text, publish).pipe(
-        Effect.provide(context),
-        Effect.catch((error) => publish(args.onError(String(error)))),
-        Effect.catchDefect((defect) =>
-          publish(args.onError(`turn crashed: ${String(defect)}`)),
-        ),
-        // The turn leaves its own trace, however it is interrupted: `interrupt`, or its sender's interruption.
-        Effect.onInterrupt(() => args.onInterrupt === undefined ? Effect.void : publish(args.onInterrupt())),
-      )
-
-    const send = (text: string): Effect.Effect<void> =>
-      gate.withPermits(1)(
-        // The slot holds the turn from its fork until it ends, however it ends.
-        Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
-          const fiber = yield* Effect.forkChild(restore(runContained(text)))
-          yield* Ref.set(running, Option.some(fiber))
-          // AWAIT, never join: joining an interrupted turn would interrupt
-          // the sender too — an interrupted turn ends the send normally,
-          // its trace already on the ledger. An interrupted sender
-          // interrupts its turn.
-          yield* restore(Fiber.await(fiber)).pipe(
-            Effect.onInterrupt(() => Fiber.interrupt(fiber)),
-            Effect.ensuring(Ref.set(running, Option.none())),
-          )
-        })),
-      )
-
-    // Taken from the slot, so two interrupts stop the turn once. Interrupting
-    // a turn that already finished on its own is a no-op AND leaves no event:
-    // the turn publishes its trace only when it is cut short.
-    const interrupt = Ref.getAndSet(running, Option.none()).pipe(
-      Effect.flatMap(
-        Option.match({
-          onNone: () => Effect.void,
-          onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber)), Effect.asVoid),
-        }),
+  const runContained = (text: string): Effect.Effect<void> =>
+    args.runTurn(text, publish).pipe(
+      Effect.provide(context),
+      Effect.catch((error) => publish(args.onError(String(error)))),
+      Effect.catchDefect((defect) =>
+        publish(args.onError(`turn crashed: ${String(defect)}`)),
       ),
+      // The turn leaves its own trace, however it is interrupted: `interrupt`, or its sender's interruption.
+      Effect.onInterrupt(() => args.onInterrupt === undefined ? Effect.void : publish(args.onInterrupt())),
     )
 
-    return {
-      conversationId: args.conversationId,
-      send,
-      interrupt,
-      state: Ref.get(log).pipe(
-        Effect.map((entries) => ({ log: entries, cursor: entries.length })),
+  const send = (text: string): Effect.Effect<void> =>
+    gate.withPermits(1)(
+      // The slot holds the turn from its fork until it ends, however it ends.
+      Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+        const fiber = yield* Effect.forkChild(restore(runContained(text)))
+        yield* Ref.set(running, Option.some(fiber))
+        // AWAIT, never join: joining an interrupted turn would interrupt
+        // the sender too — an interrupted turn ends the send normally,
+        // its trace already on the ledger. An interrupted sender
+        // interrupts its turn.
+        yield* restore(Fiber.await(fiber)).pipe(
+          Effect.onInterrupt(() => Fiber.interrupt(fiber)),
+          Effect.ensuring(Ref.set(running, Option.none())),
+        )
+      })),
+    )
+
+  // Taken from the slot, so two interrupts stop the turn once. Interrupting
+  // a turn that already finished on its own is a no-op AND leaves no event:
+  // the turn publishes its trace only when it is cut short.
+  const interrupt = Ref.getAndSet(running, Option.none()).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.void,
+        onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber)), Effect.asVoid),
+      }),
+    ),
+  )
+
+  return {
+    conversationId: args.conversationId,
+    send,
+    interrupt,
+    state: Ref.get(log).pipe(
+      Effect.map((entries) => ({ log: entries, cursor: entries.length })),
+    ),
+    subscribe: (since) =>
+      Stream.unwrap(
+        Effect.gen(function* () {
+          // Subscribe FIRST, then snapshot — anything landing between the
+          // snapshot and the live tail is deduped by seq (the identity).
+          const sub = yield* PubSub.subscribe(hub)
+          const entries = yield* Ref.get(log)
+          const replay = Stream.fromIterable(entries.filter((e) => e.seq >= since))
+          const seenThrough = entries.length
+          const live = Stream.fromSubscription(sub).pipe(
+            Stream.filter((e) => e.seq >= Math.max(since, seenThrough)),
+          )
+          return Stream.concat(replay, live)
+        }),
       ),
-      subscribe: (since) =>
-        Stream.unwrap(
-          Effect.gen(function* () {
-            // Subscribe FIRST, then snapshot — anything landing between the
-            // snapshot and the live tail is deduped by seq (the identity).
-            const sub = yield* PubSub.subscribe(hub)
-            const entries = yield* Ref.get(log)
-            const replay = Stream.fromIterable(entries.filter((e) => e.seq >= since))
-            const seenThrough = entries.length
-            const live = Stream.fromSubscription(sub).pipe(
-              Stream.filter((e) => e.seq >= Math.max(since, seenThrough)),
-            )
-            return Stream.concat(replay, live)
-          }),
-        ),
-      transient: Stream.fromPubSub(transientHub),
-      shutdown: interrupt,
-    } satisfies Session<E>
-  })
+    transient: Stream.fromPubSub(transientHub),
+    shutdown: interrupt,
+  } satisfies Session<E>
+})

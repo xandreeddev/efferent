@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Effect, Tracer } from "effect"
 import { FileSystem } from "../ports/file-system.port.js"
 import { makeMemoryFileSystem } from "../workspace/file-system.memory.adapter.js"
 import type { MemorySeed } from "../workspace/file-system.memory.adapter.js"
@@ -225,5 +225,23 @@ describe("collectSkillFiles", () => {
 
   test("a root that is missing fails with the FsError", async () => {
     expect(await collect({ "/other/SKILL.md": "x" })).toMatchObject({ _tag: "Failure", failure: { _tag: "FsError", reason: "NotFound" } })
+  })
+
+  test("a collection is one span, skills.collect, ending as the collection does; the file system's calls open none", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options)
+        spans.push(span)
+        return span
+      },
+    })
+    const traced = (seed: Readonly<Record<string, MemorySeed>>) => Effect.gen(function* () {
+      const fs = yield* makeMemoryFileSystem(seed)
+      return yield* collectSkillFiles("/skills", { maxFiles: 100, maxBytes: 10_000 }).pipe(Effect.provideService(FileSystem, fs))
+    }).pipe(Effect.withTracer(tracer), Effect.exit)
+    await Effect.runPromise(traced({ "/skills/a/SKILL.md": "x", "/skills/a/notes.md": "y" }))
+    await Effect.runPromise(traced({ "/other/SKILL.md": "x" }))
+    expect(spans.map((span) => [span.name, span.status._tag === "Ended" && span.status.exit._tag])).toEqual([["skills.collect", "Success"], ["skills.collect", "Failure"]])
   })
 })

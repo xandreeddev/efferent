@@ -4,6 +4,7 @@ import { SessionLog } from "../ports/session-log.port.js"
 import { LeaseExpired, RevisionConflict, SessionExists, SessionLogError, SessionMissing } from "./session-log.entity.js"
 import type { JsonObject, SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "./session-log.entity.js"
 import { storedJson } from "./session-log.entity.functions.js"
+import { sessionAttributes } from "../turn/turn-lifecycle.js"
 
 /** A head as stored (its `now` is added when read) and the session's events. */
 interface Stored {
@@ -38,9 +39,15 @@ const withDescendants = (all: Store, ids: ReadonlySet<string>): ReadonlySet<stri
 const olderThan = (cursor: { readonly updatedAt: number; readonly id: string }) => (head: Omit<SessionHead, "now">): boolean =>
   head.updatedAt < cursor.updatedAt || (head.updatedAt === cursor.updatedAt && head.header.id < cursor.id)
 
+/** The session an operation reads or writes, on the operation's span. */
+const onSession = <A, E, R>(effect: Effect.Effect<A, E, R>, id: ConversationId): Effect.Effect<A, E, R> =>
+  Effect.annotateCurrentSpan(sessionAttributes(id)).pipe(Effect.andThen(effect))
+
 /**
  * The session log held in memory, for tests and single-process hosts. Its
- * clock is the Effect clock, so a TestClock drives leases.
+ * clock is the Effect clock, so a TestClock drives leases. Each operation
+ * runs under its span, `session_log.<op>`, which carries
+ * `efferent.session.id` when the operation names a session.
  */
 export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(SessionLog, Effect.gen(function* () {
   const store = yield* Ref.make<Store>(new Map())
@@ -48,18 +55,20 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
   const missing = (id: ConversationId) => new SessionMissing({ session: id })
 
   return SessionLog.of({
-    create: (header) => Effect.all([encoded(header.meta), now], { concurrency: 1 }).pipe(Effect.flatMap(([meta, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
-      if (all.has(header.id)) return [Effect.fail(new SessionExists({ session: header.id })), all]
-      if (Option.isSome(header.parent) && !all.has(header.parent.value.id)) return [Effect.fail(missing(header.parent.value.id)), all]
-      const head = { header: { ...header, meta, parent: Option.map(header.parent, (parent) => ({ ...parent })) }, seq: 0, revision: 0, state: {}, updatedAt: at }
-      return [Effect.succeed(copyHead(head, at)), new Map([...all, [header.id, { head, events: [] }]])]
-    })), Effect.flatten),
-    head: (id) => Effect.gen(function* () {
+    create: Effect.fn("session_log.create")(function* (header) {
+      return yield* Effect.all([encoded(header.meta), now], { concurrency: 1 }).pipe(Effect.flatMap(([meta, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
+        if (all.has(header.id)) return [Effect.fail(new SessionExists({ session: header.id })), all]
+        if (Option.isSome(header.parent) && !all.has(header.parent.value.id)) return [Effect.fail(missing(header.parent.value.id)), all]
+        const head = { header: { ...header, meta, parent: Option.map(header.parent, (parent) => ({ ...parent })) }, seq: 0, revision: 0, state: {}, updatedAt: at }
+        return [Effect.succeed(copyHead(head, at)), new Map([...all, [header.id, { head, events: [] }]])]
+      })), Effect.flatten)
+    }, (effect, header) => onSession(effect, header.id)),
+    head: Effect.fn("session_log.head")(function* (id) {
       const at = yield* now
       const session = (yield* Ref.get(store)).get(id)
       return session === undefined ? yield* Effect.fail(missing(id)) : copyHead(session.head, at)
-    }),
-    list: (query) => Effect.gen(function* () {
+    }, onSession),
+    list: Effect.fn("session_log.list")(function* (query) {
       const at = yield* now
       const heads = [...(yield* Ref.get(store)).values()].map((session) => session.head)
         .filter((head) => head.header.owner === query.owner)
@@ -71,43 +80,49 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
         .sort((left, right) => right.updatedAt - left.updatedAt || (right.header.id < left.header.id ? -1 : right.header.id > left.header.id ? 1 : 0))
       return heads.slice(0, Math.max(0, query.limit)).map((head) => copyHead(head, at))
     }),
-    read: (id, query) => Ref.get(store).pipe(Effect.flatMap((all) => {
-      const session = all.get(id)
-      if (session === undefined) return Effect.fail(missing(id))
-      const events = session.events.filter((event) => event.seq > query.after && (query.kinds.length === 0 || query.kinds.includes(event.kind)))
-      return Effect.succeed(Option.match(query.limit, { onNone: () => events, onSome: (limit) => events.slice(0, Math.max(0, limit)) }).map(copyEvent))
-    })),
-    commit: (id, commit) => Effect.all([
-      Effect.forEach(commit.events, (draft) => encoded(draft.data), { concurrency: 1 }),
-      Option.match(commit.state, { onNone: () => Effect.succeedNone, onSome: (state) => Effect.map(encoded(state), Option.some) }),
-      now,
-    ], { concurrency: 1 }).pipe(Effect.flatMap(([data, state, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing>, Store] => {
-      const session = all.get(id)
-      if (session === undefined) return [Effect.fail(missing(id)), all]
-      if (session.head.revision !== commit.expect) {
-        return [Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: session.head.revision })), all]
-      }
-      if (Option.isSome(commit.notAfter) && at > commit.notAfter.value) {
-        return [Effect.fail(new LeaseExpired({ session: id, notAfter: commit.notAfter.value, now: at })), all]
-      }
-      const events = Arr.zip(commit.events, data).map(([draft, stored], index): SessionLogEvent => ({
-        session: id, seq: session.head.seq + index + 1, turn: Option.map(draft.turn, (turn) => turn), kind: draft.kind, at, data: stored,
+    read: Effect.fn("session_log.read")(function* (id, query) {
+      return yield* Ref.get(store).pipe(Effect.flatMap((all) => {
+        const session = all.get(id)
+        if (session === undefined) return Effect.fail(missing(id))
+        const events = session.events.filter((event) => event.seq > query.after && (query.kinds.length === 0 || query.kinds.includes(event.kind)))
+        return Effect.succeed(Option.match(query.limit, { onNone: () => events, onSome: (limit) => events.slice(0, Math.max(0, limit)) }).map(copyEvent))
       }))
-      const head = {
-        ...session.head,
-        seq: session.head.seq + events.length,
-        revision: session.head.revision + 1,
-        state: Option.getOrElse(state, () => session.head.state),
-        updatedAt: at,
-      }
-      return [
-        Effect.succeed({ revision: head.revision, seq: head.seq, events: events.map(copyEvent), at }),
-        new Map([...all, [id, { head, events: [...session.events, ...events] }]]),
-      ]
-    })), Effect.flatten),
-    remove: (id) => Ref.update(store, (all) => {
-      const removed = withDescendants(all, new Set([id]))
-      return new Map([...all].filter(([key]) => !removed.has(key)))
-    }),
+    }, onSession),
+    commit: Effect.fn("session_log.commit")(function* (id, commit) {
+      return yield* Effect.all([
+        Effect.forEach(commit.events, (draft) => encoded(draft.data), { concurrency: 1 }),
+        Option.match(commit.state, { onNone: () => Effect.succeedNone, onSome: (state) => Effect.map(encoded(state), Option.some) }),
+        now,
+      ], { concurrency: 1 }).pipe(Effect.flatMap(([data, state, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing>, Store] => {
+        const session = all.get(id)
+        if (session === undefined) return [Effect.fail(missing(id)), all]
+        if (session.head.revision !== commit.expect) {
+          return [Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: session.head.revision })), all]
+        }
+        if (Option.isSome(commit.notAfter) && at > commit.notAfter.value) {
+          return [Effect.fail(new LeaseExpired({ session: id, notAfter: commit.notAfter.value, now: at })), all]
+        }
+        const events = Arr.zip(commit.events, data).map(([draft, stored], index): SessionLogEvent => ({
+          session: id, seq: session.head.seq + index + 1, turn: Option.map(draft.turn, (turn) => turn), kind: draft.kind, at, data: stored,
+        }))
+        const head = {
+          ...session.head,
+          seq: session.head.seq + events.length,
+          revision: session.head.revision + 1,
+          state: Option.getOrElse(state, () => session.head.state),
+          updatedAt: at,
+        }
+        return [
+          Effect.succeed({ revision: head.revision, seq: head.seq, events: events.map(copyEvent), at }),
+          new Map([...all, [id, { head, events: [...session.events, ...events] }]]),
+        ]
+      })), Effect.flatten)
+    }, onSession),
+    remove: Effect.fn("session_log.remove")(function* (id) {
+      yield* Ref.update(store, (all) => {
+        const removed = withDescendants(all, new Set([id]))
+        return new Map([...all].filter(([key]) => !removed.has(key)))
+      })
+    }, onSession),
   })
 }))

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Toolkit } from "effect/ai"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Tracer } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { failureCode } from "../conformance.functions.js"
@@ -17,7 +17,7 @@ import { TurnMemory, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnOutcome } from "../ports/turn.port.js"
 import { recordingTurnWriter } from "./testing.js"
 import { TurnLive } from "./turn.adapter.js"
-import { guardTurn, openTurnTools } from "./turn-lifecycle.js"
+import { guardTurn, openTurnTools, traceTurn } from "./turn-lifecycle.js"
 
 const policy: MemoryPolicy = {
   strategy: { id: "test", version: "1" },
@@ -274,5 +274,38 @@ describe("guardTurn", () => {
     }))
     expect(exit).toMatchObject({ _tag: "Failure", failure: { code: "reaction.failed" } })
     expect(ended).toEqual(["failed"])
+  })
+
+  test("under traceTurn the reply is recorded in turn.persist_reply, a child of agent.turn with the turn's ids; a failed turn's usage stays on agent.turn", async () => {
+    const tracedTurn = (body: Effect.Effect<TurnOutcome, { readonly _tag: "HostFailure" }>) => Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = []
+      const tracer = Tracer.make({
+        span: (options) => {
+          const span = new Tracer.NativeSpan(options)
+          spans.push(span)
+          return span
+        },
+      })
+      const recorded = yield* begun()
+      yield* guarded(recorded, body).pipe(traceTurn(recorded.writer), Effect.withTracer(tracer), Effect.exit)
+      const turn = spans.find((span) => span.name === "agent.turn")
+      const replies = spans.filter((span) => span.name === "turn.persist_reply")
+      return {
+        replies: replies.map((span) => ({
+          parent: Option.map(span.parent, (parent) => parent.spanId === turn?.spanId),
+          ids: ["efferent.session.id", "efferent.run.id", "efferent.turn"].map((key) => span.attributes.get(key)),
+          usage: span.attributes.has("efferent.usage.input_tokens"),
+        })),
+        turnUsage: turn?.attributes.get("efferent.usage.input_tokens"),
+        session: recorded.writer.admitted.session.id,
+      }
+    })
+    const [completed, failed] = await Effect.runPromise(Effect.all([
+      tracedTurn(Effect.succeed<TurnOutcome>({ outcome: "completed", reply: Option.some("done") })),
+      tracedTurn(Effect.fail({ _tag: "HostFailure" as const })),
+    ], { concurrency: 1 }))
+    expect(completed.replies).toEqual([{ parent: Option.some(true), ids: [completed.session, "run-1", 1], usage: false }])
+    expect(failed.replies).toEqual([{ parent: Option.some(true), ids: [failed.session, "run-1", 1], usage: false }])
+    expect(failed.turnUsage).toBe(0)
   })
 })

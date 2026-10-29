@@ -345,9 +345,9 @@ interface Collected {
  * More than `maxFiles` files, or more than `maxBytes` bytes of text, fails
  * with `skills.limit`. A file gone between the walk and its read is skipped;
  * any other read failure, or a `root` that cannot be listed, is the
- * `FsError`.
+ * `FsError`. The collection is one span, `skills.collect`.
  */
-export const collectSkillFiles = (root: string, options: CollectSkillFilesOptions): Effect.Effect<ReadonlyArray<SkillFile>, FsError | HarnessError, FileSystem> => Effect.gen(function* () {
+export const collectSkillFiles = Effect.fn("skills.collect")(function* (root: string, options: CollectSkillFilesOptions): Effect.fn.Return<ReadonlyArray<SkillFile>, FsError | HarnessError, FileSystem> {
   const fs = yield* FileSystem
   const found = yield* fs.glob("**/*", { cwd: root, onlyFiles: true, exclude: ["node_modules"], limit: options.maxFiles })
   if (found.truncated) return yield* Effect.fail(limited(`${root} holds more than ${options.maxFiles} files (maxFiles)`))

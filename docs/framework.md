@@ -137,12 +137,13 @@ caller's span, if any:
 ```text
 agent.turn.begin                 Agent.turn beginning the turn: session plugins activated, Sessions.begin
 agent.turn                       Agent.turn, or a host's composition with traceTurn(writer)
-└─ engine.run                    one run of the step loop (turn.run)
-   └─ engine.turn                one step (engine.step is its one-based number)
-      └─ LanguageModel.*         effect/ai's span of the model call
-         ├─ providers.generate   the models plugin's call (model, usage, finish reason)
-         └─ tool.<name>          the tool registry's call, refused calls included
-            └─ (the handler's own spans)
+├─ engine.run                    one run of the step loop (turn.run)
+│  └─ engine.turn                one step (engine.step is its one-based number)
+│     └─ LanguageModel.*         effect/ai's span of the model call
+│        ├─ providers.generate   the models plugin's call (model, usage, finish reason)
+│        └─ tool.<name>          the tool registry's call, refused calls included
+│           └─ (the handler's own spans)
+└─ turn.persist_reply            the turn's reply recorded as it ends (guardTurn), failed or not
 ```
 
 `agent.turn` starts once the turn is admitted (after `Sessions.begin`; a turn
