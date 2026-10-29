@@ -113,7 +113,7 @@ export const catalogOf = (version: string, capabilities: ReadonlyArray<Capabilit
 
 /** Probabilistic intent never authorizes a capability. Expansions use this same
  * deterministic resolver against the run-pinned catalog and current grants. */
-export const resolveCapabilities = (catalog: CapabilityCatalog, requested: CapabilitySelection, permissions: ReadonlySet<string>): Effect.Effect<ResolvedCapabilities, HarnessError> => Effect.gen(function* () {
+export const resolveCapabilities = Effect.fnUntraced(function* (catalog: CapabilityCatalog, requested: CapabilitySelection, permissions: ReadonlySet<string>): Effect.fn.Return<ResolvedCapabilities, HarnessError> {
   const recipeIds = new Set(requested.recipes)
   const recipes = catalog.recipes.filter((recipe) => recipeIds.has(recipe.id))
   const toolIds = new Set([...requested.tools, ...recipes.flatMap((recipe) => recipe.tools)])

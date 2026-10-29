@@ -52,7 +52,7 @@ const defaultCapacity = 256
  * can always be interrupted. `activity` counts background deliveries so
  * far, so a caller can tell whether a drain left new work.
  */
-export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.Effect<TurnEventsService, never, Scope.Scope> => Effect.gen(function* () {
+export const makeTurnEvents = Effect.fnUntraced(function* (options: { readonly maxDepth: number }): Effect.fn.Return<TurnEventsService, never, Scope.Scope> {
   const subscribers = yield* Ref.make<ReadonlyArray<Subscriber>>([])
   const nextId = yield* Ref.make(0)
   // Each bus counts its own nesting, and knows its own lanes: references keyed by this bus alone.
@@ -147,7 +147,7 @@ interface Task {
 }
 
 /** Background work forked in `scope`: interrupted when it closes, joined on demand. `activity` counts tasks forked so far. */
-export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksService> => Effect.gen(function* () {
+export const makeTurnTasks = Effect.fnUntraced(function* (scope: Scope.Scope): Effect.fn.Return<TurnTasksService> {
   const tasks = yield* Ref.make<ReadonlyArray<Task>>([])
   const fork = <R>(tag: string, task: Effect.Effect<void, TurnError, R>) => Effect.gen(function* () {
     const context = yield* Effect.context<R>()

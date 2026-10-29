@@ -107,6 +107,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A turn that cannot begin leaves an `agent.turn.begin` span carrying the
   refusal's code: a trace check that expects every span under the caller's
   to sit under `agent.turn` excludes the begin's subtree.
+- A trace query that expects an inline `turn.ended` subscriber's spans
+  directly under `agent.turn` finds them under `turn.persist_reply`.
 
 ### Breaking
 
@@ -410,6 +412,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   grading and its exports; the layer closes with the command, so its spans
   are flushed when the command ends or is interrupted. `parseEvaluationApp`
   keeps the field and refuses a value that is not a Layer.
+- `@xandreed/core`: `TurnLive` records a turn's reply under
+  `turn.persist_reply` (a child of `agent.turn` carrying the turn's ids),
+  `collectSkillFiles` runs as `skills.collect`, and each
+  `SessionLogMemoryLive` operation is a `session_log.<op>` span with
+  `efferent.session.id` when it names a session.
 
 ### Changed
 
@@ -765,6 +772,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `effect/prefer-effect-fn` runs in `plugin-memory-summary` and
   `plugin-tasks`.
 - `effect/prefer-effect-fn` covers `evals-cli`.
+- `effect/prefer-effect-fn` covers `@xandreed/core`: service methods and
+  exported effectful functions are `Effect.fn` spans, or
+  `Effect.fnUntraced` for entity functions, constructors, per-event helpers
+  and kits.
 
 ## 0.14.0 — 2026-10-29
 

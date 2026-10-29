@@ -32,7 +32,7 @@ interface Collected {
  * cut it short, e.g. with `Stream.interruptWhen`, and the adapter killed
  * the command) gives `termination: "interrupted"` with the output so far.
  */
-export const collectBashResult = <R>(events: Stream.Stream<BashEvent, BashError, R>): Effect.Effect<BashResult, BashError, R> => Effect.gen(function* () {
+export const collectBashResult = Effect.fnUntraced(function* <R>(events: Stream.Stream<BashEvent, BashError, R>): Effect.fn.Return<BashResult, BashError, R> {
   const started = yield* Clock.currentTimeMillis
   const collected = yield* Stream.runFold(events, (): Collected => ({ stdout: "", stderr: "", exit: Option.none() }), (state, event): Collected =>
     event._tag === "BashExit" ? { ...state, exit: Option.some(event) }

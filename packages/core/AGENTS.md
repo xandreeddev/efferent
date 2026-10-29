@@ -129,4 +129,14 @@ Span attributes and log annotations share their keys: `turnAttributes`
 a begin. Put no span between `traceTurn` and `guardTurn`: a failed turn's
 usage goes on the span current where `guardTurn` runs.
 
+Core's own spans are `Effect.fn` and few: `turn.persist_reply` (`TurnLive`'s
+`persistReply`, under `agent.turn`), `skills.collect` (`collectSkillFiles`)
+and the in-memory log's `session_log.<op>`, with `efferent.session.id` when
+the operation names a session. Everything else is `Effect.fnUntraced`: entity
+functions and decoders; constructors (`make*`, and `openLogSession`, which
+`TurnLive` runs between `traceTurn` and `guardTurn`); the views a turn's code
+works with (`turnOf`, `stepRequestOf`); helpers called per event, step or
+entry (`publishToolProgress`, the memory log's `append`, the step request's
+`dispatch`); and the kits.
+
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

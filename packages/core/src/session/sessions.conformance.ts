@@ -634,7 +634,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const queued = yield* Deferred.make<void>()
       const refusing = yield* Ref.make(false)
       const admission = TurnAdmission.of({
-        admit: (turn, open) => Effect.gen(function* () {
+        admit: Effect.fnUntraced(function* (turn, open) {
           if (yield* Ref.get(refusing)) return yield* Effect.fail(new TurnRefused({ session: turn.session.id, reason: "conformance", message: "the kit refuses it" }))
           if (turn.key === "held at admission") yield* Deferred.succeed(queued, undefined).pipe(Effect.andThen(Deferred.await(gate)))
           return yield* open

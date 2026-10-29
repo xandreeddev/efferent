@@ -85,7 +85,7 @@ export const defineHostEvent = <A, I extends Readonly<Record<string, unknown>>>(
  * there, and the tool registry fails the turn after `tool.completed`
  * instead of handing the failure to the model as the tool's result.
  */
-export const publishToolProgress = (channel: TurnEventOf<"tool.progress">["channel"], text: string): Effect.Effect<void> => Effect.gen(function* () {
+export const publishToolProgress = Effect.fnUntraced(function* (channel: TurnEventOf<"tool.progress">["channel"], text: string): Effect.fn.Return<void> {
   const invocation = yield* Effect.service(CurrentToolInvocation)
   const run = yield* Effect.serviceOption(RunContext)
   if (Option.isNone(invocation) || Option.isNone(run)) return

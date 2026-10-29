@@ -97,7 +97,7 @@ const refused = <A>(tree: Tree, error: FsError): Change<A> => [Result.fail(error
  * with `/` and the `initial` entries (parents created). Times come from the
  * Effect `Clock`; files report no `mode`.
  */
-export const makeMemoryFileSystem = (initial: Readonly<Record<string, MemorySeed>> = {}): Effect.Effect<MemoryFileSystem, FsError> => Effect.gen(function* () {
+export const makeMemoryFileSystem = Effect.fnUntraced(function* (initial: Readonly<Record<string, MemorySeed>> = {}): Effect.fn.Return<MemoryFileSystem, FsError> {
   const tree = yield* Ref.make<Tree>(new Map([["/", { _tag: "Directory", mtimeMs: yield* Clock.currentTimeMillis }]]))
   const change = <A>(apply: (all: Tree, now: number) => Change<A>): Effect.Effect<A, FsError> =>
     Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Ref.modify(tree, (all) => apply(all, now))), Effect.flatMap(Effect.fromResult))

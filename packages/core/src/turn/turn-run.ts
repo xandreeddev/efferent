@@ -98,141 +98,140 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  * stamp the request's `cacheKey` (or changes the call policy) fails with
  * `request.diverged` before the provider is called.
  */
-export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<StepRequest, TurnError, P | TurnRunServices> =>
-  Effect.gen(function* () {
-    const runServices = replayableContext(yield* Effect.context<P>())
-    const inRun = <A, E>(effect: Effect.Effect<A, E, P>): Effect.Effect<A, E> => effect.pipe(Effect.provide(runServices))
-    const memory = yield* TurnMemory
-    const prompt = yield* TurnPrompt
-    const events = yield* TurnEvents
-    const tasks = yield* TurnTasks
-    const tools = yield* (yield* TurnToolbox).tools
-    const session = memory.session
-    const runId = (yield* session.renderRecipe("none")).currentRun
-    const defaultModel = Context.getOption(runServices, LanguageModel.LanguageModel)
-    const number = yield* memory.number
-    const limits: LoopLimits = { ...defaultLimits, ...options.limits, ...policy.limits }
-    const budget = policy.budgetTokens ?? options.budgetTokens ?? defaultBudgetTokens
-    if (!isBudgetTokens(budget)) return yield* Effect.fail(failure("turn.budget", `budgetTokens must be an integer of at least 1, not ${budget}`))
-    const stepContext = policy.stepContext ?? "tail"
-    const cacheKey = options.cacheKey ?? Option.none()
-    const callPolicy = yield* Effect.service(CurrentModelCallPolicy)
-    yield* Option.match(Option.fromNullishOr(policy.initial), {
-      onNone: () => Effect.void,
-      onSome: (batch) => batch.skills.length === 0 ? Effect.void : tools.activate(batch.skills, "host").pipe(Effect.asVoid),
-    })
-    yield* inRun(prompt.turnSections)
-    yield* session.maintain({ phase: "turn-start", lastUsage: Option.none(), budgetTokens: budget, views: tools.views })
-
-    // The step planned last, and what its build sent: the refusal names that build's images. `replanning`
-    // is the step `onMediaRejected` refused, once: only its next plan keeps the model choice, system
-    // prompt, directive and resolved model; any other plan of a step decides again.
-    const planned = yield* Ref.make(Option.none<PlannedStep>())
-    const replanning = yield* Ref.make(Option.none<PlannedStep>())
-    const decide = (info: StepInfo): Effect.Effect<StepDecision, TurnError> => Effect.gen(function* () {
-      const choice = policy.model === undefined ? Option.none<ModelChoice>() : yield* inRun(policy.model(info))
-      const system = yield* inRun(prompt.system(Option.flatMap(choice, (value) => value.variant)))
-      const directive = policy.step === undefined ? noDirective : yield* inRun(policy.step(info))
-      yield* Option.match(directive.context, {
-        onNone: () => Effect.void,
-        onSome: (text) => session.record([{ _tag: "StepContext", step: info.stepIndex, text }], info.stepIndex).pipe(Effect.asVoid),
-      })
-      return { choice, system, directive }
-    })
-
-    const plan = (info: StepInfo): Effect.Effect<StepPlan, TurnError> => Effect.gen(function* () {
-      const again = Option.filter(yield* Ref.getAndSet(replanning, Option.none()), (last) => last.step === info.stepIndex)
-      const { choice, system, directive } = Option.isSome(again) ? again.value.decision : yield* decide(info)
-      const reserved = estimateTokens(system) + schemaTokens(tools, info.activeTools)
-      if (budget <= reserved) {
-        return yield* Effect.fail(failure("context.budget",
-          `The system prompt and tool schemas take ${reserved} tokens, all of the ${budget}-token context budget: raise budgetTokens or offer fewer tools`))
-      }
-      yield* session.maintain({ phase: "step", lastUsage: info.lastUsage, budgetTokens: budget - reserved, views: tools.views })
-      const built = yield* session.build({ stepContext: stepContext === "tail" ? "tail" : "none" })
-      const render = yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none")
-      // A reaction may record memory now: the header's cut (`through`) keeps it for the next step.
-      yield* events.publish({
-        _tag: "context.built", step: info.stepIndex, turn: number,
-        strategy: session.strategy.id, strategyVersion: session.strategy.version,
-        fingerprint: built.fingerprint, systemFingerprint: fingerprintOf(system),
-        estimatedTokens: built.estimatedTokens, reservedTokens: reserved, budgetTokens: budget,
-        compactions: built.compactions.length, activeTools: info.activeTools,
-      })
-      const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""
-      const finalSystem = [system, stepText].filter((part) => part.length > 0).join("\n\n")
-      // Resolved once for the step: the header describes the model every attempt of the step calls.
-      const model = Option.isSome(again) ? again.value.model : yield* Option.match(Option.orElse(Option.map(choice, (value) => value.model), () => defaultModel), {
-        onNone: () => Effect.succeed(Option.none<LanguageModel.LanguageModel>()),
-        onSome: (chosen) => resolveModelRequest(chosen).pipe(Effect.map(Option.some)),
-      })
-      yield* Ref.set(planned, Option.some({ step: info.stepIndex, decision: { choice, system, directive }, model, through: built.through, render }))
-      yield* memory.prepareRequest({
-        version: 1, runId, step: info.stepIndex,
-        strategyVersion: session.strategy.version,
-        system: finalSystem,
-        render,
-        through: built.through,
-        contextFingerprint: built.fingerprint,
-        tools: modelRequestTools(info.activeTools.flatMap((name) => tools.toolkit.tools[name] === undefined ? [] : [tools.toolkit.tools[name]])),
-        toolChoice: Option.getOrElse(directive.toolChoice, () => "auto"),
-        model: yield* Option.match(model, { onNone: () => Effect.succeed(Option.none()), onSome: modelRequestDescriptorOf }),
-        cacheKey,
-        callPolicy,
-      })
-      return {
-        model,
-        system: finalSystem,
-        messages: built.messages,
-        toolChoice: directive.toolChoice,
-      }
-    })
-
-    return {
-      tools,
-      handlers: Context.merge(runServices, tools.handlers),
-      limits,
-      initial: Option.fromNullishOr(policy.initial),
-      plan,
-      dispatch: (step, actual) => Effect.gen(function* () {
-        const stored = yield* memory.requestSnapshot
-        const header = yield* modelRequestHeaderOf(stored.requests, runId, step)
-        const expected = yield* reconstructModelRequest(header, stored.entries)
-        yield* checkModelRequest(expected, {
-          prompt: actual.prompt,
-          tools: modelRequestTools(actual.tools),
-          toolChoice: actual.toolChoice,
-          model: yield* modelRequestDescriptorOf(actual.model),
-          // What the provider adapter reads at call time, not the turn's own inputs again.
-          cacheKey: yield* Effect.service(CurrentPromptCacheKey),
-          callPolicy: yield* Effect.service(CurrentModelCallPolicy),
-        })
-      }),
-      record: (step, tail) => session.recordTail(tail, tools.views, step),
-      onMediaRejected: (reason) => Effect.gen(function* () {
-        const last = yield* Ref.get(planned)
-        if (Option.isNone(last)) return false
-        const entries = yield* session.entries
-        const through = last.value.through
-        const built = Option.isNone(through) ? [] : entries.slice(0, entries.findIndex((entry) => entry.id === through.value) + 1)
-        const sent = entriesSendingMedia(built, last.value.render)
-        if (sent.length === 0) return false
-        yield* session.record([{
-          _tag: "Compaction", strategy: session.strategy.id, version: session.strategy.version,
-          action: { _tag: "OmitMedia", entries: sent, reason: reason.slice(0, MEDIA_REJECTION_CHARS) },
-        }], last.value.step)
-        yield* Ref.set(replanning, last)
-        return true
-      }),
-      completion: (info) => policy.completion === undefined ? Effect.succeed(incomplete) : inRun(policy.completion(info)).pipe(Effect.map(normalVerdict)),
-      steering: options.steering ?? Effect.succeed(Option.none()),
-      correctives: Option.fromNullishOr(policy.correctives),
-      events,
-      tasks,
-      cacheKey,
-      captureTraceContent: policy.captureTraceContent ?? options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent)),
-    } satisfies StepRequest
+export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.fn.Return<StepRequest, TurnError, P | TurnRunServices> {
+  const runServices = replayableContext(yield* Effect.context<P>())
+  const inRun = <A, E>(effect: Effect.Effect<A, E, P>): Effect.Effect<A, E> => effect.pipe(Effect.provide(runServices))
+  const memory = yield* TurnMemory
+  const prompt = yield* TurnPrompt
+  const events = yield* TurnEvents
+  const tasks = yield* TurnTasks
+  const tools = yield* (yield* TurnToolbox).tools
+  const session = memory.session
+  const runId = (yield* session.renderRecipe("none")).currentRun
+  const defaultModel = Context.getOption(runServices, LanguageModel.LanguageModel)
+  const number = yield* memory.number
+  const limits: LoopLimits = { ...defaultLimits, ...options.limits, ...policy.limits }
+  const budget = policy.budgetTokens ?? options.budgetTokens ?? defaultBudgetTokens
+  if (!isBudgetTokens(budget)) return yield* Effect.fail(failure("turn.budget", `budgetTokens must be an integer of at least 1, not ${budget}`))
+  const stepContext = policy.stepContext ?? "tail"
+  const cacheKey = options.cacheKey ?? Option.none()
+  const callPolicy = yield* Effect.service(CurrentModelCallPolicy)
+  yield* Option.match(Option.fromNullishOr(policy.initial), {
+    onNone: () => Effect.void,
+    onSome: (batch) => batch.skills.length === 0 ? Effect.void : tools.activate(batch.skills, "host").pipe(Effect.asVoid),
   })
+  yield* inRun(prompt.turnSections)
+  yield* session.maintain({ phase: "turn-start", lastUsage: Option.none(), budgetTokens: budget, views: tools.views })
+
+  // The step planned last, and what its build sent: the refusal names that build's images. `replanning`
+  // is the step `onMediaRejected` refused, once: only its next plan keeps the model choice, system
+  // prompt, directive and resolved model; any other plan of a step decides again.
+  const planned = yield* Ref.make(Option.none<PlannedStep>())
+  const replanning = yield* Ref.make(Option.none<PlannedStep>())
+  const decide = (info: StepInfo): Effect.Effect<StepDecision, TurnError> => Effect.gen(function* () {
+    const choice = policy.model === undefined ? Option.none<ModelChoice>() : yield* inRun(policy.model(info))
+    const system = yield* inRun(prompt.system(Option.flatMap(choice, (value) => value.variant)))
+    const directive = policy.step === undefined ? noDirective : yield* inRun(policy.step(info))
+    yield* Option.match(directive.context, {
+      onNone: () => Effect.void,
+      onSome: (text) => session.record([{ _tag: "StepContext", step: info.stepIndex, text }], info.stepIndex).pipe(Effect.asVoid),
+    })
+    return { choice, system, directive }
+  })
+
+  const plan = (info: StepInfo): Effect.Effect<StepPlan, TurnError> => Effect.gen(function* () {
+    const again = Option.filter(yield* Ref.getAndSet(replanning, Option.none()), (last) => last.step === info.stepIndex)
+    const { choice, system, directive } = Option.isSome(again) ? again.value.decision : yield* decide(info)
+    const reserved = estimateTokens(system) + schemaTokens(tools, info.activeTools)
+    if (budget <= reserved) {
+      return yield* Effect.fail(failure("context.budget",
+        `The system prompt and tool schemas take ${reserved} tokens, all of the ${budget}-token context budget: raise budgetTokens or offer fewer tools`))
+    }
+    yield* session.maintain({ phase: "step", lastUsage: info.lastUsage, budgetTokens: budget - reserved, views: tools.views })
+    const built = yield* session.build({ stepContext: stepContext === "tail" ? "tail" : "none" })
+    const render = yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none")
+    // A reaction may record memory now: the header's cut (`through`) keeps it for the next step.
+    yield* events.publish({
+      _tag: "context.built", step: info.stepIndex, turn: number,
+      strategy: session.strategy.id, strategyVersion: session.strategy.version,
+      fingerprint: built.fingerprint, systemFingerprint: fingerprintOf(system),
+      estimatedTokens: built.estimatedTokens, reservedTokens: reserved, budgetTokens: budget,
+      compactions: built.compactions.length, activeTools: info.activeTools,
+    })
+    const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""
+    const finalSystem = [system, stepText].filter((part) => part.length > 0).join("\n\n")
+    // Resolved once for the step: the header describes the model every attempt of the step calls.
+    const model = Option.isSome(again) ? again.value.model : yield* Option.match(Option.orElse(Option.map(choice, (value) => value.model), () => defaultModel), {
+      onNone: () => Effect.succeed(Option.none<LanguageModel.LanguageModel>()),
+      onSome: (chosen) => resolveModelRequest(chosen).pipe(Effect.map(Option.some)),
+    })
+    yield* Ref.set(planned, Option.some({ step: info.stepIndex, decision: { choice, system, directive }, model, through: built.through, render }))
+    yield* memory.prepareRequest({
+      version: 1, runId, step: info.stepIndex,
+      strategyVersion: session.strategy.version,
+      system: finalSystem,
+      render,
+      through: built.through,
+      contextFingerprint: built.fingerprint,
+      tools: modelRequestTools(info.activeTools.flatMap((name) => tools.toolkit.tools[name] === undefined ? [] : [tools.toolkit.tools[name]])),
+      toolChoice: Option.getOrElse(directive.toolChoice, () => "auto"),
+      model: yield* Option.match(model, { onNone: () => Effect.succeed(Option.none()), onSome: modelRequestDescriptorOf }),
+      cacheKey,
+      callPolicy,
+    })
+    return {
+      model,
+      system: finalSystem,
+      messages: built.messages,
+      toolChoice: directive.toolChoice,
+    }
+  })
+
+  return {
+    tools,
+    handlers: Context.merge(runServices, tools.handlers),
+    limits,
+    initial: Option.fromNullishOr(policy.initial),
+    plan,
+    dispatch: Effect.fnUntraced(function* (step, actual) {
+      const stored = yield* memory.requestSnapshot
+      const header = yield* modelRequestHeaderOf(stored.requests, runId, step)
+      const expected = yield* reconstructModelRequest(header, stored.entries)
+      yield* checkModelRequest(expected, {
+        prompt: actual.prompt,
+        tools: modelRequestTools(actual.tools),
+        toolChoice: actual.toolChoice,
+        model: yield* modelRequestDescriptorOf(actual.model),
+        // What the provider adapter reads at call time, not the turn's own inputs again.
+        cacheKey: yield* Effect.service(CurrentPromptCacheKey),
+        callPolicy: yield* Effect.service(CurrentModelCallPolicy),
+      })
+    }),
+    record: (step, tail) => session.recordTail(tail, tools.views, step),
+    onMediaRejected: Effect.fnUntraced(function* (reason) {
+      const last = yield* Ref.get(planned)
+      if (Option.isNone(last)) return false
+      const entries = yield* session.entries
+      const through = last.value.through
+      const built = Option.isNone(through) ? [] : entries.slice(0, entries.findIndex((entry) => entry.id === through.value) + 1)
+      const sent = entriesSendingMedia(built, last.value.render)
+      if (sent.length === 0) return false
+      yield* session.record([{
+        _tag: "Compaction", strategy: session.strategy.id, version: session.strategy.version,
+        action: { _tag: "OmitMedia", entries: sent, reason: reason.slice(0, MEDIA_REJECTION_CHARS) },
+      }], last.value.step)
+      yield* Ref.set(replanning, last)
+      return true
+    }),
+    completion: (info) => policy.completion === undefined ? Effect.succeed(incomplete) : inRun(policy.completion(info)).pipe(Effect.map(normalVerdict)),
+    steering: options.steering ?? Effect.succeed(Option.none()),
+    correctives: Option.fromNullishOr(policy.correctives),
+    events,
+    tasks,
+    cacheKey,
+    captureTraceContent: policy.captureTraceContent ?? options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent)),
+  } satisfies StepRequest
+})
 
 /** One run of the turn: `stepRequestOf`, then the StepLoop. */
 export const runTurnLoop = <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<RunResult, TurnError, P | TurnRunServices | StepLoop> =>

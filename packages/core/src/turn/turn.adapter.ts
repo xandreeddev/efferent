@@ -63,7 +63,9 @@ type MessageState =
  * (`TurnPrompt`). The message was stored when the turn began; memory
  * takes it at `TurnMemory.persistMessage`, and records nothing before it
  * (`TurnMemory.context` waits for it). Tasks run in the layer's scope:
- * they are interrupted when it closes.
+ * they are interrupted when it closes. `TurnMemory.persistReply` runs under
+ * its span, `turn.persist_reply` (inline `turn.ended` subscribers' spans
+ * nest under it).
  */
 export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   RunContext | TurnEvents | TurnTasks | TurnMemory | TurnToolbox | TurnPrompt,
@@ -105,7 +107,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   // same queue. Its TurnStarted is the turn's own `turn.started`, stored when the turn began.
   const log: LogHandle = {
     read: readHistory.pipe(Effect.tap((entries) => Ref.set(history, Option.some(entries)))),
-    append: (entries) => Effect.gen(function* () {
+    append: Effect.fnUntraced(function* (entries) {
       // Nothing of the turn precedes its message: an entry recorded before it would take the message's number.
       if ((yield* Ref.get(message))._tag === "Waiting" && entries.some((entry) => entry.body._tag !== "TurnStarted")) {
         return yield* Effect.fail(failure("turn.unstarted", "memory records nothing before the turn's message is taken (persistMessage); TurnMemory.context waits for it"))
@@ -203,7 +205,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       state._tag === "Waiting" ? [false, { _tag: "Waiting", early: [...state.early, entry] }] : [true, state]).pipe(
       Effect.flatMap((now) => now ? session.record([contextBody(entry)], 0).pipe(Effect.asVoid) : Effect.void),
     ),
-    persistReply: (outcome) => Effect.gen(function* () {
+    persistReply: Effect.fn("turn.persist_reply")(function* (outcome) {
       const number = yield* taken
       if (Option.isNone(number) || (yield* Ref.getAndSet(replied, true))) return
       yield* session.record([{ _tag: "TurnEnded", outcome: outcome.outcome, reply: outcome.reply }], 0)
@@ -231,7 +233,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const systems = yield* Ref.make(new Map<string, string>())
   const turnSections = yield* Ref.make(false)
   const prompt = TurnPrompt.of({
-    system: (variant) => Effect.gen(function* () {
+    system: Effect.fnUntraced(function* (variant) {
       const key = Option.getOrElse(variant, () => "")
       const known = (yield* Ref.get(systems)).get(key)
       if (known !== undefined) return known

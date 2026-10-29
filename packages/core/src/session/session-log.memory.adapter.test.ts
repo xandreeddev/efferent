@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Effect, Option } from "effect"
+import { Cause, Effect, Option, Tracer } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
 import { SessionLog } from "../ports/session-log.port.js"
 import { sessionLogConformance } from "./session-log.conformance.js"
@@ -53,5 +53,38 @@ describe("what the in-memory log keeps is JSON, as a store on disk keeps it", ()
       return yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: { big: 1n } as never }], state: Option.none() })
     }))
     expect(exit._tag === "Failure" && exit.cause.reasons.some((reason) => Cause.isFailReason(reason) && reason.error._tag === "SessionLogError" && reason.error.code === "store.encode")).toBe(true)
+  })
+})
+
+describe("the in-memory log traces each operation", () => {
+  test("as session_log.<op>, carrying the session's id when the operation names one, and ending as the operation does", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options)
+        spans.push(span)
+        return span
+      },
+    })
+    const id = ConversationId.make("00000000-0000-4000-8000-000000000003")
+    await Effect.runPromise(Effect.gen(function* () {
+      const log = yield* SessionLog
+      yield* log.create({ id, owner: "test", origin: "test", createdAt: 0, meta: {}, parent: Option.none() })
+      yield* log.head(id)
+      yield* log.list({ owner: "test", limit: 10, before: Option.none(), parent: Option.none() })
+      yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: {} }], state: Option.none() })
+      yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
+      yield* log.remove(id)
+      yield* Effect.exit(log.head(id))
+    }).pipe(Effect.provide(SessionLogMemoryLive), Effect.withTracer(tracer)))
+    expect(spans.map((span) => [span.name, span.attributes.get("efferent.session.id"), span.status._tag === "Ended" && span.status.exit._tag])).toEqual([
+      ["session_log.create", id, "Success"],
+      ["session_log.head", id, "Success"],
+      ["session_log.list", undefined, "Success"],
+      ["session_log.commit", id, "Success"],
+      ["session_log.read", id, "Success"],
+      ["session_log.remove", id, "Success"],
+      ["session_log.head", id, "Failure"],
+    ])
   })
 })

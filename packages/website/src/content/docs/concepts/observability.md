@@ -131,12 +131,13 @@ parent-linked.
 ```text
 agent.turn.begin                 Agent.turn beginning the turn: session plugins activated, Sessions.begin
 agent.turn                       Agent.turn, or a host's composition with traceTurn(writer)
-└─ engine.run                    one run of the step loop (turn.run)
-   └─ engine.turn                one step
-      └─ LanguageModel.*         effect/ai's span of the model call
-         ├─ providers.generate   the models plugin's call (model, usage, finish reason)
-         └─ tool.<name>          the tool registry's call, refused calls included
-            └─ (the handler's own spans)
+├─ engine.run                    one run of the step loop (turn.run)
+│  └─ engine.turn                one step
+│     └─ LanguageModel.*         effect/ai's span of the model call
+│        ├─ providers.generate   the models plugin's call (model, usage, finish reason)
+│        └─ tool.<name>          the tool registry's call, refused calls included
+│           └─ (the handler's own spans)
+└─ turn.persist_reply            the turn's reply recorded as it ends (guardTurn), failed or not
 ```
 
 `agent.turn` carries `efferent.session.id`, `efferent.run.id`,
@@ -175,11 +176,13 @@ spans.
 
 **Other spans.** Beside the tree above: the workspace plugin's
 `skills.settle` (its skills directory read, at `Agent.define`, outside any
-turn) and `bash.exec` (a host calling `Bash.exec` itself; the bash tool
-streams, under its `tool.<name>`); the SQLite session store's `session_log.*`
-(`open`, `create`, `head`, `list`, `read`, `commit`, `remove`), each with
-`efferent.session.id`, wherever the store is called; the render plugin's
-`render.emit`; and the evals' `eval.*` spans
+turn; the read itself, core's `collectSkillFiles`, is `skills.collect`) and
+`bash.exec` (a host calling `Bash.exec` itself; the bash tool streams, under
+its `tool.<name>`); the session logs' `session_log.*` (`create`, `head`,
+`list`, `read`, `commit`, `remove`, and the SQLite store's `open`), in
+memory (`SessionLogMemoryLive`) as in SQLite, each with
+`efferent.session.id` when it names a session, wherever the log is called;
+the render plugin's `render.emit`; and the evals' `eval.*` spans
 ([evals](/docs/concepts/evals/)).
 
 ## The telemetry plugin
