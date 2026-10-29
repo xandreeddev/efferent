@@ -143,8 +143,8 @@ crosses a boundary instead of trusting it: `effect/no-unknown-json`
 `Schema.encode*` call, which writes a value out) and
 `effect/no-record-cast` (`as Record<string, unknown|any>` and `as { … }`).
 In the root profile each runs over every package (`CHECKED`), less the
-files its entry excludes, but `prefer-effect-fn` and `no-record-cast`, which
-still enter package by package.
+files its entry excludes, but `prefer-effect-fn`, which still enters
+package by package.
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

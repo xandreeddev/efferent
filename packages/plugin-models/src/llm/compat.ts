@@ -1,4 +1,4 @@
-import { AiError, LanguageModel, Prompt, Tool } from "effect/ai"
+import { AiError, LanguageModel, Prompt, Tool, type Response as ResponseParts } from "effect/ai"
 import { Cause, Effect, Option, Schema, Stream } from "effect"
 import { Base64 } from "effect/encoding"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, reasonOf, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
@@ -216,8 +216,8 @@ export const toChatMessages = (prompt: Prompt.Prompt, options: ChatMessageOption
       return { out: [...fold.out, { role: "user", content: [...fold.pending, ...(own ? [{ type: "text", text: USER_CAPTION }] : []), ...parts] }], pending: [] }
     }
     if (message.role === "tool") {
-      // One chat message per result part, keyed by the originating call id.
-      const results = message.content.flatMap((p) => p.type === "tool-result" ? [p] : [])
+      // One chat message per result part, keyed by the originating call id (a provider-run tool's is left out, as its call is).
+      const results = message.content.flatMap((p) => p.type === "tool-result" && !p.providerExecuted ? [p] : [])
       const sent = results.flatMap((p) => {
         const parts = images ? (p.modelOutput ?? []).flatMap((output) => output.type === "file" && isSendableImage(output) ? [output] : []) : []
         return parts.length === 0 ? [] : [{ type: "text", text: `Images returned by ${p.name} (call ${p.id}):` }, ...parts.map(imageUrlPart)]
@@ -235,7 +235,7 @@ export const toChatMessages = (prompt: Prompt.Prompt, options: ChatMessageOption
       .flatMap((p) => (p.type === "text" ? [p.text] : []))
       .join("")
     const toolCalls = message.content.flatMap((p) =>
-      p.type === "tool-call"
+      p.type === "tool-call" && !p.providerExecuted // a provider-run tool (call and result) is the provider's own: neither is sent
         ? [
             {
               id: p.id,
@@ -302,12 +302,12 @@ export const toChatTools = (tools: ReadonlyArray<Tool.Any>): ReadonlyArray<Json>
       : [],
   )
 
-const toToolChoice = (choice: unknown): unknown => {
+const toToolChoice = (choice: LanguageModel.ProviderOptions["toolChoice"]): Schema.Json => {
   if (choice === "none" || choice === "required") return choice
-  if (typeof choice === "object" && choice !== null && "tool" in choice) {
+  if (typeof choice === "object" && "tool" in choice) {
     return {
       type: "function" as const,
-      function: { name: (choice as { tool: string }).tool },
+      function: { name: String(choice.tool) },
     }
   }
   return "auto"
@@ -322,7 +322,7 @@ const toToolChoice = (choice: unknown): unknown => {
  * `thinking: {type: "enabled"}`; qwen takes `enable_thinking`. Disabling is
  * never sent (kimi-k2.7+ rejects it outright); unknown families get nothing.
  */
-export const thinkingParams = (model: string): Record<string, unknown> => {
+export const thinkingParams = (model: string): Schema.JsonObject => {
   // The CODE variants get HIGH effort on top — live-probed on kimi-k2.7-code:
   // enabled alone thought 103 tokens, enabled + reasoning_effort:"high"
   // thought 398 on the same prompt (accepted, no 400). Coding turns trade
@@ -341,7 +341,7 @@ export const fromChatCompletion = (
   moduleName: string,
   body: ChatCompletion,
   reading: UsageReading = {},
-): Effect.Effect<ReadonlyArray<unknown>, AiError.AiError> =>
+): Effect.Effect<ReadonlyArray<ResponseParts.PartEncoded>, AiError.AiError> =>
   Effect.gen(function* () {
     const choice = body.choices?.[0]
     if (choice === undefined) {
@@ -355,8 +355,8 @@ export const fromChatCompletion = (
     const text = message.content
     const toolCalls = yield* Effect.forEach(message.tool_calls ?? [], (tc) =>
       decodeToolArguments(tc.function?.arguments ?? "{}").pipe(
-        Effect.map((params) => ({
-          type: "tool-call" as const,
+        Effect.map((params): ResponseParts.ToolCallPartEncoded => ({
+          type: "tool-call",
           id: tc.id ?? "",
           name: tc.function?.name ?? "",
           params,
@@ -369,14 +369,14 @@ export const fromChatCompletion = (
     )
     return [
       ...(reasoning !== null && reasoning !== undefined && reasoning.length > 0
-        ? [{ type: "reasoning", text: reasoning }]
+        ? [{ type: "reasoning" as const, text: reasoning }]
         : []),
       ...(text !== null && text !== undefined && text.length > 0
-        ? [{ type: "text", text }]
+        ? [{ type: "text" as const, text }]
         : []),
       ...toolCalls,
       {
-        type: "finish",
+        type: "finish" as const,
         reason:
           toolCalls.length > 0 ? "tool-calls" : finishReasonFromWire(choice.finish_reason),
         usage: usageFromCompletion(body.usage, reading),
@@ -386,8 +386,8 @@ export const fromChatCompletion = (
 
 /** A request's public options, shared by the body and the model's descriptor:
  *  the sampling temperature (sent before the messages) and the gateway
- *  extensions (sent after them), as the wire has always ordered them. */
-const requestSettings = (config: CompatConfig, cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>): { readonly sampling: Json; readonly extensions: Json } => ({
+ *  extensions (sent after them), as the wire has always ordered them; JSON, as the descriptor records them. */
+const requestSettings = (config: CompatConfig, cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>): { readonly sampling: Schema.JsonObject; readonly extensions: Schema.JsonObject } => ({
   sampling: config.temperature === undefined ? {} : { temperature: config.temperature },
   extensions: config.standardOnly === true ? {} : {
     ...Option.match(cacheKey, { onNone: () => ({}), onSome: (key) => ({ prompt_cache_key: key }) }),

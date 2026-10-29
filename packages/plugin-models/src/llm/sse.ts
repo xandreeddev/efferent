@@ -40,7 +40,7 @@ export interface UsageReading {
  *  parser — the gateway fronts upstreams with three cache vocabularies.
  *  `prompt_tokens` already counts the cached and written tokens: it is the
  *  full input, and `completion_tokens` the full output, reasoning included. */
-export const usageFromCompletion = (usage: CompletionUsage | null | undefined, reading: UsageReading = {}) => {
+export const usageFromCompletion = (usage: CompletionUsage | null | undefined, reading: UsageReading = {}): typeof Response.Usage.Encoded => {
   const input = usage?.prompt_tokens ?? 0
   const cached =
     usage?.prompt_cache_hit_tokens ??

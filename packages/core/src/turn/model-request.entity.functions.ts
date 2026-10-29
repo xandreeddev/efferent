@@ -178,7 +178,7 @@ export const reconstructModelRequest = (header: ModelRequestHeader, entries: Rea
   if (context.fingerprint !== header.contextFingerprint) {
     return yield* Effect.fail(diverged("context", `the memory events rebuild context ${context.fingerprint}, the request was prepared from ${header.contextFingerprint}`))
   }
-  const prompt = Prompt.concat(Prompt.make([{ role: "system", content: header.system }]), Prompt.make(toPromptMessages(context.messages) as Prompt.RawInput))
+  const prompt = Prompt.concat(Prompt.make([{ role: "system", content: header.system }]), Prompt.make(toPromptMessages(context.messages)))
   return {
     prompt, contextFingerprint: context.fingerprint, tools: header.tools, toolChoice: header.toolChoice,
     model: header.model, cacheKey: header.cacheKey, callPolicy: header.callPolicy,

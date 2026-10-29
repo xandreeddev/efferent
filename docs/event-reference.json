@@ -2395,12 +2395,7 @@
                                       "type": "string"
                                     },
                                     "providerOptions": {
-                                      "anyOf": [
-                                        {},
-                                        {
-                                          "type": "null"
-                                        }
-                                      ]
+                                      "type": "object"
                                     }
                                   },
                                   "required": [
@@ -2463,12 +2458,7 @@
                         ]
                       },
                       "providerOptions": {
-                        "anyOf": [
-                          {},
-                          {
-                            "type": "null"
-                          }
-                        ]
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -2503,12 +2493,7 @@
                                   "type": "string"
                                 },
                                 "providerOptions": {
-                                  "anyOf": [
-                                    {},
-                                    {
-                                      "type": "null"
-                                    }
-                                  ]
+                                  "type": "object"
                                 }
                               },
                               "required": [
@@ -2530,12 +2515,7 @@
                                   "type": "string"
                                 },
                                 "providerOptions": {
-                                  "anyOf": [
-                                    {},
-                                    {
-                                      "type": "null"
-                                    }
-                                  ]
+                                  "type": "object"
                                 }
                               },
                               "required": [
@@ -2561,12 +2541,7 @@
                                 },
                                 "input": {},
                                 "providerOptions": {
-                                  "anyOf": [
-                                    {},
-                                    {
-                                      "type": "null"
-                                    }
-                                  ]
+                                  "type": "object"
                                 },
                                 "providerExecuted": {
                                   "anyOf": [
@@ -2586,17 +2561,104 @@
                                 "input"
                               ],
                               "additionalProperties": true
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "type": {
+                                  "type": "string",
+                                  "enum": [
+                                    "tool-result"
+                                  ]
+                                },
+                                "toolCallId": {
+                                  "type": "string"
+                                },
+                                "toolName": {
+                                  "type": "string"
+                                },
+                                "output": {},
+                                "providerOptions": {
+                                  "type": "object"
+                                },
+                                "isError": {
+                                  "anyOf": [
+                                    {
+                                      "type": "boolean"
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "providerExecuted": {
+                                  "type": "boolean"
+                                },
+                                "media": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "type": {
+                                        "type": "string",
+                                        "enum": [
+                                          "media"
+                                        ]
+                                      },
+                                      "mediaType": {
+                                        "type": "string",
+                                        "enum": [
+                                          "image/png",
+                                          "image/jpeg",
+                                          "image/gif",
+                                          "image/webp"
+                                        ]
+                                      },
+                                      "data": {
+                                        "type": "string",
+                                        "minLength": 1,
+                                        "maxLength": 5242880,
+                                        "pattern": "^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$"
+                                      },
+                                      "fingerprint": {
+                                        "type": "string"
+                                      },
+                                      "bytes": {
+                                        "type": "integer",
+                                        "maximum": 3932160,
+                                        "exclusiveMinimum": 0
+                                      },
+                                      "name": {
+                                        "type": "string"
+                                      },
+                                      "alt": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "mediaType",
+                                      "data",
+                                      "fingerprint",
+                                      "bytes"
+                                    ],
+                                    "additionalProperties": true
+                                  }
+                                }
+                              },
+                              "required": [
+                                "type",
+                                "toolCallId",
+                                "toolName",
+                                "output"
+                              ],
+                              "additionalProperties": true
                             }
                           ]
                         }
                       },
                       "providerOptions": {
-                        "anyOf": [
-                          {},
-                          {
-                            "type": "null"
-                          }
-                        ]
+                        "type": "object"
                       }
                     },
                     "required": [
@@ -2633,12 +2695,7 @@
                             },
                             "output": {},
                             "providerOptions": {
-                              "anyOf": [
-                                {},
-                                {
-                                  "type": "null"
-                                }
-                              ]
+                              "type": "object"
                             },
                             "isError": {
                               "anyOf": [
@@ -2649,6 +2706,9 @@
                                   "type": "null"
                                 }
                               ]
+                            },
+                            "providerExecuted": {
+                              "type": "boolean"
                             },
                             "media": {
                               "type": "array",
@@ -2712,12 +2772,7 @@
                         }
                       },
                       "providerOptions": {
-                        "anyOf": [
-                          {},
-                          {
-                            "type": "null"
-                          }
-                        ]
+                        "type": "object"
                       }
                     },
                     "required": [

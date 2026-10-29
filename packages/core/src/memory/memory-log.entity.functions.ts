@@ -81,8 +81,9 @@ const appliedCompactions = (entries: ReadonlyArray<LogEntry>, strategy: string):
     }
   }, { views: new Map(), cutTurn: 0, preamble: Option.none(), ids: [], omitted: new Set<string>() })
 
+/** The calls whose results are recorded on their own: a tool the provider ran has its result in the message itself. */
 const toolCallIds = (message: AgentMessage): ReadonlyArray<string> =>
-  message.role === "assistant" ? message.content.flatMap((part) => part.type === "tool-call" ? [part.toolCallId] : []) : []
+  message.role === "assistant" ? message.content.flatMap((part) => part.type === "tool-call" && part.providerExecuted !== true ? [part.toolCallId] : []) : []
 
 const assistantText = (message: AgentMessage): Option.Option<string> => {
   if (message.role !== "assistant") return Option.none()

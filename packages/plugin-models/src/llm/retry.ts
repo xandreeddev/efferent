@@ -1,5 +1,6 @@
 import { AiError } from "effect/ai"
-import { Clock, Duration, Effect, Ref, Schedule, Stream } from "effect"
+import { HttpClientError } from "effect/http"
+import { Clock, Duration, Effect, Predicate, Ref, Schedule, Stream } from "effect"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 
 /**
@@ -39,11 +40,11 @@ export type ErrorClass = "transient" | "permanent"
 
 /** `Retry-After` millis — the integer-seconds form, or the HTTP-date form measured from `now`. */
 const retryAfterMillis = (
-  headers: Record<string, string> | undefined,
+  headers: Readonly<Record<string, unknown>> | undefined,
   now: number,
 ): number | undefined => {
   const raw = headers?.["retry-after"]
-  if (raw === undefined) return undefined
+  if (!Predicate.isString(raw)) return undefined
   const seconds = Number(raw)
   if (Number.isFinite(seconds)) return seconds * 1000
   const at = Date.parse(raw)
@@ -58,8 +59,7 @@ const rateLimited = (waitMs: number | undefined): ErrorClass =>
 export const classifyLlmError = (error: unknown, now: number): ErrorClass => {
   if (!AiError.isAiError(error)) {
     // A raw HTTP client's transport failure (the codex socket path).
-    const e = error as { readonly _tag?: string; readonly reason?: { readonly _tag?: string } } | null
-    return e?._tag === "HttpClientError" && e.reason?._tag === "TransportError" ? "transient" : "permanent"
+    return HttpClientError.isHttpClientError(error) && error.reason._tag === "TransportError" ? "transient" : "permanent"
   }
   const reason = error.reason
   // An exhausted balance or quota, whatever status carried it (a gateway's
@@ -70,7 +70,7 @@ export const classifyLlmError = (error: unknown, now: number): ErrorClass => {
     if (response.status === 429) {
       // Beyond the honored cap this is a daily quota — retrying in seconds
       // hits the same wall; fail fast and let the caller change model.
-      return rateLimited(retryAfterMillis(response.headers as Record<string, string>, now))
+      return rateLimited(retryAfterMillis(response.headers, now))
     }
     return response.status >= 500 ? "transient" : "permanent"
   }
@@ -106,9 +106,15 @@ const emptyError = (label: string, method: string): AiError.AiError =>
     `${label} returned an empty response (no text, tool call, or reasoning) — treated as a transient provider failure`,
   )
 
+/** A part's `type`, "" for a value that has none: the router hands these
+ *  guards its providers' parts untyped, and effect/ai's decoded parts
+ *  (`Response.AnyPart`) and encoded ones share `type` and `delta`. */
+const partType = (part: unknown): string =>
+  Predicate.hasProperty(part, "type") && Predicate.isString(part.type) ? part.type : ""
+
 const isContentPart = (part: unknown): boolean => {
-  const t = (part as { readonly type?: string } | null)?.type
-  return t === "text" || t === "tool-call" || t === "reasoning"
+  const type = partType(part)
+  return type === "text" || type === "tool-call" || type === "reasoning"
 }
 
 /** Reject an HTTP-200-but-empty response so it retries instead of
@@ -156,22 +162,21 @@ export const retryableLlm =
       ),
     )
 
-/** Content-part identity, on the ENCODED stream vocabulary: a non-empty
+/** Content-part identity, on the stream vocabulary: a non-empty
  *  text/reasoning delta or a tool call. The retry gate arms on it, the
  *  empty guard counts it — S1 guarantees empty deltas never reach here. */
-const isContentPartEncoded = (part: unknown): boolean => {
-  const p = part as { readonly type?: string; readonly delta?: string } | null
-  if (p === null || typeof p !== "object") return false
-  if (p.type === "tool-call") return true
+const isStreamContentPart = (part: unknown): boolean => {
+  const type = partType(part)
+  if (type === "tool-call") return true
   return (
-    (p.type === "text-delta" || p.type === "reasoning-delta") &&
-    typeof p.delta === "string" &&
-    p.delta.length > 0
+    (type === "text-delta" || type === "reasoning-delta") &&
+    Predicate.hasProperty(part, "delta") &&
+    Predicate.isString(part.delta) &&
+    part.delta.length > 0
   )
 }
 
-const isFinishPartEncoded = (part: unknown): boolean =>
-  (part as { readonly type?: string } | null)?.type === "finish"
+const isFinishPart = (part: unknown): boolean => partType(part) === "finish"
 
 /**
  * The STREAM twin of {@link retryableLlm}, with semantics a settled call
@@ -197,9 +202,9 @@ export const retryableLlmStream =
         const contentSeen = yield* Ref.make(false)
         return stream.pipe(
           Stream.mapEffect((part) =>
-            isContentPartEncoded(part)
+            isStreamContentPart(part)
               ? Ref.set(contentSeen, true).pipe(Effect.as(part))
-              : isFinishPartEncoded(part)
+              : isFinishPart(part)
                 ? Ref.get(contentSeen).pipe(
                     Effect.flatMap((seen) =>
                       seen ? Effect.succeed(part) : Effect.fail(emptyError(label, "streamText")),

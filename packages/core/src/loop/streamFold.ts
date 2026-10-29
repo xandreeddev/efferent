@@ -35,33 +35,44 @@ export interface StreamDelta {
   readonly toolName?: string
 }
 
-/** Structurally what the loop reads off a `GenerateTextResponse`; `usage`
- *  is absent when no finish part carried one. */
+/** What the loop reads off a `GenerateTextResponse`; `usage` is absent when
+ *  no finish part carried one. */
 export interface FoldedTurn {
-  readonly content: ReadonlyArray<unknown>
-  readonly finishReason: string
-  readonly usage?: unknown
+  readonly content: ReadonlyArray<Response.AnyPart>
+  readonly finishReason: Response.FinishReason
+  readonly usage?: Response.Usage
 }
 
 type Metadata = Response.ProviderMetadata
 
+type Channel = "text" | "reasoning"
+
 interface Chunk {
   readonly kind: "chunk"
-  readonly channel: "text" | "reasoning"
+  readonly channel: Channel
   readonly id: string
   readonly text: string
   readonly metadata: Metadata
 }
 
-type Entry = Chunk | { readonly kind: "part"; readonly part: unknown }
+type Entry = Chunk | { readonly kind: "part"; readonly part: Response.AnyPart }
 
 interface FoldState {
   readonly entries: ReadonlyArray<Entry>
-  readonly finishReason: Option.Option<string>
-  readonly usage: Option.Option<unknown>
+  readonly finishReason: Option.Option<Response.FinishReason>
+  readonly usage: Option.Option<Response.Usage>
 }
 
-const CHANNEL_BY_TYPE: Record<string, "text" | "reasoning"> = {
+/** The parts of a streamed text or reasoning block: its start, deltas and end. */
+type ChunkPart =
+  | Response.TextStartPart
+  | Response.TextDeltaPart
+  | Response.TextEndPart
+  | Response.ReasoningStartPart
+  | Response.ReasoningDeltaPart
+  | Response.ReasoningEndPart
+
+const CHANNEL_BY_TYPE: { readonly [T in ChunkPart["type"]]: Channel } = {
   "text-start": "text",
   "text-delta": "text",
   "text-end": "text",
@@ -69,6 +80,8 @@ const CHANNEL_BY_TYPE: Record<string, "text" | "reasoning"> = {
   "reasoning-delta": "reasoning",
   "reasoning-end": "reasoning",
 }
+
+const isChunkPart = (part: Response.AnyPart): part is ChunkPart => Object.hasOwn(CHANNEL_BY_TYPE, part.type)
 
 const isJsonObject = (value: Schema.Json | undefined): value is Schema.JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value)
@@ -88,14 +101,14 @@ const mergeMetadata = (earlier: Metadata, later: Metadata): Metadata =>
     earlier,
   )
 
-const isChunk = (channel: "text" | "reasoning", id: string) => (entry: Entry): entry is Chunk =>
+const isChunk = (channel: Channel, id: string) => (entry: Entry): entry is Chunk =>
   entry.kind === "chunk" && entry.channel === channel && entry.id === id
 
 /** The chunk `id` of `channel` — opened in the next slot when unseen — with
  *  `delta` appended and `metadata` merged in. */
 const extendChunk = (
   entries: ReadonlyArray<Entry>,
-  channel: "text" | "reasoning",
+  channel: Channel,
   id: string,
   delta: string,
   metadata: Metadata,
@@ -109,15 +122,24 @@ const extendChunk = (
   )
 }
 
-const entryParts = (entry: Entry): ReadonlyArray<unknown> => {
+const entryParts = (entry: Entry): ReadonlyArray<Response.AnyPart> => {
   if (entry.kind === "part") return [entry.part]
   return entry.text.length > 0 || Object.keys(entry.metadata).length > 0
     ? [Response.makePart(entry.channel, { text: entry.text, metadata: entry.metadata })]
     : []
 }
 
+const carriesUsage = (usage: Response.Usage): boolean =>
+  usage.inputTokens.total !== undefined || usage.outputTokens.total !== undefined
+
+/** A part passed through as a settled entry at its arrival position. */
+const settle = (state: FoldState, part: Response.AnyPart): FoldState => ({
+  ...state,
+  entries: [...state.entries, { kind: "part", part }],
+})
+
 export const foldStreamParts = <E, R, R2 = never>(
-  parts: Stream.Stream<unknown, E, R>,
+  parts: Stream.Stream<Response.AnyPart, E, R>,
   onDelta: (delta: StreamDelta) => Effect.Effect<void, never, R2>,
 ): Effect.Effect<FoldedTurn, E, R | R2> =>
   Stream.runFoldEffect(
@@ -128,69 +150,40 @@ export const foldStreamParts = <E, R, R2 = never>(
       usage: Option.none(),
     }),
     (state: FoldState, part): Effect.Effect<FoldState, never, R2> => {
-      const p = part as {
-        readonly type?: string
-        readonly id?: string
-        readonly name?: string
-        readonly delta?: string
-        readonly reason?: string
-        readonly usage?: unknown
-        readonly metadata?: Metadata
-      }
-      const type = p.type ?? ""
       // Tool argument streaming: fan the deltas for incremental admission
       // AND keep the parts passing through as settled entries (the settled
       // content is byte-identical to the non-streamed path). The start part
       // carries the tool name; deltas share the call id.
-      if (type === "tool-params-start" || type === "tool-params-delta") {
-        const id = p.id ?? "tool-params-1"
-        const fan = onDelta({
-          channel: "tool-params",
-          id,
-          delta: type === "tool-params-delta" ? p.delta ?? "" : "",
-          ...(type === "tool-params-start" && p.name !== undefined ? { toolName: p.name } : {}),
-        })
-        return fan.pipe(
-          Effect.as({
-            ...state,
-            entries: [...state.entries, { kind: "part", part } as Entry],
-          }),
-        )
+      if (part.type === "tool-params-start") {
+        return onDelta({ channel: "tool-params", id: part.id, delta: "", toolName: part.name }).pipe(Effect.as(settle(state, part)))
       }
-      const channel = CHANNEL_BY_TYPE[type]
-      if (channel !== undefined) {
-        const id = p.id ?? `${channel}-1`
-        const delta = type.endsWith("-delta") ? p.delta ?? "" : ""
-        const next = { ...state, entries: extendChunk(state.entries, channel, id, delta, p.metadata ?? {}) }
+      if (part.type === "tool-params-delta") {
+        return onDelta({ channel: "tool-params", id: part.id, delta: part.delta }).pipe(Effect.as(settle(state, part)))
+      }
+      if (isChunkPart(part)) {
+        const channel = CHANNEL_BY_TYPE[part.type]
+        const delta = "delta" in part ? part.delta : ""
+        const next = { ...state, entries: extendChunk(state.entries, channel, part.id, delta, part.metadata) }
         return delta.length > 0
-          ? onDelta({ channel, id, delta }).pipe(Effect.as(next))
+          ? onDelta({ channel, id: part.id, delta }).pipe(Effect.as(next))
           : Effect.succeed(next)
       }
-      if (type === "finish") {
+      if (part.type === "finish") {
         // Mirror extractUsage's preference: the FIRST finish's reason wins
         // (a trailing usage-only finish has no meaningful reason), while a
         // usage-CARRYING finish wins for usage.
-        const usage = p.usage as
-          | { readonly inputTokens?: { readonly total?: number }; readonly outputTokens?: { readonly total?: number } }
-          | undefined
-        const carriesUsage = usage?.inputTokens?.total !== undefined || usage?.outputTokens?.total !== undefined
         return Effect.succeed({
-          entries: [...state.entries, { kind: "part", part } as Entry],
-          finishReason: Option.orElse(state.finishReason, () =>
-            Option.some(p.reason ?? "unknown"),
-          ),
-          usage: carriesUsage || Option.isNone(state.usage) ? Option.some(p.usage) : state.usage,
+          entries: [...state.entries, { kind: "part", part }],
+          finishReason: Option.orElse(state.finishReason, () => Option.some(part.reason)),
+          usage: carriesUsage(part.usage) || Option.isNone(state.usage) ? Option.some(part.usage) : state.usage,
         })
       }
-      return Effect.succeed({
-        ...state,
-        entries: [...state.entries, { kind: "part", part } as Entry],
-      })
+      return Effect.succeed(settle(state, part))
     },
   ).pipe(
     Effect.map((state): FoldedTurn => ({
       content: state.entries.flatMap(entryParts),
-      finishReason: Option.getOrElse(state.finishReason, () => "unknown"),
+      finishReason: Option.getOrElse(state.finishReason, (): Response.FinishReason => "unknown"),
       ...Option.match(state.usage, { onNone: () => ({}), onSome: (usage) => ({ usage }) }),
     })),
   )

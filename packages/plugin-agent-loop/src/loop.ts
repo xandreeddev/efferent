@@ -1,5 +1,5 @@
 import { AiError, LanguageModel, Prompt } from "effect/ai"
-import type { Tool, Toolkit } from "effect/ai"
+import type { Response, Tool, Toolkit } from "effect/ai"
 import { Array as Arr, Cause, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Stream } from "effect"
 import { CurrentTraceContent, foldStreamParts, freezeModelRequest, replayableContext } from "@xandreed/core"
 import { CurrentAgentStep } from "@xandreed/core"
@@ -263,7 +263,7 @@ const failureText = (failure: unknown): string => typeof failure === "string" ? 
  * must not count (no tool calls, or purely pollable ones).
  */
 const progressSignature = (
-  content: ReadonlyArray<unknown>,
+  content: ReadonlyArray<Response.AnyPart>,
   pollable: ReadonlySet<string>,
 ): string => {
   const calls = responseToolCalls(content)
@@ -396,7 +396,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const partSeen = yield* Ref.make(false)
         const attempt = Effect.gen(function* () {
           const visible = options.render === undefined ? state.messages : yield* options.render(stepView).pipe(Effect.provide(eventContext))
-          const prompt = freezeModelRequest(Prompt.concat(instructions, Prompt.make(toPromptMessages(visible) as never)))
+          const prompt = freezeModelRequest(Prompt.concat(instructions, Prompt.make(toPromptMessages(visible))))
 
           if (captureTraceContent)
             yield* Effect.annotateCurrentSpan({
@@ -447,9 +447,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             generated.pipe(
               Effect.map((res) => ({
                 _tag: "ok" as const,
-                content: res.content as ReadonlyArray<unknown>,
-                finishReason: res.finishReason as string,
-                usage: res.usage as unknown,
+                content: res.content,
+                finishReason: res.finishReason,
+                usage: res.usage,
                 streamingHealthy,
               })),
             )
@@ -467,7 +467,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           const streamed = Effect.gen(function* () {
             yield* beforeDispatch
             const folded = yield* foldStreamParts(
-              (Stream.unwrap(Effect.sync(() => dispatchModel.streamText(callOptions))) as Stream.Stream<unknown, AiError.AiError, LanguageModel.LanguageModel>).pipe(
+              (Stream.unwrap(Effect.sync(() => dispatchModel.streamText(callOptions))) as Stream.Stream<Response.AnyPart, AiError.AiError, LanguageModel.LanguageModel>).pipe(
                 Stream.tap(() => Ref.set(partSeen, true)),
               ),
               (delta) =>

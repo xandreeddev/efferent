@@ -53,7 +53,7 @@ const CHECKED = [
 /**
  * The declared TYPE-ERASURE boundary: the router wrapping arbitrary provider
  * services, the compat/codex clients speaking effect/ai's generic surface,
- * the loop's prompt assembly, the bridge over dynamic MCP tools, the npm
+ * the loop's call assembly, the bridge over dynamic MCP tools, the npm
  * undici's fetch typed as the global one (its requests and responses have the
  * global fetch types' shape but are distinct classes, so nothing downstream
  * may rely on `instanceof Response` / `Headers`). `as never`
@@ -111,28 +111,6 @@ const EFFECT_FN_CLEAN = [
   "plugin-memory-digest",
 ].map(src)
 
-const RECORD_CAST_CLEAN = [
-  "sdk",
-  "evals",
-  "evals-cli",
-  "evals-langfuse",
-  "evals-langsmith",
-  "plugin-agent-loop",
-  "runtime",
-  "plugin-memory-window",
-  "plugin-memory-summary",
-  "plugin-memory-digest",
-  "plugin-tool-discovery",
-  "plugin-models",
-  "plugin-sessions",
-  "plugin-tasks",
-  "plugin-render",
-  "plugin-workspace",
-  "plugin-telemetry",
-  "plugin-session-sqlite",
-  "foundry",
-].map(src)
-
 /**
  * Open schemas (`effect/no-unknown-json`) core keeps for now. The MCP
  * bridge passes a model's arguments to a server it does not know; a
@@ -160,10 +138,10 @@ const UNKNOWN_JSON_EDGES = [
  * NULLABLE_EDGES the list only shrinks.
  */
 const RECORD_CAST_EDGES = [
+  // Core's failure classifier reads a foreign failure's fields off an open record, until it decodes them.
+  "packages/core/src/domain/agent-failure.entity.functions.ts",
   "packages/plugin-tool-discovery/src/registry.adapter.ts",
-  "packages/plugin-models/src/llm/compat.ts",
   "packages/plugin-models/src/llm/router.ts",
-  "packages/plugin-models/src/llm/utilityLlm.ts",
 ]
 
 /**
@@ -344,9 +322,9 @@ const config: typeof GateSuiteConfig.Encoded = {
       allow: NULLABLE_EDGES,
     },
     { rule: "effect/no-stringified-cause", include: CHECKED, exclude: TEST_SCAFFOLDING },
-    // One package at a time (the lists above).
+    // Each with its allow list above, which only shrinks.
     { rule: "effect/no-unknown-json", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_JSON_EDGES },
-    { rule: "effect/no-record-cast", include: RECORD_CAST_CLEAN, exclude: TEST_SCAFFOLDING, allow: RECORD_CAST_EDGES },
+    { rule: "effect/no-record-cast", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: RECORD_CAST_EDGES },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
     // One package at a time (the list above).
