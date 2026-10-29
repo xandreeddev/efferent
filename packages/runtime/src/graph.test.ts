@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Context, Effect, Layer, Option, References, Schema } from "effect"
 import { definePlugin, HarnessError } from "@xandreed/core"
-import { activateGraph, resolveGraph } from "./graph.js"
+import type { Plugin } from "@xandreed/core"
+import { activateGraph, graphFingerprint, resolveGraph } from "./graph.js"
 
 import { Value, Consumer, Items } from "./testing.port.js"
 const provider = definePlugin({ id: "provider", version: "1", config: Schema.Struct({ value: Schema.Number }), defaults: { value: 1 }, provides: [Value], layer: ({ value }) => Layer.succeed(Value, value) })
@@ -59,5 +60,72 @@ describe("plugin graph", () => {
     expect(result).toEqual({ seen: 3, all: ["one", "two", "three", "collector"] })
     const alone = await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "o", use: "optional" }] }, [optionalValue])))
     expect(alone._tag).toBe("Success")
+  })
+  test("a plugin's layer gets the services it declares and the fiber's settings, not the services around its activation", async () => {
+    const valueOr = (fallback: number) => Effect.serviceOption(Value).pipe(Effect.map(Option.getOrElse(() => fallback)))
+    const undeclared = definePlugin({ id: "undeclared", version: "1", config: Schema.Struct({}), defaults: {}, provides: [Consumer], layer: () => Layer.effect(Consumer, valueOr(-1)) })
+    const declared = definePlugin({ id: "declared", version: "1", config: Schema.Struct({}), defaults: {}, optional: [Value], provides: [Consumer], layer: () => Layer.effect(Consumer, valueOr(-1)) })
+    const settings = definePlugin({ id: "settings", version: "1", config: Schema.Struct({}), defaults: {}, provides: [Items], layer: () => Layer.effect(Items, Effect.gen(function* () {
+      const span = yield* Effect.currentSpan.pipe(Effect.map((span) => span.name), Effect.orElseSucceed(() => "none"))
+      return [span, String((yield* References.CurrentLogAnnotations)["run"])]
+    })) })
+    const activated = (plugin: Plugin, services: Context.Context<never>) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "p", use: plugin.id }] }, [plugin])
+      return yield* activateGraph(graph, "session", services, yield* Effect.scope)
+    })).pipe(Effect.provideService(Value, 41), Effect.withSpan("activation"), Effect.annotateLogs({ run: "r1" })))
+    const consumed = (plugin: Plugin, services: Context.Context<never>) => activated(plugin, services).then((context) => Context.getUnsafe(context, Consumer))
+    expect(await consumed(undeclared, Context.empty())).toBe(-1)
+    expect(await consumed(undeclared, Context.make(Value, 7))).toBe(-1)
+    expect(await consumed(declared, Context.make(Value, 7))).toBe(7)
+    expect(await consumed(declared, Context.empty())).toBe(-1)
+    expect(Context.getUnsafe(await activated(settings, Context.empty()), Items)).toEqual(["activation", "r1"])
+  })
+  test("options merge over nested defaults; an object of another shape replaces its default", async () => {
+    const nested = definePlugin({
+      id: "nested", version: "1",
+      config: Schema.Struct({
+        inbox: Schema.Struct({ maxPending: Schema.Number, attempts: Schema.Number }),
+        holder: Schema.Union([Schema.Struct({ mode: Schema.Literal("lease"), ttlMs: Schema.Number }), Schema.Struct({ mode: Schema.Literal("process") })]),
+      }),
+      defaults: { inbox: { maxPending: 20, attempts: 2 }, holder: { mode: "lease", ttlMs: 60_000 } },
+      provides: [Items], layer: ({ inbox, holder }) => Layer.succeed(Items, [String(inbox.maxPending), String(inbox.attempts), holder.mode]),
+    })
+    const items = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "n", use: "nested", options: { inbox: { maxPending: 50 }, holder: { mode: "process" } } }] }, [nested])
+      expect(graph.nodes[0]!.options).toEqual({ inbox: { maxPending: 50, attempts: 2 }, holder: { mode: "process" } })
+      return Context.getUnsafe(yield* activateGraph(graph, "session", Context.empty(), yield* Effect.scope), Items)
+    })))
+    expect(items).toEqual(["50", "2", "process"])
+    const typo = await Effect.runPromise(Effect.flip(resolveGraph({ version: 1, plugins: [{ id: "n", use: "nested", options: { inbox: { maxPending: 50, typo: 1 } } }] }, [nested])))
+    expect(typo).toMatchObject({ code: "config.options", plugin: "n" })
+  })
+  test("profiles are refused, not ignored", async () => {
+    const configs = [
+      { version: 1 as const, profile: "review", profiles: { review: { plugins: [{ id: "p", use: "provider" }] } } },
+      { version: 1 as const, plugins: [{ id: "p", use: "provider" }], profiles: {} },
+      { version: 1 as const, plugins: [{ id: "p", use: "provider" }], profile: "review" },
+    ]
+    const errors = await Effect.runPromise(Effect.forEach(configs, (config) => Effect.flip(resolveGraph(config, [provider]))))
+    expect(errors.map((error) => error.code)).toEqual(["config.profile", "config.profile", "config.profile"])
+  })
+  test("the fingerprint does not depend on the order keys were written in", async () => {
+    const nested = definePlugin({
+      id: "nested", version: "1",
+      config: Schema.Struct({ a: Schema.Number, b: Schema.Struct({ x: Schema.Number, y: Schema.Number }), labels: Schema.Record(Schema.String, Schema.String) }),
+      defaults: { a: 1, b: { x: 1, y: 2 }, labels: {} },
+      provides: [Value], layer: ({ a }) => Layer.succeed(Value, a),
+    })
+    const fingerprint = (config: Parameters<typeof resolveGraph>[0]) => Effect.runPromise(resolveGraph(config, [nested, provider]).pipe(Effect.map((graph) => graphFingerprint(graph))))
+    const written = await fingerprint({ version: 1, system: "s", bindings: { [Value.key]: "n" }, plugins: [
+      { id: "n", use: "nested", options: { b: { y: 3, x: 2 }, labels: { "z": "1", "b": "2" }, a: 5 } }, { id: "p", use: "provider" },
+    ] })
+    const reordered = await fingerprint({ plugins: [
+      { use: "nested", options: { a: 5, labels: { "b": "2", "z": "1" }, b: { x: 2, y: 3 } }, id: "n" }, { use: "provider", id: "p" },
+    ], bindings: { [Value.key]: "n" }, system: "s", version: 1 })
+    const other = await fingerprint({ version: 1, system: "s", bindings: { [Value.key]: "n" }, plugins: [
+      { id: "n", use: "nested", options: { a: 5, b: { x: 3, y: 2 }, labels: { "b": "2", "z": "1" } } }, { id: "p", use: "provider" },
+    ] })
+    expect(reordered).toBe(written)
+    expect(other).not.toBe(written)
   })
 })

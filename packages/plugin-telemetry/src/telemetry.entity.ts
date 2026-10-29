@@ -17,9 +17,9 @@ import { ModelPrice } from "@xandreed/core"
  *   as attributes, an event per response, refusal and stream fallback, and
  *   the running cost.
  *
- * Flat: the plugin's defaults merge one level deep. The options of the
- * plugin this package shipped before 0.11.0 (`enabled`, `serviceName`) are
- * refused; export is the host's `OtlpTelemetryLive` now.
+ * Flat. The options of the plugin this package shipped before 0.11.0
+ * (`enabled`, `serviceName`) are refused; export is the host's
+ * `OtlpTelemetryLive` now.
  */
 export const TelemetryOptions = Schema.Struct({
   prices: Schema.Record(Schema.String, ModelPrice),

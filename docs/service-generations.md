@@ -7,8 +7,12 @@ of a tool halfway through a run.
 
 `makeLiveLayer` in `@xandreed/runtime` stages a replacement in its own Scope,
 keeps the previous generation available if staging fails, and releases retired
-resources after their last user finishes. Use `registry.use(program)` around a
-single run; wrapping a perpetual worker pins that worker forever. The existing
+resources after their last user finishes. Uses go on with the working
+generation while a replacement builds (it holds them up only to swap), and
+replacements run one at a time; a registry closed while one builds closes the
+staged generation, and the replacement fails with `module.closed`. Use
+`registry.use(program)` around a single run; wrapping a perpetual worker pins
+that worker forever. The existing
 SDK's session plugin refresh also applies changes between runs. Runtime storage
 changes that require migration remain a separate restart/migration boundary.
 

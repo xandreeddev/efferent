@@ -19,7 +19,7 @@ const count = (maximum: number) => Schema.Int.pipe(Schema.check(Schema.isBetween
 
 /**
  * How `skillsDirectoryPlugin` loads skills from directories of `SKILL.md`
- * files. Flat: plugin defaults merge one level deep.
+ * files. Flat.
  *
  * - `roots`: the directories, absolute or relative to the agent's workspace
  *   (`SessionEnvironment`, else the process's working directory). A skill

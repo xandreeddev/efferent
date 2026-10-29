@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { HarnessError, PLUGIN_API_VERSION } from "./plugin.entity.js"
 import type { TypedPlugin } from "./plugin.entity.js"
-import { isHarnessError } from "./plugin.entity.functions.js"
+import { isHarnessError, mergeOptions } from "./plugin.entity.functions.js"
 
 /**
  * Layers retain their native types until the validated dynamic loading edge.
@@ -27,7 +27,7 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
   readonly layer: (config: A) => Layer.Layer<Out, E, In>
 }): TypedPlugin<A, I, Out, E, In> => {
   const decodeOptions = (options: unknown): Effect.Effect<A, Schema.SchemaError> => Schema.decodeUnknownEffect(definition.config)(
-    typeof options === "object" && options !== null ? { ...definition.defaults, ...options } : options ?? definition.defaults,
+    typeof options === "object" && options !== null ? mergeOptions(definition.config, definition.defaults, options) : options ?? definition.defaults,
     { onExcessProperty: "error" },
   )
   const named = (error: HarnessError) => new HarnessError({ code: error.code, message: error.message, plugin: error.plugin ?? definition.id })

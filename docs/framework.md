@@ -10,9 +10,19 @@ scope. See [Composable agents](#composable-agents-the-host-composes-the-turn).
 
 Each plugin has a stable `id`, `version`, `apiVersion`, `scope`, Effect Schema,
 default options, required service tags, provided service tags, and Layer factory.
-A plugin receives only its declared dependencies. Two providers of a service
-require a `bindings` entry selecting the instance id. Runtime plugins cannot
-require session services. Dependencies are checked before activation.
+A plugin receives only its declared dependencies (and the fiber's settings:
+logging, tracing and the current span, the clock); a host service it does not
+declare is not there, even one provided around `Agent.define` or `Agent.turn`.
+Two providers of a service require a `bindings` entry selecting the instance
+id. Runtime plugins cannot require session services. Dependencies are checked
+before activation. An agent whose turns would have no `ConversationMemory`,
+`ToolRegistry` or `StepLoop` (none provided by a plugin, none in `services`,
+none declared in `turnServices`) is refused by `Agent.define` with
+`config.graph`, naming the missing service, rather than failing its first turn.
+A `HarnessConfig` given to `resolveGraph` with `profile` or `profiles` is
+refused (`config.profile`): the graph does not select profiles, so a host
+folds the selected profile's plugins, bindings and system into the
+configuration first.
 
 ```ts
 import { Layer, Schema } from "effect"
@@ -32,7 +42,12 @@ export default definePlugin({
 
 A plugin's options are given where the agent is defined, as
 `{ plugin, options }` entries in `Agent.define({ plugins })`. They merge over
-the plugin's defaults and decode through its schema; undeclared keys are refused.
+the plugin's defaults (`mergeOptions`), nested objects key by key:
+`{ inbox: { maxPending: 50 } }` keeps the sessions plugin's other inbox
+defaults. An array, a string or any other value replaces its default, and so
+does an object of another of the shapes the schema allows
+(`{ ownership: { mode: "process" } }` over the default lease). The result
+decodes through the plugin's schema; undeclared keys are refused.
 
 The SQLite session store uses WAL and transactional sequence allocation. The
 models plugin is runtime-scoped: built once per `Agent.define`, with a turn's
@@ -1151,7 +1166,7 @@ under the process's umask) did not get, such as a private or read-only file
 mode. Both hold a
 per-file lock, so two sessions editing one file wait for each other.
 
-`WorkspaceToolsConfig` is flat (defaults merge one level deep): `tools`,
+`WorkspaceToolsConfig` is flat: `tools`,
 `always` (`["read"]`; also `edit`, `shell`), `confine`, `protect`,
 `exclude`, `maxLines`, `maxBytes`, `lsEntries`, `findResults`,
 `grepMatches`, `grepLineChars`, `maxFileBytes`, `readImages` (`true`),

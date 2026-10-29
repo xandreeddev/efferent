@@ -36,7 +36,7 @@ ls, find, grep and bash; beside them is the skill directory loader
   `exitGraceMs` after the exit it closes the output pipes, so a background
   process kept with `killBackground: false` needs its own output.
 - Configuration is flat (`shell`, `killBackground`, `exitGraceMs`;
-  `WorkspaceToolsConfig` likewise): plugin defaults merge one level deep.
+  `WorkspaceToolsConfig` likewise).
 - The workspace tools never touch `node:` or a runtime: they work through
   the `FileSystem`, `Bash` and `SessionEnvironment` of each call (read per
   call, so a turn's services can replace them), and run on any backend that

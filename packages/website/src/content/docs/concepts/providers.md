@@ -7,8 +7,9 @@ description: Configure each plugin's options and replace services through a vali
 
 An agent's plugins are configured where it is defined: each entry in
 `Agent.define({ plugins })` is a plugin, or `{ plugin, id?, options }`. Options
-merge over the plugin's defaults and decode through its schema; undeclared keys
-are refused. Two providers of one service need a `bindings` entry naming the
+merge over the plugin's defaults, nested objects key by key (an array, or an
+object of another of the shapes the schema allows, replaces its default), and
+decode through its schema; undeclared keys are refused. Two providers of one service need a `bindings` entry naming the
 instance to use. The graph is validated before anything activates: invalid
 options, missing dependencies, cycles, ambiguous providers and incompatible
 plugin API versions are all refused.

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Layer, Ref } from "effect"
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect"
 import { Version } from "./testing/version.port.js"
 import { makeLiveLayer } from "./live-layer.adapter.js"
 
@@ -26,4 +26,42 @@ test("replacements drain leased generations and failed stages preserve the worki
     expect(yield* Fiber.join(old)).toBe(1)
     expect(yield* Ref.get(disposed)).toEqual([1])
   })))
+})
+
+test("uses go on with the working generation while a replacement builds, and finish before it swaps", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const registry = yield* makeLiveLayer(Layer.succeed(Version, { value: 1 }) as Layer.Layer<Version, string>)
+    const building = yield* Deferred.make<void>()
+    const finish = yield* Deferred.make<void>()
+    const slow = Layer.effect(Version, Deferred.succeed(building, undefined).pipe(Effect.andThen(Deferred.await(finish)), Effect.as({ value: 2 })))
+    const replacement = yield* Effect.forkChild(registry.replace(slow))
+    yield* Deferred.await(building)
+    const during = yield* Effect.forkChild(registry.use(Version.pipe(Effect.map((version) => version.value))))
+    expect(yield* Fiber.join(during).pipe(Effect.timeoutOption("2 seconds"))).toEqual(Option.some(1))
+    expect(yield* registry.generation).toBe(0)
+    yield* Deferred.succeed(finish, undefined)
+    expect(yield* Fiber.join(replacement)).toBe(1)
+    expect(yield* registry.use(Version.pipe(Effect.map((version) => version.value)))).toBe(2)
+  })))
+})
+
+test("a registry closed while a replacement builds closes the staged generation, and the replacement fails", async () => {
+  const disposed: Array<number> = []
+  const result = await Effect.runPromise(Effect.gen(function* () {
+    const scope = yield* Scope.make()
+    const registry = yield* makeLiveLayer(Layer.succeed(Version, { value: 1 }) as Layer.Layer<Version, string>).pipe(Scope.provide(scope))
+    const building = yield* Deferred.make<void>()
+    const finish = yield* Deferred.make<void>()
+    const slow = Layer.effect(Version, Effect.acquireRelease(
+      Deferred.succeed(building, undefined).pipe(Effect.andThen(Deferred.await(finish)), Effect.as({ value: 2 })),
+      () => Effect.sync(() => { disposed.push(2) }),
+    ))
+    const replacement = yield* Effect.forkDetach(registry.replace(slow))
+    yield* Deferred.await(building)
+    yield* Scope.close(scope, Exit.void)
+    yield* Deferred.succeed(finish, undefined)
+    return yield* Fiber.join(replacement).pipe(Effect.flip)
+  }))
+  expect(result).toMatchObject({ code: "module.closed" })
+  expect(disposed).toEqual([2])
 })

@@ -72,8 +72,9 @@ in a SQLite file on Bun, and any other store can implement the `SessionLog` port
 
 Plugins are configured where the agent is defined: an entry in
 `Agent.define({ plugins })` is a plugin, or `{ plugin, id?, options }`. Options
-merge over the plugin's defaults and decode through its schema; undeclared keys
-are refused. The [plugin reference](/docs/concepts/plugin-reference/) lists every
+merge over the plugin's defaults, nested objects key by key (an array, or an
+object of another of the shapes the schema allows, replaces its default), and
+decode through its schema; undeclared keys are refused. The [plugin reference](/docs/concepts/plugin-reference/) lists every
 first-party plugin with its defaults and configuration schema, and
 [plugin configuration](/docs/concepts/providers/#model-endpoints) shows how to
 point the models plugin at any OpenAI-compatible endpoint.
