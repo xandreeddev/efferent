@@ -112,7 +112,7 @@ export const withAnthropicCacheBreakpoints = (options: unknown): unknown => {
 const missingKey = (selection: ModelSelection): AuthError =>
   new AuthError({
     provider: selection.provider,
-    message: `no credential for ${selection.provider} — add one to ~/.efferent/auth.json`,
+    message: `no credential for ${selection.provider} — sign in through the AuthStore (storage "local" keeps it in ~/.efferent/runtime/auth.json), or give the models plugin one in credentials or credentialEnv (storage "memory")`,
   })
 
 /** The OpenCode Responses options: what the model is built with, and what its descriptor records. */
@@ -145,11 +145,22 @@ const openCodeResponsesConfig = (cacheKey: Option.Option<string>, policy: Option
 /** `<url>/chat/completions` of an OpenAI-compatible base URL. */
 export const chatCompletionsUrl = (baseUrl: string): string => `${baseUrl.replace(/\/+$/, "")}/chat/completions`
 
-/** An endpoint's key: its own, then the environment variable it names, then the AuthStore's; none is valid. */
-const endpointKey = (endpoint: ModelEndpoint, stored: Redacted.Redacted<string> | undefined): Option.Option<string> =>
+/**
+ * An endpoint's own key: `apiKey`, then the environment variable `apiKeyEnv`
+ * names when it is set. An empty one is still the endpoint's own: it sends
+ * no key, and the AuthStore's is not used.
+ */
+export const endpointOwnKey = (endpoint: ModelEndpoint): Option.Option<Redacted.Redacted<string>> =>
   Option.fromNullishOr(endpoint.apiKey).pipe(
-    Option.orElse(() => Option.flatMap(Option.fromNullishOr(endpoint.apiKeyEnv), (name) => Option.fromNullishOr(process.env[name]))),
-    Option.orElse(() => Option.map(Option.fromNullishOr(stored), Redacted.value)),
+    Option.map((key) => Redacted.isRedacted(key) ? key : Redacted.make(key)),
+    Option.orElse(() => Option.flatMap(Option.fromNullishOr(endpoint.apiKeyEnv), (name) => Option.map(Option.fromNullishOr(process.env[name]), (value) => Redacted.make(value)))),
+  )
+
+/** An endpoint's key: its own, then the AuthStore's; an empty or missing one sends none. */
+const endpointKey = (endpoint: ModelEndpoint, stored: Redacted.Redacted<string> | undefined): Option.Option<string> =>
+  endpointOwnKey(endpoint).pipe(
+    Option.orElse(() => Option.fromNullishOr(stored)),
+    Option.map(Redacted.value),
     Option.filter((value) => value.length > 0),
   )
 
@@ -253,7 +264,7 @@ const buildBuiltInProvider = (
     if (key === undefined || credential?.type !== "oauth") return Effect.fail(missingKey(selection))
     const accountId = Option.orElse(Option.fromNullishOr(credential.accountId), () => openAiCodexAccountId(Redacted.value(key)))
     if (Option.isNone(accountId)) {
-      return Effect.fail(new AuthError({ provider: selection.provider, message: "the OpenAI subscription token has no ChatGPT account id — sign in again with Smith :login" }))
+      return Effect.fail(new AuthError({ provider: selection.provider, message: "the OpenAI subscription token has no ChatGPT account id — sign in to the subscription again and store the new token" }))
     }
     return makeOpenAiCodexLanguageModel({ model: selection.modelId, accessToken: key, accountId: accountId.value }).pipe(
       Effect.map((svc) => ({ svc, prependClaudeCode: false })),

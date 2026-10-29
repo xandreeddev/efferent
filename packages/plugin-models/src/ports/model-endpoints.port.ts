@@ -6,16 +6,25 @@ import { Context, Schema } from "effect"
  * optional — a local server or a private gateway may need none. It comes
  * from `apiKey`, then the environment variable `apiKeyEnv` names, then the
  * AuthStore's key for `<name>`; with none, no Authorization header is sent.
+ * An endpoint with its own key (`apiKey`, or a set `apiKeyEnv`) never reads
+ * the AuthStore; an empty one (`apiKey: ""`, or a variable set to "") sends
+ * no key. A host's code passes `apiKey` as a `Redacted` string so it
+ * prints as `<redacted>` in errors and graph fingerprints; JSON
+ * configuration names an environment variable in `apiKeyEnv` instead.
  * `standardOnly` (default true) sends only standard chat-completions fields.
  * The endpoint's usage is read in full: cache reads and writes from
  * `prompt_tokens_details`, reasoning from `completion_tokens_details`.
  */
 export const ModelEndpoint = Schema.Struct({
   url: Schema.String,
-  apiKey: Schema.optionalKey(Schema.String),
+  apiKey: Schema.optionalKey(Schema.Union([
+    Schema.String,
+    Schema.Redacted(Schema.String).annotate({ message: "apiKey is a string or a Redacted string" }),
+  ]).annotate({ message: "apiKey is a string or a Redacted string" })),
   apiKeyEnv: Schema.optionalKey(Schema.String),
   standardOnly: Schema.optionalKey(Schema.Boolean),
-})
+  // An unknown key is named, never its value: a misspelt `apiKey` holds a secret.
+}).annotate({ messageUnexpectedKey: "not an option of a model endpoint" })
 export type ModelEndpoint = typeof ModelEndpoint.Type
 
 /** Endpoints by provider name; a name that matches a built-in provider replaces it. */

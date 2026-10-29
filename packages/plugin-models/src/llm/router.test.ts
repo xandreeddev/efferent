@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
-import { Effect, Layer, Metric, Option, Ref, Stream, Tracer } from "effect"
+import { Effect, Layer, Metric, Option, Redacted, Ref, Stream, Tracer } from "effect"
 import { AuthStore, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, SettingsStore } from "@xandreed/core"
+import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { generateWith, LanguageModelLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
 
 const finish = {
@@ -191,6 +192,42 @@ describe("generateWith", () => {
     expect([
       "llm.usage.input_tokens", "llm.usage.output_tokens", "llm.usage.cache_read_tokens", "llm.usage.cache_write_tokens", "llm.usage.reasoning_tokens",
     ].map((key) => span?.attributes.get(key))).toEqual([1000, 60, 700, 200, 40])
+  })
+})
+
+describe("an endpoint with its own key", () => {
+  test("is called with that key and never reads the AuthStore, an empty one sends none; one without a key reads it", async () => {
+    const seen: Array<string | null> = []
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: (request) => {
+        seen.push(request.headers.get("authorization"))
+        return Response.json({ choices: [{ finish_reason: "stop", message: { content: "ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })
+      },
+    })
+    const url = `http://127.0.0.1:${server.port}/v1`
+    const reads = Ref.makeUnsafe<ReadonlyArray<string>>([])
+    const auth = Layer.succeed(AuthStore, AuthStore.of({
+      all: Effect.die("the AuthStore was read"),
+      get: (provider) => Ref.update(reads, (all) => [...all, `get ${provider}`]).pipe(Effect.as(Option.none())),
+      resolveKey: (provider) => Ref.update(reads, (all) => [...all, `resolveKey ${provider}`]).pipe(Effect.as(Option.some(Redacted.make("stored-key")))),
+      set: () => Effect.die("the AuthStore was written"),
+      remove: () => Effect.die("the AuthStore was written"),
+    }))
+    const endpoints = {
+      plain: { url, apiKey: "plain-key" },
+      redacted: { url, apiKey: Redacted.make("redacted-key") },
+      empty: { url, apiKey: "" },
+      stored: { url },
+    }
+    await Effect.runPromise(Effect.forEach(["plain:m", "redacted:m", "empty:m", "stored:m"], (label) => Effect.fromOption(parseModelSelection(label)).pipe(
+      Effect.flatMap((selection) => generateWith(selection, { prompt: "hi" })),
+    )).pipe(
+      Effect.provideService(CurrentModelEndpoints, endpoints),
+      Effect.provide(Layer.merge(auth, FetchHttpClient.layer)),
+    )).finally(() => server.stop(true))
+    expect(seen).toEqual(["Bearer plain-key", "Bearer redacted-key", null, "Bearer stored-key"])
+    expect(Ref.getUnsafe(reads)).toEqual(["get stored", "resolveKey stored"])
   })
 })
 

@@ -1,5 +1,20 @@
 import { describe, expect, it } from "bun:test"
-import { configuredModelCatalog, reasoningEffortsFor } from "./modelCatalog.js"
+import { Effect } from "effect"
+import { ModelCatalog, modelCatalogConformance } from "@xandreed/core"
+import { MemoryAuthStoreLive } from "../auth/memory-auth.adapter.js"
+import { configuredModelCatalog, ConfiguredModelCatalogLive, reasoningEffortsFor } from "./modelCatalog.js"
+
+describe("ConfiguredModelCatalogLive conforms to the ModelCatalog contract", () => {
+  const catalog = Effect.runSync(Effect.service(ModelCatalog).pipe(Effect.provide(ConfiguredModelCatalogLive), Effect.provide(MemoryAuthStoreLive(new Map([
+    ["opencode", { type: "api_key", key: "secret" }],
+    ["openai-codex", { type: "oauth", access: "a", refresh: "r", expires: 1 }],
+    ["local", { type: "local", baseUrl: "http://127.0.0.1:1/v1" }],
+  ])))))
+  modelCatalogConformance(catalog, { includes: ["opencode:glm-5.2", "openai-codex:gpt-5.5"] }).map((check) => it(check.name, async () => {
+    const exit = await Effect.runPromise(Effect.result(check.run))
+    expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
+  }))
+})
 
 describe("configured model catalog", () => {
   it("exposes only providers with configured credentials", () => {

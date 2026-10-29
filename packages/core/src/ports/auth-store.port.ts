@@ -29,9 +29,11 @@ export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
 
 /**
  * The credential store, read lazily per request: `resolveKey` returns a
- * usable secret (refreshing + persisting a near-expiry OAuth token first),
- * so a credential added mid-session takes effect on the next call with no
- * restart. `None` means the provider is not configured.
+ * usable secret (refreshing a near-expiry OAuth token first, and persisting
+ * it where the store keeps credentials), so a credential added mid-session
+ * takes effect on the next call with no restart. `None` means the provider
+ * is not configured. `authStoreConformance` checks a store against this
+ * contract.
  */
 export class AuthStore extends Context.Service<AuthStore, {
     readonly all: Effect.Effect<ReadonlyMap<string, Credential>, AuthError>
@@ -39,8 +41,8 @@ export class AuthStore extends Context.Service<AuthStore, {
     readonly resolveKey: (
       p: ProviderId,
     ) => Effect.Effect<Option.Option<Redacted.Redacted<string>>, AuthError>
-    /** Persist a credential (the human's `:login` action). */
+    /** Persist a credential (a login). */
     readonly set: (p: ProviderId, credential: Credential) => Effect.Effect<void, AuthError>
-    /** Remove a provider's credential everywhere it is stored (`:logout`). */
+    /** Remove a provider's credential everywhere it is stored (a logout). */
     readonly remove: (p: ProviderId) => Effect.Effect<void, AuthError>
   }>()("@xandreed/core/AuthStore") {}

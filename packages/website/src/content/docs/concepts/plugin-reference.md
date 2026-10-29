@@ -287,11 +287,13 @@ Requires: none
 
 ## @xandreed/plugin-models
 
-Scope: **session** · API 2 · Version 0.13.0
+Scope: **runtime** · API 2 · Version 0.13.0
 
 Provides: `effect/ai/LanguageModel`, `@xandreed/core/UtilityLlm`, `@xandreed/core/AuthStore`, `@xandreed/core/SettingsStore`, `@xandreed/core/ModelCatalog`
 
 Requires: `efferent/SessionEnvironment`
+
+Uses when present: `@xandreed/plugin-models/HostCredentials`
 
 ### Defaults
 
@@ -301,7 +303,10 @@ Requires: `efferent/SessionEnvironment`
   "fastModel": "",
   "fallbackModel": "",
   "inheritPrevious": true,
-  "endpoints": {}
+  "endpoints": {},
+  "storage": "local",
+  "credentials": {},
+  "credentialEnv": {}
 }
 ```
 
@@ -333,7 +338,14 @@ Requires: `efferent/SessionEnvironment`
             "type": "string"
           },
           "apiKey": {
-            "type": "string"
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ]
           },
           "apiKeyEnv": {
             "type": "string"
@@ -347,6 +359,96 @@ Requires: `efferent/SessionEnvironment`
         ],
         "additionalProperties": true
       }
+    },
+    "storage": {
+      "type": "string",
+      "enum": [
+        "local",
+        "memory"
+      ]
+    },
+    "credentials": {
+      "type": "object",
+      "additionalProperties": {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "api_key"
+                ]
+              },
+              "key": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "key"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "oauth"
+                ]
+              },
+              "access": {
+                "type": "string"
+              },
+              "refresh": {
+                "type": "string"
+              },
+              "expires": {
+                "type": "number"
+              },
+              "accountId": {
+                "type": "string"
+              },
+              "installationId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "access",
+              "refresh",
+              "expires"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "local"
+                ]
+              },
+              "baseUrl": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      }
+    },
+    "credentialEnv": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
     }
   },
   "required": [
@@ -354,7 +456,10 @@ Requires: `efferent/SessionEnvironment`
     "fastModel",
     "fallbackModel",
     "inheritPrevious",
-    "endpoints"
+    "endpoints",
+    "storage",
+    "credentials",
+    "credentialEnv"
   ],
   "additionalProperties": true
 }

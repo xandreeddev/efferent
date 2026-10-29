@@ -8,7 +8,7 @@ export {
   parseAuthorizationInput,
   refreshAnthropicToken,
 } from "./auth/anthropicOAuth.js"
-export type { AuthRedirect, OAuthBegin, Pkce, RefreshedTokens } from "./auth/anthropicOAuth.js"
+export type { AuthRedirect, OAuthBegin, Pkce, RefreshedTokens, TokenRequestOptions } from "./auth/anthropicOAuth.js"
 export {
   beginOpenAiCodexOAuth,
   exchangeOpenAiCodexCode,
@@ -21,7 +21,18 @@ export {
 } from "./auth/openAiCodexOAuth.js"
 export type { OpenAiCodexOAuthBegin, OpenAiCodexTokens } from "./auth/openAiCodexOAuth.js"
 export { authPaths, LocalAuthStoreLive } from "./auth/localAuth.js"
+export { MemoryAuthStoreLive } from "./auth/memory-auth.adapter.js"
+export type { MemoryAuthOptions } from "./auth/memory-auth.adapter.js"
+export { CredentialInput, CredentialInputs } from "./auth/credential-input.entity.js"
+export { credentialsOf, toCredential, toCredentialInput } from "./auth/credential-input.entity.functions.js"
+export { RefreshableProvider } from "./auth/credential-refresh.entity.js"
+export type { OAuthCredential } from "./auth/credential-refresh.entity.js"
+export { isUsableAt, REFRESH_SKEW_MS, refreshCredential } from "./auth/credential-refresh.entity.functions.js"
+export { HostCredentials } from "./ports/host-credentials.port.js"
 export { LocalSettingsStoreLive } from "./settings/localSettings.js"
+export { MemorySettingsStoreLive } from "./settings/memory-settings.adapter.js"
+export { RoleField, SettingValue } from "./settings/settings-value.entity.js"
+export { applyRole, applySetting, coerceSettingValue, ROLE_FIELDS, roleSelection, settingsFromRecord } from "./settings/settings-value.entity.functions.js"
 export { roleModelView } from "./settings/roleView.js"
 export {
   fromChatCompletion,
@@ -36,6 +47,7 @@ export { normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7, OpenAiCodexWebSo
 export {
   buildProvider,
   chatCompletionsUrl,
+  endpointOwnKey,
   OPENCODE_CHAT_URL,
   OPENCODE_RESPONSES_API_URL,
   prependClaudeCode,

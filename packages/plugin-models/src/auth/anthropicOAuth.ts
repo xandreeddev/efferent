@@ -1,4 +1,4 @@
-import { Effect, Option } from "effect"
+import { Clock, Effect, Option } from "effect"
 import { AuthError } from "@xandreed/core"
 
 /**
@@ -37,15 +37,31 @@ const oauthError = (stage: string) => (detail: string): AuthError =>
     message: `OAuth ${stage} failed: ${detail}`,
   })
 
+/**
+ * How one token request is made, for both subscription providers. `fetch`
+ * replaces the global fetch (a test stub, a host's own transport); `now` is
+ * the time the new token's expiry is counted from, in epoch ms (default: the
+ * Effect `Clock`).
+ */
+export interface TokenRequestOptions {
+  readonly fetch?: typeof globalThis.fetch
+  readonly now?: number
+}
+
+/** The time a token's expiry is counted from: the caller's, or the Effect Clock's. */
+export const tokenTime = (options: TokenRequestOptions): Effect.Effect<number> =>
+  options.now === undefined ? Clock.currentTimeMillis : Effect.succeed(options.now)
+
 /** One token-endpoint POST; refresh and exchange share it verbatim. */
 const postToken = (
   body: Record<string, string>,
   stage: string,
+  options: TokenRequestOptions,
 ): Effect.Effect<RefreshedTokens, AuthError> => {
   const fail = oauthError(stage)
   return Effect.tryPromise({
     try: async () => {
-      const res = await fetch(TOKEN_URL, {
+      const res = await (options.fetch ?? fetch)(TOKEN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(body),
@@ -70,17 +86,18 @@ const postToken = (
         catch: () => fail("the token response was not JSON"),
       }),
     ),
-    Effect.map((data) => ({
+    Effect.flatMap((data) => Effect.map(tokenTime(options), (now) => ({
       access: data.access_token,
       refresh: data.refresh_token,
-      expires: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
-    })),
+      expires: now + data.expires_in * 1000 - 5 * 60 * 1000,
+    }))),
   )
 }
 
 /** Refresh an expired (or near-expiry) access token. */
 export const refreshAnthropicToken = (
   refreshToken: string,
+  options: TokenRequestOptions = {},
 ): Effect.Effect<RefreshedTokens, AuthError> =>
   postToken(
     {
@@ -89,6 +106,7 @@ export const refreshAnthropicToken = (
       refresh_token: refreshToken,
     },
     "token refresh",
+    options,
   )
 
 /* ------------------------------------------------------------------ */
@@ -148,6 +166,7 @@ export const beginAnthropicOAuth: Effect.Effect<OAuthBegin> = Effect.map(
 export const exchangeAnthropicCode = (
   code: string,
   verifier: string,
+  options: TokenRequestOptions = {},
 ): Effect.Effect<RefreshedTokens, AuthError> =>
   postToken(
     {
@@ -159,6 +178,7 @@ export const exchangeAnthropicCode = (
       state: verifier,
     },
     "code exchange",
+    options,
   )
 
 export interface AuthRedirect {

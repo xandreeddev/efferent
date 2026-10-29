@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join, relative } from "node:path"
 const root = join(import.meta.dir, "..")
@@ -229,13 +229,27 @@ const turnServices = await Effect.runPromise(Effect.scoped(Effect.gen(function* 
 })))
 const agent = Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], system: "Be brief." })
 const turn = await runKit("turn", turnConformance(agent, turnServices))
-console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + ") and the turn kit over Agent.turn (" + turn + ")")
 const { mkdtemp, rm, symlink } = await import("node:fs/promises")
 const { tmpdir } = await import("node:os")
 const { join } = await import("node:path")
 const { Bash, bashConformance, FileSystem } = await import("@xandreed/core")
 const { BashLive, FileSystemLive } = await import("@xandreed/plugin-workspace")
 const linkTo = (target, path) => Effect.tryPromise(() => symlink(target, path))
+// The model store kits over every adapter plugin-models ships: in memory, and on files in temporary directories.
+const { authStoreConformance, AuthStore, ModelCatalog, modelCatalogConformance, SettingsStore, settingsStoreConformance } = await import("@xandreed/core")
+const { ConfiguredModelCatalogLive, LocalAuthStoreLive, LocalSettingsStoreLive, MemoryAuthStoreLive, MemorySettingsStoreLive } = await import("@xandreed/plugin-models")
+const { mkdtempSync, rmSync } = await import("node:fs")
+const serviceOf = (tag, layer) => Effect.runPromise(Effect.service(tag).pipe(Effect.provide(layer)))
+const kitHome = mkdtempSync(join(tmpdir(), "efferent-node-kits-home-"))
+const kitCwd = mkdtempSync(join(tmpdir(), "efferent-node-kits-cwd-"))
+const stores = await runKit("AuthStore (memory)", authStoreConformance(await serviceOf(AuthStore, MemoryAuthStoreLive())))
+  + await runKit("AuthStore (local)", authStoreConformance(await serviceOf(AuthStore, LocalAuthStoreLive(kitCwd, kitHome, ".efferent/runtime"))))
+  + await runKit("SettingsStore (memory)", settingsStoreConformance(await serviceOf(SettingsStore, MemorySettingsStoreLive()), { writable: true }))
+  + await runKit("SettingsStore (local)", settingsStoreConformance(await serviceOf(SettingsStore, LocalSettingsStoreLive(kitCwd, kitHome)), { writable: true }))
+  + await runKit("ModelCatalog", modelCatalogConformance(await serviceOf(ModelCatalog, ConfiguredModelCatalogLive.pipe(Layer.provide(MemoryAuthStoreLive(new Map([["opencode", { type: "api_key", key: "k" }]]))))), { includes: ["opencode:glm-5.2"] }))
+rmSync(kitHome, { recursive: true, force: true })
+rmSync(kitCwd, { recursive: true, force: true })
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + ") and the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + ")")
 ${localKits}
 `)
   const node = Bun.spawn(["node", "node-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
@@ -245,6 +259,19 @@ registry.stop(true)
 await writeFile(join(consumer, "evaluation-consumer.mjs"), await readFile(join(root, "scripts/evaluation-consumer.fixture.mjs"), "utf8"))
 const evalNode = Bun.spawn(["node", "evaluation-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await evalNode.exited !== 0) process.exit(1)
+// The models plugin with storage "memory" never touches disk: on Node, in a process of its own whose HOME
+// and working directory are fresh empty directories (the consumer's own already holds files) that must stay empty.
+await writeFile(join(consumer, "models-consumer.mjs"), await readFile(join(root, "scripts/models-consumer.fixture.mjs"), "utf8"))
+const freshHome = await mkdtemp(join(tmpdir(), "efferent-models-home-"))
+const freshCwd = await mkdtemp(join(tmpdir(), "efferent-models-cwd-"))
+const modelsNode = Bun.spawn(["node", join(consumer, "models-consumer.mjs")], {
+  cwd: freshCwd, stdout: "inherit", stderr: "inherit",
+  env: { ...process.env, HOME: freshHome, USERPROFILE: freshHome, MODELS_FIXTURE_KEY: "env-fixture-key" },
+})
+if (await modelsNode.exited !== 0) process.exit(1)
+if ((await readdir(freshHome)).length > 0 || (await readdir(freshCwd)).length > 0) { console.error("The memory-storage models consumer wrote to its HOME or working directory"); process.exit(1) }
+await rm(freshHome, { recursive: true, force: true })
+await rm(freshCwd, { recursive: true, force: true })
 // The installed bin runs as a command, which needs the shebang the build keeps.
 const evalBin = Bun.spawn([join(consumer, "node_modules/.bin/efferent-eval"), "--help"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const evalHelp = await new Response(evalBin.stdout).text()

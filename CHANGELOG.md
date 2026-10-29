@@ -152,6 +152,47 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   a positive integer, at least the system prompt and tool schemas plus room
   for the messages (`context.built` records the run's `budgetTokens` beside
   `reservedTokens`).
+- **`@xandreed/plugin-models`: `modelsPlugin` is runtime-scoped.** It is
+  built once per `Agent.define`, no longer on every turn, so credentials,
+  refreshed tokens and settings edits held in memory last across turns. Two
+  consequences:
+  - A turn's own services now win over the plugin: a `LanguageModel` (or
+    `UtilityLlm`, `AuthStore`, `SettingsStore`, `ModelCatalog`) in a turn's
+    `services` replaces the plugin's for that turn; before, the plugin's
+    replaced the turn's. Migration: a host that passed a per-turn model only
+    as a fallback drops it, or drops the plugin. A per-turn `AuthStore` or
+    `SettingsStore` reaches the turn's own code only: the plugin's
+    `LanguageModel`, `UtilityLlm` and `ModelCatalog` keep the plugin's stores.
+  - Its `SessionEnvironment` and `HostCredentials` must come from
+    `Agent.define({ workspace, services })`; an agent with a session-scoped
+    plugin providing either is refused (`config.graph`: "runtime plugins
+    cannot depend on session service"). A per-turn `SessionEnvironment` no
+    longer reaches it. Migration: move the provider into `Agent.define`.
+- **`@xandreed/plugin-models`: the local `SettingsStore` re-reads its files
+  on every `load`.** With `storage: "local"` and `inheritPrevious`, the
+  plugin's settings are `~/.efferent/config.json` and
+  `<workspace>/.efferent/config.json` read on each `load` (the options laid
+  over them), not a snapshot taken when a turn began. An edit to those files
+  applies from the next model call.
+- **`@xandreed/plugin-models`: `ModelEndpoint.apiKey` is `string | Redacted<string>`.**
+  Code reading `endpoint.apiKey` (or `CurrentModelEndpoints`) as a `string`
+  narrows it with `Redacted.isRedacted`.
+- **`@xandreed/plugin-models`: `LocalSettingsStoreLive`'s `setRole` checks
+  its selection.** A value that is not `"<provider>:<modelId>"` fails with a
+  `SettingsError` and is not written; it was written and then ignored by the
+  router.
+- **`@xandreed/plugin-models`: error texts.** A missing credential says how to
+  give one with either storage (it named `~/.efferent/auth.json`; logins go
+  to `~/.efferent/runtime/auth.json`); "no model configured" no longer
+  mentions a terminal or `efferent.config.json`; an OAuth subscription token
+  without an account id, or an expired token of a provider with no refresh
+  flow, no longer mention the removed CLI or "the new line". An unknown
+  option of the plugin, or of one of its `endpoints`, reads "not an option of
+  the models plugin" (or "of a model endpoint") with its path, without its
+  value. Code matching on the old texts matches the new ones.
+- **The plugin reference** (`docs/plugin-reference.json`) gains `optional`
+  (the services a plugin uses when present) for every plugin, and the models
+  plugin's entry its new scope and options; its graph fingerprint changes.
 
 ### Added
 
@@ -319,6 +360,51 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the event reference lists `turn.started.meta`, `context.built.budgetTokens`
   and the stored codes `turn.failed`, `turn.defect`, `turn.interrupted`,
   `turn.budget`, `config.budget` and `context.budget`.
+- `@xandreed/plugin-models`: disk-free stores. `modelsPlugin` takes
+  `storage: "local" | "memory"` (default `"local"`, today's files). With
+  `"memory"` it reads and writes no file and never looks up the home
+  directory: credentials come from the host's `HostCredentials`, then the API
+  keys of the environment variables `credentialEnv` names, then
+  `credentials` (secrets as `Redacted` values; a plain string, or a field a
+  credential does not have, is refused and never repeated in the error;
+  `Redacted` values print as `<redacted>` in errors and fingerprints);
+  settings start at the options and `setRole` and `set` change them in
+  memory; `inheritPrevious` is ignored. Memory state belongs to the agent and
+  is shared by all its sessions. `credentials`
+  and `credentialEnv` need `storage: "memory"`, as does a host's
+  `HostCredentials`.
+- `@xandreed/plugin-models`: `HostCredentials` (`load`, read when the agent
+  is defined; `save`, called after every login, logout and in-memory
+  refresh, with `Redacted` secrets), `MemoryAuthStoreLive(seed?, { fetch? })`
+  (one refresh per provider at a time; a login or logout during a refresh's
+  token request wins, so a logout is never undone by a refresh and the host
+  never receives that token; one during the refreshed token's commit and
+  host save waits for it), `MemorySettingsStoreLive(initial)`, `CredentialInput`,
+  `CredentialInputs`, `toCredential`, `toCredentialInput`, `credentialsOf`.
+- `@xandreed/plugin-models`: the shared store vocabulary, extracted from the
+  file stores: `applySetting`, `applyRole`, `coerceSettingValue`,
+  `roleSelection`, `settingsFromRecord`, `ROLE_FIELDS`
+  (`settings/settings-value.entity.functions.ts`) and `REFRESH_SKEW_MS`,
+  `isUsableAt`, `refreshCredential` (`auth/credential-refresh.entity.functions.ts`).
+  `refreshAnthropicToken`, `exchangeAnthropicCode`, `refreshOpenAiCodexToken`
+  and `exchangeOpenAiCodexCode` take optional `{ fetch, now }`; the expiry of
+  a new token is counted from the Effect `Clock` unless `now` is given.
+- `@xandreed/plugin-models`: an endpoint with its own key (`apiKey`, or a set
+  `apiKeyEnv`) never reads the `AuthStore`; an empty one sends no key, as
+  before. `apiKey` may be `Redacted`. `endpointOwnKey` is exported.
+- `@xandreed/core`: `authStoreConformance(store)`,
+  `settingsStoreConformance(store, { writable })` and
+  `modelCatalogConformance(catalog, { includes? })`, each with self-tests
+  that careless stores fail. The SettingsStore kit puts back every key it
+  touches, and fails a check before writing when a key holds a value the
+  store must refuse, so it could not be put back. They run against `MemoryAuthStoreLive`,
+  `LocalAuthStoreLive`, `MemorySettingsStoreLive`, `LocalSettingsStoreLive`,
+  the plugin's read-only local settings and `ConfiguredModelCatalogLive`, on
+  Bun and on Node.
+- Docs: the website's providers page, "Credentials and storage" (both
+  storages, `Redacted` secrets, `credentialEnv`, a `HostCredentials`
+  example, refresh, lifetime and precedence); the conformance page lists the
+  three kits; the plugin reference shows each plugin's optional services.
 
 ### Fixed
 
@@ -359,6 +445,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The sdk golden journal and model files are regenerated: `context.built`
   records carry `budgetTokens`, and the failed turn's `turn.ended` carries
   its error's code (`host.failed`).
+- `bun run verify:packages` runs the AuthStore, SettingsStore and
+  ModelCatalog kits over the packed `@xandreed/plugin-models` stores on Node,
+  and runs `scripts/models-consumer.fixture.mjs` on Node in a process of its
+  own whose HOME and working directory are fresh empty directories: with
+  `storage: "memory"`, two turns, a login, a role edit, a logout, the catalog
+  and a utility call leave both empty. `@xandreed/sdk` tests the plugin at
+  the agent level (a dev dependency).
 
 ## 0.13.0
 

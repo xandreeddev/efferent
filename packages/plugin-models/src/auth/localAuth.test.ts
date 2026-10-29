@@ -109,7 +109,7 @@ describe("LocalAuthStoreLive", () => {
       }).pipe(Effect.provide(layer)),
     )
     expect(exit._tag).toBe("Failure")
-    expect(JSON.stringify(exit)).toContain("refresh flow isn't wired")
+    expect(JSON.stringify(exit)).toContain("only anthropic and openai-codex tokens can be refreshed")
   })
 })
 
