@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Fiber, Option, Ref, Scope } from "effect"
+import { Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Scope } from "effect"
 import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
@@ -8,6 +8,7 @@ import type { TurnActivity } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
 import { TurnAdmission } from "../ports/turn-admission.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
+import { TurnEndedData } from "./session-event.entity.js"
 import { frameworkDraft } from "./session-event.entity.functions.js"
 import type { JsonObject, SessionLogEvent } from "./session-log.entity.js"
 import { TurnRefused } from "./sessions.entity.js"
@@ -75,13 +76,15 @@ const completed: TurnEnding = { reason: "completed", failure: Option.none() }
 const item = (id: string): InboxItem => ({ id, source: { kind: "conformance", id }, content: `the result of ${id}` })
 
 const turnOf = (event: SessionLogEvent): number => Option.getOrElse(event.turn, () => 0)
-const codeOf = (event: SessionLogEvent): string => {
-  const failure = event.data.failure
-  return typeof failure === "object" && failure !== null && "code" in failure && typeof failure.code === "string" ? failure.code : "none"
-}
+const decodeEnded = Schema.decodeUnknownOption(TurnEndedData)
+/** A `turn.ended` as `reason:code` (`none` when it stores no failure), as it decodes. */
+const endingOf = (event: SessionLogEvent): string => Option.match(decodeEnded(event.data), {
+  onNone: () => "undecodable",
+  onSome: (ended) => `${ended.reason}:${Option.match(ended.failure, { onNone: () => "none", onSome: (failure) => failure.code })}`,
+})
 /** Each `turn.ended` as `turn:reason:code`. */
 const endings = (events: ReadonlyArray<SessionLogEvent>) =>
-  events.filter((event) => event.kind === "turn.ended").map((event) => `${turnOf(event)}:${String(event.data.reason)}:${codeOf(event)}`).join()
+  events.filter((event) => event.kind === "turn.ended").map((event) => `${turnOf(event)}:${endingOf(event)}`).join()
 
 const created = (sessions: Service, owner: string) =>
   sessions.create({ owner }).pipe(Effect.map((view): SessionAddress => ({ id: view.header.id, owner })))

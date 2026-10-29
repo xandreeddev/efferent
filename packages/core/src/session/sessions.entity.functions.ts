@@ -1,4 +1,5 @@
 import { Cause, Exit, Formatter, Option, Predicate, Result } from "effect"
+import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import type { TurnEndReason } from "./session-event.entity.js"
 import type { NotResumable, TurnEnding } from "./sessions.entity.js"
 
@@ -16,20 +17,21 @@ const fieldsOf = (error: unknown): string => Predicate.isObject(error)
   : ""
 
 /**
- * A typed error as a stored failure: its own `code` and message when it has
- * a string `code` (a `HarnessError`, a `SessionLogError`); `turn.failed`
- * otherwise, with `<_tag>: <message>` for a tagged error.
+ * A failure's message: its own when it carries a string `code` (a
+ * `HarnessError`, a `SessionLogError`); `<_tag>: <message>` for another
+ * tagged error (its fields as JSON when it has no message); the error as
+ * text otherwise.
  */
-const failureOfError = (error: unknown): { readonly code: string; readonly message: string } => Option.match(stringField(error, "code"), {
-  onSome: (code) => ({ code, message: Option.getOrElse(stringField(error, "message"), () => Formatter.format(error)) }),
-  onNone: () => ({
-    code: "turn.failed",
-    message: Option.match(stringField(error, "_tag"), {
-      onSome: (tag) => `${tag}: ${Option.getOrElse(Option.filter(stringField(error, "message"), (text) => text.length > 0), () => fieldsOf(error))}`,
-      onNone: () => typeof error === "string" ? error : Formatter.format(error),
-    }),
-  }),
-})
+const messageOfError = (error: unknown): string => Option.isSome(stringField(error, "code"))
+  ? Option.getOrElse(stringField(error, "message"), () => Formatter.format(error))
+  : Option.match(stringField(error, "_tag"), {
+    onSome: (tag) => `${tag}: ${Option.getOrElse(Option.filter(stringField(error, "message"), (text) => text.length > 0), () => fieldsOf(error))}`,
+    onNone: () => typeof error === "string" ? error : Formatter.format(error),
+  })
+
+/** A typed error as a stored failure: its framework code (`harnessCodeOf`), else `turn.failed`, and its message. */
+const failureOfError = (error: unknown): { readonly code: string; readonly message: string } =>
+  ({ code: Option.getOrElse(harnessCodeOf(error), () => "turn.failed"), message: messageOfError(error) })
 
 const failed = (failure: { readonly code: string; readonly message: string }): TurnEnding =>
   ({ reason: "failed", failure: Option.some({ code: failure.code, message: clipped(failure.message) }) })
@@ -38,8 +40,10 @@ const failed = (failure: { readonly code: string; readonly message: string }): T
  * How a turn ended, from its exit:
  * - success: the outcome it returned, with no failure;
  * - a typed error (it wins over an interruption in the same cause): failed,
- *   with the error's own `code` and message when it has a string `code`, and
- *   `turn.failed` with `<_tag>: <message>` (or the error as text) otherwise;
+ *   with its code (`harnessCodeOf`: a `HarnessError`'s, the code a begin
+ *   refusal, `TurnClosed` or `ReservedKind` stands for, a tagged error's own
+ *   `code`), else `turn.failed`; its message when it carries a `code`, else
+ *   `<_tag>: <message>` (or the error as text);
  * - a defect: failed, `turn.defect` (a runner applies
  *   `harnessDefectsAsFailures` before taking the exit, so a `HarnessError`
  *   carried as a defect keeps its own code);

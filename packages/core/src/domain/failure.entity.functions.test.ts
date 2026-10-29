@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Effect, Schema } from "effect"
+import { Cause, Effect, Option, Schema } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
-import { reasonOf, toFailure } from "./failure.entity.functions.js"
+import { errorCodeOf, reasonOf, toFailure } from "./failure.entity.functions.js"
 
 class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { message: Schema.String }) {}
 class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
@@ -28,6 +28,14 @@ describe("reasonOf", () => {
     expect(Cause.pretty(Cause.die(defect))).toContain(import.meta.dir)
   })
 
+  test("reads a HarnessError's message, never its cause's stack", () => {
+    const underneath = new Error("the socket closed")
+    underneath.stack = "Error: the socket closed\n    at connect (/home/user/project/src/socket.ts:12:3)"
+    const reason = reasonOf(Cause.fail(new HarnessError({ code: "loop.failed", message: "the model call failed", cause: underneath })))
+    expect(reason).toBe("loop.failed: the model call failed")
+    expect(reason).not.toContain("/home/user")
+  })
+
   test("reads strings and other values as Cause.prettyErrors does, and joins several", () => {
     expect(reasonOf(Cause.die("plain text"))).toBe("plain text")
     expect(reasonOf(Cause.die(undefined))).toBe("Unknown error: undefined")
@@ -51,5 +59,13 @@ describe("toFailure", () => {
   test("names an Error by its name, anything else Error", () => {
     expect(toFailure(new TypeError("x is not a function"))).toEqual({ error: "TypeError", message: "x is not a function" })
     expect(toFailure("plain text")).toEqual({ error: "Error", message: "plain text" })
+  })
+})
+
+describe("errorCodeOf", () => {
+  test("reads a foreign error's string code only", () => {
+    const busy = Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" })
+    expect([busy, { code: "ENOENT" }, { code: 32 }, new Error("no code"), "ENOENT", undefined].map(errorCodeOf))
+      .toEqual([Option.some("SQLITE_BUSY"), Option.some("ENOENT"), Option.none(), Option.none(), Option.none(), Option.none()])
   })
 })

@@ -1,11 +1,10 @@
 import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { JsonSchema, Option, Schema, SchemaAST } from "effect"
-import { JOURNAL_KINDS, journalSchemaOf, RECORDED_ELSEWHERE, RESERVED_KINDS, TransientTurnEvents, TurnEvent } from "@xandreed/core"
+import { JOURNAL_KINDS, journalSchemaOf, RECORDED_ELSEWHERE, RESERVED_KINDS, TransientTurnEvents, turnBeginCodes, TurnEvent } from "@xandreed/core"
 import type { TurnEventName } from "@xandreed/core"
 import { encodeSocketFrame, encodeSse, FeedHeartbeat, FeedReady, FeedRecord, renderFeedDefaults, sseHeaders, ssePreamble } from "@xandreed/plugin-render"
 import { deliveryId, TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
-import { turnBeginCodes } from "@xandreed/sdk"
 
 /*
  * The event reference: what a turn publishes on its bus, what a session's
@@ -68,6 +67,7 @@ const BEGIN_HTTP: Readonly<Record<string, { readonly status: string; readonly me
   NotResumable: { status: "409", meaning: "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id)." },
   TurnRefused: { status: "429 for a quota or rate, 403 when not allowed, 503 while draining before a shutdown", meaning: "The host's `TurnAdmission` refused the turn; nothing was opened or counted." },
   SessionMissing: { status: "404", meaning: "No such session for this owner." },
+  SessionContended: { status: "503", meaning: "Other writers kept committing to the session first, and nothing was opened. Retry later." },
   SessionLogError: { status: "503", meaning: "The session store failed. Retry later." },
 }
 
@@ -80,7 +80,7 @@ interface ErrorCode { readonly code: string; readonly where: string; readonly me
  */
 const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "turn.closed", where: "`Agent.turn`, the turn writer", meaning: "Someone else closed the turn (cancelled, reaped, the session removed); its later writes are refused." },
-  { code: "turn.failed", where: "stored `turn.ended` failure (`turnEndingOf`)", meaning: "The turn failed with a typed error that has no `code` of its own; the message is `<_tag>: <message>`, or the error as text (reason failed)." },
+  { code: "turn.failed", where: "stored `turn.ended` failure (`turnEndingOf`)", meaning: "The turn failed with an error `harnessCodeOf` gives no code for (a tagged error without a `code`, or an untagged value, even one carrying a `code` such as a Node error's); the message is `<_tag>: <message>`, or the error as text (reason failed)." },
   { code: "turn.defect", where: "stored `turn.ended` failure (`turnEndingOf`)", meaning: "The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `HarnessError` carried as a defect back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`." },
   { code: "turn.interrupted", where: "stored `turn.ended` failure", meaning: "The turn was interrupted before it ended: its body (`turnEndingOf`), the scope its writer lived in, or its begin after the opening commit (reason interrupted)." },
   { code: "turn.unended", where: "stored `turn.ended` failure", meaning: "The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, not this code." },
@@ -302,7 +302,7 @@ const body = (links: { readonly guide: string }) => [
   "A host event, a `Sessions.transact` draft, or a draft a host or plugin appends through a turn's writer (`TurnWriter.append`, `transact`), may not use these names: the publish and the writer fail with `events.reserved`, `Sessions.transact` with `ReservedKind`; only the framework's turn writes them (`frameworkDraft`). They are the journal kinds above and every bus event's name (`TURN_EVENT_NAMES`), the ones the journal never stores under their own name included (`assistant.message`, `assistant.delta`, `tool.progress`, `skills.activated`, `host`). The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.",
   fence("text", RESERVED_KINDS.join("\n")),
   "## Begin codes",
-  "When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/sdk`). The HTTP status is a suggestion for a host serving turns over HTTP.",
+  "When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/core`, also exported by `@xandreed/sdk`; `harnessCodeOf` gives the code of the begin error itself). The HTTP status is a suggestion for a host serving turns over HTTP.",
   table(["Begin error", "Code", "Suggested HTTP status", "Meaning"], beginCodes.map((entry) => [code(entry.tag), code(entry.code), entry.http, entry.meaning])),
   "## Common turn error codes",
   `Besides the begin codes, these are common \`HarnessError\` codes a turn fails with, or that a stored \`turn.ended\` carries in \`failure.code\`. A failed turn's \`turn.ended\` carries the code of the error it failed with (one of these, a plugin's, or a host's own), else \`turn.failed\`, \`turn.defect\` or \`turn.interrupted\` (\`turnEndingOf\` from \`@xandreed/core\`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: \`task.turn\`, \`task.deadline\`). The list is not exhaustive: it has every code the packages raise under ${OWNED_PREFIXES.filter((prefix) => prefix !== "task.").map((prefix) => code(`${prefix}*`)).join(", ")} (the generator checks), but other plugins raise codes of their own (a memory strategy's, a store's), and a host's own errors keep their own codes.`,

@@ -6,7 +6,7 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 
 - The sdk composes and owns no port or adapter: new behaviour goes in core or a plugin, and `agent.adapter.ts` only wires it.
 - Fail at define time, not at the first turn: no `ConversationMemory`, `ToolRegistry` or `StepLoop` is `config.graph`, a bad `budgetTokens` is `config.budget`.
-- A turn that cannot begin fails with the code `turnBeginCodes` gives its `Sessions.begin` error's tag; keep the table in step with that union.
+- A turn that cannot begin fails with the code core's `turnBeginCodes` gives its `Sessions.begin` error's tag (the table is checked against `TurnBeginError` there).
 - Any change to what the model or the journal sees shows in `golden/`: re-record only on purpose (`EFFERENT_UPDATE_MODEL_GOLDEN=1`, `EFFERENT_UPDATE_GOLDEN=1`) and review the diff in the PR.
 - `src/turn-composition.test.ts` rebuilds the golden agent by hand from the typed layers: a composition change keeps both it and `Agent.turn` byte-identical to the golden.
 - Every `fixtures/journal-<version>.json` keeps decoding (`src/journal-compat.test.ts`); record one per release with `bun scripts/record-journal-fixture.ts`, never over a released one.
@@ -15,7 +15,7 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 
 ## Public surface
 
-- `export * from "@xandreed/core"`, plus `Agent` (`Agent.define`), `turnBeginCodes`, and the types `AgentConfig` and `AgentPluginEntry` (`src/agent.adapter.ts`).
+- `export * from "@xandreed/core"` (`turnBeginCodes` among it), plus `Agent` (`Agent.define`) and the types `AgentConfig` and `AgentPluginEntry` (`src/agent.adapter.ts`).
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text
@@ -36,7 +36,7 @@ None.
 
 | File | Role |
 |---|---|
-| `src/agent.adapter.ts` | `Agent.define`, `agent.turn`, `turnBeginCodes`, the turn metrics |
+| `src/agent.adapter.ts` | `Agent.define`, `agent.turn`, the turn metrics |
 | `src/index.ts` | core re-export and the sdk's own exports |
 | `src/testing.port.ts` | test-only services for the agent tests |
 | `golden/agent-turn.model.json`, `golden/agent-turn.journal.json` | the golden conversation: what the model and host see, and what is stored |

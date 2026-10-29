@@ -3,7 +3,7 @@ import type { Effect, Option } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { JsonObject, SessionExists, SessionLogError, SessionMissing } from "../session/session-log.entity.js"
-import type { SessionAddress } from "../session/sessions.entity.js"
+import type { SessionAddress, SessionContended } from "../session/sessions.entity.js"
 import type { TaskConflict, TaskMissing, TaskMode, TaskRefused, TaskView } from "../session/tasks.entity.js"
 import type { TurnWriter } from "./sessions.port.js"
 import type { TurnOutcome } from "./turn.port.js"
@@ -34,14 +34,14 @@ export class Tasks extends Context.Service<Tasks, {
     readonly instructions: string
     readonly mode: TaskMode
     readonly meta?: JsonObject
-  }) => Effect.Effect<TaskView, TaskRefused | TaskConflict | SessionExists | SessionMissing | SessionLogError>
+  }) => Effect.Effect<TaskView, TaskRefused | TaskConflict | SessionExists | SessionMissing | SessionContended | SessionLogError>
   readonly status: (parent: SessionAddress, taskId: string) => Effect.Effect<TaskView, TaskMissing | SessionMissing | SessionLogError>
   readonly list: (parent: SessionAddress) => Effect.Effect<ReadonlyArray<TaskView>, SessionMissing | SessionLogError>
   /** Stop a task: its child's turn is cancelled and nothing is delivered. */
-  readonly cancel: (parent: SessionAddress, taskId: string) => Effect.Effect<boolean, TaskMissing | SessionMissing | SessionLogError>
+  readonly cancel: (parent: SessionAddress, taskId: string) => Effect.Effect<boolean, TaskMissing | SessionMissing | SessionContended | SessionLogError>
   /** Deliver finished results a runner lost, and start tasks that never ran. */
   readonly reconcile: (parent: SessionAddress) =>
-    Effect.Effect<{ readonly delivered: number; readonly started: number }, SessionMissing | SessionLogError>
+    Effect.Effect<{ readonly delivered: number; readonly started: number }, SessionMissing | SessionContended | SessionLogError>
 }>()("efferent/Tasks") {}
 
 /**

@@ -480,7 +480,7 @@ turn that cannot begin fails with the reason as its code (`session.busy`,
 `turn.duplicate`, `turn.key-conflict`, `turn.not-resumable`, `turn.refused`,
 `turn.attachment-rejected` for an image the turn cannot take, see
 [Images and multi-part messages](#images-and-multi-part-messages); all of
-them are `turnBeginCodes` from `@xandreed/sdk`, with suggested HTTP statuses
+them are `turnBeginCodes` from `@xandreed/core`, also exported by `@xandreed/sdk`, with suggested HTTP statuses
 in the [event reference](event-reference.md#begin-codes)); a turn someone else
 closes (a cancel, a reaped lease, a removed session) fails with
 `turn.closed`.
@@ -499,13 +499,14 @@ inbox turns with it.
 
 **How a turn ends.** A turn the agent began is ended with
 `turnEndingOf(exit)` (from `@xandreed/core`), the turn's exit as the stored
-`turn.ended`:
+`turn.ended`; the code of a failure is `harnessCodeOf` its error:
 
 | The turn | `reason` | `failure.code` |
 | --- | --- | --- |
 | returned an outcome | `completed`, `partial` or `failed`, as `use` returned | none |
-| failed with an error that has a string `code` (a `HarnessError`, a `SessionLogError`) | `failed` | the error's own code, with its message |
-| failed with an error without one | `failed` | `turn.failed`, message `<_tag>: <message>` (or the error as text) |
+| failed with a `HarnessError`, or another tagged error with a string `code` (`AuthError`) | `failed` | the error's own code, with its message |
+| failed with a begin refusal, `TurnClosed`, `ReservedKind` or a `SessionLogError` | `failed` | the code its tag stands for (`TAGGED_CODES`: `session.busy`, `turn.closed`, `events.reserved`, `session.log`, ...), message `<_tag>: <message>`, its fields as JSON when it has none (a `SessionLogError`: its own message) |
+| failed with any other error, an untagged one with a `code` included | `failed` | `turn.failed`, message `<_tag>: <message>` (or the error as text) |
 | died with a defect | `failed` | `turn.defect` (`Agent.turn` first turns a `HarnessError` carried as a defect back into a failure, which keeps its own code) |
 | was interrupted, and nothing failed | `interrupted` | `turn.interrupted` |
 

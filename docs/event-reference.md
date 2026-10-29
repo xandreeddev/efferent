@@ -298,7 +298,7 @@ host
 
 ## Begin codes
 
-When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/sdk`). The HTTP status is a suggestion for a host serving turns over HTTP.
+When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/core`, also exported by `@xandreed/sdk`; `harnessCodeOf` gives the code of the begin error itself). The HTTP status is a suggestion for a host serving turns over HTTP.
 
 | Begin error | Code | Suggested HTTP status | Meaning |
 | --- | --- | --- | --- |
@@ -311,6 +311,7 @@ When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.be
 | `NotResumable` | `turn.not-resumable` | 409 | The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id). |
 | `TurnRefused` | `turn.refused` | 429 for a quota or rate, 403 when not allowed, 503 while draining before a shutdown | The host's `TurnAdmission` refused the turn; nothing was opened or counted. |
 | `SessionMissing` | `session.missing` | 404 | No such session for this owner. |
+| `SessionContended` | `session.contended` | 503 | Other writers kept committing to the session first, and nothing was opened. Retry later. |
 | `SessionLogError` | `session.log` | 503 | The session store failed. Retry later. |
 
 ## Common turn error codes
@@ -320,7 +321,7 @@ Besides the begin codes, these are common `HarnessError` codes a turn fails with
 | Code | Where | Meaning |
 | --- | --- | --- |
 | `turn.closed` | `Agent.turn`, the turn writer | Someone else closed the turn (cancelled, reaped, the session removed); its later writes are refused. |
-| `turn.failed` | stored `turn.ended` failure (`turnEndingOf`) | The turn failed with a typed error that has no `code` of its own; the message is `<_tag>: <message>`, or the error as text (reason failed). |
+| `turn.failed` | stored `turn.ended` failure (`turnEndingOf`) | The turn failed with an error `harnessCodeOf` gives no code for (a tagged error without a `code`, or an untagged value, even one carrying a `code` such as a Node error's); the message is `<_tag>: <message>`, or the error as text (reason failed). |
 | `turn.defect` | stored `turn.ended` failure (`turnEndingOf`) | The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `HarnessError` carried as a defect back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`. |
 | `turn.interrupted` | stored `turn.ended` failure | The turn was interrupted before it ended: its body (`turnEndingOf`), the scope its writer lived in, or its begin after the opening commit (reason interrupted). |
 | `turn.unended` | stored `turn.ended` failure | The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, not this code. |

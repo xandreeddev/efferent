@@ -2,8 +2,10 @@ import { Context, Schema } from "effect"
 import type { Effect } from "effect"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 
+/** A helper completion failed; `cause` is the provider's failure underneath, when there is one. */
 export class UtilityError extends Schema.TaggedError<UtilityError>()("UtilityError", {
   message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {}
 
 export class UtilityCompletion extends Schema.Class<UtilityCompletion>("UtilityCompletion")({

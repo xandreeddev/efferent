@@ -1,8 +1,10 @@
 import { Schema } from "effect"
+import { AttachmentRejected } from "../domain/media.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
+import type { HarnessError } from "../harness/plugin.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { TurnEndReason } from "./session-event.entity.js"
-import { JsonObject, SessionHeader, SessionListCursor } from "./session-log.entity.js"
+import { JsonObject, SessionHeader, SessionListCursor, SessionLogError, SessionMissing } from "./session-log.entity.js"
 
 /*
  * What hosts and turns see of sessions (the `Sessions` service): addresses,
@@ -114,11 +116,11 @@ export type AdmittedTurn = typeof AdmittedTurn.Type
 
 /**
  * How a turn ended, as its closer records it (`turnEndingOf` gives the
- * ending of a turn's exit). A failure's `code` is the error's own code when
- * it has one; otherwise one of the framework's codes (`turn.failed`,
- * `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`), or a
- * code the closer passes to `writer.end` itself (plugin-tasks: `task.turn`,
- * `task.deadline`; a host's own).
+ * ending of a turn's exit). A failure's `code` is the error's code when it
+ * has one (`harnessCodeOf`); otherwise one of the framework's codes
+ * (`turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`,
+ * `turn.lease`), or a code the closer passes to `writer.end` itself
+ * (plugin-tasks: `task.turn`, `task.deadline`; a host's own).
  */
 export const TurnEnding = Schema.Struct({
   reason: TurnEndReason,
@@ -204,3 +206,54 @@ export class TurnRefused extends Schema.TaggedError<TurnRefused>()("TurnRefused"
   reason: Schema.String,
   message: Schema.String,
 }) {}
+
+/**
+ * Writes to the session kept conflicting: `attempts` commits in a row lost
+ * to other writers, and nothing was written. Retry later (a host answers
+ * 503).
+ */
+export class SessionContended extends Schema.TaggedError<SessionContended>()("SessionContended", {
+  session: ConversationId,
+  attempts: Schema.Int,
+}) {}
+
+/**
+ * Why a turn could not begin: a refusal of `Sessions.begin`, or
+ * `AttachmentRejected` from the check of the message's images before it.
+ * Nothing was opened.
+ */
+export const TurnBeginError = Schema.Union([
+  AttachmentRejected, SessionBusy, TurnDuplicate, KeyConflict, RunIdReused, NothingPending, NotResumable, TurnRefused, SessionMissing,
+  SessionContended, SessionLogError,
+])
+export type TurnBeginError = typeof TurnBeginError.Type
+
+/**
+ * The code each begin refusal stands for, keyed by its tag: what
+ * `harnessCodeOf` gives for the refusal, what a turn that fails with it
+ * stores, and the code of the `HarnessError` `Agent.turn` fails with when
+ * the turn cannot begin. An `AttachmentRejected`'s `reason` is in the
+ * message only; a host that branches on it runs `normalizeUserMessage`
+ * itself before the turn.
+ */
+export const turnBeginCodes = {
+  AttachmentRejected: "turn.attachment-rejected",
+  SessionBusy: "session.busy",
+  TurnDuplicate: "turn.duplicate",
+  KeyConflict: "turn.key-conflict",
+  RunIdReused: "turn.run-reused",
+  NothingPending: "session.nothing-pending",
+  NotResumable: "turn.not-resumable",
+  TurnRefused: "turn.refused",
+  SessionMissing: "session.missing",
+  SessionContended: "session.contended",
+  SessionLogError: "session.log",
+} as const satisfies Record<TurnBeginError["_tag"], string>
+
+/**
+ * What a turn's own writes fail with: `TurnClosed` once someone else closed
+ * the turn, `ReservedKind` for a draft under one of the framework's kinds,
+ * `SessionContended` and `SessionLogError` from the store, and a
+ * `HarnessError` for the rest.
+ */
+export type TurnError = HarnessError | TurnClosed | ReservedKind | SessionContended | SessionLogError

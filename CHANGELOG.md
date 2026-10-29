@@ -37,6 +37,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `yield*` the result of `defineGraderCalibration` and `endpointOwnKey`; pass
   the time (`Clock.currentTimeMillis`) to `classifyLlmError` and
   `openAiCodexUuidV7`.
+- Add a `turnBeginCodes.SessionContended` entry to tables that cover every
+  begin code, handle `SessionContended` where `Sessions` or `Tasks` errors
+  are matched exhaustively, and raise a tagged error or a `HarnessError`
+  where a stored code used to be read from an untagged error.
 
 ### Breaking
 
@@ -122,6 +126,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   fails with `invalid` when a case's input does not encode.
 - `foldStreamParts` (`@xandreed/core`) leaves `usage` off the result when no
   finish part carried one.
+- `Sessions.begin` fails with `TurnBeginError`; `Sessions.transact`,
+  `cancel`, `deliver`, `drain` and `Tasks.start`, `cancel`, `reconcile` may
+  fail with `SessionContended`.
+- A stored `turn.ended` takes its code from `harnessCodeOf`: begin
+  refusals, `TurnClosed` and `ReservedKind` store their own codes instead
+  of `turn.failed`, a `SessionLogError` stores `session.log`, and an
+  untagged value with a `code` stores `turn.failed`.
 
 ### Added
 
@@ -163,6 +174,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   retry, `provider` otherwise, with the reason first in the message
   (`RateLimitError: …`) and the `AiError` as the `cause`.
   `EvaluationError` and `AssessmentError` take an optional `cause`.
+- `harnessCodeOf(error)` in `@xandreed/core`: a failure's framework code,
+  whichever copy of core made it. `HARNESS_CODES`/`HarnessCode` publish
+  every code the packages raise or store, and
+  `harnessError(code, message, cause?)` builds a `HarnessError` of one.
+- `HarnessError`, `SessionLogError` and `UtilityError` take an optional
+  `cause` (encoded as name and message, never the stack). New:
+  `SessionContended`, the `TurnBeginError` union, the `TurnError` type,
+  `isStoreBusy` and `errorCodeOf`.
+- `turnBeginCodes` comes from `@xandreed/core` (still exported by
+  `@xandreed/sdk`) and gains `SessionContended: "session.contended"`.
 
 ### Fixed
 
