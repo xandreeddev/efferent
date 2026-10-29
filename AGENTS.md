@@ -1,7 +1,7 @@
 # Efferent — composable agent framework on Effect, for Node and Bun
 
-Read `../CLAUDE.md` for identity and repository rules. The current architecture
-and configuration contract are documented in `README.md` and `docs/framework.md`.
+The current architecture and configuration contract are documented in
+`README.md` and `docs/framework.md`.
 
 Shared development skills live in `.agents/skills/<name>/SKILL.md`.
 `CLAUDE.md` links to `AGENTS.md`; `.claude/skills` links to `.agents/skills`.
@@ -77,16 +77,14 @@ provider calls work.
 Provider-backed evals require explicit model/credential configuration; preserve
 candidate, prompt, schema and protocol versions in their evidence.
 
-## OPSEC reminder
+## Commits and publishing
 
-Keep the pseudonymous project identity separate from personal and client
-identities. Never record downstream client names, private repository paths,
-or identity correlations in this repository, its documentation, or artifacts.
-Normal package attribution is permitted; it does not imply shared authorship.
-
-Every commit under this tree must be authored as
-`Xand Reed <xandreed@proton.me>` — verify with `git config user.email`. Never
-reference the real name in any file, commit, comment, or screenshot. Never
-add AI co-author trailers. Never commit anything from
-`~/Workspace/xandreed/pi`. Cutting anything outward-facing (npm, the docs
-site) happens only on explicit sign-off.
+- Commits are authored as `Xand Reed <xandreed@proton.me>`: check
+  `git config user.email` before committing.
+- No co-author trailers or assistant attribution in commits or pull request
+  text.
+- Keep personal details, local paths and other projects' names out of every
+  file, commit message, comment and screenshot; never copy code from another
+  project.
+- Publishing to npm and deploying the docs site happen only on explicit
+  sign-off.

@@ -7,7 +7,7 @@ description: How to write a commit message for this repo — verify alias git id
 
 ## Before composing
 
-1. Run `git config user.email`. It MUST return `xandreed@proton.me`. If not, stop — this tree must never be authored by any other identity. There is no global git identity; this one comes from `~/.gitconfig` `includeIf` scoping.
+1. Run `git config user.email`. It MUST return `xandreed@proton.me`. If not, stop: every commit in this repository is authored by that identity.
 2. Run `git log --oneline -5` to refresh your memory of recent style.
 3. Run `git status --short` and `git diff --stat HEAD` to make sure the staged set matches what you intend to describe.
 
@@ -28,12 +28,12 @@ description: How to write a commit message for this repo — verify alias git id
 - Reference filenames sparingly.
 - No `Closes #N`, no TODOs, no follow-up notes — those belong in tickets or PRs.
 
-## OPSEC (non-negotiable)
+## Rules (non-negotiable)
 
-- Never reference the real human name in title, body, or signoff. All authoring is `Xand Reed <xandreed@proton.me>`.
+- All authoring is `Xand Reed <xandreed@proton.me>`; no other names in the title, body or signoff.
 - Never add `Co-Authored-By`, AI attribution, or assistant/vendor signoffs.
-- Never use `--no-verify` to skip hooks. Never `--amend` a published commit unless the user explicitly overrides for OPSEC cleanup. Never `--no-gpg-sign`.
-- Never include any reference to `~/Workspace/xandreed/pi` — it's read-only research material.
+- Never use `--no-verify` to skip hooks. Never `--amend` a published commit unless the user explicitly asks. Never `--no-gpg-sign`.
+- Never include local paths or the names of other projects.
 
 ## The exact shape
 

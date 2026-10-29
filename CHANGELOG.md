@@ -8,6 +8,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Repository
+
+- The contributor guidance (`AGENTS.md` and the `commit-style` skill) states
+  its commit and publishing rules directly, and the duplicate copy of the
+  skill under `.efferent/skills` is removed. The ChatGPT subscription
+  adapter keeps its OAuth originator in one constant,
+  `OPENAI_CODEX_ORIGINATOR`.
+
 ## 0.14.0 — 2026-10-29
 
 Agents that work on files and commands, images to and from the model, token
