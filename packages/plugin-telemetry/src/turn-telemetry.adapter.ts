@@ -1,16 +1,16 @@
 import { Clock, Duration, Effect, Layer, Match, Metric, Option, Ref } from "effect"
 import type { Tracer } from "effect"
-import { RunContext, TurnEvents } from "@xandreed/core"
-import type { TurnEvent, TurnEventOf } from "@xandreed/core"
+import { RunContext, TurnEvent, TurnEvents } from "@xandreed/core"
+import type { TurnEventOf } from "@xandreed/core"
 import { TelemetryMetrics } from "./telemetry-metrics.js"
 import { telemetryDefaults } from "./telemetry.entity.js"
 import type { TelemetryOptions } from "./telemetry.entity.js"
 import { metricAttributesOf, modelAttribute, responseCost, tokenCounts, usageEventAttributes } from "./telemetry.entity.functions.js"
 
 /** The events the plugin records; every other event passes it by. */
-type Recorded = TurnEventOf<"assistant.message" | "tool.completed" | "tool.refused" | "step.ended" | "stream.fallback">
-const RECORDED: ReadonlyArray<string> = ["assistant.message", "tool.completed", "tool.refused", "step.ended", "stream.fallback"]
-const isRecorded = (event: TurnEvent): event is Recorded => RECORDED.includes(event._tag)
+const RECORDED = ["assistant.message", "tool.completed", "tool.refused", "step.ended", "stream.fallback"] as const
+type Recorded = TurnEventOf<typeof RECORDED[number]>
+const isRecorded = TurnEvent.isAnyOf(RECORDED)
 
 /**
  * The turn's telemetry: one inline subscription to the turn's events that

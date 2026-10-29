@@ -436,6 +436,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   under the span of the call that asked for it, plus `turn_writer.flush` and
   `turn_writer.end`, all with the turn's ids; the store's own spans under a
   commit carry them too.
+- `@xandreed/core` exports the turn's vocabulary from one place:
+  `TurnOrigin`, `TurnOutcomeKind`, `TurnFailure` and `StepStatus`, and
+  `TurnEvent` carries the tagged-union helpers (`cases`, `guards`,
+  `isAnyOf`, `match`).
 
 ### Changed
 
@@ -808,6 +812,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   port's boundary, `Effect.fnUntraced` for the rest), the shared span and
   log-annotation keys and every span name; the span trees show
   `models.credentials` under `providers.generate`.
+- The turn's origin, outcome, end reason, failure, ending and step status
+  are declared once in core and imported everywhere; `TURN_EVENT_NAMES` is
+  derived from the `TurnEvent` union, and `@xandreed/plugin-render`
+  re-exports core's `ConformanceFailure`. Stored data and existing exports
+  are unchanged.
 
 ## 0.14.0 — 2026-10-29
 

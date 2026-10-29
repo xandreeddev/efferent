@@ -1,9 +1,9 @@
 import { Schema } from "effect"
 import { AttachmentRejected } from "../domain/media.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
+import { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
-import { TurnEndReason } from "./session-event.entity.js"
 import { JsonObject, SessionHeader, SessionListCursor, SessionLogError, SessionMissing } from "./session-log.entity.js"
 
 /*
@@ -32,7 +32,7 @@ export const OpenTurn = Schema.Struct({
   turn: Schema.Int,
   runId: Schema.String,
   key: Schema.String,
-  origin: Schema.Literals(["user", "inbox"]),
+  origin: TurnOrigin,
   /** The writer holding it (one Sessions instance). */
   holder: Schema.String,
   /** Storage time the lease ends; none under process ownership. */
@@ -103,7 +103,7 @@ export const AdmittedTurn = Schema.Struct({
   turn: Schema.Int,
   runId: Schema.String,
   key: Schema.String,
-  origin: Schema.Literals(["user", "inbox"]),
+  origin: TurnOrigin,
   userMessage: UserMessage,
   command: JsonObject,
   claimed: Schema.Array(InboxItem),
@@ -113,20 +113,6 @@ export const AdmittedTurn = Schema.Struct({
   resumes: Resumes,
 })
 export type AdmittedTurn = typeof AdmittedTurn.Type
-
-/**
- * How a turn ended, as its closer records it (`turnEndingOf` gives the
- * ending of a turn's exit). A failure's `code` is the error's code when it
- * has one (`harnessCodeOf`); otherwise one of the framework's codes
- * (`turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`,
- * `turn.lease`), or a code the closer passes to `writer.end` itself
- * (plugin-tasks: `task.turn`, `task.deadline`; a host's own).
- */
-export const TurnEnding = Schema.Struct({
-  reason: TurnEndReason,
-  failure: Schema.OptionFromNullOr(Schema.Struct({ code: Schema.String, message: Schema.String })),
-})
-export type TurnEnding = typeof TurnEnding.Type
 
 /** A session already has a turn open: one message at a time (a host answers 409). */
 export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy", {

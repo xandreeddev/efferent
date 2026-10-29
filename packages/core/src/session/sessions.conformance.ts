@@ -3,6 +3,7 @@ import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
+import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import type { TurnActivity } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
@@ -12,7 +13,7 @@ import { TurnEndedData } from "./session-event.entity.js"
 import { frameworkDraft } from "./session-event.entity.functions.js"
 import type { JsonObject, SessionLogEvent } from "./session-log.entity.js"
 import { TurnRefused } from "./sessions.entity.js"
-import type { AdmittedTurn, BeginTurn, InboxItem, SessionAddress, TurnEnding, TurnError } from "./sessions.entity.js"
+import type { AdmittedTurn, BeginTurn, InboxItem, SessionAddress, TurnError } from "./sessions.entity.js"
 
 type Service = Context.Service.Shape<typeof Sessions>
 type Admission = Context.Service.Shape<typeof TurnAdmission>

@@ -2,13 +2,11 @@ import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Option, Ref, Schema } from "effect"
 import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, reasonOf, StepLoop } from "@xandreed/core"
-import type { AgentMessage, CompletionVerdict, LogEntry, LoopEvent, RunResult, StepInfo, StepPlan, StepRequest, StepResult, TokenUsage, TurnError } from "@xandreed/core"
+import type { AgentMessage, CompletionVerdict, LogEntry, LoopEvent, RunResult, StepInfo, StepPlan, StepRequest, StepResult, StepStatus, TokenUsage, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopToolChoice } from "./loop.js"
 
 export const STEP_LOOP = { id: "steps", version: "1" } as const
-
-type StepStatus = "completed" | "failed" | "cancelled"
 
 const resultsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<StepResult> => entries.flatMap((entry) =>
   entry.body._tag === "ToolResult" ? [{ entry: entry.id, toolCallId: entry.body.toolCallId, tool: entry.body.toolName, ok: !entry.body.isError }] : [])

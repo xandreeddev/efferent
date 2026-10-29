@@ -1,6 +1,5 @@
 import { Effect, Option, Ref, Schema, Stream } from "effect"
-import { canonicalJson } from "@xandreed/core"
-import { ConformanceFailure } from "./domain/conformance.entity.js"
+import { canonicalJson, ConformanceFailure } from "@xandreed/core"
 import { UiOutputError } from "./domain/render-output.entity.js"
 import type { UiOutputProposal } from "./domain/render-output.entity.js"
 import { SurfaceCommitted, SurfaceCompleted, SurfaceFrozen, SurfacePlanned } from "./domain/render-surface.entity.js"

@@ -1,5 +1,6 @@
 import type { TokenUsage } from "./token-usage.entity.js"
 import type { AgentFailure } from "./agent-failure.entity.js"
+import type { StepStatus } from "./turn-vocabulary.entity.js"
 
 /**
  * The loop's event vocabulary — everything a driver needs to render a run
@@ -19,7 +20,7 @@ export interface ToolCallSummary {
 
 export type LoopEvent =
   | { readonly type: "turn_start"; readonly turnIndex: number }
-  | { readonly type: "turn_end"; readonly turnIndex: number; readonly status: "completed" | "failed" | "cancelled" }
+  | { readonly type: "turn_end"; readonly turnIndex: number; readonly status: StepStatus }
   /**
    * One streamed content increment, TRANSIENT by design: it exists only for
    * live rendering, is never ledgered or replayed, and every fact it carries

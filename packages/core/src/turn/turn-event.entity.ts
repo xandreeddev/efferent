@@ -2,6 +2,7 @@ import { Schema } from "effect"
 import { DecisionRecord } from "../decision-record.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
+import { StepStatus, TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { ActivationSource, EntryId } from "../memory/memory-log.entity.js"
 import { JsonObject } from "../session/session-log.entity.js"
 import { UserMessage } from "./user-message.entity.js"
@@ -117,7 +118,7 @@ export type StepResult = typeof StepResult.Type
 
 export const StepEndedEvent = Schema.TaggedStruct("step.ended", {
   step: Schema.Int,
-  status: Schema.Literals(["completed", "failed", "cancelled"]),
+  status: StepStatus,
   /** The step's recorded tool results, in log order. */
   results: Schema.Array(StepResult),
 }).annotate({
@@ -194,7 +195,7 @@ export const StreamFallbackEvent = Schema.TaggedStruct("stream.fallback", {
 export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {
   runId: Schema.String,
   turn: Schema.Int,
-  outcome: Schema.Literals(["completed", "partial", "failed"]),
+  outcome: TurnOutcomeKind,
   reply: Schema.OptionFromNullOr(Schema.String),
   /** The turn's usage: its `assistant.message` usage summed (`RunContext.usage`). */
   usage: TokenUsage,
@@ -227,7 +228,7 @@ export const TurnEvent = Schema.Union(
   StreamFallbackEvent,
   TurnEndedEvent,
   HostEvent],
-)
+).pipe(Schema.toTaggedUnion("_tag"))
 export type TurnEvent = typeof TurnEvent.Type
 export type TurnEventName = TurnEvent["_tag"]
 export type TurnEventOf<Name extends TurnEventName> = Extract<TurnEvent, { readonly _tag: Name }>
@@ -236,12 +237,9 @@ export type TurnEventOf<Name extends TurnEventName> = Extract<TurnEvent, { reado
 export const TransientTurnEvents: ReadonlyArray<TurnEventName> = ["assistant.delta", "tool.progress"]
 
 /**
- * Every bus event's name, in the union's order. All of them are reserved
- * (`RESERVED_KINDS`): a host event may not take one, whether the journal
- * stores the bus event under that name or not.
+ * Every bus event's name, in the union's order (its tags, as the union
+ * lists them). All of them are reserved (`RESERVED_KINDS`): a host event may
+ * not take one, whether the journal stores the bus event under that name or
+ * not.
  */
-export const TURN_EVENT_NAMES: ReadonlyArray<TurnEventName> = [
-  "turn.started", "step.started", "tool.started", "tool.refused", "tool.progress", "tool.completed",
-  "step.ended", "completion.evaluated", "skills.activated", "context.built", "decision.recorded",
-  "assistant.message", "assistant.delta", "stream.fallback", "turn.ended", "host",
-]
+export const TURN_EVENT_NAMES: ReadonlyArray<TurnEventName> = TurnEvent.discriminants
