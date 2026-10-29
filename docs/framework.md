@@ -328,7 +328,11 @@ Where the counts appear:
   `gen_ai.usage.cache_write.input_tokens` there): sum one level, not both.
   The models plugin's `providers.generate` span carries
   `llm.usage.{input,output,cache_read,cache_write,reasoning}_tokens`, and
-  the same names are counters per `llm.model`.
+  the same names are counters per `llm.model`. It encloses the call's
+  credential (`models.credentials`, a token refresh included) and the
+  provider's build, which the counters leave out; a `UtilityLlm` completion
+  is a `models.utility` span around it. Logs written during a call carry
+  `llm.model` as an annotation, not in their text.
 
 A turn's usage counts what the step loop received. It does not count calls
 outside the loop: a memory digester's or summarizer's `UtilityLlm` calls

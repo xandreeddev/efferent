@@ -1,7 +1,7 @@
 import { AiError, LanguageModel } from "effect/ai"
 import type { Response } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Cause, Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Predicate, Ref, Stream } from "effect"
+import { Cause, Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Predicate, Ref, References, Stream } from "effect"
 import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, harnessError, parseModelSelection, reasonOf, replayableContext, resolvingModel, SettingsStore, stampPartModel, stampResponseModel, storedJson } from "@xandreed/core"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
@@ -193,12 +193,13 @@ const describeSelection = (primary: ModelSelection, fallback: Option.Option<Mode
   }))
 
 /**
- * The credential and key one call uses. An endpoint with its own key
- * (`apiKey`, or a set `apiKeyEnv`) uses it and never reads the AuthStore; an
- * empty own key sends none. Every other selection reads the AuthStore, which
- * refreshes a near-expiry OAuth token first.
+ * The credential and key one call uses, under its `models.credentials` span.
+ * An endpoint with its own key (`apiKey`, or a set `apiKeyEnv`) uses it and
+ * never reads the AuthStore; an empty own key sends none. Every other
+ * selection reads the AuthStore, which refreshes a near-expiry OAuth token
+ * first.
  */
-const credentialFor = (selection: ModelSelection) => Effect.gen(function* () {
+const credentialFor = Effect.fn("models.credentials")(function* (selection: ModelSelection) {
   const endpoints = yield* Effect.service(CurrentModelEndpoints)
   const own = yield* Option.match(Option.fromNullishOr(endpoints[selection.provider]), {
     onNone: () => Effect.succeedNone,
@@ -234,7 +235,7 @@ const providerFor = (selection: ModelSelection) =>
     Effect.mapError(authenticationFailure),
   )
 
-/** A settled call's counters, duration and span, as every routed call records them. */
+/** A settled call's counters and duration, as every routed call records them: the provider's call alone, its credential left out. */
 const recorded = (label: string, isFallback: boolean) =>
   <A extends { readonly usage: unknown }, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
     call.pipe(
@@ -245,9 +246,29 @@ const recorded = (label: string, isFallback: boolean) =>
       Effect.timed,
       Effect.tap(([duration]) => Metric.update(byModel(llmDuration, label), duration)),
       Effect.map(([, res]) => res),
-      Effect.withSpan("providers.generate", {
-        attributes: { "llm.model": label },
-      }),
+    )
+
+/** The model as the span attribute and the log annotation of everything one routed call does. */
+const modelAttributes = (selection: ModelSelection) => ({ "llm.model": formatModelSelection(selection) })
+
+/**
+ * One routed call's `providers.generate` span, around all of it: its
+ * credential (`models.credentials`), its provider's build and the call. The
+ * call's logs carry its model.
+ */
+const providerCall = (selection: ModelSelection) =>
+  <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    call.pipe(
+      Effect.annotateLogs(modelAttributes(selection)),
+      Effect.withSpan("providers.generate", { attributes: modelAttributes(selection) }),
+    )
+
+/** {@link providerCall} for a stream: the span and the annotations last while it runs. */
+const providerStream = (selection: ModelSelection) =>
+  <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
+    stream.pipe(
+      Stream.updateService(References.CurrentLogAnnotations, (annotations) => ({ ...annotations, ...modelAttributes(selection) })),
+      Stream.withSpan("providers.generate", { attributes: modelAttributes(selection) }),
     )
 
 /** Build + call one provider generateText for an explicit selection.
@@ -294,7 +315,7 @@ export const generateWith = <O extends PromptOptions>(
       ),
       recorded(label, isFallback),
     )
-  }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped, providerCall(selection))
 
 /** Build + call one provider generateObject for an explicit selection: the
  *  resolution, option shaping, retries and telemetry of {@link generateWith}
@@ -322,7 +343,7 @@ export const objectWith = <O extends PromptOptions>(
       ),
       recorded(label, isFallback),
     )
-  }).pipe(Effect.scoped)
+  }).pipe(Effect.scoped, providerCall(selection))
 
 /**
  * The fallback rung: run the primary; if it fails TRANSIENT after the fast
@@ -345,9 +366,10 @@ export const withFallbackRung = <A, E, R>(
           {
             onNone: () => Effect.fail(error),
             onSome: (fb) =>
-              Effect.logWarning(
-                `${formatModelSelection(primary)} exhausted retries (${String(error).slice(0, 200)}) — falling back to ${formatModelSelection(fb)}`,
-              ).pipe(Effect.andThen(call(fb, true))),
+              Effect.logWarning(`exhausted retries (${String(error).slice(0, 200)}) — falling back`).pipe(
+                Effect.annotateLogs({ ...modelAttributes(primary), "llm.fallback_model": formatModelSelection(fb) }),
+                Effect.andThen(call(fb, true)),
+              ),
           },
         ),
       ),
@@ -472,12 +494,9 @@ export const streamWith = <O extends PromptOptions>(
         retryableLlmStream(label),
         Stream.map((part) => stampPartModel(part, label)),
         tapStreamTelemetry(label),
-        Stream.withSpan("providers.generate", {
-          attributes: { "llm.model": label },
-        }),
       )
     }),
-  )
+  ).pipe(providerStream(selection))
 
 /** The persisted effort applies to a stream's whole run, unless a policy is already pinned. */
 const withConfiguredEffortStream = <A, E, R>(

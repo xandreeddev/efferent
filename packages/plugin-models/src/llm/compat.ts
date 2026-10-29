@@ -337,52 +337,51 @@ export const thinkingParams = (model: string): Schema.JsonObject => {
 }
 
 /** Parse one non-streaming completion into `@effect/ai` encoded parts. */
-export const fromChatCompletion = (
+export const fromChatCompletion = Effect.fnUntraced(function* (
   moduleName: string,
   body: ChatCompletion,
   reading: UsageReading = {},
-): Effect.Effect<ReadonlyArray<ResponseParts.PartEncoded>, AiError.AiError> =>
-  Effect.gen(function* () {
-    const choice = body.choices?.[0]
-    if (choice === undefined) {
-      return yield* Effect.fail(invalidResponse(moduleName, "generateText", "the completion carried no choices"))
-    }
-    const message = choice.message ?? {}
-    // The gateway fronts multiple upstreams with two reasoning vocabularies —
-    // models think by DEFAULT (no request param), so missing either field
-    // silently drops the thinking (live-caught on kimi-k2.6).
-    const reasoning = message.reasoning_content ?? message.reasoning
-    const text = message.content
-    const toolCalls = yield* Effect.forEach(message.tool_calls ?? [], (tc) =>
-      decodeToolArguments(tc.function?.arguments ?? "{}").pipe(
-        Effect.map((params): ResponseParts.ToolCallPartEncoded => ({
-          type: "tool-call",
-          id: tc.id ?? "",
-          name: tc.function?.name ?? "",
-          params,
-        })),
-        Effect.mapError(() =>
-          invalidOutput(moduleName, "generateText", `tool call ${tc.function?.name ?? "?"} carried unparseable JSON arguments`),
-        ),
+): Effect.fn.Return<ReadonlyArray<ResponseParts.PartEncoded>, AiError.AiError> {
+  const choice = body.choices?.[0]
+  if (choice === undefined) {
+    return yield* Effect.fail(invalidResponse(moduleName, "generateText", "the completion carried no choices"))
+  }
+  const message = choice.message ?? {}
+  // The gateway fronts multiple upstreams with two reasoning vocabularies —
+  // models think by DEFAULT (no request param), so missing either field
+  // silently drops the thinking (live-caught on kimi-k2.6).
+  const reasoning = message.reasoning_content ?? message.reasoning
+  const text = message.content
+  const toolCalls = yield* Effect.forEach(message.tool_calls ?? [], (tc) =>
+    decodeToolArguments(tc.function?.arguments ?? "{}").pipe(
+      Effect.map((params): ResponseParts.ToolCallPartEncoded => ({
+        type: "tool-call",
+        id: tc.id ?? "",
+        name: tc.function?.name ?? "",
+        params,
+      })),
+      Effect.mapError(() =>
+        invalidOutput(moduleName, "generateText", `tool call ${tc.function?.name ?? "?"} carried unparseable JSON arguments`),
       ),
-      { concurrency: 1 },
-    )
-    return [
-      ...(reasoning !== null && reasoning !== undefined && reasoning.length > 0
-        ? [{ type: "reasoning" as const, text: reasoning }]
-        : []),
-      ...(text !== null && text !== undefined && text.length > 0
-        ? [{ type: "text" as const, text }]
-        : []),
-      ...toolCalls,
-      {
-        type: "finish" as const,
-        reason:
-          toolCalls.length > 0 ? "tool-calls" : finishReasonFromWire(choice.finish_reason),
-        usage: usageFromCompletion(body.usage, reading),
-      },
-    ]
-  })
+    ),
+    { concurrency: 1 },
+  )
+  return [
+    ...(reasoning !== null && reasoning !== undefined && reasoning.length > 0
+      ? [{ type: "reasoning" as const, text: reasoning }]
+      : []),
+    ...(text !== null && text !== undefined && text.length > 0
+      ? [{ type: "text" as const, text }]
+      : []),
+    ...toolCalls,
+    {
+      type: "finish" as const,
+      reason:
+        toolCalls.length > 0 ? "tool-calls" : finishReasonFromWire(choice.finish_reason),
+      usage: usageFromCompletion(body.usage, reading),
+    },
+  ]
+})
 
 /** A request's public options, shared by the body and the model's descriptor:
  *  the sampling temperature (sent before the messages) and the gateway

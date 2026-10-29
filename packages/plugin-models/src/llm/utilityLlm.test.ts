@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Option, Tracer } from "effect"
 import { AuthStore, CurrentModelCallPolicy, EngineSettings, SettingsStore, UtilityLlm } from "@xandreed/core"
 import type { ReasoningEffort } from "@xandreed/core"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
@@ -85,5 +85,43 @@ describe("UtilityLlmLive", () => {
     expect(await completeUnder({ reasoningEffort: "low" })).toMatchObject({ reasoning_effort: "low" })
     expect(await completeUnder({})).not.toHaveProperty("reasoning_effort")
     expect(await completeUnder({ fastReasoningEffort: "medium" }, Option.some("high"))).toMatchObject({ reasoning_effort: "high" })
+  })
+
+  test("a completion is a models.utility span where it is called, around its providers.generate", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: () => Response.json({ choices: [{ finish_reason: "stop", message: { content: "a title" } }], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } }),
+    })
+    const store = Layer.succeed(SettingsStore, SettingsStore.of({
+      load: Effect.succeed(new EngineSettings({ model: Option.some("gw:general") })),
+      setRole: () => Effect.void,
+      set: () => Effect.void,
+    }))
+    const auth = Layer.succeed(AuthStore, AuthStore.of({
+      all: Effect.succeed(new Map()),
+      get: () => Effect.succeed(Option.none()),
+      resolveKey: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      remove: () => Effect.void,
+    }))
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options)
+        spans.push(span)
+        return span
+      },
+    })
+    await Effect.runPromise(Effect.gen(function* () {
+      const utility = yield* UtilityLlm.pipe(Effect.provide(UtilityLlmLive.pipe(Layer.provide(Layer.merge(store, auth)))), Effect.withSpan("built-here"))
+      yield* utility.complete("Name this conversation").pipe(Effect.withSpan("called-here"))
+    }).pipe(
+      Effect.provideService(CurrentModelEndpoints, { gw: { url: `http://127.0.0.1:${server.port}/v1`, standardOnly: false } }),
+      Effect.withTracer(tracer),
+    )).finally(() => server.stop(true))
+    const byId = new Map(spans.map((span) => [span.spanId, span] as const))
+    const parentOf = (name: string) => spans.filter((span) => span.name === name).map((span) =>
+      Option.match(Option.flatMap(span.parent, (parent) => Option.fromNullishOr(byId.get(parent.spanId))), { onNone: () => "none", onSome: (parent) => parent.name }))
+    expect([parentOf("models.utility"), parentOf("providers.generate"), parentOf("models.credentials")]).toEqual([["called-here"], ["models.utility"], ["providers.generate"]])
   })
 })
