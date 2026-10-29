@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
-import { RenderSnapshot, SurfaceFrozen, SurfacePlanned, SurfaceRecord } from "./domain/render-surface.entity.js"
-import { fillOperationIdOf, operationIdOf, signatureOf } from "./domain/render-surface.entity.functions.js"
+import { RenderError, RenderSnapshot, SurfaceFrozen, SurfacePlanned, SurfaceRecord } from "./domain/render-surface.entity.js"
+import { fillOperationIdOf, isFrozenRefusal, operationIdOf, signatureOf } from "./domain/render-surface.entity.functions.js"
 import { UiOutputAdmission } from "./ports/render-output.port.js"
 import { Render, RenderStore } from "./ports/render.port.js"
 import { renderSurfacePlugin } from "./plugin.adapter.js"
@@ -80,6 +80,11 @@ test("operation ids name the surface and generation, and a colon inside a part c
   expect(fillOperationIdOf("run", "page", 2, "media")).toBe("run:render:page:2:fill:media")
   expect(operationIdOf("run", "a:1", 2, "x")).not.toBe(operationIdOf("run", "a", 1, "2:x"))
   expect(operationIdOf("run", "page", 2, "fill:media")).not.toBe(fillOperationIdOf("run", "page", 2, "media"))
+})
+
+test("only a frozen refusal reads as frozen", () => {
+  const codes = ["invalid", "frozen", "conflict", "forbidden", "storage", "unavailable"] as const
+  expect(codes.filter((code) => isFrozenRefusal(new RenderError({ code, message: "refused" })))).toEqual(["frozen"])
 })
 
 test("a version partly committed under an earlier operation id format completes with only its missing node", async () => {

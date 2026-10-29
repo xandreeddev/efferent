@@ -156,6 +156,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   rubric fingerprint follows the prompt; `GrepResult.unreadable` and
   `GrepUnreadable` in `@xandreed/plugin-workspace`; the bash kit's
   `backpressure` check, with `BashSubject.holdsBack`.
+- `isFrozenRefusal(error)` in `@xandreed/plugin-render`: whether a
+  `RenderStore` refused a write because the surface is frozen.
 
 ### Fixed
 
@@ -372,6 +374,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   order, a shared resource or the first failure matters).
 - `foundry check` reads the source files behind findings and the run
   history eight at a time instead of one by one.
+- The render surface recognises a frozen refusal through that guard instead
+  of comparing the error code, and `plugin-render` passes
+  `effect/no-error-code-compare`.
 
 ## 0.14.0 — 2026-10-29
 
