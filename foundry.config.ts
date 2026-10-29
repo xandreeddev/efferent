@@ -154,15 +154,14 @@ const UNKNOWN_JSON_EDGES = [
  * Casts to an object type (`effect/no-record-cast`) not yet replaced by a
  * decode or a type. The tool registry hands its two skill tools the
  * parameters the toolkit decoded, through a handler map typed `unknown`.
- * The models plugin's provider layer reads effect/ai's response parts and
- * call options through hand-written shapes, until they are typed as
- * effect/ai's own. Each entry goes once its file is typed; like
+ * The models plugin's chat client, router and utility model read
+ * effect/ai's response parts through hand-written shapes, until they are
+ * typed as effect/ai's own. Each entry goes once its file is typed; like
  * NULLABLE_EDGES the list only shrinks.
  */
 const RECORD_CAST_EDGES = [
   "packages/plugin-tool-discovery/src/registry.adapter.ts",
   "packages/plugin-models/src/llm/compat.ts",
-  "packages/plugin-models/src/llm/providers.ts",
   "packages/plugin-models/src/llm/router.ts",
   "packages/plugin-models/src/llm/utilityLlm.ts",
 ]

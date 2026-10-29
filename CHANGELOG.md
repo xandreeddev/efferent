@@ -86,6 +86,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   still decode, without metadata). Code comparing `foldStreamParts` output
   with plain `{ type, text }` objects compares with `Response.makePart(...)`,
   and a custom `StepLoop` that streams reruns `stepLoopConformance`.
+- Narrow options typed `unknown` to `{ prompt }` before passing them to
+  `prependClaudeCode`, `withAnthropicCacheBreakpoints` or `generateWith`.
 
 ### Breaking
 
@@ -257,6 +259,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`Response.makePart`, with `metadata`), and keeps a chunk that has
   metadata but no text (a redacted thinking block, an OpenAI reasoning item
   without a summary).
+- `@xandreed/plugin-models`: `prependClaudeCode` and
+  `withAnthropicCacheBreakpoints` take call options with a `prompt` and
+  return them with the prompt as a `Prompt` (other options kept), instead of
+  `unknown`; `generateWith` takes options with a `prompt`.
 
 ### Added
 
@@ -316,6 +322,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `step.usage` and `request.prepared` records (`StoredData`, `Stored`), and
   `readStoredKeys` decodes only a turn's `runId`, `key` and `entry`, or a
   request's `runId` and `step`, never a user's message or its images.
+- `buildProvider`'s result names its route: `anthropic`,
+  `openai-responses`, `openai-codex` or `compat`.
 
 ### Fixed
 
@@ -504,6 +512,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   redacted thinking is no longer dropped, and the OpenAI Responses routes
   (openai, openai-codex, OpenCode `gpt-*`) keep a reasoning item's `itemId`
   and `encryptedContent`. Later requests send that reasoning back.
+- The model catalog no longer throws on a credential stored under a name
+  such as `toString`.
 
 ### Repository
 
@@ -631,6 +641,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `UNKNOWN_JSON_EDGES` allow list); its per-package list is gone.
 - A streamed golden, `packages/sdk/golden/agent-stream.model.json`, pins
   every request of a streamed two-turn conversation.
+- The built-in providers are one profile table in `@xandreed/plugin-models`;
+  the catalog, the image and effort flags and `buildProvider` read it, with
+  one builder per route, and a pin test holds every built-in selection's
+  catalog entry, flags and descriptor settings to their earlier values.
 
 ## 0.14.0 — 2026-10-29
 

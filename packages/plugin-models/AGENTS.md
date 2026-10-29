@@ -5,6 +5,7 @@ The models plugin: the routed `LanguageModel` (opencode, google, anthropic, open
 ## Rules
 
 - Build a provider per request from a freshly resolved key (`buildProvider`), never at layer build: a sign-in or a model switch applies on the next call.
+- Name a built-in provider only in its profile (`PROVIDER_PROFILES`, `src/llm/provider-profile.entity.functions.ts`): its catalog, each model's images and efforts, and the route a model is sent over. The catalog, `imageInputFor`, `reasoningEffortsFor` and `buildProvider` read the table; a builder serves a route, never a provider name.
 - Send every outbound call (providers, compatible endpoints, OAuth refreshes, the subscription's WebSocket) through the `ModelsTransport` when one applies, as `transportFetchOf` does in `src/llm/router.ts`.
 - Keep `storage: "memory"` off the disk; with `storage: "local"`, read and write files through `src/storage/json-file.ts`: only a missing file is empty, one it cannot use fails with `auth.corrupt` or `settings.corrupt` and is left as it was.
 - Refresh a provider's token one at a time and commit it only if the provider still holds the credential refreshed, so a login or logout made meanwhile wins.
@@ -27,15 +28,15 @@ The models plugin: the routed `LanguageModel` (opencode, google, anthropic, open
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Anthropic subscription system block `CLAUDE_CODE_SYSTEM` | `src/auth/anthropicOAuth.ts:28`, prepended by `prependClaudeCode` (`src/llm/providers.ts:81`, called at `src/llm/router.ts:128`) | unpinned |
-| Codex default `instructions` (`You are a helpful assistant.`) when a request has no system text | `src/llm/openAiCodex.ts:58` | exact, `src/llm/providers.test.ts:60`, `src/llm/openAiCodex.test.ts:40` |
-| Label lines in place of unsent files: the message's text, then one line per file part | `src/llm/compat.ts:147-158`, `:268-286` | exact, `src/llm/compat.test.ts:434`, `:500`, `:504`; `src/llm/providers.test.ts:209` |
+| Anthropic subscription system block `CLAUDE_CODE_SYSTEM` | `src/auth/anthropicOAuth.ts:28`, prepended by `prependClaudeCode` (`src/llm/providers.ts:91`, called at `src/llm/router.ts:135`) | unpinned |
+| Codex default `instructions` (`You are a helpful assistant.`) when a request has no system text | `src/llm/openAiCodex.ts:58` | exact, `src/llm/providers.test.ts:61`, `src/llm/openAiCodex.test.ts:40` |
+| Label lines in place of unsent files: the message's text, then one line per file part | `src/llm/compat.ts:147-158`, `:268-286` | exact, `src/llm/compat.test.ts:434`, `:500`, `:504`; `src/llm/providers.test.ts:210` |
 | Non-image file label (`[file omitted: <type>, <name>]`); images use core's `mediaLabel` | `src/llm/compat.ts:123` | unpinned |
-| Image captions: `Images returned by <tool> (call <id>):`, `[the images this call returned follow]`, `The user's message:` | `src/llm/compat.ts:224`, `:229`, `:178` | exact, `src/llm/compat.test.ts:462` (first two), `:492` (the third); `src/llm/providers.test.ts:209` |
+| Image captions: `Images returned by <tool> (call <id>):`, `[the images this call returned follow]`, `The user's message:` | `src/llm/compat.ts:224`, `:229`, `:178` | exact, `src/llm/compat.test.ts:462` (first two), `:492` (the third); `src/llm/providers.test.ts:210` |
 
 ## Erasure files
 
-- `src/llm/router.ts`, `src/llm/providers.ts`: one routed `LanguageModel` over arbitrary provider services, with reshaped options and the generic `generateText`/`generateObject`/`streamText` signatures (for example `router.ts:259`, `:585-589`); `withImageLabels` re-wraps those three methods (`providers.ts:56-58`) and a cache-control message is rebuilt with `Prompt.makeMessage` (`providers.ts:122`).
+- `src/llm/router.ts`, `src/llm/providers.ts`: one routed `LanguageModel` over arbitrary provider services, with reshaped options and the generic `generateText`/`generateObject`/`streamText` signatures (for example `router.ts:271`, `:591-596`); `withImageLabels` re-wraps those three methods (`providers.ts:66-68`) and a cache-control message is rebuilt with `Prompt.makeMessage` (`providers.ts:120`).
 - `src/llm/compat.ts`, `src/llm/openAiCodex.ts`: effect/ai's generic `LanguageModel` surface over hand-built clients (`compat.ts:511`, `:530`; `openAiCodex.ts:207-218`), and `Tool.Any`'s description and schema (`compat.ts:298-299`).
 - `src/transport/undici-fetch.adapter.ts`: npm undici's fetch typed as the global one; its classes differ, so nothing downstream may rely on `instanceof Response` or `Headers`.
 
@@ -44,7 +45,7 @@ The models plugin: the routed `LanguageModel` (opencode, google, anthropic, open
 | File | Role |
 |---|---|
 | `src/plugin.adapter.ts` | the plugin: options, memory or local stores, the transport beneath them |
-| `src/llm/` | `router.ts` (routed and selection models), `providers.ts`, `compat.ts` with `chat-wire.entity*.ts` and `sse.ts` (OpenAI-compatible client), `openAiCodex.ts` and `openAiCodexWebSocket.ts` (subscription), `retry.ts`, `modelCatalog.ts`, `utilityLlm.ts` |
+| `src/llm/` | `router.ts` (routed and selection models), `providers.ts` (one builder per route), the `provider-profile` entity pair (the built-in providers' table), `compat.ts` with `chat-wire.entity*.ts` and `sse.ts` (OpenAI-compatible client), `openAiCodex.ts` and `openAiCodexWebSocket.ts` (subscription), `retry.ts`, `modelCatalog.ts`, `utilityLlm.ts` |
 | `src/auth/`, `src/settings/` | `localAuth.ts`, `memory-auth.adapter.ts`, `anthropicOAuth.ts`, `openAiCodexOAuth.ts`, the `credential-input`, `credential-refresh` and `token-response` entity pairs; `localSettings.ts`, `memory-settings.adapter.ts`, the `settings-value` entity pair, `roleView.ts` |
 | `src/transport/` | the `http-proxy` entity pair (proxy and `NO_PROXY` rules), `models-transport.adapter.ts`, `undici-fetch.adapter.ts` |
 | `src/ports/`, `src/storage/json-file.ts` | `HostCredentials`, `ModelsTransport`, `ModelEndpoints`; atomic JSON files under a per-file lock |

@@ -5,7 +5,8 @@ import { FetchHttpClient } from "effect/http"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, parseModelSelection, ToolCallId, toPromptMessages } from "@xandreed/core"
 import type { AgentMessage, ModelCallPolicy } from "@xandreed/core"
 import type { Credential } from "@xandreed/core"
-import { buildProvider, chatCompletionsUrl, OPENCODE_RESPONSES_API_URL, usesOpenCodeResponses } from "./providers.js"
+import { CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
+import { buildProvider, chatCompletionsUrl, OPENCODE_RESPONSES_API_URL, prependClaudeCode, usesOpenCodeResponses, withAnthropicCacheBreakpoints } from "./providers.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import type { ModelEndpoints } from "../ports/model-endpoints.port.js"
@@ -277,5 +278,50 @@ describe("reasoning effort on the wire", () => {
       Effect.provide(FetchHttpClient.layer),
     ))
     expect(Option.map(descriptor, (value) => value.settings)).toEqual(Option.some({ prompt_cache_key: "efferent", reasoning: { effort: "high" } }))
+  })
+})
+
+describe("call options", () => {
+  it("cache breakpoints mark the last system message and the last two others, keep the other options and leave an explicit cacheControl alone", () => {
+    const shaped = withAnthropicCacheBreakpoints({
+      prompt: [
+        { role: "system", content: "rules" },
+        { role: "user", content: "one" },
+        { role: "assistant", content: "two" },
+        { role: "user", content: "three", options: { anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } } } },
+      ],
+      toolChoice: "none" as const,
+    })
+    expect(shaped.toolChoice).toBe("none")
+    expect(shaped.prompt.content.map((message) => message.options["anthropic"] ?? null)).toEqual([
+      { cacheControl: { type: "ephemeral" } },
+      null,
+      { cacheControl: { type: "ephemeral" } },
+      { cacheControl: { type: "ephemeral", ttl: "1h" } },
+    ])
+  })
+
+  it("the Claude Code block goes first and the other options are kept", () => {
+    const shaped = prependClaudeCode({ prompt: [{ role: "system", content: "rules" }, { role: "user", content: "hi" }], toolChoice: "auto" as const })
+    expect(shaped.toolChoice).toBe("auto")
+    expect(shaped.prompt.content.map((message) => message.role)).toEqual(["system", "system", "user"])
+    expect(shaped.prompt.content[0]).toMatchObject({ role: "system", content: CLAUDE_CODE_SYSTEM })
+  })
+
+  it("a built model names its route: a configured endpoint's and a local credential's are compat", async () => {
+    const routeOf = (model: string, endpoints: ModelEndpoints = {}, credential?: Credential) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection(model))
+      return (yield* buildProvider(selection, credential, Redacted.make("test-key"))).route
+    })).pipe(Effect.provideService(CurrentModelEndpoints, endpoints), Effect.provide(FetchHttpClient.layer)))
+    expect(await Promise.all([
+      routeOf("anthropic:claude-sonnet-5"),
+      routeOf("openai:gpt-5.5"),
+      routeOf("opencode:gpt-5.6-luna"),
+      routeOf("opencode:glm-5.2"),
+      routeOf("google:gemini-3.5-flash"),
+      routeOf("openai-codex:gpt-5.5", {}, { type: "oauth", access: "a", refresh: "r", expires: 1, accountId: "account" }),
+      routeOf("anthropic:claude-sonnet-5", { anthropic: { url: "http://127.0.0.1:1/v1" } }),
+      routeOf("ollama:qwen3", {}, { type: "local", baseUrl: "http://127.0.0.1:1/v1" }),
+    ])).toEqual(["anthropic", "openai-responses", "openai-responses", "compat", "compat", "openai-codex", "compat", "compat"])
   })
 })
