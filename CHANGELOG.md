@@ -817,6 +817,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   derived from the `TurnEvent` union, and `@xandreed/plugin-render`
   re-exports core's `ConformanceFailure`. Stored data and existing exports
   are unchanged.
+- `effect/branded-id-fields` sees an unbranded id inside `.check(…)` and
+  `.annotate(…)` chains, inside `optionalKey`, `optional`,
+  `OptionFromNullOr`, `OptionFromOptionalKey`, `NullOr`, `Array` and
+  `withDecodingDefaultKey`, and behind a const declared in the same file; a
+  pipe on a branded schema is no longer reported. It runs one package at a
+  time over `*.entity.ts` files (`BRANDED_IDS_CLEAN`), in every package
+  already clean of it, and in core's `src/domain` and `src/spec`.
 
 ## 0.14.0 — 2026-10-29
 

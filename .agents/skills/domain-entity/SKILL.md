@@ -70,8 +70,11 @@ see a file by its suffix, so the suffix decides which rules apply.
   `export const EntryId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("EntryId"))`
   (also `ConversationId` with `Schema.isUUID()`, `ToolCallId`, `ProviderId`).
 - A field named `id` or `<x>Id` is a branded schema, never a bare
-  `Schema.String`. `effect/branded-id-fields` checks `core/src/domain` and
-  `core/src/spec`; follow it everywhere.
+  `Schema.String`, a `.check(…)` chain or a local const without a brand.
+  `effect/branded-id-fields` checks it through `optionalKey`,
+  `OptionFromNullOr`, `Array` and the other wrappers, in core's
+  `src/domain` and `src/spec` and in the entity files of the packages
+  `BRANDED_IDS_CLEAN` names; follow it everywhere.
 - Mint a value with `EntryId.make(…)` where it is created; decode it where it
   arrives.
 
