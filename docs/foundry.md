@@ -113,8 +113,11 @@ would judge attempt N against attempt N-1's source).
    `effect/no-loop-statements`, `effect/branded-id-fields`,
    `effect/no-parallel-interface`, and the rules for what crosses a
    boundary: `effect/no-json-parse`, `effect/no-sync-codec`,
-   `effect/no-cause-pretty-data` (`Cause.pretty` outside an `Effect.log*`
-   argument), `effect/no-effect-promise`, `effect/no-promise-all`,
+   `effect/no-unknown-json` (`Record(String, Unknown)` and
+   `fromJsonString(Unknown)`, except as what a `Schema.encode*` call
+   writes), `effect/no-record-cast` (`as Record<string, unknown>`,
+   `as { … }`), `effect/no-cause-pretty-data` (`Cause.pretty` outside an
+   `Effect.log*` argument), `effect/no-effect-promise`, `effect/no-promise-all`,
    `effect/callback-buffer-size`, `effect/no-process-env`,
    `effect/no-ambient-time-random` (`Date.now`, argless `new Date()`,
    `Math.random`, `randomUUID`), `effect/no-locale-compare`,

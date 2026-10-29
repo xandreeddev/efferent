@@ -529,6 +529,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`errorCodeOf` for a Node or SQLite code), and errors are recognised by
   tag and fields rather than `Schema.is` of a class, which fails for an
   error from another copy of core.
+- Two gate rules make boundary data decoded rather than trusted:
+  `effect/no-unknown-json` (`Schema.Record(Schema.String, Schema.Unknown)`
+  and `Schema.fromJsonString(Schema.Unknown)`, except as what a
+  `Schema.encode*` call writes) and `effect/no-record-cast`
+  (`as Record<string, unknown>`, `as { … }`). Each runs in the packages
+  already clean of it and grows one package at a time;
+  `effect/no-json-parse` recommends `Schema.Json` for open JSON. Foundry
+  decodes a config's plugged rule packs with Schema.
 
 ## 0.14.0 — 2026-10-29
 

@@ -142,6 +142,40 @@ describe("effect-idioms gate over fixtures", () => {
     ])
   })
 
+  test("effect/no-unknown-json flags open record and JSON schemas, not one passed to Schema.encode*, nor a bare Schema.Unknown", async () => {
+    const findings = await findingsFor(["effect/no-unknown-json"], ["unknownJson.ts"])
+    expect(at(findings)).toEqual([3, 4, 5].map((line) => ({ rule: "effect/no-unknown-json", file: "unknownJson.ts", line })))
+    expect(findings.map((f) => f.message)).toEqual([
+      "`Schema.Record(Schema.String, Schema.Unknown)` checks the keys and lets every value through",
+      "`Schema.fromJsonString(Schema.Unknown)` checks that the text is JSON, not what it holds",
+      "`Schema.Record(Schema.String, Schema.Unknown)` checks the keys and lets every value through",
+    ])
+  })
+
+  test("effect/no-record-cast flags casts to an open record or an object literal type, not to typed values", async () => {
+    const findings = await findingsFor(["effect/no-record-cast"], ["recordCast.ts"])
+    expect(at(findings)).toEqual([3, 4, 5].map((line) => ({ rule: "effect/no-record-cast", file: "recordCast.ts", line })))
+    expect(findings.map((f) => f.message)).toEqual([
+      "`as Record<string, unknown>` asserts an object that nothing checked",
+      "`as Record<string, any>` asserts an object that nothing checked",
+      "`as { … }` asserts an object shape that nothing checked",
+    ])
+  })
+
+  test("the decoding rules find nothing in the other fixtures, nor in test scaffolding the profile excludes", async () => {
+    const config = ["effect/no-unknown-json", "effect/no-record-cast"].map((rule) =>
+      Schema.decodeUnknownSync(RuleConfig)({ rule, include: ["**/*.ts"], exclude: ["**/*.testing.ts"] }),
+    )
+    const findings = await Effect.runPromise(
+      makeIdiomGate(allBuiltinRules, config, "tsconfig.json").run(ws).pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    expect([...new Set(at(findings).map((f) => `${f.rule} ${f.file}`))]).toEqual([
+      "effect/no-record-cast recordCast.ts",
+      "effect/no-unknown-json unknownJson.ts",
+    ])
+    expect(await findingsFor(["effect/no-unknown-json", "effect/no-record-cast"], ["decoding.testing.ts"])).toHaveLength(2)
+  })
+
   test("effect/no-cause-pretty-data flags Cause.pretty kept as data, not as an Effect.log* argument", async () => {
     const findings = await findingsFor(["effect/no-cause-pretty-data"], ["causePretty.ts"])
     expect(at(findings)).toEqual([

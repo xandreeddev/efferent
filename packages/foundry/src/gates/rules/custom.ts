@@ -1,4 +1,4 @@
-import { Effect, Result, Schema } from "effect"
+import { Effect, Option, Result, Schema } from "effect"
 import { RuleId } from "../../domain/Brands.js"
 import { ConfigError } from "../../domain/Errors.js"
 import { Severity } from "../../domain/Finding.js"
@@ -12,14 +12,22 @@ import type { IdiomRule, RuleContext, RuleMatch } from "../idiomGate.js"
  * (`RuleId.make`) happens HERE, in our decoder, never in the workspace.
  */
 
-/** The data half of a plugged rule — Schema-decoded; the `check` function is
- *  asserted separately (Schema cannot decode functions). */
+/** The data half of a plugged rule — Schema-decoded first, so a bad `check`
+ *  is reported under the rule's id. */
 const PluggedRuleMeta = Schema.Struct({
   id: RuleId,
   defaultSeverity: Severity,
   description: Schema.NonEmptyString,
   fixHint: Schema.NonEmptyString,
 })
+
+/** Any function: `failClosed` checks what it returns, on every call. */
+const isCheck = (value: unknown): value is (ctx: RuleContext) => unknown => typeof value === "function"
+
+const decodeCheck = Schema.decodeUnknownOption(Schema.Struct({ check: Schema.declare(isCheck) }))
+
+/** A plugged pack's shape; its `rules` are decoded one entry at a time. */
+const decodePackShape = Schema.decodeUnknownOption(Schema.Struct({ name: Schema.String, rules: Schema.Unknown }))
 
 /** Wrap a plugged check FAIL-CLOSED: a crashing rule (or one returning a
  *  non-array) reports ITSELF as a finding on the file it was checking —
@@ -47,12 +55,6 @@ const failClosed = (
       },
     )
 
-const hasCallableCheck = (entry: unknown): entry is { readonly check: (ctx: RuleContext) => unknown } =>
-  typeof entry === "object" &&
-  entry !== null &&
-  "check" in entry &&
-  typeof (entry as { readonly check: unknown }).check === "function"
-
 const decodeOne = (
   configPath: string,
   label: string,
@@ -65,21 +67,23 @@ const decodeOne = (
           new ConfigError({ path: configPath, message: `${label}: ${parseError.message}` }),
       ),
     )
-    if (!hasCallableCheck(entry)) {
-      return yield* Effect.fail(
-        new ConfigError({
-          path: configPath,
-          message: `${label} ("${meta.id}"): \`check\` must be a function (ctx) => matches`,
+    return yield* Option.match(decodeCheck(entry), {
+      onNone: () =>
+        Effect.fail(
+          new ConfigError({
+            path: configPath,
+            message: `${label} ("${meta.id}"): \`check\` must be a function (ctx) => matches`,
+          }),
+        ),
+      onSome: ({ check }) =>
+        Effect.succeed<IdiomRule>({
+          id: meta.id,
+          defaultSeverity: meta.defaultSeverity,
+          description: meta.description,
+          fixHint: meta.fixHint,
+          check: failClosed(meta.id, check),
         }),
-      )
-    }
-    return {
-      id: meta.id,
-      defaultSeverity: meta.defaultSeverity,
-      description: meta.description,
-      fixHint: meta.fixHint,
-      check: failClosed(meta.id, entry.check),
-    }
+    })
   })
 
 const decodeArray = (
@@ -99,26 +103,17 @@ const decodePack = (
   configPath: string,
   index: number,
   raw: unknown,
-): Effect.Effect<ReadonlyArray<IdiomRule>, ConfigError> => {
-  const shaped =
-    typeof raw === "object" &&
-    raw !== null &&
-    "name" in raw &&
-    typeof (raw as { readonly name: unknown }).name === "string" &&
-    "rules" in raw
-  return shaped
-    ? decodeArray(
-        configPath,
-        `rulePacks[${index}] ("${(raw as { readonly name: string }).name}")`,
-        (raw as { readonly rules: unknown }).rules,
-      )
-    : Effect.fail(
+): Effect.Effect<ReadonlyArray<IdiomRule>, ConfigError> =>
+  Option.match(decodePackShape(raw), {
+    onNone: () =>
+      Effect.fail(
         new ConfigError({
           path: configPath,
           message: `rulePacks[${index}] must be { name, rules } — import a shipped pack or shape your own`,
         }),
-      )
-}
+      ),
+    onSome: (pack) => decodeArray(configPath, `rulePacks[${index}] ("${pack.name}")`, pack.rules),
+  })
 
 /**
  * The config module's whole rule registry: `rulePacks` ∪ `customRules` named
