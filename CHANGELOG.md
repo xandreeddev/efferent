@@ -344,6 +344,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   they wrap as the error's `cause` and say what failed (`Cannot read
   <path>: …`, `Run <id> does not encode: …`, `LangSmith export: …`). Error
   codes are unchanged, and export receipts still hold the message only.
+- `definePlugin` keeps what failed: `plugin.activation`, `plugin.defect` and
+  `config.options` errors carry the original failure as `cause`, and a
+  `HarnessError` a plugin's layer fails or dies with keeps its own `cause`
+  when the plugin is named. Messages name the plugin and the failure's text
+  (`<id> failed to activate: <reason>`), never a stack; `config.options`
+  messages are the schema's message without the `SchemaError(...)` wrapper.
+- `SpecDocParseError` keeps the schema's failure as `cause`; its message is
+  the schema's message.
 
 ### Repository
 
@@ -427,6 +435,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `effect/no-stringified-cause` runs over `packages/foundry`.
 - `@xandreed/evals-cli`, `@xandreed/evals-langfuse` and
   `@xandreed/evals-langsmith` pass `effect/no-stringified-cause`.
+- `effect/no-stringified-cause` runs over `packages/core`, and
+  `effect/no-instanceof-tagged-error` runs over test code too.
 
 ## 0.14.0 — 2026-10-29
 

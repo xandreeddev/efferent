@@ -105,6 +105,7 @@ const src = (name: string): string => `packages/${name}/src/**`
  * list names every package in CHECKED, its rule takes CHECKED instead.
  */
 const STRINGIFIED_CAUSE_CLEAN = [
+  "core",
   "sdk",
   "evals",
   "evals-cli",
@@ -314,7 +315,8 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-ambient-time-random", include: CHECKED, exclude: ["**/*.adapter.ts", ...TEST_SCAFFOLDING] },
     { rule: "effect/no-locale-compare", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/require-sort-comparator", include: CHECKED, exclude: TEST_SCAFFOLDING },
-    { rule: "effect/no-instanceof-tagged-error", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    // Tests too: one that checks an error by its class passes where a second copy of core fails.
+    { rule: "effect/no-instanceof-tagged-error", include: CHECKED },
     // A failure is kept and logged, not dropped; absence stays an Option.
     { rule: "effect/no-silent-ignore", include: CHECKED, exclude: TEST_SCAFFOLDING },
     {

@@ -1,4 +1,5 @@
-import { Context, Effect, Layer, Schema } from "effect"
+import { Cause, Context, Effect, Layer, Schema } from "effect"
+import { reasonOf } from "../domain/failure.entity.functions.js"
 import { HarnessError, PLUGIN_API_VERSION } from "./plugin.entity.js"
 import type { TypedPlugin } from "./plugin.entity.js"
 import { isHarnessError, mergeOptions } from "./plugin.entity.functions.js"
@@ -9,9 +10,11 @@ import { isHarnessError, mergeOptions } from "./plugin.entity.functions.js"
  * decode: the options merged over the defaults, extra keys refused — so a
  * graph caller, whose options already hold the defaults, decodes the same.
  * A `build` whose layer fails or dies with a `HarnessError` fails with that
- * error's code, as `live` does (and names the plugin when the error does
- * not); any other failure is `plugin.activation`, and any other defect
- * `plugin.defect`.
+ * error's code and cause, as `live` does (and names the plugin when the
+ * error does not); any other failure is `plugin.activation`, and any other
+ * defect `plugin.defect`. Either keeps what failed as its `cause`, and its
+ * message names the plugin and what failed (`reasonOf`: messages, never a
+ * stack). `config.options` keeps the schema's failure the same way.
  */
 export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out, E, In>(definition: {
   readonly id: string
@@ -30,7 +33,10 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
     typeof options === "object" && options !== null ? mergeOptions(definition.config, definition.defaults, options) : options ?? definition.defaults,
     { onExcessProperty: "error" },
   )
-  const named = (error: HarnessError) => new HarnessError({ code: error.code, message: error.message, plugin: error.plugin ?? definition.id })
+  const named = (error: HarnessError) => new HarnessError({
+    code: error.code, message: error.message, plugin: error.plugin ?? definition.id,
+    ...(error.cause === undefined ? {} : { cause: error.cause }),
+  })
   return {
     id: definition.id,
     version: definition.version,
@@ -54,14 +60,20 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
       // Matched by its fields, not `instanceof`: a plugin built against another copy of core fails with that copy's class.
       Effect.mapError((error) => isHarnessError(error)
         ? named(error)
-        : new HarnessError({ code: "plugin.activation", plugin: definition.id, message: String(error) })),
+        : new HarnessError({
+          code: "plugin.activation", plugin: definition.id,
+          message: `${definition.id} failed to activate: ${reasonOf(Cause.fail(error))}`, cause: error,
+        })),
       // One that dies with a HarnessError (an `Effect.orDie` over its own failure) keeps its code too.
       Effect.catchDefect((defect) => Effect.fail(isHarnessError(defect)
         ? named(defect)
-        : new HarnessError({ code: "plugin.defect", plugin: definition.id, message: String(defect) }))),
+        : new HarnessError({
+          code: "plugin.defect", plugin: definition.id,
+          message: `${definition.id} died while activating: ${reasonOf(Cause.die(defect))}`, cause: defect,
+        }))),
     ),
     live: (options) => Layer.unwrap(decodeOptions(options).pipe(
-      Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: definition.id, message: String(error) })),
+      Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: definition.id, message: error.message, cause: error })),
       Effect.map(definition.layer),
     )),
   }

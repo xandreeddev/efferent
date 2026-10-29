@@ -139,6 +139,12 @@ describe("spec codec — strictness (typed errors, never silent drift)", () => {
     const text = "---\nstatus: shipped\ncreated: t\n---\n# Goal\nDo.\n"
     expect(decodeFail(text).message).toContain("shipped")
   })
+
+  test("a field the schema refuses keeps the schema's failure as the cause, its message as the message", () => {
+    const failure = decodeFail("---\nstatus: shipped\ncreated: t\n---\n# Goal\nDo.\n")
+    expect(failure.cause).toMatchObject({ _tag: "SchemaError" })
+    expect(failure.message).toBe((failure.cause as Error).message)
+  })
 })
 
 describe("encode stays inside its own grammar", () => {
