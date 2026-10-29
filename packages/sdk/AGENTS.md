@@ -1,0 +1,52 @@
+# @xandreed/sdk
+
+The composable agent: `Agent.define` builds an agent's plugin graph once (through runtime's `resolveGraph` and `activateGraph`) and `agent.turn` runs one turn over core's `TurnLive`, with the session, memory, registry and step loop its plugins provide. It re-exports all of core, so a host imports one package. Node 24 and Bun; layer `sdk` in `foundry.config.ts` (imports core and runtime); its tests are the `sdk-tests` layer, which may import every plugin.
+
+## Rules
+
+- The sdk composes and owns no port or adapter: new behaviour goes in core or a plugin, and `agent.adapter.ts` only wires it.
+- Fail at define time, not at the first turn: no `ConversationMemory`, `ToolRegistry` or `StepLoop` is `config.graph`, a bad `budgetTokens` is `config.budget`.
+- A turn that cannot begin fails with the code `turnBeginCodes` gives its `Sessions.begin` error's tag; keep the table in step with that union.
+- Any change to what the model or the journal sees shows in `golden/`: re-record only on purpose (`EFFERENT_UPDATE_MODEL_GOLDEN=1`, `EFFERENT_UPDATE_GOLDEN=1`) and review the diff in the PR.
+- `src/turn-composition.test.ts` rebuilds the golden agent by hand from the typed layers: a composition change keeps both it and `Agent.turn` byte-identical to the golden.
+- Every `fixtures/journal-<version>.json` keeps decoding (`src/journal-compat.test.ts`); record one per release with `bun scripts/record-journal-fixture.ts`, never over a released one.
+- `docs/events.md` quotes regions of `src/events-guide.test.ts`: edit the snippet there, then run `bun run docs:generate`.
+- Keep test-only code out of `index.ts`: `src/testing.port.ts` (`Tally`, `Stamp`) serves the tests only, and the build leaves it out.
+
+## Public surface
+
+- `export * from "@xandreed/core"`, plus `Agent` (`Agent.define`), `turnBeginCodes`, and the types `AgentConfig` and `AgentPluginEntry` (`src/agent.adapter.ts`).
+- Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
+
+## Model-facing text
+
+None of its own: the system prompt prefix is the host's (`AgentConfig.system`, a turn's `system`). The sdk owns the pin of what a composed agent sends:
+
+| Pinned text | Source | Pinned by |
+|---|---|---|
+| Every model request of the golden conversation: system prompts with the tool-discovery catalogue, tool descriptions and schemas (`load_skill`, `recall_context`, the host's), memory renderings (a `CompactViews` compaction, a digested result), seeded `load_skill` exchanges | `golden/agent-turn.model.json` | exact text, `src/agent.golden.test.ts:317`; over three storage backends, `src/agent.backends.test.ts` |
+
+The golden has no spill, dropped-turn or summary scenario: those texts are pinned, or not, in their plugins.
+
+## Erasure files
+
+None.
+
+## Layout
+
+| File | Role |
+|---|---|
+| `src/agent.adapter.ts` | `Agent.define`, `agent.turn`, `turnBeginCodes`, the turn metrics |
+| `src/index.ts` | core re-export and the sdk's own exports |
+| `src/testing.port.ts` | test-only services for the agent tests |
+| `golden/agent-turn.model.json`, `golden/agent-turn.journal.json` | the golden conversation: what the model and host see, and what is stored |
+| `fixtures/journal-<version>.json` | journals each release wrote |
+
+## Tests
+
+- Golden and composition: `agent.golden.test.ts`, `agent.backends.test.ts`, `turn-composition.test.ts` (also runs core's `turnConformance`), `plugin-stack.test.ts`.
+- Behaviour: `agent.adapter.test.ts`, `agent.trace.test.ts` (span nesting and ids), `activity.test.ts`, `models-plugin.test.ts`; the key-free journey `resume.journey.test.ts`.
+- Kits and compatibility: `memory.conformance.test.ts` (core's `memoryConformance` over the window and summary strategies and a test-only one), `journal-compat.test.ts`, `events-guide.test.ts`.
+- Run: `bun test packages/sdk`.
+
+See the root AGENTS.md for the enforced rules and the definition of done.

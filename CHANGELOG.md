@@ -325,6 +325,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   ports with their conformance kits, text the model reads, Effect 4 idioms
   (including `Effect.fn` spans at service boundaries), domain schemas,
   events and stored payloads, key-free journey tests, and the release order.
+- Every published package has an `AGENTS.md` (with a `CLAUDE.md` link):
+  what it provides and its layer, its rules, its public surface and
+  plugins, the text it sends to a model with the test or golden that pins
+  each (or "unpinned"), its type-erasure files, its layout and how to run
+  its tests. The plugin-workspace notes take the same shape.
 
 ## 0.14.0 — 2026-10-29
 
