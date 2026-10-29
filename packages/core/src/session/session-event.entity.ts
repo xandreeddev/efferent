@@ -55,13 +55,14 @@ export type TurnEndReason = typeof TurnEndReason.Type
 
 /**
  * Closes a turn. Not model-visible: what later turns remember is `turn.reply`.
- * `failure.code` is the failing error's own code when it has one (a
- * `HarnessError`'s); otherwise one of the framework's codes, `turn.failed`
- * (a typed error without a code), `turn.defect`, `turn.interrupted` (an
- * interrupted turn or scope), `turn.unended` (a scope closed before its turn
- * ended) or `turn.lease` (a reaped turn), or a code the closer passes to
- * `writer.end` itself (plugin-tasks: `task.turn`, `task.deadline`; a host's
- * own). A cancel stores none.
+ * `failure.code` is the failing error's code when it has one
+ * (`harnessCodeOf`: a `HarnessError`'s, a begin refusal's); otherwise one of
+ * the framework's codes, `turn.failed` (a typed error without a code),
+ * `turn.defect`, `turn.interrupted` (an interrupted turn or scope),
+ * `turn.unended` (a scope closed before its turn ended) or `turn.lease` (a
+ * reaped turn), or a code the closer passes to `writer.end` itself
+ * (plugin-tasks: `task.turn`, `task.deadline`; a host's own). A cancel
+ * stores none.
  */
 export const TurnEndedData = Schema.Struct({
   reason: TurnEndReason,

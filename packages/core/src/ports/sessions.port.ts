@@ -1,6 +1,5 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope, Stream } from "effect"
-import type { AttachmentRejected } from "../domain/media.entity.js"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { JsonObject, SessionExists, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "../session/session-log.entity.js"
@@ -9,19 +8,14 @@ import type {
   BeginTurn,
   InboxFull,
   InboxItem,
-  KeyConflict,
-  NothingPending,
-  NotResumable,
   ReservedKind,
-  RunIdReused,
   SessionAddress,
-  SessionBusy,
+  SessionContended,
   SessionPage,
   SessionView,
+  TurnBeginError,
   TurnClosed,
-  TurnDuplicate,
   TurnEnding,
-  TurnRefused,
 } from "../session/sessions.entity.js"
 
 /** One event to record; the writer stamps the turn (or none, outside a turn). */
@@ -147,7 +141,7 @@ export class Sessions extends Context.Service<Sessions, {
   readonly lookup: (address: SessionAddress, key: string) => Effect.Effect<Option.Option<number>, SessionMissing | SessionLogError>
   /** Check, then append outside a turn (a user's action on a page, a setting): decided again on a conflict. */
   readonly transact: <A, E>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>) =>
-    Effect.Effect<Decided<A>, E | ReservedKind | SessionMissing | SessionLogError>
+    Effect.Effect<Decided<A>, E | ReservedKind | SessionMissing | SessionContended | SessionLogError>
   /**
    * End exactly `turn` as cancelled, if it is the open one and still held:
    * its inbox items are done. A turn nobody holds any more (its lease ran
@@ -158,7 +152,7 @@ export class Sessions extends Context.Service<Sessions, {
    * such a turn the same way.
    */
   readonly cancel: (address: SessionAddress, turn: number) =>
-    Effect.Effect<{ readonly cancelled: boolean; readonly pending: number }, SessionMissing | SessionLogError>
+    Effect.Effect<{ readonly cancelled: boolean; readonly pending: number }, SessionMissing | SessionContended | SessionLogError>
   /**
    * Open a turn, through the host's TurnAdmission. Its writer lives in the
    * scope; a writer the scope closes unended ends with the last ending it
@@ -186,10 +180,10 @@ export class Sessions extends Context.Service<Sessions, {
    * admitted and compared with an earlier turn of the same key.
    */
   readonly begin: (address: SessionAddress, input: BeginTurn) =>
-    Effect.Effect<TurnWriter, AttachmentRejected | SessionBusy | TurnDuplicate | KeyConflict | RunIdReused | NothingPending | NotResumable | TurnRefused | SessionMissing | SessionLogError, Scope.Scope>
+    Effect.Effect<TurnWriter, TurnBeginError, Scope.Scope>
   /** Put an item in the inbox (once per id); `pending` counts what waits after it. */
   readonly deliver: (address: SessionAddress, item: InboxItem) =>
-    Effect.Effect<{ readonly delivered: boolean; readonly pending: number }, InboxFull | SessionMissing | SessionLogError>
+    Effect.Effect<{ readonly delivered: boolean; readonly pending: number }, InboxFull | SessionMissing | SessionContended | SessionLogError>
   /**
    * Run inbox turns while items wait, the session is free and the host
    * admits them, at most `maxTurns` (3), each begun with `meta`: it goes on
@@ -202,5 +196,5 @@ export class Sessions extends Context.Service<Sessions, {
    * took, even when it wrote nothing.
    */
   readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject }) =>
-    Effect.Effect<{ readonly turns: number }, SessionMissing | SessionLogError, R>
+    Effect.Effect<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R>
 }>()("efferent/Sessions") {}

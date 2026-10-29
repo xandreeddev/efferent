@@ -139,8 +139,13 @@ export class LeaseExpired extends Schema.TaggedError<LeaseExpired>()("LeaseExpir
   now: Schema.Number,
 }) {}
 
-/** The store itself failed (unreachable, undecodable). */
+/**
+ * The store itself failed (unreachable, busy, undecodable): `code` says how
+ * (`store.busy`: `isStoreBusy`), `cause` is the store's own failure, when
+ * there is one.
+ */
 export class SessionLogError extends Schema.TaggedError<SessionLogError>()("SessionLogError", {
   code: Schema.String,
   message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {}

@@ -5,10 +5,16 @@ export const PLUGIN_API_VERSION = 2
 /** Version 1 plugins (no capabilities, no optional services) still load. */
 export const SUPPORTED_PLUGIN_API_VERSIONS: ReadonlyArray<number> = [1, 2]
 
+/**
+ * A framework failure, told apart by its `code` (`harnessCodeOf`). `cause`
+ * is what failed underneath, kept as a value for logs: it encodes as its
+ * name and message only, and `reasonOf` never reads it.
+ */
 export class HarnessError extends Schema.TaggedError<HarnessError>()("HarnessError", {
   code: Schema.String,
   message: Schema.String,
   plugin: Schema.optional(Schema.String),
+  cause: Schema.optional(Schema.Defect()),
 }) {}
 
 /** The runtime consumes this erased boundary; authors use definePlugin. */

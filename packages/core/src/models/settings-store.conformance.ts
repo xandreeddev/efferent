@@ -3,6 +3,7 @@ import type { Context, Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, fail } from "../conformance.functions.js"
 import { parseModelSelection } from "../domain/model-selection.entity.functions.js"
+import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { SETTINGS_KEYS } from "../ports/settings-store.port.js"
 import type { EngineSettings, ModelRole, SettingsKey, SettingsStore } from "../ports/settings-store.port.js"
@@ -111,7 +112,7 @@ const corrupted = (what: string, effect: Effect.Effect<unknown, unknown>) => Eff
   if (result._tag === "Success") return fail("corrupt", `${what} succeeded on a store whose backing data cannot be read`)
   const error: unknown = result.failure
   const tag = typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "an error"
-  const code = typeof error === "object" && error !== null && "code" in error ? String(error.code) : "no code"
+  const code = Option.getOrElse(harnessCodeOf(error), () => "no code")
   return expect("corrupt", tag === "SettingsError" && code === "settings.corrupt", `${what} failed with ${tag} (${code}), not a SettingsError of code settings.corrupt`)
 }))
 

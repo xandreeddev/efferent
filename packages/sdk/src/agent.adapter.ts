@@ -31,6 +31,7 @@ import {
   TurnPrompt,
   TurnToolbox,
   traceTurn,
+  turnBeginCodes,
   turnEndingOf,
   turnOf,
 } from "@xandreed/core"
@@ -203,26 +204,6 @@ const turnIdsOf = (admitted: AdmittedTurn): Record<string, unknown> => ({
   "efferent.run.id": admitted.runId,
   "efferent.turn": admitted.turn,
 })
-
-/**
- * Why a turn could not begin (`Sessions.begin` failed, or, for
- * `AttachmentRejected`, the attachments' check before it), as the code of
- * the `HarnessError` `Agent.turn` fails with: keyed by the begin error's
- * tag. An `AttachmentRejected`'s `reason` is in the message only; a host
- * that branches on it runs `normalizeUserMessage` itself before the turn.
- */
-export const turnBeginCodes = {
-  AttachmentRejected: "turn.attachment-rejected",
-  SessionBusy: "session.busy",
-  TurnDuplicate: "turn.duplicate",
-  KeyConflict: "turn.key-conflict",
-  RunIdReused: "turn.run-reused",
-  NothingPending: "session.nothing-pending",
-  NotResumable: "turn.not-resumable",
-  TurnRefused: "turn.refused",
-  SessionMissing: "session.missing",
-  SessionLogError: "session.log",
-} as const
 
 /** A new turn's idempotency key: the host's, else `resume:<n>` for a resume of turn `n`, else the run id. */
 const keyOf = (turn: NewTurn): string => turn.key ?? (turn.resumes === undefined ? turn.runId : `resume:${turn.resumes}`)

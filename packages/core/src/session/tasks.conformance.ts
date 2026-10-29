@@ -9,7 +9,7 @@ import type { Tasks } from "../ports/tasks.port.js"
 import type { TurnOutcome } from "../ports/turn.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import type { SessionLogError, SessionLogEvent, SessionMissing } from "./session-log.entity.js"
-import type { AdmittedTurn, SessionAddress } from "./sessions.entity.js"
+import type { AdmittedTurn, SessionAddress, SessionContended } from "./sessions.entity.js"
 import type { TaskView } from "./tasks.entity.js"
 
 type Runner = Context.Service.Shape<typeof TaskRunner>
@@ -188,7 +188,7 @@ const FILL = 256
  * Deliver items to `parent` until its inbox refuses one (`InboxFull`): true
  * once it is full, false when it took `FILL` items without refusing any.
  */
-const fillInbox = (sessions: Context.Service.Shape<typeof Sessions>, parent: SessionAddress, n = 0): Effect.Effect<boolean, SessionMissing | SessionLogError> =>
+const fillInbox = (sessions: Context.Service.Shape<typeof Sessions>, parent: SessionAddress, n = 0): Effect.Effect<boolean, SessionMissing | SessionContended | SessionLogError> =>
   n >= FILL ? Effect.succeed(false) : sessions.deliver(parent, { id: `fill-${n}`, source: { kind: "conformance", id: `fill-${n}` }, content: `filler ${n}` }).pipe(
     Effect.as(false),
     Effect.catchTag("InboxFull", () => Effect.succeed(true)),

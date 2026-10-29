@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Exit, Option, Schema } from "effect"
+import { ConversationId } from "../domain/message.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { SessionLogError } from "./session-log.entity.js"
+import { ReservedKind, SessionBusy, SessionContended, TurnClosed } from "./sessions.entity.js"
 import { resumeRefusal, turnEndingOf } from "./sessions.entity.functions.js"
 import type { ResumableTurn } from "./sessions.entity.functions.js"
 import type { TurnEndReason } from "./session-event.entity.js"
@@ -34,6 +37,24 @@ describe("turnEndingOf", () => {
     expect(failure(Exit.fail(new Explained({ message: "the model is down" })))).toEqual(["failed", { code: "turn.failed", message: "Explained: the model is down" }])
     expect(failure(Exit.fail(new Untold({ attempt: 2 })))).toEqual(["failed", { code: "turn.failed", message: "Untold: {\"attempt\":2}" }])
     expect(failure(Exit.fail("the model is down"))).toEqual(["failed", { code: "turn.failed", message: "the model is down" }])
+  })
+
+  test("a begin refusal, TurnClosed and ReservedKind store the code their tag stands for, from any copy of core", () => {
+    const session = ConversationId.make("00000000-0000-4000-8000-0000000000b1")
+    expect(failure(Exit.fail(new SessionBusy({ session, turn: 2 })))).toEqual(["failed", { code: "session.busy", message: `SessionBusy: {"session":"${session}","turn":2}` }])
+    expect(failure(Exit.fail(new SessionContended({ session, attempts: 5 })))[1]).toMatchObject({ code: "session.contended" })
+    expect(failure(Exit.fail(new TurnClosed({ session, turn: 2, reason: "cancelled" })))[1]).toMatchObject({ code: "turn.closed" })
+    expect(failure(Exit.fail(new ReservedKind({ kind: "turn.ended" })))[1]).toEqual({ code: "events.reserved", message: `ReservedKind: {"kind":"turn.ended"}` })
+    expect(failure(Exit.fail({ _tag: "TurnClosed", session, turn: 2, reason: "removed" }))[1]).toMatchObject({ code: "turn.closed" })
+  })
+
+  test("a store failure is session.log, with the store's message", () => {
+    expect(failure(Exit.fail(new SessionLogError({ code: "store.io", message: "disk full" })))).toEqual(["failed", { code: "session.log", message: "disk full" }])
+  })
+
+  test("an untagged value's code is not stored: it is turn.failed, with its message", () => {
+    expect(failure(Exit.fail({ code: "ENOENT", message: "no such file" }))).toEqual(["failed", { code: "turn.failed", message: "no such file" }])
+    expect(failure(Exit.fail(Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" })))).toEqual(["failed", { code: "turn.failed", message: "database is locked" }])
   })
 
   test("a defect is turn.defect", () => {

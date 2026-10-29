@@ -12,7 +12,14 @@ explicit `plugin.adapter.ts` boundary.
 Tell a `HarnessError` (or another tagged error) by its tag and fields, with
 `isHarnessError` (`src/harness/plugin.entity.functions.ts`), never with
 `instanceof`: a host can load two copies of core, each with its own class,
-and the other copy's errors would lose their codes.
+and the other copy's errors would lose their codes. A failure's framework
+code comes from `harnessCodeOf` (`src/harness/harness-code.entity.functions.ts`):
+a `HarnessError`'s own, the code a begin refusal, `TurnClosed` or
+`ReservedKind` stands for (`TAGGED_CODES`), a tagged error's own `code`,
+never an untagged value's (a Node or SQLite error's `code` is `errorCodeOf`).
+`HARNESS_CODES` is the published list of the codes the packages raise or
+store: add a new one there, never rename or remove one; first-party code
+builds a `HarnessError` of one with `harnessError(code, message, cause)`.
 
 The step loop lives in `@xandreed/plugin-agent-loop`, plugin activation in
 `@xandreed/runtime`, sessions in `@xandreed/plugin-sessions`, and the

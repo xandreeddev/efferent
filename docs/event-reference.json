@@ -5182,6 +5182,12 @@
       "meaning": "No such session for this owner."
     },
     {
+      "tag": "SessionContended",
+      "code": "session.contended",
+      "http": "503",
+      "meaning": "Other writers kept committing to the session first, and nothing was opened. Retry later."
+    },
+    {
       "tag": "SessionLogError",
       "code": "session.log",
       "http": "503",
@@ -5197,7 +5203,7 @@
     {
       "code": "turn.failed",
       "where": "stored `turn.ended` failure (`turnEndingOf`)",
-      "meaning": "The turn failed with a typed error that has no `code` of its own; the message is `<_tag>: <message>`, or the error as text (reason failed)."
+      "meaning": "The turn failed with an error `harnessCodeOf` gives no code for (a tagged error without a `code`, or an untagged value, even one carrying a `code` such as a Node error's); the message is `<_tag>: <message>`, or the error as text (reason failed)."
     },
     {
       "code": "turn.defect",

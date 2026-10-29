@@ -4,6 +4,13 @@ import type { Failure } from "./failure.entity.js"
 const stringField = (value: unknown, key: string): Option.Option<string> =>
   Predicate.isObject(value) ? Option.filter(Option.some(value[key]), Predicate.isString) : Option.none()
 
+/**
+ * The string `code` a foreign error carries (a Node error's `ENOENT`,
+ * SQLite's `SQLITE_BUSY`), when it has one. For the framework's codes, read
+ * `harnessCodeOf`.
+ */
+export const errorCodeOf = (error: unknown): Option.Option<string> => stringField(error, "code")
+
 /** A value's message as `Cause.prettyErrors` reads it: an `Error`'s or a tagged value's `message`, else the value as text (an object as JSON). */
 const messageOf = (value: unknown): string => Cause.prettyErrors(Cause.die(value))[0]?.message ?? ""
 

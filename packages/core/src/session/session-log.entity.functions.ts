@@ -1,5 +1,6 @@
 import { Effect, Schema } from "effect"
 import { JsonObject } from "./session-log.entity.js"
+import type { SessionLogError } from "./session-log.entity.js"
 
 const JsonObjectText = Schema.fromJsonString(JsonObject)
 const encodeText = Schema.encodeEffect(JsonObjectText)
@@ -13,3 +14,6 @@ const decodeText = Schema.decodeUnknownEffect(JsonObjectText)
  */
 export const storedJson = (value: JsonObject): Effect.Effect<JsonObject, Schema.SchemaError> =>
   encodeText(value).pipe(Effect.flatMap(decodeText))
+
+/** Whether the store was too busy to answer (`store.busy`: another connection held it): nothing was written, and a retry may succeed. */
+export const isStoreBusy = (error: SessionLogError): boolean => error.code === "store.busy"

@@ -588,6 +588,7 @@ const beginStatus = {
   [turnBeginCodes.NotResumable]: 409, // `resumes` names a turn that cannot be resumed
   [turnBeginCodes.TurnRefused]: 429, // your TurnAdmission refused it (its reason may call for 403 or 503)
   [turnBeginCodes.SessionMissing]: 404,
+  [turnBeginCodes.SessionContended]: 503, // other writers kept winning: retry later
   [turnBeginCodes.SessionLogError]: 503,
 } satisfies Record<(typeof turnBeginCodes)[keyof typeof turnBeginCodes], number>
 
