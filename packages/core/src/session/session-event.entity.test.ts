@@ -10,7 +10,7 @@ import { zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
 import { JOURNAL_KINDS, MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
-import type { SessionDraft, SessionLogEvent } from "./session-log.entity.js"
+import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-00000000e3e3")
 const goldenPath = `${import.meta.dir}/../../../sdk/golden/agent-turn.model.json`
@@ -33,7 +33,7 @@ const storedDrafts = (entries: ReadonlyArray<LogEntry>) => Effect.forEach(entrie
 const asEvents = (drafts: ReadonlyArray<SessionDraft>, order: (keys: ReadonlyArray<string>) => ReadonlyArray<string>): ReadonlyArray<SessionLogEvent> =>
   drafts.map((draft, index) => ({
     session, seq: index + 1, turn: draft.turn, kind: draft.kind, at: 0,
-    data: reordered(JSON.parse(JSON.stringify(draft.data)), order) as Record<string, unknown>,
+    data: reordered(JSON.parse(JSON.stringify(draft.data)), order) as JsonObject,
   }))
 
 describe("the memory log stored as session events", () => {
@@ -123,6 +123,13 @@ describe("the turn's bus events as stored", () => {
     expect(Option.map(stored, (draft) => draft.kind)).toEqual(Option.some("answer.published"))
     expect(RESERVED_KINDS.includes("answer.published")).toBe(false)
     expect(["turn.started", "turn.ended", "memory.message", "step.usage", "inbox.queued"].every((kind) => RESERVED_KINDS.includes(kind))).toBe(true)
+  })
+  test("a stored event's data is JSON: undefined fields are dropped, a value JSON cannot hold fails with the SchemaError", () => {
+    const host = Option.map(storedOf(2, { _tag: "host", name: "answer.published", data: { id: "a", draft: undefined, nested: { at: undefined, n: 1 } } }), (draft) => draft.data)
+    const started = Option.map(storedOf(1, { _tag: "tool.started", step: 0, invocationId: "i", tool: "lookup", input: { q: "x", page: undefined }, labels: {}, stage: Option.none() }), (draft) => draft.data.input)
+    expect([Option.getOrNull(host), Option.getOrNull(started)]).toStrictEqual([{ id: "a", nested: { n: 1 } }, { q: "x" }])
+    const big = Effect.runSync(Effect.result(draftOfTurnEvent(1, { _tag: "host", name: "answer.published", data: { big: 1n } })))
+    expect(big._tag === "Failure" ? big.failure._tag : "stored").toBe("SchemaError")
   })
   test("an event its schema refuses fails with the SchemaError instead of throwing", () => {
     const fractional: TurnEvent = { _tag: "step.started", step: 1.5, planned: false, activeTools: [] }
@@ -216,7 +223,7 @@ describe("the journal's schemas", () => {
 })
 
 describe("a turn's usage from the stored events", () => {
-  const stepUsage = (seq: number, turn: number, data: Record<string, unknown>): SessionLogEvent =>
+  const stepUsage = (seq: number, turn: number, data: JsonObject): SessionLogEvent =>
     ({ session, seq, turn: Option.some(turn), kind: "step.usage", at: 0, data })
   const full = (input: number) => ({ inputTokens: input, outputTokens: 20, totalTokens: input + 20, cacheReadTokens: 30, cacheWriteTokens: 10, reasoningTokens: 5 })
 
@@ -248,7 +255,7 @@ describe("a turn's usage from the stored events", () => {
 
 describe("a stored turn.started and its user message", () => {
   const pixel = Effect.runSync(mediaFromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", { name: "pixel.png" }))
-  const startedEvent = (data: Record<string, unknown>): SessionLogEvent => ({ session, seq: 1, turn: Option.some(1), kind: "turn.started", at: 0, data })
+  const startedEvent = (data: JsonObject): SessionLogEvent => ({ session, seq: 1, turn: Option.some(1), kind: "turn.started", at: 0, data })
   const fields = { runId: "run-1", key: "k", origin: "user", command: {}, claimed: [], entry: "run-1:0", at: 7 }
 
   test("one written before 0.14.0 with whitespace-only text still decodes, and is the memory's TurnStarted", async () => {

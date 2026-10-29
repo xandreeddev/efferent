@@ -28,7 +28,7 @@ import {
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
-import type { SessionAddress, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import type { JsonObject, SessionAddress, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -214,7 +214,7 @@ const record = Effect.gen(function* () {
   const address: SessionAddress = { id: conversation, owner: "fixture" }
   yield* sessions.create({ owner: address.owner, id: conversation, meta: { recorded: version } })
 
-  const input = (runId: string, text: string, model: LanguageModel.LanguageModel, extra?: { readonly key: string; readonly command: Readonly<Record<string, unknown>> }) => ({
+  const input = (runId: string, text: string, model: LanguageModel.LanguageModel, extra?: { readonly key: string; readonly command: JsonObject }) => ({
     turn: { session: address, userMessage: new UserMessage({ text }), runId, ...extra },
     services: Context.merge(Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), digester), matcher), Context.make(Sessions, sessions)),
   })

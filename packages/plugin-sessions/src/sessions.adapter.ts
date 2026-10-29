@@ -252,7 +252,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   const inboxItems = (id: ConversationId, ids: ReadonlyArray<string>) => log.read(id, { after: 0, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(
     Effect.map((events) => ids.flatMap((wanted): ReadonlyArray<InboxItem> => Option.toArray(Option.fromNullishOr(events.find((event) => event.data.id === wanted))).map((event) => ({
       id: wanted,
-      source: typeof event.data.source === "object" && event.data.source !== null ? event.data.source as Record<string, unknown> : {},
+      source: Option.getOrElse(Schema.decodeUnknownOption(Schema.JsonObject)(event.data.source), (): JsonObject => ({})),
       content: typeof event.data.content === "string" && event.data.content.length > 0 ? event.data.content : `(inbox item ${wanted})`,
     })))),
   )

@@ -12,9 +12,13 @@ import { ConversationId } from "../domain/message.entity.js"
 
 const Name = Schema.Trimmed.check(Schema.isNonEmpty())
 
-/** A JSON object as stored: compared by value, key order is not kept. */
-export const JsonObject = Schema.Record(Schema.String, Schema.Unknown)
-export type JsonObject = typeof JsonObject.Type
+/**
+ * A JSON object as stored: compared by value, key order is not kept. Every
+ * value is JSON (`Schema.JsonObject`), so a reader decodes what it reads
+ * rather than narrowing `unknown` by hand.
+ */
+export const JsonObject = Schema.JsonObject
+export type JsonObject = Schema.JsonObject
 
 /** Where a forked session starts: the parent, the last parent event it inherits, and the parent's turns at that point. */
 export const SessionLineage = Schema.Struct({

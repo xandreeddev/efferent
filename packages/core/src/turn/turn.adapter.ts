@@ -11,6 +11,7 @@ import type { LogHandle } from "../ports/memory.port.js"
 import { RunContext } from "../ports/run-context.port.js"
 import type { TurnDraft } from "../ports/sessions.port.js"
 import { draftOfTurnEvent, draftsOfEntries, entriesOfEvents, frameworkDraft } from "../session/session-event.entity.functions.js"
+import { storedJson } from "../session/session-log.entity.functions.js"
 import { MEMORY_KINDS, RESERVED_KINDS } from "../session/session-event.entity.js"
 import { ToolRegistry } from "../ports/tool-registry.port.js"
 import type { RunTools } from "../ports/tool-registry.port.js"
@@ -168,6 +169,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     strategy: session.strategy,
     session,
     prepareRequest: (header) => Schema.encodeEffect(ModelRequestHeader)(header).pipe(
+      Effect.flatMap(storedJson),
       Effect.mapError((error) => failure("request.encode", error.message)),
       Effect.flatMap((data) => writer.append([frameworkDraft("request.prepared", data)])),
       Effect.andThen(writer.flush),

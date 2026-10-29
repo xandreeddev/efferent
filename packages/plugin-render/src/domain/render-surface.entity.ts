@@ -2,7 +2,8 @@ import { Schema, Effect } from "effect"
 import { UiOutputReceipt, UiOutputScope, UiRelease } from "./render-output.entity.js"
 
 const Id = Schema.Trimmed.check(Schema.isNonEmpty())
-const Json = Schema.Record(Schema.String, Schema.Unknown)
+/** Opaque JSON: a spec or a node's props, every value JSON. */
+const Json = Schema.JsonObject
 const Generation = Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0)))
 
 /** One addressable visual region a host renders into (a page, a canvas, a panel). */

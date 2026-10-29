@@ -13,7 +13,7 @@ type Log = Context.Service.Shape<typeof SessionLog>
 type Service = Context.Service.Shape<typeof Sessions>
 
 const owner = "owner-1"
-const say = (text: string, key = text, command: Record<string, unknown> = {}): BeginTurn =>
+const say = (text: string, key = text, command: JsonObject = {}): BeginTurn =>
   ({ _tag: "User", userMessage: new UserMessage({ text }), runId: `run-${key}`, key, command })
 
 /** Sessions instances over one shared log: as if on several servers. */
@@ -997,7 +997,7 @@ describe("contention and a broken log", () => {
 
 describe("the inbox", () => {
   const item = (id: string) => ({ id, source: { kind: "task", task: id }, content: `[Background task ${id} completed]\n<task-output>done ${id}</task-output>` })
-  const record = (text: string) => (writer: { readonly append: (drafts: ReadonlyArray<{ readonly kind: string; readonly data: Record<string, unknown> }>) => Effect.Effect<void, unknown> }) =>
+  const record = (text: string) => (writer: { readonly append: (drafts: ReadonlyArray<{ readonly kind: string; readonly data: JsonObject }>) => Effect.Effect<void, unknown> }) =>
     writer.append([{ kind: "answer.published", data: { text } }]).pipe(Effect.orDie)
 
   test("an item delivered to an idle session is taken by one inbox turn, framed as its message", () => withLog((log) => Effect.gen(function* () {

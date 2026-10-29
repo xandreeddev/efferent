@@ -1572,6 +1572,10 @@ background tasks. Two layers split the work:
   purpose: per session a head (`header`, `seq`, `revision`, an opaque
   `state` the sessions plugin owns, `updatedAt`, and `now`, the storage's
   clock) and the events (`{ session, seq, turn, kind, at, data }`).
+  `meta`, `state` and `data` are `JsonObject`s (`Schema.JsonObject`: every
+  value is JSON), so a reader decodes them; a store writes them as JSON
+  text, which drops an `undefined` field, and `storedJson` turns any object
+  into the `JsonObject` a store gives back.
   `create`, `head`, `list` (an owner's sessions, newest first, keyset
   paged), `read` (after a cursor, by kinds), `remove` (with its children)
   and `commit`. A commit is one compare-and-swap: it applies only when
@@ -1583,7 +1587,8 @@ background tasks. Two layers split the work:
   so instances sharing them need clocks in step; a host's own store may read
   its database server's clock instead.
   `sessionLogConformance(log)` checks all of it, including that one of many
-  concurrent commits wins and that an event as large as a message's images
+  concurrent commits wins, that data with an `undefined` field commits and
+  reads back without it, and that an event as large as a message's images
   at their limit (`MEDIA_LIMITS.requestChars` base64 characters) comes back
   whole. `sessionLogRecoveryConformance({ open,
   callerClock })` checks, inside one process, what must survive handles,
