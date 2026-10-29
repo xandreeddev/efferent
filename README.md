@@ -70,7 +70,10 @@ Core ships the port contracts as conformance kits, checks any test runner can
 run against your own implementation: `sessionLogConformance` and
 `sessionLogRecoveryConformance` (reopening, two handles, interrupted commits,
 a handle whose scope never closed) for a session store,
-`memoryConformance`, `stepLoopConformance` and `turnConformance`. See
+`memoryConformance`, `stepLoopConformance` and `turnConformance`, and
+`fileSystemConformance` and `bashConformance` for the `FileSystem` and `Bash`
+ports agent tools work through (`FileSystemMemoryLive` is an in-memory file
+system). See
 [conformance kits](packages/website/src/content/docs/concepts/conformance.md).
 
 Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)

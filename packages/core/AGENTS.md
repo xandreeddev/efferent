@@ -16,10 +16,21 @@ is independent and supplies deterministic verification when a host chooses it.
 
 Port contracts ship as conformance kits (`*.conformance.ts`, each exported
 from `src/index.ts`). Run a port's kit against every adapter of it, and when
-the port changes, on Node too (`verify:packages`). The session-log kits share
+the port changes, on Node too (`verify:packages`). The kits share
 the private helpers in `src/conformance.functions.ts` (`check`, `expect`,
 `fail`, `freshId`, `headerOf`, `atTime`), and the step-loop and turn kits
 `sameUsage`; they are not exported, and new kits use them too. That file is test support for the kits, not an entity's behaviour,
 so it is not paired with `conformance.entity.ts`.
+
+The `FileSystem` and `Bash` ports are what agent tools work through. Core
+ships the ports, the in-memory `FileSystemMemoryLive` and the two kits; no
+disk-backed `FileSystem` or `Bash` adapter ships yet (they are to live
+outside core, which does no file-system or process IO). `walkGlob`
+(`src/domain/file-system.entity.functions.ts`, a sorted walk over the port's
+`list`) is how every backend implements `glob`, so it means the same
+everywhere; `fs.glob` differs between Bun and Node. `src/workspace` holds
+the in-memory backend and the kits. `resolveBashEnv` is the one place the
+inherited-environment allowlist is applied. `bashConformance` has no adapter
+in core: its self-test runs it against fakes that run nothing.
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

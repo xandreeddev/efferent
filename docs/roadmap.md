@@ -110,9 +110,8 @@ ships no Google provider). Cost, not correctness.
   checkpoint model already supports the data shape, the UI is the work.
 - **Image attachments** — `FilePart`s exist in `effect/ai`; needs input
   syntax + encoding.
-- **Live bash streaming** — `Shell.spawn` variant returning a stream so the
-  model reacts to long builds mid-run.
-- **Native grep** — pure-TS over `Bun.Glob` for structured matches.
+- **Native grep** — structured content matches over `walkGlob` (the
+  `FileSystem` port has `glob`, nothing searches file contents yet).
 - **LSP tool** — park until a concrete need; naturally skill-shaped.
 - **Wider code-highlight coverage** — the new TUI has NO syntax
   highlighting yet; if/when it returns, `@opentui/core` bundles only
@@ -122,8 +121,8 @@ ships no Google provider). Cost, not correctness.
 
 - `--cwd` outside the repo dies on the Solid preload (bunfig is
   cwd-relative) — error message should say so.
-- Shell adapter: no process group on timeout kill; unbounded buffering
-  before truncation.
+- `Bash.exec` / `collectBashResult` keep a command's whole output: no cap or
+  truncation yet.
 - Fast input bursts: Enter in the same terminal chunk as text can land as a
   newline instead of running a `:` command.
 

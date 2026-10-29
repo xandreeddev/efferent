@@ -251,6 +251,85 @@
       }
     },
     {
+      "name": "tool.progress",
+      "description": "Published by `publishToolProgress` from inside a tool handler, between that call's `tool.started` and `tool.completed` (same `step`, `invocationId` and `tool`). `channel` is stdout or stderr for a command's output as it arrives, status for anything else the tool reports; `text` is that output or message. Transient: never journaled; `tool.completed` carries the result.",
+      "transient": true,
+      "stored": {
+        "as": "transient"
+      },
+      "fields": [
+        {
+          "name": "step",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "invocationId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "tool",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "channel",
+          "type": "\"stdout\" | \"stderr\" | \"status\"",
+          "required": true
+        },
+        {
+          "name": "text",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "tool.progress"
+            ]
+          },
+          "step": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "invocationId": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "stdout",
+              "stderr",
+              "status"
+            ]
+          },
+          "text": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "_tag",
+          "step",
+          "invocationId",
+          "tool",
+          "channel",
+          "text"
+        ],
+        "additionalProperties": true,
+        "description": "Published by `publishToolProgress` from inside a tool handler, between that call's `tool.started` and `tool.completed` (same `step`, `invocationId` and `tool`). `channel` is stdout or stderr for a command's output as it arrives, status for anything else the tool reports; `text` is that output or message. Transient: never journaled; `tool.completed` carries the result."
+      }
+    },
+    {
       "name": "tool.completed",
       "description": "Published by the tool registry when a handler returned or failed (`ok`). `result` is the decoded value, `encoded` its wire form as the model receives it. `durationMs` runs from just after `tool.started` to the handler's exit, so it includes any wait for the tool's read or write lane. Journaled as `tool.completed` without `input`, `result` and `encoded`: memory keeps the call and its result (`memory.message`, `memory.tool-result`).",
       "transient": false,

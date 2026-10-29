@@ -37,7 +37,7 @@ if (await install.exited !== 0) process.exit(1)
 await writeFile(join(consumer, "verify.ts"), `
 import { Context, Deferred, Effect, Layer, Option, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
-import { Sessions, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { fileSystemConformance, makeMemoryFileSystem, Sessions, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
 import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
@@ -94,6 +94,11 @@ const recoveryFailures = (await Effect.runPromise(Effect.forEach(recovery, (chec
  Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
 if (recoveryFailures.length > 0) { console.error(recoveryFailures.join("\\n")); process.exit(1) }
 console.log("The SessionLog recovery kit passed over the packed SQLite log (" + recovery.length + " checks)")
+const fileSystem = fileSystemConformance({ open: makeMemoryFileSystem().pipe(Effect.tap((fs) => fs.mkdir("/work")), Effect.map((fs) => ({ fs, root: "/work", symlink: fs.symlink }))) })
+const fileSystemFailures = (await Effect.runPromise(Effect.forEach(fileSystem, (check) => Effect.result(check.run).pipe(
+ Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
+if (fileSystemFailures.length > 0) { console.error(fileSystemFailures.join("\\n")); process.exit(1) }
+console.log("The FileSystem kit passed over the packed in-memory file system (" + fileSystem.length + " checks)")
 `)
 /**
  * The documentation's imports must exist in the packed packages: every
@@ -170,7 +175,7 @@ const { encodeSse, FeedReady, renderSurfacePlugin } = await import("@xandreed/pl
 if (renderSurfacePlugin.id !== "@xandreed/plugin-render/surface" || encodeSse(FeedReady.make({})) !== "event: ready\\ndata: {}\\n\\n") process.exit(1)
 const { Context, Effect, Layer, Stream } = await import("effect")
 const { LanguageModel } = await import("effect/ai")
-const { Sessions, SessionLog, SessionLogMemoryLive, sessionLogRecoveryConformance, StepLoop, stepLoopConformance, TurnAdmissionOpen, turnConformance } = await import("@xandreed/core")
+const { fileSystemConformance, makeMemoryFileSystem, Sessions, SessionLog, SessionLogMemoryLive, sessionLogRecoveryConformance, StepLoop, stepLoopConformance, TurnAdmissionOpen, turnConformance } = await import("@xandreed/core")
 const { runSteps, STEP_LOOP, stepLoopPlugin } = await import("@xandreed/plugin-agent-loop")
 const { memoryWindowPlugin } = await import("@xandreed/plugin-memory-window")
 const { SessionsPluginLive } = await import("@xandreed/plugin-sessions")
@@ -186,6 +191,7 @@ const runKit = async (kit, checks) => {
 // An in-memory log reopens only when every open shares its store: build it once.
 const memoryLog = await Effect.runPromise(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
 const recovery = await runKit("SessionLog recovery", sessionLogRecoveryConformance({ open: Effect.succeed(memoryLog), callerClock: true }))
+const fileSystem = await runKit("FileSystem", fileSystemConformance({ open: makeMemoryFileSystem().pipe(Effect.tap((fs) => fs.mkdir("/work")), Effect.map((fs) => ({ fs, root: "/work", symlink: fs.symlink }))) }))
 // The StepLoop and TurnRunner contracts (their usage totals among them) hold on Node too.
 const stepLoop = await runKit("StepLoop", stepLoopConformance(StepLoop.of({ ...STEP_LOOP, run: runSteps })))
 // The turn kit brings its own model where it runs the loop; the one here is never called.
@@ -196,7 +202,7 @@ const turnServices = await Effect.runPromise(Effect.scoped(Effect.gen(function* 
 })))
 const agent = Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], system: "Be brief." })
 const turn = await runKit("turn", turnConformance(agent, turnServices))
-console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the StepLoop kit over runSteps (" + stepLoop + ") and the turn kit over Agent.turn (" + turn + ")")
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + ") and the turn kit over Agent.turn (" + turn + ")")
 `)
   const node = Bun.spawn(["node", "node-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await node.exited !== 0) process.exit(1)

@@ -16,6 +16,7 @@ There are two kinds of events. The **bus** carries a turn's typed events (`TurnE
 | `turn.started` | no | Recorded elsewhere: the session's own `turn.started`, written when the turn began |
 | `step.started` | no | `step.started` |
 | `tool.started` | no | `tool.started` |
+| `tool.progress` | yes | Not stored (transient) |
 | `tool.completed` | no | `tool.completed`, without `input`, `result`, `encoded` |
 | `step.ended` | no | `step.ended` |
 | `completion.evaluated` | no | `completion.evaluated` |
@@ -59,6 +60,18 @@ Published by the tool registry just before a tool's handler runs. `invocationId`
 | `input` | `unknown` |
 | `labels` | `Record<string, string>` |
 | `stage` | `string \| null` |
+
+### `tool.progress`
+
+Published by `publishToolProgress` from inside a tool handler, between that call's `tool.started` and `tool.completed` (same `step`, `invocationId` and `tool`). `channel` is stdout or stderr for a command's output as it arrives, status for anything else the tool reports; `text` is that output or message. Transient: never journaled; `tool.completed` carries the result.
+
+| Field | Type |
+| --- | --- |
+| `step` | `integer` |
+| `invocationId` | `string` |
+| `tool` | `string` |
+| `channel` | `"stdout" \| "stderr" \| "status"` |
+| `text` | `string` |
 
 ### `tool.completed`
 

@@ -61,6 +61,47 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   through `extractUsage`, so its `llm.usage.input_tokens` counter and span
   attribute are raised to the cache reads plus writes when the provider
   reports less, and `llm.usage.output_tokens` to the reasoning.
+- **`@xandreed/core`: `Shell` is replaced by `Bash`.** `Shell`, `ShellError`
+  and `ShellResult` are removed. `Bash.exec(command, { cwd, timeoutMs })`
+  returns a `BashResult` whose `exitCode` and `signal` are Options and whose
+  `termination` (`exit`, `signal`, `timeout`, `interrupted`) says how it
+  ended: a timeout is `termination: "timeout"`, not a note on stderr. `cwd` is
+  required. Live output comes from `Bash.stream` (chunks, then one
+  `BashExit`) instead of the `onChunk` callback. A command no longer inherits
+  the whole parent environment: only `BASH_ENV_ALLOWLIST` passes unless
+  `inheritEnv` says otherwise. Migration: `shell.exec(cmd, { cwd, timeoutMs })`
+  becomes `bash.exec(cmd, { cwd, timeoutMs })`, `result.exitCode` becomes
+  `Option.getOrElse(result.exitCode, () => -1)` where a number is needed, and
+  an implementation of the port adds `stream` and builds `exec` with
+  `collectBashResult`.
+- **`@xandreed/core`: `FsError.reason` is required.** `FsError` is now
+  `{ path, reason, message }` with `reason` one of `NotFound`, `Exists`,
+  `IsDirectory`, `NotDirectory`, `NotEmpty`, `Permission`, `Invalid`, `Io`,
+  and is exported from the domain module (still from `@xandreed/core`).
+  Migration: construct it with the reason that fits, `Io` when unsure.
+- **`@xandreed/core`: `FileSystem.list` returns `DirEntry`s.** It was the
+  names; it is now `{ name, kind }` sorted by name, links not followed.
+  Migration: `list(dir).pipe(Effect.map((entries) => entries.map((entry) => entry.name)))`.
+- **`@xandreed/core`: `FileSystem` implementations must add the new
+  methods.** The port gains `readBytes`, `append`, `rename`, `stat` and
+  `glob`; `write` takes `string | Uint8Array` and `{ createParents }`,
+  `mkdir` takes `{ recursive }` (without it, an existing path fails with
+  `Exists` and a missing parent with `NotFound`; pass `recursive: true` for
+  the old create-if-missing behaviour), and `remove` takes `{ recursive }`
+  and removes empty directories. Migration: implement `glob` as
+  `walkGlob(list, pattern, options)` and run `fileSystemConformance`.
+- **`@xandreed/core`: `TurnEvent` gains `tool.progress`.** Code matching the
+  union exhaustively (`Match.exhaustive`, a `switch` with a `never` default)
+  must handle it. It is transient (in `TransientTurnEvents`) and never
+  journaled, so stored sessions are unchanged.
+- **`@xandreed/plugin-tool-discovery`: a handler that dies with a
+  `HarnessError` fails the turn.** That defect comes from a subscriber that
+  failed on an event the handler published (`tool.progress`, or
+  `skills.activated` from `load_skill`). It reached the model as a
+  `ToolDefect` result and the turn went on; now the registry publishes
+  `tool.completed` and then fails the turn with that error, as a subscriber
+  failure on `tool.started` always did. A handler that wants the model to
+  see a failure returns it on its failure channel.
 
 ### Added
 
@@ -103,6 +144,34 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   process and lease ownership. A new docs page, "Conformance kits", lists
   core's kits and `@xandreed/plugin-render`'s, and how to run them against
   your own adapter.
+- `@xandreed/core`: the `FileSystem` port's new calls (`readBytes` ranges,
+  `append`, `rename`, `stat` with `FileInfo` and `followSymlinks`, `glob`
+  with `cwd`, `exclude`, `dot`, `onlyFiles` and `limit`), `walkGlob` (the
+  sorted, link-safe walk over `list` every backend uses for `glob`, as
+  `fs.glob` differs between Bun and Node), `compileGlob` and `globMatcher`
+  (`*`, `**`, `?`, `[...]`, `{a,b}`; each returns a `Result` and refuses a
+  pattern whose braces stand for more than 1024 patterns, which `glob`
+  reports as `Invalid`), `GlobOptions`, `FileSystemMemoryLive` and
+  `makeMemoryFileSystem(seed)` (an in-memory tree with symbolic links), and
+  `fileSystemConformance(subject)`, run over the memory backend on Bun and
+  Node. No disk-backed `FileSystem` ships yet.
+- `@xandreed/core`: the `Bash` port (`stream`, `exec`) with `BashOptions`
+  (`cwd`, `env`, `inheritEnv`, `stdin` as text or bytes, `timeoutMs`), `BashChunk`,
+  `BashExit`, `BashResult`, `BashError`, `collectBashResult`,
+  `resolveBashEnv` and `BASH_ENV_ALLOWLIST`, and `bashConformance(subject)`:
+  exit codes as results, separate streams, output before exit, stdin, the
+  environment allowlist, timeouts and interrupts that kill the process
+  group, `cwd`, signals and UTF-8. No `Bash` adapter ships yet: core's
+  tests run the kit against fakes that run nothing, which fail every check.
+  `exec` keeps the whole output; there is no output cap yet.
+- `@xandreed/core`: `tool.progress` (`ToolProgressEvent`: `step`,
+  `invocationId`, `tool`, `channel` and `text`), published from a handler
+  with `publishToolProgress(channel, text)`: `stdout` or `stderr` for a
+  command's output as it arrives, `status` for anything else a tool
+  reports. Also
+  `CurrentToolInvocation`, which `@xandreed/plugin-tool-discovery` now sets
+  around every handler call (innermost, so a nested agent's tools see their
+  own call).
 
 - `@xandreed/core`: token usage counts cache writes and reasoning.
   `TokenUsage` gains `cacheWriteTokens` and `reasoningTokens` (both inside

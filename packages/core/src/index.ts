@@ -41,6 +41,10 @@ export type { ModelCallPolicy as ModelCallPolicyType } from "./domain/model-call
 export { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "./loop/modelPolicy.js"
 export { formatModelSelection, parseModelSelection } from "./domain/model-selection.entity.functions.js"
 export type { LoopEvent, ToolCallSummary } from "./domain/loop-event.entity.js"
+export { DirEntry, FileInfo, FileKind, FsError, FsReason, GlobOptions, GlobResult, ReadRange, RecursiveOptions, StatOptions, WriteOptions } from "./domain/file-system.entity.js"
+export { walkGlob } from "./domain/file-system.entity.functions.js"
+export { BASH_ENV_ALLOWLIST, BashChunk, BashError, BashErrorReason, BashEvent, BashExit, BashOptions, BashResult, BashTermination } from "./domain/bash.entity.js"
+export { collectBashResult, resolveBashEnv } from "./domain/bash.entity.functions.js"
 
 // ports
 export {
@@ -52,12 +56,22 @@ export {
 export type { ModelRole, SettingsKey } from "./ports/settings-store.port.js"
 export { AuthError, AuthStore, Credential } from "./ports/auth-store.port.js"
 export { ModelCatalog } from "./ports/model-catalog.port.js"
-export { FileSystem, FsError } from "./ports/file-system.port.js"
-export { Shell, ShellError, ShellResult } from "./ports/shell.port.js"
+export { FileSystem } from "./ports/file-system.port.js"
+export { Bash } from "./ports/bash.port.js"
 export { UtilityCompletion, UtilityError, UtilityLlm } from "./ports/utility-llm.port.js"
 
 // util
 export { asJsonRecord, decodeJsonLines, parseJsonOption, parseJsonWarn } from "./util/json.js"
+export { compileGlob, globMatcher } from "./util/glob.js"
+export type { GlobMatcher, GlobMatchOptions } from "./util/glob.js"
+
+// workspace: the in-memory FileSystem backend and the FileSystem and Bash contracts
+export { FileSystemMemoryLive, makeMemoryFileSystem } from "./workspace/file-system.memory.adapter.js"
+export type { MemoryFileSystem, MemorySeed } from "./workspace/file-system.memory.adapter.js"
+export { fileSystemConformance } from "./workspace/file-system.conformance.js"
+export type { FileSystemFixture, FileSystemSubject } from "./workspace/file-system.conformance.js"
+export { bashConformance } from "./workspace/bash.conformance.js"
+export type { BashFixture, BashSubject } from "./workspace/bash.conformance.js"
 
 // loop
 export {
@@ -137,7 +151,8 @@ export * from "./domain/prompt-provenance.entity.js"
 
 export * from "./loop/promptProvenance.js"
 
-export { CurrentAgentStep } from "./loop/stepContext.js"
+export { CurrentAgentStep, CurrentToolInvocation } from "./loop/stepContext.js"
+export type { ToolInvocation } from "./loop/stepContext.js"
 
 export * from "./decision-record.entity.js"
 
