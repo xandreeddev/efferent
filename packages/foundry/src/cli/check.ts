@@ -46,7 +46,7 @@ export interface LoadedConfig {
 export const loadConfig = (configPath: string): Effect.Effect<LoadedConfig, ConfigError> =>
   Effect.tryPromise({
     try: () => import(pathToFileURL(path.resolve(configPath)).href),
-    catch: (cause) => new ConfigError({ path: configPath, message: String(cause) }),
+    catch: (cause) => new ConfigError({ path: configPath, message: "the config module could not be imported", cause }),
   }).pipe(
     Effect.flatMap(
       (module: {
@@ -109,7 +109,8 @@ export const fingerprintFindings = (
       onSome: (location) =>
         Effect.tryPromise({
           try: () => fs.readFile(path.join(rootDir, location.file), "utf8"),
-          catch: (cause) => new WorkspaceError({ message: String(cause) }),
+          catch: (cause) =>
+            new WorkspaceError({ message: `cannot read ${location.file} to fingerprint its finding`, cause }),
         }).pipe(
           Effect.map((text) => ({
             finding,
@@ -149,7 +150,7 @@ const writeBaseline = (
           await fs.mkdir(path.dirname(baselinePath), { recursive: true })
           await fs.writeFile(baselinePath, `${text}\n`)
         },
-        catch: (cause) => new WorkspaceError({ message: String(cause) }),
+        catch: (cause) => new WorkspaceError({ message: `cannot write the baseline ${baselinePath}`, cause }),
       }),
     ),
   )

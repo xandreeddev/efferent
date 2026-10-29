@@ -49,7 +49,10 @@ flagship demo).
 - **Errors are `Schema.TaggedError`** (`GateCrash`, `ImplementorError`,
   `WorkspaceError`, `ConfigError`, `ProjectLoadError`) — they cross a
   serialization boundary (the persisted `FactoryRun`, model-readable
-  feedback), so each carries its schema.
+  feedback), so each carries its schema. `message` says what failed; the
+  optional `cause` keeps the failure it wraps as a value (on the wire, an
+  `Error` is its name and message, never its stack), and `describeError`
+  gives the terminal line: the message, then the cause's message.
 - **Verdicts make bad states unrepresentable**: `fail` REQUIRES a non-empty
   findings array ("failed with no reasons" cannot exist); `skip` carries the
   blocking stage's name, so a report accounts for every configured gate.

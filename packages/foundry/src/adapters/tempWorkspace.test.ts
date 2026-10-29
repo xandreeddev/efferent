@@ -3,7 +3,18 @@ import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import { fingerprintWorkspace, snapshotWorkspace } from "./tempWorkspace.js"
+import { fingerprintWorkspace, snapshotWorkspace, writeWorkspaceFile } from "./tempWorkspace.js"
+
+describe("writeWorkspaceFile — a failed write", () => {
+  test("is a WorkspaceError naming the file and keeping the filesystem's error as its cause", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "foundry-write-"))
+    writeFileSync(join(dir, "blocker"), "a file where a directory should be")
+    const error = await Effect.runPromise(Effect.flip(writeWorkspaceFile(dir, "blocker/src/inner.ts", "export {}")))
+    expect(error._tag).toBe("WorkspaceError")
+    expect(error.message).toBe("write of blocker/src/inner.ts failed")
+    expect(error.cause).toHaveProperty("code", "ENOTDIR")
+  })
+})
 
 describe("snapshotWorkspace — hostile filesystems", () => {
   test("an unreadable directory is skipped, never fatal", async () => {

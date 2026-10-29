@@ -22,8 +22,7 @@ export const makeFileRunSink = (dir: string): Layer.Layer<RunSink> =>
               await fs.writeFile(file, `${JSON.stringify(encoded, null, 2)}\n`)
               return file
             },
-            catch: (cause) =>
-              new WorkspaceError({ message: `artifact write failed: ${String(cause)}` }),
+            catch: (cause) => new WorkspaceError({ message: "artifact write failed", cause }),
           }),
         ),
       ),

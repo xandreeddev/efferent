@@ -1,5 +1,6 @@
 import { Effect, Layer, Match, Option } from "effect"
 import * as path from "node:path"
+import { describeError } from "../domain/Errors.js"
 import type { WorkspaceError } from "../domain/Errors.js"
 import { RuleId } from "../domain/Brands.js"
 import { RuleConfig } from "../domain/Rules.js"
@@ -165,7 +166,7 @@ export const runDemo = (implementor: DemoImplementor): Effect.Effect<number, Wor
         ),
         Effect.map(Option.some),
         Effect.catchTag("ImplementorError", (e) =>
-          Effect.sync(() => console.error(`implementor failed: ${e.message}`)).pipe(
+          Effect.sync(() => console.error(`implementor failed: ${describeError(e)}`)).pipe(
             Effect.as(Option.none<ForgeResult>()),
           ),
         ),

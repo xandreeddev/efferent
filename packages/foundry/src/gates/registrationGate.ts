@@ -33,7 +33,9 @@ interface WorkspacePackage {
 const fill = (template: string, pkg: WorkspacePackage): string =>
   template.replaceAll("{path}", pkg.path).replaceAll("{dir}", pkg.dir).replaceAll("{name}", pkg.name)
 
-const crash = (message: string): GateCrash => new GateCrash({ gate: REGISTRATION_GATE, message })
+/** What failed, and the failure it wraps (as `new Error(message, { cause })` takes it). */
+const crash = (message: string, wrapped: { readonly cause?: unknown } = {}): GateCrash =>
+  new GateCrash({ gate: REGISTRATION_GATE, message, ...wrapped })
 
 const Manifest = Schema.fromJsonString(Schema.Struct({ name: Schema.NonEmptyString }))
 
@@ -53,7 +55,7 @@ const discoverPackages = (
   Effect.forEach(roots, (root) =>
     Effect.tryPromise({
       try: () => fs.readdir(path.join(rootDir, root), { withFileTypes: true }),
-      catch: (cause) => crash(`cannot list package root "${root}": ${String(cause)}`),
+      catch: (cause) => crash(`cannot list package root "${root}"`, { cause }),
     }).pipe(
       Effect.map((entries) => Arr.sort(entries.filter((entry) => entry.isDirectory()).map((entry) => entry.name), Order.String)),
       Effect.flatMap((dirs) =>
@@ -65,11 +67,11 @@ const discoverPackages = (
               exists
                 ? Effect.tryPromise({
                     try: () => fs.readFile(manifest, "utf8"),
-                    catch: (cause) => crash(`cannot read ${pkgPath}/package.json: ${String(cause)}`),
+                    catch: (cause) => crash(`cannot read ${pkgPath}/package.json`, { cause }),
                   }).pipe(
                     Effect.flatMap((text) =>
                       Schema.decodeUnknownEffect(Manifest)(text).pipe(
-                        Effect.mapError((e) => crash(`${pkgPath}/package.json has no usable "name": ${e.message}`)),
+                        Effect.mapError((cause) => crash(`${pkgPath}/package.json has no usable "name"`, { cause })),
                       ),
                     ),
                     Effect.map((parsed): ReadonlyArray<WorkspacePackage> => [{ path: pkgPath, dir, name: parsed.name }]),
@@ -87,7 +89,7 @@ const discoverPackages = (
 const readWorkspaceFile = (rootDir: string, file: string): Effect.Effect<string, GateCrash> =>
   Effect.tryPromise({
     try: () => fs.readFile(path.join(rootDir, file), "utf8"),
-    catch: (cause) => crash(`cannot read registry file ${file}: ${String(cause)}`),
+    catch: (cause) => crash(`cannot read registry file ${file}`, { cause }),
   })
 
 const unwrap = (expression: ts.Expression): ts.Expression =>

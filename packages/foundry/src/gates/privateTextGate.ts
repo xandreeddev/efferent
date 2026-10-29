@@ -13,7 +13,11 @@ export const PRIVATE_TEXT_GATE = GateName.make("private-text")
 
 const NO_PRIVATE_TEXT = RuleId.make("quality/no-private-text")
 
-const crash = (message: string): GateCrash => new GateCrash({ gate: PRIVATE_TEXT_GATE, message })
+/** What failed, and the failure it wraps (as `new Error(message, { cause })`
+ *  takes it). Neither ever holds a matched term: the gate reports where,
+ *  never what. */
+const crash = (message: string, wrapped: { readonly cause?: unknown } = {}): GateCrash =>
+  new GateCrash({ gate: PRIVATE_TEXT_GATE, message, ...wrapped })
 
 /** `git <args>` in `cwd`: its exit code and standard output. */
 const git = (cwd: string, args: ReadonlyArray<string>): Effect.Effect<{ readonly code: number; readonly stdout: string }, GateCrash> =>
@@ -24,7 +28,7 @@ const git = (cwd: string, args: ReadonlyArray<string>): Effect.Effect<{ readonly
           ? Effect.succeed({ code: 0, stdout })
           : typeof error.code === "number"
             ? Effect.succeed({ code: error.code, stdout })
-            : Effect.fail(crash(`cannot run git: ${error.message}`)),
+            : Effect.fail(crash("cannot run git", { cause: error })),
       )
     })
   })
@@ -53,7 +57,7 @@ const textOf = (
       regular
         ? Effect.tryPromise({
             try: () => fs.readFile(file, "utf8"),
-            catch: (cause) => crash(`cannot read ${file}: ${String(cause)}`),
+            catch: (cause) => crash(`cannot read ${file}`, { cause }),
           }).pipe(Effect.map(Option.some))
         : Effect.succeed(Option.none()),
     ),

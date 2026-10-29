@@ -152,4 +152,18 @@ describe("registration gate", () => {
     expect(exit._tag).toBe("Failure")
     expect(String(exit)).toContain("scripts/reference.ts declares no top-level array `const firstParty = [...]`")
   })
+
+  test("an unlistable package root is a GateCrash that keeps the filesystem's error as its cause", async () => {
+    const config = configFor()
+    const crash = await Effect.runPromise(
+      Option.match(config.registration, {
+        onNone: () => Effect.die("the fixture config arms registration"),
+        onSome: (registration) =>
+          Effect.flip(makeRegistrationGate(config, { ...registration, roots: ["absent"] }).run({ rootDir: seedRepo(), files: [] })),
+      }),
+    )
+    expect(crash._tag).toBe("GateCrash")
+    expect(crash.message).toBe('cannot list package root "absent"')
+    expect(crash.cause).toHaveProperty("code", "ENOENT")
+  })
 })

@@ -4,6 +4,7 @@ import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { Effect, Option, Schema } from "effect"
 import { BaselineFile, baselineRefusal } from "../domain/baseline.js"
+import { describeError } from "../domain/Errors.js"
 import { PrivateTextConfig, RuleConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
@@ -239,6 +240,16 @@ describe("loadConfig — the plug-in registry", () => {
     )
     const { registry } = await Effect.runPromise(loadConfig(configPath))
     expect(registry).toEqual([])
+  })
+
+  test("a config module that throws on import is a ConfigError keeping what it threw as its cause", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "foundry-plug-"))
+    const configPath = writeConfig(dir, 'throw new RangeError("the config refused to load")\n')
+    const error = await Effect.runPromise(Effect.flip(loadConfig(configPath)))
+    expect(error._tag).toBe("ConfigError")
+    expect(error.message).toBe("the config module could not be imported")
+    expect(error.cause).toBeInstanceOf(RangeError)
+    expect(describeError(error)).toBe("the config module could not be imported: the config refused to load")
   })
 })
 

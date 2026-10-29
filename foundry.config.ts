@@ -116,6 +116,7 @@ const STRINGIFIED_CAUSE_CLEAN = [
   "plugin-render",
   "plugin-workspace",
   "plugin-telemetry",
+  "foundry",
 ].map(src)
 
 const ERROR_CODE_COMPARE_CLEAN = [

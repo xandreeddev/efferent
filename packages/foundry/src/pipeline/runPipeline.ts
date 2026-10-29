@@ -1,5 +1,6 @@
 import { Array as Arr, Duration, Effect, Match, Option, Order } from "effect"
 import { GateName, RuleId } from "../domain/Brands.js"
+import { describeError } from "../domain/Errors.js"
 import { Finding } from "../domain/Finding.js"
 import { FailVerdict, GateReport, SkipVerdict, toVerdict } from "../domain/Verdict.js"
 import type { GateVerdict } from "../domain/Verdict.js"
@@ -66,7 +67,7 @@ const runGate = <R>(gate: Gate<R>, workspace: Workspace): Effect.Effect<GateVerd
     Effect.map(([elapsed, findings]) =>
       toVerdict(gate.name, Duration.toMillis(elapsed), findings),
     ),
-    Effect.catch((crash) => Effect.succeed(crashVerdict(gate.name, gate.kind, crash.message))),
+    Effect.catch((crash) => Effect.succeed(crashVerdict(gate.name, gate.kind, describeError(crash)))),
     Effect.catchDefect((defect) => Effect.succeed(crashVerdict(gate.name, gate.kind, String(defect)))),
     Effect.withSpan("foundry.gate", {
       attributes: { "gate.name": gate.name, "gate.kind": gate.kind },
