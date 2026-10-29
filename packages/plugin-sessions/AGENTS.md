@@ -1,0 +1,56 @@
+# @xandreed/plugin-sessions
+
+Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time, turns owned by a lease or by the process that began them, the inbox, forks, resumes, and `TurnActivity` (the turns this instance holds open or is beginning). The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
+
+## Rules
+
+- Change the head's `sessions` state only in a guarded commit (`guarded`: compare-and-swap on the revision, planned again after a conflict) with the events that justify it; no backend reads that state.
+- Write a turn's events only through its writer (`makeTurnWriter`): one fiber in queue order, consecutive appends in one commit, the framework's reserved kinds refused unless marked (`events.reserved`).
+- Judge an open turn by its own record (a lease end, or none and its holder process) through `isHeld`, never by the reading instance's ownership.
+- Refuse a begin, never queue or replace one: `SessionBusy`, `TurnDuplicate`, `KeyConflict`, `RunIdReused`, `NotResumable`, `NothingPending`.
+- Count an inbox attempt only for a turn that wrote something; drop an item once `inbox.attempts` turns took it and failed.
+- Keep `TurnActivity` exact: a begin counts from the request until its writer is handed over, then the turn until the writer's scope closes (`awaitIdle` relies on it).
+- A keep-alive is queued in order with the turn's writes: keep one `write` or `transact` shorter than the lease.
+- Import no `node:` module: `processLiveness` reaches `node:os` through `process.getBuiltinModule` and works without a process.
+- Change behaviour by adding the check to core's `sessionsConformance` first, with a careless instance in `src/sessions.conformance.test.ts` that it catches.
+
+## Public surface
+
+- `sessionsPlugin` (also the default export) and `SessionsPluginLive` (its `.live` layer); `SessionsLive(config, { liveness })` for hosts that compose layers; `processLiveness` (type `ProcessLiveness`).
+- Config and stored state: `SessionsConfig`, `sessionsDefaults` (a 60 s lease, a keep-alive every 20 s), `Ownership`, `SessionsState`, `HeldTurn`, `HolderProcess`, `InboxSlot`.
+
+| Plugin | Id | Scope | Provides | Contributes | Requires |
+|---|---|---|---|---|---|
+| `sessionsPlugin` | `@xandreed/plugin-sessions` | runtime | `efferent/Sessions`, `efferent/TurnActivity` | none | `efferent/SessionLog`, `efferent/TurnAdmission` |
+
+## Model-facing text
+
+| Text | Source | Pinned by |
+|---|---|---|
+| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:322` | exact for one item, `src/sessions.adapter.test.ts:901`; the join unpinned |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:236` | unpinned |
+
+## Erasure files
+
+None.
+
+## Layout
+
+| File | Role |
+|---|---|
+| `src/plugin.adapter.ts` | `sessionsPlugin`, `SessionsPluginLive` |
+| `src/sessions.adapter.ts` | `SessionsLive`: create, fork, begin, deliver, drain, cancel, remove, reaping, `TurnActivity` |
+| `src/turn-writer.adapter.ts` | the open turn's writer: queued, batched commits, lease renewal and keep-alive |
+| `src/sessions-state.entity.ts` | config, ownership and the state kept in the head |
+| `src/sessions-state.entity.functions.ts` | state from a head, `isHeld`, `closedState`, `viewOf`, titles |
+| `src/process-liveness.adapter.ts` | `processLiveness`: host, pid and start time, `kill(pid, 0)` |
+| `src/index.ts` | the public exports |
+
+## Tests
+
+- `src/sessions.adapter.test.ts`: one turn at a time, leases, activity, cancel and removal, check then append, the inbox, resuming, forks, admission, over the in-memory log.
+- `src/sessions.conformance.test.ts`: core's `sessionsConformance` over the in-memory log, and the kit's self-tests (careless instances that must fail the named checks).
+- Elsewhere: plugin-session-sqlite runs the same kit and its crash tests over SQLite; the sdk journeys and golden (`packages/sdk/src/resume.journey.test.ts`, `agent.golden.test.ts`) compose `SessionsLive`; `verify:packages` runs the kit on Node over the packed package.
+- Run: `bun test packages/plugin-sessions packages/plugin-session-sqlite`.
+
+See the root AGENTS.md for the enforced rules and the definition of done.
