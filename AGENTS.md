@@ -1,93 +1,156 @@
-# Efferent — composable agent framework on Effect, for Node and Bun
+# Efferent — composable agent framework on Effect 4.0.7, for Node and Bun
 
-The current architecture and configuration contract are documented in
-`README.md` and `docs/framework.md`.
+Rules for changing this repository. Contract: `README.md`, `docs/framework.md`.
+Human process: `CONTRIBUTING.md`. A package's own rules:
+`packages/<name>/AGENTS.md`. `CLAUDE.md` links here. Skills, in
+`.agents/skills/<name>/SKILL.md` (linked from `.claude/skills`):
+`commit-style`, `add-plugin`, `add-port`, `write-model-text`, `effect-idioms`,
+`domain-entity`, `change-event`, `journey-test`, `release`.
 
-Shared development skills live in `.agents/skills/<name>/SKILL.md`.
-`CLAUDE.md` links to `AGENTS.md`; `.claude/skills` links to `.agents/skills`.
+## Task map
+
+| Task | Read first |
+|---|---|
+| Write a commit, or a squash-merged PR's title and body | skill `commit-style` |
+| Add a package or a plugin | skill `add-plugin` |
+| Add or change a port, an adapter or a conformance kit | skill `add-port`, `packages/core/AGENTS.md` |
+| Add or change text the model reads | skill `write-model-text` |
+| Write Effect code, or tsc rejects an Effect 3 name | skill `effect-idioms` |
+| Add or change an entity or a stored field | skill `domain-entity` |
+| Add or change an event, a journal kind or a stored payload | skill `change-event` |
+| Test a plugin end to end through `Agent.define` | skill `journey-test` |
+| Bump the version, publish or tag (only on explicit sign-off) | skill `release` |
+| Change a gate rule, a layer or the registration lists | `foundry.config.ts`, `packages/foundry/AGENTS.md` |
 
 ## Architecture
 
-- `core`: shared schemas, ports and protocol helpers; no provider or host imports.
-- `runtime` → core: plugin dependency graph and scoped plugin activation.
-- `sdk` → runtime/core: `Agent.define` and `Agent.turn`, the composable agent over sessions.
-- `plugin-*` → core: independently configurable capabilities, including the agent loop.
-- `evals` (+ `evals-cli`, `evals-langfuse`, `evals-langsmith`): tasks, trials, graders and suites; the local CLI and exporters run on Node 24.
-- `foundry`: independent verification framework, no internal package dependencies; development tooling, not published.
-- `website`: the docs site; not published.
+- `core`: shared schemas, ports, conformance kits and protocol helpers.
+- `runtime` → core: the plugin dependency graph and scoped plugin activation.
+- `sdk` → runtime, core: `Agent.define` and `Agent.turn`, the composable agent over sessions.
+- `plugin-*` → core: independently configurable capabilities, the agent loop included.
+- `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24.
+- `foundry` runs the gates (development tooling); `website` is the docs site. Neither is published.
 
-This repository holds the framework only. The coding CLI (`cli`, `tui`,
-`smith`), the reference applications and the plugins only they used were
-removed on 2026-10-28 and are moving to their own repositories.
-Everything except `plugin-session-sqlite` (`bun:sqlite`) must also load on
-Node; `bun run verify:packages` imports every Node-capable package on Node.
+The `boundaries` layers in `foundry.config.ts` enforce the direction (a
+`<name>-tests` layer before a package's widens it for tests). Everything but
+`plugin-session-sqlite` (`bun:sqlite`) also loads on Node 24. Session data
+defaults to `.efferent/runtime`: never delete old local data to reset it.
+Build output goes under `.artifacts`.
 
-All production packages participate in the zero-baseline architecture gates:
-`bun run typecheck` fails on a package missing from a list the gates or the
-build read (`quality/package-registered`; the lists are in CONTRIBUTING.md).
-New session data uses `.efferent/runtime`; never delete old local data to reset it.
-Build artifacts go under `.artifacts`. Publishing requires explicit sign-off;
-releases go through `bun run publish:packages`, a dry run unless
-`--publish` (CONTRIBUTING.md, "Publishing"). Every PR adds an entry under
-"Unreleased" in `CHANGELOG.md`. An event or stored-payload change regenerates
-the references (`bun run docs:generate`, which writes `docs/event-reference.*`)
-and must keep every release's `packages/sdk/fixtures/journal-<version>.json`
-decoding. The events
-guide (`docs/events.md`) quotes regions of `packages/sdk/src/events-guide.test.ts`:
-change its code there, and `bun run docs:generate` copies it into the guide
-and its website page (`scripts/sync-guides.ts`).
+## Gate rules
 
-## Conventions (gate-enforced, ZERO baseline)
+`bun run typecheck` runs the repo profile (`foundry.config.ts`) over every
+file under `packages/*/src`, tests included (tsc errors are `ts/<code>`), then
+tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 
-`bun run typecheck` = the canonical repo profile (static architecture + tsc),
-then tsc over `scripts/` (`scripts/tsconfig.json`), and the committed baseline
-is EMPTY and must stay so (a fingerprint in it fails `quality/baseline-empty`;
-never pass `--allow-grow`) — every rule violation anywhere fails:
+| Rule | Bans | Fix |
+|---|---|---|
+| `effect/no-try-catch` | `try`/`catch`, `throw`, a non-Effect `.catch()` | `Effect.fail`/`Effect.die`, `Effect.catch`/`Effect.catchTag`; foreign promises via `Effect.tryPromise` |
+| `effect/no-let` | `let`, `var` | a fold: `Effect.reduce`, a recursive Effect step, Array combinators, or a `Ref` |
+| `effect/no-loop-statements` | `for`, `for…of`, `for…in`, `while`, `do` | `Effect.forEach`, `Effect.repeat({ while })`, `Effect.whileLoop`, Array combinators (`Effect.iterate` does not exist) |
+| `effect/no-nullable-return` | an exported function returning `A \| undefined` or `A \| null` | `Option<A>` (`Option.fromNullishOr` at the edge) |
+| `effect/match-over-tag-switch` | `switch` or an else-if ladder on `_tag` | `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Option.match`, `Result.match`, `Exit.match` |
+| `effect/no-as-any` | `as any`, `as unknown as T` | decode with Schema, or fix the type |
+| `effect/no-as-never` | `as never`, outside the `ERASURE_BOUNDARY` files and test scaffolding (`*.test.ts`, `testing.ts`) | fix the type; a file added to `ERASURE_BOUNDARY` states its reason in the PR |
+| `effect/no-parallel-interface` | an interface shadowing a same-named schema | `type X = typeof X.Type` |
+| `effect/branded-id-fields` | an unbranded id field, in core's `src/domain` and `src/spec` | a brand; elsewhere reuse the sibling fields' brand |
+| `quality/no-skipped-tests` | `.skip`, `.todo`, `.only`, `xit`, `xdescribe`, `xtest` | fix or delete the test; one that needs an environment uses `test.skipIf` |
+| `quality/no-empty-catch` | an empty `catch` block | handle the failure as a value |
+| `architecture/no-raw-promise-core` | `await`, `async`, `Promise`, `.then`, `Effect.run*` in entity and use-case files | Effect values; promises belong in an adapter |
+| `architecture/no-runtime-imports-core` | `node:`, `bun` and host imports in entity and use-case files | a port, implemented in a `.adapter.ts` |
+| `architecture/contracts-contain-no-behavior` | an exported function in a `.entity.ts` or `.usecase.ts` | the paired `.functions.ts` file |
+| `architecture/context-tags-live-in-ports` | `Context.Service` outside `.port.ts` files and `ports/` folders | move the contract to a port file |
+| `architecture/layers-live-at-edges` | `Layer.*` in entity and use-case files | build the Layer in a `.adapter.ts` |
+| `boundaries/illegal-import` | a relative import into a layer that `canImport` does not list | invert the dependency or move the code |
+| `boundaries/illegal-external` | a bare import, `@xandreed/*` included, missing from the layer's `externals` | depend downward; widening `externals` is a reviewed change |
+| `quality/package-registered` | a package missing from a list the gates or the build read | add it where the message says (skill `add-plugin`) |
+| `quality/baseline-empty` | any fingerprint in `.foundry/baseline.json` | fix the finding; never `--update-baseline --allow-grow` |
 
-- **Errors are values**: no `try`/`catch`/`throw`/`.catch()` — typed errors
-  are `Schema.TaggedError`; foreign promises via `Effect.tryPromise` (or the
-  two-arg `.then` for pure-promise fallbacks).
-- **State is a fold**: no `let`, no loop statements — `Effect.iterate` /
-  `Effect.reduce` / array combinators / `Ref`.
-- **Absence is `Option`** (never `A | undefined` returns); union branching is
-  `Match`; no `as any` / `as unknown as` laundering; entities are
-  `Schema.Class`/`Struct` with branded id fields; no parallel interfaces.
-- Tool failures are DATA: toolkits use the shared `Failure` struct with
-  `failureMode: "return"` so the model corrects in the same run.
-- Ports are `Context.Service` services in core or domain packages; adapters are
-  `<Thing>Live` Layers in capability plugins; composition happens at each agent's
-  `main.ts` edge and nowhere else.
-- New domain/application features use qualified pairs: `thing.entity.ts` +
-  `thing.entity.functions.ts`, and `do-thing.usecase.ts` +
-  `do-thing.usecase.functions.ts`. Entity/use-case contracts contain Schema
-  definitions and derived types; behavior lives in the paired functions file.
-  Ports end in `.port.ts`; adapters end in `.adapter.ts` and may bridge foreign
-  promises only through `Effect.tryPromise`. Raw Promise orchestration,
-  runtime imports, `Effect.run*`, and Layer construction never enter the core.
-- **After any task, run `bun run typecheck`** — a banned construct or a fresh
-  finding fails the command and the change is rejected. CI additionally runs
-  `bun test`, `bun run foundry demo` (the forge-loop E2E), and the packed
-  consumer check (`bun run verify:packages`).
+## File roles
 
-## Running and validating
+"Base" is every rule above except the four that look only at entity and
+use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
+`contracts-contain-no-behavior` and `layers-live-at-edges`.
 
-JSON and TypeScript configuration resolve through the same plugin graph.
+| File | Holds | Gates that see it |
+|---|---|---|
+| `x.entity.ts`, `x.usecase.ts` | schemas, brands, tagged errors, derived types | base + those four |
+| `x.entity.functions.ts`, `x.usecase.functions.ts` | the pure behaviour of that pair | base + `no-raw-promise-core`, `no-runtime-imports-core`, `layers-live-at-edges` |
+| `x.port.ts`, `ports/*` | `Context.Service` contracts | base |
+| `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base |
+| `x.conformance.ts` | a port's kit, exported and shipped | base |
+| `index.ts` | the public surface, as explicit named exports | base |
+| `x.test.ts`, `testing.ts` | tests beside their source; scaffolding the build does not ship | base, `as never` allowed |
+| any other name (`loop.ts`) | older modules | base only: give a new file one of the roles above |
 
-Run `bun run typecheck`, `bun test`, `bun run foundry demo`,
-`bun run build:packages`, `bun run verify:packages`, and the website check.
-A passing fixture smoke test does not establish that model setup or real
-provider calls work.
-Provider-backed evals require explicit model/credential configuration; preserve
-candidate, prompt, schema and protocol versions in their evidence.
+## Ports, adapters and composition
+
+- Ports are `Context.Service` classes in a `.port.ts` file or a `ports/`
+  folder: shared ones in `packages/core/src/ports`, a package's own in its
+  `src/ports`.
+  Methods return `Effect` or `Stream`; expected failures are
+  `Schema.TaggedError`s, absence is `Option`.
+- Adapters are `<Thing>Live` Layers in `.adapter.ts` files: in-memory ones in
+  core, IO ones in plugins. Foreign promises go through `Effect.tryPromise`;
+  foreign errors map to the port's error in one function.
+- A plugin (`definePlugin`, usually `plugin.adapter.ts`) builds only its own
+  services. Agents are composed by `Agent.define` or a host's `stackPlugins`;
+  the only `main.ts` files are the `evals-cli` and `foundry` command lines.
+- Tool failures are data: the shared `Failure` struct, `failureMode: "return"`.
+- Errors are told apart by tag and fields (`Effect.catchTag`,
+  `isHarnessError`, `Schema.is`), never `instanceof`. `reasonOf` turns a cause
+  into text; no stack reaches a report or the model.
+
+Naming for new code (existing code is not converted in passing):
+
+- Service methods and exported effectful functions at a service boundary are
+  `Effect.fn("area.op")`, named like the spans `agent.turn` and `engine.run`;
+  hot internal helpers use `Effect.fnUntraced`.
+- Service and reference keys are `@xandreed/<package>/<Name>`. A key is
+  public (`provides`, config `bindings`, the plugin reference): never rename
+  one, the older `efferent/<Name>` keys included.
+- A plugin is `export const <thing>Plugin = definePlugin(...)`, exported by
+  name from `src/index.ts`, with the id `@xandreed/<package>` (then also the
+  default export) or `@xandreed/<package>/<part>`.
+
+## Model-facing text
+
+Text the model reads is a contract and part of cached prompt prefixes: frame
+it with core's `src/turn/model-text.ts` (`hostNote`, `framed`, `clipTo`), pin
+it exactly, and follow skill `write-model-text` and `packages/core/AGENTS.md`.
+
+## Definition of done
+
+`.github/workflows/ci.yml`, in order; tests run with `HTTP_PROXY` and
+`HTTPS_PROXY` unset.
+
+```bash
+bun install --frozen-lockfile
+bun run typecheck
+bun packages/foundry/src/main.ts check --config packages/foundry/foundry.config.ts
+bun run foundry demo
+bun test
+bun run build:packages
+bun run verify:packages
+bun run docs:generate
+test -z "$(git status --porcelain -- docs packages/website/src/content/docs)"
+bun run --cwd packages/website check
+# then the models plugin's proxy tests again, on Bun 1.3.6:
+bun test packages/plugin-models/src/llm/openAiCodexWebSocket.test.ts packages/plugin-models/src/plugin.adapter.test.ts packages/plugin-models/src/transport/models-transport.adapter.test.ts
+```
+
+These checks are key-free, so they do not show that real provider calls work.
+Provider-backed evals need explicit model and credential configuration and
+keep candidate, prompt, schema and protocol versions in their evidence.
 
 ## Commits and publishing
 
 - Commits are authored as `Xand Reed <xandreed@proton.me>`: check
-  `git config user.email` before committing.
-- No co-author trailers or assistant attribution in commits or pull request
-  text.
+  `git config user.email` first.
+- Commit messages and PR text carry no co-author trailers or assistant
+  attribution.
 - Keep personal details, local paths and other projects' names out of every
-  file, commit message, comment and screenshot; never copy code from another
-  project.
-- Publishing to npm and deploying the docs site happen only on explicit
-  sign-off.
+  file, commit, comment and screenshot; never copy code from another project.
+- Every PR adds an entry under "Unreleased" in `CHANGELOG.md`.
+- Publishing to npm and pushing a `v*` tag (it deploys the docs site) happen
+  only on explicit sign-off.

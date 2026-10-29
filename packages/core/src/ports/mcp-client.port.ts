@@ -5,8 +5,9 @@ import type { Effect } from "effect"
  * The MCP client port — external, user-configured tool servers surfaced to
  * agents through the ordinary toolkit machinery (see `mcp/bridge.ts`). The
  * adapter owns transport (stdio JSON-RPC) and lifecycle; the engine sees
- * only descriptors and calls. Consent model: servers exist ONLY because the
- * human wrote them into `.efferent/config.json`.
+ * only descriptors and calls. Consent model: the servers are the ones the
+ * host configured its McpClient adapter with; core ships no adapter and
+ * never finds a server on its own.
  */
 
 export class McpError extends Schema.TaggedError<McpError>()("McpError", {

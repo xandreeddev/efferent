@@ -362,12 +362,13 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun:test"
             ]
       },
-      // The one plugin test layer that imports upward (sdk, evals and the plugins
-      // an agent needs): the skills directory and the workspace tools are tested
-      // end to end, through Agent.define and a journey. Test files are not built
-      // or packed, but if sdk ever lists plugin-workspace as a devDependency,
-      // move those tests to sdk-tests rather than make the two devDependencies
-      // a cycle.
+      // The plugin test layers that import upward, this one and
+      // plugin-telemetry-tests below (sdk, the plugins an agent needs and, here,
+      // evals): the skills directory, the workspace tools and the telemetry
+      // plugin are tested end to end, through Agent.define. Test files are not
+      // built or packed, but if sdk ever lists one of these plugins as a
+      // devDependency, move its tests to sdk-tests rather than make the two
+      // devDependencies a cycle.
       {
             "name": "plugin-workspace-tests",
             "path": "packages/plugin-workspace/src/**/*.test.ts",

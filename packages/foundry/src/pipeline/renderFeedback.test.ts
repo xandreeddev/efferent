@@ -26,7 +26,7 @@ describe("renderFeedback", () => {
           findings: [
             // Deliberately out of order — the renderer must sort.
             finding("effect/no-nullable-return", "src/stringStats.ts", 30, "returns `string | undefined`; return Option<string>", "wrap with Option.fromNullable"),
-            finding("effect/no-let", "src/stringStats.ts", 12, "`let` is banned; fold state instead", "use Effect.iterate or Array combinators"),
+            finding("effect/no-let", "src/stringStats.ts", 12, "`let` is banned; fold state instead", "use Effect.reduce or Array combinators"),
           ],
         }),
         SkipVerdict.make({
@@ -42,7 +42,7 @@ describe("renderFeedback", () => {
         "The deterministic gate pipeline rejected attempt 2. Fix every item below; the work will be re-checked.",
         "",
         "## gate: effect-idioms — 2 errors",
-        "- [effect/no-let] src/stringStats.ts:12:3 — `let` is banned; fold state instead. Fix: use Effect.iterate or Array combinators",
+        "- [effect/no-let] src/stringStats.ts:12:3 — `let` is banned; fold state instead. Fix: use Effect.reduce or Array combinators",
         "- [effect/no-nullable-return] src/stringStats.ts:30:3 — returns `string | undefined`; return Option<string>. Fix: wrap with Option.fromNullable",
         "",
         "Not yet run (blocked by the failures above): typecheck.",
