@@ -1,12 +1,20 @@
-import { Effect, Option } from "effect"
+import { Array as Arr, Effect, Option, Order } from "effect"
 import type { HarnessError } from "../harness/plugin.entity.js"
+import type { PromptTier } from "../harness/capability.entity.js"
 import type { PromptContext, PromptSection } from "../ports/capability.port.js"
 
-const tierRank = (section: PromptSection): number => section.tier === "static" ? 0 : section.tier === "session" ? 1 : 2
+const tierRank: Record<PromptTier, number> = { static: 0, session: 1, turn: 2 }
+
+/** Tier, then order, then id by code unit: the same prompt bytes under every locale. */
+const bySection: Order.Order<PromptSection> = Order.combineAll([
+  Order.mapInput(Order.Number, (section: PromptSection) => tierRank[section.tier]),
+  Order.mapInput(Order.Number, (section: PromptSection) => section.order),
+  Order.mapInput(Order.String, (section: PromptSection) => section.id),
+])
 
 /** Static sections first (the cacheable prefix), then session ones; each tier by order, then id. */
 export const orderSections = (sections: ReadonlyArray<PromptSection>): ReadonlyArray<PromptSection> =>
-  [...sections].sort((left, right) => tierRank(left) - tierRank(right) || left.order - right.order || left.id.localeCompare(right.id))
+  Arr.sort(sections, bySection)
 
 /** Render sections in order; a section that renders None is left out. Their requirements are the caller's. */
 export const renderSections = (

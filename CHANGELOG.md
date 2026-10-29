@@ -15,6 +15,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `SurfaceFrozen` without a version (and refuses `plan` after it), and reruns
   `renderSurfaceConformance`. Code calling `decodeSse` reads its `Result`;
   code building `SurfaceFrozen` passes `versionId: Option.some(...)`.
+- `@xandreed/evals`: rename ids containing "/" or "@" and re-run reports
+  that hold them; give every gate a `minimum` or a `maximum`; `yield*` the
+  result of `positiveInt`.
 
 ### Breaking
 
@@ -36,6 +39,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Skill-selection decisions and seeded `load_skill` calls are numbered per
   run: `<runId>:skill-selection:<n>` and `<runId>:matcher:<n>`. Older
   journals still decode.
+- `@xandreed/evals` ids (`EvalId`) can no longer contain "/" or "@":
+  `EvalId.make` refuses them and saved reports holding them no longer
+  decode. Trial, transcript-event and review trial ids are the new
+  `EvalPath`. A run id that is not an `EvalId` fails the run with `invalid`.
+- A `Gate` needs a `minimum` or a `maximum`; validation refuses one with
+  neither (it used to pass any value).
+- `GateFinding.mode` is `"blocking" | "diagnostic"`; a report with another
+  mode (such as "Blocking", once read as diagnostic) no longer decodes.
+- `positiveInt` returns an `Effect` failing with `invalid` instead of
+  silently using the fallback. `EvaluationError` has a new code, `missing`.
 
 ### Added
 
@@ -51,6 +64,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `TurnResult.pending`: the inbox items the end of a turn `Agent.turn`
   began left waiting (a background task's result delivered while it ran,
   for example). Drain them with `Sessions.drain`.
+- `runCliMain` (with `CliProcess` and `nodeProcess`), `readJson` and
+  `readText` in `@xandreed/evals-cli`; `EvalPath` in `@xandreed/evals`.
 
 ### Fixed
 
@@ -107,6 +122,20 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A turn end or lease write the store refuses is logged, and the instance
   lets the turn go instead of answering `SessionBusy` until the process
   exits.
+- Ctrl-C or SIGTERM during `efferent-eval` settles running trials as
+  `cancelled`, closes their worlds and exits 130; a blocking gate still
+  exits 2.
+- A timed-out or cancelled trial keeps the outcome its environment showed.
+- `compare` no longer reports a coverage difference (exit 2) when trials ran
+  in another order. Fingerprints and system-prompt section ties use
+  code-unit order on every machine; a fingerprint over keys that differ only
+  in case or punctuation can change once.
+- `efferent-eval` accepts `--flag=value`, names its default directory after
+  the run id, refuses bad counts, reports a missing file as `missing`, and
+  removes temp files after a failed write.
+- The LangSmith export sends encoded values (`null`, not Option objects),
+  and exporting again updates the runs and feedback the first export
+  created.
 
 ### Repository
 

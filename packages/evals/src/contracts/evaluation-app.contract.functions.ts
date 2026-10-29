@@ -1,5 +1,6 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
 import { EvaluationError } from "../domain/identity.entity.js"
+import { Gate } from "../domain/suite.entity.js"
 import type { EvaluationApp } from "./evaluation-app.contract.js"
 
 export const defineEvaluationApp = (
@@ -57,6 +58,7 @@ export const validateEvaluationApp = (app: EvaluationApp) => {
           ) ||
           suite.gates.some(
             (gate) =>
+              !Schema.is(Gate)(gate) ||
               !suite.tasks.some((task) => task.graders.some((binding) => binding.grader === gate.grader)) ||
               !app.graders.some(
                 (grader) =>
@@ -71,7 +73,7 @@ export const validateEvaluationApp = (app: EvaluationApp) => {
         new EvaluationError({
           code: "invalid",
           message:
-            "Application needs unique registrations, tasks and candidates, registered environments, and bound grader metrics"
+            "Application needs unique registrations, tasks and candidates, registered environments, bound grader metrics, and a minimum or maximum on every gate"
         })
       )
     : Effect.succeed(app)

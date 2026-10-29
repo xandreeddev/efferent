@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { Client } from "langsmith"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Predicate, Schema } from "effect"
 import {
   EvaluationError,
   EvaluationExport,
@@ -19,6 +19,30 @@ const remoteId = (id: string) => {
   const hex = createHash("sha256").update(id).digest("hex")
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`
 }
+const providerError = (error: unknown) =>
+  new EvaluationError({
+    code: "provider",
+    message: `LangSmith export: ${String(error)}`
+  })
+const sdk = <A>(request: () => Promise<A>) =>
+  Effect.tryPromise({ try: request, catch: (error) => error })
+/** The SDK's answer to a create whose id already exists (HTTP 409). */
+const isConflict = (error: unknown) =>
+  Predicate.hasProperty(error, "name") && error.name === "LangSmithConflictError"
+/** Create a record under its stable id; when an earlier export made it, update it instead. */
+const upsert = (create: () => Promise<unknown>, update: () => Promise<unknown>) =>
+  sdk(create).pipe(
+    Effect.catchIf(isConflict, () => sdk(update)),
+    Effect.mapError(providerError),
+    Effect.asVoid
+  )
+
+/**
+ * Every value sent is read from the run as its schema encodes it (an absent
+ * value is `null`, never an in-memory `Option`), and every remote id is
+ * derived from a local one, so exporting a report again updates what the
+ * first export created.
+ */
 const exportService = (options: LangSmithExportOptions) => ({
   exportRun: (
     run: EvaluationRun
@@ -31,87 +55,98 @@ const exportService = (options: LangSmithExportOptions) => ({
         )
       )
       const mappings = Object.fromEntries(
-        run.trials.map((trial) => [trial.id, remoteId(trial.id)])
+        encoded.trials.map((trial) => [trial.id, remoteId(trial.id)])
       )
-      yield* Effect.tryPromise({
-        try: async () => {
-          const client = new Client({
-            apiUrl: options.apiUrl,
-            apiKey: options.apiKey,
-            autoBatchTracing: false
-          })
-          const project = await client.createProject({
-            projectName: options.project,
-            upsert: true,
-            metadata: { application: run.application }
-          })
-          await Promise.all(
-            encoded.trials.map((trial) =>
+      const client = new Client({
+        apiUrl: options.apiUrl,
+        apiKey: options.apiKey,
+        autoBatchTracing: false
+      })
+      const project = yield* sdk(() =>
+        client.createProject({
+          projectName: options.project,
+          upsert: true,
+          metadata: { application: encoded.application }
+        })
+      ).pipe(Effect.mapError(providerError))
+      yield* Effect.forEach(
+        encoded.trials,
+        (trial) => {
+          const fields = {
+            name: `${trial.suiteId}/${trial.task.id}`,
+            start_time: trial.startedAt,
+            end_time: trial.endedAt,
+            inputs: { input: trial.task.input },
+            outputs: { output: trial.output, outcome: trial.outcome },
+            ...(trial.status === "completed" ? {} : { error: trial.reason }),
+            extra: {
+              metadata: {
+                evaluation: trial,
+                fingerprints: encoded.fingerprints,
+                runId: encoded.id
+              }
+            }
+          }
+          return upsert(
+            () =>
               client.createRun({
                 id: mappings[trial.id]!,
-                name: `${trial.suiteId}/${trial.task.id}`,
                 run_type: "chain",
                 project_name: options.project,
-                start_time: trial.startedAt,
-                end_time: trial.endedAt,
-                inputs: { input: trial.task.input },
-                outputs: { output: trial.output, outcome: trial.outcome },
-                ...(trial.status === "completed"
-                  ? {}
-                  : { error: trial.reason }),
-                extra: {
-                  metadata: {
-                    evaluation: trial,
-                    fingerprints: run.fingerprints,
-                    runId: run.id
-                  }
-                }
-              })
-            )
-          )
-          await client.flush()
-          await Promise.all(
-            run.trials.flatMap((trial) =>
-              trial.grades
-                .filter((grade) => grade.status === "scored")
-                .flatMap((grade) =>
-                  grade.metrics
-                    .filter(
-                      (metric) =>
-                        metric.kind === "boolean" ||
-                        metric.kind === "score" ||
-                        metric.kind === "probability"
-                    )
-                    .map((metric) =>
-                      client.createFeedback({
-                        runId: mappings[trial.id]!,
-                        sessionId: project.id,
-                        key: `${grade.grader}@${grade.version}/${grade.scope}/${metric.name}`,
-                        score:
-                          metric.kind === "boolean"
-                            ? Number(metric.value)
-                            : metric.value,
-                        comment: grade.reason,
-                        feedbackId: remoteId(
-                          `${trial.id}/${grade.grader}/${grade.version}/${grade.scope}/${metric.name}`
-                        ),
-                        feedbackSourceType: "api",
-                        sourceInfo: {
-                          context: grade.context,
-                          usage: grade.usage
-                        }
-                      })
-                    )
-                )
-            )
+                ...fields
+              }),
+            () => client.updateRun(mappings[trial.id]!, fields)
           )
         },
-        catch: (error) =>
-          new EvaluationError({
-            code: "provider",
-            message: `LangSmith export: ${String(error)}`
-          })
-      })
+        { concurrency: 8, discard: true }
+      )
+      yield* sdk(() => client.flush()).pipe(Effect.mapError(providerError))
+      yield* Effect.forEach(
+        encoded.trials.flatMap((trial) =>
+          trial.grades
+            .filter((grade) => grade.status === "scored")
+            .flatMap((grade) =>
+              grade.metrics
+                .filter(
+                  (metric) =>
+                    metric.kind === "boolean" ||
+                    metric.kind === "score" ||
+                    metric.kind === "probability"
+                )
+                .map((metric) => ({
+                  runId: mappings[trial.id]!,
+                  key: `${grade.grader}@${grade.version}/${grade.scope}/${metric.name}`,
+                  score:
+                    metric.kind === "boolean"
+                      ? Number(metric.value)
+                      : metric.value,
+                  comment: grade.reason,
+                  feedbackId: remoteId(
+                    `${trial.id}/${grade.grader}/${grade.version}/${grade.scope}/${metric.name}`
+                  ),
+                  sourceInfo: {
+                    context: grade.context,
+                    usage: grade.usage
+                  }
+                }))
+            )
+        ),
+        (feedback) =>
+          upsert(
+            () =>
+              client.createFeedback({
+                ...feedback,
+                sessionId: project.id,
+                feedbackSourceType: "api"
+              }),
+            () =>
+              client.updateFeedback(feedback.feedbackId, {
+                score: feedback.score,
+                comment: feedback.comment
+              })
+          ),
+        { concurrency: 8, discard: true }
+      )
       return {
         provider: "langsmith",
         runId: run.id,

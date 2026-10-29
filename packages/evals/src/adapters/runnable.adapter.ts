@@ -38,33 +38,35 @@ export const defineRunnable = <I, O, E, W, R, H>(options: {
       const runner = yield* options.runnable
       const host = yield* options.environment
       return TrialExecution.of({
-        execute: (raw, candidate, inspection) => Effect.gen(function* () {
+        // Only opening and running are interruptible: a timed-out or cancelled
+        // execution still has its world inspected and the outcome recorded
+        // (inspection keeps its own deadline) before the interruption goes on.
+        execute: (raw, candidate, inspection) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
           const input = yield* Schema.decodeUnknownEffect(Schema.toCodecJson(options.input))(raw).pipe(
             Effect.mapError((error) => new EvaluationError({ code: "invalid", message: String(error) }))
           )
-          const world = yield* host.open(input, candidate)
-          const attempted = yield* runner.execute(input, candidate, world).pipe(
+          const world = yield* restore(host.open(input, candidate))
+          const attempted = yield* restore(runner.execute(input, candidate, world).pipe(
             Effect.flatMap((result) => Effect.all({
               output: portable(options.output, result.output),
               evidence: portable(options.evidence, result.evidence)
             })),
             Effect.mapError((error) => error instanceof EvaluationError
               ? error
-              : new EvaluationError({ code: "invalid", message: String(error) })),
-            Effect.exit
-          )
-          const observed = yield* Effect.uninterruptible(host.inspect(world).pipe(
+              : new EvaluationError({ code: "invalid", message: String(error) }))
+          )).pipe(Effect.exit)
+          const observed = yield* host.inspect(world).pipe(
             Effect.timeoutOrElse({
               duration: inspection.timeoutMs,
               orElse: () => Effect.fail(new EvaluationError({ code: "timeout", message: "Outcome inspection deadline exceeded" }))
             }),
             Effect.exit
-          ))
+          )
           if (Exit.isSuccess(observed)) yield* inspection.record(observed.value)
           if (Exit.isFailure(attempted)) return yield* Effect.failCause(attempted.cause)
           if (Exit.isFailure(observed)) return yield* Effect.failCause(observed.cause)
           return attempted.value
-        })
+        }))
       })
     })).pipe(Layer.provide(Layer.merge(options.layer, environment.layer)))
   }))
