@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { LanguageModel, Prompt, Tool } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
 import { join } from "node:path"
-import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, LogEntry, onTool, RunContext, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
+import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, isHarnessError, LogEntry, onTool, RunContext, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
 import type { Turn, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
@@ -221,7 +221,7 @@ export const runGolden = (
     const exit = yield* Effect.result(agent.turn(turnInput, observed))
     const recorded: Observed = {
       runId: "admitted" in turnInput.turn ? turnInput.turn.admitted.runId : turnInput.turn.runId,
-      outcome: exit._tag === "Success" ? exit.success : { failed: exit.failure instanceof HarnessError ? exit.failure.code : String(exit.failure) },
+      outcome: exit._tag === "Success" ? exit.success : { failed: isHarnessError(exit.failure) ? exit.failure.code : String(exit.failure) },
       events: yield* Ref.get(events),
       contextBuilt: yield* Ref.get(built),
       entries: yield* Ref.get(entries),

@@ -1,4 +1,4 @@
-import { Clock, Effect, Option } from "effect"
+import { Clock, Effect, Option, Schema } from "effect"
 import type { Fiber } from "effect"
 import { ConformanceFailure } from "./conformance.entity.js"
 import type { ConformanceCheck } from "./conformance.entity.js"
@@ -11,6 +11,9 @@ import type { SessionHeader, SessionLogEvent } from "./session/session-log.entit
  * The helpers the conformance kits share. Private to core: the kits are
  * exported from the index, these are not.
  */
+
+/** A `ConformanceFailure` by its tag and fields, whichever copy of core made it. */
+const isConformanceFailure = (value: unknown): value is ConformanceFailure => Schema.is(Schema.Struct(ConformanceFailure.fields))(value)
 
 export const fail = (check: string, message: string) => Effect.fail(new ConformanceFailure({ check, message }))
 export const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(check, message)
@@ -53,7 +56,7 @@ export const check = (name: string, id: string, body: (owner: string) => Effect.
   name,
   run: freshId.pipe(
     Effect.flatMap((owner) => body(`owner-${owner}`)),
-    Effect.catch((error: unknown) => error instanceof ConformanceFailure ? Effect.fail(error)
+    Effect.catch((error: unknown) => isConformanceFailure(error) ? Effect.fail(error)
       : fail(id, `unexpected ${typeof error === "object" && error !== null && "_tag" in error ? String(error._tag) : "error"}: ${JSON.stringify(error)}`)),
   ),
 })

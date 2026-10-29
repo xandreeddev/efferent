@@ -14,6 +14,7 @@ import {
   EntryId,
   Failure,
   HarnessError,
+  isHarnessError,
   harnessDefectsAsFailures,
   IntentMatcher,
   journalSchemaOf,
@@ -135,7 +136,7 @@ const callInTurn = (outer: Option.Option<ToolInvocation>, failOn: Option.Option<
     const events = (yield* Ref.get(published)).filter((event) => event._tag.startsWith("tool."))
     return {
       saw: outcome._tag === "Success" ? outcome.success.at(-1)?.result : undefined,
-      failure: outcome._tag === "Failure" && outcome.failure instanceof HarnessError ? `${outcome.failure.code}: ${outcome.failure.message}` : "none",
+      failure: outcome._tag === "Failure" && isHarnessError(outcome.failure) ? `${outcome.failure.code}: ${outcome.failure.message}` : "none",
       events,
       stored: yield* recorded.kinds,
     }

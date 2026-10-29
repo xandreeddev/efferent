@@ -13,8 +13,13 @@ this repository's history.
 ## Install
 
 ```sh
-npm install @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
+npm install effect @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
 ```
+
+Install `effect` (4.0.7 or a later 4.x) beside them: the packages and your
+code share one copy. Releases after 0.14.0 declare it a peer dependency and
+each other by caret ranges, so other patch versions still install one copy of
+`effect` and of `@xandreed/core`.
 
 Every package below is published at `0.14.0` under npm's `latest` tag (npm's
 older `@xandreed/plugin-telemetry` versions, 0.3.0 and 0.4.0, are an earlier,

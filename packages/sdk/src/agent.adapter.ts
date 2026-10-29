@@ -11,6 +11,7 @@ import {
   harnessDefectsAsFailures,
   HarnessError,
   isBudgetTokens,
+  isHarnessError,
   normalizeUserMessage,
   openTurnTools,
   processActivity,
@@ -239,7 +240,7 @@ const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effec
     ...(turn.meta === undefined ? {} : { meta: turn.meta }),
     ...(turn.resumes === undefined ? {} : { resumes: turn.resumes }),
   })
-}).pipe(Effect.mapError((error) => error instanceof HarnessError ? error
+}).pipe(Effect.mapError((error) => isHarnessError(error) ? error
   : failure(turnBeginCodes[error._tag], error._tag === "NotResumable"
     ? `turn ${error.turn} of session ${turn.session.id} cannot be resumed (${error.reason})`
     : error._tag === "AttachmentRejected"

@@ -1,7 +1,7 @@
 import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Schema } from "effect"
-import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, HarnessError, StepLoop } from "@xandreed/core"
+import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, HarnessError, isHarnessError, StepLoop } from "@xandreed/core"
 import type { AgentMessage, CompletionVerdict, LogEntry, LoopEvent, RunResult, StepInfo, StepPlan, StepRequest, StepResult, TokenUsage } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopToolChoice } from "./loop.js"
@@ -148,7 +148,7 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
     Effect.provide(handlers),
     Effect.provideService(LanguageModel.LanguageModel, model),
     Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
-    Effect.mapError((error) => error instanceof HarnessError ? error : new HarnessError({ code: "loop.failed", message: String(error) })),
+    Effect.mapError((error) => isHarnessError(error) ? error : new HarnessError({ code: "loop.failed", message: String(error) })),
   ))
   return {
     outcome: result.outcome === "ok" ? "completed" : "partial",

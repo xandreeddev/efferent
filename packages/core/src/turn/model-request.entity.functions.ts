@@ -3,6 +3,7 @@ import { Prompt, Tool } from "effect/ai"
 import type { LanguageModel } from "effect/ai"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import { toPromptMessages } from "../loop/mapping.js"
 import { toolParametersSchema } from "../loop/toolSchema.js"
 import { canonicalJson, buildContext } from "../memory/memory-log.entity.functions.js"
@@ -31,7 +32,7 @@ export const modelRequestDescriptorOf = (model: LanguageModel.LanguageModel): Ef
     ? (candidate as Effect.Effect<unknown, HarnessError>).pipe(
       Effect.flatMap(Schema.decodeUnknownEffect(ModelRequestDescriptor)),
       Effect.map(Option.some),
-      Effect.mapError((error) => error instanceof HarnessError ? error : new HarnessError({ code: "request.descriptor", message: error.message })),
+      Effect.mapError((error) => isHarnessError(error) ? error : new HarnessError({ code: "request.descriptor", message: error.message })),
     )
     : Effect.succeed(Option.none())
 }

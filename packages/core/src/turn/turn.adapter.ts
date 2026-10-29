@@ -29,11 +29,18 @@ const failure = (code: string, message: string) => new HarnessError({ code, mess
 const inCaller = <A, E>(effect: Effect.Effect<A, E, unknown>): Effect.Effect<A, E> =>
   Effect.flatMap(Effect.context<never>(), (context) => effect.pipe(Effect.provide(context)) as Effect.Effect<A, E>)
 
-/** A host event may not take a name only the framework writes. */
-const storedDraft = (turn: number) => (event: TurnEvent): Option.Option<TurnDraft | HarnessError> =>
+/**
+ * A bus event as the turn stores it, when it is stored. A host event may not
+ * take a name only the framework writes (`events.reserved`); an event its
+ * schema does not encode fails the turn with `events.encode`.
+ */
+const storedDraft = (turn: number) => (event: TurnEvent): Effect.Effect<Option.Option<TurnDraft>, HarnessError> =>
   event._tag === "host" && RESERVED_KINDS.includes(event.name)
-    ? Option.some(failure("events.reserved", `${event.name} is the framework's kind`))
-    : Option.map(draftOfTurnEvent(turn, event), (draft): TurnDraft => ({ kind: draft.kind, data: draft.data }))
+    ? Effect.fail(failure("events.reserved", `${event.name} is the framework's kind`))
+    : draftOfTurnEvent(turn, event).pipe(
+      Effect.mapError((error) => failure("events.encode", `${event._tag} does not encode: ${error.message}`)),
+      Effect.map(Option.map((draft): TurnDraft => ({ kind: draft.kind, data: draft.data }))),
+    )
 
 const contextBody = (entry: TurnContextEntry) => ({ _tag: "TurnContext" as const, sectionId: entry.id, version: entry.version, text: entry.text })
 
@@ -71,7 +78,9 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const events = yield* makeTurnEvents({ maxDepth: input.maxEventDepth ?? 8 })
   const tasks = yield* makeTurnTasks(scope)
   // The writer is the first subscriber: every stored event is queued before any reaction runs.
-  yield* events.subscribe(storedDraft(admitted.turn), (draft) => draft instanceof HarnessError ? Effect.fail(draft) : writer.append([draft]))
+  yield* events.subscribe(Option.some, (event: TurnEvent) => storedDraft(admitted.turn)(event).pipe(
+    Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (draft) => writer.append([draft]) })),
+  ))
   // The turn's usage: what its stored `step.usage` records hold, summed as they are queued.
   const usage = yield* Ref.make(zeroUsage)
   yield* events.subscribe(

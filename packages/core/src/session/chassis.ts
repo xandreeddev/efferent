@@ -1,4 +1,4 @@
-import { Effect, Exit, Fiber, Option, PubSub, Ref, Stream, Semaphore } from "effect"
+import { Effect, Fiber, Option, PubSub, Ref, Stream, Semaphore } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import { replayableContext } from "../loop/traceContent.js"
 
@@ -10,13 +10,18 @@ import { replayableContext } from "../loop/traceContent.js"
  *   turn runs waits its turn (drivers coalesce user actions before here).
  * - `interrupt` stops the in-flight turn's fiber; the ledger survives.
  * - `subscribe(since)` replays the ledger from a cursor, then streams live,
- *   deduped by `seq` (the identity) — a client reconnecting mid-turn gets
- *   each event exactly once.
+ *   deduped by `seq` (the identity): a client reconnecting mid-turn gets no
+ *   event twice. The live tail is a sliding buffer of 512 events: a
+ *   subscriber that falls further behind loses the oldest it has not read,
+ *   with nothing to say so but a gap in `seq` (subscribe again from the
+ *   last `seq` it saw to read them from the ledger).
  *
  * Generic over the event vocabulary: a product composes `LoopEvent` with its
  * own `{ type: ... }` events and hands the chassis a `runTurn` that publishes
  * through the given sink. Turn failures and defects are CONTAINED: they
  * become an event (via `onError`), never a dead session.
+ *
+ * Deprecated: see `makeSession`.
  */
 
 export interface SeqEvent<E> {
@@ -48,6 +53,14 @@ export interface Session<E> {
   readonly shutdown: Effect.Effect<void>
 }
 
+/**
+ * @deprecated Compose agents with `Agent.define` and run each turn with
+ * `Agent.turn` (`@xandreed/sdk`) over `Sessions` (`@xandreed/plugin-sessions`):
+ * turns are journaled, serialized by the session and replayed from its
+ * stored events. This chassis keeps its ledger in memory only, and its live
+ * tail drops events for a subscriber that falls behind; it will be removed
+ * in a later release.
+ */
 export const makeSession = <E, RS = never>(args: {
   readonly conversationId: ConversationId
   /** Run one turn, publishing events through the sink. Errors/defects are
@@ -92,36 +105,35 @@ export const makeSession = <E, RS = never>(args: {
         Effect.catchDefect((defect) =>
           publish(args.onError(`turn crashed: ${String(defect)}`)),
         ),
+        // The turn leaves its own trace, however it is interrupted: `interrupt`, or its sender's interruption.
+        Effect.onInterrupt(() => args.onInterrupt === undefined ? Effect.void : publish(args.onInterrupt())),
       )
 
     const send = (text: string): Effect.Effect<void> =>
       gate.withPermits(1)(
-        Effect.gen(function* () {
-          const fiber = yield* Effect.forkChild(runContained(text))
+        // The slot holds the turn from its fork until it ends, however it ends.
+        Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+          const fiber = yield* Effect.forkChild(restore(runContained(text)))
           yield* Ref.set(running, Option.some(fiber))
           // AWAIT, never join: joining an interrupted turn would interrupt
           // the sender too — an interrupted turn ends the send normally,
-          // its trace already on the ledger.
-          yield* Fiber.await(fiber).pipe(Effect.asVoid)
-          yield* Ref.set(running, Option.none())
-        }),
+          // its trace already on the ledger. An interrupted sender
+          // interrupts its turn.
+          yield* restore(Fiber.await(fiber)).pipe(
+            Effect.onInterrupt(() => Fiber.interrupt(fiber)),
+            Effect.ensuring(Ref.set(running, Option.none())),
+          )
+        })),
       )
 
-    // Interrupting a turn that already finished on its own is a no-op AND
-    // leaves no event — only a real interruption goes on the ledger.
-    const interrupt = Ref.get(running).pipe(
+    // Taken from the slot, so two interrupts stop the turn once. Interrupting
+    // a turn that already finished on its own is a no-op AND leaves no event:
+    // the turn publishes its trace only when it is cut short.
+    const interrupt = Ref.getAndSet(running, Option.none()).pipe(
       Effect.flatMap(
         Option.match({
           onNone: () => Effect.void,
-          onSome: (fiber) =>
-            Fiber.interrupt(fiber).pipe(
-              Effect.andThen(Fiber.await(fiber)),
-              Effect.flatMap((exit) =>
-                Exit.hasInterrupts(exit) && args.onInterrupt !== undefined
-                  ? publish(args.onInterrupt())
-                  : Effect.void,
-              ),
-            ),
+          onSome: (fiber) => Fiber.interrupt(fiber).pipe(Effect.andThen(Fiber.await(fiber)), Effect.asVoid),
         }),
       ),
     )

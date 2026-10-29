@@ -181,6 +181,7 @@ export {
 } from "./spec/codec.js"
 export { parseFrontmatter } from "./spec/frontmatter.js"
 export * from "./harness/plugin.entity.js"
+export { isHarnessError } from "./harness/plugin.entity.functions.js"
 export * from "./harness/plugin.adapter.js"
 export * from "./harness/plugin-stack.adapter.js"
 export * from "./harness/config.entity.js"

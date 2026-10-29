@@ -179,4 +179,39 @@ describe("makeSession — an interrupted turn leaves a trace", () => {
       }),
     )
   })
+
+  test("a turn interrupted with its sender leaves its trace once; a later interrupt and shutdown add nothing", async () => {
+    const log = await Effect.runPromise(Effect.gen(function* () {
+      const session = yield* makeSession<Ev, never>({
+        conversationId: cid,
+        runTurn: (_text, publish) => publish({ type: "note", text: "started" }).pipe(Effect.andThen(Effect.never)),
+        onError: (message) => ({ type: "error", message }),
+        onInterrupt: () => ({ type: "error", message: "interrupted" }),
+      })
+      const sender = yield* Effect.forkChild(session.send("slow"))
+      yield* Effect.sleep("20 millis")
+      yield* Fiber.interrupt(sender)
+      yield* session.interrupt
+      yield* session.shutdown
+      return (yield* session.state).log.map((e) => e.event)
+    }))
+    expect(log).toEqual([{ type: "note", text: "started" }, { type: "error", message: "interrupted" }])
+  })
+
+  test("two interrupts at once stop the turn once", async () => {
+    const log = await Effect.runPromise(Effect.gen(function* () {
+      const session = yield* makeSession<Ev, never>({
+        conversationId: cid,
+        runTurn: (_text, publish) => publish({ type: "note", text: "started" }).pipe(Effect.andThen(Effect.never)),
+        onError: (message) => ({ type: "error", message }),
+        onInterrupt: () => ({ type: "error", message: "interrupted" }),
+      })
+      const sender = yield* Effect.forkChild(session.send("slow"))
+      yield* Effect.sleep("20 millis")
+      yield* Effect.all([session.interrupt, session.interrupt], { concurrency: 2 })
+      yield* Fiber.join(sender)
+      return (yield* session.state).log.map((e) => e.event)
+    }))
+    expect(log).toEqual([{ type: "note", text: "started" }, { type: "error", message: "interrupted" }])
+  })
 })

@@ -24,7 +24,11 @@ export interface TurnPolicy<R = never> {
   readonly initial?: InitialBatch
   readonly model?: (step: StepInfo) => Effect.Effect<Option.Option<ModelChoice>, HarnessError, R>
   readonly step?: (step: StepInfo) => Effect.Effect<StepDirective, HarnessError, R>
-  /** Read-only by contract: react to events, decide here. */
+  /**
+   * Read-only by contract: react to events, decide here. The verdict's
+   * `awaiting` tags are trimmed and empty ones dropped before the loop awaits
+   * them and the journal stores it.
+   */
   readonly completion?: (step: StepInfo) => Effect.Effect<CompletionVerdict, HarnessError, R>
   readonly limits?: Partial<LoopLimits>
   /**

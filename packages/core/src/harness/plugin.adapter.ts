@@ -1,23 +1,17 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import { HarnessError, PLUGIN_API_VERSION } from "./plugin.entity.js"
 import type { TypedPlugin } from "./plugin.entity.js"
-
-/** A `HarnessError` by its tag and fields, whichever copy of core made it. */
-const isHarnessError = Schema.is(Schema.Struct({
-  _tag: Schema.Literal("HarnessError"),
-  code: Schema.String,
-  message: Schema.String,
-  plugin: Schema.optional(Schema.String),
-}))
+import { isHarnessError } from "./plugin.entity.functions.js"
 
 /**
  * Layers retain their native types until the validated dynamic loading edge.
  * `build` (the graph's) and `live` (a host's own composition) share one
  * decode: the options merged over the defaults, extra keys refused — so a
  * graph caller, whose options already hold the defaults, decodes the same.
- * A `build` whose layer fails with a `HarnessError` fails with that error's
- * code, as `live` does (and names the plugin when the error does not); any
- * other failure is `plugin.activation`, and a defect `plugin.defect`.
+ * A `build` whose layer fails or dies with a `HarnessError` fails with that
+ * error's code, as `live` does (and names the plugin when the error does
+ * not); any other failure is `plugin.activation`, and any other defect
+ * `plugin.defect`.
  */
 export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out, E, In>(definition: {
   readonly id: string
@@ -36,6 +30,7 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
     typeof options === "object" && options !== null ? { ...definition.defaults, ...options } : options ?? definition.defaults,
     { onExcessProperty: "error" },
   )
+  const named = (error: HarnessError) => new HarnessError({ code: error.code, message: error.message, plugin: error.plugin ?? definition.id })
   return {
     id: definition.id,
     version: definition.version,
@@ -58,9 +53,12 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
       // A layer that fails with a HarnessError keeps its code (skills.duplicate, not plugin.activation), as `live` does.
       // Matched by its fields, not `instanceof`: a plugin built against another copy of core fails with that copy's class.
       Effect.mapError((error) => isHarnessError(error)
-        ? new HarnessError({ code: error.code, message: error.message, plugin: error.plugin ?? definition.id })
+        ? named(error)
         : new HarnessError({ code: "plugin.activation", plugin: definition.id, message: String(error) })),
-      Effect.catchDefect((error) => Effect.fail(new HarnessError({ code: "plugin.defect", plugin: definition.id, message: String(error) }))),
+      // One that dies with a HarnessError (an `Effect.orDie` over its own failure) keeps its code too.
+      Effect.catchDefect((defect) => Effect.fail(isHarnessError(defect)
+        ? named(defect)
+        : new HarnessError({ code: "plugin.defect", plugin: definition.id, message: String(defect) }))),
     ),
     live: (options) => Layer.unwrap(decodeOptions(options).pipe(
       Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: definition.id, message: String(error) })),

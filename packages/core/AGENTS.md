@@ -9,6 +9,11 @@ Plugin and configuration contracts live in `src/harness`; service tags live in
 in paired `.functions.ts` modules. `definePlugin` bridges typed Layers at the
 explicit `plugin.adapter.ts` boundary.
 
+Tell a `HarnessError` (or another tagged error) by its tag and fields, with
+`isHarnessError` (`src/harness/plugin.entity.functions.ts`), never with
+`instanceof`: a host can load two copies of core, each with its own class,
+and the other copy's errors would lose their codes.
+
 The step loop lives in `@xandreed/plugin-agent-loop`, plugin activation in
 `@xandreed/runtime`, sessions in `@xandreed/plugin-sessions`, and the
 composable agent (`Agent.define`, `Agent.turn`) in `@xandreed/sdk`. Foundry

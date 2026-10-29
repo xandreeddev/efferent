@@ -1,3 +1,5 @@
+import { Match, Option } from "effect"
+import { AiError } from "effect/ai"
 import type { AgentFailure, AgentFailureCategory } from "./agent-failure.entity.js"
 
 const record = (value: unknown): Record<string, unknown> =>
@@ -9,16 +11,62 @@ const text = (value: unknown): string | undefined =>
 const numeric = (value: unknown): number | undefined =>
   typeof value === "number" && Number.isFinite(value) ? value : undefined
 
-/** Classify adapter/runtime defects without exposing provider-specific types. */
-export const toAgentFailure = (error: unknown, stage: string): AgentFailure => {
+/** Each effect/ai error reason's category; whether it is retryable is the reason's own `isRetryable`. */
+const categoryOfReason = Match.typeTags<AiError.AiErrorReason, AgentFailureCategory>()({
+  RateLimitError: () => "rate-limit",
+  QuotaExhaustedError: () => "rate-limit",
+  AuthenticationError: (reason) => reason.kind === "InsufficientPermissions" ? "authorization" : "authentication",
+  ContentPolicyError: () => "validation",
+  InvalidRequestError: () => "protocol",
+  InvalidResponseError: () => "protocol",
+  InternalProviderError: () => "transport",
+  NetworkError: () => "transport",
+  InvalidOutputError: () => "protocol",
+  StructuredOutputError: () => "protocol",
+  UnsupportedSchemaError: () => "validation",
+  UnknownError: () => "unknown",
+  ToolNotFoundError: () => "tool",
+  ToolParameterValidationError: () => "tool",
+  InvalidToolResultError: () => "tool",
+  ToolResultEncodingError: () => "tool",
+  ToolConfigurationError: () => "tool",
+  ToolkitRequiredError: () => "tool",
+  InvalidUserInputError: () => "validation",
+})
+
+/** A model the account or the provider refuses: no reason names it, so the provider's wording does. */
+const modelRefusal = (message: string): Option.Option<"ModelUnavailable" | "ModelUnsupported"> =>
+  /model .* is not available to .*subscription/i.test(message) ? Option.some("ModelUnavailable")
+    : /model .* (?:is )?not supported/i.test(message) ? Option.some("ModelUnsupported")
+    : Option.none()
+
+/** The HTTP status a reason carries, when the provider answered. */
+const statusOf = (reason: AiError.AiErrorReason): Option.Option<number> =>
+  "http" in reason ? Option.fromNullishOr(reason.http?.response?.status) : Option.none()
+
+const reasonFailure = (reason: AiError.AiErrorReason, message: string, stage: string): AgentFailure =>
+  Option.match(modelRefusal(message), {
+    onSome: (code) => ({ code, category: "validation", stage, message, retryable: false }),
+    onNone: () => ({
+      code: Option.match(statusOf(reason), { onNone: () => reason._tag, onSome: (status) => `${reason._tag}:${status}` }),
+      category: categoryOfReason(reason),
+      stage,
+      message,
+      retryable: reason.isRetryable,
+    }),
+  })
+
+/** A failure that is no effect/ai error: its tag, name and status, then its wording. */
+const foreignFailure = (error: unknown, stage: string): AgentFailure => {
   const value = record(error)
   const response = record(value["response"])
   const tag = text(value["_tag"]) ?? (error instanceof Error ? error.name : undefined) ?? "UnknownError"
   const status = numeric(response["status"]) ?? numeric(value["status"])
   const description = text(value["description"])
   const message = description ?? (error instanceof Error ? error.message : undefined) ?? String(error)
-  const unavailable = /model .* is not available to .*subscription/i.test(message)
-  const unsupported = /model .* (?:is )?not supported/i.test(message)
+  const refusal = modelRefusal(message)
+  const unavailable = Option.contains(refusal, "ModelUnavailable")
+  const unsupported = Option.contains(refusal, "ModelUnsupported")
   const terminalQuota = /CreditsError|insufficient (?:balance|credits)|usage limit|quota exhausted/i.test(message)
 
   const category: AgentFailureCategory =
@@ -44,6 +92,20 @@ export const toAgentFailure = (error: unknown, stage: string): AgentFailure => {
   const retryable = category === "timeout" || (category === "rate-limit" && !terminalQuota) || category === "transport"
   return { code, category, stage, message, retryable }
 }
+
+/**
+ * Classify a failure or defect without exposing provider-specific types. An
+ * effect/ai `AiError` (or a bare reason) by its reason: the code is the
+ * reason's tag (`RateLimitError`, with `:<status>` when the provider
+ * answered), the category the reason's, retryable as the reason says;
+ * `ModelUnavailable` and `ModelUnsupported` from a refusal's wording.
+ * Anything else by its `_tag`, name and `status`, its message read only
+ * where those say nothing.
+ */
+export const toAgentFailure = (error: unknown, stage: string): AgentFailure =>
+  AiError.isAiError(error) ? reasonFailure(error.reason, error.message, stage)
+    : AiError.isAiErrorReason(error) ? reasonFailure(error, error.message, stage)
+    : foreignFailure(error, stage)
 
 /** Preserve a returned tool failure as structured context for hosts/evals. */
 export const toolResultFailure = (

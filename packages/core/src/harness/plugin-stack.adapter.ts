@@ -31,11 +31,16 @@ export const stackPlugins = <A2, E2, R2>(next: Layer.Layer<A2, E2, R2>) =>
   <A1, E1, R1>(base: Layer.Layer<A1, E1, R1>): Layer.Layer<A1 | A2, E1 | E2, R1 | Exclude<R2, A1>> =>
     Layer.effectContext(Effect.gen(function* () {
       const scope = yield* Effect.scope
-      const lower = yield* Layer.buildWithScope(base, scope)
-      const upper = yield* Layer.buildWithScope(next, scope).pipe(Effect.provide(lower))
-      const merged = Context.merge(lower, upper)
+      // Both levels build into one memo map, forked from the caller's, so a layer
+      // both use is built once. It stays the stack's own: the stacked context leaves
+      // it out, and what is built over the stack memoizes where the rest of the
+      // composition does.
+      const memoMap = Layer.CurrentMemoMap.forkOrCreate(yield* Effect.context<never>())
+      const lower = yield* Layer.buildWithMemoMap(base, memoMap, scope)
+      const upper = yield* Layer.buildWithMemoMap(next, memoMap, scope).pipe(Effect.provide(lower))
+      const merged = [...Context.merge(lower, upper).mapUnsafe].filter(([key]) => key !== Layer.CurrentMemoMap.key)
       const contributes = lower.mapUnsafe.has(Capabilities.key) || upper.mapUnsafe.has(Capabilities.key)
-      return contributes
-        ? Context.makeUnsafe<A1 | A2>(new Map([...merged.mapUnsafe, [Capabilities.key, [...capabilitiesOf(lower), ...capabilitiesOf(upper)]]]))
-        : merged
+      return Context.makeUnsafe<A1 | A2>(new Map(contributes
+        ? [...merged, [Capabilities.key, [...capabilitiesOf(lower), ...capabilitiesOf(upper)]]]
+        : merged))
     }))
