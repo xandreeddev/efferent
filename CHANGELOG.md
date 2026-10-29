@@ -61,6 +61,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `TurnRunner` lets the `Sessions.begin` refusal through and reruns
   `turnConformance`. The events guide's turn route answers a busy session
   with `{ code: "session.busy", turn }`.
+- Narrow `unknown` values before putting them in JSON fields, or pass the
+  object through `storedJson`, which takes any object and returns the
+  `JsonObject` a store gives back. A host event whose data JSON cannot hold
+  fails the turn with `events.encode` when published. A `SessionLog` backend
+  writes data as JSON text (`storedJson`), never through
+  `fromJsonString(JsonObject)`.
 
 ### Breaking
 
@@ -187,6 +193,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   fields, and its code is unchanged. `turnConformance` checks that a turn
   begun while another is open fails with that `SessionBusy` and runs and
   stores nothing.
+- `@xandreed/core`: `JsonObject` is `Schema.JsonObject`. A session's `meta`
+  and `state`, event and draft `data`, a turn's `command` and `meta`, and an
+  inbox item's `source` are typed and decoded as JSON; stored bytes do not
+  change. `asJsonRecord`, `parseJsonWarn`, `parseJsonOption` and
+  `decodeJsonLines` are deprecated, and `asJsonRecord` reads an array as
+  `{}`.
+- `@xandreed/plugin-render`: a snapshot's `spec`, node and proposal `props`,
+  and journal record and feed payload `data` are `Schema.JsonObject`; a
+  value JSON cannot hold is refused. The `render_component` tool's schema is
+  unchanged.
+- `sessionLogConformance` checks that data with an `undefined` field commits
+  and reads back without it.
 
 ### Added
 
@@ -537,6 +555,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   already clean of it and grows one package at a time;
   `effect/no-json-parse` recommends `Schema.Json` for open JSON. Foundry
   decodes a config's plugged rule packs with Schema.
+- `effect/no-unknown-json` runs in plugin-render.
 
 ## 0.14.0 — 2026-10-29
 

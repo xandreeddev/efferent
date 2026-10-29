@@ -36,7 +36,7 @@ describe("what the in-memory log keeps is JSON, as a store on disk keeps it", ()
     const data = { kept: 1, dropped: undefined, nested: { list: [1, 2] } }
     const result = await Effect.runPromise(Effect.gen(function* () {
       yield* log.create(header(id))
-      const committed = yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data }], state: Option.none() })
+      const committed = yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: data as never }], state: Option.none() })
       data.nested.list.push(3)
       const read = yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
       return { committed: committed.events.map((event) => event.data), read: read.map((event) => event.data) }
@@ -50,7 +50,7 @@ describe("what the in-memory log keeps is JSON, as a store on disk keeps it", ()
     const id = ConversationId.make("00000000-0000-4000-8000-000000000002")
     const exit = await Effect.runPromiseExit(Effect.gen(function* () {
       yield* log.create(header(id))
-      return yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: { big: 1n } }], state: Option.none() })
+      return yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: { big: 1n } as never }], state: Option.none() })
     }))
     expect(exit._tag === "Failure" && exit.cause.reasons.some((reason) => Cause.isFailReason(reason) && reason.error._tag === "SessionLogError" && reason.error.code === "store.encode")).toBe(true)
   })

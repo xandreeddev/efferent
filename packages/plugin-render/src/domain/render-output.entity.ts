@@ -16,7 +16,7 @@ export const UiOutputProposal = Schema.Struct({
   operationId: Schema.Trimmed.check(Schema.isNonEmpty()),
   nodeId: Schema.Trimmed.check(Schema.isNonEmpty()),
   release: UiRelease,
-  props: Schema.Record(Schema.String, Schema.Unknown),
+  props: Schema.JsonObject,
   evidence: Schema.Array(Schema.Trimmed.check(Schema.isNonEmpty())),
 })
 export type UiOutputProposal = typeof UiOutputProposal.Type

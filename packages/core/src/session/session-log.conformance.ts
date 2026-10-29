@@ -17,6 +17,17 @@ const noEvents = { notAfter: Option.none<number>(), state: Option.none<JsonObjec
 const rich: JsonObject = { zeta: 1, alpha: { b: [true, false, { y: "ü", x: 0.5 }], a: "text ✓" }, empty: {}, list: [] }
 
 /**
+ * `value` with an `undefined` field named `unset`, as a host's optional field
+ * left unset puts one there: the type rules it out, JavaScript does not. A
+ * store drops the field, as JSON text does, rather than refusing the commit.
+ */
+const withUnset = (value: JsonObject): JsonObject => Object.assign<JsonObject, { readonly unset: undefined }>({ ...value }, { unset: undefined })
+
+/** Whether a field named `unset` is still there, at any depth (JSON text would not show it). */
+const keepsUnset = (value: unknown): boolean =>
+  typeof value === "object" && value !== null && ("unset" in value || Object.values(value).some(keepsUnset))
+
+/**
  * The SessionLog contract, as checks any backend must pass: dense sequence
  * numbers, one revision per commit, compare-and-swap, the `notAfter` clock
  * check, JSON kept by value, an event as large as a turn's images may make
@@ -97,6 +108,17 @@ export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck>
       const [event] = yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
       yield* expect("json", event !== undefined && canonicalJson(event.data) === canonicalJson(rich), `data came back as ${JSON.stringify(event?.data)}`)
       yield* expect("json", canonicalJson((yield* log.head(id)).state) === canonicalJson(rich), "the state came back different")
+    })),
+    check("event data with an undefined field commits and reads back without it", "json-unset", (owner) => Effect.gen(function* () {
+      const id = yield* freshId
+      yield* log.create(headerOf(id, owner))
+      const committed = yield* log.commit(id, { expect: 0, ...noEvents, events: [draft("unset", withUnset({ kept: 1, nested: withUnset({ list: [1] }) }))] })
+      const read = yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
+      const expected = canonicalJson({ kept: 1, nested: { list: [1] } })
+      const dropped = (events: ReadonlyArray<{ readonly data: JsonObject }>) =>
+        events.length === 1 && canonicalJson(events[0]!.data) === expected && !keepsUnset(events[0]!.data)
+      yield* expect("json-unset", dropped(committed.events), "the commit did not return the data without its undefined fields")
+      yield* expect("json-unset", dropped(read), "a read did not return the data without its undefined fields")
     })),
     check("an event holding MEDIA_LIMITS.requestChars of base64 (a message's images at their limit) comes back whole", "large", (owner) => Effect.gen(function* () {
       const id = yield* freshId

@@ -18,6 +18,7 @@ import {
   TurnStartedData,
 } from "./session-event.entity.js"
 import type { TurnEndedData as TurnEnded, TurnStartedData as TurnStarted } from "./session-event.entity.js"
+import { storedJson } from "./session-log.entity.functions.js"
 import { JsonObject as JsonObjectSchema } from "./session-log.entity.js"
 import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 
@@ -35,18 +36,17 @@ const turnOf = (event: SessionLogEvent): number => Option.getOrElse(event.turn, 
 
 /**
  * One memory entry → the draft it is stored as: its own kind, the entry's
- * id, run, step and time, and the body. TurnStarted has none: the turn's
- * `turn.started` (written when the turn begins) is that entry.
+ * id, run, step and time, and the body, as JSON (`storedJson`). TurnStarted
+ * has none: the turn's `turn.started` (written when the turn begins) is
+ * that entry.
  */
 export const draftOfEntry = (entry: LogEntry): Effect.Effect<Option.Option<SessionDraft>, Schema.SchemaError> =>
-  entry.body._tag === "TurnStarted" ? Effect.succeed(Option.none()) : encodeEntry(entry).pipe(Effect.map((encoded) => {
+  entry.body._tag === "TurnStarted" ? Effect.succeed(Option.none()) : encodeEntry(entry).pipe(Effect.flatMap((encoded) => {
     const { _tag, ...body } = encoded.body
     const kind = MemoryKindOf[_tag as keyof typeof MemoryKindOf]
-    return Option.some({
-      kind,
-      turn: Option.some(entry.turn),
-      data: { entry: encoded.id, runId: encoded.runId, step: encoded.step, at: encoded.at, body },
-    })
+    return storedJson({ entry: encoded.id, runId: encoded.runId, step: encoded.step, at: encoded.at, body }).pipe(
+      Effect.map((data) => Option.some({ kind, turn: Option.some(entry.turn), data })),
+    )
   }))
 
 export const draftsOfEntries = (entries: ReadonlyArray<LogEntry>): Effect.Effect<ReadonlyArray<SessionDraft>, Schema.SchemaError> =>
@@ -120,11 +120,11 @@ const OMITTED_FROM_TOOL_COMPLETED = ["result", "encoded", "input"] as const
 /** A refused call's input is in the memory log too (the model's call); the refusal keeps why. */
 const OMITTED_FROM_TOOL_REFUSED = ["input"] as const
 
-const without = (omitted: ReadonlyArray<string>) => (data: Record<string, unknown>): JsonObject =>
+const without = (omitted: ReadonlyArray<string>) => (data: Readonly<Record<string, unknown>>): Readonly<Record<string, unknown>> =>
   Object.fromEntries(Object.entries(data).filter(([key]) => !omitted.includes(key)))
 
 /** What a bus event stored under its own name leaves out. */
-const storedPayload: ReadonlyMap<string, (data: Record<string, unknown>) => JsonObject> = new Map([
+const storedPayload: ReadonlyMap<string, (data: Readonly<Record<string, unknown>>) => Readonly<Record<string, unknown>>> = new Map([
   ["tool.completed", without(OMITTED_FROM_TOOL_COMPLETED)],
   ["tool.refused", without(OMITTED_FROM_TOOL_REFUSED)],
 ])
@@ -150,22 +150,24 @@ export const turnUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number
  * payload. Transient events are not stored; a host's event keeps its name
  * and data; an assistant message is stored only as the step's model and
  * usage (its content is memory's `memory.message`); `tool.completed` leaves
- * out its input and result, `tool.refused` its input. An event its schema
+ * out its input and result, `tool.refused` its input. The payload is stored
+ * as JSON (`storedJson`: `undefined` fields dropped). An event its schema
  * does not encode (a value its type allows but a check refuses, such as a
- * non-integer step) fails with the `SchemaError`, never throws.
+ * non-integer step), or whose payload JSON cannot hold (a BigInt in a host
+ * event's data), fails with the `SchemaError`, never throws.
  */
 export const draftOfTurnEvent = (turn: number, event: TurnEventType): Effect.Effect<Option.Option<SessionDraft>, Schema.SchemaError> => {
   if (TransientTurnEvents.includes(event._tag) || RECORDED_ELSEWHERE.has(event._tag)) return Effect.succeed(Option.none())
-  if (event._tag === "host") return Effect.succeed(Option.some({ kind: event.name, turn: Option.some(turn), data: event.data }))
+  if (event._tag === "host") return storedJson(event.data).pipe(Effect.map((data) => Option.some({ kind: event.name, turn: Option.some(turn), data })))
   if (event._tag === "assistant.message") {
     return encodeStepUsage({ step: event.step, model: event.model, usage: event.usage }).pipe(
       Effect.map((encoded) => Option.some({ kind: "step.usage", turn: Option.some(turn), data: { ...encoded } })),
     )
   }
-  return encodeTurnEvent(event).pipe(Effect.map(({ _tag, ...data }) => Option.some({
-    kind: _tag, turn: Option.some(turn),
-    data: Option.match(Option.fromNullishOr(storedPayload.get(_tag)), { onNone: () => data, onSome: (stored) => stored(data) }),
-  })))
+  return encodeTurnEvent(event).pipe(Effect.flatMap(({ _tag, ...data }) =>
+    storedJson(Option.match(Option.fromNullishOr(storedPayload.get(_tag)), { onNone: () => data, onSome: (stored) => stored(data) })).pipe(
+      Effect.map((stored) => Option.some({ kind: _tag, turn: Option.some(turn), data: stored })),
+    )))
 }
 
 /**

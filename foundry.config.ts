@@ -124,6 +124,7 @@ const UNKNOWN_JSON_CLEAN = [
   "plugin-tool-discovery",
   "plugin-sessions",
   "plugin-tasks",
+  "plugin-render",
   "plugin-workspace",
   "plugin-telemetry",
   "plugin-session-sqlite",

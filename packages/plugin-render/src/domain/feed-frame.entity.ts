@@ -1,7 +1,8 @@
 import { Schema } from "effect"
 
 const Id = Schema.Trimmed.check(Schema.isNonEmpty())
-const Json = Schema.Record(Schema.String, Schema.Unknown)
+/** A record's payload: a JSON object, every value JSON. */
+const Json = Schema.JsonObject
 
 /** Whose journal a feed reads. The host authorizes the principal before opening one. */
 export const FeedScope = Schema.Struct({ threadId: Id, principalId: Id })
