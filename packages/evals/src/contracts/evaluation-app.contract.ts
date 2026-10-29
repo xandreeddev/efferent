@@ -42,6 +42,14 @@ export interface EvaluationApp {
   readonly environmentFor: Readonly<Record<string, string>>
   readonly fingerprints: Readonly<Record<string, string>>
   readonly exporters?: ReadonlyArray<ExporterRegistration>
+  /**
+   * The tracer (and any other telemetry) of a command that loads this app:
+   * the CLI provides it around the command, whose scope closes it, so the
+   * command's spans are flushed when it ends or is interrupted. It takes no
+   * error, because observability never fails an eval: a telemetry layer
+   * that can fail goes through `Layer.orDie`.
+   */
+  readonly observability?: Layer.Layer<never>
   readonly commands: Readonly<
     Record<
       string,

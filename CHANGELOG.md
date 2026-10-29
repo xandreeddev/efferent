@@ -403,6 +403,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `agent.turn.begin`, and every log line inside a turn carries
   `efferent.session.id`, `efferent.run.id` and `efferent.turn` as
   annotations.
+- `@xandreed/evals`: `EvaluationApp.observability`, a `Layer` with no error
+  that `efferent-eval` provides around each command that loads the app
+  (for example `Layer.orDie(OtlpTelemetryFromEnv())`). Such a command is one
+  `eval.cli` span carrying `eval.command`, over `eval.run`, its trials, its
+  grading and its exports; the layer closes with the command, so its spans
+  are flushed when the command ends or is interrupted. `parseEvaluationApp`
+  keeps the field and refuses a value that is not a Layer.
 
 ### Changed
 
@@ -757,6 +764,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `evals-langsmith`.
 - `effect/prefer-effect-fn` runs in `plugin-memory-summary` and
   `plugin-tasks`.
+- `effect/prefer-effect-fn` covers `evals-cli`.
 
 ## 0.14.0 — 2026-10-29
 

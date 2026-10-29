@@ -16,10 +16,10 @@ export const defineEvaluationApp = (
   application: EvaluationApp
 ): EvaluationApp => application
 
-/** A Layer by its marker: the services it provides exist only in its type,
- *  so the registration's type names them and the value is checked to be a Layer. */
-const layerOf = <A>() =>
-  Schema.declare((value: unknown): value is Layer.Layer<A, EvaluationError> => Layer.isLayer(value), { expected: "a Layer" })
+/** A Layer by its marker: the services it provides and its error exist only in
+ *  its type, so the registration's type names them and the value is checked to be a Layer. */
+const layerOf = <A, E = EvaluationError>() =>
+  Schema.declare((value: unknown): value is Layer.Layer<A, E> => Layer.isLayer(value), { expected: "a Layer" })
 const Command = Schema.declare(
   (value: unknown): value is (args: ReadonlyArray<string>) => Effect.Effect<unknown, EvaluationError> => Predicate.isFunction(value),
   { expected: "a function" }
@@ -40,6 +40,7 @@ const EvaluationAppShape = Schema.Struct({
   environmentFor: Schema.Record(Schema.String, Schema.String),
   fingerprints: Fingerprints,
   exporters: Schema.optionalKey(Schema.Array(Schema.Struct({ id: Schema.String, layer: layerOf<EvaluationExport>() }))),
+  observability: Schema.optionalKey(layerOf<never, never>()),
   commands: Schema.Record(Schema.String, Command),
 })
 const decodeShape = Schema.decodeUnknownResult(EvaluationAppShape, { errors: "all" })

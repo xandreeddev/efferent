@@ -107,6 +107,7 @@ const src = (name: string): string => `packages/${name}/src/**`
  */
 const EFFECT_FN_CLEAN = [
   "evals",
+  "evals-cli",
   "evals-langfuse",
   "evals-langsmith",
   "plugin-agent-loop",

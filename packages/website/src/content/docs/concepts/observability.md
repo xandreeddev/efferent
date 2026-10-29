@@ -113,6 +113,14 @@ declare const handleRequest: Effect.Effect<Response>
 const respond = handleRequest.pipe(Effect.tap(() => flushTelemetry.pipe(Effect.timeoutOption("2 seconds"))))
 ```
 
+**Evaluations.** `efferent-eval` provides an app's `observability` layer
+around each command that loads the app, and closes it with the command:
+`observability: Layer.orDie(OtlpTelemetryFromEnv())` in `eval.config.ts`
+exports the command's `eval.cli` span and everything under it, an
+interrupted command's too. A variable set to an invalid value stops the
+command at start; a failed export never fails it.
+[Evals](/docs/concepts/evals/#traces) lists the spans.
+
 The export layer joins Effect's tracer only. A host already running the
 OpenTelemetry Node SDK (with HTTP or database auto-instrumentation) gets two
 separate pipelines; traces from both reach a collector but are not
