@@ -149,7 +149,8 @@ serialized evidence state and named, schema-validated questions:
 - `choice`: instructions and a nonempty map of offered keys to descriptions;
   response must name one offered key.
 
-`SemanticResult` contains `answers`, `usage`, and `metadata`. Missing usage remains
+`SemanticResult` contains `answers`, `usage`, and `metadata`, a JSON object (as is
+the `metadata` of an `Assessment`, an `EvaluationResult` and a `Grade`). Missing usage remains
 `Option.none`. Question IDs, answer kinds, bounds, and offered choices are checked
 before answers become evaluation metrics. Empty rubrics and blank instructions
 fail validation before a provider request.

@@ -19,7 +19,7 @@ The `efferent-eval` command line over `@xandreed/evals`: it loads an app's `eval
 
 - `evaluationCli(args, options?)`: the whole command line as an `Effect` of its exit code (`CliOptions`: `config`, `exporters`, `output`); `cliArguments` parses the arguments.
 - `runCliMain(program, host?)` with `nodeProcess` (`CliProcess`): runs a command as the main fiber with signal handling, for an app's own entry point.
-- `loadEvaluationApp(path, args)`: imports a configuration module (an `EvaluationApp`, or a function of the arguments returning one).
+- `loadEvaluationApp(path, args)`: imports a configuration module (an `EvaluationApp`, or a function of the arguments returning one) and decodes its default export with `parseEvaluationApp`.
 - `EvaluationRunStoreFsLive(directory)`: the file-backed `EvaluationRunStore`; `fileIo`, `readText`, `readJson`, `readRun`, `writeJson`.
 - The `efferent-eval` bin (`src/main.ts`); subpath `@xandreed/evals-cli/*` maps to `src/*.ts`.
 
@@ -45,7 +45,7 @@ None.
 
 ## Tests
 
-- `src/cli.test.ts`: the commands over `cliFixture` in a temporary directory (export failure, grading revisions, comparison, flags, file errors, the causes and messages of wrapped failures).
+- `src/cli.test.ts`: the commands over `cliFixture` in a temporary directory (export failure, grading revisions, comparison, flags, file errors, the causes and messages of wrapped failures); `validate` on `node` (tsx's loader does not run on Bun) refuses configurations whose default export is not an app.
 - `src/run-main.adapter.test.ts`: signals and exit codes over a fake `CliProcess`; `:54` spawns `node` on `src/main.ts` with `hanging-run.testing.ts` and sends SIGINT (needs `node` on `PATH`).
 - `bun run verify:packages` runs `scripts/evaluation-consumer.fixture.mjs` on Node: `evaluationCli` from the packed package loads a TypeScript configuration and runs a suite.
 - Run: `bun test packages/evals-cli`.

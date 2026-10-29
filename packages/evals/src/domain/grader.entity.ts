@@ -9,6 +9,6 @@ export const Grade = Schema.Struct({
   grader: Schema.String, version: Version, scope: Schema.String, status: Schema.Literals(["scored", "error", "unavailable", "pending", "skipped"]),
   metrics: Schema.Array(Metric), reason: Schema.String,
   context: Schema.OptionFromNullOr(GradingContext), usage: EvaluationUsage,
-  startedAt: Schema.Number, endedAt: Schema.Number, metadata: Schema.Record(Schema.String, Schema.Unknown),
+  startedAt: Schema.Number, endedAt: Schema.Number, metadata: Schema.JsonObject,
 })
 export type Grade = typeof Grade.Type

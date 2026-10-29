@@ -88,9 +88,12 @@ the typed input codec and controlled labelled cases; it is an `Effect` that fail
 context and verdict; a separate agreement grade checks the expected status and metrics,
 including unavailable evidence, false passes and false failures. Regrading those observations
 does not call the subject. Rerun the calibration to test a changed target grader implementation.
-Native gates require exactly one measurement per bound scope, and validation rejects duplicate
-scopes, unbound gates, gates without a minimum or maximum and families leaking across dataset
-splits.
+Native gates require exactly one measurement per bound scope. `parseEvaluationApp` decodes an
+app before every run, grading and `validate` (and a configuration's default export as it loads):
+its shape first, then its cross-references. It rejects duplicate ids and scopes, unbound gates,
+gates without a minimum or maximum, families leaking across dataset splits and references to
+unregistered runnables, environments, graders, projections or metrics. A refusal is `invalid`,
+lists every `{ rule, path, message }` in `violations` and names the first five in its message.
 
 ```ts
 const TextRunnable = runnableExecutionPort<

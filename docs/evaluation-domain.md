@@ -88,9 +88,17 @@ expected unavailable results, false passes and false failures. Labels never ente
 Regrading saved observations makes no subject calls; testing a revised target grader requires
 executing the controlled calibration again. Candidate fingerprints include the target grader.
 
-Native validation rejects duplicate grader scopes, gates without task bindings or without a
-minimum or maximum, and families split across development and validation. Gate coverage requires exactly one scored metric per
-bound scope; duplicate grades cannot substitute for a missing scope.
+`parseEvaluationApp` decodes an app before every run, grading and `validate`, and
+`loadEvaluationApp` passes a configuration's default export through it. It checks the shape
+first (definitions as their schemas' types, so a gate without a minimum or maximum is refused
+there; layers are Layers and commands functions), then the cross-references
+(`evaluationAppViolations`): unique ids, suites with tasks and candidates, graded tasks,
+duplicate grader scopes, families split across development and validation, registered
+runnables, environments, graders and projections, and gates bound to a task and to a metric
+of their grader. A refusal is `invalid` and lists every `AppViolation` (`{ rule, path,
+message }`, `rule` being `shape` or the broken cross-reference) in `violations`; its message
+names the first five. Gate coverage requires exactly one scored metric per bound scope;
+duplicate grades cannot substitute for a missing scope.
 
 ```ts
 const TextRunnable = runnableExecutionPort<

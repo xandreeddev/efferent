@@ -10,7 +10,7 @@ import {
   calibrateGrader,
   gradeEvaluation,
   comparisonIssues,
-  validateEvaluationApp,
+  parseEvaluationApp,
   ReviewBundle,
   reviewBundle,
   approveReviews,
@@ -191,7 +191,7 @@ export const evaluationCli = (
       return 0
     }
     if (line.command === "validate") {
-      yield* validateEvaluationApp(app)
+      yield* parseEvaluationApp(app)
       output({ application: app.id, valid: true })
       return 0
     }

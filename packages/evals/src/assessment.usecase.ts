@@ -22,7 +22,7 @@ export interface Assessment {
   readonly reason: string
   readonly references?: ReadonlyArray<string>
   readonly usage?: EvaluationUsage
-  readonly metadata?: Readonly<Record<string, unknown>>
+  readonly metadata?: Schema.JsonObject
 }
 export interface Evaluator<I, R = never> {
   readonly id: string

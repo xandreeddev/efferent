@@ -15,7 +15,8 @@ import {
   runEvaluation,
   gradeEvaluation,
   executionFingerprint,
-  validateEvaluationApp,
+  parseEvaluationApp,
+  evaluationAppViolations,
   reviewBundle,
   approveReviews,
   rankingMetrics,
@@ -199,11 +200,12 @@ test("retrieval duplicates keep their rank and unjudged precision is unavailable
 
 test("invalid registry bindings are rejected before executing", async () => {
   const app = fixture()
-  expect(
-    await Effect.runPromise(
-      validateEvaluationApp({ ...app, graders: [] }).pipe(Effect.isFailure)
-    )
-  ).toBe(true)
+  const refused = await Effect.runPromise(run({ ...app, graders: [] }).pipe(Effect.flip))
+  expect(refused.code).toBe("invalid")
+  expect(refused.violations?.map((entry) => [entry.rule, entry.path])).toEqual([
+    ["grader-unknown", ["suites", 0, "tasks", 0, "graders", 0, "grader"]],
+    ["grader-unknown", ["suites", 0, "gates", 0, "grader"]]
+  ])
 })
 
 test("candidate selection only gates selected candidates", async () => {
@@ -484,7 +486,7 @@ test("a gate needs a bound, and a finding keeps its gate's mode", async () => {
     ...app,
     suites: app.suites.map((suite) => ({ ...suite, gates: suite.gates.map((gate) => ({ ...gate, minimum: Option.none<number>() })) }))
   }
-  expect((await Effect.runPromise(validateEvaluationApp(unbounded).pipe(Effect.flip))).message).toContain("a minimum or maximum on every gate")
+  expect((await Effect.runPromise(parseEvaluationApp(unbounded).pipe(Effect.flip))).violations?.map((entry) => [entry.rule, entry.path])).toEqual([["shape", ["suites", 0, "gates", 0]]])
   const gate = { grader: "grader@1", metric: "correct", aggregate: "mean", mode: "blocking", requiresReviewedReference: true }
   expect(Result.isSuccess(Schema.decodeUnknownResult(Gate)({ ...gate, minimum: 1, maximum: null }))).toBe(true)
   expect(Result.isFailure(Schema.decodeUnknownResult(Gate)({ ...gate, minimum: null, maximum: null }))).toBe(true)
@@ -493,4 +495,61 @@ test("a gate needs a bound, and a finding keeps its gate's mode", async () => {
   const encoded = Schema.encodeSync(EvaluationRun)(report)
   const decode = Schema.decodeUnknownResult(EvaluationRun)
   expect(Result.isFailure(decode({ ...encoded, gates: encoded.gates.map((gate) => ({ ...gate, mode: "Blocking" })) }))).toBe(true)
+})
+
+const breaks = (app: EvaluationApp) => evaluationAppViolations(app).map((entry) => [entry.rule, entry.path])
+const refusedBy = async (value: unknown) =>
+  (await Effect.runPromise(parseEvaluationApp(value).pipe(Effect.flip))).violations?.map((entry) => [entry.rule, entry.path])
+
+test("each broken cross-reference names its rule and the path to the value", () => {
+  const app = fixture()
+  const suite = app.suites[0]!
+  const task = suite.tasks[0]!
+  const binding = task.graders[0]!
+  const gate = suite.gates[0]!
+  const grader = app.graders[0]!
+  const withTask = (changes: Partial<typeof task>) => ({ ...app, suites: [{ ...suite, tasks: [{ ...task, ...changes }] }] })
+  const withGate = (changes: Partial<typeof gate>) => ({ ...app, suites: [{ ...suite, gates: [{ ...gate, ...changes }] }] })
+  const at = ["suites", 0, "tasks", 0]
+  expect(breaks(app)).toEqual([])
+  expect(breaks({ ...app, id: " " })).toEqual([["id-empty", ["id"]]])
+  expect(breaks({ ...app, suites: [suite, suite] })).toEqual([["duplicate-id", ["suites", 1, "id"]]])
+  expect(breaks({ ...app, suites: [{ ...suite, candidates: [] }] })).toEqual([["suite-empty", ["suites", 0, "candidates"]]])
+  expect(breaks(withTask({ graders: [] }))).toEqual([["task-ungraded", [...at, "graders"]], ["gate-unbound", ["suites", 0, "gates", 0, "grader"]]])
+  expect(breaks(withTask({ graders: [binding, binding] }))).toEqual([["binding-duplicate", [...at, "graders", 1]]])
+  expect(breaks({ ...app, suites: [{ ...suite, tasks: [task, { ...task, id: EvalId.make("other"), split: "calibration" }] }] }))
+    .toEqual([["split-mixed", [...at, "split"]], ["split-mixed", ["suites", 0, "tasks", 1, "split"]]])
+  expect(breaks(withTask({ runnable: "absent" }))).toEqual([["runnable-unknown", [...at, "runnable"]]])
+  expect(breaks({ ...app, environmentFor: { subject: "docker" } })).toEqual([["environment-unregistered", ["environmentFor", "subject"]]])
+  expect(breaks({ ...app, environmentFor: {} })).toEqual([["environment-unregistered", ["environmentFor", "subject"]]])
+  expect(breaks(withTask({ graders: [{ ...binding, grader: "grader@2" }] })))
+    .toEqual([["grader-unknown", [...at, "graders", 0, "grader"]], ["gate-unbound", ["suites", 0, "gates", 0, "grader"]]])
+  expect(breaks(withTask({ graders: [{ ...binding, projection: "absent" }] }))).toEqual([["projection-unknown", [...at, "graders", 0, "projection"]]])
+  expect(breaks({ ...withGate({ grader: "other@1" }), graders: [grader, { ...grader, definition: { ...grader.definition, id: EvalId.make("other") } }] }))
+    .toEqual([["gate-unbound", ["suites", 0, "gates", 0, "grader"]]])
+  expect(breaks(withGate({ metric: "absent" }))).toEqual([["gate-metric-unknown", ["suites", 0, "gates", 0, "metric"]]])
+  expect(breaks({ ...app, calibrations: [{ id: EvalId.make("calibration"), version: "1", grader: grader.definition, suite: { ...suite, candidates: [] } }] }))
+    .toEqual([["duplicate-id", ["calibrations", 0, "suite", "id"]], ["suite-empty", ["calibrations", 0, "suite", "candidates"]]])
+})
+
+test("a value that is not an evaluation app is refused by shape, at the path of each issue", async () => {
+  const app = fixture()
+  expect(await refusedBy(42)).toEqual([["shape", []]])
+  expect(await refusedBy({ ...app, commands: { estimate: "cost" }, graders: [{ ...app.graders[0]!, layer: {} }] }))
+    .toEqual([["shape", ["graders", 0, "layer"]], ["shape", ["commands", "estimate"]]])
+  expect(await refusedBy({ ...app, suites: [{ ...app.suites[0]!, id: "a/b" }] })).toEqual([["shape", ["suites", 0, "id"]]])
+  const parsed = await Effect.runPromise(parseEvaluationApp(app))
+  expect(parsed.suites).toEqual(app.suites)
+  expect(parsed.graders[0]?.layer).toBe(app.graders[0]!.layer)
+})
+
+test("a refusal keeps every violation and names the first five", async () => {
+  const app = fixture()
+  const suite = app.suites[0]!
+  const refused = await Effect.runPromise(parseEvaluationApp({ ...app, suites: Array.from({ length: 7 }, () => suite) }).pipe(Effect.flip))
+  expect(refused.code).toBe("invalid")
+  expect(refused.violations).toHaveLength(6)
+  expect(refused.message).toBe(
+    `Evaluation app refused (6 violations): ${[1, 2, 3, 4, 5].map((index) => `duplicate-id at suites.${index}.id: suite id "suite" is used more than once`).join("; ")}; and 1 more`
+  )
 })

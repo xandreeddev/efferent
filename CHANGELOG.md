@@ -71,6 +71,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   type (a numeric `accountId`, say) is no longer read with that field
   dropped: it is not used, and is written back as it is. Fix the field, or
   log in again.
+- Call `parseEvaluationApp` instead of `validateEvaluationApp`, tell
+  refusals apart by `violations[].rule` rather than message text, and put
+  only JSON values in `metadata`.
 
 ### Breaking
 
@@ -212,6 +215,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/plugin-models`: `toOpenAiCodexRequestBody` returns a readonly
   JSON object (`Schema.JsonObject`), and reads a body that is not a
   Responses request object as an empty one.
+- `@xandreed/evals`: `parseEvaluationApp(value)` decodes an evaluation app
+  (its shape, then its cross-references) and replaces `validateEvaluationApp`
+  (kept as a deprecated alias). A refusal is still `invalid`, with a message
+  naming the first five problems; `EvaluationError` gains `violations`
+  (`{ rule, path, message }`), and `evaluationAppViolations(app)` lists the
+  cross-reference ones. Runs, gradings, `efferent-eval validate` and
+  `loadEvaluationApp` decode the app, so a configuration whose default
+  export is not an app is refused up front.
+- `@xandreed/evals`: `metadata` on `Grade`, `EvaluationResult`,
+  `SemanticResult`, `Assessment`, `SemanticLlmOptions` and
+  `SemanticJevOptions` is a `Schema.JsonObject`; saved reports still decode.
 
 ### Added
 
@@ -567,6 +581,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `effect/no-record-cast`; its provider layer's casts (`compat.ts`,
   `providers.ts`, `router.ts`, `utilityLlm.ts`) sit on `RECORD_CAST_EDGES`
   until those files are typed.
+- `effect/no-unknown-json` covers `@xandreed/evals`.
 
 ## 0.14.0 — 2026-10-29
 

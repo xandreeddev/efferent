@@ -1,6 +1,6 @@
 import { LanguageModel } from "effect/ai"
 import type { Prompt } from "effect/ai"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Option, type Schema } from "effect"
 import { assessmentOfAiError } from "../assessment.entity.functions.js"
 import type { SemanticInput } from "../semantic.entity.js"
 import { semanticResponseSchema, validateSemanticInput, validateSemanticAnswers } from "../semantic.entity.functions.js"
@@ -9,7 +9,7 @@ import { SemanticJudge } from "../ports/semantic-judge.port.js"
 export interface SemanticLlmOptions {
   readonly id: string
   readonly prompt: (input: SemanticInput) => Prompt.Prompt
-  readonly metadata?: Readonly<Record<string, unknown>>
+  readonly metadata?: Schema.JsonObject
 }
 
 /** Captures the supplied model service; each profile can supply its own native prompt builder. */
