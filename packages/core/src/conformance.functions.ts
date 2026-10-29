@@ -6,6 +6,7 @@ import { ConversationId } from "./domain/message.entity.js"
 import { zeroUsage } from "./domain/token-usage.entity.functions.js"
 import type { TokenUsage } from "./domain/token-usage.entity.js"
 import type { SessionHeader, SessionLogEvent } from "./session/session-log.entity.js"
+import { randomUuid } from "./util/random-id.js"
 
 /*
  * The helpers the conformance kits share. Private to core: the kits are
@@ -41,7 +42,7 @@ export const eventually = <A>(value: Effect.Effect<A>, holds: (a: A) => boolean,
     : Effect.yieldNow.pipe(Effect.andThen(Effect.suspend(() => eventually(value, holds, tries - 1))))))
 
 /** A fresh id per session, so a kit can run against a shared store. */
-export const freshId = Effect.sync(() => ConversationId.make(crypto.randomUUID()))
+export const freshId = Effect.map(randomUuid, (id) => ConversationId.make(id))
 
 export const headerOf = (id: ConversationId, owner: string, parent: Option.Option<{ readonly id: ConversationId; readonly through: number; readonly turnAtFork: number }> = Option.none()): SessionHeader => ({
   id, owner, origin: "user", createdAt: 1_767_225_600_000, meta: { title: "conformance", nested: { list: [1, "two", null] } }, parent,

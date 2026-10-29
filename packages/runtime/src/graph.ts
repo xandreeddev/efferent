@@ -1,4 +1,4 @@
-import { Clock, ConfigProvider, Console, Context, Effect, Metric, Option, Random, References, Scheduler, Schema, Scope, Tracer } from "effect"
+import { Array as Arr, Clock, ConfigProvider, Console, Context, Effect, Metric, Option, Order, Random, References, Scheduler, Schema, Scope, Tracer } from "effect"
 import { createHash } from "node:crypto"
 import { CurrentTraceContent, HarnessError, mergeOptions, PLUGIN_API_VERSION, SUPPORTED_PLUGIN_API_VERSIONS } from "@xandreed/core"
 import type { HarnessConfig, Plugin, PluginEntry } from "@xandreed/core"
@@ -147,7 +147,7 @@ const canonicalJson = (value: unknown): Option.Option<string> => {
   const json: unknown = typeof value === "object" && value !== null && "toJSON" in value && typeof value.toJSON === "function" ? value.toJSON() : value
   if (Array.isArray(json)) return Option.some(`[${json.map((item) => Option.getOrElse(canonicalJson(item), () => "null")).join(",")}]`)
   if (typeof json === "object" && json !== null) {
-    return Option.some(`{${Object.keys(json).sort().flatMap((key) =>
+    return Option.some(`{${Arr.sort(Object.keys(json), Order.String).flatMap((key) =>
       Option.toArray(Option.map(canonicalJson(Reflect.get(json, key)), (text) => `${JSON.stringify(key)}:${text}`))).join(",")}}`)
   }
   return Option.fromNullishOr(JSON.stringify(json))

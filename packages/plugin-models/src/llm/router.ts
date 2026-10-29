@@ -1,8 +1,8 @@
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Clock, Context, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
-import { AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, HarnessError, parseModelSelection, replayableContext, resolvingModel, SettingsStore } from "@xandreed/core"
-import type { AuthError, ModelSelection, TokenUsage } from "@xandreed/core"
+import { Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
+import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, HarnessError, parseModelSelection, replayableContext, resolvingModel, SettingsStore } from "@xandreed/core"
+import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, endpointOwnKey, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
 import { CurrentOpenAiCodexSessions, makeOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
@@ -10,7 +10,7 @@ import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import { transportFetch } from "../transport/models-transport.adapter.js"
 import {
-  classifyLlmError,
+  isTransientLlmError,
   rejectEmptyResponse,
   retryableLlm,
   retryableLlmStream,
@@ -110,13 +110,22 @@ const countUsage = (label: string, usage: TokenUsage) =>
   )
 
 /**
+ * `EFFERENT_TRACE_CONTENT=1`, read with `Config` (the current ConfigProvider);
+ * a provider that cannot be read counts as unset, with a warning.
+ */
+const traceContentVariable: Effect.Effect<boolean> = Config.option(Config.String("EFFERENT_TRACE_CONTENT")).pipe(
+  Effect.map(Option.exists((value) => value === "1")),
+  Effect.catch((error) => Effect.logWarning(`EFFERENT_TRACE_CONTENT cannot be read: ${error.message}`).pipe(Effect.as(false))),
+)
+
+/**
  * The model's reasoning on the call's span: its first 500 characters when
  * this call may carry content (`CurrentTraceContent`, which the step loop
  * provides from the run's `captureTraceContent`, or `EFFERENT_TRACE_CONTENT=1`
  * for the whole process), `[redacted]` otherwise. Read per call.
  */
-const tracedContent = Effect.service(CurrentTraceContent).pipe(Effect.map((capture) =>
-  (content: string): string => capture || process.env["EFFERENT_TRACE_CONTENT"] === "1" ? content.slice(0, 500) : "[redacted]"))
+const tracedContent = Effect.all([Effect.service(CurrentTraceContent), traceContentVariable]).pipe(Effect.map(([capture, variable]) =>
+  (content: string): string => capture || variable ? content.slice(0, 500) : "[redacted]"))
 
 const shapeOptions = (
   selection: ModelSelection,
@@ -193,7 +202,12 @@ const describeSelection = (primary: ModelSelection, fallback: Option.Option<Mode
  */
 const credentialFor = (selection: ModelSelection) => Effect.gen(function* () {
   const endpoints = yield* Effect.service(CurrentModelEndpoints)
-  const own = Option.flatMap(Option.fromNullishOr(endpoints[selection.provider]), endpointOwnKey)
+  const own = yield* Option.match(Option.fromNullishOr(endpoints[selection.provider]), {
+    onNone: () => Effect.succeedNone,
+    onSome: (endpoint) => endpointOwnKey(endpoint).pipe(
+      Effect.mapError((error) => new AuthError({ provider: selection.provider, message: `cannot read the endpoint's key variable: ${error.message}` })),
+    ),
+  })
   if (Option.isSome(own)) return { credential: undefined, key: own.value }
   const auth = yield* AuthStore
   return {
@@ -330,20 +344,17 @@ export const withFallbackRung = <A, E, R>(
 ): Effect.Effect<A, E, R> =>
   call(primary, false).pipe(
     Effect.catch((error) =>
-      Option.match(
-        Option.filter(
-          fallback,
-          (fb) =>
-            formatModelSelection(fb) !== formatModelSelection(primary) &&
-            classifyLlmError(error) === "transient",
+      Effect.flatMap(isTransientLlmError(error), (transient) =>
+        Option.match(
+          Option.filter(fallback, (fb) => transient && formatModelSelection(fb) !== formatModelSelection(primary)),
+          {
+            onNone: () => Effect.fail(error),
+            onSome: (fb) =>
+              Effect.logWarning(
+                `${formatModelSelection(primary)} exhausted retries (${String(error).slice(0, 200)}) — falling back to ${formatModelSelection(fb)}`,
+              ).pipe(Effect.andThen(call(fb, true))),
+          },
         ),
-        {
-          onNone: () => Effect.fail(error),
-          onSome: (fb) =>
-            Effect.logWarning(
-              `${formatModelSelection(primary)} exhausted retries (${String(error).slice(0, 200)}) — falling back to ${formatModelSelection(fb)}`,
-            ).pipe(Effect.andThen(call(fb, true))),
-        },
       ),
     ),
   )

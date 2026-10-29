@@ -106,9 +106,103 @@ describe("effect-idioms gate over fixtures", () => {
     expect(findings.map((f) => f.message).at(-1)).toContain("every OTHER test")
   })
 
-  test("effect/no-as-never flags the never-cast and nothing else", async () => {
+  test("effect/no-as-never flags the never-cast and the never-laundering chain", async () => {
     const findings = await findingsFor(["effect/no-as-never"], ["asNever.ts"])
-    expect(at(findings)).toEqual([{ rule: "effect/no-as-never", file: "asNever.ts", line: 2 }])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-as-never", file: "asNever.ts", line: 2 },
+      { rule: "effect/no-as-never", file: "asNever.ts", line: 4 },
+    ])
+    expect(findings.map((f) => f.message)).toEqual([
+      "`as never` launders the type like `as any`",
+      "`as never as T` launders the type like `as unknown as T`",
+    ])
+  })
+
+  test("a rule's boundary drops what the rule tolerates there: `as never`, never `as never as T`", async () => {
+    const config = [Schema.decodeUnknownSync(RuleConfig)({ rule: "effect/no-as-never", include: ["asNever.ts"], boundary: ["asNever.ts"] })]
+    const findings = await Effect.runPromise(
+      makeIdiomGate(allBuiltinRules, config, "tsconfig.json").run(ws).pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    expect(at(findings)).toEqual([{ rule: "effect/no-as-never", file: "asNever.ts", line: 4 }])
+  })
+
+  test("effect/no-json-parse flags JSON.parse, called or passed, and not the Schema decode", async () => {
+    const findings = await findingsFor(["effect/no-json-parse"], ["jsonParse.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-json-parse", file: "jsonParse.ts", line: 3 },
+      { rule: "effect/no-json-parse", file: "jsonParse.ts", line: 4 },
+    ])
+  })
+
+  test("effect/no-sync-codec flags the throwing codecs, not the Result or Effect forms", async () => {
+    const findings = await findingsFor(["effect/no-sync-codec"], ["syncCodec.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-sync-codec", file: "syncCodec.ts", line: 4 },
+      { rule: "effect/no-sync-codec", file: "syncCodec.ts", line: 5 },
+    ])
+  })
+
+  test("effect/no-cause-pretty-data flags Cause.pretty kept as data, not as an Effect.log* argument", async () => {
+    const findings = await findingsFor(["effect/no-cause-pretty-data"], ["causePretty.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-cause-pretty-data", file: "causePretty.ts", line: 4 },
+      { rule: "effect/no-cause-pretty-data", file: "causePretty.ts", line: 8 },
+    ])
+  })
+
+  test("effect/no-effect-promise flags Effect.promise, not Effect.tryPromise", async () => {
+    const findings = await findingsFor(["effect/no-effect-promise"], ["effectPromise.ts"])
+    expect(at(findings)).toEqual([{ rule: "effect/no-effect-promise", file: "effectPromise.ts", line: 3 }])
+  })
+
+  test("effect/no-promise-all flags Promise.all and allSettled", async () => {
+    const findings = await findingsFor(["effect/no-promise-all"], ["promiseAll.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-promise-all", file: "promiseAll.ts", line: 3 },
+      { rule: "effect/no-promise-all", file: "promiseAll.ts", line: 4 },
+    ])
+  })
+
+  test("effect/callback-buffer-size is type-aware: a literal or a typed options value naming bufferSize passes", async () => {
+    const findings = await findingsFor(["effect/callback-buffer-size"], ["callbackBufferSize.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/callback-buffer-size", file: "callbackBufferSize.ts", line: 4 },
+      { rule: "effect/callback-buffer-size", file: "callbackBufferSize.ts", line: 5 },
+    ])
+  })
+
+  test("effect/no-process-env flags process.env in code, not in comments", async () => {
+    const findings = await findingsFor(["effect/no-process-env"], ["processEnv.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-process-env", file: "processEnv.ts", line: 3 },
+      { rule: "effect/no-process-env", file: "processEnv.ts", line: 4 },
+    ])
+  })
+
+  test("effect/no-ambient-time-random flags the wall clock and unseeded generators, not Clock, Random or new Date(t)", async () => {
+    const findings = await findingsFor(["effect/no-ambient-time-random"], ["ambientTimeRandom.ts"])
+    expect(at(findings)).toEqual([4, 5, 6, 7, 8].map((line) => ({ rule: "effect/no-ambient-time-random", file: "ambientTimeRandom.ts", line })))
+  })
+
+  test("effect/no-locale-compare flags localeCompare, not Order.String", async () => {
+    const findings = await findingsFor(["effect/no-locale-compare"], ["localeCompare.ts"])
+    expect(at(findings)).toEqual([{ rule: "effect/no-locale-compare", file: "localeCompare.ts", line: 3 }])
+  })
+
+  test("effect/require-sort-comparator flags sort/toSorted without an order", async () => {
+    const findings = await findingsFor(["effect/require-sort-comparator"], ["sortComparator.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/require-sort-comparator", file: "sortComparator.ts", line: 3 },
+      { rule: "effect/require-sort-comparator", file: "sortComparator.ts", line: 4 },
+    ])
+  })
+
+  test("effect/no-instanceof-tagged-error is type-aware: tagged classes only, never Error or Date", async () => {
+    const findings = await findingsFor(["effect/no-instanceof-tagged-error"], ["instanceofTaggedError.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-instanceof-tagged-error", file: "instanceofTaggedError.ts", line: 6 },
+      { rule: "effect/no-instanceof-tagged-error", file: "instanceofTaggedError.ts", line: 7 },
+    ])
   })
 
   test("quality/no-empty-catch flags the swallow, not the handled catch", async () => {

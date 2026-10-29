@@ -18,6 +18,7 @@ import {
   TurnStartedData,
 } from "./session-event.entity.js"
 import type { TurnEndedData as TurnEnded, TurnStartedData as TurnStarted } from "./session-event.entity.js"
+import { JsonObject as JsonObjectSchema } from "./session-log.entity.js"
 import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 
 const encodeEntry = Schema.encodeEffect(LogEntry)
@@ -25,8 +26,10 @@ const decodeEntry = Schema.decodeUnknownEffect(LogEntry)
 const encodeTurnEvent = Schema.encodeEffect(TurnEvent)
 const tagOfKind: ReadonlyMap<string, string> = new Map(Object.entries(MemoryKindOf).map(([tag, kind]) => [kind, tag]))
 
+const decodeCanonical = Schema.decodeUnknownEffect(Schema.fromJsonString(JsonObjectSchema))
+
 /** Stored JSON read back with sorted keys: every store gives the same bytes, as the canonical log did. */
-const canonical = (data: JsonObject): Record<string, unknown> => JSON.parse(canonicalJson(data)) as Record<string, unknown>
+const canonical = (data: JsonObject): Effect.Effect<JsonObject, Schema.SchemaError> => decodeCanonical(canonicalJson(data))
 
 const turnOf = (event: SessionLogEvent): number => Option.getOrElse(event.turn, () => 0)
 
@@ -79,11 +82,11 @@ export const turnEndedDraft = (turn: number, data: TurnEnded): Effect.Effect<Ses
 
 /** A stored `turn.started`, decoded. */
 export const turnStartedOf = (event: SessionLogEvent): Effect.Effect<TurnStarted, Schema.SchemaError> =>
-  Schema.decodeUnknownEffect(TurnStartedData)(canonical(event.data))
+  canonical(event.data).pipe(Effect.flatMap(Schema.decodeUnknownEffect(TurnStartedData)))
 
 /** A stored `turn.ended`, decoded. */
 export const turnEndedOf = (event: SessionLogEvent): Effect.Effect<TurnEnded, Schema.SchemaError> =>
-  Schema.decodeUnknownEffect(TurnEndedData)(canonical(event.data))
+  canonical(event.data).pipe(Effect.flatMap(Schema.decodeUnknownEffect(TurnEndedData)))
 
 /**
  * One stored event → the memory entry it is, if it is one. A `turn.started`
@@ -98,10 +101,13 @@ export const entryOfEvent = (event: SessionLogEvent): Effect.Effect<Option.Optio
   }
   const tag = tagOfKind.get(event.kind)
   if (tag === undefined) return Effect.succeed(Option.none())
-  const data = canonical(event.data)
-  const body = typeof data.body === "object" && data.body !== null ? data.body : {}
-  return decodeEntry({ id: data.entry, runId: data.runId, turn: turnOf(event), step: data.step, at: data.at, body: { ...body, _tag: tag } })
-    .pipe(Effect.map(Option.some))
+  return canonical(event.data).pipe(
+    Effect.flatMap((data) => {
+      const body = typeof data.body === "object" && data.body !== null ? data.body : {}
+      return decodeEntry({ id: data.entry, runId: data.runId, turn: turnOf(event), step: data.step, at: data.at, body: { ...body, _tag: tag } })
+    }),
+    Effect.map(Option.some),
+  )
 }
 
 /** The memory log held in a session's events, in log order. */
@@ -135,7 +141,7 @@ const decodeStepUsage = Schema.decodeUnknownEffect(StepUsageData)
 export const turnUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number): Effect.Effect<TokenUsage, Schema.SchemaError> =>
   Effect.forEach(
     events.filter((event) => event.kind === "step.usage" && Option.contains(event.turn, turn)),
-    (event) => decodeStepUsage(canonical(event.data)),
+    (event) => canonical(event.data).pipe(Effect.flatMap(decodeStepUsage)),
   ).pipe(Effect.map((records) => sumUsage(records.map((record) => record.usage))))
 
 /**

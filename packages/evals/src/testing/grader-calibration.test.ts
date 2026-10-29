@@ -20,14 +20,14 @@ const target = {
     ),
   }),
 }
-const calibration = defineGraderCalibration({ id: "calibration", version: "1", description: "Evidence boundary", input: Input, grader: target,
+const calibration = Effect.runSync(defineGraderCalibration({ id: "calibration", version: "1", description: "Evidence boundary", input: Input, grader: target,
   cases: [true, false, null].map((value, index) => ({
     id: `case-${index}`, family: `family-${index}`, split: index === 2 ? "validation" as const : "calibration" as const,
     review: "known" as const, provenance: "Controlled evidence mutation", input: { evidence: Option.fromNullishOr(value) },
     reference: { status: value === null ? "unavailable" as const : "scored" as const,
       metrics: value === null ? [] : [{ metric: { kind: "boolean" as const, name: "valid", value }, tolerance: 0 }] },
   })),
-})
+}))
 const app = defineEvaluationApp({ id: "calibration-test", suites: [], calibrations: [calibration.calibration],
   runnables: [calibration.runnable], graders: calibration.graders, projections: calibration.projections,
   environmentFor: { [calibration.runnable.definition.id]: calibration.environment.id }, fingerprints: {}, commands: {},
@@ -44,14 +44,23 @@ test("the actual grader is calibrated on passes, rejections and unavailable evid
   expect(replay.gates.every((gate) => gate.passed)).toBe(true)
 })
 test("a permissive mutation cannot pass calibration", async () => {
-  const mutated = defineGraderCalibration({ id: "mutation", version: "1", description: "Always accepts", input: Input,
+  const mutated = Effect.runSync(defineGraderCalibration({ id: "mutation", version: "1", description: "Always accepts", input: Input,
     grader: { ...target, layer: Layer.succeed(GraderAssessment, { assess: () => Effect.succeed({ status: "scored", metrics: [{ kind: "boolean", name: "valid", value: true }], reason: "Always accepts", usage: unknownEvaluationUsage, metadata: {} }) }) },
     cases: calibration.calibration.suite.tasks.map((task) => ({ ...task, split: task.split === "calibration" ? "calibration" as const : "validation" as const, input: Schema.decodeUnknownSync(Schema.toCodecJson(Input))(task.input), reference: Schema.decodeUnknownSync(CalibrationReference)(task.reference) })),
-  })
+  }))
   const mutatedApp = { ...app, calibrations: [mutated.calibration], runnables: [mutated.runnable], graders: mutated.graders, projections: mutated.projections, environmentFor: { [mutated.runnable.definition.id]: mutated.environment.id } }
   const report = await Effect.runPromise(calibrateGrader(mutatedApp, "mutation", "mutation", { ids: [], split: "all" }).pipe(Effect.provide(Layer.merge(EvaluationServicesLive(mutatedApp), store))))
   expect(report.gates.filter((gate) => gate.passed)).toHaveLength(1)
   expect(report.gates.find((gate) => gate.metric === "false-pass")?.passed).toBe(false)
+})
+
+test("a case whose input does not encode is an invalid calibration, not a throw", async () => {
+  const Positive = Schema.Struct({ count: Schema.Number.check(Schema.isGreaterThan(0)) })
+  const exit = await Effect.runPromiseExit(defineGraderCalibration({ id: "unencodable", version: "1", description: "A bad case", input: Positive, grader: target,
+    cases: [{ id: "negative", family: "negative", split: "calibration", review: "known", provenance: "A typo", input: { count: -1 }, reference: { status: "unavailable", metrics: [] } }],
+  }))
+  expect(exit._tag).toBe("Failure")
+  expect(String(exit)).toContain("calibration unencodable, case negative: the input does not encode")
 })
 
 test("a duplicate grade cannot stand in for a missing scoped grade", async () => {

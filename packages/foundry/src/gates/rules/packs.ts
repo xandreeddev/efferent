@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Array as Arr, Effect, Order } from "effect"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { ConfigError } from "../../domain/Errors.js"
@@ -14,6 +14,12 @@ import { noNullableReturn } from "./noNullableReturn.js"
 import { noParallelInterface } from "./noParallelInterface.js"
 import { noSkippedTests } from "./noSkippedTests.js"
 import { noTryCatch } from "./noTryCatch.js"
+import { noAmbientTimeRandom, noProcessEnv } from "./ambientServices.js"
+import { noJsonParse, noSyncCodec } from "./boundaryDecoding.js"
+import { callbackBufferSize } from "./callbackBufferSize.js"
+import { noLocaleCompare, requireSortComparator } from "./deterministicOrder.js"
+import { noCausePrettyData, noInstanceofTaggedError } from "./errorValues.js"
+import { noEffectPromise, noPromiseAll } from "./promiseInterop.js"
 import { effectArchitectureRules } from "./effectArchitecture.js"
 
 /**
@@ -28,7 +34,9 @@ export interface RulePack {
   readonly rules: ReadonlyArray<IdiomRule>
 }
 
-/** The Effect.ts house style — errors are values, state is a fold. */
+/** The Effect.ts house style — errors are values, state is a fold, and
+ *  what crosses a boundary (text, the environment, time, randomness,
+ *  foreign promises) is decoded or comes from a service. */
 export const effectPack: RulePack = {
   name: "effect",
   rules: [
@@ -41,6 +49,17 @@ export const effectPack: RulePack = {
     noAsNever,
     brandedIdFields,
     noParallelInterface,
+    noJsonParse,
+    noSyncCodec,
+    noCausePrettyData,
+    noEffectPromise,
+    noPromiseAll,
+    callbackBufferSize,
+    noProcessEnv,
+    noAmbientTimeRandom,
+    noLocaleCompare,
+    requireSortComparator,
+    noInstanceofTaggedError,
   ],
 }
 
@@ -75,21 +94,21 @@ const VENDOR_DIR = path.resolve(import.meta.dir, "../../../vendor")
 
 export const vendoredPackFiles = (
   packName: string,
-): Effect.Effect<ReadonlyArray<{ readonly path: string; readonly content: string }>, ConfigError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const dir = path.join(VENDOR_DIR, packName)
-      const names = (await fs.readdir(dir)).filter((name) => name.endsWith(".ts")).sort()
-      return Promise.all(
-        names.map(async (name) => ({
-          path: `${packName}/${name}`,
-          content: await fs.readFile(path.join(dir, name), "utf8"),
-        })),
-      )
-    },
-    catch: () =>
-      new ConfigError({
-        path: path.join(VENDOR_DIR, packName),
-        message: `no vendorable pack named "${packName}" — known: ${builtinPacks.map((p) => p.name).join(", ")}`,
-      }),
-  })
+): Effect.Effect<ReadonlyArray<{ readonly path: string; readonly content: string }>, ConfigError> => {
+  const dir = path.join(VENDOR_DIR, packName)
+  const unknownPack = () =>
+    new ConfigError({
+      path: dir,
+      message: `no vendorable pack named "${packName}" — known: ${builtinPacks.map((p) => p.name).join(", ")}`,
+    })
+  return Effect.tryPromise({ try: () => fs.readdir(dir), catch: unknownPack }).pipe(
+    Effect.map((names) => Arr.sort(names.filter((name) => name.endsWith(".ts")), Order.String)),
+    Effect.flatMap((names) =>
+      Effect.forEach(names, (name) =>
+        Effect.tryPromise({ try: () => fs.readFile(path.join(dir, name), "utf8"), catch: unknownPack }).pipe(
+          Effect.map((content) => ({ path: `${packName}/${name}`, content })),
+        ),
+      ),
+    ),
+  )
+}

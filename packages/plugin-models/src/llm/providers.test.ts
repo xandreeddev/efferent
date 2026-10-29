@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test"
-import { Effect, Option, Redacted } from "effect"
+import { ConfigProvider, Effect, Option, Redacted } from "effect"
 import { Prompt } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, parseModelSelection, ToolCallId, toPromptMessages } from "@xandreed/core"
@@ -101,12 +101,16 @@ const chatServer = () => {
   return { seen, url: `http://127.0.0.1:${server.port}/v1`, stop: () => server.stop(true) }
 }
 
-const ask = (model: string, endpoints: ModelEndpoints, credential?: Credential, key?: string) =>
+const ask = (model: string, endpoints: ModelEndpoints, credential?: Credential, key?: string, config?: ConfigProvider.ConfigProvider) =>
   Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const selection = yield* Effect.fromOption(parseModelSelection(model))
     const built = yield* buildProvider(selection, credential, key === undefined ? undefined : Redacted.make(key))
     return (yield* built.svc.generateText({ prompt: "hi" })).text
-  })).pipe(Effect.provideService(CurrentModelEndpoints, endpoints), Effect.provide(FetchHttpClient.layer)))
+  })).pipe(
+    Effect.provideService(CurrentModelEndpoints, endpoints),
+    config === undefined ? (effect) => effect : Effect.provideService(ConfigProvider.ConfigProvider, config),
+    Effect.provide(FetchHttpClient.layer),
+  ))
 
 describe("configured endpoints", () => {
   it("sends a named endpoint's models to its URL without a key", async () => {
@@ -119,25 +123,35 @@ describe("configured endpoints", () => {
 
   it("takes the key from the endpoint, then its environment variable, then the stored credential", async () => {
     const server = chatServer()
-    process.env["EFFERENT_TEST_ENDPOINT_KEY"] = "env-key"
+    const env = ConfigProvider.fromEnvRecord({ EFFERENT_TEST_ENDPOINT_KEY: "env-key" })
     const run = Promise.all([
-      ask("gw:m", { gw: { url: server.url, apiKey: "config-key", apiKeyEnv: "EFFERENT_TEST_ENDPOINT_KEY" } }, undefined, "stored-key"),
-      ask("gw:m", { gw: { url: server.url, apiKeyEnv: "EFFERENT_TEST_ENDPOINT_KEY" } }, undefined, "stored-key"),
-      ask("gw:m", { gw: { url: server.url, apiKeyEnv: "EFFERENT_TEST_UNSET_KEY" } }, undefined, "stored-key"),
+      ask("gw:m", { gw: { url: server.url, apiKey: "config-key", apiKeyEnv: "EFFERENT_TEST_ENDPOINT_KEY" } }, undefined, "stored-key", env),
+      ask("gw:m", { gw: { url: server.url, apiKeyEnv: "EFFERENT_TEST_ENDPOINT_KEY" } }, undefined, "stored-key", env),
+      ask("gw:m", { gw: { url: server.url, apiKeyEnv: "EFFERENT_TEST_UNSET_KEY" } }, undefined, "stored-key", env),
     ])
-    await run.finally(() => { server.stop(); delete process.env["EFFERENT_TEST_ENDPOINT_KEY"] })
+    await run.finally(() => server.stop())
     expect(server.seen.map((call) => call.auth).sort()).toEqual(["Bearer config-key", "Bearer env-key", "Bearer stored-key"])
   })
 
   it("sends no key for an empty own key, and never the stored one", async () => {
     const server = chatServer()
-    process.env["EFFERENT_TEST_EMPTY_KEY"] = ""
+    const preserving = ConfigProvider.fromEnvRecord({ EFFERENT_TEST_EMPTY_KEY: "" }, { preserveEmptyStrings: true })
     const run = Promise.all([
       ask("gw:m", { gw: { url: server.url, apiKey: "" } }, undefined, "stored-key"),
-      ask("gw:m", { gw: { url: server.url, apiKeyEnv: "EFFERENT_TEST_EMPTY_KEY" } }, undefined, "stored-key"),
+      ask("gw:m", { gw: { url: server.url, apiKeyEnv: "EFFERENT_TEST_EMPTY_KEY" } }, undefined, "stored-key", preserving),
     ])
-    await run.finally(() => { server.stop(); delete process.env["EFFERENT_TEST_EMPTY_KEY"] })
+    await run.finally(() => server.stop())
     expect(server.seen.map((call) => call.auth)).toEqual([null, null])
+  })
+
+  it("reads apiKeyEnv through the ConfigProvider, where the environment's reads an empty variable as unset", async () => {
+    const server = chatServer()
+    const run = Promise.all([
+      ask("gw:m", { gw: { url: server.url, apiKeyEnv: "GATEWAY_KEY" } }, undefined, "stored-key", ConfigProvider.fromEnvRecord({ GATEWAY_KEY: "provided-key" })),
+      ask("gw:m", { gw: { url: server.url, apiKeyEnv: "GATEWAY_KEY" } }, undefined, "stored-key", ConfigProvider.fromEnvRecord({ GATEWAY_KEY: "" })),
+    ])
+    await run.finally(() => server.stop())
+    expect(server.seen.map((call) => call.auth).sort()).toEqual(["Bearer provided-key", "Bearer stored-key"])
   })
 
   it("routes a local credential's base URL without a key", async () => {

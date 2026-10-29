@@ -1,8 +1,9 @@
-import { Clock, Effect, Layer, Option, Ref } from "effect"
+import { Array as Arr, Clock, Effect, Layer, Option, Ref } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import { SessionLog } from "../ports/session-log.port.js"
-import { LeaseExpired, RevisionConflict, SessionExists, SessionMissing } from "./session-log.entity.js"
+import { LeaseExpired, RevisionConflict, SessionExists, SessionLogError, SessionMissing } from "./session-log.entity.js"
 import type { JsonObject, SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "./session-log.entity.js"
+import { storedJson } from "./session-log.entity.functions.js"
 
 /** A head as stored (its `now` is added when read) and the session's events. */
 interface Stored {
@@ -12,17 +13,19 @@ interface Stored {
 
 type Store = ReadonlyMap<string, Stored>
 
-/** Stored JSON is a copy: what a caller later mutates never reaches the log. */
-const stored = (value: JsonObject): JsonObject => JSON.parse(JSON.stringify(value)) as JsonObject
+/** What a caller hands the log, as a store on disk would keep it; a value JSON cannot hold fails with `store.encode`. */
+const encoded = (value: JsonObject): Effect.Effect<JsonObject, SessionLogError> =>
+  storedJson(value).pipe(Effect.mapError((error) => new SessionLogError({ code: "store.encode", message: `the data is not JSON: ${error.message}` })))
 
+/** Stored JSON is copied out: what a caller later mutates never reaches the log. */
 const copyHeader = (header: SessionHeader): SessionHeader => ({
-  ...header, meta: stored(header.meta), parent: Option.map(header.parent, (parent) => ({ ...parent })),
+  ...header, meta: structuredClone(header.meta), parent: Option.map(header.parent, (parent) => ({ ...parent })),
 })
 const copyHead = (head: Omit<SessionHead, "now">, now: number): SessionHead => ({
-  ...head, header: copyHeader(head.header), state: stored(head.state), now,
+  ...head, header: copyHeader(head.header), state: structuredClone(head.state), now,
 })
 const copyEvent = (event: SessionLogEvent): SessionLogEvent => ({
-  ...event, turn: Option.map(event.turn, (turn) => turn), data: stored(event.data),
+  ...event, turn: Option.map(event.turn, (turn) => turn), data: structuredClone(event.data),
 })
 
 /** Every session under `ids`, their children, and theirs. */
@@ -45,10 +48,10 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
   const missing = (id: ConversationId) => new SessionMissing({ session: id })
 
   return SessionLog.of({
-    create: (header) => now.pipe(Effect.flatMap((at) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
+    create: (header) => Effect.all([encoded(header.meta), now]).pipe(Effect.flatMap(([meta, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionHead, SessionExists | SessionMissing>, Store] => {
       if (all.has(header.id)) return [Effect.fail(new SessionExists({ session: header.id })), all]
       if (Option.isSome(header.parent) && !all.has(header.parent.value.id)) return [Effect.fail(missing(header.parent.value.id)), all]
-      const head = { header: copyHeader(header), seq: 0, revision: 0, state: {}, updatedAt: at }
+      const head = { header: { ...header, meta, parent: Option.map(header.parent, (parent) => ({ ...parent })) }, seq: 0, revision: 0, state: {}, updatedAt: at }
       return [Effect.succeed(copyHead(head, at)), new Map([...all, [header.id, { head, events: [] }]])]
     })), Effect.flatten),
     head: (id) => Effect.gen(function* () {
@@ -74,7 +77,11 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
       const events = session.events.filter((event) => event.seq > query.after && (query.kinds.length === 0 || query.kinds.includes(event.kind)))
       return Effect.succeed(Option.match(query.limit, { onNone: () => events, onSome: (limit) => events.slice(0, Math.max(0, limit)) }).map(copyEvent))
     })),
-    commit: (id, commit) => now.pipe(Effect.flatMap((at) => Ref.modify(store, (all): readonly [Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing>, Store] => {
+    commit: (id, commit) => Effect.all([
+      Effect.forEach(commit.events, (draft) => encoded(draft.data)),
+      Option.match(commit.state, { onNone: () => Effect.succeedNone, onSome: (state) => Effect.map(encoded(state), Option.some) }),
+      now,
+    ]).pipe(Effect.flatMap(([data, state, at]) => Ref.modify(store, (all): readonly [Effect.Effect<SessionCommitted, RevisionConflict | LeaseExpired | SessionMissing>, Store] => {
       const session = all.get(id)
       if (session === undefined) return [Effect.fail(missing(id)), all]
       if (session.head.revision !== commit.expect) {
@@ -83,14 +90,14 @@ export const SessionLogMemoryLive: Layer.Layer<SessionLog> = Layer.effect(Sessio
       if (Option.isSome(commit.notAfter) && at > commit.notAfter.value) {
         return [Effect.fail(new LeaseExpired({ session: id, notAfter: commit.notAfter.value, now: at })), all]
       }
-      const events = commit.events.map((draft, index): SessionLogEvent => ({
-        session: id, seq: session.head.seq + index + 1, turn: Option.map(draft.turn, (turn) => turn), kind: draft.kind, at, data: stored(draft.data),
+      const events = Arr.zip(commit.events, data).map(([draft, stored], index): SessionLogEvent => ({
+        session: id, seq: session.head.seq + index + 1, turn: Option.map(draft.turn, (turn) => turn), kind: draft.kind, at, data: stored,
       }))
       const head = {
         ...session.head,
         seq: session.head.seq + events.length,
         revision: session.head.revision + 1,
-        state: Option.match(commit.state, { onNone: () => session.head.state, onSome: stored }),
+        state: Option.getOrElse(state, () => session.head.state),
         updatedAt: at,
       }
       return [

@@ -3,6 +3,8 @@ import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { FactoryRun } from "../domain/FactoryRun.js"
 
+const decodeRun = Schema.decodeUnknownEffect(Schema.fromJsonString(FactoryRun))
+
 /**
  * Read the persisted run history back from a `makeFileRunSink` directory —
  * the memory read (`deriveLessons` is the fold over it). DEFENSIVE by
@@ -24,10 +26,7 @@ export const readRuns = (dir: string): Effect.Effect<ReadonlyArray<FactoryRun>> 
             try: () => fs.readFile(path.join(dir, name), "utf-8"),
             catch: () => "unreadable" as const,
           }).pipe(
-            Effect.flatMap((text) =>
-              Effect.try({ try: () => JSON.parse(text) as unknown, catch: () => "not-json" as const }),
-            ),
-            Effect.flatMap(Schema.decodeUnknownEffect(FactoryRun)),
+            Effect.flatMap(decodeRun),
             Effect.map((run) => [run] as ReadonlyArray<FactoryRun>),
             Effect.orElseSucceed(() => [] as ReadonlyArray<FactoryRun>),
           ),

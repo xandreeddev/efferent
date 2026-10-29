@@ -2,7 +2,7 @@ import { LanguageModel, Prompt } from "effect/ai"
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
-import { Effect, Option, Redacted } from "effect"
+import { Config, Effect, Option, Redacted } from "effect"
 import type { Context, Scope } from "effect"
 import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, formatModelSelection, modelRequestDescriptorOf } from "@xandreed/core"
 import type { Credential, ModelCallPolicy, ModelSelection } from "@xandreed/core"
@@ -174,22 +174,31 @@ const openAiConfig = (selection: ModelSelection, cacheKey: Option.Option<string>
 export const chatCompletionsUrl = (baseUrl: string): string => `${baseUrl.replace(/\/+$/, "")}/chat/completions`
 
 /**
- * An endpoint's own key: `apiKey`, then the environment variable `apiKeyEnv`
- * names when it is set. An empty one is still the endpoint's own: it sends
- * no key, and the AuthStore's is not used.
+ * An endpoint's own key: `apiKey`, then the variable `apiKeyEnv` names, read
+ * with `Config` from the current ConfigProvider (the process environment
+ * unless the host provides another; the environment's reads an empty
+ * variable as unset). An empty `apiKey` is still the endpoint's own: it
+ * sends no key, and the AuthStore's is not used. Fails with the
+ * ConfigError when the provider cannot be read.
  */
-export const endpointOwnKey = (endpoint: ModelEndpoint): Option.Option<Redacted.Redacted<string>> =>
-  Option.fromNullishOr(endpoint.apiKey).pipe(
-    Option.map((key) => Redacted.isRedacted(key) ? key : Redacted.make(key)),
-    Option.orElse(() => Option.flatMap(Option.fromNullishOr(endpoint.apiKeyEnv), (name) => Option.map(Option.fromNullishOr(process.env[name]), (value) => Redacted.make(value)))),
-  )
+export const endpointOwnKey = (endpoint: ModelEndpoint): Effect.Effect<Option.Option<Redacted.Redacted<string>>, Config.ConfigError> =>
+  Option.match(Option.fromNullishOr(endpoint.apiKey), {
+    onSome: (key) => Effect.succeed(Option.some(Redacted.isRedacted(key) ? key : Redacted.make(key))),
+    onNone: () => Option.match(Option.fromNullishOr(endpoint.apiKeyEnv), {
+      onNone: () => Effect.succeedNone,
+      onSome: (name) => Config.option(Config.Redacted(name)),
+    }),
+  })
 
 /** An endpoint's key: its own, then the AuthStore's; an empty or missing one sends none. */
-const endpointKey = (endpoint: ModelEndpoint, stored: Redacted.Redacted<string> | undefined): Option.Option<string> =>
+const endpointKey = (selection: ModelSelection, endpoint: ModelEndpoint, stored: Redacted.Redacted<string> | undefined): Effect.Effect<Option.Option<string>, AuthError> =>
   endpointOwnKey(endpoint).pipe(
-    Option.orElse(() => Option.fromNullishOr(stored)),
-    Option.map(Redacted.value),
-    Option.filter((value) => value.length > 0),
+    Effect.mapError((error) => new AuthError({ provider: selection.provider, message: `cannot read the endpoint's key variable: ${error.message}` })),
+    Effect.map((own) => own.pipe(
+      Option.orElse(() => Option.fromNullishOr(stored)),
+      Option.map(Redacted.value),
+      Option.filter((value) => value.length > 0),
+    )),
   )
 
 /** The transport the plugin was built over, if any: the compat client's fetch goes through it. */
@@ -240,7 +249,9 @@ const buildProviderService = (
   Effect.flatMap(Effect.all({ endpoints: Effect.service(CurrentModelEndpoints), transport: Effect.serviceOption(ModelsTransport) }), ({ endpoints, transport }) => {
     const endpoint = Option.fromNullishOr(endpoints[selection.provider])
     if (Option.isSome(endpoint)) {
-      return endpointModel(selection, endpoint.value.url, endpointKey(endpoint.value, key), endpoint.value.standardOnly ?? true, endpoint.value.images ?? false, transport)
+      const configured = endpoint.value
+      return Effect.flatMap(endpointKey(selection, configured, key), (own) =>
+        endpointModel(selection, configured.url, own, configured.standardOnly ?? true, configured.images ?? false, transport))
     }
     if (credential?.type === "local" && credential.baseUrl !== undefined) {
       return endpointModel(selection, credential.baseUrl, Option.none(), true, false, transport)

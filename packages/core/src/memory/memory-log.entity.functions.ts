@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect"
+import { Array as Arr, Effect, Option, Order, Schema } from "effect"
 import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaAt, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
@@ -17,7 +17,7 @@ const sortKeys = (value: unknown): unknown =>
   Array.isArray(value)
     ? value.map(sortKeys)
     : typeof value === "object" && value !== null
-      ? Object.fromEntries(Object.keys(value).sort().flatMap((key) => {
+      ? Object.fromEntries(Arr.sort(Object.keys(value), Order.String).flatMap((key) => {
         const field = (value as Record<string, unknown>)[key]
         return field === undefined ? [] : [[key, sortKeys(field)] as const]
       }))

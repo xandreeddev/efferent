@@ -134,6 +134,7 @@ export type { SeqEvent, Session } from "./session/chassis.js"
 
 // the session log: the storage a host provides, its in-memory backend and its contract
 export * from "./session/session-log.entity.js"
+export { storedJson } from "./session/session-log.entity.functions.js"
 export * from "./ports/session-log.port.js"
 export { SessionLogMemoryLive } from "./session/session-log.memory.adapter.js"
 export { sessionLogConformance } from "./session/session-log.conformance.js"

@@ -1,4 +1,4 @@
-import { Effect } from "effect"
+import { Array as Arr, Effect, Order } from "effect"
 import * as fs from "node:fs/promises"
 import * as path from "node:path"
 import { WorkspacePath } from "../domain/Brands.js"
@@ -12,37 +12,46 @@ const SKIPPED_DIRS = new Set(["node_modules", ".git", ".foundry", "__pycache__"]
 const isSkipped = (relPath: string): boolean =>
   relPath.split("/").some((segment) => SKIPPED_DIRS.has(segment))
 
+/** Directory reads in flight at once, per level of a walk. */
+const WALK_CONCURRENCY = 8
+
+/** One directory's entries; an unreadable directory has none (see `walk`). */
+const entriesOf = (dir: string) =>
+  Effect.tryPromise({ try: () => fs.readdir(dir, { withFileTypes: true }), catch: () => "unreadable" as const }).pipe(
+    Effect.orElseSucceed(() => []),
+  )
+
+const relativeTo = (rootDir: string, abs: string): string => path.relative(rootDir, abs).split(path.sep).join("/")
+
 /** Walk one directory level; unreadable entries are SKIPPED, never fatal —
  *  a 0700 pg-data dir or a root-owned file must not kill a forge run that
  *  already did its work (live-caught: EACCES at snapshot time threw away a
  *  full implementation attempt). Skipped dirs are PRUNED before descent so
  *  node_modules/.git are never even read. */
-const walk = async (rootDir: string, dir: string): Promise<ReadonlyArray<string>> => {
-  const entries = await fs
-    .readdir(dir, { withFileTypes: true })
-    .then((found) => found, () => [])
-  const nested = await Promise.all(
-    entries.map(async (entry) => {
-      const abs = path.join(dir, entry.name)
-      const rel = path.relative(rootDir, abs).split(path.sep).join("/")
-      if (isSkipped(rel)) return []
-      if (entry.isDirectory()) return walk(rootDir, abs)
-      if (entry.isFile()) return [rel]
-      return []
-    }),
+const walk = (rootDir: string, dir: string): Effect.Effect<ReadonlyArray<string>> =>
+  entriesOf(dir).pipe(
+    Effect.flatMap((entries) =>
+      Effect.forEach(
+        entries,
+        (entry): Effect.Effect<ReadonlyArray<string>> => {
+          const abs = path.join(dir, entry.name)
+          const rel = relativeTo(rootDir, abs)
+          if (isSkipped(rel)) return Effect.succeed([])
+          if (entry.isDirectory()) return walk(rootDir, abs)
+          return Effect.succeed(entry.isFile() ? [rel] : [])
+        },
+        { concurrency: WALK_CONCURRENCY },
+      ),
+    ),
+    Effect.map((nested) => nested.flat()),
   )
-  return nested.flat()
-}
 
 /** The second `WorkspacePath` mint point (the first is the AST walk). */
 export const snapshotWorkspace = (rootDir: string): Effect.Effect<Workspace, WorkspaceError> =>
-  Effect.tryPromise({
-    try: () => walk(rootDir, rootDir),
-    catch: (cause) => new WorkspaceError({ message: `snapshot of ${rootDir} failed: ${String(cause)}` }),
-  }).pipe(
+  walk(rootDir, rootDir).pipe(
     Effect.map((files) => ({
       rootDir,
-      files: [...files].sort().map((rel) => WorkspacePath.make(rel)),
+      files: Arr.sort(files, Order.String).map((rel) => WorkspacePath.make(rel)),
     })),
   )
 
@@ -53,40 +62,40 @@ export const snapshotWorkspace = (rootDir: string): Effect.Effect<Workspace, Wor
  *  "the implementor changed something". Hidden FILES still count
  *  (`.gitignore`, `.env` are real edits); tool-call writes into hidden
  *  dirs stay visible through the receipt union in the forge loop. */
-const walkFingerprint = async (
+const walkFingerprint = (
   rootDir: string,
   dir: string,
-): Promise<ReadonlyArray<readonly [string, string]>> => {
-  const entries = await fs
-    .readdir(dir, { withFileTypes: true })
-    .then((found) => found, () => [])
-  const nested = await Promise.all(
-    entries.map(async (entry): Promise<ReadonlyArray<readonly [string, string]>> => {
-      const abs = path.join(dir, entry.name)
-      const rel = path.relative(rootDir, abs).split(path.sep).join("/")
-      if (isSkipped(rel)) return []
-      if (entry.isDirectory()) {
-        return entry.name.startsWith(".") ? [] : walkFingerprint(rootDir, abs)
-      }
-      if (!entry.isFile()) return []
-      // A file deleted mid-walk is simply absent — same tolerance as `walk`.
-      const stat = await fs.stat(abs).then((s) => s, () => null)
-      return stat === null ? [] : [[rel, `${stat.size}:${stat.mtimeMs}`] as const]
-    }),
+): Effect.Effect<ReadonlyArray<readonly [string, string]>> =>
+  entriesOf(dir).pipe(
+    Effect.flatMap((entries) =>
+      Effect.forEach(
+        entries,
+        (entry): Effect.Effect<ReadonlyArray<readonly [string, string]>> => {
+          const abs = path.join(dir, entry.name)
+          const rel = relativeTo(rootDir, abs)
+          if (isSkipped(rel)) return Effect.succeed([])
+          if (entry.isDirectory()) {
+            return entry.name.startsWith(".") ? Effect.succeed([]) : walkFingerprint(rootDir, abs)
+          }
+          if (!entry.isFile()) return Effect.succeed([])
+          // A file deleted mid-walk is simply absent — same tolerance as `walk`.
+          return Effect.tryPromise({ try: () => fs.stat(abs), catch: () => "absent" as const }).pipe(
+            Effect.map((stat) => [[rel, `${stat.size}:${stat.mtimeMs}`] as const]),
+            Effect.orElseSucceed(() => []),
+          )
+        },
+        { concurrency: WALK_CONCURRENCY },
+      ),
+    ),
+    Effect.map((nested) => nested.flat()),
   )
-  return nested.flat()
-}
 
 /** The forge loop's movement oracle — taken before and after each implement
  *  call; `diffFingerprints` of the pair is what the attempt actually did. */
 export const fingerprintWorkspace = (
   rootDir: string,
 ): Effect.Effect<WorkspaceFingerprint, WorkspaceError> =>
-  Effect.tryPromise({
-    try: () => walkFingerprint(rootDir, rootDir),
-    catch: (cause) =>
-      new WorkspaceError({ message: `fingerprint of ${rootDir} failed: ${String(cause)}` }),
-  }).pipe(
+  walkFingerprint(rootDir, rootDir).pipe(
     Effect.map(
       (entries) => new Map(entries.map(([rel, signature]) => [WorkspacePath.make(rel), signature])),
     ),

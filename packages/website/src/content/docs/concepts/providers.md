@@ -33,12 +33,16 @@ it under `endpoints` and select its models as `<name>:<model id>`:
 
 Requests go to `<url>/chat/completions`. The key is optional: the plugin uses
 `apiKey`, then the environment variable named by `apiKeyEnv`, then a key stored
-for that name; with none it sends no `Authorization` header. An endpoint with
-its own key (`apiKey`, or an `apiKeyEnv` that is set) never reads the
-credential store, and an empty one (`apiKey: ""`, or a variable set to `""`)
-sends no key. From code, pass `apiKey` as `Redacted.make(...)` so it prints
-as `<redacted>`; a plain string shows in error messages and the agent's
-fingerprint, so JSON configuration names an environment variable instead.
+for that name; with none it sends no `Authorization` header. The variable is
+read with Effect's `Config`, from the current `ConfigProvider` (the process
+environment unless the host provides another). An endpoint with its own key
+(`apiKey`, or an `apiKeyEnv` that is set) never reads the credential store,
+and an empty one (`apiKey: ""`, or a variable set to `""` under a provider
+that keeps empty values, `ConfigProvider.fromEnv({ preserveEmptyStrings: true })`)
+sends no key; the default environment provider reads `""` as unset. From
+code, pass `apiKey` as `Redacted.make(...)` so it prints as `<redacted>`; a
+plain string shows in error messages and the agent's fingerprint, so JSON
+configuration names an environment variable instead.
 `standardOnly` (default `true`) sends only standard chat-completions fields.
 `images` (default `false`) says the endpoint's models read images: see
 [Images](#images). An endpoint whose name matches a built-in provider
@@ -444,7 +448,8 @@ and the `agent.turn` span the turn's as
 The models plugin's `providers.generate` span puts the model's reasoning in
 `llm.reasoning` (its first 500 characters) only when the run captures trace
 content (`captureTraceContent`, read per call as `CurrentTraceContent`) or
-`EFFERENT_TRACE_CONTENT=1` is set; otherwise it reads `[redacted]`.
+`EFFERENT_TRACE_CONTENT=1` is set (read with `Config`, from the current
+`ConfigProvider`); otherwise it reads `[redacted]`.
 
 The counts hold three invariants: both cache counts are inside the input, the
 reasoning is inside the output, and the total is input plus output. The usage

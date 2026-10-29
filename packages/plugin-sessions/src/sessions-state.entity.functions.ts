@@ -5,7 +5,7 @@ import { SessionsState } from "./sessions-state.entity.js"
 import type { HeldTurn, HolderProcess, InboxSlot, ProcessLiveness, SessionsState as State } from "./sessions-state.entity.js"
 
 const decodeState = Schema.decodeUnknownEffect(SessionsState)
-const encodeState = Schema.encodeSync(SessionsState)
+const encodeState = Schema.encodeEffect(SessionsState)
 
 /** A session's state before its first turn: a fork counts from its parent's turns. */
 export const initialState = (head: SessionHead): State => ({
@@ -21,16 +21,19 @@ export const stateOf = (head: SessionHead): Effect.Effect<State, Schema.SchemaEr
   head.state.sessions === undefined ? Effect.succeed(initialState(head)) : decodeState(head.state.sessions)
 
 /** The state as the head stores it. */
-export const stateJson = (state: State): JsonObject => ({ sessions: encodeState(state) })
+export const stateJson = (state: State): Effect.Effect<JsonObject, Schema.SchemaError> =>
+  Effect.map(encodeState(state), (sessions) => ({ sessions }))
 
-const encodeQueued = Schema.encodeSync(InboxQueuedData)
-const encodeDropped = Schema.encodeSync(InboxDroppedData)
+const encodeQueued = Schema.encodeEffect(InboxQueuedData)
+const encodeDropped = Schema.encodeEffect(InboxDroppedData)
 
 /** What `inbox.queued` stores of a delivered item. */
-export const queuedData = (item: InboxItem): JsonObject => ({ ...encodeQueued({ id: item.id, source: item.source, content: item.content }) })
+export const queuedData = (item: InboxItem): Effect.Effect<JsonObject, Schema.SchemaError> =>
+  Effect.map(encodeQueued({ id: item.id, source: item.source, content: item.content }), (encoded) => ({ ...encoded }))
 
 /** What `inbox.dropped` stores of an item as many turns took and failed as the inbox allows. */
-export const droppedData = (id: string): JsonObject => ({ ...encodeDropped({ id, reason: "attempts" }) })
+export const droppedData = (id: string): Effect.Effect<JsonObject, Schema.SchemaError> =>
+  Effect.map(encodeDropped({ id, reason: "attempts" }), (encoded) => ({ ...encoded }))
 
 /**
  * Who asks whether a turn is held: this Sessions instance, the process it

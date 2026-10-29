@@ -1,5 +1,5 @@
 import { Tool } from "effect/ai"
-import { Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Array as Arr, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, freshId } from "../conformance.functions.js"
@@ -22,6 +22,7 @@ import type { TurnDraft, TurnWriter } from "../ports/sessions.port.js"
 import { TurnMemory, TurnToolbox } from "../ports/turn-scope.port.js"
 import { turnStartedDraft } from "../session/session-event.entity.functions.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
+import { storedJson } from "../session/session-log.entity.functions.js"
 import { TurnLive } from "./turn.adapter.js"
 import type { ToolRefusalReason, TurnEvent } from "./turn-event.entity.js"
 import { publishToolProgress } from "./turn-event.entity.functions.js"
@@ -123,9 +124,13 @@ const memoryWriter = Effect.gen(function* () {
   }).pipe(Effect.orDie)
   const started: SessionLogEvent = { session, seq: 1, turn: draft.turn, kind: draft.kind, at: 0, data: draft.data }
   const stored = yield* Ref.make<ReadonlyArray<SessionLogEvent>>([started])
-  const append = (drafts: ReadonlyArray<TurnDraft>) => Effect.yieldNow.pipe(Effect.andThen(Ref.update(stored, (all) => [...all, ...drafts.map((next, index): SessionLogEvent => ({
-    session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: JSON.parse(JSON.stringify(next.data)),
-  }))])))
+  const append = (drafts: ReadonlyArray<TurnDraft>) => Effect.yieldNow.pipe(
+    Effect.andThen(Effect.forEach(drafts, (next) => storedJson(next.data))),
+    Effect.mapError((error) => new HarnessError({ code: "session.encode", message: error.message })),
+    Effect.flatMap((data) => Ref.update(stored, (all) => [...all, ...Arr.zip(drafts, data).map(([next, json], index): SessionLogEvent => ({
+      session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: json,
+    }))])),
+  )
   const writer: TurnWriter = {
     admitted: { session: { id: session, owner: "conformance" }, turn: 1, runId: RUN, key: RUN, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,

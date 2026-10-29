@@ -6,9 +6,12 @@ import { Context, Schema } from "effect"
  * optional — a local server or a private gateway may need none. It comes
  * from `apiKey`, then the environment variable `apiKeyEnv` names, then the
  * AuthStore's key for `<name>`; with none, no Authorization header is sent.
- * An endpoint with its own key (`apiKey`, or a set `apiKeyEnv`) never reads
- * the AuthStore; an empty one (`apiKey: ""`, or a variable set to "") sends
- * no key. A host's code passes `apiKey` as a `Redacted` string so it
+ * The variable is read with `Config`, from the current ConfigProvider (the
+ * process environment unless the host provides another). An endpoint with
+ * its own key (`apiKey`, or a set `apiKeyEnv`) never reads the AuthStore;
+ * an empty one (`apiKey: ""`, or a variable set to "" under a provider that
+ * keeps empty values, `ConfigProvider.fromEnv({ preserveEmptyStrings: true })`)
+ * sends no key; the default environment provider reads "" as unset. A host's code passes `apiKey` as a `Redacted` string so it
  * prints as `<redacted>` in errors and graph fingerprints; JSON
  * configuration names an environment variable in `apiKeyEnv` instead.
  * `standardOnly` (default true) sends only standard chat-completions fields.

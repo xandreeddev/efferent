@@ -1,5 +1,6 @@
 import { AiError, LanguageModel, Prompt, Tool } from "effect/ai"
 import { Effect, Option, Schema, Stream } from "effect"
+import { Base64 } from "effect/encoding"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
 import type { ModelCallPolicy } from "@xandreed/core"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
@@ -123,8 +124,6 @@ const filePartLabel = (part: Prompt.FilePart): string => {
     : `[file omitted: ${[part.mediaType, ...(part.fileName === undefined ? [] : [part.fileName])].join(", ")}]`
 }
 
-const encodeBase64 = Schema.encodeSync(Schema.Uint8ArrayFromBase64)
-
 /** An image a chat-completions request can carry: one of the image types, inline or by URL. */
 const isSendableImage = (part: Prompt.FilePart): boolean => isImageType(part.mediaType)
 
@@ -132,7 +131,7 @@ const isSendableImage = (part: Prompt.FilePart): boolean => isImageType(part.med
 const imageUrlPart = (part: Prompt.FilePart): Json => {
   const data = part.data
   const url = data instanceof URL ? data.toString()
-    : data instanceof Uint8Array ? `data:${part.mediaType};base64,${encodeBase64(data)}`
+    : data instanceof Uint8Array ? `data:${part.mediaType};base64,${Base64.encode(data)}`
       : /^(data:|https?:\/\/)/i.test(data) ? data : `data:${part.mediaType};base64,${data}`
   return { type: "image_url", image_url: { url } }
 }

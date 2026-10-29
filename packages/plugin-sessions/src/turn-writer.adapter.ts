@@ -174,9 +174,9 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       const now = yield* storageNow
       const next = options.renew ? renewed(decided.next, now, false) : decided.next
       const notAfter = ownership.mode === "lease" ? Option.flatMap(at.state.open, (open) => open.expiresAt) : Option.none()
+      const state = next === at.state ? Option.none() : Option.some(yield* stateJson(next).pipe(Effect.mapError((error) => harness("session.encode", error.message))))
       const outcome = yield* Effect.result(log.commit(id, {
-        expect: at.revision, notAfter, events: stamped(decided.drafts),
-        state: next === at.state ? Option.none() : Option.some(stateJson(next)),
+        expect: at.revision, notAfter, events: stamped(decided.drafts), state,
       }))
       if (outcome._tag === "Success") {
         const committed = outcome.success
@@ -275,7 +275,10 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     const done = yield* commitPlan((at) => Effect.gen(function* () {
       const after = closedState(at.state, ending.reason, config.inbox.attempts, yield* Ref.get(tried))
       const closing = yield* turnEndedDraft(admitted.turn, ending).pipe(Effect.mapError((error) => harness("session.encode", error.message)))
-      const dropped = after.dropped.map((item): TurnDraft => ({ kind: "inbox.dropped", data: droppedData(item) }))
+      const dropped = yield* Effect.forEach(after.dropped, (item) => droppedData(item).pipe(
+        Effect.map((data): TurnDraft => ({ kind: "inbox.dropped", data })),
+        Effect.mapError((error) => harness("session.encode", error.message)),
+      ))
       return { drafts: [{ kind: closing.kind, data: closing.data }, ...dropped], next: after.state, result: pendingOf(after.state).length }
     }), { renew: false })
     yield* Ref.set(ended, true)

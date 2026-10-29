@@ -1,6 +1,7 @@
-import { Effect, Layer, Match, Option, Schema } from "effect"
+import { Effect, Layer, Match, Option } from "effect"
 import * as path from "node:path"
 import type { WorkspaceError } from "../domain/Errors.js"
+import { RuleId } from "../domain/Brands.js"
 import { RuleConfig } from "../domain/Rules.js"
 import { ForgeLimits, Spec } from "../domain/Spec.js"
 import { forge } from "../pipeline/forge.js"
@@ -106,7 +107,7 @@ const demoRules = [
   "effect/no-nullable-return",
   "effect/no-try-catch",
   "effect/no-as-any",
-].map((rule) => Schema.decodeUnknownSync(RuleConfig)({ rule, include: ["src/**/*.ts"] }))
+].map((rule) => new RuleConfig({ rule: RuleId.make(rule), severity: Option.none(), include: ["src/**/*.ts"] }))
 
 export type DemoImplementor = "scripted" | "claude"
 

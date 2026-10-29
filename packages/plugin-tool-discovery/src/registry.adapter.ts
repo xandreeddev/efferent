@@ -341,8 +341,8 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
         : entry.tool.name === ReadSkillReference.name ? (params) => readReference(params as { readonly skill: string; readonly reference: string })
           : entry.handler
 
-    const toolkit = Toolkit.make(...(registered.map((entry) => entry.tool) as never))
-    const handlers = yield* (toolkit as never as Toolkit.Toolkit<Record<string, Tool.Any>>).toHandlers(
+    const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.make(...registered.map((entry) => entry.tool))
+    const handlers = yield* toolkit.toHandlers(
       Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))])) as never,
     )
 
@@ -431,7 +431,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
     const select = (userMessage: UserMessage) => match(userMessage).pipe(Effect.flatMap(apply))
 
     return {
-      toolkit: toolkit as never as Toolkit.Toolkit<Record<string, Tool.Any>>,
+      toolkit,
       handlers: handlers as Context.Context<never>,
       active: SynchronizedRef.get(activated).pipe(Effect.map((held) => [...own.map((entry) => entry.tool.name), ...held.tools])),
       activate,

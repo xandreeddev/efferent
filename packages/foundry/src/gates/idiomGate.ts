@@ -8,7 +8,7 @@ import { Finding } from "../domain/Finding.js"
 import type { Severity } from "../domain/Finding.js"
 import type { RuleConfig } from "../domain/Rules.js"
 import type { Gate, Workspace } from "../ports/Gate.js"
-import { includedBy, locationOf, projectSourceFiles, toWorkspacePath } from "./astWalk.js"
+import { includedBy, locationOf, matchesGlob, projectSourceFiles, toWorkspacePath } from "./astWalk.js"
 import { TsProject } from "./TsProject.port.js"
 
 export interface RuleContext {
@@ -19,6 +19,9 @@ export interface RuleContext {
 export interface RuleMatch {
   readonly node: ts.Node
   readonly message: string
+  /** Dropped in the files the rule's config declares a `boundary` (an
+   *  `as never` where type erasure is the design); reported elsewhere. */
+  readonly toleratedAtBoundary?: boolean
 }
 
 /** An idiom rule is DATA plus one pure check — which rules run where, and at
@@ -38,6 +41,7 @@ interface ActiveRule {
   readonly severity: Severity
   readonly include: ReadonlyArray<string>
   readonly exclude: ReadonlyArray<string>
+  readonly boundary: ReadonlyArray<string>
 }
 
 const activate = (
@@ -63,6 +67,7 @@ const activate = (
             severity: Option.getOrElse(config.severity, () => rule.defaultSeverity),
             include: config.include,
             exclude: config.exclude,
+            boundary: config.boundary,
           }),
       },
     ),
@@ -96,9 +101,11 @@ export const makeIdiomGate = (
         const rel = toWorkspacePath(workspace.rootDir, sourceFile.fileName)
         return active
           .filter((a) => includedBy(a.include, a.exclude, rel))
-          .flatMap((a) =>
-            a.rule
+          .flatMap((a) => {
+            const atBoundary = a.boundary.some((glob) => matchesGlob(glob, rel))
+            return a.rule
               .check({ sourceFile, checker: project.checker })
+              .filter((match) => !(atBoundary && match.toleratedAtBoundary === true))
               .map(
                 (match) =>
                   new Finding({
@@ -110,8 +117,8 @@ export const makeIdiomGate = (
                     ),
                     fixHint: Option.some(a.rule.fixHint),
                   }),
-              ),
-          )
+              )
+          })
       })
     }),
 })

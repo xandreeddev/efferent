@@ -3,11 +3,11 @@ import { Effect, Option, Stream } from "effect"
 import type { BashEvent } from "./bash.entity.js"
 import { collectBashResult, resolveBashEnv } from "./bash.entity.functions.js"
 
-const parent = { PATH: "/usr/bin", HOME: "/home/kit", LC_ALL: "C", LC_TIME: "C", OPENAI_API_KEY: "sk-secret", SECRET_TOKEN: "t", UNSET: undefined }
+const parent = { PATH: "/usr/bin", HOME: "/home/user", LC_ALL: "C", LC_TIME: "C", OPENAI_API_KEY: "sk-secret", SECRET_TOKEN: "t", UNSET: undefined }
 
 describe("resolveBashEnv", () => {
   test("by default only the allowlist passes, LC_* by prefix, and no host secret", () => {
-    expect(resolveBashEnv(parent, {})).toEqual({ PATH: "/usr/bin", HOME: "/home/kit", LC_ALL: "C", LC_TIME: "C" })
+    expect(resolveBashEnv(parent, {})).toEqual({ PATH: "/usr/bin", HOME: "/home/user", LC_ALL: "C", LC_TIME: "C" })
   })
 
   test("true inherits everything set, false nothing, a list its names and prefixes; env always wins", () => {

@@ -11,6 +11,7 @@ import type { FingerprintedFinding } from "../domain/baseline.js"
 import { runPipeline } from "../pipeline/runPipeline.js"
 import { makeBoundariesGate } from "../gates/boundariesGate.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
+import { makePrivateTextGate } from "../gates/privateTextGate.js"
 import { makeRegistrationGate } from "../gates/registrationGate.js"
 import type { IdiomRule } from "../gates/idiomGate.js"
 import { decodeRegistry } from "../gates/rules/custom.js"
@@ -85,6 +86,10 @@ export const gatesFromConfig = (
   ...Option.match(config.registration, {
     onNone: () => [] as ReadonlyArray<Gate<TsProject>>,
     onSome: (registration) => [makeRegistrationGate(config, registration)],
+  }),
+  ...Option.match(config.privateText, {
+    onNone: () => [] as ReadonlyArray<Gate<TsProject>>,
+    onSome: (privateText) => [makePrivateTextGate(privateText)],
   }),
   ...(config.typecheck ? [makeTypecheckGate(config.tsconfig)] : []),
 ]
@@ -172,7 +177,7 @@ export const runCheck = (
         new ConfigError({
           path: args.configPath,
           message:
-            "the config describes no runnable static gates (no rules, no boundaries, no registration, typecheck off) — nothing to check",
+            "the config describes no runnable static gates (no rules, no boundaries, no registration, no private text, typecheck off) — nothing to check",
         }),
       )
     }

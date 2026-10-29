@@ -1,6 +1,6 @@
 import { AiError, LanguageModel, Prompt } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
-import { Cause, Effect, Exit, Formatter, Match, Metric, Option, Ref, Result, Stream } from "effect"
+import { Array as Arr, Cause, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Stream } from "effect"
 import { CurrentTraceContent, foldStreamParts, freezeModelRequest, replayableContext } from "@xandreed/core"
 import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
@@ -269,11 +269,12 @@ const progressSignature = (
   const calls = responseToolCalls(content)
   if (calls.length === 0) return ""
   if (calls.every((c) => pollable.has(c.toolName))) return ""
-  return responseToolResults(content)
-    .filter((r) => !pollable.has(r.toolName))
-    .map((r) => `${r.toolName}:${r.ok ? "ok" : "err"}:${clip(JSON.stringify(r.result ?? null), 300)}`)
-    .sort()
-    .join("|")
+  return Arr.sort(
+    responseToolResults(content)
+      .filter((r) => !pollable.has(r.toolName))
+      .map((r) => `${r.toolName}:${r.ok ? "ok" : "err"}:${clip(JSON.stringify(r.result ?? null), 300)}`),
+    Order.String,
+  ).join("|")
 }
 
 export type Phase = "continue" | "completed" | "step-cap" | "degenerate-loop"

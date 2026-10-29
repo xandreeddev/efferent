@@ -1,4 +1,5 @@
-import { Effect, Result, Option } from "effect"
+import { Effect, Result, Option, Schema } from "effect"
+import { Base64Url } from "effect/encoding"
 import { AuthError } from "@xandreed/core"
 import { generatePkce, tokenTime } from "./anthropicOAuth.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
@@ -37,11 +38,11 @@ export interface OpenAiCodexOAuthBegin {
 const oauthError = (stage: string, detail: string): AuthError =>
   new AuthError({ provider: "openai-codex", message: `OAuth ${stage} failed: ${detail}` })
 
-const base64UrlJson = (segment: string): unknown => {
-  const normalized = segment.replace(/-/g, "+").replace(/_/g, "/")
-  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=")
-  return JSON.parse(atob(padded)) as unknown
-}
+const decodeJsonRecord = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))
+
+/** A JWT segment's JSON object: base64url text holding one; none for anything else. */
+const base64UrlJson = (segment: string): Option.Option<Record<string, unknown>> =>
+  Option.flatMap(Result.getSuccess(Base64Url.decodeString(segment)), decodeJsonRecord)
 
 /** Extract the subscription account lane without exposing the token. */
 export const openAiCodexAccountId = (accessToken: string): Option.Option<string> => {
@@ -49,7 +50,7 @@ export const openAiCodexAccountId = (accessToken: string): Option.Option<string>
   return Option.flatMap(
     Option.fromNullishOr(segment),
     (encoded) => Option.flatMap(
-      Result.getSuccess(Result.try(() => base64UrlJson(encoded) as Record<string, unknown>)),
+      base64UrlJson(encoded),
       (payload) => {
         const claim = payload[ACCOUNT_CLAIM]
         if (typeof claim !== "object" || claim === null) return Option.none<string>()

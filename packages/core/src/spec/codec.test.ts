@@ -166,6 +166,11 @@ describe("slugs", () => {
     expect(String(uniqueSlug(SpecSlug.make("stats"), (s) => taken.has(s)))).toBe("stats-3")
     expect(String(uniqueSlug(SpecSlug.make("free"), (s) => taken.has(s)))).toBe("free")
   })
+
+  test("uniqueSlug keeps counting past 99 collisions instead of reading the clock", () => {
+    const taken = new Set(["stats", ...Array.from({ length: 98 }, (_, index) => `stats-${index + 2}`)])
+    expect(String(uniqueSlug(SpecSlug.make("stats"), (s) => taken.has(s)))).toBe("stats-100")
+  })
 })
 
 describe("renderSpecSection", () => {

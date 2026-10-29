@@ -1,4 +1,6 @@
-import { Effect, Result, Option } from "effect"
+import { Effect, Result, Option, Schema } from "effect"
+
+const decodeJson = Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Unknown))
 
 /**
  * Parse JSON with CORRUPT ≠ ABSENT semantics: malformed text logs a warning
@@ -12,11 +14,11 @@ export const parseJsonWarn = (
   where: string,
 ): Effect.Effect<Option.Option<unknown>> =>
   Result.match(
-    Result.try(() => JSON.parse(text) as unknown),
+    decodeJson(text),
     {
       onFailure: (error) =>
         Effect.logWarning(
-          `${where}: unreadable JSON — treating as empty: ${String(error)}`,
+          `${where}: unreadable JSON — treating as empty: ${error.message}`,
         ).pipe(Effect.as(Option.none<unknown>())),
       onSuccess: (value) => Effect.succeed(Option.some(value)),
     },
@@ -35,7 +37,7 @@ export const asJsonRecord = (value: Option.Option<unknown>): Record<string, unkn
 /** SILENT parse-to-Option — for wire noise (a garbage WS frame) where
  *  dropping without a log is the design; configs use {@link parseJsonWarn}. */
 export const parseJsonOption = (text: string): Option.Option<unknown> =>
-  Result.getSuccess(Result.try(() => JSON.parse(text) as unknown))
+  Result.getSuccess(decodeJson(text))
 
 /** Decode append-only JSONL text: one JSON value per line, each decoded by
  *  `decode`; a corrupt or undecodable LINE is skipped (append-only files
@@ -49,7 +51,7 @@ export const decodeJsonLines = <A, E>(
     .split("\n")
     .filter((line) => line.trim().length > 0)
     .flatMap((line) =>
-      Result.try(() => JSON.parse(line) as unknown).pipe(
+      decodeJson(line).pipe(
         Result.match({
           onFailure: () => [] as ReadonlyArray<A>,
           onSuccess: (parsed) =>

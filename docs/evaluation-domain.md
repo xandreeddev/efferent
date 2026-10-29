@@ -80,7 +80,8 @@ or `gradeEvaluation`.
 ## Typed runnable boundary
 
 `defineGraderCalibration` builds a native calibration around an existing `GraderRegistration`.
-The app supplies a concrete input codec, controlled cases and `CalibrationReference` labels.
+The app supplies a concrete input codec, controlled cases and `CalibrationReference` labels;
+the result is an `Effect` that fails with `invalid` when a case's input does not encode.
 The registered grader runs as the subject and captures `CalibrationObservation` plus its exact
 grading context. A separate agreement projection/grade checks status and metrics, including
 expected unavailable results, false passes and false failures. Labels never enter the subject.

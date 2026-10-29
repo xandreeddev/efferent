@@ -53,6 +53,8 @@ packages/evals/results/
 !.foundry/
 .foundry/*
 !.foundry/baseline.json
+# The private-text gate's local denylist (foundry.config.ts): never committed
+.foundry/private-terms.txt
 
 # Fixture workspaces COMMIT their .efferent (they are the eval worlds, not live state)
 !packages/*/fixtures/**/.efferent/

@@ -1,5 +1,5 @@
 import { Tool } from "effect/ai"
-import { Clock, Effect, Option, Random, Stream } from "effect"
+import { Array as Arr, Clock, Effect, Option, Order, Random, Stream } from "effect"
 import { Bash, CurrentToolInvocation, defineTool, Failure, publishToolProgress, RunContext } from "@xandreed/core"
 import type { BashChunk, BashEvent, BashExit, BashOptions, RegisteredTool } from "@xandreed/core"
 import { clipHead, tailText, utf8Length } from "./text-window.entity.functions.js"
@@ -51,7 +51,7 @@ const runsOf = (chunks: ReadonlyArray<BashChunk>): ReadonlyArray<{ readonly stre
 
 /** Keep the newest `keep` spill files of the directory (they are named by time), removing the rest; best effort. */
 const prune = (access: WorkspaceAccess, dir: string, keep: number): Effect.Effect<void> => access.fs.list(dir).pipe(
-  Effect.map((entries) => entries.filter((entry) => entry.kind === "file" && /^bash-.*\.log$/.test(entry.name)).map((entry) => entry.name).sort()),
+  Effect.map((entries) => Arr.sort(entries.filter((entry) => entry.kind === "file" && /^bash-.*\.log$/.test(entry.name)).map((entry) => entry.name), Order.String)),
   Effect.flatMap((names) => Effect.forEach(names.slice(0, Math.max(0, names.length - keep)), (name) => access.fs.remove(access.path.join(dir, name)), { discard: true })),
   Effect.ignore,
 )

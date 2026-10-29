@@ -103,5 +103,15 @@ boundaries layers and listed in each file registry it names (a top-level
 knowledge (which lists, which packages are exempt) is data in the root
 `foundry.config.ts`; the gate imports no workspace package.
 
+A config's `privateText` arms the `private-text` gate
+(`gates/privateTextGate.ts`, findings `quality/no-private-text`): no file
+git tracks or would track may hold an absolute home path (other than a
+configured placeholder home) or a term of the config's local, git-ignored
+denylist. Its messages never repeat what matched. A rule entry's `boundary`
+globs drop the matches the rule marks `toleratedAtBoundary` (only
+`effect/no-as-never`'s plain `as never` today); a new rule that needs a
+per-file exemption uses `exclude`, or a boundary when only part of what it
+flags is the design there.
+
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

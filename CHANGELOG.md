@@ -34,6 +34,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Install `effect` beside the packages: they declare it as a peer
   (`^4.0.7`) and depend on each other with caret ranges, so other patch
   versions install one copy of `effect` and of `@xandreed/core`.
+- `yield*` the result of `defineGraderCalibration` and `endpointOwnKey`; pass
+  the time (`Clock.currentTimeMillis`) to `classifyLlmError` and
+  `openAiCodexUuidV7`.
 
 ### Breaking
 
@@ -107,6 +110,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   that is not the parent's task child.
 - A turn's writer refuses framework kinds from hosts and plugins
   (`events.reserved`); only drafts made with `frameworkDraft` are accepted.
+- `endpointOwnKey` (`@xandreed/plugin-models`) returns an `Effect`;
+  `apiKeyEnv` and `EFFERENT_TRACE_CONTENT` are read with `Config` from the
+  current `ConfigProvider`. Under the default environment provider an empty
+  `apiKeyEnv` variable is unset, so the stored key is used;
+  `ConfigProvider.fromEnv({ preserveEmptyStrings: true })` keeps the old
+  behaviour.
+- `classifyLlmError(error, now)` and `openAiCodexUuidV7(now)` take the time
+  explicitly.
+- `defineGraderCalibration` (`@xandreed/evals`) returns an `Effect` that
+  fails with `invalid` when a case's input does not encode.
 
 ### Added
 
@@ -277,6 +290,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   their real `limit` maximum, and a larger value is refused rather than
   quietly lowered.
 - Retrieval judges get the ids they must return.
+- The session logs fail a commit holding data JSON cannot represent with
+  `SessionLogError` `store.encode` instead of dying, and the in-memory log
+  drops `undefined` fields, as SQLite does.
 
 ### Repository
 
@@ -330,6 +346,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   plugins, the text it sends to a model with the test or golden that pins
   each (or "unpinned"), its type-erasure files, its layout and how to run
   its tests. The plugin-workspace notes take the same shape.
+- Eleven new gate rules (`no-json-parse`, `no-sync-codec`,
+  `no-cause-pretty-data`, `no-effect-promise`, `no-promise-all`,
+  `callback-buffer-size`, `no-process-env`, `no-ambient-time-random`,
+  `no-locale-compare`, `require-sort-comparator`,
+  `no-instanceof-tagged-error`) and the `quality/no-private-text` gate (home
+  paths, plus an optional gitignored local denylist,
+  `.foundry/private-terms.txt`); `effect/no-as-never` rejects `as never as
+  T` everywhere. Every violation is fixed and the baseline stays empty.
 
 ## 0.14.0 — 2026-10-29
 

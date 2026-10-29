@@ -17,7 +17,8 @@ described in [Evaluation domain and adapters](evaluation-domain.md).
 grader runs as the subject over controlled cases and its verdict is captured;
 a separate agreement grader then compares that verdict with the case's
 `CalibrationReference` label (status and metrics, within a tolerance). The
-labels never reach the grader under test.
+labels never reach the grader under test. It is an `Effect`: a case whose
+input does not encode with the input codec fails it with `invalid`.
 
 ```ts
 import { Effect, Layer, Option, Schema } from "effect"
@@ -30,7 +31,7 @@ declare const runStore: Layer.Layer<EvaluationRunStore>  // where trials and the
 const Input = Schema.Struct({ evidence: Schema.OptionFromNullOr(Schema.Boolean) })
 const valid = (value: boolean) => ({ status: "scored" as const, metrics: [{ metric: { kind: "boolean" as const, name: "valid", value }, tolerance: 0 }] })
 
-export const calibration = defineGraderCalibration({
+const calibration = defineGraderCalibration({
   id: "evidence-agreement",
   version: "1",                                     // changes with the cases or the labels
   description: "Accepts supported answers, rejects unsupported ones, refuses missing evidence",
@@ -46,16 +47,18 @@ export const calibration = defineGraderCalibration({
   ],
 })
 
-const app = defineEvaluationApp({
-  id: "evidence", suites: [], calibrations: [calibration.calibration],
-  runnables: [calibration.runnable], graders: calibration.graders, projections: calibration.projections,
-  environmentFor: { [calibration.runnable.definition.id]: calibration.environment.id }, fingerprints: {}, commands: {},
-})
-
 // The run: every trial, its grades and the gate findings, written to the store.
-export const report = calibrateGrader(app, "evidence-agreement", crypto.randomUUID(), { ids: [], split: "all" }).pipe(
-  Effect.provide(Layer.merge(EvaluationServicesLive(app), runStore)),
-)
+export const report = Effect.gen(function* () {
+  const { calibration: evidenceAgreement, runnable, graders, projections, environment } = yield* calibration
+  const app = defineEvaluationApp({
+    id: "evidence", suites: [], calibrations: [evidenceAgreement],
+    runnables: [runnable], graders, projections,
+    environmentFor: { [runnable.definition.id]: environment.id }, fingerprints: {}, commands: {},
+  })
+  return yield* calibrateGrader(app, "evidence-agreement", crypto.randomUUID(), { ids: [], split: "all" }).pipe(
+    Effect.provide(Layer.merge(EvaluationServicesLive(app), runStore)),
+  )
+})
 ```
 
 - **Cases** carry the input, the reference label, a `family` (related cases

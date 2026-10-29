@@ -1,4 +1,4 @@
-import { Effect, Option, Schema } from "effect"
+import { Array as Arr, Effect, Option, Order, Schema } from "effect"
 import { Prompt, Tool } from "effect/ai"
 import type { LanguageModel } from "effect/ai"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
@@ -109,7 +109,7 @@ const sha256Of = (text: string): string => {
 
 /** A provider-defined tool's args as a header keeps them: their key names and their digest, never their values. */
 const providerArgs = (args: unknown) => ({
-  argKeys: typeof args === "object" && args !== null && !Array.isArray(args) ? Object.keys(args).sort() : [],
+  argKeys: typeof args === "object" && args !== null && !Array.isArray(args) ? Arr.sort(Object.keys(args), Order.String) : [],
   argsDigest: sha256Of(canonicalJson(args)),
 })
 

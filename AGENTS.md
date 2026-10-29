@@ -42,6 +42,9 @@ Build output goes under `.artifacts`.
 `bun run typecheck` runs the repo profile (`foundry.config.ts`) over every
 file under `packages/*/src`, tests included (tsc errors are `ts/<code>`), then
 tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
+`no-as-never` and the rules from `no-json-parse` to
+`no-instanceof-tagged-error` skip test code (`*.test.ts`, `*.bench.ts`,
+`testing.ts`, `*.testing.ts`, `testing.port.ts`, `testing/`).
 
 | Rule | Bans | Fix |
 |---|---|---|
@@ -51,8 +54,19 @@ tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 | `effect/no-nullable-return` | an exported function returning `A \| undefined` or `A \| null` | `Option<A>` (`Option.fromNullishOr` at the edge) |
 | `effect/match-over-tag-switch` | `switch` or an else-if ladder on `_tag` | `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Option.match`, `Result.match`, `Exit.match` |
 | `effect/no-as-any` | `as any`, `as unknown as T` | decode with Schema, or fix the type |
-| `effect/no-as-never` | `as never`, outside the `ERASURE_BOUNDARY` files and test scaffolding (`*.test.ts`, `testing.ts`) | fix the type; a file added to `ERASURE_BOUNDARY` states its reason in the PR |
+| `effect/no-as-never` | `as never` outside the `ERASURE_BOUNDARY` files; `as never as T` everywhere, those files included | fix the type; a file added to `ERASURE_BOUNDARY` states its reason in the PR |
 | `effect/no-parallel-interface` | an interface shadowing a same-named schema | `type X = typeof X.Type` |
+| `effect/no-json-parse` | `JSON.parse` | decode with `Schema.fromJsonString(S)` (`decodeUnknownEffect`, `decodeUnknownResult`, `decodeUnknownOption`) |
+| `effect/no-sync-codec` | `decodeSync`, `decodeUnknownSync`, `encodeSync`, `encodeUnknownSync` | the Effect, Result or Option codec, its failure handled |
+| `effect/no-cause-pretty-data` | `Cause.pretty` anywhere but an `Effect.log*` argument | log the cause; data keeps `Cause.prettyErrors` messages or `reasonOf` |
+| `effect/no-effect-promise` | `Effect.promise` | `Effect.tryPromise` with a typed error, logged or handled |
+| `effect/no-promise-all` | `Promise.all`, `Promise.allSettled` | `Effect.forEach` or `Effect.all` with a stated `concurrency` |
+| `effect/callback-buffer-size` | `Stream.callback` without a `bufferSize` | pass `{ bufferSize }` |
+| `effect/no-process-env` | `process.env` outside a `main.ts` and the bash adapter (`ENVIRONMENT_EDGES`) | `Config.String`, `Config.Redacted`, `Config.option`: the ConfigProvider supplies it |
+| `effect/no-ambient-time-random` | `Date.now`, `new Date()` without arguments, `Math.random`, `randomUUID`, outside `*.adapter.ts` files | `Clock.currentTimeMillis`, `Random` (core's `randomUuid` for ids) |
+| `effect/no-locale-compare` | `.localeCompare` | `Order.String` |
+| `effect/require-sort-comparator` | `.sort()` or `.toSorted()` without a comparator | `Arr.sort(xs, Order.String)`, or a comparator |
+| `effect/no-instanceof-tagged-error` | `instanceof` a tagged class (`instanceof Error` is fine) | `Schema.is`, `isHarnessError`, `Predicate.isTagged`, `Effect.catchTag` |
 | `effect/branded-id-fields` | an unbranded id field, in core's `src/domain` and `src/spec` | a brand; elsewhere reuse the sibling fields' brand |
 | `quality/no-skipped-tests` | `.skip`, `.todo`, `.only`, `xit`, `xdescribe`, `xtest` | fix or delete the test; one that needs an environment uses `test.skipIf` |
 | `quality/no-empty-catch` | an empty `catch` block | handle the failure as a value |
@@ -65,6 +79,7 @@ tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 | `boundaries/illegal-external` | a bare import, `@xandreed/*` included, missing from the layer's `externals` | depend downward; widening `externals` is a reviewed change |
 | `quality/package-registered` | a package missing from a list the gates or the build read | add it where the message says (skill `add-plugin`) |
 | `quality/baseline-empty` | any fingerprint in `.foundry/baseline.json` | fix the finding; never `--update-baseline --allow-grow` |
+| `quality/no-private-text` | in any file git tracks: a home path (`/home/<name>/`, `/Users/<name>/`, `C:\Users\<name>\`) but a placeholder one, or a term of the git-ignored local denylist `.foundry/private-terms.txt` | a relative path or a placeholder home (`/home/user/`); remove the term |
 
 ## File roles
 
@@ -77,10 +92,10 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 | `x.entity.ts`, `x.usecase.ts` | schemas, brands, tagged errors, derived types | base + those four |
 | `x.entity.functions.ts`, `x.usecase.functions.ts` | the pure behaviour of that pair | base + `no-raw-promise-core`, `no-runtime-imports-core`, `layers-live-at-edges` |
 | `x.port.ts`, `ports/*` | `Context.Service` contracts | base |
-| `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base |
+| `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-ambient-time-random` |
 | `x.conformance.ts` | a port's kit, exported and shipped | base |
 | `index.ts` | the public surface, as explicit named exports | base |
-| `x.test.ts`, `testing.ts` | tests beside their source; scaffolding the build does not ship | base, `as never` allowed |
+| `x.test.ts`, `testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never` and the rules from `no-json-parse` on |
 | any other name (`loop.ts`) | older modules | base only: give a new file one of the roles above |
 
 ## Ports, adapters and composition
