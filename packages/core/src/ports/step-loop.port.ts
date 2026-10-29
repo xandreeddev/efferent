@@ -102,9 +102,11 @@ export interface RunResult {
  * awaiting tasks joins them and is evaluated once more; no provider call
  * follows a complete verdict; `RunResult.usage` is the sum of the usage
  * the run's `assistant.message` events carried; the model calls read the
- * request's `captureTraceContent` as `CurrentTraceContent`. A loop that streams and
- * falls back to a non-streamed call publishes `stream.fallback`; the kit
- * does not stream, so it does not check that.
+ * request's `captureTraceContent` as `CurrentTraceContent`; a streamed
+ * step's reasoning reaches the next request with its provider metadata, as
+ * a non-streamed one's does. A loop that streams and falls back to a
+ * non-streamed call publishes `stream.fallback`; the kit's streams do not
+ * fail, so it does not check that.
  * Every real provider attempt runs `request.dispatch` immediately before
  * invoking the model; a failed durable check prevents the call. Planned
  * batches skip that hook because they make no provider request. A request

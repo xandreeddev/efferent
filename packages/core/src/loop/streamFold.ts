@@ -1,4 +1,6 @@
 import { Effect, Option, Stream } from "effect"
+import type { Schema } from "effect"
+import { Response } from "effect/ai"
 
 /**
  * Folds a `streamText` part stream into the SETTLED turn shape `step()`
@@ -7,8 +9,16 @@ import { Effect, Option, Stream } from "effect"
  *
  * - Streamed text/reasoning chunks occupy ORDERED SLOTS at the position
  *   their start/first-delta arrived; deltas append in place (and fan out
- *   through `onDelta` for live rendering); a chunk that accumulated nothing
- *   is dropped (content-part identity).
+ *   through `onDelta` for live rendering).
+ * - A chunk keeps its provider metadata, merged from its start, every delta
+ *   (empty ones included) and its end the way effect/ai merges a streamed
+ *   block's: an Anthropic thinking signature arrives on an empty delta, a
+ *   redacted thinking block on a start with no text, OpenAI's `itemId` and
+ *   `encryptedContent` on the start and end. The settled part carries the
+ *   same metadata the non-streamed response's does, so the stored history
+ *   and its replay do not depend on the path.
+ * - A chunk with neither text nor metadata is dropped (content-part
+ *   identity).
  * - Every settled part (tool-call, tool-result, finish, provider extras)
  *   passes through at its arrival position unchanged — metadata included,
  *   so the router's model stamp and the usage fold read exactly what the
@@ -33,14 +43,17 @@ export interface FoldedTurn {
   readonly usage?: unknown
 }
 
-type Entry =
-  | {
-      readonly kind: "chunk"
-      readonly channel: "text" | "reasoning"
-      readonly id: string
-      readonly text: string
-    }
-  | { readonly kind: "part"; readonly part: unknown }
+type Metadata = Response.ProviderMetadata
+
+interface Chunk {
+  readonly kind: "chunk"
+  readonly channel: "text" | "reasoning"
+  readonly id: string
+  readonly text: string
+  readonly metadata: Metadata
+}
+
+type Entry = Chunk | { readonly kind: "part"; readonly part: unknown }
 
 interface FoldState {
   readonly entries: ReadonlyArray<Entry>
@@ -57,30 +70,50 @@ const CHANNEL_BY_TYPE: Record<string, "text" | "reasoning"> = {
   "reasoning-end": "reasoning",
 }
 
-const openChunk = (
-  entries: ReadonlyArray<Entry>,
-  channel: "text" | "reasoning",
-  id: string,
-): ReadonlyArray<Entry> =>
-  entries.some((e) => e.kind === "chunk" && e.channel === channel && e.id === id)
-    ? entries
-    : [...entries, { kind: "chunk", channel, id, text: "" }]
+const isJsonObject = (value: Schema.Json | undefined): value is Schema.JsonObject =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
 
-const appendDelta = (
+/** effect/ai's merge of a streamed block's metadata: per provider, the later
+ *  part's fields over the earlier ones; a value that is not an object
+ *  replaces the earlier one. */
+const mergeMetadata = (earlier: Metadata, later: Metadata): Metadata =>
+  Object.entries(later).reduce(
+    (merged: Metadata, [provider, fields]) => {
+      const before = merged[provider]
+      return {
+        ...merged,
+        [provider]: isJsonObject(before) && isJsonObject(fields) ? { ...before, ...fields } : fields,
+      }
+    },
+    earlier,
+  )
+
+const isChunk = (channel: "text" | "reasoning", id: string) => (entry: Entry): entry is Chunk =>
+  entry.kind === "chunk" && entry.channel === channel && entry.id === id
+
+/** The chunk `id` of `channel` — opened in the next slot when unseen — with
+ *  `delta` appended and `metadata` merged in. */
+const extendChunk = (
   entries: ReadonlyArray<Entry>,
   channel: "text" | "reasoning",
   id: string,
   delta: string,
-): ReadonlyArray<Entry> =>
-  openChunk(entries, channel, id).map((e) =>
-    e.kind === "chunk" && e.channel === channel && e.id === id
-      ? { ...e, text: e.text + delta }
-      : e,
+  metadata: Metadata,
+): ReadonlyArray<Entry> => {
+  const matches = isChunk(channel, id)
+  const opened: ReadonlyArray<Entry> = entries.some(matches)
+    ? entries
+    : [...entries, { kind: "chunk", channel, id, text: "", metadata: {} }]
+  return opened.map((e) =>
+    matches(e) ? { ...e, text: e.text + delta, metadata: mergeMetadata(e.metadata, metadata) } : e,
   )
+}
 
 const entryParts = (entry: Entry): ReadonlyArray<unknown> => {
   if (entry.kind === "part") return [entry.part]
-  return entry.text.length > 0 ? [{ type: entry.channel, text: entry.text }] : []
+  return entry.text.length > 0 || Object.keys(entry.metadata).length > 0
+    ? [Response.makePart(entry.channel, { text: entry.text, metadata: entry.metadata })]
+    : []
 }
 
 export const foldStreamParts = <E, R, R2 = never>(
@@ -102,6 +135,7 @@ export const foldStreamParts = <E, R, R2 = never>(
         readonly delta?: string
         readonly reason?: string
         readonly usage?: unknown
+        readonly metadata?: Metadata
       }
       const type = p.type ?? ""
       // Tool argument streaming: fan the deltas for incremental admission
@@ -126,14 +160,8 @@ export const foldStreamParts = <E, R, R2 = never>(
       const channel = CHANNEL_BY_TYPE[type]
       if (channel !== undefined) {
         const id = p.id ?? `${channel}-1`
-        if (type.endsWith("-start")) {
-          return Effect.succeed({ ...state, entries: openChunk(state.entries, channel, id) })
-        }
-        if (type.endsWith("-end")) {
-          return Effect.succeed(state)
-        }
-        const delta = p.delta ?? ""
-        const next = { ...state, entries: appendDelta(state.entries, channel, id, delta) }
+        const delta = type.endsWith("-delta") ? p.delta ?? "" : ""
+        const next = { ...state, entries: extendChunk(state.entries, channel, id, delta, p.metadata ?? {}) }
         return delta.length > 0
           ? onDelta({ channel, id, delta }).pipe(Effect.as(next))
           : Effect.succeed(next)

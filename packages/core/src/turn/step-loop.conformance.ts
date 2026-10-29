@@ -1,5 +1,5 @@
 import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
-import type { Response } from "effect/ai"
+import type { Prompt, Response } from "effect/ai"
 import { Context, Effect, Option, Ref, Schema, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
@@ -11,7 +11,7 @@ import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
 import { CurrentAgentStep } from "../loop/stepContext.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
-import { entryId } from "../memory/memory-log.entity.functions.js"
+import { canonicalJson, entryId } from "../memory/memory-log.entity.functions.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { InitialBatch, ToolChoice } from "../ports/capability.port.js"
 import type { RunResult, StepLoop, StepRequest } from "../ports/step-loop.port.js"
@@ -40,6 +40,27 @@ export const probeCall = (id: string, n: number): ReadonlyArray<Part> => [
   { type: "finish", reason: "tool-calls", usage },
 ]
 export const textReply = (text: string): ReadonlyArray<Part> => [{ type: "text", text }, { type: "finish", reason: "stop", usage }]
+
+type StreamPart = Response.StreamPartEncoded
+/** Anthropic's thinking metadata: the signature of a thinking block, the data of a redacted one. */
+const signed = { anthropic: { info: { type: "thinking" as const, signature: "conformance-signature" } } }
+const redacted = { anthropic: { info: { type: "redacted_thinking" as const, redactedData: "conformance-redacted" } } }
+/** A reply that thinks, signed and redacted, before it calls `probe`: settled, then as Anthropic streams it
+ *  (the signature on an empty delta after the text, the redacted data on its block's start). */
+const thinkingProbeCall = (id: string, n: number): ReadonlyArray<Part> =>
+  [{ type: "reasoning", text: "think", metadata: signed }, { type: "reasoning", text: "", metadata: redacted }, ...probeCall(id, n)]
+const streamedThinkingProbeCall = (id: string, n: number): ReadonlyArray<StreamPart> => [
+  { type: "reasoning-start", id: "0" },
+  { type: "reasoning-delta", id: "0", delta: "think" },
+  { type: "reasoning-delta", id: "0", delta: "", metadata: signed },
+  { type: "reasoning-end", id: "0" },
+  { type: "reasoning-start", id: "1", metadata: redacted },
+  { type: "reasoning-end", id: "1" },
+  { type: "tool-call", id, name: Probe.name, params: { n }, providerExecuted: false },
+  { type: "finish", reason: "tool-calls", usage },
+]
+const streamedText = (text: string): ReadonlyArray<StreamPart> =>
+  [{ type: "text-start", id: "t" }, { type: "text-delta", id: "t", delta: text }, { type: "text-end", id: "t" }, { type: "finish", reason: "stop", usage }]
 
 /** A provider's usage with every count: cache reads and writes inside the input, reasoning inside the output. */
 const billed = (input: number, output: number) => ({
@@ -71,6 +92,12 @@ interface Scenario {
   readonly onMediaRejected?: (reason: string) => Effect.Effect<boolean>
   /** Runs on every `plan` call, with the step it plans. */
   readonly planned?: (step: number) => Effect.Effect<void>
+  /** The request's `limits.streaming` (off by default). */
+  readonly streaming?: boolean
+  /** What the provider streams for each call, the streamed twin of `script`; without it, the provider does not stream. */
+  readonly stream?: ReadonlyArray<ReadonlyArray<StreamPart>>
+  /** Each plan holds the messages recorded so far after the user's, as a memory renders them (only the user's by default). */
+  readonly replay?: boolean
 }
 
 /** A provider's refusal of a request over an image. */
@@ -83,6 +110,8 @@ interface Observed {
   readonly result: RunResult
   readonly events: ReadonlyArray<TurnEvent>
   readonly providerCalls: ReadonlyArray<unknown>
+  /** The prompt of each provider call. */
+  readonly prompts: ReadonlyArray<Prompt.Prompt>
   readonly recorded: ReadonlyArray<LogEntry>
   readonly dispatches: ReadonlyArray<number>
   /** `CurrentTraceContent` as each provider call read it. */
@@ -101,22 +130,30 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
   const seen = yield* Ref.make<ReadonlyArray<TurnEvent>>([])
   yield* events.subscribe(Option.some, (event: TurnEvent) => Ref.update(seen, (all) => [...all, event]))
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([])
+  const prompts = yield* Ref.make<ReadonlyArray<Prompt.Prompt>>([])
   const dispatches = yield* Ref.make<ReadonlyArray<number>>([])
   const traceContent = yield* Ref.make<ReadonlyArray<boolean>>([])
   const dispatchedKeys = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
   const calledKeys = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
   const readKey = (into: Ref.Ref<ReadonlyArray<Option.Option<string>>>) =>
     Effect.service(CurrentPromptCacheKey).pipe(Effect.flatMap((key) => Ref.update(into, (all) => [...all, key])))
+  /** One provider call, streamed or not: its index, after it is recorded. */
+  const called = (options: LanguageModel.ProviderOptions) => Ref.modify(calls, (all): [number, ReadonlyArray<unknown>] => [all.length, [...all, options.toolChoice]]).pipe(
+    Effect.tap(() => Ref.update(prompts, (all) => [...all, options.prompt])),
+    Effect.tap(() => scenario.providerCall ?? Effect.void),
+    Effect.tap(() => Effect.service(CurrentTraceContent).pipe(Effect.flatMap((capture) => Ref.update(traceContent, (all) => [...all, capture])))),
+    Effect.tap(() => readKey(calledKeys)),
+  )
+  const stream = scenario.stream
   const model = yield* LanguageModel.make({
-    generateText: (options) => Ref.modify(calls, (all): [number, ReadonlyArray<unknown>] => [all.length, [...all, options.toolChoice]]).pipe(
-      Effect.tap(() => scenario.providerCall ?? Effect.void),
-      Effect.tap(() => Effect.service(CurrentTraceContent).pipe(Effect.flatMap((capture) => Ref.update(traceContent, (all) => [...all, capture])))),
-      Effect.tap(() => readKey(calledKeys)),
+    generateText: (options) => called(options).pipe(
       Effect.flatMap((index) => scenario.refuseFirst === true && index === 0
         ? Effect.fail(imageRefusal)
         : Effect.succeed([...(scenario.script[index] ?? textReply("done"))])),
     ),
-    streamText: () => Stream.die("the conformance provider does not stream"),
+    streamText: (options) => stream === undefined
+      ? Stream.die("the conformance provider does not stream")
+      : Stream.unwrap(called(options).pipe(Effect.map((index) => Stream.fromIterable(stream[index] ?? streamedText("done"))))),
   })
   const invocations = yield* Ref.make(0)
   const handlers = yield* typed.toHandlers({
@@ -146,7 +183,8 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     skills: [],
   }
   const recorded = yield* Ref.make<ReadonlyArray<LogEntry>>([])
-  const record = (step: number, tail: ReadonlyArray<AgentMessage>) => Ref.modify(recorded, (all): [ReadonlyArray<LogEntry>, ReadonlyArray<LogEntry>] => {
+  const history = yield* Ref.make<ReadonlyArray<AgentMessage>>([{ role: "user", content: "go" }])
+  const record = (step: number, tail: ReadonlyArray<AgentMessage>) => Ref.update(history, (all) => [...all, ...tail]).pipe(Effect.andThen(Ref.modify(recorded, (all): [ReadonlyArray<LogEntry>, ReadonlyArray<LogEntry>] => {
     const entries = tail.flatMap((message): ReadonlyArray<LogEntry["body"]> => message.role !== "tool"
       ? [{ _tag: "Message", message }]
       : message.content.map((part) => ({
@@ -154,16 +192,17 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
         encoded: part.output, view: String(part.output), viewVersion: "1", subjects: [], artifacts: [], pinned: false,
       }))).map((body, index): LogEntry => ({ id: entryId("conformance", all.length + index), runId: "conformance", turn: 1, step, at: 0, body }))
     return [entries, [...all, ...entries]]
-  })
+  })))
   yield* scenario.before?.(tasks) ?? Effect.void
   const request: StepRequest = {
     tools,
     handlers: Context.merge(handlers, Context.make(LanguageModel.LanguageModel, model)) as Context.Context<never>,
-    limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: false, requireCompletion: false },
+    limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: scenario.streaming ?? false, requireCompletion: false },
     initial: Option.fromNullishOr(scenario.initial),
-    plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(Effect.as({
-      model: Option.none(), system: "conformance", messages: [{ role: "user" as const, content: "go" }], toolChoice: Option.fromNullishOr(scenario.toolChoice),
-    })),
+    plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(
+      Effect.andThen(scenario.replay === true ? Ref.get(history) : Effect.succeed([{ role: "user" as const, content: "go" }])),
+      Effect.map((messages) => ({ model: Option.none(), system: "conformance", messages, toolChoice: Option.fromNullishOr(scenario.toolChoice) })),
+    ),
     dispatch: (step) => Ref.update(dispatches, (all) => [...all, step]).pipe(Effect.andThen(readKey(dispatchedKeys)), Effect.andThen(scenario.dispatch?.(step) ?? Effect.void)),
     record,
     onMediaRejected: scenario.onMediaRejected ?? (() => Effect.succeed(false)),
@@ -177,7 +216,7 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
   }
   const result = yield* loop.run(request).pipe(Effect.provideService(CurrentTraceContent, scenario.ambientTraceContent ?? false))
   return {
-    result, events: yield* Ref.get(seen), providerCalls: yield* Ref.get(calls), recorded: yield* Ref.get(recorded),
+    result, events: yield* Ref.get(seen), providerCalls: yield* Ref.get(calls), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded),
     dispatches: yield* Ref.get(dispatches), traceContent: yield* Ref.get(traceContent),
     cacheKeys: { dispatched: yield* Ref.get(dispatchedKeys), called: yield* Ref.get(calledKeys) },
   }
@@ -198,8 +237,11 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * `captureTraceContent` provided to its model calls as `CurrentTraceContent`,
  * the request's `cacheKey` provided to its dispatch checks and model calls as
  * `CurrentPromptCacheKey` (the dispatch check compares it with the request's
- * header), and a request refused over an image planned again and sent once more
- * when `onMediaRejected` answers true, failing the step when it answers false.
+ * header), a request refused over an image planned again and sent once more
+ * when `onMediaRejected` answers true, failing the step when it answers false,
+ * and a streamed step's reasoning reaching the next request with its provider
+ * metadata (Anthropic's signed and redacted thinking), as a non-streamed one's
+ * does.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
   {
@@ -352,6 +394,21 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
       const [rejections, sent] = [yield* Ref.get(asked), yield* Ref.get(calls)]
       yield* expect("media-rejected", result._tag === "Failure" && rejections === 1 && sent === 1,
         `${result._tag} after ${sent} provider calls, onMediaRejected asked ${rejections} times`)
+    }),
+  },
+  {
+    name: "a streamed reasoning part reaches the next request with its provider metadata",
+    run: Effect.gen(function* () {
+      const { prompts } = yield* observe(loop, {
+        streaming: true, replay: true,
+        script: [thinkingProbeCall("c1", 1), textReply("done")],
+        stream: [streamedThinkingProbeCall("c1", 1), streamedText("done")],
+      })
+      const replayed = (prompts[1]?.content ?? []).flatMap((message) => message.role === "assistant" ? message.content : [])
+        .flatMap((part) => part.type === "reasoning" ? [{ text: part.text, options: part.options }] : [])
+      const expected = [{ text: "think", options: signed }, { text: "", options: redacted }]
+      yield* expect("stream-metadata", prompts.length === 2 && canonicalJson(replayed) === canonicalJson(expected),
+        `${prompts.length} provider calls; the second request's reasoning was ${JSON.stringify(replayed)}, not ${JSON.stringify(expected)}`)
     }),
   },
   {

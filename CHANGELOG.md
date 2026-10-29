@@ -80,6 +80,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   publish through `defineHostEvent`.
 - Read stored records through `readStored` and `readStoredKeys` rather than
   `event.data.<field>`.
+- Streamed sessions now replay their reasoning: the request bytes and
+  cached prompt prefixes of Anthropic sessions with thinking and OpenAI
+  Responses sessions with reasoning change once (messages stored earlier
+  still decode, without metadata). Code comparing `foldStreamParts` output
+  with plain `{ type, text }` objects compares with `Response.makePart(...)`,
+  and a custom `StepLoop` that streams reruns `stepLoopConformance`.
 
 ### Breaking
 
@@ -247,6 +253,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `{}`); in plugin-tasks, `list` and `status` fail with `session.decode`;
   in core, `modelRequestHeaderOf` and `replayModelRequest` fail with
   `request.decode` where they used to report `request.missing`.
+- `foldStreamParts` emits each text and reasoning chunk as an effect/ai part
+  (`Response.makePart`, with `metadata`), and keeps a chunk that has
+  metadata but no text (a redacted thinking block, an OpenAI reasoning item
+  without a summary).
 
 ### Added
 
@@ -489,6 +499,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   recognises `store.busy`.
 - A task whose turn fails with `SessionContended`, `ReservedKind` or
   `SessionLogError` stores that tag's code instead of `task.turn`.
+- A streamed step stores the provider metadata of its text and reasoning,
+  as a non-streamed step does: Anthropic thinking keeps its signature,
+  redacted thinking is no longer dropped, and the OpenAI Responses routes
+  (openai, openai-codex, OpenCode `gpt-*`) keep a reasoning item's `itemId`
+  and `encryptedContent`. Later requests send that reasoning back.
 
 ### Repository
 
@@ -614,6 +629,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `effect/no-record-cast` runs in plugin-sessions.
 - `effect/no-unknown-json` runs in every package (with its shrinking
   `UNKNOWN_JSON_EDGES` allow list); its per-package list is gone.
+- A streamed golden, `packages/sdk/golden/agent-stream.model.json`, pins
+  every request of a streamed two-turn conversation.
 
 ## 0.14.0 — 2026-10-29
 
