@@ -12,6 +12,7 @@ import * as render from "@xandreed/plugin-render"
 import * as sessionSqlite from "@xandreed/plugin-session-sqlite"
 import * as sessions from "@xandreed/plugin-sessions"
 import * as tasks from "@xandreed/plugin-tasks"
+import * as telemetry from "@xandreed/plugin-telemetry"
 import * as toolDiscovery from "@xandreed/plugin-tool-discovery"
 import * as workspace from "@xandreed/plugin-workspace"
 /** A self-contained draft-07 schema, as the reference has always published. */
@@ -22,7 +23,7 @@ const jsonSchemaOf = (schema: Schema.Top) => {
 /** Every first-party plugin the framework publishes, in host-graph order. */
 const firstParty: ReadonlyArray<Plugin> = [sessionSqlite.sessionSqlitePlugin, sessionSqlite.sessionLogSqlitePlugin, sessions.sessionsPlugin,
   workspace.localSystemPlugin, workspace.skillsDirectoryPlugin, workspace.workspaceToolsPlugin, models.modelsPlugin, memoryWindow.memoryWindowPlugin, memorySummary.memorySummaryPlugin, memoryDigest.memoryDigestPlugin,
-  toolDiscovery.toolDiscoveryPlugin, agentLoop.stepLoopPlugin, tasks.tasksPlugin, render.renderSurfacePlugin, render.renderFeedPlugin,
+  toolDiscovery.toolDiscoveryPlugin, agentLoop.stepLoopPlugin, tasks.tasksPlugin, telemetry.telemetryPlugin, render.renderSurfacePlugin, render.renderFeedPlugin,
   render.uiOutputPlugin]
 /** A `definePlugin` result, as a package exports it. */
 const isPlugin = (value: unknown): value is Plugin => typeof value === "object" && value !== null && "id" in value && "version" in value

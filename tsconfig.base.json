@@ -99,6 +99,9 @@
       ],
       "@xandreed/plugin-workspace": [
         "packages/plugin-workspace/src/index.ts"
+      ],
+      "@xandreed/plugin-telemetry": [
+        "packages/plugin-telemetry/src/index.ts"
       ]
     }
   }

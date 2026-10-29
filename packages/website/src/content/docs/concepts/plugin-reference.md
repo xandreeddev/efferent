@@ -1247,6 +1247,85 @@ Requires: `efferent/Sessions`, `efferent/TaskRunner`, `efferent/TaskExecutor`
 }
 ```
 
+## @xandreed/plugin-telemetry
+
+Scope: **session** · API 2 · Version 0.13.0
+
+Provides: none
+
+Requires: `efferent/RunContext`, `efferent/TurnEvents`
+
+### Defaults
+
+```json
+{
+  "prices": {},
+  "metricAttributes": {},
+  "spanEvents": true
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "prices": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "number",
+            "minimum": 0
+          },
+          "output": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cacheRead": {
+            "type": "number",
+            "minimum": 0
+          },
+          "cacheWrite": {
+            "type": "number",
+            "minimum": 0
+          },
+          "reasoning": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "input",
+          "output",
+          "cacheRead",
+          "cacheWrite"
+        ],
+        "additionalProperties": true
+      }
+    },
+    "metricAttributes": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "spanEvents": {
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "prices",
+    "metricAttributes",
+    "spanEvents"
+  ],
+  "additionalProperties": true
+}
+```
+
 ## @xandreed/plugin-render/surface
 
 Scope: **runtime** · API 2 · Version 0.13.0

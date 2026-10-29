@@ -16,8 +16,10 @@ this repository's history.
 npm install @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
 ```
 
-Every package below except the new `@xandreed/plugin-workspace` is published
-at `0.13.0` under npm's `latest` tag; that one ships with the next release.
+Every package below except the new `@xandreed/plugin-workspace` and
+`@xandreed/plugin-telemetry` is published at `0.13.0` under npm's `latest`
+tag; those two ship with the next release (npm's older
+`@xandreed/plugin-telemetry` versions are an earlier, unrelated plugin).
 The historical `efferent` npm package is a different release line.
 
 ## Compose
@@ -70,6 +72,28 @@ on the Anthropic and Responses routes; chat-completions routes get a label
 line per image for now (see [Images and multi-part
 messages](docs/framework.md#images-and-multi-part-messages) for the routes
 and the memory budgets).
+
+Each turn is one trace subtree under its `agent.turn` span (a child of the
+caller's span, if any), and the packages record Effect metrics; nothing
+leaves the process until the host provides an exporter. `@xandreed/plugin-telemetry` adds usage (by billed kind), cost and
+tool metrics per turn (`telemetryPlugin`, with the host's prices) and exports
+traces and metrics over OTLP/HTTP with Effect's own exporters
+(`OtlpTelemetryLive`, or `OtlpTelemetryFromEnv` for the standard
+`OTEL_EXPORTER_OTLP_*` variables), on Node 24 and Bun:
+
+```ts
+import { Effect } from "effect"
+import { OtlpTelemetryLive, telemetryPlugin } from "@xandreed/plugin-telemetry"
+
+const plugins = [/* … */ { plugin: telemetryPlugin, options: {
+  prices: { "anthropic:claude-sonnet-5": { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } }, // per million tokens
+} }]
+declare const program: Effect.Effect<void> // defines the agent and runs its turns
+Effect.runFork(program.pipe(Effect.provide(OtlpTelemetryLive({ baseUrl: "http://localhost:4318" }))))
+```
+
+See [observability](packages/website/src/content/docs/concepts/observability.md)
+for the span tree, the metrics and serverless flushing.
 
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere;
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores them
@@ -194,6 +218,7 @@ names, or the host's `HostCredentials`, and settings edits stay in memory. See
 | `@xandreed/plugin-tasks` | Background tasks |
 | `@xandreed/plugin-render` | Render surfaces, event feeds and streaming |
 | `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`), the workspace tools `read`, `write`, `edit`, `ls`, `find`, `grep` and `bash` (`workspaceToolsPlugin`), and skills from directories of `SKILL.md` files (`skillsDirectoryPlugin`); Linux and macOS |
+| `@xandreed/plugin-telemetry` | Usage, cost and tool metrics per turn (`telemetryPlugin`) and OTLP/HTTP export of traces and metrics (`OtlpTelemetryLive`) |
 | `@xandreed/evals` | Tasks, trials, graders and suites; app adapters, local reports and retrieval metrics |
 | `@xandreed/evals-cli` | The `efferent-eval` command line (Node 24) |
 | `@xandreed/evals-langfuse`, `@xandreed/evals-langsmith` | Optional evaluation exporters (Node 24) |
@@ -222,7 +247,8 @@ session log with a background task on Bun, then imports every Node-capable
 package on Node, and runs the `FileSystem` and `Bash` kits over the local
 adapters, loads a `SKILL.md` tree through the skills directory plugin, and
 runs an agent turn that reads, edits and runs a command through the
-workspace tools, on both. It also compiles every `@xandreed/*` import in the README,
+workspace tools, and flushes a turn's span and usage metric through the
+telemetry plugin to a local OTLP collector, on both. It also compiles every `@xandreed/*` import in the README,
 the guides and the website docs against the packed packages, and checks that
 each plugin's version is its package's. `bun run docs:generate` writes the
 plugin and event references.

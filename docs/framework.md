@@ -75,7 +75,9 @@ then imports every Node-capable package on Node; it also runs the `FileSystem`
 and `Bash` kits over the packed `@xandreed/plugin-workspace` adapters, loads a
 `SKILL.md` tree through the packed skills directory plugin, and runs an agent
 turn in which a scripted model reads, edits and runs a command through the
-workspace tools, on both Bun and Node. Publishing is a separate release action:
+workspace tools, and flushes a turn's `agent.turn` span and its usage and cost
+metrics through the packed `@xandreed/plugin-telemetry` to a local OTLP
+collector, on both Bun and Node. Publishing is a separate release action:
 `bun run publish:packages` checks the build stamp (`.artifacts/packages/build.json`)
 against the current commit and a clean tree, then publishes in dependency order; it is a
 dry run unless `--publish` is passed (see [publishing](../CONTRIBUTING.md#publishing)).
@@ -84,9 +86,17 @@ dry run unless `--publish` is passed (see [publishing](../CONTRIBUTING.md#publis
 
 The packages record spans and metrics through Effect's own `Tracer` and
 metric registry, outside evals too. Nothing is exported until the host
-provides an exporter around its program, for example the OTLP layers of
-`effect/observability` (`OtlpTracer`, `OtlpMetrics`); a serverless host
-flushes them before it responds.
+provides an exporter around its program: `@xandreed/plugin-telemetry`'s
+`OtlpTelemetryLive({ baseUrl })` (or `OtlpTelemetryFromEnv()`, configured by
+the standard `OTEL_EXPORTER_OTLP_*` variables) posts traces and metrics over
+OTLP/HTTP with Effect's own exporters (`effect/observability`), and a
+serverless host flushes before it responds (`flushTelemetry`). The same
+package's `telemetryPlugin` records each turn's token usage by billed kind,
+its cost at the host's prices, tool calls, refusals and durations, steps and
+stream fallbacks as metrics, and the turn's usage and refusals as events on
+its `agent.turn` span. See the website's
+[observability](../packages/website/src/content/docs/concepts/observability.md)
+page for the options, the environment variables and the metrics.
 
 **The span tree.** Each turn `Agent.turn` runs is one trace subtree under the
 caller's span, if any:
@@ -155,6 +165,11 @@ context to provide it later passes it through `replayableContext` too.
 | `llm.request.duration`, `llm.usage.*_tokens` | `llm.model` | the same calls' time and tokens |
 
 No metric carries a session, run or turn id: those are on the spans.
+`telemetryPlugin` adds `efferent.llm.tokens` (by `efferent.model` and
+`efferent.token.kind`: `input`, `cache_read`, `cache_write`, `reasoning`,
+`output`, summing to each response's total), `efferent.llm.cost`,
+`efferent.steps`, `efferent.tool.calls`, `efferent.tool.duration`,
+`efferent.tool.refused` and `efferent.stream.fallbacks` (`TelemetryMetrics`).
 
 **Trace content.** Prompts and responses stay out of spans unless a run
 captures them: `engine.step.input` (the exact prompt and the active tools)
@@ -1057,13 +1072,14 @@ defaults and its layer:
 | `@xandreed/plugin-workspace` | `LocalSystemPluginLive` | `FileSystem`, `Bash` | — (fails with `ShellMissing` when the shell is not installed) |
 | `@xandreed/plugin-workspace` | `SkillsDirectoryPluginLive` | `Capabilities` (the directory's skills) | `FileSystem` (and `SessionEnvironment` when present) |
 | `@xandreed/plugin-workspace` | `WorkspaceToolsPluginLive` | `Capabilities` (the workspace tools) | — at build (`Bash` used when there); each call needs `FileSystem` and `SessionEnvironment`, `bash` also `Bash` |
+| `@xandreed/plugin-telemetry` | `TelemetryPluginLive` | — (records metrics and span events) | `RunContext`, `TurnEvents` (build it per turn) |
 
 The schemas are `SessionsConfig`, `TasksConfig`, `MemoryWindowConfig`,
 `MemorySummaryConfig`, `MemoryDigestConfig`, `ToolDiscoveryConfig`,
-`LocalSystemConfig`, `SkillsDirectoryConfig` and `WorkspaceToolsConfig`, with
-`sessionsDefaults`, `localSystemDefaults`, `skillsDirectoryDefaults`,
-`workspaceToolsDefaults` and so on; plugin-render exports
-`renderSurfaceDefaults` and `renderFeedDefaults`.
+`LocalSystemConfig`, `SkillsDirectoryConfig`, `WorkspaceToolsConfig` and
+`TelemetryOptions`, with `sessionsDefaults`, `localSystemDefaults`,
+`skillsDirectoryDefaults`, `workspaceToolsDefaults`, `telemetryDefaults` and
+so on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
 
 `stackPlugins(next)(base)` composes them the way the graph activates plugins:
 `next` is built over everything `base` provides, the two `Capabilities`

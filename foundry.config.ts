@@ -45,6 +45,7 @@ const CHECKED = [
   "packages/plugin-tasks/src/**",
   "packages/plugin-render/src/**",
   "packages/plugin-workspace/src/**",
+  "packages/plugin-telemetry/src/**",
   // The factory judges itself by the same profile (the dogfood).
   "packages/foundry/src/**",
 ]
@@ -343,6 +344,44 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect/ai",
                   "node:",
                   "@xandreed/core"
+            ]
+      },
+      {
+            "name": "plugin-telemetry-tests",
+            "path": "packages/plugin-telemetry/src/**/*.test*.ts",
+            "canImport": [
+                  "plugin-telemetry",
+                  "core",
+                  "sdk",
+                  "plugin-agent-loop",
+                  "plugin-memory-window",
+                  "plugin-tool-discovery",
+                  "plugin-sessions"
+            ],
+            "externals": [
+                  "effect",
+                  "effect/",
+                  "bun",
+                  "bun:test",
+                  "@xandreed/core",
+                  "@xandreed/sdk",
+                  "@xandreed/plugin-agent-loop",
+                  "@xandreed/plugin-memory-window",
+                  "@xandreed/plugin-tool-discovery",
+                  "@xandreed/plugin-sessions"
+            ]
+      },
+      {
+            "name": "plugin-telemetry",
+            "path": "packages/plugin-telemetry/src/**",
+            "canImport": [
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "effect/",
+                  "@xandreed/core",
+                  "bun:test"
             ]
       },
       {

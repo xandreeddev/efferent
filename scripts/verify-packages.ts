@@ -348,6 +348,13 @@ registry.stop(true)
 await writeFile(join(consumer, "evaluation-consumer.mjs"), await readFile(join(root, "scripts/evaluation-consumer.fixture.mjs"), "utf8"))
 const evalNode = Bun.spawn(["node", "evaluation-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await evalNode.exited !== 0) process.exit(1)
+// A turn with the packed telemetry plugin exports its agent.turn span and usage metric over OTLP to a
+// node:http collector: on Node, the runtime a serverless host deploys to, then on Bun.
+await writeFile(join(consumer, "telemetry-consumer.mjs"), await readFile(join(root, "scripts/telemetry-consumer.fixture.mjs"), "utf8"))
+const telemetryNode = Bun.spawn(["node", "telemetry-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await telemetryNode.exited !== 0) process.exit(1)
+const telemetryBun = Bun.spawn(["bun", "telemetry-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await telemetryBun.exited !== 0) process.exit(1)
 // The models plugin with storage "memory" never touches disk: on Node, in a process of its own whose HOME
 // and working directory are fresh empty directories (the consumer's own already holds files) that must stay empty.
 await writeFile(join(consumer, "models-consumer.mjs"), await readFile(join(root, "scripts/models-consumer.fixture.mjs"), "utf8"))

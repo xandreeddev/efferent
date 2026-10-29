@@ -42,6 +42,7 @@ export const docsNav: DocGroup[] = [
       { slug: "concepts/engine", label: "Core contracts" },
       { slug: "concepts/conformance", label: "Conformance kits" },
       { slug: "concepts/workspace", label: "Workspace tools" },
+      { slug: "concepts/observability", label: "Observability" },
       { slug: "concepts/providers", label: "Plugin configuration" },
       { slug: "concepts/plugin-reference", label: "Plugin reference" },
       { slug: "concepts/event-reference", label: "Event reference" },

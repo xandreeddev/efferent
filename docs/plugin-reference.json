@@ -1185,6 +1185,80 @@
     }
   },
   {
+    "id": "@xandreed/plugin-telemetry",
+    "version": "0.13.0",
+    "apiVersion": 2,
+    "scope": "session",
+    "requires": [
+      "efferent/RunContext",
+      "efferent/TurnEvents"
+    ],
+    "optional": [],
+    "provides": [],
+    "contributes": [],
+    "defaults": {
+      "prices": {},
+      "metricAttributes": {},
+      "spanEvents": true
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "prices": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "input": {
+                "type": "number",
+                "minimum": 0
+              },
+              "output": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheRead": {
+                "type": "number",
+                "minimum": 0
+              },
+              "cacheWrite": {
+                "type": "number",
+                "minimum": 0
+              },
+              "reasoning": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "input",
+              "output",
+              "cacheRead",
+              "cacheWrite"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "metricAttributes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "spanEvents": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "prices",
+        "metricAttributes",
+        "spanEvents"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
     "id": "@xandreed/plugin-render/surface",
     "version": "0.13.0",
     "apiVersion": 2,
