@@ -3,6 +3,7 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentToolInvocation } from "../loop/stepContext.js"
 import { RunContext } from "../ports/run-context.port.js"
 import type { SubscribeOptions, Subscription, TurnEventsService } from "../ports/turn-events.port.js"
+import { storedJson } from "../session/session-log.entity.functions.js"
 import type { TurnError } from "../session/sessions.entity.js"
 
 import type { TurnEvent, TurnEventName, TurnEventOf } from "./turn-event.entity.js"
@@ -50,13 +51,17 @@ export const subscribeAll = <R>(events: TurnEventsService, subscriptions: Readon
 
 /**
  * An application's own typed event. Its name is the host's namespace
- * (e.g. `answer.published`); payloads are encoded with the schema, so a
- * journal sink can persist them like any other event.
+ * (e.g. `answer.published`); payloads are encoded with the schema and
+ * carried as JSON (`storedJson`: `undefined` fields dropped), so a journal
+ * sink can persist them like any other event. A payload that does not
+ * encode, or whose encoded form JSON cannot hold (a BigInt), fails `make`
+ * with `events.encode`.
  */
 export const defineHostEvent = <A, I extends Readonly<Record<string, unknown>>>(name: string, schema: Schema.Codec<A, I>) => {
   const select = (event: TurnEvent): Option.Option<A> =>
     event._tag === "host" && event.name === name ? Schema.decodeUnknownOption(schema)(event.data) : Option.none()
   const make = (data: A): Effect.Effect<TurnEvent, HarnessError> => Schema.encodeEffect(schema)(data).pipe(
+    Effect.flatMap(storedJson),
     Effect.map((encoded): TurnEvent => ({ _tag: "host", name, data: encoded })),
     Effect.mapError((error) => new HarnessError({ code: "events.encode", message: `${name}: ${error.message}` })),
   )

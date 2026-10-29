@@ -112,6 +112,7 @@ const EFFECT_FN_CLEAN = [
 ].map(src)
 
 const UNKNOWN_JSON_CLEAN = [
+  "core",
   "sdk",
   "evals",
   "evals-cli",
@@ -153,6 +154,23 @@ const RECORD_CAST_CLEAN = [
   "plugin-session-sqlite",
   "foundry",
 ].map(src)
+
+/**
+ * Open schemas (`effect/no-unknown-json`) core keeps for now. The MCP
+ * bridge passes a model's arguments to a server it does not know; a
+ * plugin entry's in-code options may hold values that are not JSON (a
+ * function, a layer); a model request's descriptor records the settings
+ * each provider builds, until the providers build them as JSON; the
+ * deprecated JSON helpers keep what they read today until they are
+ * removed. Each entry goes once its file decodes what it reads; the list
+ * only shrinks.
+ */
+const UNKNOWN_JSON_EDGES = [
+  "packages/core/src/mcp/bridge.ts",
+  "packages/core/src/harness/config.entity.ts",
+  "packages/core/src/turn/model-request.entity.ts",
+  "packages/core/src/util/json.ts",
+]
 
 /**
  * Casts to an object type (`effect/no-record-cast`) not yet replaced by a
@@ -350,7 +368,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
     { rule: "effect/no-stringified-cause", include: CHECKED, exclude: TEST_SCAFFOLDING },
     // One package at a time (the lists above).
-    { rule: "effect/no-unknown-json", include: UNKNOWN_JSON_CLEAN, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-unknown-json", include: UNKNOWN_JSON_CLEAN, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_JSON_EDGES },
     { rule: "effect/no-record-cast", include: RECORD_CAST_CLEAN, exclude: TEST_SCAFFOLDING, allow: RECORD_CAST_EDGES },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },

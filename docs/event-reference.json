@@ -1701,7 +1701,7 @@
     },
     {
       "name": "host",
-      "description": "An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it. Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`.",
+      "description": "An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it, as JSON (`defineHostEvent` writes it through JSON text, so `undefined` fields are dropped and a value JSON cannot hold fails the publish with `events.encode`). Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`.",
       "transient": false,
       "stored": {
         "as": "host"
@@ -1743,7 +1743,7 @@
           "data"
         ],
         "additionalProperties": true,
-        "description": "An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it. Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`."
+        "description": "An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it, as JSON (`defineHostEvent` writes it through JSON text, so `undefined` fields are dropped and a value JSON cannot hold fails the publish with `events.encode`). Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`."
       }
     }
   ],
@@ -5268,7 +5268,7 @@
     {
       "code": "events.encode",
       "where": "a host event's `make` / `publish`; the turn storing a bus event",
-      "meaning": "The payload did not encode with the host event's schema, or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step)."
+      "meaning": "The payload did not encode with the host event's schema, or its encoded form held a value JSON cannot (a BigInt), or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step)."
     },
     {
       "code": "service.missing",

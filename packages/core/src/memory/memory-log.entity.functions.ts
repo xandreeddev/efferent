@@ -1,4 +1,4 @@
-import { Array as Arr, Effect, Option, Order, Schema } from "effect"
+import { Array as Arr, Effect, Option, Order, Predicate, Schema } from "effect"
 import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaAt, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
@@ -13,14 +13,14 @@ import { EntryId as EntryIdSchema } from "./memory-log.entity.js"
 /** Key-sorted JSON: identical values always serialize to identical bytes. */
 export const canonicalJson = (value: unknown): string => JSON.stringify(sortKeys(value)) ?? "null"
 
+const byKey = Order.mapInput(Order.String, ([key]: readonly [string, unknown]) => key)
+
 const sortKeys = (value: unknown): unknown =>
   Array.isArray(value)
     ? value.map(sortKeys)
-    : typeof value === "object" && value !== null
-      ? Object.fromEntries(Arr.sort(Object.keys(value), Order.String).flatMap((key) => {
-        const field = (value as Record<string, unknown>)[key]
-        return field === undefined ? [] : [[key, sortKeys(field)] as const]
-      }))
+    : Predicate.isObject(value)
+      ? Object.fromEntries(Arr.sort(Object.entries(value), byKey).flatMap(([key, field]) =>
+        field === undefined ? [] : [[key, sortKeys(field)] as const]))
       : value
 
 /** FNV-1a (32 bit) plus length — pure, stable across processes and runtimes. */

@@ -88,6 +88,15 @@ describe("the turn event bus", () => {
     expect(pages).toEqual(["p1@5"])
   })
 
+  test("a host event carries its encoded payload as JSON: an undefined field is left out, a BigInt fails with events.encode", async () => {
+    const Note = defineHostEvent("note.saved", Schema.Struct({ id: Schema.String, draft: Schema.optional(Schema.String) }))
+    const Tally = defineHostEvent("tally.saved", Schema.Struct({ n: Schema.BigInt }))
+    const note = await Effect.runPromise(Note.make({ id: "a", draft: undefined }))
+    const tally = await run(Tally.make({ n: 1n }))
+    expect(note._tag === "host" ? note.data : {}).toStrictEqual({ id: "a" })
+    expect(tally._tag === "Failure" ? failureCode(tally.failure) : "made").toBe("events.encode")
+  })
+
   test("a background subscription handles events in order, off the publisher's path, and drain waits for it", async () => {
     const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const events = yield* makeTurnEvents({ maxDepth: 4 })

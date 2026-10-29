@@ -145,7 +145,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
   if (duplicateSkill !== undefined) return yield* Effect.fail(harness("skills.duplicate", `Two capabilities define the skill ${duplicateSkill.id}`))
   const unknownTool = skills.flatMap((skill) => skill.tools.filter((tool) => !registered.some((entry) => entry.tool.name === tool)).map((tool) => `${skill.id} → ${tool}`))
   if (unknownTool.length > 0) return yield* Effect.fail(harness("skills.tools", `Skills reference unregistered tools: ${unknownTool.join(", ")}`))
-  const catalog: CapabilityCatalog = catalogOf(config.catalogVersion, [...capabilities, defineCapability({ id: "tool-discovery", version: "1", tools: own })])
+  const catalog: CapabilityCatalog = yield* catalogOf(config.catalogVersion, [...capabilities, defineCapability({ id: "tool-discovery", version: "1", tools: own })])
   const byName = new Map(registered.map((entry) => [entry.tool.name, entry] as const))
   const skillsForTool = (tool: string) => skills.filter((skill) => skill.tools.includes(tool)).map((skill) => skill.id)
   const decoded = (name: string, encoded: unknown): Effect.Effect<Option.Option<{ readonly entry: RegisteredTool; readonly result: unknown }>> =>
