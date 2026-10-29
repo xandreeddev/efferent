@@ -102,10 +102,13 @@ would judge attempt N against attempt N-1's source).
    AND inferred return types, which is why the engine is compiler-API, not
    pattern-matching — `effect/match-over-tag-switch` (switch on `._tag` +
    else-if ladders; single guards are fine), `effect/no-as-any` (incl.
-   `as unknown as T` laundering), `effect/branded-id-fields`,
-   `effect/no-parallel-interface`) and the paradigm-neutral `quality` pack
+   `as unknown as T` laundering), `effect/no-as-never`,
+   `effect/no-loop-statements`, `effect/branded-id-fields`,
+   `effect/no-parallel-interface`), the paradigm-neutral `quality` pack
    (`quality/no-skipped-tests` — a skipped test is the coder gaming the
-   test gate; `quality/no-empty-catch`).
+   test gate; `quality/no-empty-catch`) and the `effect-architecture` pack
+   (the `architecture/*` file-role rules for entity, use-case, port and
+   adapter files).
 2. **`boundaries`** — each layer declares `canImport` (internal, by name)
    and `externals` (by prefix); everything else is a finding. Foundry's own
    6-layer config is the dogfood; pointing globs at package dirs makes the
@@ -127,7 +130,7 @@ steps and checks at runtime.)
 
 ## The loop — `forge`
 
-`Effect.iterate` over an immutable `LoopState` — zero `let`, zero `while`:
+A recursive Effect step over an immutable `LoopState` — zero `let`, zero `while`:
 implement (with `Schedule.exponential` retry on transient implementor
 failures) → snapshot → `runPipeline` → `Match` the phase → accept, or feed
 `renderFeedback` back and go again. Bounded by `maxAttempts` and a

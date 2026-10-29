@@ -27,7 +27,7 @@ const noLetFinding = new Finding({
   severity: "error",
   message: "`let` is banned; fold state instead",
   location: Option.none(),
-  fixHint: Option.some("use Effect.iterate or Array combinators"),
+  fixHint: Option.some("use Effect.reduce or Array combinators"),
 })
 
 /** Records every brief it was handed; writes nothing (the fake gate below is

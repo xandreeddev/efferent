@@ -24,7 +24,8 @@ from `src/index.ts`). Run a port's kit against every adapter of it, and when
 the port changes, on Node too (`verify:packages`). The kits share
 the private helpers in `src/conformance.functions.ts` (`check`, `expect`,
 `fail`, `freshId`, `headerOf`, `atTime`), the step-loop and turn kits
-`sameUsage`, and the sessions and task kits `kindsOf`, `settles` and
+`sameUsage`, the turn, sessions and memory kits the one-pixel image
+`pixelPng`, and the sessions and task kits `kindsOf`, `settles` and
 `eventually`; they are not exported, and new kits use them too. That file is test support for the kits, not an entity's behaviour,
 so it is not paired with `conformance.entity.ts`.
 Core has no adapter of `Sessions`, `Tasks` or `ToolRegistry`: their kits

@@ -1,35 +1,39 @@
 # Contributing to efferent
 
+This repository holds the framework only: the coding CLI and the reference
+applications moved to their own repositories on 2026-10-28. The rules for
+the code are in the root [`AGENTS.md`](AGENTS.md); this file is the process
+around them.
+
 ## Dev setup
 
-Requires [Bun](https://bun.sh) ≥ 1.3 on Linux. Development runs TypeScript directly; distribution builds
-emit JavaScript and declarations.
+Requires [Bun](https://bun.sh) ≥ 1.3 (CI pins 1.3.0) and Node ≥ 24.5 on
+Linux: `verify:packages` runs the packed packages on Node, and
+`@xandreed/plugin-models` declares 24.5. Development runs TypeScript
+directly; distribution builds emit JavaScript and declarations.
 
 ```bash
 git clone https://github.com/xandreeddev/efferent && cd efferent
 bun install
 ```
 
-## The gates are the review
-
-Every change must leave all of these green — CI enforces them, and the repo runs
-its **own** static gates on its own source at a **zero baseline** (one new
-violation anywhere fails the build):
-
-```bash
-bun run typecheck     # tsc + foundry self-check + the zero-baseline repo gate suite + scripts/
-bun test              # colocated unit tests — key-free by design
-bun run foundry demo  # the forge-loop E2E over a scripted implementor
-```
+`bun install` also installs a git pre-commit hook (`scripts/installHooks.ts`,
+in a standard checkout) that runs the repo gate profile before each commit.
+Keep it; never commit with `--no-verify`.
 
 The tests expect no proxy in the environment: Bun's fetch sends even the
 loopback servers they start to `HTTP_PROXY` / `HTTPS_PROXY`, so run them with
 those unset (the proxy tests that would go direct skip when one is set).
 
-House rules the gates enforce (see the root `AGENTS.md` for the full list):
-errors are `Schema.TaggedError` values (no `try`/`catch`/`throw`), state is a
-fold (no `let`, no loop statements), absence is `Option`, union branching is
-`Match`, dependency direction between packages is a build-failing gate.
+## The gates are the review
+
+The definition of done is the root `AGENTS.md` "Definition of done": the
+commands `.github/workflows/ci.yml` runs, in order. Its "Gate rules" table
+lists every rule `bun run typecheck` applies (the repo profile over every
+package, foundry's source included, then tsc over `scripts/`), and
+`bun run foundry check` runs foundry's own layer profile. A test
+(`scripts/agents-guide.test.ts`) keeps that table and that list in step
+with `foundry.config.ts` and `ci.yml`.
 
 The committed baseline (`.foundry/baseline.json`) stays empty, and
 `bun run typecheck` fails while it holds a fingerprint
@@ -37,7 +41,10 @@ The committed baseline (`.foundry/baseline.json`) stays empty, and
 finding instead of passing `--update-baseline --allow-grow`; that flag
 warns that CI will refuse the grown file.
 
-A new package under `packages/` must be registered by hand, and
+## Adding a package or a plugin
+
+Follow the `add-plugin` skill (`.agents/skills/add-plugin/SKILL.md`). A new
+package under `packages/` must be registered by hand, and
 `bun run typecheck` fails (`quality/package-registered`) naming each list
 it is missing from:
 
@@ -50,28 +57,48 @@ it is missing from:
 - `compilerOptions.paths` in `tsconfig.base.json` (`"@xandreed/<name>"`);
 - for a `plugin-*` package, `firstParty` in
   `scripts/generate-plugin-reference.ts` (import the package and list its
-  plugins).
+  plugins; `bun run docs:generate` also fails on an exported plugin missing
+  there).
 
 The lists the check reads are the `registration` data in
 `foundry.config.ts`; the docs site (`packages/website`) is exempt.
 
 ## PRs
 
-- Branch off `main`; PRs squash-merge.
+- Branch off `main`; PRs squash-merge, so the PR title becomes the commit
+  title and the body its message: write both as the `commit-style` skill
+  says.
 - Keep a PR to one concern; tests ride the same PR as the change.
 - New agent behavior ships with its evaluation — a calibration or a journey
   (`docs/composable-evaluations.md`); the battery is part of the definition of done.
 - Colocate tests next to the source (`foo.ts` / `foo.test.ts`); fixtures live
   outside `src/` so the gates never see deliberate violations.
-- A change to an event or a stored payload runs `bun run docs:generate`
-  (the plugin and [event](docs/event-reference.md) references are committed
-  as generated) and must keep every release's journal fixture readable
+- A change to a documented contract updates `docs/framework.md` and the
+  matching page under `packages/website/src/content/docs/concepts/` in the
+  same PR. Their `@xandreed/*` imports in code blocks are compiled against
+  the packed packages (`verify:packages`); generated pages are never edited
+  by hand.
+- Run `bun run docs:generate` after a change to an event, a stored payload,
+  or a plugin's id, version, scope, configuration schema, defaults,
+  `requires`, `optional`, `provides` or `contributes`. It writes the
+  [plugin](docs/plugin-reference.json) and [event](docs/event-reference.md)
+  references, the guides' snippets and their website pages; CI fails on any
+  difference from what is committed.
+- Every release's journal fixture stays readable
   (`packages/sdk/src/journal-compat.test.ts` reads each
   `packages/sdk/fixtures/journal-<version>.json`). A fixture records what a
   release wrote: record one per release with
   `bun scripts/record-journal-fixture.ts`. It refuses to overwrite an
   existing fixture unless `--force` is passed, and `--force` is only for
   re-recording the current, unreleased version.
+- The sdk golden (`packages/sdk/src/agent.golden.test.ts`) pins one
+  conversation byte for byte: what the model and the host see
+  (`packages/sdk/golden/agent-turn.model.json`) and what the session stores
+  (`agent-turn.journal.json`). After a deliberate change, re-record with
+  `EFFERENT_UPDATE_MODEL_GOLDEN=1` (model text) or `EFFERENT_UPDATE_GOLDEN=1`
+  (storage format) on `bun test packages/sdk/src/agent.golden.test.ts`, read
+  the whole `git diff` of the golden, and explain each change in the PR.
+  Never re-record to silence a failure you cannot explain.
 - A guide's code is not edited in the guide: `docs/events.md` quotes the
   regions of `packages/sdk/src/events-guide.test.ts`, a test that runs, and
   `bun run docs:generate` (`scripts/sync-guides.ts`) copies them in with the
@@ -82,15 +109,19 @@ The lists the check reads are the `registration` data in
   fence that is neither a snippet nor marked `<!-- unchecked: why -->`, and
   a link to a missing file or heading.
 - Add an entry under **Unreleased** in `CHANGELOG.md`: what changes for
-  someone using the packages, with a migration note for anything breaking.
-  Repository-only changes go under its "Repository" heading.
+  someone using the packages. Use its headings: `### Migration` (what a
+  user must do), `### Breaking`, `### Added`, `### Fixed` and
+  `### Repository` (changes to this repository only). Start a package's
+  entry with its name (`` `@xandreed/plugin-render`: ``).
 
 ## Publishing
 
 The framework packages are published from a maintainer's terminal; there is
 no release automation, and publishing needs explicit sign-off. All 19
 publishable packages (`names` in `scripts/build-packages.ts`) share one version (`0.14.0` in the sources) and are
-published under npm's `latest` tag. The previously published `efferent`,
+published under npm's `latest` tag. The build writes `private: false` into
+each manifest it builds, so a source `private: true` (core's) does not keep
+a package off npm. The previously published `efferent`,
 `@xandreed/cli` and `@xandreed/sdk-*` packages are a frozen earlier line.
 
 For a release, set the new version in every publishable `package.json` and in
@@ -144,8 +175,8 @@ depends on, with `npm publish <dir> --access public --tag latest`. A
 registry's cache), so a run that stopped part-way can be repeated. npm runs in
 the same terminal, so its two-factor prompt works there; run it from an
 interactive terminal. Merging a version bump publishes nothing; tag the
-release (`v<version>`) after it is on npm. Tags resume with `v0.13.0`; 0.11.0
-and 0.12.0 have none.
+release (`v<version>`) after it is on npm. Tags resume with `v0.14.0`; 0.11.0
+to 0.13.0 have none (`v0.1.1` to `v0.3.0` belong to the frozen earlier line).
 
 Never publish from a commit whose version is already on npm for some
 packages, unless it is the commit those were published from (a run that
@@ -165,10 +196,10 @@ Deployment branches and tags, or with
 
 ## Distribution changes
 
-Run `bun run build:packages` and `bun run verify:packages` for package changes.
-`verify:packages` checks only the build of `HEAD` (`build.json`) from a clean
-tree, and refuses test code in it (`*.test.*`, `testing` modules and folders,
-which the build leaves out); to check a build of uncommitted changes, run
-`bun run verify:packages --allow-dirty` right after `bun run build:packages`.
-The external-consumer test installs local tarballs; it never publishes them.
-Run `bun run --cwd packages/website check` for documentation changes.
+Run `bun run build:packages` and then `bun run verify:packages` for package
+changes. `verify:packages` checks only the build of `HEAD` (`build.json`)
+from a clean tree, and refuses test code in it (`*.test.*`, `testing`
+modules and folders, which the build leaves out); to check a build of
+uncommitted changes, run `bun run verify:packages --allow-dirty` right after
+`bun run build:packages`. The external-consumer test installs local
+tarballs; it never publishes them.

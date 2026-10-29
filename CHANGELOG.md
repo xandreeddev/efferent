@@ -306,6 +306,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Package builds leave out test code. `verify:packages` refuses a build of
   another commit, a build from a tree with changes (`--allow-dirty` checks a
   local build) and built packages holding test code.
+- The root `AGENTS.md` is rules only: a task map to the skills, a table of
+  every gate rule with what it bans and how to fix it, which gates see each
+  file role, how ports, adapters and plugins compose, naming rules for new
+  code (`Effect.fn("area.op")` at service boundaries,
+  `@xandreed/<package>/<Name>` service keys, `<thing>Plugin` exports) and a
+  definition of done identical to CI. A test keeps the rule table and the CI
+  commands in step with `foundry.config.ts` and `ci.yml`.
+- `CONTRIBUTING.md` covers process only: Node 24.5 and the pre-commit hook,
+  changelog headings, re-recording the sdk golden, when to run
+  `docs:generate`, and tags resuming at `v0.14.0`. The foundry and core
+  notes are brought up to date.
 
 ## 0.14.0 — 2026-10-29
 

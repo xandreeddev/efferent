@@ -134,7 +134,7 @@ export const layersLiveAtEdges: IdiomRule = {
   id: RuleId.make("architecture/layers-live-at-edges"),
   defaultSeverity: "error",
   description: "concrete Layers are constructed only by adapters, composition roots, and tests",
-  fixHint: "export the concrete Layer from a .adapter.ts file and compose it in main.ts",
+  fixHint: "export the concrete Layer from a .adapter.ts file and provide it where the program is composed (a plugin, an agent definition or a main.ts)",
   check: ({ sourceFile }) => {
     if (!isCore(sourceFile)) return []
     const matches: Array<RuleMatch> = []
