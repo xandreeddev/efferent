@@ -62,7 +62,9 @@ See [evaluation-domain.md](evaluation-domain.md) for interfaces, lifecycle, comm
 under `.artifacts/packages`. `bun run verify:packages` packs them, installs them
 in a temporary external project through a temporary local npm registry, and exercises
 SDK sessions, replacement plugins, persistence, forks and custom evals on Bun,
-then imports every Node-capable package on Node. Publishing is a separate release action:
+then imports every Node-capable package on Node; it also runs the `FileSystem`
+and `Bash` kits over the packed `@xandreed/plugin-workspace` adapters on both
+Bun and Node. Publishing is a separate release action:
 `bun run publish:packages` checks the build stamp (`.artifacts/packages/build.json`)
 against the current commit and a clean tree, then publishes in dependency order; it is a
 dry run unless `--publish` is passed (see [publishing](../CONTRIBUTING.md#publishing)).
@@ -256,6 +258,7 @@ skills, step context, completion) is the host's.
 | Memory strategy | `ConversationMemory` | `@xandreed/plugin-memory-window`, `@xandreed/plugin-memory-summary` |
 | Tool digests | `ResultDigester` (optional) | `@xandreed/plugin-memory-digest` |
 | Tool registry and discovery | `ToolRegistry` | `@xandreed/plugin-tool-discovery` |
+| Files and commands | `FileSystem`, `Bash` | `localSystemPlugin` from `@xandreed/plugin-workspace`, `FileSystemMemoryLive` (core), or the host's own |
 | Step iteration | `StepLoop` | `stepLoopPlugin` from `@xandreed/plugin-agent-loop` |
 | Host definitions | `Capabilities` (multi-provider) | `AgentConfig.capabilities`, or any plugin that `contributes` |
 | Pre-turn skill selection | `IntentMatcher` (optional, per turn) | any matcher service |
@@ -580,16 +583,22 @@ that any test runner can run. Run them against a new strategy, loop, turn
 composition, session store, file system or shell.
 
 **Files and commands.** Agent tools reach the machine through two core ports,
-`FileSystem` and `Bash`. This release ships the ports, the in-memory
-`FileSystemMemoryLive` and their conformance kits; no disk-backed
-`FileSystem` and no `Bash` adapter ships yet, so a host that needs them
-implements the ports and runs the kits against its adapters.
+`FileSystem` and `Bash`. Core ships the ports, the in-memory
+`FileSystemMemoryLive` and their conformance kits.
+`@xandreed/plugin-workspace` ships the local adapters, `FileSystemLive` (the
+disk through `node:fs/promises`) and `BashLive` (commands through
+`node:child_process`), both passing the kits on Bun and Node, and
+`localSystemPlugin`, which provides both. A host with another backend (a
+container, a remote machine) implements the ports and runs the kits against
+its adapters.
 `FileSystem` works on absolute POSIX paths: `read` (UTF-8) and `readBytes`
 (a range), `write` and `append` (`createParents`), `rename` (over an existing
 file; a link is moved, not its target), `stat` (kind, size, time; links followed unless
 `followSymlinks: false`), `exists`, `list` (entries with their kind, sorted by
 name), `glob`, `mkdir` (`recursive`), `realPath` and `remove` (a missing path
-is a no-op; a directory with entries needs `recursive`). Every failure is an
+is a no-op; a directory with entries needs `recursive`; links in the parent
+are followed but never the last name, so `link/` removes the link; the root
+and a path ending in `.` or `..` fail with `Invalid`). Every failure is an
 `FsError` with a `reason` that means the same on every backend (`NotFound`,
 `Exists`, `IsDirectory`, `NotDirectory`, `NotEmpty`, `Permission`, `Invalid`,
 `Io`). `glob(pattern, { cwd, exclude, dot, onlyFiles, limit })` is `walkGlob`
@@ -616,6 +625,45 @@ passed through: `resolveBashEnv` keeps `BASH_ENV_ALLOWLIST` (`PATH`, `HOME`,
 `inheritEnv` says `true`, `false` or another allowlist (a trailing `*`
 matches a prefix), then sets `env` over it, so provider keys never reach a
 command by default.
+
+The local adapters are POSIX only (Linux and macOS; CI runs Linux): they
+rely on `/`-rooted paths and process groups, so they do not work on
+Windows. `BashLive(options)` runs `<shell> -c <command>` with the command
+detached into a process group of its own. `shell` (default `bash`) is
+resolved to an absolute path once, when the layer is built, from the parent
+`PATH`, so a command whose environment has no `PATH` still runs; a shell
+that is not installed fails the layer with `ShellMissing`. There is no
+fallback: on a host without bash, set `shell: "sh"` (and write commands for
+it). Each command's `cwd` is checked first (`CwdMissing`); its `stdin` is
+written and closed, and a command that exits without reading it is not an
+error. A timeout or a caller that stops reading kills the whole group; with
+`killBackground` (the default) so does the command's return, so nothing it
+started in the background outlives it. The stream ends once the command
+has exited and its output has closed, or `exitGraceMs` (default 500) after
+the exit when something it started still holds the output open; the output
+pipes close then. So with `killBackground: false`, a background process
+that should outlive the command must have its own output
+(`npm run dev > dev.log 2>&1 &`): one still writing to the command's output
+gets `EPIPE` or dies of `SIGPIPE`. Commands inherit from `parentEnv`
+(default `process.env`) through `resolveBashEnv`. `FileSystemLive` maps
+each error code to its `FsReason` (`fsReasonOf`), refuses relative paths
+with `Invalid`, and resolves a `remove`'s parent before acting on its last
+name, as the in-memory backend does.
+
+`localSystemPlugin` provides both at runtime scope, with a flat
+configuration, `shell`, `killBackground` and `exitGraceMs`:
+
+```ts
+import { localSystemPlugin } from "@xandreed/plugin-workspace"
+
+const plugins = [{ plugin: localSystemPlugin, options: { killBackground: false } }]
+```
+
+**Workspace tools.** The tools an agent works on a workspace with (read,
+write, edit, ls, find, grep and bash, over `FileSystem` and `Bash`) are to
+ship in `@xandreed/plugin-workspace` beside these adapters; this release has
+the adapters and `localSystemPlugin` only. Until then, a host's own tools
+use the two services directly.
 
 **Tool discovery.** Hosts contribute tools (`defineTool`: handler, view,
 annotations) and skills (`defineSkill`, or `skillsFromFiles` over
@@ -675,10 +723,12 @@ defaults and its layer:
 | `@xandreed/plugin-memory-digest` | `MemoryDigestLive` | `ResultDigester` (build it per turn) | `UtilityLlm` |
 | `@xandreed/plugin-tool-discovery` | `ToolDiscoveryLive` | `ToolRegistry`, `Capabilities` (catalogue) | `Capabilities` |
 | `@xandreed/plugin-agent-loop` | `StepLoopLive` | `StepLoop` | — |
+| `@xandreed/plugin-workspace` | `LocalSystemPluginLive` | `FileSystem`, `Bash` | — (fails with `ShellMissing` when the shell is not installed) |
 
 The schemas are `SessionsConfig`, `TasksConfig`, `MemoryWindowConfig`,
-`MemorySummaryConfig`, `MemoryDigestConfig` and `ToolDiscoveryConfig`, with
-`sessionsDefaults` and so on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
+`MemorySummaryConfig`, `MemoryDigestConfig`, `ToolDiscoveryConfig` and
+`LocalSystemConfig`, with `sessionsDefaults`, `localSystemDefaults` and so
+on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
 
 `stackPlugins(next)(base)` composes them the way the graph activates plugins:
 `next` is built over everything `base` provides, the two `Capabilities`

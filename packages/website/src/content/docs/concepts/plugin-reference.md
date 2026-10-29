@@ -238,6 +238,53 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
 }
 ```
 
+## @xandreed/plugin-workspace/local
+
+Scope: **runtime** · API 2 · Version 0.13.0
+
+Provides: `@xandreed/core/FileSystem`, `@xandreed/core/Bash`
+
+Requires: none
+
+### Defaults
+
+```json
+{
+  "shell": "bash",
+  "killBackground": true,
+  "exitGraceMs": 500
+}
+```
+
+### Configuration schema
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "properties": {
+    "shell": {
+      "type": "string",
+      "minLength": 1
+    },
+    "killBackground": {
+      "type": "boolean"
+    },
+    "exitGraceMs": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 60000
+    }
+  },
+  "required": [
+    "shell",
+    "killBackground",
+    "exitGraceMs"
+  ],
+  "additionalProperties": true
+}
+```
+
 ## @xandreed/plugin-models
 
 Scope: **session** · API 2 · Version 0.13.0

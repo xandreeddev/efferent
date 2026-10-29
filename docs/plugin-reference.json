@@ -213,6 +213,46 @@
     }
   },
   {
+    "id": "@xandreed/plugin-workspace/local",
+    "version": "0.13.0",
+    "apiVersion": 2,
+    "scope": "runtime",
+    "requires": [],
+    "provides": [
+      "@xandreed/core/FileSystem",
+      "@xandreed/core/Bash"
+    ],
+    "defaults": {
+      "shell": "bash",
+      "killBackground": true,
+      "exitGraceMs": 500
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "shell": {
+          "type": "string",
+          "minLength": 1
+        },
+        "killBackground": {
+          "type": "boolean"
+        },
+        "exitGraceMs": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 60000
+        }
+      },
+      "required": [
+        "shell",
+        "killBackground",
+        "exitGraceMs"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
     "id": "@xandreed/plugin-models",
     "version": "0.13.0",
     "apiVersion": 2,

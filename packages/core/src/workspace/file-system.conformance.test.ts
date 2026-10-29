@@ -38,13 +38,30 @@ describe("the FileSystem kit catches careless backends", () => {
         : Effect.fail(new FsError({ path, reason: "NotFound", message: "no such file" })))),
       stat: (path) => fs.stat(path),
     }))
-    // The rename check reads the moved link with followSymlinks: false too.
-    expect(await failedChecks(careless)).toEqual(["list", "remove", "rename", "stat"])
+    // The rename and remove-paths checks read a link with followSymlinks: false too.
+    expect(await failedChecks(careless)).toEqual(["list", "remove", "remove-paths", "rename", "stat"])
   })
 
   test("a rename that follows a link, moving its target, fails the rename check", async () => {
     const careless = memorySubject((fs) => ({ ...fs, rename: (from, to) => fs.realPath(from).pipe(Effect.flatMap((real) => fs.rename(real, to))) }))
     expect(await failedChecks(careless)).toEqual(["rename"])
+  })
+
+  test("a rename that blames the source for every failure fails the rename check", async () => {
+    const careless = memorySubject((fs) => ({ ...fs, rename: (from, to) => fs.rename(from, to).pipe(Effect.mapError((error) => new FsError({ path: from, reason: error.reason, message: error.message }))) }))
+    expect(await failedChecks(careless)).toEqual(["rename"])
+  })
+
+  test("a remove that resolves the whole path first, as the kernel resolves a trailing slash or a last .., fails the remove checks", async () => {
+    // What a disk backend that hands the path to rmdir and rm as given does: `link/` is the directory it leads to, `dir/sub/..` is dir.
+    const careless = memorySubject((fs) => ({
+      ...fs,
+      remove: (path, options) => fs.realPath(path).pipe(
+        Effect.flatMap((real) => fs.remove(real, options)),
+        Effect.catchIf((error) => error.reason === "NotFound", () => Effect.void),
+      ),
+    }))
+    expect(await failedChecks(careless)).toEqual(["remove", "remove-paths"])
   })
 
   test("a glob that follows links (as fs.glob does on Bun) fails the glob checks a link changes", async () => {
@@ -79,20 +96,25 @@ describe("the in-memory file system", () => {
     expect(root).toEqual([])
   })
 
-  test("refuses relative paths, symlink loops, a directory moved into itself, and removing, moving or replacing the root", async () => {
-    const reasons = await Effect.runPromise(Effect.gen(function* () {
-      const fs = yield* makeMemoryFileSystem({ "/loop": { symlink: "/loop" }, "/dir/file": "x" })
+  test("refuses relative paths, symlink loops, a directory moved into itself, removing a path ending in . or .., and removing, moving or replacing the root", async () => {
+    const outcome = await Effect.runPromise(Effect.gen(function* () {
+      const fs = yield* makeMemoryFileSystem({ "/loop": { symlink: "/loop" }, "/dir/file": "x", "/up": { symlink: "/dir" } })
       const reason = (effect: Effect.Effect<unknown, FsError>) => Effect.flip(effect).pipe(Effect.map((error) => error.reason), Effect.orElseSucceed(() => "succeeded"))
-      return [
-        yield* reason(fs.read("relative/path")),
-        yield* reason(fs.read("/loop")),
-        yield* reason(fs.rename("/dir", "/dir/inner")),
-        yield* reason(fs.remove("/", { recursive: true })),
-        yield* reason(fs.rename("/", "/moved")),
-        yield* reason(fs.rename("/dir", "/")),
-      ]
+      return {
+        reasons: [
+          yield* reason(fs.read("relative/path")),
+          yield* reason(fs.read("/loop")),
+          yield* reason(fs.rename("/dir", "/dir/inner")),
+          yield* reason(fs.remove("/", { recursive: true })),
+          yield* reason(fs.remove("/up/..", { recursive: true })),
+          yield* reason(fs.remove("/dir/.", { recursive: true })),
+          yield* reason(fs.rename("/", "/moved")),
+          yield* reason(fs.rename("/dir", "/")),
+        ],
+        kept: yield* fs.read("/dir/file"),
+      }
     }))
-    expect(reasons).toEqual(["Invalid", "Invalid", "Invalid", "Invalid", "Invalid", "Invalid"])
+    expect(outcome).toEqual({ reasons: Array.from({ length: 8 }, () => "Invalid"), kept: "x" })
   })
 
   test("never creates directories through a link whose target is missing: mkdir and createParents fail with NotFound", async () => {

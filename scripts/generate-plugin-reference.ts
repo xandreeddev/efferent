@@ -13,6 +13,7 @@ import * as sessionSqlite from "@xandreed/plugin-session-sqlite"
 import * as sessions from "@xandreed/plugin-sessions"
 import * as tasks from "@xandreed/plugin-tasks"
 import * as toolDiscovery from "@xandreed/plugin-tool-discovery"
+import * as workspace from "@xandreed/plugin-workspace"
 /** A self-contained draft-07 schema, as the reference has always published. */
 const jsonSchemaOf = (schema: Schema.Top) => {
   const document = JsonSchema.toDocumentDraft07(Schema.toJsonSchemaDocument(schema))
@@ -20,7 +21,7 @@ const jsonSchemaOf = (schema: Schema.Top) => {
 }
 /** Every first-party plugin the framework publishes, in host-graph order. */
 const firstParty: ReadonlyArray<Plugin> = [sessionSqlite.sessionSqlitePlugin, sessionSqlite.sessionLogSqlitePlugin, sessions.sessionsPlugin,
-  models.modelsPlugin, memoryWindow.memoryWindowPlugin, memorySummary.memorySummaryPlugin, memoryDigest.memoryDigestPlugin,
+  workspace.localSystemPlugin, models.modelsPlugin, memoryWindow.memoryWindowPlugin, memorySummary.memorySummaryPlugin, memoryDigest.memoryDigestPlugin,
   toolDiscovery.toolDiscoveryPlugin, agentLoop.stepLoopPlugin, tasks.tasksPlugin, render.renderSurfacePlugin, render.renderFeedPlugin,
   render.uiOutputPlugin]
 /** A `definePlugin` result, as a package exports it. */

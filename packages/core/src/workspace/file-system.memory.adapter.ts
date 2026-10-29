@@ -35,6 +35,15 @@ const parentOf = (path: string): string => {
   return at <= 0 ? "/" : path.slice(0, at)
 }
 const join = (dir: string, name: string): string => dir === "/" ? `/${name}` : `${dir}/${name}`
+/**
+ * Whether a path's last segment is `.` or `..`: such a path names a
+ * directory only by where it leads (`<link>/..` can be the root), so
+ * `remove` refuses it, as `rm` does.
+ */
+const endsInDots = (path: string): boolean => {
+  const last = path.split("/").filter((segment) => segment.length > 0).at(-1)
+  return last === "." || last === ".."
+}
 /** The parent as written (not resolved): what `createParents` creates. */
 const writtenParent = (path: string): string => parentOf(`/${segmentsOf(path).join("/")}`)
 /** A copy, so neither the caller's later writes nor ours reach the other. */
@@ -166,18 +175,20 @@ export const makeMemoryFileSystem = (initial: Readonly<Record<string, MemorySeed
     path: asked, kind: kinds[node._tag], size: sizeOf(node), mtimeMs: node.mtimeMs, mode: Option.none(),
   })))
 
-  const remove = (asked: string, options?: RecursiveOptions) => change<void>((all) => Result.match(resolveIn(all, asked, false), {
-    onFailure: (error) => error.reason === "NotFound" ? [Result.succeed(undefined), all] : refused(all, error),
-    onSuccess: (real) => {
-      const node = all.get(real)
-      if (node === undefined) return [Result.succeed(undefined), all]
-      if (real === "/") return refused(all, failure(asked, "Invalid", "the root cannot be removed"))
-      const below = node._tag === "Directory" ? inside(all, real) : []
-      if (below.length > 0 && options?.recursive !== true) return refused(all, failure(asked, "NotEmpty", `directory not empty: ${asked}`))
-      const gone = new Set([real, ...below])
-      return [Result.succeed(undefined), new Map([...all].filter(([key]) => !gone.has(key)))]
-    },
-  }))
+  const remove = (asked: string, options?: RecursiveOptions) => endsInDots(asked)
+    ? Effect.fail(failure(asked, "Invalid", `a path whose last segment is . or .. is never removed: ${asked}`))
+    : change<void>((all) => Result.match(resolveIn(all, asked, false), {
+      onFailure: (error) => error.reason === "NotFound" ? [Result.succeed(undefined), all] : refused(all, error),
+      onSuccess: (real) => {
+        const node = all.get(real)
+        if (node === undefined) return [Result.succeed(undefined), all]
+        if (real === "/") return refused(all, failure(asked, "Invalid", "the root cannot be removed"))
+        const below = node._tag === "Directory" ? inside(all, real) : []
+        if (below.length > 0 && options?.recursive !== true) return refused(all, failure(asked, "NotEmpty", `directory not empty: ${asked}`))
+        const gone = new Set([real, ...below])
+        return [Result.succeed(undefined), new Map([...all].filter(([key]) => !gone.has(key)))]
+      },
+    }))
 
   const symlink = (target: string, asked: string) => change<void>((all, now) => Result.match(resolveIn(all, asked, false), {
     onFailure: (error) => refused(all, error),

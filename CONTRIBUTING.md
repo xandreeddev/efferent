@@ -51,7 +51,7 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
 ## Publishing
 
 The framework packages are published from a maintainer's terminal; there is
-no release automation, and publishing needs explicit sign-off. All 17
+no release automation, and publishing needs explicit sign-off. All 18
 publishable packages share one version (`0.13.0` in the sources) and are
 published under npm's `latest` tag. The previously published `efferent`,
 `@xandreed/cli` and `@xandreed/sdk-*` packages are a frozen earlier line.
@@ -59,7 +59,10 @@ published under npm's `latest` tag. The previously published `efferent`,
 For a release, set the new version in every publishable `package.json` and in
 each plugin definition (`version:` in `definePlugin`), run
 `bun run docs:generate`, and turn the changelog's **Unreleased** section into
-the new version, with the release date. Merge that, then publish from a clean
+the new version, with the release date. Set the version in the README's and
+the website getting-started page's "published at" sentence, and drop the
+README's exception for packages not yet on npm (today
+`@xandreed/plugin-workspace`). Merge that, then publish from a clean
 checkout of the merge commit:
 
 ```sh
@@ -99,6 +102,13 @@ the same terminal, so its two-factor prompt works there; run it from an
 interactive terminal. Merging a version bump publishes nothing; tag the
 release (`v<version>`) after it is on npm. Tags resume with `v0.13.0`; 0.11.0
 and 0.12.0 have none.
+
+Never publish from a commit whose version is already on npm for some
+packages, unless it is the commit those were published from (a run that
+stopped part-way). The skip above would then publish only what is missing,
+such as a package added since that release, pinned to the published
+`@xandreed/*` versions, which lack what it needs. A new package starts at
+the current shared version and first ships with the next version bump.
 
 Pushing a `v<version>` tag also deploys the documentation site from that tag
 (`.github/workflows/docs.yml`; a manual dispatch can deploy it too), so push

@@ -157,6 +157,17 @@
         "effect": "4.0.7",
       },
     },
+    "packages/plugin-workspace": {
+      "name": "@xandreed/plugin-workspace",
+      "version": "0.13.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "4.0.7",
+      },
+      "devDependencies": {
+        "@xandreed/runtime": "workspace:*",
+      },
+    },
     "packages/runtime": {
       "name": "@xandreed/runtime",
       "version": "0.13.0",
@@ -500,6 +511,8 @@
     "@xandreed/plugin-tasks": ["@xandreed/plugin-tasks@workspace:packages/plugin-tasks"],
 
     "@xandreed/plugin-tool-discovery": ["@xandreed/plugin-tool-discovery@workspace:packages/plugin-tool-discovery"],
+
+    "@xandreed/plugin-workspace": ["@xandreed/plugin-workspace@workspace:packages/plugin-workspace"],
 
     "@xandreed/runtime": ["@xandreed/runtime@workspace:packages/runtime"],
 

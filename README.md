@@ -16,8 +16,9 @@ this repository's history.
 npm install @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
 ```
 
-Every package below is published at `0.13.0` under npm's `latest` tag. The
-historical `efferent` npm package is a different release line.
+Every package below except the new `@xandreed/plugin-workspace` is published
+at `0.13.0` under npm's `latest` tag; that one ships with the next release.
+The historical `efferent` npm package is a different release line.
 
 ## Compose
 
@@ -73,7 +74,8 @@ a handle whose scope never closed) for a session store,
 `memoryConformance`, `stepLoopConformance` and `turnConformance`, and
 `fileSystemConformance` and `bashConformance` for the `FileSystem` and `Bash`
 ports agent tools work through (`FileSystemMemoryLive` is an in-memory file
-system). See
+system; `FileSystemLive` and `BashLive` from `@xandreed/plugin-workspace`
+are the local disk and shell, and pass both kits on Bun and Node). See
 [conformance kits](packages/website/src/content/docs/concepts/conformance.md).
 
 Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)
@@ -130,6 +132,7 @@ for an independent setup.
 | `@xandreed/plugin-session-sqlite` | SQLite session store (Bun only) |
 | `@xandreed/plugin-tasks` | Background tasks |
 | `@xandreed/plugin-render` | Render surfaces, event feeds and streaming |
+| `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`; Linux and macOS) |
 | `@xandreed/evals` | Tasks, trials, graders and suites; app adapters, local reports and retrieval metrics |
 | `@xandreed/evals-cli` | The `efferent-eval` command line (Node 24) |
 | `@xandreed/evals-langfuse`, `@xandreed/evals-langsmith` | Optional evaluation exporters (Node 24) |
@@ -155,7 +158,8 @@ package's manifest version and matching internal dependency versions.
 The consumer check installs local tarballs outside the monorepo, runs a
 composable agent's turn, a session fork, an eval composition and a SQLite
 session log with a background task on Bun, then imports every Node-capable
-package on Node. It also compiles every `@xandreed/*` import in the README,
+package on Node, and runs the `FileSystem` and `Bash` kits over the local
+adapters on both. It also compiles every `@xandreed/*` import in the README,
 the guides and the website docs against the packed packages, and checks that
 each plugin's version is its package's. `bun run docs:generate` writes the
 plugin and event references.
