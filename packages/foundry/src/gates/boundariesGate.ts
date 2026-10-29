@@ -125,8 +125,8 @@ export const makeBoundariesGate = (
   name: BOUNDARIES_GATE,
   kind: "static",
   deterministic: true,
-  run: (workspace: Workspace) =>
-    Effect.gen(function* () {
+  run: Effect.fnUntraced(
+    function* (workspace: Workspace) {
       const tsp = yield* TsProject
       const project = yield* tsp
         .load(path.resolve(workspace.rootDir, tsconfigRel))
@@ -153,5 +153,6 @@ export const makeBoundariesGate = (
             ),
         })
       })
-    }),
+    },
+  ),
 })

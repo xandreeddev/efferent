@@ -27,7 +27,7 @@ const resultsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<StepResult> 
  * over an image goes to `request.onMediaRejected`; when it records an
  * `OmitMedia`, the step is planned again and sent once more.
  */
-export const runSteps = (request: StepRequest): Effect.Effect<RunResult, TurnError> => Effect.gen(function* () {
+export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effect.fn.Return<RunResult, TurnError> {
   const model = yield* Option.match(Context.getOption(request.handlers, LanguageModel.LanguageModel), {
     onNone: () => Effect.fail(new HarnessError({ code: "loop.model", message: "The turn's services carry no LanguageModel" })),
     onSome: Effect.succeed,

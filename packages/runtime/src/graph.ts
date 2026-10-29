@@ -20,11 +20,11 @@ const invalid = (message: string) => Effect.fail(new HarnessError({ code: "confi
 const contributes = (node: PluginNode): ReadonlyArray<string> => node.plugin.contributes ?? []
 const optional = (node: PluginNode): ReadonlyArray<string> => node.plugin.optional ?? []
 
-export const resolveGraph = (
+export const resolveGraph: (
   config: HarnessConfig,
   plugins: ReadonlyArray<Plugin>,
-  external: ReadonlyArray<string> = [],
-): Effect.Effect<PluginGraph, HarnessError> => Effect.gen(function* () {
+  external?: ReadonlyArray<string>,
+) => Effect.Effect<PluginGraph, HarnessError> = Effect.fnUntraced(function* (config, plugins, external = []) {
   const duplicatePlugin = plugins.find((plugin, index) => plugins.findIndex((other) => other.id === plugin.id) !== index)
   if (duplicatePlugin !== undefined) return yield* invalid(`duplicate plugin definition: ${duplicatePlugin.id}`)
   if (config.profile !== undefined || config.profiles !== undefined) {

@@ -365,6 +365,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `bash.exec`, the `render_component` tool's output `render.emit`, and the
   skills directory `skills.settle` when an agent is built; each records its
   failure.
+- `foundry check` runs as one `foundry.check` span above
+  `foundry.pipeline`.
 
 ### Changed
 
@@ -707,6 +709,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `effect/prefer-effect-fn` runs in `plugin-session-sqlite`.
 - `effect/prefer-effect-fn` runs on `plugin-workspace`, `plugin-render` and
   `plugin-telemetry`.
+- `effect/prefer-effect-fn` checks `runtime`, `plugin-agent-loop`,
+  `plugin-tool-discovery` and `foundry`. Plugin graph resolution, the
+  replaceable-module layer, the step loop, the tool registry and foundry's
+  gates and rule registry are `Effect.fnUntraced`, so traces keep their
+  shape.
 
 ## 0.14.0 — 2026-10-29
 

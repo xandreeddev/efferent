@@ -106,13 +106,17 @@ const src = (name: string): string => `packages/${name}/src/**`
  * the list is deleted.
  */
 const EFFECT_FN_CLEAN = [
+  "plugin-agent-loop",
+  "runtime",
   "sdk",
   "plugin-memory-window",
   "plugin-memory-digest",
+  "plugin-tool-discovery",
   "plugin-session-sqlite",
   "plugin-render",
   "plugin-workspace",
   "plugin-telemetry",
+  "foundry",
 ].map(src)
 
 /**

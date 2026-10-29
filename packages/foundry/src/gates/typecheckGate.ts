@@ -44,8 +44,8 @@ export const makeTypecheckGate = (tsconfigRel: string): Gate<TsProject> => ({
   name: TYPECHECK_GATE,
   kind: "typecheck",
   deterministic: true,
-  run: (workspace: Workspace) =>
-    Effect.gen(function* () {
+  run: Effect.fnUntraced(
+    function* (workspace: Workspace) {
       const tsp = yield* TsProject
       const project = yield* tsp
         .load(path.resolve(workspace.rootDir, tsconfigRel))
@@ -63,5 +63,6 @@ export const makeTypecheckGate = (tsconfigRel: string): Gate<TsProject> => ({
               !path.relative(workspace.rootDir, d.file.fileName).startsWith("..")),
         )
         .map((d) => toFinding(d, workspace.rootDir))
-    }),
+    },
+  ),
 })

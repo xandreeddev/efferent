@@ -169,11 +169,10 @@ const growWarning = (count: number, baselinePath: string, policy: GateSuiteConfi
  * `foundry check`: run the config's gate suite over its workspace. With a
  * baseline, pre-existing findings are grandfathered (the ratchet) unless the
  * profile's baseline must stay empty; without one, any error finding fails.
+ * A check is one `foundry.check` span, the `foundry.pipeline` span beneath it.
  */
-export const runCheck = (
-  args: CheckArgs,
-): Effect.Effect<number, ConfigError | WorkspaceError, TsProject> =>
-  Effect.gen(function* () {
+export const runCheck = Effect.fn("foundry.check")(
+  function* (args: CheckArgs): Effect.fn.Return<number, ConfigError | WorkspaceError, TsProject> {
     const { config, rootDir, registry } = yield* loadConfig(args.configPath)
     const workspace: Workspace = { rootDir, files: [] }
     const gates = gatesFromConfig(config, registry)
@@ -234,4 +233,5 @@ export const runCheck = (
           return diff.fresh.length > 0 || Option.isSome(refusal) ? 1 : 0
         }),
     })
-  })
+  },
+)
