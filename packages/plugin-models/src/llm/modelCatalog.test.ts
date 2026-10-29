@@ -1,8 +1,10 @@
 import { describe, expect, it } from "bun:test"
 import { Effect } from "effect"
 import { ModelCatalog, modelCatalogConformance } from "@xandreed/core"
+import type { Credential, ModelCatalogEntryType } from "@xandreed/core"
+import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { MemoryAuthStoreLive } from "../auth/memory-auth.adapter.js"
-import { configuredModelCatalog, ConfiguredModelCatalogLive, reasoningEffortsFor } from "./modelCatalog.js"
+import { configuredModelCatalog, ConfiguredModelCatalogLive, imageInputFor, reasoningEffortsFor } from "./modelCatalog.js"
 
 describe("ConfiguredModelCatalogLive conforms to the ModelCatalog contract", () => {
   const catalog = Effect.runSync(Effect.service(ModelCatalog).pipe(Effect.provide(ConfiguredModelCatalogLive), Effect.provide(MemoryAuthStoreLive(new Map([
@@ -49,5 +51,34 @@ describe("configured model catalog", () => {
       "none", "low", "medium", "high", "xhigh", "max",
     ])
     expect(reasoningEffortsFor("opencode:glm-5.2")).toEqual([])
+  })
+})
+
+describe("image input per route", () => {
+  it("Anthropic, the OpenAI Responses routes and Gemini read images; OpenCode's chat models, Spark and unknown providers do not", () => {
+    expect(["anthropic:claude-sonnet-5", "openai:gpt-5.5", "openai-codex:gpt-5.6-luna", "opencode:gpt-5.6-luna", "google:gemini-3.5-flash"].map(imageInputFor)).toEqual([true, true, true, true, true])
+    expect(["opencode:glm-5.2", "opencode:kimi-k2.7-code", "openai-codex:gpt-5.3-codex-spark", "local:llama3.1:8b", "nonsense"].map(imageInputFor)).toEqual([false, false, false, false, false])
+  })
+
+  it("the catalog states each model's input", () => {
+    const entries = configuredModelCatalog(new Map([["opencode", { type: "api_key" as const, key: "secret" }], ["anthropic", { type: "api_key" as const, key: "secret" }]]))
+    expect(entries.find((entry) => entry.selection === "opencode:glm-5.2")?.input).toEqual(["text"])
+    expect(entries.find((entry) => entry.selection === "anthropic:claude-sonnet-5")?.input).toEqual(["text", "image"])
+  })
+
+  it("input follows the route a model is sent through: a configured endpoint of the provider's name by its images, a local credential's URL text only", () => {
+    const credentials = new Map<string, Credential>([["anthropic", { type: "api_key", key: "secret" }], ["openai", { type: "local", baseUrl: "http://127.0.0.1:1/v1" }]])
+    const inputOf = (entries: ReadonlyArray<ModelCatalogEntryType>, selection: string) => entries.find((entry) => entry.selection === selection)?.input
+    const overridden = configuredModelCatalog(credentials, { anthropic: { url: "http://127.0.0.1:2/v1" } })
+    expect([inputOf(overridden, "anthropic:claude-sonnet-5"), inputOf(overridden, "openai:gpt-5.5")]).toEqual([["text"], ["text"]])
+    const reading = configuredModelCatalog(credentials, { anthropic: { url: "http://127.0.0.1:2/v1", images: true } })
+    expect(inputOf(reading, "anthropic:claude-sonnet-5")).toEqual(["text", "image"])
+    const live = Effect.runSync(Effect.service(ModelCatalog).pipe(
+      Effect.flatMap((catalog) => catalog.list),
+      Effect.provide(ConfiguredModelCatalogLive),
+      Effect.provide(MemoryAuthStoreLive(credentials)),
+      Effect.provideService(CurrentModelEndpoints, { anthropic: { url: "http://127.0.0.1:2/v1" } }),
+    ))
+    expect(inputOf(live, "anthropic:claude-sonnet-5")).toEqual(["text"])
   })
 })

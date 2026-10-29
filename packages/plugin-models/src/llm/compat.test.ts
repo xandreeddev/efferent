@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Prompt, Tool } from "effect/ai"
 import { Deferred, Effect, Fiber, Option, Schema } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, extractUsage, Failure, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, toPromptMessages } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, extractUsage, Failure, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, ToolCallId, toPromptMessages } from "@xandreed/core"
 import type { AgentMessage } from "@xandreed/core"
-import { fromChatCompletion, makeCompatLanguageModel, thinkingParams, toChatMessages } from "./compat.js"
+import { fromChatCompletion, makeCompatLanguageModel, promptWithImageLabels, thinkingParams, toChatMessages } from "./compat.js"
 
 const completion = (body: unknown, status = 200): typeof fetch =>
   ((_url: unknown, _init?: unknown) =>
@@ -409,5 +409,75 @@ describe("toChatMessages: a user's images", () => {
 
   test("a text-only message is sent as before", () => {
     expect(chat([{ role: "user", content: "hi" }])).toEqual([{ role: "user", content: "hi" }])
+  })
+})
+
+describe("toChatMessages: images on an endpoint that reads them", () => {
+  const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  const image = Effect.runSync(mediaFromBase64(pixel, { name: "pixel.png" }))
+  const dataUrl = `data:image/png;base64,${pixel}`
+  const prompt = (messages: ReadonlyArray<AgentMessage>) => Prompt.make(toPromptMessages(messages) as Prompt.RawInput)
+  const callAndResult = (id: string, text: string): ReadonlyArray<AgentMessage> => [
+    { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(id), toolName: "screenshot", input: {} }] },
+    { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make(id), toolName: "screenshot", output: text, isError: false, media: [image] }] },
+  ]
+
+  test("a user's images are image_url parts with a data: URL, in order; a text-only message is a string as before", () => {
+    expect(toChatMessages(prompt([{ role: "user", content: [image, { type: "text", text: "what is this?" }] }]), { images: true })).toEqual([
+      { role: "user", content: [{ type: "image_url", image_url: { url: dataUrl } }, { type: "text", text: "what is this?" }] },
+    ])
+    expect(toChatMessages(prompt([{ role: "user", content: "hi" }]), { images: true })).toEqual([{ role: "user", content: "hi" }])
+  })
+
+  test("a tool's images follow the batch's tool messages in one user message, each result's captioned", () => {
+    const messages: ReadonlyArray<AgentMessage> = [
+      { role: "user", content: "look" },
+      { role: "assistant", content: [
+        { type: "tool-call", toolCallId: ToolCallId.make("c1"), toolName: "screenshot", input: {} },
+        { type: "tool-call", toolCallId: ToolCallId.make("c2"), toolName: "screenshot", input: {} },
+      ] },
+      { role: "tool", content: [
+        { type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "screenshot", output: "home", isError: false, media: [image] },
+        { type: "tool-result", toolCallId: ToolCallId.make("c2"), toolName: "screenshot", output: "", isError: false, media: [image] },
+      ] },
+    ]
+    expect(toChatMessages(prompt(messages), { images: true }).slice(2)).toEqual([
+      { role: "tool", tool_call_id: "c1", content: "home" },
+      { role: "tool", tool_call_id: "c2", content: "[the images this call returned follow]" },
+      { role: "user", content: [
+        { type: "text", text: "Images returned by screenshot (call c1):" }, { type: "image_url", image_url: { url: dataUrl } },
+        { type: "text", text: "Images returned by screenshot (call c2):" }, { type: "image_url", image_url: { url: dataUrl } },
+      ] },
+    ])
+  })
+
+  test("a user message right after the batch is merged into the images' message", () => {
+    const chat = toChatMessages(prompt([...callAndResult("c1", "home"), { role: "user", content: "step 2" }]), { images: true })
+    expect(chat.slice(1)).toEqual([
+      { role: "tool", tool_call_id: "c1", content: "home" },
+      { role: "user", content: [{ type: "text", text: "Images returned by screenshot (call c1):" }, { type: "image_url", image_url: { url: dataUrl } }, { type: "text", text: "step 2" }] },
+    ])
+  })
+
+  test("a merged user message with images of its own is captioned, so its images are not read as the tool's", () => {
+    const chat = toChatMessages(prompt([...callAndResult("c1", "home"), { role: "user", content: [image, { type: "text", text: "and this one?" }] }]), { images: true })
+    expect(chat.at(-1)).toEqual({ role: "user", content: [
+      { type: "text", text: "Images returned by screenshot (call c1):" }, { type: "image_url", image_url: { url: dataUrl } },
+      { type: "text", text: "The user's message:" }, { type: "image_url", image_url: { url: dataUrl } }, { type: "text", text: "and this one?" },
+    ] })
+  })
+
+  test("without images a tool result is its text with a label line per image, and no user message follows", () => {
+    expect(toChatMessages(prompt(callAndResult("c1", "home"))).slice(1)).toEqual([{ role: "tool", tool_call_id: "c1", content: `home\n${mediaLabel(image)}` }])
+  })
+
+  test("promptWithImageLabels: every file part becomes its label line, what a route without images is sent", () => {
+    const relabeled = promptWithImageLabels(prompt([{ role: "user", content: [image, { type: "text", text: "look" }] }, ...callAndResult("c1", "")]))
+    expect(JSON.stringify(relabeled.content)).not.toContain(pixel)
+    const [user, , tool] = relabeled.content
+    expect(user?.role === "user" ? user.content.map((part) => part.type === "text" ? part.text : part.type) : []).toEqual([`look\n${mediaLabel(image)}`])
+    expect(tool?.role === "tool" ? tool.content.map((part) => part.type === "tool-result" ? [part.result, part.modelOutput] : []) : []).toEqual([[mediaLabel(image), undefined]])
+    const plain = prompt([{ role: "user", content: "hi" }])
+    expect(promptWithImageLabels(plain).content[0]).toBe(plain.content[0])
   })
 })

@@ -67,12 +67,14 @@ what it leaves out (utility calls, failed or retried attempts) and what each
 provider reports.
 
 A user's message can carry images (`new UserMessage({ text, attachments })`,
-built with `mediaFromBytes` or `mediaFromBase64`): stored inline in the
-session, checked when the turn begins, and sent to the model as image parts
-on the Anthropic and Responses routes; chat-completions routes get a label
-line per image for now (see [Images and multi-part
-messages](docs/framework.md#images-and-multi-part-messages) for the routes
-and the memory budgets).
+built with `mediaFromBytes` or `mediaFromBase64`), and a tool can return them
+as `Media` values in its result: stored inline in the session, once, checked
+when they are written, and sent to the model as image parts on every route
+that reads images (Anthropic, the Responses routes but Codex Spark, Gemini,
+an endpoint with `images: true`); a text-only route gets a label line per
+image (see [Images
+and multi-part messages](docs/framework.md#images-and-multi-part-messages)
+for the routes, the limits and the memory budgets).
 
 Each turn is one trace subtree under its `agent.turn` span (a child of the
 caller's span, if any), and the packages record Effect metrics; nothing

@@ -1,10 +1,13 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Option, Redacted } from "effect"
+import { Prompt } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, modelRequestDescriptorOf, parseModelSelection } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, parseModelSelection, ToolCallId, toPromptMessages } from "@xandreed/core"
+import type { AgentMessage } from "@xandreed/core"
 import type { Credential } from "@xandreed/core"
 import { buildProvider, chatCompletionsUrl, OPENCODE_RESPONSES_API_URL, usesOpenCodeResponses } from "./providers.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
+import { ModelsTransport } from "../ports/models-transport.port.js"
 import type { ModelEndpoints } from "../ports/model-endpoints.port.js"
 import { OPENAI_CODEX_API_URL, toOpenAiCodexRequestBody } from "./openAiCodex.js"
 import { isOpenAiCodexControlEvent, normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7 } from "./openAiCodexWebSocket.js"
@@ -147,5 +150,73 @@ describe("configured endpoints", () => {
     const server = chatServer()
     await ask("openai:gpt-test", { openai: { url: server.url } }).finally(server.stop)
     expect(server.seen).toEqual([{ path: "/v1/chat/completions", auth: null, model: "gpt-test" }])
+  })
+})
+
+describe("images on the wire", () => {
+  const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  const image = Effect.runSync(mediaFromBase64(pixel, { name: "home.png" }))
+  /** A user's question, a screenshot call, and its result with the image (as memory renders it). */
+  const messages: ReadonlyArray<AgentMessage> = [
+    { role: "user", content: "how does the home page look?" },
+    { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("call_1"), toolName: "screenshot", input: {} }] },
+    { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("call_1"), toolName: "screenshot", output: "Screenshot of home.", isError: false, media: [image] }] },
+  ]
+  const prompt = Prompt.make(toPromptMessages(messages) as Prompt.RawInput)
+
+  /** Build the selection's model and send the prompt through a fetch that records each request body and refuses it. */
+  const sent = (model: string, endpoints: ModelEndpoints = {}, credential?: Credential) => {
+    const bodies: Array<Record<string, unknown>> = []
+    const fetch = ((_url: unknown, init?: { readonly body?: unknown }) => {
+      bodies.push(JSON.parse(typeof init?.body === "string" ? init.body : new TextDecoder().decode(init?.body as Uint8Array)) as Record<string, unknown>)
+      return Promise.resolve(Response.json({ type: "error", error: { type: "invalid_request_error", message: "recorded" } }, { status: 400 }))
+    }) as typeof globalThis.fetch
+    return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection(model))
+      const built = yield* buildProvider(selection, credential, Redacted.make("test-key"))
+      yield* Effect.exit(built.svc.generateText({ prompt }))
+      return { bodies, images: built.images }
+    })).pipe(
+      Effect.provideService(CurrentModelEndpoints, endpoints),
+      // Every route's requests reach the recording fetch: the SDK clients' and the chat-completions client's.
+      Effect.provideService(ModelsTransport, ModelsTransport.of({ fetch })),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    ))
+  }
+
+  it("Anthropic: the tool_result holds the result's text and an image block", async () => {
+    const { bodies, images } = await sent("anthropic:claude-sonnet-5")
+    expect(images).toBe(true)
+    const messages = bodies[0]?.["messages"] as ReadonlyArray<{ readonly role: string; readonly content: ReadonlyArray<Record<string, unknown>> }>
+    const result = messages.flatMap((message) => message.content).find((block) => block["type"] === "tool_result")
+    expect(result).toMatchObject({
+      tool_use_id: "call_1",
+      content: [{ type: "text", text: "Screenshot of home." }, { type: "image", source: { type: "base64", media_type: "image/png", data: pixel } }],
+    })
+  })
+
+  it("OpenAI Responses: the function_call_output holds input_text and input_image", async () => {
+    const { bodies, images } = await sent("openai:gpt-5.5")
+    expect(images).toBe(true)
+    const output = (bodies[0]?.["input"] as ReadonlyArray<Record<string, unknown>>).find((item) => item["type"] === "function_call_output")
+    expect(output).toMatchObject({
+      call_id: "call_1",
+      output: [{ type: "input_text", text: "Screenshot of home." }, { type: "input_image", image_url: `data:image/png;base64,${pixel}` }],
+    })
+  })
+
+  it("a route that reads no images (OpenCode's chat models, an endpoint without images) is sent label lines; one with images: true the images", async () => {
+    const chat = await sent("opencode:glm-5.2")
+    expect(chat.images).toBe(false)
+    expect(JSON.stringify(chat.bodies[0])).not.toContain(pixel)
+    expect((chat.bodies[0]?.["messages"] as ReadonlyArray<Record<string, unknown>>).at(-1)).toEqual({ role: "tool", tool_call_id: "call_1", content: `Screenshot of home.\n${mediaLabel(image)}` })
+    const plain = await sent("gw:vision", { gw: { url: "http://gw.invalid/v1" } })
+    expect(JSON.stringify(plain.bodies[0])).not.toContain(pixel)
+    const vision = await sent("gw:vision", { gw: { url: "http://gw.invalid/v1", images: true } })
+    expect(vision.images).toBe(true)
+    expect((vision.bodies[0]?.["messages"] as ReadonlyArray<Record<string, unknown>>).at(-1)).toEqual({ role: "user", content: [
+      { type: "text", text: "Images returned by screenshot (call call_1):" }, { type: "image_url", image_url: { url: `data:image/png;base64,${pixel}` } },
+    ] })
   })
 })

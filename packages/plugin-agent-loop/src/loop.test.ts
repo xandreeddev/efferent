@@ -830,6 +830,55 @@ test("traced step content names an image by its size, never its bytes", async ()
 })
 
 
+describe("a request the provider refuses over an image", () => {
+  const refusal = (description: string) => AiError.make({ module: "Test", method: "generateText", reason: new AiError.InvalidRequestError({ description }) })
+  /**
+   * A model that refuses its first request with `first`, then answers; it records how many requests it got and
+   * whether each was streamed. With `afterPart`, the first streamed response sends a part before the refusal.
+   */
+  const refusingOnce = (first: AiError.AiError, calls: Ref.Ref<ReadonlyArray<string>>, afterPart: boolean) => LanguageModel.make({
+    generateText: () => Ref.modify(calls, (all): [number, ReadonlyArray<string>] => [all.length, [...all, "settled"]]).pipe(
+      Effect.flatMap((n) => n === 0 ? Effect.fail(first) : Effect.succeed([{ type: "text", text: "seen without the image" }, finish("stop")] as never))),
+    streamText: () => Stream.unwrap(Ref.modify(calls, (all): [number, ReadonlyArray<string>] => [all.length, [...all, "streamed"]]).pipe(
+      Effect.map((n) => n > 0 ? Stream.fromIterable(toStreamParts([{ type: "text", text: "seen without the image" }, finish("stop")]))
+        : afterPart ? Stream.concat(Stream.fromIterable(toStreamParts([{ type: "text", text: "partial" }])), Stream.fail(first))
+        : Stream.fail(first)))) as never,
+  })
+  const attempt = (first: AiError.AiError, options: { readonly streaming: boolean; readonly omit: boolean; readonly afterPart?: boolean }) => Effect.gen(function* () {
+    const calls = yield* Ref.make<ReadonlyArray<string>>([])
+    const renders = yield* Ref.make(0)
+    const reasons = yield* Ref.make<ReadonlyArray<string>>([])
+    const { events, onEvent } = collect()
+    const result = yield* runLoop({
+      system: "sys", messages: [user("look")], toolkit: kit, streaming: options.streaming, onEvent,
+      render: () => Ref.updateAndGet(renders, (n) => n + 1).pipe(Effect.map((n) => [user(n === 1 ? "look [an image]" : "look [image omitted]")])),
+      onMediaRejected: (reason) => Ref.update(reasons, (all) => [...all, reason]).pipe(Effect.as(options.omit)),
+    }).pipe(Effect.provide(handlers), Effect.provideServiceEffect(LanguageModel.LanguageModel, refusingOnce(first, calls, options.afterPart ?? false)), Effect.result)
+    return { result, calls: yield* Ref.get(calls), renders: yield* Ref.get(renders), reasons: yield* Ref.get(reasons), events }
+  })
+
+  test.each([false, true])("is rendered again and sent once more after onMediaRejected deals with it (streaming %p, never a stream fallback)", async (streaming) => {
+    const outcome = await Effect.runPromise(attempt(refusal("messages.1.content.0.image.source.base64: image exceeds 5 MB maximum"), { streaming, omit: true }))
+    expect(outcome.result._tag === "Success" ? outcome.result.success.finalText : "failed").toBe("seen without the image")
+    expect(outcome.calls).toEqual(streaming ? ["streamed", "streamed"] : ["settled", "settled"])
+    expect(outcome.renders).toBe(2)
+    expect(outcome.reasons).toEqual([expect.stringContaining("image exceeds 5 MB maximum")])
+    expect(outcome.events.map((event) => event.type).filter((type) => type !== "assistant_delta")).toEqual(["turn_start", "assistant_message", "turn_end", "agent_end"])
+  })
+
+  test("fails the step when onMediaRejected has nothing to omit, or the refusal names no image", async () => {
+    const nothing = await Effect.runPromise(attempt(refusal("Could not process image"), { streaming: false, omit: false }))
+    expect([nothing.result._tag, nothing.calls.length]).toEqual(["Failure", 1])
+    const other = await Effect.runPromise(attempt(refusal("max_tokens is too large"), { streaming: false, omit: true }))
+    expect([other.result._tag, other.calls.length, other.reasons]).toEqual(["Failure", 1, []])
+  })
+
+  test("is not sent again once a part of the streamed response arrived (its deltas went out)", async () => {
+    const outcome = await Effect.runPromise(attempt(refusal("Could not process image"), { streaming: true, omit: true, afterPart: true }))
+    expect([outcome.result._tag, outcome.calls, outcome.reasons, outcome.renders]).toEqual(["Failure", ["streamed"], [], 1])
+  })
+})
+
 /** A tracer keeping every span it starts, to read their attributes once they ended. */
 const capturingTracer = (spans: Array<Tracer.NativeSpan>) => Tracer.make({
   span: (options) => {

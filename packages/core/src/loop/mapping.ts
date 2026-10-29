@@ -1,5 +1,6 @@
 import { Option, Schema } from "effect"
 import type { ToolCallSummary } from "../domain/loop-event.entity.js"
+import type { Media } from "../domain/media.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import type {
   AgentMessage,
@@ -89,15 +90,31 @@ const withoutEngineStamp = (blob: unknown): unknown => {
   return rest
 }
 
+/** An image → an `@effect/ai` `file` part with its base64 data, type and name. */
+const filePart = (media: Media): unknown =>
+  ({ type: "file", mediaType: media.mediaType, data: media.data, ...(media.name === undefined ? {} : { fileName: media.name }) })
+
 /**
  * A multi-part user message's parts → `@effect/ai` prompt parts: text as
  * text (an empty text part is left out: providers refuse them), an image as
- * a `file` part with its base64 data, type and name.
+ * a `file` part.
  */
 const userPromptParts = (parts: ReadonlyArray<UserContentPart>): ReadonlyArray<unknown> =>
   parts.flatMap((part): ReadonlyArray<unknown> => part.type === "text"
     ? part.text.length === 0 ? [] : [{ type: "text", text: part.text, ...withOptions(part.providerOptions) }]
-    : [{ type: "file", mediaType: part.mediaType, data: part.data, ...(part.name === undefined ? {} : { fileName: part.name }) }])
+    : [filePart(part)])
+
+/**
+ * A tool result with images → its `modelOutput`, what the provider sends in
+ * place of the result: the result's text (left out when it is empty), then
+ * each image as a `file` part. A result without images has none, and the
+ * provider sends its `result` as before.
+ */
+const toolModelOutput = (output: unknown, media: ReadonlyArray<Media> | undefined): { readonly modelOutput?: ReadonlyArray<unknown> } => {
+  if (media === undefined || media.length === 0) return {}
+  const text = typeof output === "string" ? output : JSON.stringify(output ?? null)
+  return { modelOutput: [...(text.length === 0 ? [] : [{ type: "text", text }]), ...media.map(filePart)] }
+}
 
 /** `AgentMessage[]` → `@effect/ai` encoded prompt messages (spreadable). A text-only user message stays a string. */
 export const toPromptMessages = (
@@ -136,6 +153,7 @@ export const toPromptMessages = (
         id: p.toolCallId,
         name: p.toolName,
         result: p.output,
+        ...toolModelOutput(p.output, p.media),
         isFailure: p.isError ?? false,
         providerExecuted: false,
         ...withOptions(p.providerOptions),

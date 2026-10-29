@@ -37,13 +37,14 @@ export { roleModelView } from "./settings/roleView.js"
 export {
   fromChatCompletion,
   makeCompatLanguageModel,
+  promptWithImageLabels,
   toChatMessages,
   toChatTools,
 } from "./llm/compat.js"
-export type { CompatConfig } from "./llm/compat.js"
+export type { ChatMessageOptions, CompatConfig } from "./llm/compat.js"
 export type { UsageReading } from "./llm/sse.js"
 export { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL, toOpenAiCodexRequestBody } from "./llm/openAiCodex.js"
-export { makeOpenAiCodexWebSocketHttpClient, normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7, OpenAiCodexWebSocketHttpClient } from "./llm/openAiCodexWebSocket.js"
+export { makeOpenAiCodexWebSocketHttpClient, normalizeOpenAiCodexWebSocketEvent, openAiCodexRefusal, openAiCodexUuidV7, OpenAiCodexWebSocketHttpClient } from "./llm/openAiCodexWebSocket.js"
 export {
   buildProvider,
   chatCompletionsUrl,
@@ -66,6 +67,7 @@ export { generateWith, LanguageModelLive, LanguageModelSelectionLive } from "./l
 export {
   configuredModelCatalog,
   ConfiguredModelCatalogLive,
+  imageInputFor,
   reasoningEffortsFor,
 } from "./llm/modelCatalog.js"
 export type { ReasoningEffort } from "./llm/modelCatalog.js"

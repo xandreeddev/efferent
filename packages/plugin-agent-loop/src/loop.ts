@@ -51,6 +51,13 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
   }, AiError.AiError, R>
   /** Validate independently reconstructed durable input immediately before a provider dispatch. */
   readonly beforeDispatch?: (step: number, request: ModelDispatch) => Effect.Effect<void, never, R>
+  /**
+   * A provider refused a step's request over an image (an `InvalidRequestError`
+   * that names one; the argument is what it said). True: the images are
+   * dealt with (memory omits them), and the loop renders the step again and
+   * sends it once more; false, or absent: the step fails with the refusal.
+   */
+  readonly onMediaRejected?: (reason: string) => Effect.Effect<boolean, never, R>
   readonly system: string | Prompt.Prompt
   /** The READ side of memory: when present, each provider step sends these
    * messages instead of the loop's own buffer. Persistence still flows through
@@ -153,7 +160,8 @@ export const DEFAULT_TOOL_CONCURRENCY = 4
  * `engine_runs_total{engine_outcome,engine_reason}` (task completion rate),
  * `engine_tool_calls_total{engine_tool,engine_ok}` (usage frequency +
  * failed-call rate), `engine_corrections_total{engine_kind}` (malformed
- * recoveries and degenerate nudges — the self-correction count).
+ * recoveries, degenerate nudges, stream fallbacks and steps sent again
+ * without the images a provider refused — the self-correction count).
  */
 const engineRuns = Metric.counter("engine.runs", {
   description: "agent runs by outcome and reason",
@@ -164,7 +172,7 @@ const engineToolCalls = Metric.counter("engine.tool_calls", {
   incremental: true,
 })
 const engineCorrections = Metric.counter("engine.corrections", {
-  description: "self-corrections by kind (malformed recovery, degenerate nudge, stream fallback)",
+  description: "self-corrections by kind (malformed recovery, degenerate nudge, stream fallback, image refused and resent)",
   incremental: true,
 })
 const tagged = <Input, State>(
@@ -214,6 +222,11 @@ type MalformedResponse = AiError.AiError & {
 const malformedReasons: ReadonlySet<string> = new Set(["InvalidOutputError", "ToolParameterValidationError", "ToolNotFoundError"])
 const isMalformed = (error: unknown): error is MalformedResponse =>
   AiError.isAiError(error) && malformedReasons.has(error.reason._tag)
+
+/** A provider's refusal of a request over an image: an invalid request whose message names one. */
+type ImageRejection = AiError.AiError & { readonly reason: AiError.InvalidRequestError }
+const isImageRejection = (error: unknown): error is ImageRejection =>
+  AiError.isAiError(error) && error.reason._tag === "InvalidRequestError" && /image/i.test(error.reason.message)
 
 /** Consecutive malformed responses tolerated before the run fails for real. */
 const MAX_MALFORMED = 3
@@ -370,143 +383,166 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const instructions = typeof baseSystem === "string"
           ? Prompt.make([{ role: "system", content: baseSystem }])
           : baseSystem
-        const visible = options.render === undefined ? state.messages : yield* options.render(stepView).pipe(Effect.provide(eventContext))
-        const prompt = freezeModelRequest(Prompt.concat(instructions, Prompt.make(toPromptMessages(visible) as never)))
         const directive = options.stepDirective === undefined ? Option.none<LoopToolChoice>() : (yield* options.stepDirective(stepView).pipe(Effect.provide(eventContext))).toolChoice
 
-        if (captureTraceContent)
-          yield* Effect.annotateCurrentSpan({
-            "engine.step.input": tracedJson({ messages: prompt.content, activeTools: toolNames }),
+        // One provider attempt over the step's messages, rendered for it: a request refused over an
+        // image before any part of its response arrived is attempted once more, rendered again after
+        // `onMediaRejected` dealt with the images. Once a part arrived, deltas went out and tool handlers
+        // may have run, so a refusal then fails the step like any other failure after the first part.
+        const partSeen = yield* Ref.make(false)
+        const attempt = Effect.gen(function* () {
+          const visible = options.render === undefined ? state.messages : yield* options.render(stepView).pipe(Effect.provide(eventContext))
+          const prompt = freezeModelRequest(Prompt.concat(instructions, Prompt.make(toPromptMessages(visible) as never)))
+
+          if (captureTraceContent)
+            yield* Effect.annotateCurrentSpan({
+              "engine.step.input": tracedJson({ messages: prompt.content, activeTools: toolNames }),
+            })
+
+          const toolSequence = yield* Ref.make(0)
+          const instrumented: Toolkit.WithHandler<Tools> = {
+            tools: selectedTools,
+            handle: (name, params, providerCallId, parseOptions) => Effect.gen(function* () {
+              const sequence = yield* Ref.getAndUpdate(toolSequence, (value) => value + 1)
+              const toolCallId = `execution:${state.turnIndex}:${sequence}`
+              yield* onEvent({ type: "tool_start", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params })
+              const results = yield* toolkit.handle(name, params, providerCallId, parseOptions)
+              return results.pipe(
+                // Parameters that do not decode are a malformed response whatever
+                // the tool's failure mode: the loop answers with a corrective turn.
+                Stream.mapEffect((result) => result.isFailure && result.failureOrigin === "parameters"
+                  ? Effect.fail(result.result as AiError.AiError)
+                  : Effect.succeed(result)),
+                Stream.tap((result) => result.preliminary ? Effect.void : onEvent({
+                  type: "tool_end", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params,
+                  ok: !result.isFailure, result: result.result, encoded: result.encodedResult,
+                })),
+              )
+            }) as never,
+          }
+          const callOptions = Object.freeze({
+            prompt,
+            toolkit: instrumented,
+            concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY,
+            ...Option.match(directive, { onNone: () => ({}), onSome: (toolChoice) => ({ toolChoice: toolChoice as never }) }),
           })
 
-        const toolSequence = yield* Ref.make(0)
-        const instrumented: Toolkit.WithHandler<Tools> = {
-          tools: selectedTools,
-          handle: (name, params, providerCallId, parseOptions) => Effect.gen(function* () {
-            const sequence = yield* Ref.getAndUpdate(toolSequence, (value) => value + 1)
-            const toolCallId = `execution:${state.turnIndex}:${sequence}`
-            yield* onEvent({ type: "tool_start", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params })
-            const results = yield* toolkit.handle(name, params, providerCallId, parseOptions)
-            return results.pipe(
-              // Parameters that do not decode are a malformed response whatever
-              // the tool's failure mode: the loop answers with a corrective turn.
-              Stream.mapEffect((result) => result.isFailure && result.failureOrigin === "parameters"
-                ? Effect.fail(result.result as AiError.AiError)
-                : Effect.succeed(result)),
-              Stream.tap((result) => result.preliminary ? Effect.void : onEvent({
-                type: "tool_end", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params,
-                ok: !result.isFailure, result: result.result, encoded: result.encodedResult,
+          const dispatchModel = Option.isSome(prepared) ? prepared.value.model : yield* LanguageModel.LanguageModel
+          const beforeDispatch = options.beforeDispatch === undefined ? Effect.void : options.beforeDispatch(state.turnIndex, {
+            prompt, tools: Object.values(selectedTools), toolChoice: Option.getOrElse(directive, () => "auto"), model: dispatchModel,
+          }).pipe(Effect.provide(eventContext))
+
+          /** Both paths land on the SAME settled shape — after this point the
+           *  turn body is identical code, streamed or not. */
+          // Tools declare no dependencies (handlers carry their own context), so a
+          // model call needs the model alone; `Tool.Any` would widen it to `any`.
+          const generated = (planned ? LanguageModel.generateText(callOptions) : beforeDispatch.pipe(Effect.andThen(Effect.suspend(() =>
+            dispatchModel.generateText(callOptions),
+          )))) as Effect.Effect<LanguageModel.GenerateTextResponse<Tools, "opaque">, AiError.AiError, LanguageModel.LanguageModel>
+          const settled = (streamingHealthy: boolean) =>
+            generated.pipe(
+              Effect.map((res) => ({
+                _tag: "ok" as const,
+                content: res.content as ReadonlyArray<unknown>,
+                finishReason: res.finishReason as string,
+                usage: res.usage as unknown,
+                streamingHealthy,
               })),
             )
-          }) as never,
-        }
-        const callOptions = Object.freeze({
-          prompt,
-          toolkit: instrumented,
-          concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY,
-          ...Option.match(directive, { onNone: () => ({}), onSome: (toolChoice) => ({ toolChoice: toolChoice as never }) }),
-        })
 
-        const dispatchModel = Option.isSome(prepared) ? prepared.value.model : yield* LanguageModel.LanguageModel
-        const beforeDispatch = options.beforeDispatch === undefined ? Effect.void : options.beforeDispatch(state.turnIndex, {
-          prompt, tools: Object.values(selectedTools), toolChoice: Option.getOrElse(directive, () => "auto"), model: dispatchModel,
-        }).pipe(Effect.provide(eventContext))
-
-        /** Both paths land on the SAME settled shape — after this point the
-         *  turn body is identical code, streamed or not. */
-        // Tools declare no dependencies (handlers carry their own context), so a
-        // model call needs the model alone; `Tool.Any` would widen it to `any`.
-        const generated = (planned ? LanguageModel.generateText(callOptions) : beforeDispatch.pipe(Effect.andThen(Effect.suspend(() =>
-          dispatchModel.generateText(callOptions),
-        )))) as Effect.Effect<LanguageModel.GenerateTextResponse<Tools, "opaque">, AiError.AiError, LanguageModel.LanguageModel>
-        const settled = (streamingHealthy: boolean) =>
-          generated.pipe(
-            Effect.map((res) => ({
-              _tag: "ok" as const,
-              content: res.content as ReadonlyArray<unknown>,
-              finishReason: res.finishReason as string,
-              usage: res.usage as unknown,
-              streamingHealthy,
-            })),
-          )
-
-        // The streamed twin: fold parts into the settled shape, fanning
-        // assistant_delta events while tokens flow. A failure or defect
-        // BEFORE the first part (a scripted provider's Stream.die, a broken
-        // gateway) falls back to generateText for the rest of the run, with
-        // one stream_fallback event; after the first part, failures ride the
-        // existing turn handling (tool handlers may already have run — a
-        // replay would duplicate).
-        // The dispatch check runs first, outside that fallback: a failed
-        // check fails the step, it is no stream failure (the fallback's own
-        // call is checked again).
-        const streamed = Effect.gen(function* () {
-          yield* beforeDispatch
-          const partSeen = yield* Ref.make(false)
-          const folded = yield* foldStreamParts(
-            (Stream.unwrap(Effect.sync(() => dispatchModel.streamText(callOptions))) as Stream.Stream<unknown, AiError.AiError, LanguageModel.LanguageModel>).pipe(
-              Stream.tap(() => Ref.set(partSeen, true)),
-            ),
-            (delta) =>
-              onEvent({
-                type: "assistant_delta",
-                turnIndex: state.turnIndex,
-                channel: delta.channel,
-                id: delta.id,
-                delta: delta.delta,
-                ...(delta.toolName === undefined ? {} : { toolName: delta.toolName }),
-              }),
-          ).pipe(
-            Effect.map((turn) =>
-              Result.succeed({
-                _tag: "ok" as const,
-                content: turn.content,
-                finishReason: turn.finishReason,
-                usage: turn.usage,
-                streamingHealthy: true,
-              }),
-            ),
-            Effect.catch((err) =>
-              Ref.get(partSeen).pipe(
-                Effect.flatMap((armed) =>
-                  armed ? Effect.fail(err) : Effect.succeed(Result.fail(failureText(err))),
+          // The streamed twin: fold parts into the settled shape, fanning
+          // assistant_delta events while tokens flow. A failure or defect
+          // BEFORE the first part (a scripted provider's Stream.die, a broken
+          // gateway) falls back to generateText for the rest of the run, with
+          // one stream_fallback event; after the first part, failures ride the
+          // existing turn handling (tool handlers may already have run — a
+          // replay would duplicate).
+          // The dispatch check runs first, outside that fallback: a failed
+          // check fails the step, it is no stream failure (the fallback's own
+          // call is checked again).
+          const streamed = Effect.gen(function* () {
+            yield* beforeDispatch
+            const folded = yield* foldStreamParts(
+              (Stream.unwrap(Effect.sync(() => dispatchModel.streamText(callOptions))) as Stream.Stream<unknown, AiError.AiError, LanguageModel.LanguageModel>).pipe(
+                Stream.tap(() => Ref.set(partSeen, true)),
+              ),
+              (delta) =>
+                onEvent({
+                  type: "assistant_delta",
+                  turnIndex: state.turnIndex,
+                  channel: delta.channel,
+                  id: delta.id,
+                  delta: delta.delta,
+                  ...(delta.toolName === undefined ? {} : { toolName: delta.toolName }),
+                }),
+            ).pipe(
+              Effect.map((turn) =>
+                Result.succeed({
+                  _tag: "ok" as const,
+                  content: turn.content,
+                  finishReason: turn.finishReason,
+                  usage: turn.usage,
+                  streamingHealthy: true,
+                }),
+              ),
+              // An image refusal is the request's, not the stream's: no fallback would send it.
+              Effect.catch((err) =>
+                Ref.get(partSeen).pipe(
+                  Effect.flatMap((armed) =>
+                    armed || isImageRejection(err) ? Effect.fail(err) : Effect.succeed(Result.fail(failureText(err))),
+                  ),
                 ),
               ),
-            ),
-            Effect.catchDefect((defect) =>
-              Ref.get(partSeen).pipe(
-                Effect.flatMap((armed) =>
-                  armed ? Effect.die(defect) : Effect.succeed(Result.fail(failureText(defect))),
+              Effect.catchDefect((defect) =>
+                Ref.get(partSeen).pipe(
+                  Effect.flatMap((armed) =>
+                    armed ? Effect.die(defect) : Effect.succeed(Result.fail(failureText(defect))),
+                  ),
                 ),
               ),
-            ),
-          )
-          return yield* Result.match(folded, {
-            onSuccess: Effect.succeed,
-            onFailure: (failure) =>
-              Effect.logWarning(
-                "streaming failed before any part arrived — falling back to generateText for this run",
-              ).pipe(
-                Effect.andThen(onEvent({ type: "stream_fallback", turnIndex: state.turnIndex, message: failure.slice(0, FALLBACK_MESSAGE_CHARS) })),
-                Effect.andThen(Metric.update(tagged(engineCorrections, { "engine.kind": "stream-fallback" }), 1)),
-                Effect.andThen(settled(false)),
-              ),
+            )
+            return yield* Result.match(folded, {
+              onSuccess: Effect.succeed,
+              onFailure: (failure) =>
+                Effect.logWarning(
+                  "streaming failed before any part arrived — falling back to generateText for this run",
+                ).pipe(
+                  Effect.andThen(onEvent({ type: "stream_fallback", turnIndex: state.turnIndex, message: failure.slice(0, FALLBACK_MESSAGE_CHARS) })),
+                  Effect.andThen(Metric.update(tagged(engineCorrections, { "engine.kind": "stream-fallback" }), 1)),
+                  Effect.andThen(settled(false)),
+                ),
+            })
           })
-        })
 
-        const initial = Effect.gen(function* () {
-          const provider = yield* LanguageModel.make({
-            generateText: () => Effect.succeed([...(options.initialStep ?? []).map((call, index) => ({
-              type: "tool-call" as const, id: `planned:0:${index}`, name: call.name,
-              params: call.params, providerExecuted: false,
-            })), { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: {}, outputTokens: {} } }]),
-            streamText: () => Stream.empty,
+          const initial = Effect.gen(function* () {
+            const provider = yield* LanguageModel.make({
+              generateText: () => Effect.succeed([...(options.initialStep ?? []).map((call, index) => ({
+                type: "tool-call" as const, id: `planned:0:${index}`, name: call.name,
+                params: call.params, providerExecuted: false,
+              })), { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: {}, outputTokens: {} } }]),
+              streamText: () => Stream.empty,
+            })
+            yield* Effect.annotateCurrentSpan("engine.step.host_planned", true)
+            return yield* settled(state.streamingHealthy).pipe(Effect.provideService(LanguageModel.LanguageModel, provider))
           })
-          yield* Effect.annotateCurrentSpan("engine.step.host_planned", true)
-          return yield* settled(state.streamingHealthy).pipe(Effect.provideService(LanguageModel.LanguageModel, provider))
+          const useStreaming = options.streaming === true && state.streamingHealthy
+          return yield* (planned ? initial : useStreaming ? streamed : settled(state.streamingHealthy))
         })
-        const useStreaming = options.streaming === true && state.streamingHealthy
-        const outcome = yield* (planned ? initial : useStreaming ? streamed : settled(state.streamingHealthy)).pipe(
+        const outcome = yield* attempt.pipe(
+          Effect.catch((err) => Effect.gen(function* () {
+            const onMediaRejected = options.onMediaRejected
+            const armed = yield* Ref.get(partSeen)
+            if (planned || armed || onMediaRejected === undefined || !isImageRejection(err)) return yield* Effect.fail(err)
+            return yield* onMediaRejected(clip(err.reason.message, 600)).pipe(
+              Effect.provide(eventContext),
+              Effect.flatMap((retry) => retry
+                ? Effect.logWarning(`the provider refused an image; sending the step again with its images as labels: ${clip(err.reason.message, 300)}`).pipe(
+                  Effect.andThen(Metric.update(tagged(engineCorrections, { "engine.kind": "media-rejected" }), 1)),
+                  Effect.andThen(attempt),
+                )
+                : Effect.fail(err)),
+            )
+          })),
           Effect.catch((err) =>
             isMalformed(err)
               ? Effect.succeed({ _tag: "malformed" as const, err: err as MalformedResponse })

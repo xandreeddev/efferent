@@ -23,7 +23,9 @@ const resultsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<StepResult> 
  * host-planned first batch runs without a provider call or a plan. A stream
  * that fails before its first part publishes `stream.fallback` once, and the
  * run goes on without streaming. The run's `captureTraceContent` is
- * `CurrentTraceContent` for its model calls.
+ * `CurrentTraceContent` for its model calls. A request a provider refuses
+ * over an image goes to `request.onMediaRejected`; when it records an
+ * `OmitMedia`, the step is planned again and sent once more.
  */
 export const runSteps = (request: StepRequest): Effect.Effect<RunResult, HarnessError> => Effect.gen(function* () {
   const model = yield* Option.match(Context.getOption(request.handlers, LanguageModel.LanguageModel), {
@@ -125,6 +127,11 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
       ? Effect.succeed({ toolChoice: Option.none<LoopToolChoice>() })
       : planFor(view).pipe(Effect.map((plan) => ({ toolChoice: plan.toolChoice })), Effect.orDie),
     beforeDispatch: (step, actual) => request.dispatch(step, actual).pipe(Effect.orDie),
+    // The images are omitted from now on: the step is planned again for its second attempt.
+    onMediaRejected: (reason) => request.onMediaRejected(reason).pipe(
+      Effect.tap((retry) => retry ? Ref.set(cached, Option.none()) : Effect.void),
+      Effect.orDie,
+    ),
     isComplete,
     pendingInput: () => request.steering.pipe(Effect.orDie),
     onTail: (messages) => Effect.gen(function* () {

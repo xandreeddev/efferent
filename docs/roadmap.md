@@ -108,11 +108,12 @@ ships no Google provider). Cost, not correctness.
 
 - **Session branching** — fork a conversation from any message; the
   checkpoint model already supports the data shape, the UI is the work.
-- **Images beyond the user's message** — a user's images ship
-  (`UserMessage.attachments`, stored inline, sent as `file` parts). Still
-  to come: images in tool results, `image_url` parts and labels on
-  chat-completions routes (which send a label line per image today), resizing, PDFs,
-  and a `MediaStore` port for sessions too large to keep images inline.
+- **More media** — a user's images and the images tools return ship
+  (stored inline, once; image parts on every route that reads them, label
+  lines elsewhere). Still to come: images an MCP tool returns (the MCP
+  bridge keeps text and structured content only), resizing an image over
+  the limits instead of refusing it, PDFs and other documents, and a
+  `MediaStore` port for sessions too large to keep images inline.
 - **`.gitignore` in the workspace tools** — `find` and `grep` prune only
   their `exclude` names; honouring ignore files (or calling `rg`/`fd` when
   installed) is the next step for large repositories.

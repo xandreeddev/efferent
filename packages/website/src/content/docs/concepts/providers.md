@@ -38,8 +38,10 @@ credential store, and an empty one (`apiKey: ""`, or a variable set to `""`)
 sends no key. From code, pass `apiKey` as `Redacted.make(...)` so it prints
 as `<redacted>`; a plain string shows in error messages and the agent's
 fingerprint, so JSON configuration names an environment variable instead.
-`standardOnly` (default `true`) sends only standard chat-completions fields. An
-endpoint whose name matches a built-in provider replaces it. A `local`
+`standardOnly` (default `true`) sends only standard chat-completions fields.
+`images` (default `false`) says the endpoint's models read images: see
+[Images](#images). An endpoint whose name matches a built-in provider
+replaces it. A `local`
 credential with a `baseUrl` (stored, or given in `credentials`) routes the same
 way, without a key.
 
@@ -314,21 +316,42 @@ it around the whole use, as above.
 
 ## Images
 
-A user's images (`UserMessage.attachments`) reach the model as image parts on
-the routes that take them; on the others the model gets the message's text
-and a label line in place of each image (`[image omitted: image/png, 182 KB,
-form.png]`).
+A user's images (`UserMessage.attachments`) and the images a tool returns
+(`Media` values in its result) reach the model as images on the routes that
+take them; on the others the model gets a label line in place of each image
+(`[image omitted: image/png, 182 KB, form.png]`), never a provider error.
 
-| Route | Images |
-|---|---|
-| `anthropic` (Messages API) | image blocks |
-| `openai`, `openai-codex`, OpenCode `gpt-*` (Responses API) | `input_image` |
-| OpenCode's other models, `google` and configured endpoints (chat completions) | not sent yet: a label line per image |
+| Route | A user's images | A tool result's images |
+|---|---|---|
+| `anthropic` (Messages API) | image blocks | image blocks inside the `tool_result` |
+| `openai`, `openai-codex`, OpenCode `gpt-*` (Responses API) | `input_image` | `input_image` inside the `function_call_output` |
+| `google` (chat completions), a configured endpoint with `images: true` | `image_url` parts | one user message after the tool messages, each result's images captioned `Images returned by <tool> (call <id>):` |
+| OpenCode's other models, `openai-codex:gpt-5.3-codex-spark`, endpoints without `images`, a `local` credential's URL | a label line per image | a label line per image |
 
-An image is at most 3.75 MiB and 8000 pixels a side, a message carries at
-most 8, they take at most 20 000 000 base64 characters together, and one
-request sends at most 8 images, whatever the memory plugins' `maxImages`
-says (`MEDIA_LIMITS`): within Anthropic's per-image and per-request limits.
+A configured endpoint reads no images unless it says so:
+
+```ts
+import { modelsPlugin } from "@xandreed/plugin-models"
+
+const models = { plugin: modelsPlugin, options: {
+  model: "vision:llava",
+  endpoints: { vision: { url: "http://127.0.0.1:11434/v1", images: true } },
+} }
+```
+
+`imageInputFor(selection)` says whether a built-in route reads images, and
+the model catalog states it per model (`input: ["text", "image"]` or
+`["text"]`) for the route the model is sent through: a configured endpoint
+of a built-in provider's name by its `images`, a `local` credential's URL as
+text only. An image is at most 3.75 MiB and 8000 pixels a side, a message
+carries at most 8 and a tool result sends at most 4, they take at most
+20 000 000 base64 characters together, and one request sends at most 8
+images, whatever the memory plugins' `maxImages` says (`MEDIA_LIMITS`):
+within Anthropic's per-image and per-request limits. When a provider refuses
+a request over an image anyway, the turn omits the images that request sent
+(their label lines from then on) and sends the step once more; on
+`openai-codex` too, where an `error` event refusing the request before any
+other event is the same `InvalidRequestError` an HTTP 400 is.
 
 ## Token usage
 

@@ -710,6 +710,9 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
           },
           "standardOnly": {
             "type": "boolean"
+          },
+          "images": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -860,7 +863,7 @@ Requires: none
   "ledgerTurnChars": 240,
   "digestOnWriteChars": 0,
   "digests": true,
-  "media": "none",
+  "media": "inline",
   "maxImages": 8,
   "maxMediaChars": 20000000
 }
@@ -962,7 +965,7 @@ Requires: none
   "turnContext": "current",
   "replies": true,
   "digests": true,
-  "media": "none",
+  "media": "inline",
   "maxImages": 8,
   "maxMediaChars": 20000000,
   "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript."

@@ -285,3 +285,27 @@ describe("a multi-part user message → effect/ai prompt parts", () => {
     ])
   })
 })
+
+describe("a tool result with images → effect/ai model output", () => {
+  const pixel = Effect.runSync(mediaFromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", { name: "pixel.png" }))
+  const result = (output: string, media?: ReadonlyArray<typeof pixel>): AgentMessage => ({
+    role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "shot", output, isError: false, ...(media === undefined ? {} : { media }) }],
+  })
+
+  test("its text, then each image as a file part; the result stays its text; an empty text is left out", () => {
+    const file = { type: "file", mediaType: "image/png", data: pixel.data, fileName: "pixel.png" }
+    expect(toPromptMessages([result("a shot", [pixel])])).toEqual([{ role: "tool", content: [{
+      type: "tool-result", id: "c1", name: "shot", result: "a shot", modelOutput: [{ type: "text", text: "a shot" }, file], isFailure: false, providerExecuted: false,
+    }] }])
+    const [imageOnly] = toPromptMessages([result("", [pixel])]) as ReadonlyArray<{ readonly content: ReadonlyArray<Record<string, unknown>> }>
+    expect(imageOnly?.content[0]?.["modelOutput"]).toEqual([file])
+    const prompt = Prompt.make(toPromptMessages([result("a shot", [pixel])]) as Prompt.RawInput)
+    const part = prompt.content[0]?.role === "tool" ? prompt.content[0].content[0] : undefined
+    expect(part?.type === "tool-result" ? part.modelOutput?.map((output) => output.type) : []).toEqual(["text", "file"])
+  })
+
+  test("a result without images has no model output, as before", () => {
+    expect(toPromptMessages([result("plain")])).toEqual([{ role: "tool", content: [{ type: "tool-result", id: "c1", name: "shot", result: "plain", isFailure: false, providerExecuted: false }] }])
+    expect(toPromptMessages([result("plain", [])])).toEqual(toPromptMessages([result("plain")]))
+  })
+})

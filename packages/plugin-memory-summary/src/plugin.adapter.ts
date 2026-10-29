@@ -23,11 +23,12 @@ export const MemorySummaryConfig = Schema.Struct({
   /** Show recorded tool digests in place of the results they digest. */
   digests: Schema.Boolean,
   /**
-   * How images reach the model: the current turn's attachments are sent as
-   * images first, within `maxImages` and `maxMediaChars` (with the defaults a
-   * message's own images always fit); `none` shows earlier images as label
-   * lines, `inline` sends earlier turns' images too, newest turn first, while
-   * they fit.
+   * How images reach the model (a user's attachments, the images tool
+   * results return): the current turn's are sent as images first, within
+   * `maxImages` and `maxMediaChars` (with the defaults a message's own images
+   * always fit); `inline` (the default) sends earlier turns' images too,
+   * newest turn first, while they fit, `none` shows them as label lines.
+   * Text only: `maxMediaChars: 0`.
    */
   media: Schema.Literals(["none", "inline"]),
   /** Images one request sends as images, never more than `MEDIA_LIMITS.requestImages` (and artifact reference lines one result shows). */
@@ -39,7 +40,7 @@ export const MemorySummaryConfig = Schema.Struct({
 })
 export type MemorySummaryConfig = typeof MemorySummaryConfig.Type
 export const memorySummaryDefaults: MemorySummaryConfig = {
-  triggerRatio: 0.8, keepRatio: 0.16, cooldownTurns: 3, turnContext: "current", replies: true, digests: true, media: "none",
+  triggerRatio: 0.8, keepRatio: 0.16, cooldownTurns: 3, turnContext: "current", replies: true, digests: true, media: "inline",
   maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
   instructions: "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
 }

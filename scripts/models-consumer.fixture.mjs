@@ -6,10 +6,12 @@ import { readdirSync } from "node:fs"
 import { createServer } from "node:http"
 import { homedir } from "node:os"
 import { Context, Effect, Layer, Option, Redacted } from "effect"
-import { AuthStore, ModelCatalog, ProviderId, Sessions, SessionLogMemoryLive, SettingsStore, TurnAdmissionOpen, UserMessage, UtilityLlm } from "@xandreed/core"
+import { Prompt } from "effect/ai"
+import { AuthStore, mediaFromBase64, mediaLabel, ModelCatalog, ProviderId, Sessions, SessionLogMemoryLive, SettingsStore, toPromptMessages, TurnAdmissionOpen, UserMessage, UtilityLlm } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { modelsPlugin } from "@xandreed/plugin-models"
+import { promptWithImageLabels, toChatMessages } from "@xandreed/plugin-models/compat"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { Agent } from "@xandreed/sdk"
@@ -78,5 +80,18 @@ const expected = [
 if (JSON.stringify(result) !== JSON.stringify(["answered first", "answered second"])) fail(`replies ${JSON.stringify(result)}`)
 if (JSON.stringify(seen) !== JSON.stringify(expected)) fail(`requests ${JSON.stringify(seen)}`)
 if (entries(home).length > 0 || entries(cwd).length > 0) fail(`memory storage wrote to disk: HOME has ${JSON.stringify(entries(home))}, the working directory ${JSON.stringify(entries(cwd))}`)
-console.log("On Node, the models plugin with storage \"memory\" ran two turns, a login, a role edit, a logout, the catalog and a utility call, and left a fresh HOME and working directory empty")
+
+// A tool result's image on Node: an image_url part in a captioned user message on an endpoint that reads images, a label line on one that does not.
+const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+const pixel = Effect.runSync(mediaFromBase64(pixelPng, { name: "shot.png" }))
+const shotPrompt = Prompt.make(toPromptMessages([
+  { role: "assistant", content: [{ type: "tool-call", toolCallId: "c1", toolName: "screenshot", input: {} }] },
+  { role: "tool", content: [{ type: "tool-result", toolCallId: "c1", toolName: "screenshot", output: "home", isError: false, media: [pixel] }] },
+]))
+const withImages = toChatMessages(shotPrompt, { images: true })
+const imageMessage = JSON.stringify(withImages.at(-1))
+if (!imageMessage.includes("Images returned by screenshot (call c1):") || !imageMessage.includes(`data:image/png;base64,${pixelPng}`)) fail(`the tool's image was sent as ${imageMessage.slice(0, 200)}`)
+const labelled = JSON.stringify(toChatMessages(promptWithImageLabels(shotPrompt)))
+if (labelled.includes(pixelPng) || !labelled.includes(mediaLabel(pixel))) fail(`a route without images was sent ${labelled.slice(0, 200)}`)
+console.log("On Node, the models plugin with storage \"memory\" ran two turns, a login, a role edit, a logout, the catalog and a utility call, and left a fresh HOME and working directory empty; a tool's image went out as an image_url part, or as its label line where images are not read")
 process.exit(0)

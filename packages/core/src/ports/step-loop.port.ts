@@ -49,6 +49,17 @@ export interface StepRequest {
   readonly dispatch: (step: number, request: ModelDispatch) => Effect.Effect<void, HarnessError>
   /** Persist a step's appended messages; returns their log entries. */
   readonly record: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
+  /**
+   * A provider refused the step's request over an image (an `InvalidRequestError`
+   * that names one; `reason` is what it said). Records an `OmitMedia`
+   * compaction of the entries whose images that request sent and answers
+   * true, so the loop plans the step again and sends it once more, the
+   * images as label lines; false when the request sent no image, and the
+   * step fails. The step's next `plan`, that one only, keeps the model
+   * choice, system prompt and directive the refused request was planned
+   * with; any other `plan` of a step asks the policy again.
+   */
+  readonly onMediaRejected: (reason: string) => Effect.Effect<boolean, HarnessError>
   readonly completion: (step: StepInfo) => Effect.Effect<CompletionVerdict, HarnessError>
   readonly steering: Effect.Effect<Option.Option<string>, HarnessError>
   readonly correctives: Option.Option<Correctives>
@@ -95,7 +106,9 @@ export interface RunResult {
  * does not stream, so it does not check that.
  * Every real provider attempt runs `request.dispatch` immediately before
  * invoking the model; a failed durable check prevents the call. Planned
- * batches skip that hook because they make no provider request.
+ * batches skip that hook because they make no provider request. A request
+ * a provider refuses over an image is sent once more after
+ * `request.onMediaRejected` answers true, planned again first.
  */
 export class StepLoop extends Context.Service<StepLoop, {
   readonly id: string

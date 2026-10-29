@@ -176,7 +176,7 @@ context to provide it later passes it through `replayableContext` too.
 | `efferent.turn.duration` | `efferent.outcome` | each such turn's time from admission to its end, in milliseconds; for a turn the host began (its `TurnWriter` passed in), from when `Agent.turn` took it to when `Agent.turn` returned, before the host ends it |
 | `engine.runs` | `engine.outcome`, `engine.reason` | step-loop runs |
 | `engine.tool_calls` | `engine.tool`, `engine.ok` | tool results the loop received |
-| `engine.corrections` | `engine.kind`: `malformed`, `degenerate-nudge`, `stream-fallback` | the loop's self-corrections, a stream falling back included |
+| `engine.corrections` | `engine.kind`: `malformed`, `degenerate-nudge`, `stream-fallback`, `media-rejected` | the loop's self-corrections, a stream falling back and a step sent again without the images a provider refused included |
 | `llm.requests` | `llm.model`, `outcome` (`ok`, `error`), `fallback` (`true` for the fallback model's call, `false` otherwise; non-streamed calls only) | the models plugin's calls, after retries, utility calls included |
 | `llm.request.duration`, `llm.usage.*_tokens` | `llm.model` | the same calls' time and tokens |
 
@@ -575,7 +575,9 @@ form), `step.ended` (the recorded results by entry id, refused calls
 included), `completion.evaluated`, `skills.activated`, `context.built`,
 `decision.recorded`, `assistant.message`, `assistant.delta` (transient),
 `stream.fallback` (a streamed call failed before its first part, and the run
-goes on without streaming), `turn.ended`, and host events from
+goes on without streaming; a refusal over an image is no stream failure: it
+has no fallback, and the turn sends the step again without the images,
+`onMediaRejected`), `turn.ended`, and host events from
 `defineHostEvent`; the [event reference](event-reference.md) lists each
 one's payload, who publishes it and how it is stored. Every call the
 registry handles has its `invocationId` (`<runId>:call:<n>`), a refused one
@@ -648,8 +650,9 @@ four by default) and are recorded in the order of their results.
 
 A tool owns how its result appears: `render`, `compact`, `subjects`,
 `artifacts` (image and file references by URL, always rendered as reference
-lines; an image the model is to see is a `Media` value, see [Images and
-multi-part messages](#images-and-multi-part-messages)) and
+lines), `media` (which of the `Media` values the result holds the model is
+sent as images, every one by default; see [Images and multi-part
+messages](#images-and-multi-part-messages)) and
 an optional `digest`. A `Select` digest keeps whole items by key and
 re-renders them, so every identifier an answer may cite survives. A
 `Summarize` digest is accepted only when every `preserve`d identifier appears
@@ -1280,7 +1283,7 @@ message itself before the turn and branches on `AttachmentRejected.reason`.
 | `attachments` | 8 | images on one user message |
 | `requestImages` | 8 | images one request sends as images, whatever `maxImages` says; the memory plugins' default `maxImages` |
 | `requestChars` | 20 000 000 | base64 of one message's images together; the memory plugins' default (and largest) `maxMediaChars` |
-| `toolResultImages` | 4 | images one tool result may carry (reserved: tools cannot return images yet) |
+| `toolResultImages` | 4 | images one tool result sends (more are label lines), within `requestChars` together |
 
 **Begin.** `Sessions.begin` normalises the message before anything else
 (`normalizeUserMessage`): each image's type, size and fingerprint are taken
@@ -1302,47 +1305,135 @@ images back with its memory, so a long session of images is a heavy one. A
 `SessionLog` must hold an event of `requestChars` base64 characters;
 `sessionLogConformance` checks one.
 
-**What the model sees.** The memory plugins' `media` option decides. The
-current turn's attachments are sent as images first, while they fit: the
-images, then the text (an empty text part is left out). With `none`, the
-default, an earlier turn's image is a label line, `[image omitted:
-image/png, 182 KB, form.png: the failing form]`. With `inline`, earlier
-turns' images are sent too, newest turn first and a whole turn at a time,
-until one does not fit. All of them stay within `maxImages` images (never
-more than `MEDIA_LIMITS.requestImages`) and `maxMediaChars` base64
-characters; an image that does not fit is a label line. With the defaults
-(`maxImages` and `attachments` both 8, `maxMediaChars` the same
-`requestChars` a message's images are held to) a message's own images
-always fit; `maxMediaChars: 0` sends no image at all, for a host whose
-models read text only. What is sent changes only when a turn starts, so
-a provider's prompt cache holds within a turn. An image counts as
-`IMAGE_TOKEN_ESTIMATE` (1 600) tokens in memory's estimates, and the context
-fingerprint hashes its fingerprint, not its data. A request's render recipe
-records the budget (`media.maxChars`; a header from before reads
-`requestChars`), so replays and dispatch checks rebuild the same images.
+**Images from tools.** A tool returns images as `Media` values anywhere in
+its success value (build them with `mediaFromBytes` or `mediaFromBase64`;
+effect/ai's `Tool.toModelOutput` is not used). Every image the result holds
+is sent with it, or the ones its view picks:
 
-The step loop sends an image as an effect/ai `file` part:
+```ts
+import { Tool } from "effect/ai"
+import { Effect, Schema } from "effect"
+import { defineTool, Failure, Media, mediaFromBytes } from "@xandreed/core"
 
-| Route | Images |
-|---|---|
-| `anthropic` (Messages API) | image blocks |
-| `openai`, `openai-codex`, OpenCode `gpt-*` (Responses API) | `input_image` |
-| OpenCode's other models, `google` and configured endpoints (chat completions) | not sent yet: the message's text, then a label line per image |
+declare const capture: (url: string) => Effect.Effect<Uint8Array>
+
+const Screenshot = Tool.make("screenshot", {
+  description: "Take a screenshot of a page.",
+  parameters: Schema.Struct({ url: Schema.String }),
+  success: Schema.Struct({ url: Schema.String, image: Media }),
+  failure: Failure,
+  failureMode: "return",
+})
+
+const screenshot = defineTool({
+  tool: Screenshot,
+  handler: ({ url }) => capture(url).pipe(
+    Effect.flatMap((bytes) => mediaFromBytes(bytes, { name: "page.png" })),
+    Effect.map((image) => ({ url, image })),
+    Effect.mapError((error) => ({ error: "Screenshot", message: error.message })),
+  ),
+  view: {
+    version: "1",
+    render: (result) => `Screenshot of ${result.url}.`,
+    media: (result) => [result.image], // optional: every image of the result when omitted
+  },
+})
+```
+
+Memory stores the result once, as the tool encoded it, images included, and
+records where each image sent with it sits in that value (`MediaSlot`s, the
+`media` of a `memory.tool-result`), so no image is stored twice. It checks
+each image then, once (`toolResultMedia`): its data must be an image whose
+type, size and fingerprint are the ones it states, as `mediaFromBytes` gives
+them. An image that fails is an `[image unavailable: <why>]` line in the
+stored view, one past `toolResultImages` (or past `requestChars` together)
+its label line (the result keeps those lines as its `mediaNotes` too); a
+failed call sends none. A result without a view (the raw
+view, its encoded JSON) shows each image with its `data` replaced by its
+fingerprint, and sends the images as images.
+
+**What the model sees.** The memory plugins' `media` option decides, over a
+user's attachments and the images tool results return alike. The current
+turn's are sent as images first, while they fit: its attachments in order
+(the images, then the text; an empty text part is left out), then its tool
+results' images, newest result first and a whole result at a time. With
+`inline`, the default, earlier turns' images are sent too, newest turn first
+and a whole turn at a time (its attachments and its results' images
+together), until one does not fit; with `none` an earlier turn's image is a
+label line, `[image omitted: image/png, 182 KB, form.png: the failing form]`.
+A result shown through a compaction, a digest or a spill's preview shows its
+`mediaNotes`, then its images as label lines. All of them stay within `maxImages` images (never more than
+`MEDIA_LIMITS.requestImages`) and `maxMediaChars` base64 characters; an image
+that does not fit is a label line. With the defaults (`maxImages` and
+`attachments` both 8, `maxMediaChars` the same `requestChars` a message's
+images are held to) a message's own images always fit; `maxMediaChars: 0`
+sends no image at all, for a host whose models read text only. Earlier
+turns' images change only when a turn starts, or when the current turn's no
+longer leave them room, so a provider's prompt cache mostly holds within a
+turn. An image counts as `IMAGE_TOKEN_ESTIMATE` (1 600) tokens in memory's
+estimates, and the context fingerprint hashes its fingerprint, not its data.
+A request's render recipe records the budget (`media.maxChars`; a header from
+before reads `requestChars`), so replays and dispatch checks rebuild the same
+images.
+
+The step loop sends a user's image as an effect/ai `file` part, and a tool
+result's images as its `modelOutput` (the result's text, left out when empty,
+then a `file` part per image):
+
+| Route | A user's images | A tool result's images |
+|---|---|---|
+| `anthropic` (Messages API) | image blocks | image blocks inside the `tool_result` |
+| `openai`, `openai-codex`, OpenCode `gpt-*` (Responses API) | `input_image` | `input_image` inside the `function_call_output` |
+| `google` (Gemini's chat completions), a configured endpoint with `images: true` | `image_url` parts (`data:` URLs) | one user message after the batch's tool messages, each result's images captioned `Images returned by <tool> (call <id>):` (merged with a user message that follows, captioned `The user's message:` when it has images of its own) |
+| OpenCode's other models, `openai-codex:gpt-5.3-codex-spark`, configured endpoints without `images`, a `local` credential's URL | a label line per image | a label line per image |
+
+`imageInputFor(selection)` (`@xandreed/plugin-models`) says whether a
+built-in route reads images, and the model catalog states it per model
+(`ModelCatalogEntry.input`, `["text", "image"]` or `["text"]`) for a host's
+attach button, for the route the model is sent through: a configured
+endpoint of a built-in provider's name by its `images`, a `local`
+credential's URL as text only. On a route that does not, the models plugin sends every image
+as its label line (`promptWithImageLabels`) instead of a provider error.
+
+**A refused image.** A provider may still refuse an image (a size it reads
+differently, an image it cannot decode). When a request fails with an
+`InvalidRequestError` whose message names an image, the step loop calls the
+turn's `StepRequest.onMediaRejected(reason)`: it records an `OmitMedia`
+compaction naming every entry whose images that request sent, with the
+provider's message as its reason, and the step is planned again and sent
+once more, those images as label lines from then on. That plan keeps the
+model choice, system prompt and directive of the refused one (no second
+`policy.model` or `policy.step` call, no second step context). An
+`OmitMedia` applies whatever memory strategy renders the log, so one bad
+image cannot break a session. A request refused again fails the step; so
+does a refusal when the request sent no image, and one that arrives after
+the first part of a streamed response (its deltas went out, and tool
+handlers may have run). The streaming path does not fall back to a settled
+call over such a refusal. The rebuilt step publishes `context.built` and
+stores a `request.prepared` again; the dispatch check reads the latest. On
+`openai-codex`, an `error` event that refuses the request before any other
+event fails it with a 400, as the HTTP Responses endpoint does, so a refused
+image is an `InvalidRequestError` there too.
 
 **Text views.** Transcripts (`raw`, `reference`), digests, ledgers and
 summaries read a message as `userMessageText`: its text, then one label line
-per image. `queryLog` searches with each image's data elided
-(`elideMediaData`). The bus and stored `turn.started` carry the images'
-base64: elide them before streaming events to a browser. The skill
+per image; the raw transcript shows a tool result's images with their data
+elided. `queryLog` searches with each image's data elided
+(`elideMediaData`). The bus and stored `turn.started` carry a user's images'
+base64; the bus's `tool.completed` (the stored one leaves the result out) and
+the stored `memory.tool-result` (its `encoded` result) a tool's: elide them
+before streaming events to a browser. The skill
 matcher's decision hash adds the images' fingerprints only when there are
 some.
 
 **Compatibility.** Logs written before decode unchanged, a whitespace-only
-message included. A 0.13 reader of a newer log drops the images it does not
-know, fails on a message without text, and a replay of a request with images
-diverges there (`request.diverged`).
+message included; a result without images is stored and rendered exactly as
+before. A 0.13 reader of a newer log drops the images it does not know (a
+result's `media` slots included), fails on a message without text and on an
+`OmitMedia` compaction, and a replay of a request with images diverges there
+(`request.diverged`).
 
-Tools cannot return images yet; an `ArtifactRef` stays a reference by URL.
+An `ArtifactRef` stays a reference by URL, a reference line in both modes.
 
 ## Sessions: one log per session
 

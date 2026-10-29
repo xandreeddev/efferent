@@ -16,6 +16,8 @@ import {
   HarnessError,
   harnessDefectsAsFailures,
   journalSchemaOf,
+  Media,
+  mediaFromBase64,
   openLogSession,
   publishToolProgress,
   RunContext,
@@ -328,5 +330,44 @@ describe("the registry refuses a call before its handler runs", () => {
     expect(turn.events.map((event) => `${event._tag}:${"invocationId" in event ? event.invocationId : ""}`)).toEqual([
       "tool.refused:run-1:call:0", "tool.started:run-1:call:1", "tool.completed:run-1:call:1",
     ])
+  })
+})
+
+describe("the views of a result holding images", () => {
+  const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  const pixelGif = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+  const Shots = Tool.make("shots", {
+    description: "Two screenshots.",
+    parameters: Schema.Struct({}),
+    success: Schema.Struct({ before: Media, after: Media }),
+    failure: Failure,
+    failureMode: "return",
+  })
+  const Raw = Tool.make("raw_shots", { description: "Two screenshots, no view.", parameters: Schema.Struct({}), success: Schema.Struct({ before: Media, after: Media }), failure: Failure, failureMode: "return" })
+  const capability = defineCapability({
+    id: "shots", version: "1",
+    tools: [
+      defineTool({ tool: Shots, handler: () => Effect.die("unused"), view: { version: "1", render: () => "after the click", media: (result) => [result.after] } }),
+      defineTool({ tool: Raw, handler: () => Effect.die("unused") }),
+    ],
+  })
+  const views = Effect.runSync(Effect.gen(function* () {
+    const registry = yield* makeRegistry(config, [capability])
+    return registry.views
+  }))
+  const encoded = Effect.runSync(Effect.all({ before: mediaFromBase64(pixelPng), after: mediaFromBase64(pixelGif) }))
+
+  test("the raw view shows the result with each image's data elided, and sends every image", () => {
+    const view = Effect.runSync(views.view("raw_shots", encoded, {}, false))
+    expect(view.text).not.toContain(pixelPng.slice(0, 30))
+    expect(view.text).toContain(String(encoded.before.fingerprint))
+    expect(view.media?.map((slot) => slot.path)).toEqual([["after"], ["before"]])
+  })
+
+  test("a view's selector picks the images it sends among the result's; a failed call sends none", () => {
+    const view = Effect.runSync(views.view("shots", encoded, {}, false))
+    expect([view.text, view.media?.map((slot) => slot.path)]).toEqual(["after the click", [["after"]]])
+    expect(Effect.runSync(views.view("shots", encoded, {}, true)).media).toBeUndefined()
+    expect(Effect.runSync(views.view("raw_shots", encoded, {}, true)).media).toBeUndefined()
   })
 })

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { LanguageModel, Tool, Toolkit } from "effect/ai"
+import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
 import {
   ConversationId,
@@ -14,6 +14,7 @@ import {
   Failure,
   HarnessError,
   IntentMatcher,
+  Media,
   MediaFingerprint,
   mediaFromBase64,
   mediaLabel,
@@ -1070,9 +1071,9 @@ describe("resuming a turn", () => {
 describe("a turn's images", () => {
   const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 
-  test("an image-only message reaches the first request as a file part, normalised; step-0 dispatch passes its check; a later turn sees it as a label", async () => {
+  test.each([["inline", true], ["none", false]] as const)("an image-only message reaches the first request as a file part, normalised; step-0 dispatch passes its check; a later turn sends it again with media %p (%p)", async (media, again) => {
     const { outcome, seen, events, replayed, pixel } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const agent = yield* define(memoryWindowPlugin)
+      const agent = yield* define({ plugin: memoryWindowPlugin, options: { media } })
       const journal = yield* inMemorySession
       const { seen, model } = yield* scripted([stop("a pixel"), stop("still a pixel")])
       const pixel = yield* mediaFromBase64(pixelPng, { name: "pixel.png" })
@@ -1091,8 +1092,9 @@ describe("a turn's images", () => {
     const first = JSON.parse(seen[0]?.prompt ?? "[]") as ReadonlyArray<{ readonly role: string; readonly content: unknown }>
     expect(first.at(1)).toMatchObject({ role: "user", content: [{ type: "file", mediaType: "image/png", data: pixelPng, fileName: "pixel.png" }] })
     expect(JSON.stringify(replayed.prompt.content)).toBe(seen[0]?.prompt ?? "")
-    expect(seen[1]?.prompt).toContain(JSON.stringify(mediaLabel(pixel)).slice(1, -1))
-    expect(seen[1]?.prompt).not.toContain(pixelPng)
+    // `inline` (the default) sends an earlier turn's image again; `none` shows it as its label line.
+    expect(seen[1]?.prompt.includes(JSON.stringify(mediaLabel(pixel)).slice(1, -1))).toBe(!again)
+    expect(seen[1]?.prompt.includes(pixelPng)).toBe(again)
   })
 
   test("an attachment that is not an image fails the turn before it begins (turn.attachment-rejected)", async () => {
@@ -1108,6 +1110,153 @@ describe("a turn's images", () => {
     expect(error.code).toBe("turn.attachment-rejected")
     expect(error.message).toContain("UnsupportedType")
     expect(events).toEqual([])
+  })
+})
+
+/* ── images a tool returns ── */
+
+const Screenshot = Tool.make("screenshot", {
+  description: "Take a screenshot of the page.",
+  parameters: Schema.Struct({ page: Schema.String }),
+  success: Schema.Struct({ page: Schema.String, image: Media }),
+  failure: Failure,
+  failureMode: "return",
+})
+const screenshotPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+const screenshots = defineCapability({
+  id: "test-screenshots", version: "1",
+  tools: [defineTool({
+    tool: Screenshot,
+    handler: ({ page }) => mediaFromBase64(screenshotPng, { name: `${page}.png` }).pipe(
+      Effect.map((image) => ({ page, image })),
+      Effect.orDie,
+    ),
+    view: { version: "1", render: (result) => `Screenshot of ${result.page}.` },
+    annotations: { readOnly: true },
+  })],
+  skills: [defineSkill({ id: "screens", summary: "Take screenshots.", tools: ["screenshot"], always: true })],
+})
+
+/** A scripted model that refuses the request it is sent as call `refuse`, as Anthropic refuses an image it cannot read. */
+const refusing = (script: ReadonlyArray<Part>, refuse: number) => Effect.gen(function* () {
+  const seen = yield* Ref.make<ReadonlyArray<string>>([])
+  const model = yield* LanguageModel.make({
+    generateText: (options) => Ref.modify(seen, (all): [number, ReadonlyArray<string>] => [all.length, [...all, JSON.stringify(options.prompt.content)]]).pipe(
+      Effect.flatMap((index) => index === refuse
+        ? Effect.fail(AiError.make({ module: "Test", method: "generateText", reason: new AiError.InvalidRequestError({ description: "messages.2.content.0.image.source.base64: image exceeds 5 MB maximum" }) }))
+        : Effect.succeed((script[index - (index > refuse ? 1 : 0)] ?? stop("done")) as never)),
+    ),
+    streamText: () => Stream.die("not scripted") as never,
+  })
+  return { seen, model }
+})
+
+describe("images a tool returns", () => {
+  const run = (model: LanguageModel.LanguageModel) => Effect.gen(function* () {
+    const agent = yield* define(memoryWindowPlugin, { capabilities: [screenshots] })
+    const journal = yield* inMemorySession
+    const outcome = yield* agent.turn(inputFor(journal, "run-1", "how does the home page look?", model), (turn) =>
+      turn.tools.select(turn.userMessage).pipe(
+        Effect.andThen(turn.run({ limits: { requireCompletion: false } })),
+        Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })),
+      ))
+    return { outcome, events: yield* journal.stored, replayed: yield* replayModelRequest(yield* journal.stored, "run-1", 1) }
+  })
+
+  test("reach the next request as image parts of the tool result; the session log stores each image once, where the tool put it", async () => {
+    const { outcome, seen, events, replayed } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { seen, model } = yield* scripted([call("c1", "screenshot", { page: "home" }), stop("a blank page")])
+      return { ...(yield* run(model)), seen: yield* Ref.get(seen) }
+    })))
+    expect([outcome.outcome, outcome.reply]).toEqual(["completed", Option.some("a blank page")])
+    const second = JSON.parse(seen[1]?.prompt ?? "[]") as ReadonlyArray<{ readonly role: string; readonly content: ReadonlyArray<Record<string, unknown>> }>
+    const result = second.find((message) => message.role === "tool")?.content[0]
+    expect(result?.["result"]).toBe("Screenshot of home.")
+    expect(result?.["modelOutput"]).toMatchObject([
+      { type: "text", text: "Screenshot of home." },
+      { type: "file", mediaType: "image/png", data: screenshotPng, fileName: "home.png" },
+    ])
+    expect(JSON.stringify(replayed.prompt.content)).toBe(seen[1]?.prompt ?? "")
+    const stored = named(events, "memory.tool-result")
+    expect(body(stored[0])?.["media"]).toEqual([{ path: ["image"], fingerprint: expect.any(String), mediaType: "image/png", bytes: 70 }])
+    expect(JSON.stringify(events).split(screenshotPng).length - 1).toBe(1)
+  })
+
+  test("an image the provider refuses is omitted (OmitMedia) and the step is sent once more, the image as its label line", async () => {
+    const { outcome, seen, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { seen, model } = yield* refusing([call("c1", "screenshot", { page: "home" }), stop("a page I could not see")], 1)
+      return { ...(yield* run(model)), seen: yield* Ref.get(seen) }
+    })))
+    expect([outcome.outcome, outcome.reply]).toEqual(["completed", Option.some("a page I could not see")])
+    expect(seen).toHaveLength(3)
+    expect(seen[1]).toContain(screenshotPng)
+    expect(seen[2]).not.toContain(screenshotPng)
+    expect(seen[2]).toContain("[image omitted: image/png, 70 B, home.png]")
+    const omitted = named(events, "memory.compaction").map((event) => body(event)?.["action"])
+    expect(omitted).toEqual([{ _tag: "OmitMedia", entries: [expect.stringMatching(/^run-1:/)], reason: expect.stringContaining("image exceeds 5 MB maximum") }])
+    expect(named(events, "request.prepared").map((event) => event.data.step)).toEqual([0, 1, 1])
+  })
+
+  test("a step sent again over a refused image keeps its plan: one policy.model and policy.step call, one memory.step entry", async () => {
+    const { outcome, events, models, directives } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* refusing([call("c1", "screenshot", { page: "home" }), stop("a page I could not see")], 1)
+      const models = yield* Ref.make<ReadonlyArray<number>>([])
+      const directives = yield* Ref.make<ReadonlyArray<number>>([])
+      const agent = yield* define(memoryWindowPlugin, { capabilities: [screenshots] })
+      const journal = yield* inMemorySession
+      const outcome = yield* agent.turn(inputFor(journal, "run-1", "how does the home page look?", model), (turn) =>
+        turn.tools.select(turn.userMessage).pipe(
+          Effect.andThen(turn.run({
+            limits: { requireCompletion: false },
+            model: (info) => Ref.update(models, (all) => [...all, info.stepIndex]).pipe(Effect.as(Option.some({ model, variant: Option.none<string>() }))),
+            step: (info) => Ref.update(directives, (all) => [...all, info.stepIndex]).pipe(Effect.as({ context: Option.some(`step ${info.stepIndex}`), toolChoice: Option.none() })),
+          })),
+          Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })),
+        ))
+      return { outcome, events: yield* journal.stored, models: yield* Ref.get(models), directives: yield* Ref.get(directives) }
+    })))
+    expect(outcome.outcome).toBe("completed")
+    expect(named(events, "memory.compaction")).toHaveLength(1)
+    expect([models, directives]).toEqual([[0, 1], [0, 1]])
+    expect(named(events, "memory.step").map((event) => event.data.step)).toEqual([0, 1])
+  })
+
+  test("a step loop that plans a step twice, with no image refused, asks the policy again", async () => {
+    const models = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { model } = yield* scripted([stop("done")])
+      const models = yield* Ref.make<ReadonlyArray<number>>([])
+      const twice = definePlugin({
+        id: "test/plans-twice", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {}, provides: [StepLoop],
+        layer: () => Layer.succeed(StepLoop, {
+          id: "plans-twice", version: "1", run: (request) => runSteps({ ...request, plan: (info) => request.plan(info).pipe(Effect.andThen(request.plan(info))) }),
+        }),
+      })
+      const agent = yield* Agent.define({
+        plugins: [memoryWindowPlugin, toolDiscoveryPlugin, twice], capabilities: [host],
+        turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 1 },
+      })
+      const journal = yield* inMemorySession
+      yield* agent.turn(inputFor(journal, "run-1", "hello", model), (turn) => turn.run({
+        limits: { requireCompletion: false },
+        model: (info) => Ref.update(models, (all) => [...all, info.stepIndex]).pipe(Effect.as(Option.some({ model, variant: Option.none<string>() }))),
+      }).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+      return yield* Ref.get(models)
+    })))
+    expect(models).toEqual([0, 0])
+  })
+
+  test("a request the provider refuses twice over an image fails the turn", async () => {
+    const error = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const seen = yield* Ref.make(0)
+      const model = yield* LanguageModel.make({
+        generateText: () => Ref.getAndUpdate(seen, (count) => count + 1).pipe(Effect.flatMap((index) => index === 0
+          ? Effect.succeed(call("c1", "screenshot", { page: "home" }) as never)
+          : Effect.fail(AiError.make({ module: "Test", method: "generateText", reason: new AiError.InvalidRequestError({ description: "Could not process image" }) })))),
+        streamText: () => Stream.die("not scripted") as never,
+      })
+      return yield* Effect.flip(run(model))
+    })))
+    expect(error.message).toContain("Could not process image")
   })
 })
 

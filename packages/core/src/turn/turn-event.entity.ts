@@ -189,7 +189,7 @@ export const StreamFallbackEvent = Schema.TaggedStruct("stream.fallback", {
   /** The stream's error or defect as text, cut to 300 characters. */
   message: Schema.String,
 }).annotate({
-  description: "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). Journaled as `stream.fallback`.",
+  description: "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). A refusal over an image (an `InvalidRequestError` that names one) is no stream failure: it has no fallback; the turn omits the images and sends the step again (`StepRequest.onMediaRejected`), or the step fails. Journaled as `stream.fallback`.",
 })
 
 export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {

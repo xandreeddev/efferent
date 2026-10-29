@@ -1,5 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope } from "effect"
+import type { MediaSlot } from "../domain/media.entity.js"
 import type { AgentMessage, ConversationId } from "../domain/message.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
@@ -21,6 +22,13 @@ export interface ToolView {
   readonly subjects: ReadonlyArray<Subject>
   readonly artifacts: ReadonlyArray<ArtifactRef>
   readonly pinned: boolean
+  /**
+   * The images of the encoded result the model is sent with it, where they
+   * are in it (`mediaSlotsOf`). Memory checks each one when it records the
+   * result (`toolResultMedia`): an image that fails, or one over
+   * `MEDIA_LIMITS.toolResultImages`, is a label line in the stored view.
+   */
+  readonly media?: ReadonlyArray<MediaSlot>
 }
 
 /** What the digester returns: the item keys to keep, or a summary. */

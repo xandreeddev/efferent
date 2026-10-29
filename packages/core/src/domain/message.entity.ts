@@ -56,6 +56,13 @@ export const ToolResultPart = Schema.Struct({
   output: Schema.Unknown,
   providerOptions: Schema.optional(Schema.Unknown),
   isError: Schema.optional(Schema.Boolean),
+  /**
+   * Images sent with the result, after `output`'s text: memory's render of
+   * the images a result's slots name (`LogBody.ToolResult.media`). Only a
+   * rendered message has them; the loop's own tail keeps a result's images
+   * inside `output`, as the tool encoded them.
+   */
+  media: Schema.optionalKey(Schema.Array(Media)),
 })
 export type ToolResultPart = typeof ToolResultPart.Type
 

@@ -1,6 +1,7 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
 import type { LanguageModel, Tool } from "effect/ai"
+import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { PromptTier, SkillDefinition, ToolAnnotations } from "../harness/capability.entity.js"
@@ -39,9 +40,16 @@ export interface ToolViewDefinition<Result, Params> {
   /** The older-turn form; None keeps `render`'s text. */
   readonly compact: Option.Option<(result: Result, params: Params) => string>
   readonly subjects: (result: Result, params: Params) => ReadonlyArray<Subject>
-  /** Files and images the result carries, kept by reference. */
+  /** Files and images the result points to by URL, kept by reference (shown as reference lines). */
   readonly artifacts: (result: Result, params: Params) => ReadonlyArray<ArtifactRef>
   readonly digest: Option.Option<DigestDefinition<Result, Params>>
+  /**
+   * The images the model is sent with the result: `Media` values the result
+   * holds (one it does not hold is ignored). None: every image it holds.
+   * A tool returns images as `Media` values in its success value;
+   * `Tool.toModelOutput` is not used.
+   */
+  readonly media: Option.Option<(result: Result, params: Params) => ReadonlyArray<Media>>
 }
 
 /** The view as an author writes it; optional parts default in `defineTool`. */
@@ -52,6 +60,8 @@ export interface ToolViewInput<Result, Params> {
   readonly subjects?: (result: Result, params: Params) => ReadonlyArray<Subject>
   readonly artifacts?: (result: Result, params: Params) => ReadonlyArray<ArtifactRef>
   readonly digest?: DigestDefinition<Result, Params>
+  /** The images among the result's the model is sent with it; omitted: every image the result holds. */
+  readonly media?: (result: Result, params: Params) => ReadonlyArray<Media>
 }
 
 /** A typed tool definition as its author writes it (see `defineTool`). */

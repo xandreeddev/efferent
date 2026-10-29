@@ -31,6 +31,7 @@ export const defineTool = <T extends Tool.Any, R>(definition: {
     subjects: view.subjects ?? (() => []),
     artifacts: view.artifacts ?? (() => []),
     digest: Option.fromNullishOr(view.digest),
+    media: Option.fromNullishOr(view.media),
   })) as RegisteredTool["view"],
   annotations: { ...defaultAnnotations, ...definition.annotations },
 })
