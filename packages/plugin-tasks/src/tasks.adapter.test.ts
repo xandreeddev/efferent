@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Clock, Context, Deferred, Effect, Exit, FiberSet, Layer, Logger, Option, Queue, Ref, Scope } from "effect"
+import { Clock, Context, Deferred, Effect, Exit, FiberSet, Layer, Logger, Option, Queue, Ref, References, Scope, Tracer } from "effect"
 import type { Layer as LayerType } from "effect"
 import { TestClock } from "effect/testing"
 import {
@@ -92,6 +92,16 @@ const harness = (input: {
 const onCommit: SessionsConfig = { ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } }
 
 const scenario = <A, E>(body: Effect.Effect<A, E, Scope.Scope>) => Effect.runPromise(Effect.scoped(body).pipe(Effect.provide(TestClock.layer())))
+
+/** A logger that keeps each line's level and message, and the session and task ids it is annotated with. */
+const capturing = () => {
+  const logged: Array<readonly [string, string, unknown, unknown]> = []
+  const layer = Logger.layer([Logger.make((options) => {
+    const annotations = options.fiber.getRef(References.CurrentLogAnnotations)
+    logged.push([options.logLevel, [options.message].flat().join(" "), annotations["efferent.session.id"], annotations["efferent.task.id"]])
+  })])
+  return { logged, layer }
+}
 
 describe("results slot in after the turn in flight", () => {
   test("a task started during a turn delivers after that turn ends, and the parent reacts once, to the notice", () => scenario(Effect.gen(function* () {
@@ -208,8 +218,7 @@ describe("starting and storing", () => {
   })))
 
   test("a store failure while the task's turn is stored is logged as a failure, not as a turn closed under it", () => {
-    const logged: Array<readonly [string, string]> = []
-    const capture = Logger.layer([Logger.make((options) => logged.push([options.logLevel, [options.message].flat().join(" ")]))])
+    const { logged, layer: capture } = capturing()
     return scenario(Effect.gen(function* () {
       const h = yield* harness({
         log: (inner) => SessionLog.of({
@@ -221,7 +230,7 @@ describe("starting and storing", () => {
       })
       const task = yield* h.tasks.start(h.parent, { instructions: "unstored", mode: "spawn" })
       yield* h.idle
-      expect(logged).toContainEqual(["Warn", `background task ${task.taskId} could not store its turn: store.io: the store is down`])
+      expect(logged).toContainEqual(["Warn", "the background task could not store its turn: store.io: the store is down", h.parent.id, task.taskId])
       expect(logged.filter(([, message]) => message.includes("stopped"))).toEqual([])
       // The turn ended without a result: the task is lost, and the parent hears of it.
       const lost = yield* h.tasks.status(h.parent, task.taskId)
@@ -308,8 +317,7 @@ describe("cancel and removal", () => {
   })))
 
   test("a task whose turn is cancelled under it is logged as stopped, with how its turn was closed, not as a failure", () => {
-    const logged: Array<readonly [string, string]> = []
-    const capture = Logger.layer([Logger.make((options) => logged.push([options.logLevel, [options.message].flat().join(" ")]))])
+    const { logged, layer: capture } = capturing()
     return scenario(Effect.gen(function* () {
       const entered = yield* Deferred.make<void>()
       const h = yield* harness({ turn: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)) })
@@ -317,7 +325,7 @@ describe("cancel and removal", () => {
       yield* Deferred.await(entered)
       expect(yield* h.tasks.cancel(h.parent, task.taskId)).toBe(true)
       yield* h.idle
-      expect(logged).toContainEqual(["Info", `background task ${task.taskId} stopped: its turn was cancelled`])
+      expect(logged).toContainEqual(["Info", "the background task stopped: its turn was cancelled", h.parent.id, task.taskId])
       expect(logged.filter(([level]) => level === "Warn")).toEqual([])
     }).pipe(Effect.provide(capture)))
   })
@@ -486,8 +494,7 @@ describe("limits, failures and budgets", () => {
   })))
 
   test("the runner's deadline bounds parent admission, leaves the delivered notice pending and says what it cut", () => {
-    const logged: Array<string> = []
-    const capture = Logger.layer([Logger.make((options) => logged.push([options.message].flat().join(" ")))])
+    const { logged, layer: capture } = capturing()
     return scenario(Effect.gen(function* () {
       const entered = yield* Deferred.make<void>()
       const stopped = yield* Ref.make(false)
@@ -504,7 +511,7 @@ describe("limits, failures and budgets", () => {
       expect([Option.isNone((yield* h.sessions.get(h.parent)).open), (yield* h.sessions.get(h.parent)).pending]).toEqual([true, 1])
       expect((yield* h.tasks.status(h.parent, task.taskId)).delivered).toBe(true)
       expect(yield* h.reactions).toEqual([])
-      expect(logged).toContain(`background task ${task.taskId} of ${h.parent.id} was cut by the runner's deadline after 1000 ms`)
+      expect(logged).toContainEqual(["Warn", "the background task was cut by the runner's deadline after 1000 ms", h.parent.id, task.taskId])
     }).pipe(Effect.provide(capture)))
   })
 
@@ -535,4 +542,49 @@ describe("limits, failures and budgets", () => {
     expect([...new Set(all.map(([origin]) => origin))]).toEqual(["child", "inbox"])
     expect(all.every(([, meta]) => JSON.stringify(meta) === JSON.stringify({ tenant: "acme", runId: "run-1" }))).toBe(true)
   })))
+})
+
+describe("spans and logs", () => {
+  test("each method is a tasks.<op> span with the parent's id, and the task's when it names one; a task's work is task.run with both", () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({ span: (options) => { const span = new Tracer.NativeSpan(options); spans.push(span); return span } })
+    return scenario(Effect.gen(function* () {
+      const h = yield* harness()
+      const task = yield* h.tasks.start(h.parent, { instructions: "traced", mode: "spawn" })
+      yield* h.idle
+      yield* h.tasks.status(h.parent, task.taskId)
+      yield* h.tasks.list(h.parent)
+      yield* h.tasks.cancel(h.parent, task.taskId)
+      yield* h.tasks.reconcile(h.parent)
+      expect((yield* Effect.flip(h.tasks.status(h.parent, "no-such-task")))._tag).toBe("TaskMissing")
+      const ids = (span: Tracer.NativeSpan) => [span.attributes.get("efferent.session.id"), span.attributes.get("efferent.task.id")]
+      const ended = (span: Tracer.NativeSpan) => span.status._tag === "Ended" ? span.status.exit._tag : "open"
+      expect(spans.filter((span) => span.name.startsWith("task")).map((span) => [span.name, ...ids(span), ended(span)])).toEqual([
+        ["tasks.start", h.parent.id, task.taskId, "Success"],
+        ["task.run", h.parent.id, task.taskId, "Success"],
+        ["tasks.status", h.parent.id, task.taskId, "Success"],
+        ["tasks.list", h.parent.id, undefined, "Success"],
+        ["tasks.cancel", h.parent.id, task.taskId, "Success"],
+        ["tasks.reconcile", h.parent.id, undefined, "Success"],
+        ["tasks.status", h.parent.id, "no-such-task", "Failure"],
+      ])
+    }).pipe(Effect.withTracer(tracer)))
+  })
+
+  test("a notice the parent's full inbox refuses is logged with the task's ids, and left for a later reconcile", () => {
+    const { logged, layer: capture } = capturing()
+    return scenario(Effect.gen(function* () {
+      const h = yield* harness()
+      const open = yield* Scope.make()
+      yield* h.sessions.begin(h.parent, say("busy")).pipe(Scope.provide(open))
+      yield* Effect.forEach(Array.from({ length: sessionsDefaults.inbox.maxPending }, (_, index) => `note-${index}`), (id) =>
+        h.sessions.deliver(h.parent, { id, source: { kind: "host" }, content: "a note" }), { concurrency: 1, discard: true })
+      const task = yield* h.tasks.start(h.parent, { instructions: "into a full inbox", mode: "spawn" })
+      yield* h.idle
+      expect(logged).toContainEqual(["Warn", "the parent's inbox is full; the task's notice is delivered later", h.parent.id, task.taskId])
+      const done = yield* h.tasks.status(h.parent, task.taskId)
+      expect([done.status, done.delivered]).toEqual(["completed", false])
+      yield* Scope.close(open, Exit.void)
+    }).pipe(Effect.provide(capture)))
+  })
 })

@@ -162,7 +162,7 @@ export const memoryWindowPlugin = definePlugin({
       const policy = windowPolicy(config)
       return ConversationMemory.of({
         strategy: WINDOW_STRATEGY,
-        open: ({ runId, log }) => openLogSession(log, policy, { runId }),
+        open: Effect.fn("memory.open")(({ runId, log }) => openLogSession(log, policy, { runId })),
       })
     }),
     Layer.succeed(Capabilities, [recallCapability]),

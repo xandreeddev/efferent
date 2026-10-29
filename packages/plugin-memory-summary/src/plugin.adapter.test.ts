@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Fiber, Logger, Option, Ref } from "effect"
+import { Context, Effect, Fiber, Logger, Option, Ref, Tracer } from "effect"
 import { TestClock } from "effect/testing"
 import { ConversationId, ConversationMemory, entryId, HarnessError, renderLog, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
@@ -124,5 +124,52 @@ describe("a summarizer that fails or stalls", () => {
       return yield* session.maintain(signal)
     })))
     expect(recorded.map((entry) => entry.body)).toEqual([{ _tag: "Compaction", strategy: "summary", version: "1", action: { _tag: "Summarize", keepFromTurn: 4, summary: "SUMMARY" } }])
+  })
+})
+
+describe("spans", () => {
+  /** A tracer that keeps every span it starts, and how each one ended. */
+  const keeping = () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({ span: (options) => { const span = new Tracer.NativeSpan(options); spans.push(span); return span } })
+    const shown = () => spans.map((span) => [span.name, span.status._tag === "Ended" ? span.status.exit._tag : "open"])
+    return { spans, tracer, shown }
+  }
+  const usage = { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
+
+  test("opening is a memory.open span, failed without a UtilityLlm; asking the summarizer is a memory.summarize span under the caller's", async () => {
+    const { spans, tracer, shown } = keeping()
+    await run(() => Effect.scoped(Effect.gen(function* () {
+      const utility = UtilityLlm.of({ complete: () => Effect.succeed(new UtilityCompletion({ text: "SUMMARY", usage })) })
+      const handle: LogHandle = { read: Effect.succeed(log), append: () => Effect.void }
+      const built = yield* memorySummaryPlugin.build(config, Context.empty())
+      const memory = Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
+      const open = memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b4"), runId: "run-4", log: handle })
+      // Without a UtilityLlm the open fails.
+      yield* Effect.exit(open)
+      const session = yield* open.pipe(Effect.provideService(UtilityLlm, utility))
+      yield* session.maintain(signal).pipe(Effect.withSpan("host.step"))
+    })).pipe(Effect.withTracer(tracer)))
+    expect(shown()).toEqual([["memory.open", "Failure"], ["memory.open", "Success"], ["host.step", "Success"], ["memory.summarize", "Success"]])
+    expect(Option.map(spans[3]!.parent, (parent) => parent.spanId)).toEqual(Option.some(spans[2]!.spanId))
+  })
+
+  test("a summarizer call that fails or outlasts summaryTimeoutMs fails its memory.summarize span", async () => {
+    const { tracer, shown } = keeping()
+    await run(() => Effect.gen(function* () {
+      yield* maintain(() => Effect.fail(new HarnessError({ code: "memory.summary", message: "the prompt is too long" })))
+      const fiber = yield* Effect.forkChild(maintain(() => Effect.never))
+      yield* TestClock.adjust("5 seconds")
+      yield* Fiber.join(fiber)
+    }).pipe(Effect.withTracer(tracer)))
+    expect(shown()).toEqual([["memory.summarize", "Failure"], ["memory.summarize", "Failure"]])
+  })
+
+  test("a step whose context stays under the trigger asks nothing, and opens no span", async () => {
+    const { tracer, shown } = keeping()
+    const policy = summaryPolicy(config, () => Effect.succeed("SUMMARY"))
+    const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: "run-4" })
+    const decided = await run(() => policy.maintain({ entries: log, signal: { ...signal, budgetTokens: 100_000 }, turn: 4, runId: "run-4", render }).pipe(Effect.withTracer(tracer)))
+    expect([decided.actions, shown()]).toEqual([[], []])
   })
 })

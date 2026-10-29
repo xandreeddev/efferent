@@ -9,6 +9,7 @@ Summarizing conversation memory: a `ConversationMemory` with the window strategy
 - After a failed or timed-out call, never ask the summarizer again in that turn (the `failed` ref in `memorySummaryPlugin`).
 - Everything after the instructions in `summaryPrompt` is data: the transcript and an earlier summary go through core's `framed`, never pasted bare.
 - Opening without a `UtilityLlm` in the turn's services fails with `memory.summary`.
+- `open` is a `memory.open` span (`Effect.fn`); each ask of the summarizer is a `memory.summarize` span, failed when the call fails or outlasts `summaryTimeoutMs`. A step under the trigger asks nothing and opens no span.
 - Bump `SUMMARY_STRATEGY.version` when a decision changes: every recorded `Compaction` and every `context.built` carries it.
 - A text change updates its exact pin in `src/plugin.adapter.test.ts`.
 
@@ -43,7 +44,7 @@ None.
 
 ## Tests
 
-- `src/plugin.adapter.test.ts`: the prompt, and a summarizer that answers, fails or stalls (under `TestClock`), alone and in the plugin.
+- `src/plugin.adapter.test.ts`: the prompt, a summarizer that answers, fails or stalls (under `TestClock`), alone and in the plugin, and the spans.
 - `packages/sdk/src/memory.conformance.test.ts` runs core's `memoryConformance` against this strategy and checks the `memory.summary` failure without a `UtilityLlm`.
 - Run: `bun test packages/plugin-memory-summary packages/sdk/src/memory.conformance.test.ts`.
 

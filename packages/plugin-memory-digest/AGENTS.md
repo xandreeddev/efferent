@@ -6,6 +6,7 @@ The `ResultDigester` that runs tools' digest tasks (select the items to keep, or
 
 - Session scope: the digester is built per turn from that turn's `UtilityLlm`; never cache one across turns.
 - A call that fails or outlasts `digestTimeoutMs` fails with `memory.digest` and logs `digest left out: …`; memory then records no digest and the result keeps its view.
+- `digest` is a `memory.digest` span (`Effect.fn`), failed with the call.
 - The user's request and the result (or its items) are data: frame them with core's `framed` and clip them with `clipTo`, the request to a quarter of `maxSourceChars`.
 - `keysOf` accepts only keys the task offered, read inside brackets first, so a reply cannot keep an item that was not shown.
 - Bump `UTILITY_DIGESTER.version` when the prompt or the reading of a reply changes: recorded digests name the digester (`utility-digest@1` in the sdk golden).
@@ -42,7 +43,7 @@ None.
 
 ## Tests
 
-- `src/plugin.adapter.test.ts`: reply keys, the prompt for both modes and its clipping, and a digester that answers, fails or stalls (under `TestClock`).
+- `src/plugin.adapter.test.ts`: reply keys, the prompt for both modes and its clipping, a digester that answers, fails or stalls (under `TestClock`), and its `memory.digest` spans.
 - The sdk golden (`packages/sdk/src/agent.golden.test.ts`) composes it with a `Select` digest; it pins the digest the turn records, not the digester's prompt.
 - Run: `bun test packages/plugin-memory-digest packages/sdk/src/agent.golden.test.ts`.
 

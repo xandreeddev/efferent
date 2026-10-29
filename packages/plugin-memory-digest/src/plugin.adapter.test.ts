@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Fiber, Logger, Option } from "effect"
+import { Context, Effect, Fiber, Logger, Option, Tracer } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { ResultDigester, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
@@ -102,5 +102,22 @@ describe("a digester that fails or stalls", () => {
       return yield* digester.digest(keyed(["a", "b"]))
     }))
     expect(value).toEqual({ keep: ["a"], summary: Option.none() })
+  })
+
+  test("each digest is a memory.digest span under the caller's, failed when the call fails or stalls", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({ span: (options) => { const span = new Tracer.NativeSpan(options); spans.push(span); return span } })
+    const answer = new UtilityCompletion({ text: "[a]", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } })
+    await run(Effect.gen(function* () {
+      yield* (yield* digesterWith(() => Effect.succeed(answer))).digest(keyed(["a"])).pipe(Effect.withSpan("host.step"))
+      yield* Effect.exit((yield* digesterWith(() => Effect.fail(new UtilityError({ message: "the model is unavailable" })))).digest(keyed(["a"])))
+      const fiber = yield* Effect.forkChild(Effect.exit((yield* digesterWith(() => Effect.never)).digest(keyed(["a"]))))
+      yield* TestClock.adjust("2 seconds")
+      yield* Fiber.join(fiber)
+    }).pipe(Effect.withTracer(tracer)))
+    expect(spans.map((span) => [span.name, span.status._tag === "Ended" ? span.status.exit._tag : "open"])).toEqual([
+      ["host.step", "Success"], ["memory.digest", "Success"], ["memory.digest", "Failure"], ["memory.digest", "Failure"],
+    ])
+    expect(Option.map(spans[1]!.parent, (parent) => parent.spanId)).toEqual(Option.some(spans[0]!.spanId))
   })
 })

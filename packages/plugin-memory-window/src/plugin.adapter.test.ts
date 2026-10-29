@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option } from "effect"
-import { entryId, estimateMessageTokens, renderLog, RunContext, ToolCallId, toolParametersSchema, UserMessage } from "@xandreed/core"
-import type { LogBody, LogEntry, ToolViews } from "@xandreed/core"
-import { RECALL_PAGE_CHARS, recallCapability, recallPage, spillPreview, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
+import { Context, Effect, Option, Tracer } from "effect"
+import { ConversationId, ConversationMemory, entryId, HarnessError, estimateMessageTokens, renderLog, RunContext, ToolCallId, toolParametersSchema, UserMessage } from "@xandreed/core"
+import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
+import { memoryWindowPlugin, RECALL_PAGE_CHARS, recallCapability, recallPage, spillPreview, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
 const config = {
   compactPreviousTurn: true, turnContext: "current" as const, replies: true, spillMinChars: 100, previewChars: 20, ledgerTurnChars: 40,
@@ -82,5 +82,25 @@ describe("reading a spilled result back", () => {
     const entries = [...log("x".repeat(3_000)), call(7, 2, 8), result(8, 2, "y".repeat(4_000), "recall_context")]
     const decided = await maintain(entries, estimateMessageTokens(render(entries)) - 500, "step")
     expect(decided).toMatchObject({ _tag: "Success", success: { actions: [{ _tag: "Spill", entry: "run-2:6" }] } })
+  })
+})
+
+describe("spans", () => {
+  test("opening a session is a memory.open span under the caller's, failed when the log cannot be read", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({ span: (options) => { const span = new Tracer.NativeSpan(options); spans.push(span); return span } })
+    await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const built = yield* memoryWindowPlugin.build(config, Context.empty())
+      const memory = Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
+      const conversation = ConversationId.make("00000000-0000-4000-8000-0000000005c1")
+      const readable: LogHandle = { read: Effect.succeed(log("x")), append: () => Effect.void }
+      const unreadable: LogHandle = { ...readable, read: Effect.fail(new HarnessError({ code: "memory.log", message: "the log is gone" })) }
+      yield* memory.open({ conversation, runId: "run-2", log: readable }).pipe(Effect.withSpan("host.turn"))
+      yield* Effect.exit(memory.open({ conversation, runId: "run-2", log: unreadable }))
+    })).pipe(Effect.withTracer(tracer)))
+    expect(spans.map((span) => [span.name, span.status._tag === "Ended" ? span.status.exit._tag : "open"])).toEqual([
+      ["host.turn", "Success"], ["memory.open", "Success"], ["memory.open", "Failure"],
+    ])
+    expect(Option.map(spans[1]!.parent, (parent) => parent.spanId)).toEqual(Option.some(spans[0]!.spanId))
   })
 })

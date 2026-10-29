@@ -5,6 +5,7 @@ Windowed conversation memory: a `ConversationMemory` over core's memory log that
 ## Rules
 
 - The policy only decides: `windowPolicy` returns `CompactionAction`s as data, and core's `openLogSession` records and renders them.
+- `open` is a `memory.open` span (`Effect.fn`), as in every memory plugin.
 - Keep the pressure order: compact earlier turns at turn start, spill the current turn's largest results, drop the oldest turns, then fail with `context.budget`.
 - Never spill a `recall_context` result or a pinned one: the recalled page is what makes a spill lossless.
 - Bump `WINDOW_STRATEGY.version` when a decision changes: every recorded `Compaction` and every `context.built` carries it.
@@ -42,7 +43,7 @@ None.
 
 ## Tests
 
-- `src/plugin.adapter.test.ts`: the policy's decisions over hand-built log entries, and recall paging.
+- `src/plugin.adapter.test.ts`: the policy's decisions over hand-built log entries, recall paging, and the `memory.open` span.
 - `packages/sdk/src/memory.conformance.test.ts` runs core's `memoryConformance` against this strategy; the sdk golden (`packages/sdk/src/agent.golden.test.ts`) composes it with `digestOnWriteChars: 1`.
 - Run: `bun test packages/plugin-memory-window packages/sdk/src/memory.conformance.test.ts packages/sdk/src/agent.golden.test.ts`.
 
