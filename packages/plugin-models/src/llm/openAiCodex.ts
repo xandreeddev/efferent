@@ -64,7 +64,7 @@ const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unkno
 
 const transformRequest = (
   accountId: string,
-  reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max",
+  reasoningEffort: Option.Option<"none" | "low" | "medium" | "high" | "xhigh" | "max">,
 ) => (request: HttpClientRequest.HttpClientRequest): HttpClientRequest.HttpClientRequest => {
   const withHeaders = request.pipe(
     HttpClientRequest.setHeaders({
@@ -83,7 +83,10 @@ const transformRequest = (
       onNone: () => withHeaders,
       onSome: (decoded) => HttpClientRequest.bodyJsonUnsafe(
         withHeaders,
-        toOpenAiCodexRequestBody(decoded, reasoningEffort),
+        Option.match(reasoningEffort, {
+          onNone: () => toOpenAiCodexRequestBody(decoded),
+          onSome: (effort) => toOpenAiCodexRequestBody(decoded, effort),
+        }),
       ),
     },
   )
@@ -144,7 +147,7 @@ export const makeOpenAiCodexLanguageModel = (args: {
           HttpClient.mapRequest((request) =>
             transformRequest(
               args.accountId,
-              Option.getOrUndefined(Option.map(policy, (value) => value.effort)),
+              Option.map(policy, (value) => value.effort),
             )(
               request.pipe(
                 HttpClientRequest.prependUrl(OPENAI_CODEX_API_URL),

@@ -151,6 +151,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       onNone: () => Effect.succeed(Option.none()),
       onSome: (entry) => Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded).pipe(
         Effect.map((result) => Option.some({ entry, result })),
+        Effect.tapError((error) => Effect.logDebug(`a ${name} result does not decode against the tool's schema; it is not digested`, error)),
         Effect.orElseSucceed(() => Option.none()),
       ),
     })
@@ -176,6 +177,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
             ...(media.length === 0 ? {} : { media }),
           }
         }),
+        Effect.tapError((error) => Effect.logDebug(`a ${name} result does not decode against the tool's schema; it is shown raw`, error)),
         Effect.orElseSucceed(() => raw),
       )
     },
@@ -186,6 +188,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       return Option.isNone(compact) || entry === undefined ? Effect.succeed(Option.none())
         : Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded).pipe(
           Effect.map((result) => Option.some(compact.value(result, params))),
+          Effect.tapError((error) => Effect.logDebug(`a ${name} result does not decode against the tool's schema; it is not compacted`, error)),
           Effect.orElseSucceed(() => Option.none<string>()),
         )
     },
@@ -330,7 +333,10 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       if (Exit.isFailure(exit) && Option.isNone(Cause.findErrorOption(exit.cause)) && Option.isNone(turnFailure)) {
         yield* Effect.logError(`${name} failed unexpectedly`, exit.cause).pipe(Effect.annotateLogs({ tool: name, invocationId }))
       }
-      const encoded = yield* Schema.encodeUnknownEffect(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(Effect.orElseSucceed(() => value))
+      const encoded = yield* Schema.encodeUnknownEffect(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(
+        Effect.tapError((error) => Effect.logWarning(`${name} returned a value its own schema does not encode; it is recorded as returned`, error)),
+        Effect.orElseSucceed(() => value),
+      )
       yield* run.events.publish({ _tag: "tool.completed", step, invocationId, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
       if (Option.isSome(turnFailure)) return yield* Effect.die(turnFailure.value)
       return yield* ok ? Effect.succeed(value) : Effect.fail(value)

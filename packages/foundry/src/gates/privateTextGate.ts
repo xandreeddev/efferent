@@ -47,6 +47,7 @@ const textOf = (
 ): Effect.Effect<Option.Option<string>, GateCrash> =>
   Effect.tryPromise({ try: () => stat(file), catch: () => "absent" as const }).pipe(
     Effect.map((found) => found.isFile()),
+    Effect.tapError(() => Effect.logDebug(`${file} has no file to read`)),
     Effect.orElseSucceed(() => false),
     Effect.flatMap((regular) =>
       regular

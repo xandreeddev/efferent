@@ -27,7 +27,11 @@ const waitOf = (tail: typeof JournalTail.Service, feed: FeedScope): Effect.Effec
     onNone: () => Effect.succeed((delayMs: number) => Effect.sleep(Duration.millis(delayMs))),
     onSome: (changes) => Effect.gen(function* () {
       const wake = yield* Queue.sliding<void>(1)
-      yield* changes(feed).pipe(Stream.runForEach(() => Queue.offer(wake, undefined)), Effect.ignore, Effect.forkScoped)
+      yield* changes(feed).pipe(
+        Stream.runForEach(() => Queue.offer(wake, undefined)),
+        Effect.ignore({ log: "Warn", message: "the render feed's change signal failed; the feed polls without it" }),
+        Effect.forkScoped,
+      )
       return (delayMs: number) => Effect.race(Effect.sleep(Duration.millis(delayMs)), Queue.take(wake))
     }),
   })

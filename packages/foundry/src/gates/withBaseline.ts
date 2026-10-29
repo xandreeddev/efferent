@@ -31,6 +31,7 @@ const sourceLineOf = (
         catch: () => "unreadable" as const,
       }).pipe(
         Effect.map((text) => Option.fromNullishOr(text.split("\n")[location.line - 1])),
+        Effect.tapError(() => Effect.logDebug(`${location.file} is unreadable; its finding is fingerprinted without its line`)),
         Effect.orElseSucceed(() => Option.none<string>()),
       ),
   })

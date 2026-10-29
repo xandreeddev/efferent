@@ -95,6 +95,167 @@ const TEST_SCAFFOLDING = [
  */
 const ENVIRONMENT_EDGES = ["**/main.ts", "packages/plugin-workspace/src/bash.adapter.ts"]
 
+/** A package's source, by its directory name: one entry of the lists below. */
+const src = (name: string): string => `packages/${name}/src/**`
+
+/**
+ * Rules that enter one package at a time, never through the baseline. Each
+ * list names the packages already clean of its rule, one per line: a
+ * cleanup change fixes one package's findings and adds its line. Once a
+ * list names every package in CHECKED, its rule takes CHECKED instead.
+ */
+const STRINGIFIED_CAUSE_CLEAN = [
+  "sdk",
+  "plugin-memory-window",
+  "plugin-memory-summary",
+  "plugin-memory-digest",
+  "plugin-tool-discovery",
+  "plugin-sessions",
+  "plugin-tasks",
+  "plugin-render",
+  "plugin-workspace",
+  "plugin-telemetry",
+].map(src)
+
+const ERROR_CODE_COMPARE_CLEAN = [
+  "core",
+  "evals-cli",
+  "evals-langfuse",
+  "evals-langsmith",
+  "plugin-agent-loop",
+  "runtime",
+  "plugin-memory-window",
+  "plugin-memory-summary",
+  "plugin-memory-digest",
+  "plugin-tool-discovery",
+  "plugin-models",
+  "plugin-workspace",
+  "plugin-telemetry",
+  "foundry",
+].map(src)
+
+const EFFECT_FN_CLEAN = [
+  "sdk",
+  "plugin-memory-window",
+  "plugin-memory-digest",
+].map(src)
+
+const CONCURRENCY_STATED = [
+  "evals-langfuse",
+  "evals-langsmith",
+  "sdk",
+  "plugin-memory-summary",
+  "plugin-memory-digest",
+  "plugin-tool-discovery",
+].map(src)
+
+/**
+ * `effect/match-over-tag-switch` runs everywhere on a `switch` or else-if
+ * ladder over `_tag`; in the packages listed it also refuses ternary
+ * chains and the `type`, `role` and `mode` discriminants. Everywhere else
+ * is the rule's `boundary`, where those later matches are tolerated.
+ */
+const MATCH_CHAINS_CLEAN = [
+  "evals",
+  "evals-cli",
+  "evals-langfuse",
+  "evals-langsmith",
+  "plugin-agent-loop",
+  "runtime",
+  "plugin-memory-window",
+  "plugin-memory-summary",
+  "plugin-memory-digest",
+  "plugin-tool-discovery",
+  "plugin-models",
+  "plugin-session-sqlite",
+  "plugin-sessions",
+  "plugin-tasks",
+  "plugin-render",
+  "plugin-workspace",
+  "plugin-telemetry",
+  "foundry",
+].map(src)
+
+/**
+ * The files that had no role suffix when `architecture/role-suffix-required`
+ * arrived. FROZEN: the list only shrinks. The gate fails on an entry that
+ * names a file that is gone or now has a role, so a rename, a split into an
+ * entity and functions pair or a deletion removes its entry in the same
+ * change; a new file takes a role instead of joining. Foundry is out of
+ * the rule: development tooling laid out by folder, whose own profile
+ * (`packages/foundry/foundry.config.ts`) enforces those layers.
+ */
+const ROLELESS_FILES = [
+  "packages/core/src/conformance.functions.ts",
+  "packages/core/src/loop/cacheKey.ts",
+  "packages/core/src/loop/mapping.ts",
+  "packages/core/src/loop/modelPolicy.ts",
+  "packages/core/src/loop/promptProvenance.ts",
+  "packages/core/src/loop/stepContext.ts",
+  "packages/core/src/loop/streamFold.ts",
+  "packages/core/src/loop/toolSchema.ts",
+  "packages/core/src/loop/traceContent.ts",
+  "packages/core/src/mcp/bridge.ts",
+  "packages/core/src/memory/memory-session.ts",
+  "packages/core/src/session/chassis.ts",
+  "packages/core/src/spec/SpecDoc.ts",
+  "packages/core/src/spec/codec.ts",
+  "packages/core/src/spec/frontmatter.ts",
+  "packages/core/src/turn/model-text.ts",
+  "packages/core/src/turn/prompt-sections.ts",
+  "packages/core/src/turn/turn-bus.ts",
+  "packages/core/src/turn/turn-lifecycle.ts",
+  "packages/core/src/turn/turn-run.ts",
+  "packages/core/src/util/glob.ts",
+  "packages/core/src/util/json.ts",
+  "packages/core/src/util/random-id.ts",
+  "packages/evals/src/cli.functions.ts",
+  "packages/evals/src/contracts/evaluation-app.contract.functions.ts",
+  "packages/evals/src/contracts/evaluation-app.contract.ts",
+  "packages/evals/src/evaluators/llm.ts",
+  "packages/evals/src/evaluators/pairwise.ts",
+  "packages/evals/src/evaluators/semantic.ts",
+  "packages/evals/src/graders/retrieval/contextual-precision.functions.ts",
+  "packages/evals/src/graders/retrieval/contextual-recall.functions.ts",
+  "packages/evals/src/graders/retrieval/contextual-relevancy.functions.ts",
+  "packages/evals/src/graders/retrieval/ranking.functions.ts",
+  "packages/evals/src/stats.ts",
+  "packages/plugin-agent-loop/src/loop.ts",
+  "packages/plugin-models/src/auth/anthropicOAuth.ts",
+  "packages/plugin-models/src/auth/localAuth.ts",
+  "packages/plugin-models/src/auth/openAiCodexOAuth.ts",
+  "packages/plugin-models/src/llm/compat.ts",
+  "packages/plugin-models/src/llm/modelCatalog.ts",
+  "packages/plugin-models/src/llm/openAiCodex.ts",
+  "packages/plugin-models/src/llm/openAiCodexWebSocket.ts",
+  "packages/plugin-models/src/llm/providers.ts",
+  "packages/plugin-models/src/llm/retry.ts",
+  "packages/plugin-models/src/llm/router.ts",
+  "packages/plugin-models/src/llm/sse.ts",
+  "packages/plugin-models/src/llm/utilityLlm.ts",
+  "packages/plugin-models/src/settings/localSettings.ts",
+  "packages/plugin-models/src/settings/roleView.ts",
+  "packages/plugin-models/src/storage/json-file.ts",
+  "packages/plugin-render/src/output.ts",
+  "packages/plugin-render/src/render-output.tools.ts",
+  "packages/plugin-telemetry/src/telemetry-metrics.ts",
+  "packages/runtime/src/graph.ts",
+]
+
+/**
+ * Adapters by role whose names predate the role suffixes, each unwrapping
+ * an `Option` where the edge takes a nullable (`effect/no-option-unwrap`):
+ * the router hands a selection's credential and key to `buildProvider`
+ * (public; `undefined` for none), and the subscription's WebSocket
+ * transport answers with OpenAI's error body (`null` fields). Like
+ * ROLELESS_FILES the list only shrinks: an entry renamed `*.adapter.ts`,
+ * or that no longer unwraps, fails until it is removed.
+ */
+const NULLABLE_EDGES = [
+  "packages/plugin-models/src/llm/router.ts",
+  "packages/plugin-models/src/llm/openAiCodexWebSocket.ts",
+]
+
 /**
  * No file git tracks may name a person's home directory, or a term from
  * the local denylist (`quality/no-private-text`). Tests and fixtures that
@@ -161,7 +322,11 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-let", include: CHECKED },
     { rule: "effect/no-loop-statements", include: CHECKED },
     { rule: "effect/no-nullable-return", include: CHECKED },
-    { rule: "effect/match-over-tag-switch", include: CHECKED },
+    {
+      rule: "effect/match-over-tag-switch",
+      include: CHECKED,
+      boundary: CHECKED.filter((glob) => !MATCH_CHAINS_CLEAN.includes(glob)),
+    },
     { rule: "effect/no-as-any", include: CHECKED },
     {
       rule: "effect/no-as-never",
@@ -183,6 +348,20 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-locale-compare", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/require-sort-comparator", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/no-instanceof-tagged-error", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    // A failure is kept and logged, not dropped; absence stays an Option.
+    { rule: "effect/no-silent-ignore", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    {
+      rule: "effect/no-option-unwrap",
+      include: CHECKED,
+      exclude: ["**/*.adapter.ts", "**/*.conformance.ts", ...TEST_SCAFFOLDING],
+      allow: NULLABLE_EDGES,
+    },
+    // One package at a time (the lists above).
+    { rule: "effect/no-stringified-cause", include: STRINGIFIED_CAUSE_CLEAN, exclude: TEST_SCAFFOLDING },
+    // A kit asserts the codes its port publishes.
+    { rule: "effect/no-error-code-compare", include: ERROR_CODE_COMPARE_CLEAN, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
+    { rule: "effect/prefer-effect-fn", include: EFFECT_FN_CLEAN, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/require-concurrency-option", include: CONCURRENCY_STATED, exclude: TEST_SCAFFOLDING },
     { rule: "quality/no-skipped-tests", include: CHECKED },
     { rule: "quality/no-empty-catch", include: CHECKED },
     { rule: "architecture/no-raw-promise-core", include: CHECKED },
@@ -190,6 +369,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "architecture/contracts-contain-no-behavior", include: CHECKED },
     { rule: "architecture/context-tags-live-in-ports", include: CHECKED },
     { rule: "architecture/layers-live-at-edges", include: CHECKED },
+    { rule: "architecture/role-suffix-required", include: CHECKED, exclude: ["packages/foundry/**"], allow: ROLELESS_FILES },
     {
       rule: "effect/branded-id-fields",
       include: ["packages/core/src/domain/**", "packages/core/src/spec/**"],

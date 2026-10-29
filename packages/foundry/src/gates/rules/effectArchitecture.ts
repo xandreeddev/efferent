@@ -151,10 +151,28 @@ export const layersLiveAtEdges: IdiomRule = {
   },
 }
 
+/** The file names that state a role: the four core roles and their
+ *  functions files, ports, adapters, conformance kits, the public surface,
+ *  an entry point, and test code (tests, benches, `testing` modules). */
+const ROLE = /(?:\.(?:entity|entity\.functions|usecase|usecase\.functions|port|adapter|conformance|testing)\.ts|\.test\.tsx?|\.bench\.ts|\/(?:index|main|testing)\.ts)$/
+
+export const roleSuffixRequired: IdiomRule = {
+  id: RuleId.make("architecture/role-suffix-required"),
+  defaultSeverity: "error",
+  description: "every source file states its role in its name",
+  fixHint:
+    "name the file for what it holds: `x.entity.ts` + `x.entity.functions.ts`, `x.usecase.ts` + `x.usecase.functions.ts`, `x.port.ts`, `x.adapter.ts`, `x.conformance.ts`, `index.ts`, `main.ts`, or test code (`x.test.ts`, `testing.ts`, `x.testing.ts`)",
+  check: ({ sourceFile }) =>
+    ROLE.test(fileName(sourceFile))
+      ? []
+      : [{ node: sourceFile, message: `\`${fileName(sourceFile).split("/").pop() ?? ""}\` has no role suffix` }],
+}
+
 export const effectArchitectureRules: ReadonlyArray<IdiomRule> = [
   noRawPromiseCore,
   noRuntimeImportsCore,
   contractsContainNoBehavior,
   contextTagsLiveInPorts,
   layersLiveAtEdges,
+  roleSuffixRequired,
 ]

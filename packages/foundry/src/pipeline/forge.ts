@@ -170,7 +170,7 @@ export const forge = <R>(
                 endedAt,
               }),
             )
-            .pipe(Effect.asVoid, Effect.catch(() => Effect.void))
+            .pipe(Effect.ignore({ log: "Warn", message: "a partial run record was not persisted" }))
         : Effect.void
 
     const attemptOnce = (state: LoopState): Effect.Effect<LoopState, ImplementorError | WorkspaceError, R | Implementor> =>

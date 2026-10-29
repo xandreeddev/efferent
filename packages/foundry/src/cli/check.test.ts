@@ -29,14 +29,24 @@ const TSCONFIG = JSON.stringify({
 })
 
 /** A workspace whose src violates several effect rules — the shared golden
- *  fixture for library-vs-vendored parity. */
+ *  fixture for library-vs-vendored parity. `errors.ts` declares the error
+ *  whose code `violations.ts` compares. */
 const seedViolations = (dir: string): void => {
   writeFileSync(path.join(dir, "tsconfig.json"), TSCONFIG)
   mkdirSync(path.join(dir, "src"), { recursive: true })
   writeFileSync(
+    path.join(dir, "src", "errors.ts"),
+    [
+      'import { Schema } from "effect"',
+      'export class StoreError extends Schema.TaggedError<StoreError>()("StoreError", { code: Schema.String, message: Schema.String }) {}',
+      "",
+    ].join("\n"),
+  )
+  writeFileSync(
     path.join(dir, "src", "violations.ts"),
     [
-      'import { Cause, Effect, Schema, Stream } from "effect"',
+      'import { Cause, Effect, Option, Schema, Stream } from "effect"',
+      'import { StoreError } from "./errors.js"',
       "export const f = (): number => {",
       "  let x = 1",
       "  try {",
@@ -63,6 +73,13 @@ const seedViolations = (dir: string): void => {
       "export interface Item { readonly id: string }",
       "export const loop = (xs: ReadonlyArray<number>) => { for (const x of xs) { void x } }",
       "export const tag = (x: { readonly _tag: string }) => { switch (x._tag) { default: return 0 } }",
+      'export const role = (x: { readonly role: string }) => (x.role === "a" ? 1 : x.role === "b" ? 2 : 3)',
+      "export const swallowed = Effect.fail(1).pipe(Effect.ignore)",
+      'export const wrapped = (cause: unknown) => new StoreError({ code: "write", message: String(cause) })',
+      'export const busy = (error: StoreError) => error.code === "busy"',
+      "export const load = (id: string) => Effect.gen(function* () { return id })",
+      "export const both = Effect.all([Effect.succeed(1), Effect.succeed(2)])",
+      "export const unwrapped = Option.getOrNull(Option.some(1))",
       "",
     ].join("\n"),
   )

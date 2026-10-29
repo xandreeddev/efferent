@@ -16,6 +16,12 @@ const fold = (parts: ReadonlyArray<unknown>) => {
 }
 
 describe("foldStreamParts", () => {
+  test("a stream without a finish part folds to no usage and an unknown reason", async () => {
+    const { turn } = await fold([{ type: "text-delta", id: "t1", delta: "a" }])
+    expect(turn.finishReason).toBe("unknown")
+    expect("usage" in turn).toBe(false)
+  })
+
   test("chunks occupy ordered slots; deltas append; settled parts pass through in place", async () => {
     const { turn, deltas } = await fold([
       { type: "reasoning-start", id: "r1" },

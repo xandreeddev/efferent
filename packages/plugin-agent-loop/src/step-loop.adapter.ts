@@ -91,7 +91,9 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
     if (event.type === "turn_end") {
       const ending = endStep(event.turnIndex, event.status)
       // A step that already failed must not fail again on its way out.
-      return event.status === "completed" ? ending.pipe(Effect.orDie) : ending.pipe(Effect.catchCause(() => Effect.void))
+      return event.status === "completed"
+        ? ending.pipe(Effect.orDie)
+        : ending.pipe(Effect.ignoreCause({ log: "Warn", message: `the end of failed step ${event.turnIndex} was not recorded` }))
     }
     return Effect.void
   }

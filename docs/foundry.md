@@ -94,15 +94,18 @@ for one-shot `check`; rebuilt per attempt in `forge` — `TsProjectFreshLive`
 would judge attempt N against attempt N-1's source).
 
 1. **`effect-idioms`** (`idiomGate.ts`) — rules as data (`RuleConfig`:
-   per-rule severity + include/exclude globs) over a PLUGGED registry (see
+   per-rule severity, include/exclude globs, `boundary` globs and an
+   `allow` list) over a PLUGGED registry (see
    "Plugging rules" below — the platform ships no implicit builtins). The
    shipped library is organized as packs: the `effect` pack
    (`effect/no-try-catch` — banTryCatch generalized, `effect/no-let`,
    `effect/no-nullable-return` — **type-aware**: the checker reads declared
    AND inferred return types, which is why the engine is compiler-API, not
    pattern-matching — `effect/match-over-tag-switch` (switch on `._tag` +
-   else-if ladders; single guards are fine), `effect/no-as-any` (incl.
-   `as unknown as T` laundering), `effect/no-as-never` (`as never` outside
+   else-if ladders; ternary chains and the `type`, `role` and `mode`
+   discriminants, tolerated in the rule's `boundary` files; single guards
+   are fine), `effect/no-as-any` (incl. `as unknown as T` laundering),
+   `effect/no-as-never` (`as never` outside
    the rule's `boundary` files, `as never as T` everywhere),
    `effect/no-loop-statements`, `effect/branded-id-fields`,
    `effect/no-parallel-interface`, and the rules for what crosses a
@@ -113,14 +116,27 @@ would judge attempt N against attempt N-1's source).
    `effect/no-ambient-time-random` (`Date.now`, argless `new Date()`,
    `Math.random`, `randomUUID`), `effect/no-locale-compare`,
    `effect/require-sort-comparator` and `effect/no-instanceof-tagged-error`
-   — type-aware, plain `instanceof Error` passes), the paradigm-neutral
-   `quality` pack (`quality/no-skipped-tests` — a skipped test is the coder
+   — type-aware, plain `instanceof Error` passes — and the rules that keep
+   failures, absence and concurrency visible: `effect/no-silent-ignore` (a
+   bare `Effect.ignore`, `catch(() => Effect.void)` or `orElseSucceed`
+   that nothing logs first), `effect/no-option-unwrap`
+   (`getOrNull`/`getOrUndefined`), `effect/no-stringified-cause`
+   (type-aware: `String(e)` of a failure in a tagged error),
+   `effect/no-error-code-compare` (type-aware: a code compared outside the
+   file declaring it), `effect/prefer-effect-fn` (a function that only
+   returns `Effect.gen`) and `effect/require-concurrency-option`), the
+   paradigm-neutral `quality` pack (`quality/no-skipped-tests` — a skipped test is the coder
    gaming the test gate; `quality/no-empty-catch`) and the
    `effect-architecture` pack (the `architecture/*` file-role rules for
-   entity, use-case, port and adapter files). A rule's `boundary` globs
-   name the files where the matches it marks as tolerated (an `as never`
-   where type erasure is the design) are dropped; its other matches still
-   report there.
+   entity, use-case, port and adapter files, and
+   `architecture/role-suffix-required`: every file names its role). A
+   rule's `boundary` globs name the files where the matches it marks as
+   tolerated (an `as never` where type erasure is the design) are dropped;
+   its other matches still report there. A rule's `allow` names exact
+   files it skips, a frozen list of today's exceptions: an entry naming a
+   file the rule does not check, or no longer flags, is itself a finding,
+   so the list only shrinks. A rule with findings enters a profile through
+   its `include`, one clean package at a time, never through the baseline.
 2. **`boundaries`** — each layer declares `canImport` (internal, by name)
    and `externals` (by prefix); everything else is a finding. Foundry's own
    6-layer config is the dogfood; pointing globs at package dirs makes the

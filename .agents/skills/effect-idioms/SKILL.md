@@ -39,7 +39,8 @@ before using it; do not trust Effect 3 memory.
 - Absence is `Option`: never return `A | undefined` (`effect/no-nullable-return`).
   Convert at a foreign edge with `Option.fromNullishOr`; read with
   `Option.match` or `Option.getOrElse`. `Option.getOrUndefined`/`getOrNull`
-  only where a foreign API or the wire needs it.
+  only in the adapter where a foreign API or the wire needs it
+  (`effect/no-option-unwrap`).
 - A pure computation that can fail returns `Result`; lift it with `Effect.fromResult`.
 
 ## 4. Errors and defects
@@ -53,20 +54,26 @@ before using it; do not trust Effect 3 memory.
   only where something reports them (`definePlugin` maps them to `plugin.defect`).
 - Match errors by tag or shape: `Effect.catchTag`, `Effect.catchIf(isHarnessError, …)`,
   `Schema.is(X)`. Never `instanceof`: a host may load two copies of core.
+  Compare an error's `code` only in the module that declares the error;
+  elsewhere use a guard it exports (`effect/no-error-code-compare`).
+- A tagged error keeps the failure it wraps as a value and says what
+  failed; not `message: String(e)` (`effect/no-stringified-cause`).
 - Text from a cause is `reasonOf(cause)` (`@xandreed/core`) for anything
   stored, reported or shown to the model. `Cause.pretty` only inside a log
   call, `Effect.logError("what failed", cause)`, never in data: it carries
   stack frames and host paths.
-- Never swallow: `Effect.ignore({ log: "Warn", message: "…" })`, not a bare
-  `Effect.ignore` or `Effect.catch(() => Effect.void)`.
+- Never swallow: `Effect.ignore({ log: "Warn", message: "…" })` (`"Debug"`
+  for an expected miss), not a bare `Effect.ignore`,
+  `Effect.catch(() => Effect.void)` or an `Effect.orElseSucceed` that no
+  logging `Effect.tapError` precedes (`effect/no-silent-ignore`).
 - Tool handlers return `Failure` data (`failureMode: "return"`); skill
   `write-model-text`.
 
 ## 5. Concurrency, scopes, time bounds
 
 - Always state `concurrency` on `Effect.forEach` and `Effect.all`: a number,
-  or a config option (`digestConcurrency`). `"unbounded"` only in
-  conformance kits. No `Promise.all`.
+  or a config option (`digestConcurrency`); `"unbounded"` only in
+  conformance kits (`effect/require-concurrency-option`). No `Promise.all`.
 - Give `Stream.callback` a `bufferSize`.
 - Every wait on something outside the process has a bound:
   `Effect.timeoutOrElse({ duration, orElse })`.
@@ -89,7 +96,8 @@ before using it; do not trust Effect 3 memory.
 
 - A service method or an exported effectful function at a service boundary
   is `Effect.fn("area.op")(function* (…) { … })`, named like the existing
-  spans (`agent.turn`, `engine.run`): `bash.exec`, `sessions.begin`.
+  spans (`agent.turn`, `engine.run`): `bash.exec`, `sessions.begin`
+  (`effect/prefer-effect-fn`).
 - A hot helper called per item, chunk or event is `Effect.fnUntraced`.
 - Older code uses plain `Effect.gen` closures; convert a service when you
   change it, not in passing.
@@ -100,8 +108,10 @@ before using it; do not trust Effect 3 memory.
 
 - A `_tag` union: `Match.valueTags(value, { … })` or
   `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`; `Option.match`,
-  `Result.match`, `Exit.match`. Not `switch (x._tag)` or an if/else ladder
-  on `_tag` (`effect/match-over-tag-switch`).
+  `Result.match`, `Exit.match`. Not `switch (x._tag)`, an if/else ladder or
+  a ternary chain on `_tag`, `type`, `role` or `mode`
+  (`effect/match-over-tag-switch`; `Match.discriminators("type")` for a
+  field other than `_tag`).
 - No `let`, no loops, no `try`/`catch`/`throw`: the gates refuse them.
 
 ## Checklist

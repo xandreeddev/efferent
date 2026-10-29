@@ -4,7 +4,7 @@ import type { Path, RcMap, Semaphore } from "effect"
 import { defineTool, Failure } from "@xandreed/core"
 import type { RegisteredTool, Subject } from "@xandreed/core"
 import { compilePattern, searchText } from "./text-search.entity.functions.js"
-import { decodeText, formatBytes, lineWindow, looksBinary } from "./text-window.entity.functions.js"
+import { decodeText, formatBytes, lineWindow, looksBinary, mediaTypeOf } from "./text-window.entity.functions.js"
 import { displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget } from "./workspace-path.entity.functions.js"
 import type { ProtectRule, WorkspaceAccess } from "./workspace-path.entity.functions.js"
 import type { WorkspaceTarget } from "./workspace-path.entity.js"
@@ -56,7 +56,7 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
       return yield* Effect.fail(failure("FileTooLarge", `${target.display} is ${formatBytes(info.size)}, more than the ${formatBytes(config.maxFileBytes)} read loads; ${fileTooLargeHint(target.display, config.readImages)}`))
     }
     const bytes = yield* access.fs.readBytes(target.path).pipe(Effect.mapError(fsFailure(target.display)))
-    if (looksBinary(bytes)) return yield* binaryRead(target.display, bytes, config.readImages)
+    if (looksBinary(bytes)) return yield* binaryRead(target.display, bytes, config.readImages, Option.getOrNull(mediaTypeOf(target.display)))
     const decoded = decodeText(bytes)
     const window = lineWindow(decoded.text, { offset: params.offset ?? 1, limit: params.limit ?? config.maxLines, maxBytes: config.maxBytes })
     return yield* Result.match(window, {

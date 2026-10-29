@@ -120,6 +120,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   explicitly.
 - `defineGraderCalibration` (`@xandreed/evals`) returns an `Effect` that
   fails with `invalid` when a case's input does not encode.
+- `foldStreamParts` (`@xandreed/core`) leaves `usage` off the result when no
+  finish part carried one.
 
 ### Added
 
@@ -293,6 +295,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The session logs fail a commit holding data JSON cannot represent with
   `SessionLogError` `store.encode` instead of dying, and the in-memory log
   drops `undefined` fields, as SQLite does.
+- Failures the framework drops on purpose are logged: lost writes and
+  cleanups at Warn, expected misses at Debug.
 
 ### Repository
 
@@ -354,6 +358,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   paths, plus an optional gitignored local denylist,
   `.foundry/private-terms.txt`); `effect/no-as-never` rejects `as never as
   T` everywhere. Every violation is fixed and the baseline stays empty.
+- New gate rules: `no-silent-ignore`, `no-option-unwrap`,
+  `no-stringified-cause`, `no-error-code-compare`, `prefer-effect-fn`,
+  `require-concurrency-option` and `architecture/role-suffix-required`;
+  `match-over-tag-switch` also refuses ternary chains and
+  `type`/`role`/`mode` discriminants. Rules with findings enter one package
+  at a time through `include` lists, and a rule's `allow` list can only
+  shrink.
 
 ## 0.14.0 — 2026-10-29
 

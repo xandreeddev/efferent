@@ -19,8 +19,10 @@ export interface RuleContext {
 export interface RuleMatch {
   readonly node: ts.Node
   readonly message: string
-  /** Dropped in the files the rule's config declares a `boundary` (an
-   *  `as never` where type erasure is the design); reported elsewhere. */
+  /** Dropped in the files the rule's config declares a `boundary`, where
+   *  the profile tolerates this kind of match (an `as never` where type
+   *  erasure is the design; a discriminant ternary in code not yet
+   *  converted to `Match`); reported elsewhere. */
   readonly toleratedAtBoundary?: boolean
 }
 
@@ -42,6 +44,7 @@ interface ActiveRule {
   readonly include: ReadonlyArray<string>
   readonly exclude: ReadonlyArray<string>
   readonly boundary: ReadonlyArray<string>
+  readonly allow: ReadonlyArray<string>
 }
 
 const activate = (
@@ -68,6 +71,7 @@ const activate = (
             include: config.include,
             exclude: config.exclude,
             boundary: config.boundary,
+            allow: config.allow,
           }),
       },
     ),
@@ -97,28 +101,67 @@ export const makeIdiomGate = (
             (e) => new GateCrash({ gate: IDIOM_GATE, message: e.message }),
           ),
         )
-      return projectSourceFiles(project, workspace.rootDir).flatMap((sourceFile) => {
+      const sourceFiles = projectSourceFiles(project, workspace.rootDir)
+      const matchesOf = (a: ActiveRule, sourceFile: ts.SourceFile, rel: string): ReadonlyArray<RuleMatch> => {
+        const atBoundary = a.boundary.some((glob) => matchesGlob(glob, rel))
+        return a.rule
+          .check({ sourceFile, checker: project.checker })
+          .filter((match) => !(atBoundary && match.toleratedAtBoundary === true))
+      }
+      const findings = sourceFiles.flatMap((sourceFile) => {
         const rel = toWorkspacePath(workspace.rootDir, sourceFile.fileName)
         return active
-          .filter((a) => includedBy(a.include, a.exclude, rel))
-          .flatMap((a) => {
-            const atBoundary = a.boundary.some((glob) => matchesGlob(glob, rel))
-            return a.rule
-              .check({ sourceFile, checker: project.checker })
-              .filter((match) => !(atBoundary && match.toleratedAtBoundary === true))
-              .map(
-                (match) =>
-                  new Finding({
-                    rule: a.rule.id,
-                    severity: a.severity,
-                    message: match.message,
-                    location: Option.some(
-                      locationOf(sourceFile, match.node, workspace.rootDir),
-                    ),
-                    fixHint: Option.some(a.rule.fixHint),
-                  }),
-              )
-          })
+          .filter((a) => includedBy(a.include, a.exclude, rel) && !a.allow.includes(rel))
+          .flatMap((a) =>
+            matchesOf(a, sourceFile, rel).map(
+              (match) =>
+                new Finding({
+                  rule: a.rule.id,
+                  severity: a.severity,
+                  message: match.message,
+                  location: Option.some(
+                    locationOf(sourceFile, match.node, workspace.rootDir),
+                  ),
+                  fixHint: Option.some(a.rule.fixHint),
+                }),
+            ),
+          )
       })
+      return [...findings, ...active.flatMap((a) => staleAllowances(a, sourceFiles, workspace.rootDir, matchesOf))]
     }),
 })
+
+/** The `allow` entries that no longer excuse anything: a path that is not
+ *  a file the rule covers (renamed, deleted, outside its globs), or a file
+ *  the rule no longer flags. Each one fails, so the list only shrinks. */
+const staleAllowances = (
+  a: ActiveRule,
+  sourceFiles: ReadonlyArray<ts.SourceFile>,
+  rootDir: string,
+  matchesOf: (a: ActiveRule, sourceFile: ts.SourceFile, rel: string) => ReadonlyArray<RuleMatch>,
+): ReadonlyArray<Finding> =>
+  a.allow.flatMap((entry) => {
+    const covered = Option.fromNullishOr(
+      sourceFiles.find((sourceFile) => {
+        const rel = toWorkspacePath(rootDir, sourceFile.fileName)
+        return rel === entry && includedBy(a.include, a.exclude, rel)
+      }),
+    )
+    const reason = Option.match(covered, {
+      onNone: () => Option.some("names no file this rule checks (renamed, deleted or outside its include)"),
+      onSome: (sourceFile) =>
+        matchesOf(a, sourceFile, entry).length === 0 ? Option.some("passes this rule now") : Option.none(),
+    })
+    return Option.match(reason, {
+      onNone: () => [],
+      onSome: (why) => [
+        new Finding({
+          rule: a.rule.id,
+          severity: a.severity,
+          message: `the allow list entry "${entry}" ${why}`,
+          location: Option.none(),
+          fixHint: Option.some("remove the entry from the rule's `allow` list in the profile; the list only shrinks"),
+        }),
+      ],
+    })
+  })

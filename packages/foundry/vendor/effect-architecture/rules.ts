@@ -144,10 +144,25 @@ const layersLiveAtEdges = {
   },
 }
 
+const ROLE = /(?:\.(?:entity|entity\.functions|usecase|usecase\.functions|port|adapter|conformance|testing)\.ts|\.test\.tsx?|\.bench\.ts|\/(?:index|main|testing)\.ts)$/
+
+const roleSuffixRequired = {
+  id: "architecture/role-suffix-required",
+  defaultSeverity: "error",
+  description: "every source file states its role in its name",
+  fixHint:
+    "name the file for what it holds: `x.entity.ts` + `x.entity.functions.ts`, `x.usecase.ts` + `x.usecase.functions.ts`, `x.port.ts`, `x.adapter.ts`, `x.conformance.ts`, `index.ts`, `main.ts`, or test code (`x.test.ts`, `testing.ts`, `x.testing.ts`)",
+  check: ({ sourceFile }: Context): ReadonlyArray<Match> =>
+    ROLE.test(nameOf(sourceFile))
+      ? []
+      : [{ node: sourceFile, message: `\`${nameOf(sourceFile).split("/").pop() ?? ""}\` has no role suffix` }],
+}
+
 export const rules = [
   noRawPromiseCore,
   noRuntimeImportsCore,
   contractsContainNoBehavior,
   contextTagsLiveInPorts,
   layersLiveAtEdges,
+  roleSuffixRequired,
 ]

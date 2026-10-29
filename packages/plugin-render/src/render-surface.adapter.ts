@@ -164,7 +164,7 @@ export const openSurface = (
     yield* Ref.update(preparations, (all) => [...all, done])
     const run = preparer.withPermits(1)(Stream.runForEach(work, publish)).pipe(
       Effect.catch((error: E | RenderError) => store.annotate(scope, "render.preparation-failed", { message: describeError(error) }).pipe(
-        Effect.ignore,
+        Effect.ignore({ log: "Warn", message: `the failed preparation of surface ${scope.surfaceId} was not annotated` }),
         Effect.andThen(recover(error)),
       )),
       Effect.ensuring(Deferred.succeed(done, undefined)),

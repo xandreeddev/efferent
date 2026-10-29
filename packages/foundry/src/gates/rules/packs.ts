@@ -18,8 +18,12 @@ import { noAmbientTimeRandom, noProcessEnv } from "./ambientServices.js"
 import { noJsonParse, noSyncCodec } from "./boundaryDecoding.js"
 import { callbackBufferSize } from "./callbackBufferSize.js"
 import { noLocaleCompare, requireSortComparator } from "./deterministicOrder.js"
-import { noCausePrettyData, noInstanceofTaggedError } from "./errorValues.js"
+import { noCausePrettyData, noErrorCodeCompare, noInstanceofTaggedError, noStringifiedCause } from "./errorValues.js"
 import { noEffectPromise, noPromiseAll } from "./promiseInterop.js"
+import { requireConcurrencyOption } from "./concurrencyOption.js"
+import { preferEffectFn } from "./effectFn.js"
+import { noOptionUnwrap } from "./optionUnwrap.js"
+import { noSilentIgnore } from "./silentFailures.js"
 import { effectArchitectureRules } from "./effectArchitecture.js"
 
 /**
@@ -34,7 +38,8 @@ export interface RulePack {
   readonly rules: ReadonlyArray<IdiomRule>
 }
 
-/** The Effect.ts house style — errors are values, state is a fold, and
+/** The Effect.ts house style — errors are values (kept, logged when
+ *  dropped, told apart by tag), state is a fold, concurrency is stated, and
  *  what crosses a boundary (text, the environment, time, randomness,
  *  foreign promises) is decoded or comes from a service. */
 export const effectPack: RulePack = {
@@ -60,6 +65,12 @@ export const effectPack: RulePack = {
     noLocaleCompare,
     requireSortComparator,
     noInstanceofTaggedError,
+    noSilentIgnore,
+    noStringifiedCause,
+    noErrorCodeCompare,
+    preferEffectFn,
+    requireConcurrencyOption,
+    noOptionUnwrap,
   ],
 }
 

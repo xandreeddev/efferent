@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
 import { MEDIA_LIMITS, mediaFromBytes } from "@xandreed/core"
 import { ReadResult, workspaceToolsDefaults } from "./workspace-tools.entity.js"
+import { mediaTypeOf } from "./text-window.entity.functions.js"
 import { binaryRead, compactRead, fileTooLargeHint, readMedia, renderRead, toolDescriptions } from "./workspace-tools.entity.functions.js"
 
 const ascii = (text: string): ReadonlyArray<number> => Array.from(text, (char) => char.charCodeAt(0))
@@ -35,7 +36,7 @@ const gif = (width: number, height: number) => bytes(
 /** An extended WebP: the RIFF header and its VP8X chunk (each side less one, in 24 bits). */
 const webp = (width: number, height: number) => bytes(ascii("RIFF"), le32(22), ascii("WEBP"), ascii("VP8X"), le32(10), [0, 0, 0, 0], le24(width - 1), le24(height - 1))
 
-const read = (path: string, file: Uint8Array, readImages = true) => Effect.runSync(binaryRead(path, file, readImages))
+const read = (path: string, file: Uint8Array, readImages = true) => Effect.runSync(binaryRead(path, file, readImages, Option.getOrNull(mediaTypeOf(path))))
 const encode = Schema.encodeSync(ReadResult)
 
 describe("read over a binary file", () => {

@@ -116,6 +116,7 @@ export const openLogSession = (
                     _tag: "ToolDigest", entry: entry.id, version: task.version, mode: task.mode, keep: outcome.keep,
                     text, digester: `${service.id}@${service.version}`, trigger,
                   })))),
+                  Effect.tapError((error) => Effect.logWarning(`the digest of tool result ${entry.id} failed; the result stays whole`, error)),
                   Effect.orElseSucceed((): ReadonlyArray<LogBody> => []),
                 ),
               })),

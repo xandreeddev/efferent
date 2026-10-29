@@ -53,7 +53,7 @@ const runsOf = (chunks: ReadonlyArray<BashChunk>): ReadonlyArray<{ readonly stre
 const prune = (access: WorkspaceAccess, dir: string, keep: number): Effect.Effect<void> => access.fs.list(dir).pipe(
   Effect.map((entries) => Arr.sort(entries.filter((entry) => entry.kind === "file" && /^bash-.*\.log$/.test(entry.name)).map((entry) => entry.name), Order.String)),
   Effect.flatMap((names) => Effect.forEach(names.slice(0, Math.max(0, names.length - keep)), (name) => access.fs.remove(access.path.join(dir, name)), { discard: true })),
-  Effect.ignore,
+  Effect.ignore({ log: "Warn", message: `the older spill files in ${dir} were not pruned` }),
 )
 
 /**

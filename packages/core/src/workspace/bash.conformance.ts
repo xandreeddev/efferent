@@ -117,7 +117,7 @@ export const bashConformance = (subject: BashSubject): ReadonlyArray<Conformance
     })),
     bashCheck("output arrives while the command still runs, before its exit", "streaming", (fixture) => Effect.gen(function* () {
       // The command cannot exit until the kit has seen its first output: an adapter that holds output back until exit times out here.
-      yield* Effect.addFinalizer(() => run(fixture, "touch go").pipe(Effect.ignore))
+      yield* Effect.addFinalizer(() => run(fixture, "touch go").pipe(Effect.ignore({ log: "Warn", message: "the streaming check could not release its waiting command" })))
       const started = yield* runUntil(fixture, "printf first; while [ ! -e go ]; do sleep 0.05; done; printf second", "first")
       if (!started.arrived) return yield* fail("streaming", "the first output did not arrive while the command ran (is output held until exit?)")
       yield* run(fixture, "touch go")

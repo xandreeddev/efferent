@@ -23,6 +23,7 @@ interface Exited {
 const isExecutableFile = (path: string): Effect.Effect<boolean> => Effect.tryPromise(() => access(path, constants.X_OK)).pipe(
   Effect.andThen(Effect.tryPromise(() => stat(path))),
   Effect.map((info) => info.isFile()),
+  Effect.tapError(() => Effect.logDebug(`${path} is not an executable file`)),
   Effect.orElseSucceed(() => false),
 )
 
@@ -36,9 +37,12 @@ const resolveShell = (shell: string, path: Option.Option<string>): Effect.Effect
     onSome: Effect.succeed,
   })))
 
-const checkCwd = (cwd: string): Effect.Effect<void, BashError> =>
-  (cwd.startsWith("/") ? Effect.tryPromise(() => stat(cwd)).pipe(Effect.map((info) => info.isDirectory()), Effect.orElseSucceed(() => false)) : Effect.succeed(false)).pipe(
-    Effect.flatMap((directory) => directory ? Effect.void : Effect.fail(new BashError({ reason: "CwdMissing", message: `cwd is not an existing absolute directory: ${cwd}` }))))
+const checkCwd = (cwd: string): Effect.Effect<void, BashError> => {
+  const missing = () => new BashError({ reason: "CwdMissing", message: `cwd is not an existing absolute directory: ${cwd}` })
+  return cwd.startsWith("/")
+    ? Effect.tryPromise({ try: () => stat(cwd), catch: missing }).pipe(Effect.flatMap((info) => info.isDirectory() ? Effect.void : Effect.fail(missing())))
+    : Effect.fail(missing())
+}
 
 /**
  * SIGKILL the command's process group (its id is the shell's pid: the shell
