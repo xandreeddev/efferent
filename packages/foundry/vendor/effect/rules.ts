@@ -178,43 +178,97 @@ export const noNullableReturn = {
     }),
 }
 
-const isTagAccess = (node: ts.Expression): boolean =>
-  ts.isPropertyAccessExpression(node) && node.name.text === "_tag"
+const DISCRIMINANTS = ["_tag", "type", "role", "mode"]
 
-const isTagComparison = (node: ts.Expression): boolean =>
-  ts.isBinaryExpression(node) &&
-  (node.operatorToken.kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
-    node.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken) &&
-  (isTagAccess(node.left) || isTagAccess(node.right))
+const unparenthesized = (node: ts.Expression): ts.Expression =>
+  ts.isParenthesizedExpression(node) ? unparenthesized(node.expression) : node
 
-const tagChainLength = (node: ts.IfStatement): number =>
-  isTagComparison(node.expression)
-    ? 1 +
-      (node.elseStatement !== undefined && ts.isIfStatement(node.elseStatement)
-        ? tagChainLength(node.elseStatement)
-        : 0)
-    : 0
+const discriminantOf = (node: ts.Expression): string | undefined =>
+  ts.isPropertyAccessExpression(node) && DISCRIMINANTS.includes(node.name.text) ? node.name.text : undefined
 
-const isChainHead = (node: ts.IfStatement): boolean => {
+const comparedDiscriminant = (node: ts.Expression): string | undefined => {
+  const comparison = unparenthesized(node)
+  if (
+    !ts.isBinaryExpression(comparison) ||
+    (comparison.operatorToken.kind !== ts.SyntaxKind.EqualsEqualsEqualsToken &&
+      comparison.operatorToken.kind !== ts.SyntaxKind.ExclamationEqualsEqualsToken)
+  ) {
+    return undefined
+  }
+  const sides: ReadonlyArray<readonly [ts.Expression, ts.Expression]> = [
+    [comparison.left, comparison.right],
+    [comparison.right, comparison.left],
+  ]
+  return sides
+    .map(([subject, other]) => {
+      const name = discriminantOf(subject)
+      return name !== undefined && (name === "_tag" || ts.isStringLiteralLike(other)) ? name : undefined
+    })
+    .find((name) => name !== undefined)
+}
+
+const ladder = (node: ts.IfStatement): ReadonlyArray<string> => {
+  const name = comparedDiscriminant(node.expression)
+  if (name === undefined) return []
+  const next = node.elseStatement
+  return [name, ...(next !== undefined && ts.isIfStatement(next) ? ladder(next) : [])]
+}
+
+const ternaryChain = (node: ts.ConditionalExpression): ReadonlyArray<string> => {
+  const name = comparedDiscriminant(node.condition)
+  if (name === undefined) return []
+  const next = unparenthesized(node.whenFalse)
+  return [name, ...(ts.isConditionalExpression(next) ? ternaryChain(next) : [])]
+}
+
+const isLadderHead = (node: ts.IfStatement): boolean => {
   const parent: ts.Node | undefined = node.parent
   return parent === undefined || !(ts.isIfStatement(parent) && parent.elseStatement === node)
 }
 
+const isTernaryHead = (node: ts.ConditionalExpression): boolean => {
+  const outer = (inner: ts.Node): ts.Node | undefined => {
+    const parent: ts.Node | undefined = inner.parent
+    return parent !== undefined && ts.isParenthesizedExpression(parent) ? outer(parent) : parent
+  }
+  const parent = outer(node)
+  return parent === undefined || !(ts.isConditionalExpression(parent) && unparenthesized(parent.whenFalse) === node)
+}
+
+/** The `switch` and the else-if ladder on `_tag` report everywhere; ternary
+ *  chains and the `type`/`role`/`mode` discriminants are tolerated in the
+ *  files a rule config names as its `boundary`. */
 export const matchOverTagSwitch = {
   id: "effect/match-over-tag-switch",
   defaultSeverity: "error",
   description:
-    "discriminated unions are branched with Match, not `switch (x._tag)` / else-if ladders",
+    "discriminated unions are branched with Match, not `switch`, else-if ladders or ternary chains on `_tag`, `type`, `role` or `mode`",
   fixHint:
-    "Match.value(x).pipe(Match.tag(…), Match.exhaustive) — or Option.match / Result.match / Exit.match",
+    "Match.value(x).pipe(Match.tag(…), Match.exhaustive) or Match.valueTags(x, { … }) for `_tag`; Match.discriminators(\"type\")({ … }) for another field — or Option.match / Result.match / Exit.match",
   check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
     const matches: Array<VendoredMatch> = []
     walk(sourceFile, (node) => {
-      if (ts.isSwitchStatement(node) && isTagAccess(node.expression)) {
-        matches.push({ node, message: "`switch` on `._tag` — use Match.exhaustive" })
+      if (ts.isSwitchStatement(node)) {
+        const name = discriminantOf(unparenthesized(node.expression))
+        if (name !== undefined) {
+          matches.push({ node, message: `\`switch\` on \`.${name}\` — use Match.exhaustive`, toleratedAtBoundary: name !== "_tag" })
+        }
       }
-      if (ts.isIfStatement(node) && isChainHead(node) && tagChainLength(node) >= 2) {
-        matches.push({ node, message: "`._tag` else-if ladder — use Match.exhaustive" })
+      if (ts.isIfStatement(node) && isLadderHead(node)) {
+        const names = ladder(node)
+        if (names.length >= 2) {
+          matches.push({
+            node,
+            message: `\`.${names[0] ?? "_tag"}\` else-if ladder — use Match.exhaustive`,
+            toleratedAtBoundary: names.some((other) => other !== "_tag"),
+          })
+        }
+      }
+      if (ts.isConditionalExpression(node) && isTernaryHead(node)) {
+        const names = ternaryChain(node)
+        if (names.length >= 2) {
+          matches.push({ node, message: `\`.${names[0] ?? "_tag"}\` ternary chain — use Match.exhaustive`, toleratedAtBoundary: true })
+        }
       }
     })
     return matches
@@ -558,6 +612,290 @@ export const noInstanceofTaggedError = {
     ),
 }
 
+const logs = (node: ts.Node): boolean =>
+  (ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "Effect" &&
+    /^log(?:[A-Z]\w*)?$/.test(node.name.text)) ||
+  (ts.forEachChild(node, (child) => (logs(child) ? true : undefined)) ?? false)
+
+const isLoggingTap = (step: ts.Expression): boolean =>
+  ts.isCallExpression(step) &&
+  ts.isPropertyAccessExpression(step.expression) &&
+  ts.isIdentifier(step.expression.expression) &&
+  step.expression.expression.text === "Effect" &&
+  /^(?:tap(?:Error|Cause|Defect)\w*|onError\w*|onExit)$/.test(step.expression.name.text) &&
+  logs(step)
+
+const isPipe = (call: ts.CallExpression): boolean =>
+  (ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === "pipe") ||
+  (ts.isIdentifier(call.expression) && call.expression.text === "pipe")
+
+const loggedBefore = (step: ts.Expression): boolean => {
+  const parent = step.parent
+  if (ts.isCallExpression(parent) && isPipe(parent)) {
+    const index = parent.arguments.findIndex((argument) => argument === step)
+    return parent.arguments.slice(0, Math.max(index, 0)).some(isLoggingTap)
+  }
+  const subject = ts.isCallExpression(step) ? step.arguments[0] : undefined
+  return subject !== undefined && ts.isCallExpression(subject) && isPipe(subject) && subject.arguments.some(isLoggingTap)
+}
+
+const stepOf = (access: ts.PropertyAccessExpression): ts.Expression =>
+  ts.isCallExpression(access.parent) && access.parent.expression === access ? access.parent : access
+
+const statesLog = (checker: ts.TypeChecker, argument: ts.Expression): boolean => {
+  const options = unparenthesized(argument)
+  if (ts.isObjectLiteralExpression(options) && !options.properties.some(ts.isSpreadAssignment)) {
+    return options.properties.some(
+      (property) =>
+        ts.isPropertyAssignment(property) &&
+        ts.isIdentifier(property.name) &&
+        property.name.text === "log" &&
+        property.initializer.kind !== ts.SyntaxKind.FalseKeyword &&
+        !(ts.isIdentifier(property.initializer) && property.initializer.text === "undefined"),
+    )
+  }
+  return !ts.isObjectLiteralExpression(options) && checker.getTypeAtLocation(options).getProperty("log") !== undefined
+}
+
+const answersVoid = (handler: ts.Expression | undefined): boolean => {
+  if (handler === undefined) return false
+  const fn = unparenthesized(handler)
+  if (!ts.isArrowFunction(fn) && !ts.isFunctionExpression(fn)) return false
+  const only = ts.isBlock(fn.body) ? fn.body.statements[0] : undefined
+  const returned = ts.isBlock(fn.body)
+    ? fn.body.statements.length === 1 && only !== undefined && ts.isReturnStatement(only) ? only.expression : undefined
+    : fn.body
+  return returned !== undefined && isMemberOf(unparenthesized(returned), "Effect", ["void"])
+}
+
+const silentMatch = (checker: ts.TypeChecker, node: ts.Node): ReadonlyArray<VendoredMatch> => {
+  if (!isMemberOf(node, "Effect", ["ignore", "ignoreCause", "catch", "catchCause", "orElseSucceed"])) return []
+  const member = node.name.text
+  const step = stepOf(node)
+  const args = ts.isCallExpression(step) ? step.arguments : []
+  if (member === "ignore" || member === "ignoreCause") {
+    return args.some((argument) => statesLog(checker, argument)) || loggedBefore(step)
+      ? []
+      : [{ node, message: `\`Effect.${member}\` drops the failure without logging it` }]
+  }
+  if (member === "catch" || member === "catchCause") {
+    return answersVoid(args[args.length - 1]) && !loggedBefore(step)
+      ? [{ node, message: `\`Effect.${member}(() => Effect.void)\` drops the failure without logging it` }]
+      : []
+  }
+  return loggedBefore(step) ? [] : [{ node, message: "`Effect.orElseSucceed` replaces the failure without logging it" }]
+}
+
+export const noSilentIgnore = {
+  id: "effect/no-silent-ignore",
+  defaultSeverity: "error",
+  description: "a failure that is dropped is logged first",
+  fixHint:
+    "log what is dropped: `Effect.ignore({ log: \"Warn\", message: \"what was lost\" })` (`ignoreCause` likewise; `\"Debug\"` for an expected miss), or an `Effect.tapError`/`Effect.tapCause` step that calls `Effect.log*` earlier in the same pipe; or recover only the expected failure with `Effect.catchTag`/`Effect.catchIf`",
+  check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
+    matchesIn(sourceFile, (node) => silentMatch(checker, node)),
+}
+
+const isFailureValue = (checker: ts.TypeChecker, expression: ts.Expression): boolean => {
+  const type = checker.getTypeAtLocation(expression)
+  const failureLike = (part: ts.Type): boolean =>
+    (part.flags & (ts.TypeFlags.Any | ts.TypeFlags.Unknown)) !== 0 ||
+    (part.flags & ts.TypeFlags.Object) !== 0 &&
+      ["message", "_tag", "reasons"].some((name) => part.getProperty(name) !== undefined)
+  return type.isUnion() ? type.types.some(failureLike) : failureLike(type)
+}
+
+const stringified = (sourceFile: ts.SourceFile, checker: ts.TypeChecker, node: ts.Node): ReadonlyArray<VendoredMatch> => {
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "String") {
+    const [argument] = node.arguments
+    return argument !== undefined && isFailureValue(checker, argument)
+      ? [{ node, message: `\`String(${argument.getText(sourceFile)})\` keeps only the text of the failure it wraps` }]
+      : []
+  }
+  if (ts.isTemplateSpan(node) && isFailureValue(checker, node.expression)) {
+    return [{ node: node.expression, message: `\`\${${node.expression.getText(sourceFile)}}\` keeps only the text of the failure it wraps` }]
+  }
+  if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    return [node.left, node.right].some(
+      (side) => !ts.isStringLiteralLike(side) && !ts.isTemplateExpression(side) && isFailureValue(checker, side),
+    )
+      ? [{ node, message: "a failure concatenated into a string keeps only its text" }]
+      : []
+  }
+  return []
+}
+
+const stringifiedUnder = (sourceFile: ts.SourceFile, checker: ts.TypeChecker, node: ts.Node): ReadonlyArray<VendoredMatch> => {
+  if (ts.isFunctionLike(node)) return []
+  const nested: Array<VendoredMatch> = []
+  ts.forEachChild(node, (child) => {
+    nested.push(...stringifiedUnder(sourceFile, checker, child))
+  })
+  return [...stringified(sourceFile, checker, node), ...nested]
+}
+
+export const noStringifiedCause = {
+  id: "effect/no-stringified-cause",
+  defaultSeverity: "error",
+  description: "a tagged error keeps the failure it wraps as a value, not as `String(e)`",
+  fixHint:
+    "keep the failure as a value (a `cause` field, `Schema.Defect`) and write a message that says what failed; text for a person or the model comes from `reasonOf(cause)` or a decoded error's own `message`",
+  check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
+    matchesIn(sourceFile, (node) =>
+      ts.isNewExpression(node) && isTaggedClass(checker, node.expression)
+        ? (node.arguments ?? []).flatMap((argument) => stringifiedUnder(sourceFile, checker, argument))
+        : [],
+    ),
+}
+
+const isEquality = (kind: ts.SyntaxKind): boolean =>
+  kind === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+  kind === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+  kind === ts.SyntaxKind.EqualsEqualsToken ||
+  kind === ts.SyntaxKind.ExclamationEqualsToken
+
+const isCodeAccess = (node: ts.Expression): node is ts.PropertyAccessExpression =>
+  ts.isPropertyAccessExpression(node) && node.name.text === "code"
+
+const ownersOf = (checker: ts.TypeChecker, access: ts.PropertyAccessExpression): ReadonlyArray<string> => {
+  const files = (checker.getSymbolAtLocation(access.name)?.declarations ?? []).map(
+    (declaration) => declaration.getSourceFile().fileName,
+  )
+  return files.some((file) => file.endsWith(".d.ts") || /[\\/]node_modules[\\/]/.test(file)) ? [] : files
+}
+
+export const noErrorCodeCompare = {
+  id: "effect/no-error-code-compare",
+  defaultSeverity: "error",
+  description: "an error code is compared only in the module that declares the error",
+  fixHint:
+    "ask the owning module: a guard it exports (`isTurnClosed(error)`), or a tagged error for that case handled with `Effect.catchTag`/`Match.tag`",
+  check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
+    matchesIn(sourceFile, (node) => {
+      if (!ts.isBinaryExpression(node) || !isEquality(node.operatorToken.kind)) return []
+      const access = isCodeAccess(node.left) && ts.isStringLiteralLike(node.right)
+        ? node.left
+        : isCodeAccess(node.right) && ts.isStringLiteralLike(node.left)
+          ? node.right
+          : undefined
+      if (access === undefined) return []
+      const owners = ownersOf(checker, access)
+      const here = sourceFile.fileName
+      return owners.length === 0 || owners.some((owner) => here === owner || here === owner.replace(/\.ts$/, ".functions.ts"))
+        ? []
+        : [{ node, message: `\`${node.getText(sourceFile)}\` compares a code another module declares` }]
+    }),
+}
+
+type FunctionBody = ts.ConciseBody | undefined
+
+const onlyReturnsGen = (body: FunctionBody): boolean => {
+  if (body === undefined) return false
+  const only = ts.isBlock(body) && body.statements.length === 1 ? body.statements[0] : undefined
+  const returned = ts.isBlock(body)
+    ? only !== undefined && ts.isReturnStatement(only) ? only.expression : undefined
+    : body
+  if (returned === undefined) return false
+  const call = unparenthesized(returned)
+  return ts.isCallExpression(call) && isMemberOf(call.expression, "Effect", ["gen"])
+}
+
+const bodyOf = (node: ts.Expression | undefined): FunctionBody => {
+  const fn = node === undefined ? undefined : unparenthesized(node)
+  return fn !== undefined && (ts.isArrowFunction(fn) || ts.isFunctionExpression(fn)) ? fn.body : undefined
+}
+
+const isServiceObject = (literal: ts.ObjectLiteralExpression): boolean => {
+  const parent = ts.isParenthesizedExpression(literal.parent) ? literal.parent.parent : literal.parent
+  if (!ts.isCallExpression(parent) || parent.expression === literal) return true
+  const callee = parent.expression
+  return ts.isPropertyAccessExpression(callee) && (callee.name.text === "of" || callee.name.text === "succeed")
+}
+
+const preferFnMatch = (node: ts.Node): ReadonlyArray<VendoredMatch> => {
+  if (ts.isFunctionDeclaration(node) && isExported(node) && node.name !== undefined && onlyReturnsGen(node.body)) {
+    return [{ node, message: `exported function \`${node.name.text}\` only returns \`Effect.gen\`` }]
+  }
+  if (ts.isVariableStatement(node) && isExported(node)) {
+    return node.declarationList.declarations.flatMap((declaration) =>
+      onlyReturnsGen(bodyOf(declaration.initializer)) && ts.isIdentifier(declaration.name)
+        ? [{ node: declaration, message: `exported function \`${declaration.name.text}\` only returns \`Effect.gen\`` }]
+        : [],
+    )
+  }
+  if (ts.isObjectLiteralExpression(node) && isServiceObject(node)) {
+    return node.properties.flatMap((property) => {
+      const name = property.name !== undefined && (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) ? property.name.text : "method"
+      const generated =
+        (ts.isPropertyAssignment(property) && onlyReturnsGen(bodyOf(property.initializer))) ||
+        (ts.isMethodDeclaration(property) && onlyReturnsGen(property.body))
+      return generated ? [{ node: property, message: `service method \`${name}\` only returns \`Effect.gen\`` }] : []
+    })
+  }
+  return []
+}
+
+export const preferEffectFn = {
+  id: "effect/prefer-effect-fn",
+  defaultSeverity: "error",
+  description: "exported functions and service methods that only return `Effect.gen` are `Effect.fn`",
+  fixHint:
+    "write it as `Effect.fn(\"area.op\")(function* (…) { … })`, named like the spans `agent.turn` and `engine.run`; a hot helper called per item uses `Effect.fnUntraced(function* (…) { … })`",
+  check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => matchesIn(sourceFile, preferFnMatch),
+}
+
+const namesConcurrency = (checker: ts.TypeChecker, options: ts.Expression): boolean =>
+  ts.isObjectLiteralExpression(options) && !options.properties.some(ts.isSpreadAssignment)
+    ? options.properties.some((property) => property.name !== undefined && ts.isIdentifier(property.name) && property.name.text === "concurrency")
+    : checker.getTypeAtLocation(options).getProperty("concurrency") !== undefined
+
+const atMostOne = (collection: ts.Expression | undefined): boolean =>
+  collection !== undefined &&
+  ((ts.isArrayLiteralExpression(collection) && collection.elements.length <= 1 && !collection.elements.some(ts.isSpreadElement)) ||
+    (ts.isObjectLiteralExpression(collection) && collection.properties.length <= 1 && !collection.properties.some(ts.isSpreadAssignment)))
+
+const forEachParts = (checker: ts.TypeChecker, call: ts.CallExpression): { readonly items: ts.Expression | undefined; readonly options: ts.Expression | undefined } => {
+  const [first, second, third] = call.arguments
+  const dataLast = first !== undefined && checker.getTypeAtLocation(first).getCallSignatures().length > 0
+  return dataLast ? { items: undefined, options: second } : { items: first, options: third }
+}
+
+const concurrencyMatch = (checker: ts.TypeChecker, node: ts.Node): ReadonlyArray<VendoredMatch> => {
+  if (!ts.isCallExpression(node) || !isMemberOf(node.expression, "Effect", ["forEach", "all"])) return []
+  const { items, options } = node.expression.name.text === "forEach"
+    ? forEachParts(checker, node)
+    : { items: node.arguments[0], options: node.arguments[1] }
+  return atMostOne(items) || (options !== undefined && namesConcurrency(checker, options))
+    ? []
+    : [{ node, message: `\`Effect.${node.expression.name.text}\` does not state its \`concurrency\`` }]
+}
+
+export const requireConcurrencyOption = {
+  id: "effect/require-concurrency-option",
+  defaultSeverity: "error",
+  description: "`Effect.forEach` and `Effect.all` state their `concurrency`",
+  fixHint:
+    "pass `{ concurrency }`: `1` when the effects must run in order, a number or a config value (`digestConcurrency`) for I/O, `\"unbounded\"` only over a small fixed set",
+  check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
+    matchesIn(sourceFile, (node) => concurrencyMatch(checker, node)),
+}
+
+export const noOptionUnwrap = {
+  id: "effect/no-option-unwrap",
+  defaultSeverity: "error",
+  description: "an `Option` stays an `Option` until an adapter hands it to a foreign API or the wire",
+  fixHint:
+    "keep the `Option`: `Option.match`, `Option.map`, `Option.getOrElse` with a real default, or an optional field spread from `Option.match`; unwrap to `null`/`undefined` only in a `*.adapter.ts` that writes to the wire or calls a foreign API",
+  check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
+    matchesIn(sourceFile, (node) =>
+      isMemberOf(node, "Option", ["getOrNull", "getOrUndefined"])
+        ? [{ node, message: `\`Option.${node.name.text}\` turns absence back into a nullable` }]
+        : [],
+    ),
+}
+
 /** The whole pack — plug in via `export const customRules = rules` (or a subset). */
 export const rules = [
   noTryCatch,
@@ -580,4 +918,10 @@ export const rules = [
   noLocaleCompare,
   requireSortComparator,
   noInstanceofTaggedError,
+  noSilentIgnore,
+  noStringifiedCause,
+  noErrorCodeCompare,
+  preferEffectFn,
+  requireConcurrencyOption,
+  noOptionUnwrap,
 ]

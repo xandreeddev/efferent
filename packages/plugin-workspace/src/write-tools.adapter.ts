@@ -50,7 +50,7 @@ const save = (access: WorkspaceAccess, target: WorkspaceTarget, content: string,
   const replaced = Effect.gen(function* () {
     const suffix = (yield* Random.nextIntBetween(0, 2_147_483_647)).toString(36)
     const temporary = access.path.join(access.path.dirname(target.path), `.${access.path.basename(target.path)}.${suffix}.efferent-tmp`)
-    const discard = access.fs.remove(temporary).pipe(Effect.ignore)
+    const discard = access.fs.remove(temporary).pipe(Effect.ignore({ log: "Warn", message: `the temporary file ${temporary} was not removed` }))
     yield* access.fs.write(temporary, content, { createParents: true })
     const same = yield* Option.match(mode, {
       onNone: () => Effect.succeed(true),

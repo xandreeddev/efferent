@@ -119,15 +119,12 @@ const printRun = ({ artifact, run }: ForgeResult): number => {
       console.log(`\nfeedback for the next attempt:\n${brief}`),
     )
   })
-  console.log(
-    `\noutcome: ${
-      run.outcome._tag === "accepted"
-        ? `ACCEPTED on attempt ${run.outcome.attempt}`
-        : run.outcome._tag === "rejected"
-          ? `REJECTED (${run.outcome.reason})`
-          : "IN FLIGHT (interrupted mid-run)"
-    }`,
-  )
+  const outcome = Match.valueTags(run.outcome, {
+    accepted: (accepted) => `ACCEPTED on attempt ${accepted.attempt}`,
+    rejected: (rejected) => `REJECTED (${rejected.reason})`,
+    "in-flight": () => "IN FLIGHT (interrupted mid-run)",
+  })
+  console.log(`\noutcome: ${outcome}`)
   console.log(`artifact: ${artifact}`)
   return run.outcome._tag === "accepted" ? 0 : 1
 }

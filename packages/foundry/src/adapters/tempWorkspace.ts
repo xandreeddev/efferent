@@ -18,6 +18,7 @@ const WALK_CONCURRENCY = 8
 /** One directory's entries; an unreadable directory has none (see `walk`). */
 const entriesOf = (dir: string) =>
   Effect.tryPromise({ try: () => fs.readdir(dir, { withFileTypes: true }), catch: () => "unreadable" as const }).pipe(
+    Effect.tapError(() => Effect.logDebug(`${dir} is unreadable; the walk skips it`)),
     Effect.orElseSucceed(() => []),
   )
 
@@ -81,6 +82,7 @@ const walkFingerprint = (
           // A file deleted mid-walk is simply absent — same tolerance as `walk`.
           return Effect.tryPromise({ try: () => fs.stat(abs), catch: () => "absent" as const }).pipe(
             Effect.map((stat) => [[rel, `${stat.size}:${stat.mtimeMs}`] as const]),
+            Effect.tapError(() => Effect.logDebug(`${rel} went away during the walk`)),
             Effect.orElseSucceed(() => []),
           )
         },
@@ -135,5 +137,5 @@ export const withTempWorkspace = <A, E, R>(
       Effect.tryPromise({
         try: () => fs.rm(rootDir, { recursive: true, force: true }),
         catch: (cause) => new WorkspaceError({ message: String(cause) }),
-      }).pipe(Effect.ignore),
+      }).pipe(Effect.ignore({ log: "Warn", message: `the temporary workspace ${rootDir} was not removed` })),
   )

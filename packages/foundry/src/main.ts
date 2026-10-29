@@ -54,13 +54,12 @@ const program = Effect.gen(function* () {
 
 const main = program.pipe(
   Effect.tap((code) => Effect.sync(() => (process.exitCode = code))),
-  Effect.tapError((error) =>
+  Effect.catch((error) =>
     Effect.sync(() => {
       console.error(`foundry: ${error._tag}: ${error.message}`)
       process.exitCode = 2
     }),
   ),
-  Effect.ignore,
 )
 
 await Effect.runPromise(main)

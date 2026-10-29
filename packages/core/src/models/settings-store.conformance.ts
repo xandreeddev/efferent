@@ -53,7 +53,7 @@ const restoring = (store: Store, id: string, field: Field, write: (value: Option
     onSome: (value): Effect.Effect<A, unknown> => fail(id, `the store holds ${field} "${value}", which a conforming store refuses to write, so the kit could not put it back; it changed nothing. Correct the value, then run the kit`),
     onNone: (): Effect.Effect<A, unknown> => body.pipe(Effect.ensuring(store.load.pipe(
       Effect.flatMap((after) => Option.getOrNull(valueOf(after, field)) === Option.getOrNull(valueOf(before, field)) ? Effect.void : write(valueOf(before, field))),
-      Effect.ignore,
+      Effect.ignore({ log: "Warn", message: `the kit could not put back ${field}` }),
     ))),
   })))
 

@@ -63,7 +63,7 @@ const readRange = (path: string, offset: number, length: Option.Option<number>) 
     }
     return gather(offset === 0 ? null : offset, Option.getOrElse(length, () => Number.POSITIVE_INFINITY), []).pipe(Effect.map(joined))
   })),
-  (handle) => Effect.tryPromise(() => handle.close()).pipe(Effect.ignore),
+  (handle) => Effect.tryPromise(() => handle.close()).pipe(Effect.ignore({ log: "Warn", message: `the read handle of ${path} did not close` })),
 )
 
 const readBytes = (path: string, range?: ReadRange): Effect.Effect<Uint8Array, FsError> => {

@@ -90,11 +90,12 @@ export const bashEnvironment = (config: WorkspaceToolsConfig, session: Option.Op
  * by the path; an image it refuses (over `MEDIA_LIMITS.imageBytes`, over
  * `MEDIA_LIMITS.maxPixels` a side, or a header without a size) is an
  * `ImageRejected` note, without the bytes. Anything else is `Binary`, with
- * the media type the name suggests.
+ * `nameType`: the media type the name suggests, as the result carries it
+ * (`null` for none; the adapter reads it with `mediaTypeOf`).
  */
-export const binaryRead = (path: string, bytes: Uint8Array, readImages: boolean): Effect.Effect<ReadResult> =>
+export const binaryRead = (path: string, bytes: Uint8Array, readImages: boolean, nameType: string | null): Effect.Effect<ReadResult> =>
   Option.match(readImages ? sniffImageType(bytes) : Option.none(), {
-    onNone: () => Effect.succeed<ReadResult>({ _tag: "Binary", path, bytes: bytes.length, mediaType: Option.getOrNull(mediaTypeOf(path)) }),
+    onNone: () => Effect.succeed<ReadResult>({ _tag: "Binary", path, bytes: bytes.length, mediaType: nameType }),
     onSome: (mediaType) => mediaFromBytes(bytes, { name: path }).pipe(Effect.match({
       onSuccess: (image): ReadResult => ({ _tag: "Image", path, image }),
       onFailure: (rejected): ReadResult => ({ _tag: "ImageRejected", path, mediaType, bytes: bytes.length, reason: rejected.reason, message: rejected.message }),

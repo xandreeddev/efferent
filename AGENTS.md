@@ -43,8 +43,13 @@ Build output goes under `.artifacts`.
 file under `packages/*/src`, tests included (tsc errors are `ts/<code>`), then
 tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 `no-as-never` and the rules from `no-json-parse` to
-`no-instanceof-tagged-error` skip test code (`*.test.ts`, `*.bench.ts`,
-`testing.ts`, `*.testing.ts`, `testing.port.ts`, `testing/`).
+`require-concurrency-option` skip test code (`*.test.ts`, `*.bench.ts`,
+`testing.ts`, `*.testing.ts`, `testing.port.ts`, `testing/`). A rule marked
+"per package" runs in the packages its list in `foundry.config.ts` names
+(`MATCH_CHAINS_CLEAN`, `STRINGIFIED_CAUSE_CLEAN`, …): to add a package, fix
+its findings and add its line, never the baseline. An `allow` list
+(`ROLELESS_FILES`, `NULLABLE_EDGES`) only shrinks: an entry that excuses
+nothing fails.
 
 | Rule | Bans | Fix |
 |---|---|---|
@@ -52,7 +57,7 @@ tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 | `effect/no-let` | `let`, `var` | a fold: `Effect.reduce`, a recursive Effect step, Array combinators, or a `Ref` |
 | `effect/no-loop-statements` | `for`, `for…of`, `for…in`, `while`, `do` | `Effect.forEach`, `Effect.repeat({ while })`, `Effect.whileLoop`, Array combinators (`Effect.iterate` does not exist) |
 | `effect/no-nullable-return` | an exported function returning `A \| undefined` or `A \| null` | `Option<A>` (`Option.fromNullishOr` at the edge) |
-| `effect/match-over-tag-switch` | `switch` or an else-if ladder on `_tag` | `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Option.match`, `Result.match`, `Exit.match` |
+| `effect/match-over-tag-switch` | `switch` or an else-if ladder on `_tag`; per package, also ternary chains, and any of the three on `.type`, `.role` or `.mode` | `Match.valueTags(x, { … })`, `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Match.discriminators("type")`, `Option.match`, `Result.match`, `Exit.match` |
 | `effect/no-as-any` | `as any`, `as unknown as T` | decode with Schema, or fix the type |
 | `effect/no-as-never` | `as never` outside the `ERASURE_BOUNDARY` files; `as never as T` everywhere, those files included | fix the type; a file added to `ERASURE_BOUNDARY` states its reason in the PR |
 | `effect/no-parallel-interface` | an interface shadowing a same-named schema | `type X = typeof X.Type` |
@@ -67,6 +72,12 @@ tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 | `effect/no-locale-compare` | `.localeCompare` | `Order.String` |
 | `effect/require-sort-comparator` | `.sort()` or `.toSorted()` without a comparator | `Arr.sort(xs, Order.String)`, or a comparator |
 | `effect/no-instanceof-tagged-error` | `instanceof` a tagged class (`instanceof Error` is fine) | `Schema.is`, `isHarnessError`, `Predicate.isTagged`, `Effect.catchTag` |
+| `effect/no-silent-ignore` | a bare `Effect.ignore` or `Effect.ignoreCause`, `Effect.catch(() => Effect.void)`, `Effect.catchCause(() => Effect.void)`, `Effect.orElseSucceed`, unless an `Effect.tapError`/`tapCause` that logs comes first in the pipe | `Effect.ignore({ log: "Warn", message: "…" })` (`"Debug"` for an expected miss), a logging tap before it, or `Effect.catchTag` for the one expected failure |
+| `effect/no-option-unwrap` | `Option.getOrNull`, `Option.getOrUndefined` outside `*.adapter.ts` files and kits | `Option.match`, `Option.getOrElse` with a real default, an optional field spread from `Option.match`; unwrap in the adapter that writes the wire |
+| `effect/no-stringified-cause` | per package: `String(e)`, `${e}` or `"…" + e` of a failure inside a tagged error's fields | keep the failure as a value (a `cause` field) and say what failed; text from `reasonOf(cause)` |
+| `effect/no-error-code-compare` | per package: `x.code === "<literal>"` outside the file that declares the error and its `.functions.ts` (kits may compare) | a guard the owning module exports, or a tagged error matched with `Effect.catchTag` |
+| `effect/prefer-effect-fn` | per package: an exported function or a service method that only returns `Effect.gen(…)` | `Effect.fn("area.op")(function* (…) { … })`; `Effect.fnUntraced` for a hot helper |
+| `effect/require-concurrency-option` | per package: `Effect.forEach` or `Effect.all` over more than one effect without `concurrency` | state it: a number or a config value for I/O, `1` when order matters |
 | `effect/branded-id-fields` | an unbranded id field, in core's `src/domain` and `src/spec` | a brand; elsewhere reuse the sibling fields' brand |
 | `quality/no-skipped-tests` | `.skip`, `.todo`, `.only`, `xit`, `xdescribe`, `xtest` | fix or delete the test; one that needs an environment uses `test.skipIf` |
 | `quality/no-empty-catch` | an empty `catch` block | handle the failure as a value |
@@ -75,6 +86,7 @@ tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 | `architecture/contracts-contain-no-behavior` | an exported function in a `.entity.ts` or `.usecase.ts` | the paired `.functions.ts` file |
 | `architecture/context-tags-live-in-ports` | `Context.Service` outside `.port.ts` files and `ports/` folders | move the contract to a port file |
 | `architecture/layers-live-at-edges` | `Layer.*` in entity and use-case files | build the Layer in a `.adapter.ts` |
+| `architecture/role-suffix-required` | a file under `packages/*/src` (foundry aside) whose name has none of the roles below and is not on the frozen `ROLELESS_FILES` | name it for its role; a renamed or split file leaves the list in the same change |
 | `boundaries/illegal-import` | a relative import into a layer that `canImport` does not list | invert the dependency or move the code |
 | `boundaries/illegal-external` | a bare import, `@xandreed/*` included, missing from the layer's `externals` | depend downward; widening `externals` is a reviewed change |
 | `quality/package-registered` | a package missing from a list the gates or the build read | add it where the message says (skill `add-plugin`) |
@@ -92,11 +104,11 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 | `x.entity.ts`, `x.usecase.ts` | schemas, brands, tagged errors, derived types | base + those four |
 | `x.entity.functions.ts`, `x.usecase.functions.ts` | the pure behaviour of that pair | base + `no-raw-promise-core`, `no-runtime-imports-core`, `layers-live-at-edges` |
 | `x.port.ts`, `ports/*` | `Context.Service` contracts | base |
-| `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-ambient-time-random` |
-| `x.conformance.ts` | a port's kit, exported and shipped | base |
-| `index.ts` | the public surface, as explicit named exports | base |
-| `x.test.ts`, `testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never` and the rules from `no-json-parse` on |
-| any other name (`loop.ts`) | older modules | base only: give a new file one of the roles above |
+| `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-ambient-time-random` and `no-option-unwrap` |
+| `x.conformance.ts` | a port's kit, exported and shipped | base except `no-option-unwrap` and `no-error-code-compare` |
+| `index.ts`, `main.ts` | the public surface, as explicit named exports; a command line's entry | base (`main.ts` may read `process.env`) |
+| `x.test.ts`, `testing.ts`, `x.testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never` and the rules from `no-json-parse` to `require-concurrency-option` |
+| any other name (`loop.ts`) | older modules, listed in `ROLELESS_FILES` | base; `role-suffix-required` refuses a new one: give it one of the roles above |
 
 ## Ports, adapters and composition
 

@@ -131,6 +131,7 @@ export const ConfiguredModelCatalogLive = Layer.effect(
   ModelCatalog,
   Effect.all({ auth: AuthStore, endpoints: Effect.service(CurrentModelEndpoints) }).pipe(Effect.map(({ auth, endpoints }) => ({
     list: auth.all.pipe(
+      Effect.tapError((error) => Effect.logWarning("the model catalog could not read the stored credentials; it lists none of them", error)),
       Effect.orElseSucceed(() => new Map<string, Credential>()),
       Effect.map((credentials) => configuredModelCatalog(credentials, endpoints)),
     ),

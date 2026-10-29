@@ -6,6 +6,7 @@ import {
   layersLiveAtEdges,
   noRawPromiseCore,
   noRuntimeImportsCore,
+  roleSuffixRequired,
 } from "./effectArchitecture.js"
 
 const source = (name: string, text: string): ts.SourceFile =>
@@ -52,6 +53,18 @@ describe("the Effect architecture pack", () => {
         "export const Issue = Schema.Struct({ id: Schema.String })",
       ),
     ).toEqual([])
+  })
+
+  test("every file names its role; a bare name or a functions file without its entity does not", () => {
+    const roled = [
+      "/src/issue.entity.ts", "/src/issue.entity.functions.ts", "/src/close.usecase.ts", "/src/close.usecase.functions.ts",
+      "/src/repo.port.ts", "/src/http.adapter.ts", "/src/log.memory.adapter.ts", "/src/repo.conformance.ts",
+      "/src/index.ts", "/src/main.ts", "/src/loop.test.ts", "/src/view.test.tsx", "/src/fold.bench.ts", "/src/testing.ts", "/src/fixture.testing.ts",
+    ]
+    expect(roled.flatMap((name) => run(roleSuffixRequired, name, "export const a = 1"))).toEqual([])
+    expect(run(roleSuffixRequired, "/src/loop.ts", "export const a = 1")).toEqual(["`loop.ts` has no role suffix"])
+    expect(run(roleSuffixRequired, "/src/cli.functions.ts", "export const a = 1")).toEqual(["`cli.functions.ts` has no role suffix"])
+    expect(run(roleSuffixRequired, "/src/myindex.ts", "export const a = 1")).toHaveLength(1)
   })
 
   test("Context.Service (and v3's Context.Tag) and Layer construction are confined to their file roles", () => {

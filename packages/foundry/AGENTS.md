@@ -108,10 +108,30 @@ A config's `privateText` arms the `private-text` gate
 git tracks or would track may hold an absolute home path (other than a
 configured placeholder home) or a term of the config's local, git-ignored
 denylist. Its messages never repeat what matched. A rule entry's `boundary`
-globs drop the matches the rule marks `toleratedAtBoundary` (only
-`effect/no-as-never`'s plain `as never` today); a new rule that needs a
-per-file exemption uses `exclude`, or a boundary when only part of what it
-flags is the design there.
+globs drop the matches the rule marks `toleratedAtBoundary`:
+`effect/no-as-never`'s plain `as never` (where type erasure is the
+design), and `effect/match-over-tag-switch`'s ternary chains and
+`type`/`role`/`mode` discriminants (in the packages not yet converted;
+its `switch` and ladder on `_tag` report everywhere). A rule entry's
+`allow` names exact files the rule skips, a frozen list that only
+shrinks: an entry naming a file the rule does not check, or one it no
+longer flags, is itself a finding under the rule's id
+(`architecture/role-suffix-required`'s `ROLELESS_FILES`,
+`effect/no-option-unwrap`'s `NULLABLE_EDGES`). A new rule that needs a
+per-file exemption uses `exclude`, `allow` for today's exceptions, or a
+boundary when only part of what it flags is the design there. A rule with
+findings enters through its `include`, one clean package at a time (the
+lists in the root `foundry.config.ts`), never through the baseline.
+
+The `effect` pack's second wave: `effect/no-silent-ignore` (a dropped
+failure is logged first: `Effect.ignore({ log })` or a logging
+`tapError`/`tapCause` earlier in the pipe), `effect/no-option-unwrap`,
+`effect/no-stringified-cause` (type-aware: a failure turned to text
+inside a tagged error), `effect/no-error-code-compare` (type-aware: a
+code compared outside the file declaring it and its `.functions.ts`),
+`effect/prefer-effect-fn` and `effect/require-concurrency-option`
+(type-aware about `forEach`'s data-last form); the `effect-architecture`
+pack adds `architecture/role-suffix-required`.
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

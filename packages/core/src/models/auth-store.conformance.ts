@@ -67,7 +67,7 @@ const keyOf = (id: string, resolved: Option.Option<Redacted.Redacted<string>>) =
 /** Run `body` with `count` fresh providers, removing them afterwards so a shared store keeps nothing of the kit. */
 const withProviders = (store: Store, count: number, body: (providers: ReadonlyArray<ProviderId>) => Effect.Effect<void, unknown>) =>
   Effect.forEach(Array.from({ length: count }), () => freshProvider).pipe(
-    Effect.flatMap((providers) => body(providers).pipe(Effect.ensuring(Effect.forEach(providers, (provider) => store.remove(provider).pipe(Effect.ignore), { discard: true })))),
+    Effect.flatMap((providers) => body(providers).pipe(Effect.ensuring(Effect.forEach(providers, (provider) => store.remove(provider).pipe(Effect.ignore({ log: "Warn", message: `the kit could not remove its provider ${provider}` })), { discard: true })))),
   )
 
 /** Run `body` on the probe's provider, then put back the credential it held before (or none). */
@@ -75,7 +75,7 @@ const withProbeProvider = (store: Store, probe: AuthStoreRefreshProbe, body: (pr
   store.get(probe.provider).pipe(Effect.flatMap((before) => body(probe.provider).pipe(Effect.ensuring(Option.match(before, {
     onNone: () => store.remove(probe.provider),
     onSome: (credential) => store.set(probe.provider, credential),
-  }).pipe(Effect.ignore)))))
+  }).pipe(Effect.ignore({ log: "Warn", message: `the kit could not put back the credential of ${probe.provider}` }))))))
 
 /** An OAuth credential that expired an hour ago, so any read of it needs a refresh. */
 const expiredToken = Effect.gen(function* () {

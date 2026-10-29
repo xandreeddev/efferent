@@ -205,6 +205,84 @@ describe("effect-idioms gate over fixtures", () => {
     ])
   })
 
+  test("effect/no-silent-ignore flags a dropped failure that nothing logs, not a logged or narrowed one", async () => {
+    const findings = await findingsFor(["effect/no-silent-ignore"], ["silentIgnore.ts"])
+    expect(at(findings)).toEqual([4, 5, 6, 7, 8].map((line) => ({ rule: "effect/no-silent-ignore", file: "silentIgnore.ts", line })))
+  })
+
+  test("effect/no-stringified-cause is type-aware: a failure turned to text inside a tagged error, not a number or plain data", async () => {
+    const findings = await findingsFor(["effect/no-stringified-cause"], ["stringifiedCause.ts"])
+    expect(at(findings)).toEqual([6, 7, 8, 9].map((line) => ({ rule: "effect/no-stringified-cause", file: "stringifiedCause.ts", line })))
+  })
+
+  test("effect/no-error-code-compare flags a code compared outside the module that declares it, not a foreign code", async () => {
+    const findings = await findingsFor(["effect/no-error-code-compare"], ["errorCode.ts", "errorCodeCompare.ts"])
+    expect(at(findings)).toEqual([
+      { rule: "effect/no-error-code-compare", file: "errorCodeCompare.ts", line: 3 },
+      { rule: "effect/no-error-code-compare", file: "errorCodeCompare.ts", line: 4 },
+    ])
+  })
+
+  test("effect/prefer-effect-fn flags exported functions and service methods that only return Effect.gen", async () => {
+    const findings = await findingsFor(["effect/prefer-effect-fn"], ["effectFn.ts"])
+    expect(at(findings)).toEqual([3, 4, 7].map((line) => ({ rule: "effect/prefer-effect-fn", file: "effectFn.ts", line })))
+  })
+
+  test("effect/require-concurrency-option flags forEach and all without a concurrency, data-first or data-last", async () => {
+    const findings = await findingsFor(["effect/require-concurrency-option"], ["concurrencyOption.ts"])
+    expect(at(findings)).toEqual([4, 5, 6].map((line) => ({ rule: "effect/require-concurrency-option", file: "concurrencyOption.ts", line })))
+  })
+
+  test("effect/no-option-unwrap flags getOrNull and getOrUndefined, called or passed", async () => {
+    const findings = await findingsFor(["effect/no-option-unwrap"], ["optionUnwrap.ts"])
+    expect(at(findings)).toEqual([4, 5, 6].map((line) => ({ rule: "effect/no-option-unwrap", file: "optionUnwrap.ts", line })))
+  })
+
+  test("effect/match-over-tag-switch flags ternary chains and the type, role and mode discriminants, not a single guard", async () => {
+    const findings = await findingsFor(["effect/match-over-tag-switch"], ["discriminantChains.ts"])
+    expect(at(findings)).toEqual([5, 7, 9].map((line) => ({ rule: "effect/match-over-tag-switch", file: "discriminantChains.ts", line })))
+  })
+
+  test("a boundary tolerates the later match-over-tag-switch checks, never the switch or ladder on _tag", async () => {
+    const config = [
+      Schema.decodeUnknownSync(RuleConfig)({
+        rule: "effect/match-over-tag-switch",
+        include: ["tagSwitch.ts", "discriminantChains.ts"],
+        boundary: ["tagSwitch.ts", "discriminantChains.ts"],
+      }),
+    ]
+    const findings = await Effect.runPromise(
+      makeIdiomGate(allBuiltinRules, config, "tsconfig.json").run(ws).pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    expect(at(findings)).toEqual([
+      { rule: "effect/match-over-tag-switch", file: "tagSwitch.ts", line: 6 },
+      { rule: "effect/match-over-tag-switch", file: "tagSwitch.ts", line: 15 },
+    ])
+  })
+
+  test("architecture/role-suffix-required flags a file whose name states no role", async () => {
+    const findings = await findingsFor(["architecture/role-suffix-required"], ["noLet.ts"])
+    expect(at(findings)).toEqual([{ rule: "architecture/role-suffix-required", file: "noLet.ts", line: 1 }])
+    expect(findings.map((f) => f.message)).toEqual(["`noLet.ts` has no role suffix"])
+  })
+
+  test("a rule's allow list skips the files it names, and an entry that excuses nothing fails", async () => {
+    const run = (allow: ReadonlyArray<string>) =>
+      Effect.runPromise(
+        makeIdiomGate(
+          allBuiltinRules,
+          [Schema.decodeUnknownSync(RuleConfig)({ rule: "effect/no-let", include: ["noLet.ts", "clean.ts"], allow })],
+          "tsconfig.json",
+        ).run(ws).pipe(Effect.provide(TsProjectCachedLive)),
+      )
+    expect(await run(["noLet.ts"])).toEqual([])
+    const stale = await run(["noLet.ts", "clean.ts", "gone.ts"])
+    expect(stale.map((f) => [String(f.rule), f.message, Option.isNone(f.location)])).toEqual([
+      ["effect/no-let", 'the allow list entry "clean.ts" passes this rule now', true],
+      ["effect/no-let", 'the allow list entry "gone.ts" names no file this rule checks (renamed, deleted or outside its include)', true],
+    ])
+  })
+
   test("quality/no-empty-catch flags the swallow, not the handled catch", async () => {
     const findings = await findingsFor(["quality/no-empty-catch"], ["emptyCatch.ts"])
     expect(at(findings)).toEqual([
@@ -212,9 +290,9 @@ describe("effect-idioms gate over fixtures", () => {
     ])
   })
 
-  test("clean.ts passes every rule", async () => {
+  test("clean.ts passes every rule but the role suffix (a fixture's name states no role)", async () => {
     const findings = await findingsFor(
-      allBuiltinRules.map((r) => String(r.id)),
+      allBuiltinRules.map((r) => String(r.id)).filter((id) => id !== "architecture/role-suffix-required"),
       ["clean.ts"],
     )
     expect(findings).toEqual([])

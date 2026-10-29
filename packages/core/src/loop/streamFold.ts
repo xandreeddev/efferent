@@ -25,11 +25,12 @@ export interface StreamDelta {
   readonly toolName?: string
 }
 
-/** Structurally what the loop reads off a `GenerateTextResponse`. */
+/** Structurally what the loop reads off a `GenerateTextResponse`; `usage`
+ *  is absent when no finish part carried one. */
 export interface FoldedTurn {
   readonly content: ReadonlyArray<unknown>
   readonly finishReason: string
-  readonly usage: unknown
+  readonly usage?: unknown
 }
 
 type Entry =
@@ -159,9 +160,9 @@ export const foldStreamParts = <E, R, R2 = never>(
       })
     },
   ).pipe(
-    Effect.map((state) => ({
+    Effect.map((state): FoldedTurn => ({
       content: state.entries.flatMap(entryParts),
       finishReason: Option.getOrElse(state.finishReason, () => "unknown"),
-      usage: Option.getOrUndefined(state.usage),
+      ...Option.match(state.usage, { onNone: () => ({}), onSome: (usage) => ({ usage }) }),
     })),
   )

@@ -250,8 +250,9 @@ const flush = (moduleName: string, reading: UsageReading, state: SseState): Effe
           reason:
             toolParts.length > 0
               ? "tool-calls"
-              : finishReasonFromWire(Option.getOrUndefined(closed.finishReason)),
-          usage: usageFromCompletion(Option.getOrUndefined(closed.usage), reading),
+              : Option.match(closed.finishReason, { onNone: () => "stop" as const, onSome: finishReasonFromWire }),
+          // No usage on the stream is a usage of nothing.
+          usage: usageFromCompletion(Option.getOrElse(closed.usage, (): CompletionUsage => ({})), reading),
         }
         return [
           { ...closed, flushed: true },

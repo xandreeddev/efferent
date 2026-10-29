@@ -41,6 +41,7 @@ const Manifest = Schema.fromJsonString(Schema.Struct({ name: Schema.NonEmptyStri
 const isFile = (file: string): Effect.Effect<boolean> =>
   Effect.tryPromise({ try: () => fs.stat(file), catch: () => "absent" as const }).pipe(
     Effect.map((stat) => stat.isFile()),
+    Effect.tapError(() => Effect.logDebug(`${file} is absent or unreadable`)),
     Effect.orElseSucceed(() => false),
   )
 

@@ -12,8 +12,12 @@ import { noAmbientTimeRandom, noProcessEnv } from "./ambientServices.js"
 import { noJsonParse, noSyncCodec } from "./boundaryDecoding.js"
 import { callbackBufferSize } from "./callbackBufferSize.js"
 import { noLocaleCompare, requireSortComparator } from "./deterministicOrder.js"
-import { noCausePrettyData, noInstanceofTaggedError } from "./errorValues.js"
+import { noCausePrettyData, noErrorCodeCompare, noInstanceofTaggedError, noStringifiedCause } from "./errorValues.js"
 import { noEffectPromise, noPromiseAll } from "./promiseInterop.js"
+import { requireConcurrencyOption } from "./concurrencyOption.js"
+import { preferEffectFn } from "./effectFn.js"
+import { noOptionUnwrap } from "./optionUnwrap.js"
+import { noSilentIgnore } from "./silentFailures.js"
 import {
   contextTagsLiveInPorts,
   contractsContainNoBehavior,
@@ -21,6 +25,7 @@ import {
   layersLiveAtEdges,
   noRawPromiseCore,
   noRuntimeImportsCore,
+  roleSuffixRequired,
 } from "./effectArchitecture.js"
 
 /** The shipped rules are a LIBRARY organized as packs (`packs.js`) — config
@@ -51,10 +56,17 @@ export {
   noLocaleCompare,
   requireSortComparator,
   noInstanceofTaggedError,
+  noSilentIgnore,
+  noStringifiedCause,
+  noErrorCodeCompare,
+  preferEffectFn,
+  requireConcurrencyOption,
+  noOptionUnwrap,
   contextTagsLiveInPorts,
   contractsContainNoBehavior,
   effectArchitectureRules,
   layersLiveAtEdges,
   noRawPromiseCore,
   noRuntimeImportsCore,
+  roleSuffixRequired,
 }

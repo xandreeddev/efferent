@@ -20,6 +20,12 @@ export class RuleConfig extends Schema.Class<RuleConfig>("RuleConfig")({
    *  tolerated at a boundary is dropped there; every other match still
    *  reports. */
   boundary: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
+  /** Workspace-relative paths (exact, not globs) of the files the rule
+   *  skips: a frozen list of today's exceptions that may only shrink. An
+   *  entry that names no file the rule covers, or a file the rule no
+   *  longer flags, is itself a finding, so a fixed, renamed or deleted
+   *  file leaves the list in the same change. */
+  allow: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
 }) {}
 
 export class LayerSpec extends Schema.Class<LayerSpec>("LayerSpec")({
