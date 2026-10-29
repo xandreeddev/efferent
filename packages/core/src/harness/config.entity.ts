@@ -16,6 +16,13 @@ export const Profile = Schema.Struct({
 })
 export type Profile = typeof Profile.Type
 
+/**
+ * A plugin graph's configuration. `profile` and `profiles` describe a
+ * selection the host makes before the graph is resolved (the selected
+ * profile's plugins, bindings and system folded into the config's own):
+ * `resolveGraph` refuses a config that still carries them (`config.profile`)
+ * rather than ignore them.
+ */
 export const HarnessConfig = Schema.Struct({
   version: Schema.Literal(1),
   profile: Schema.optional(Schema.String),

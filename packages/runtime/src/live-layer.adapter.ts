@@ -13,11 +13,15 @@ type Generation<A> = {
 
 /** Scoped generations for replaceable modules. Each use pins one successful
  * generation; retiring a generation does not close its resources until its
- * last user completes. Failed staging never replaces the working services. */
+ * last user completes. Failed staging never replaces the working services.
+ * A replacement builds while uses go on with the working generation, and
+ * takes their gate only to swap; replacements run one at a time. Scopes are
+ * closed outside the gate, so a slow finalizer holds up no use either. */
 export const makeLiveLayer = <A, E, R>(initial: Layer.Layer<A, E, R>) => Effect.gen(function* () {
   // Each stage builds with these, traced where it is staged (a replacement under its caller's span).
   const dependencies = replayableContext(yield* Effect.context<R>())
   const gate = yield* Semaphore.make(1)
+  const replacing = yield* Semaphore.make(1)
   const generations = yield* Ref.make<ReadonlyMap<number, Generation<A>>>(new Map())
   const current = yield* Ref.make(0)
   const closed = yield* Ref.make(false)
@@ -47,29 +51,39 @@ export const makeLiveLayer = <A, E, R>(initial: Layer.Layer<A, E, R>) => Effect.
     yield* Ref.set(generations, new Map([...all, [id, { ...generation, leases: generation.leases + 1 }]]))
     return generation
   }))
+  const closeAll = (scopes: ReadonlyArray<Scope.Closeable>) => Effect.forEach(scopes, (scope) => Scope.close(scope, Exit.void), { discard: true })
   const release = (lease: Generation<A>) => gate.withPermits(1)(Effect.gen(function* () {
     const all = yield* Ref.get(generations)
     const generation = all.get(lease.id)
-    if (!generation) return
+    if (!generation) return []
     const next = { ...generation, leases: generation.leases - 1 }
     if (next.retired && next.leases === 0) {
       yield* Ref.set(generations, new Map([...all].filter(([id]) => id !== next.id)))
-      yield* Scope.close(next.scope, Exit.void)
-    } else yield* Ref.set(generations, new Map([...all, [next.id, next]]))
-  }))
+      return [next.scope]
+    }
+    yield* Ref.set(generations, new Map([...all, [next.id, next]]))
+    return []
+  })).pipe(Effect.flatMap(closeAll))
   return {
     use: <B, E2, R2>(effect: Effect.Effect<B, E2, R2>) => Effect.acquireUseRelease(acquire, (generation) => effect.pipe(Effect.provide(generation.services)), release),
     generation: Ref.get(current),
-    replace: (layer: Layer.Layer<A, E, R>) => gate.withPermits(1)(Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+    replace: (layer: Layer.Layer<A, E, R>) => replacing.withPermits(1)(Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
       if (yield* Ref.get(closed)) return yield* Effect.fail(unavailable())
-      const id = yield* Ref.get(current)
-      const next = yield* restore(stage(layer, id + 1))
-      const all = yield* Ref.get(generations)
-      const previous = all.get(id)
-      const retained = [...all].filter(([key]) => key !== id)
-      yield* Ref.set(generations, new Map([...retained, ...(previous && previous.leases > 0 ? [[id, { ...previous, retired: true }] as const] : []), [next.id, next]]))
-      yield* Ref.set(current, next.id)
-      if (previous && previous.leases === 0) yield* Scope.close(previous.scope, Exit.void)
+      // Only replacements move `current`, and they run one at a time: it is still this id at the swap.
+      const next = yield* restore(stage(layer, (yield* Ref.get(current)) + 1))
+      const swap = yield* gate.withPermits(1)(Effect.gen(function* () {
+        // Closed while staging: the staged generation is closed instead of served.
+        if (yield* Ref.get(closed)) return { swapped: false, close: [next.scope] }
+        const id = yield* Ref.get(current)
+        const all = yield* Ref.get(generations)
+        const previous = all.get(id)
+        const retained = [...all].filter(([key]) => key !== id)
+        yield* Ref.set(generations, new Map([...retained, ...(previous && previous.leases > 0 ? [[id, { ...previous, retired: true }] as const] : []), [next.id, next]]))
+        yield* Ref.set(current, next.id)
+        return { swapped: true, close: previous && previous.leases === 0 ? [previous.scope] : [] }
+      }))
+      yield* closeAll(swap.close)
+      if (!swap.swapped) return yield* Effect.fail(unavailable())
       return next.id
     }))),
   }

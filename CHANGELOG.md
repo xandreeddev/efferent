@@ -88,6 +88,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   quotas are not).
 - `toFailure` names tagged values by their `_tag` and never produces
   `[object Object]`.
+- A plugin's layer no longer sees services provided around `Agent.define`,
+  `Agent.turn` or `activateGraph` that it does not declare in `requires` or
+  `optional`. It keeps the fiber's settings: logging, tracing and the
+  current span, clock and metrics.
+- `Agent.define` fails with `config.graph`, naming the missing service, when
+  the agent's turns would have no `ConversationMemory`, `ToolRegistry` or
+  `StepLoop`; before, the first turn failed with `service.missing`.
+- `resolveGraph` refuses `profile`/`profiles` (`config.profile`) instead of
+  ignoring them.
+- Agent fingerprints change once: they now hash canonical JSON.
 
 ### Added
 
@@ -114,6 +124,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `isHarnessError(value)` in `@xandreed/core`: matches a `HarnessError` from
   any installed copy of core. The framework uses it, so a code from another
   copy no longer becomes `loop.failed`, `task.turn` or a defect.
+- `mergeOptions` and `PartialOptions` in `@xandreed/core`.
 
 ### Fixed
 
@@ -221,6 +232,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the layers built over it.
 - `makeSession`: a turn interrupted together with its sender records its
   interrupt once, and a later `interrupt` or `shutdown` adds no stale event.
+- Nested plugin options keep their sibling defaults:
+  `{ inbox: { maxPending: 50 } }` no longer fails with `config.options`. An
+  object of another union variant still replaces its default.
+- `makeLiveLayer`: uses keep running while a replacement builds, and a
+  registry closed mid-replacement no longer leaks the staged generation.
+- The agent fingerprint no longer depends on the key order of options or
+  bindings.
 
 ### Repository
 

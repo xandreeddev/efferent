@@ -32,6 +32,14 @@ export interface Plugin {
 }
 
 /**
+ * A plugin's options as a host gives them: any key may be left out, at any
+ * depth of nested objects, and takes its default (`mergeOptions`).
+ */
+export type PartialOptions<T> = T extends ReadonlyArray<unknown> | ((...args: never) => unknown) ? T
+  : T extends object ? { readonly [K in keyof T]?: PartialOptions<T[K]> }
+  : T
+
+/**
  * A plugin as its author defined it (see `definePlugin`): the erased
  * `Plugin` the runtime loads, plus its typed parts. `live` is the plugin's
  * own layer, with the services it provides and requires in its type, for
@@ -40,6 +48,6 @@ export interface Plugin {
 export interface TypedPlugin<A extends Readonly<Record<string, unknown>>, I, Out, E, In> extends Plugin {
   readonly config: Schema.Codec<A, I>
   readonly defaults: A
-  /** Options merged over the defaults and decoded (extra keys fail with config.options). */
-  readonly live: (options?: Partial<I>) => Layer.Layer<Out, E | HarnessError, In>
+  /** Options merged over the defaults (`mergeOptions`) and decoded (extra keys fail with config.options). */
+  readonly live: (options?: PartialOptions<I>) => Layer.Layer<Out, E | HarnessError, In>
 }

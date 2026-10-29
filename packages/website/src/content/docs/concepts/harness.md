@@ -132,14 +132,19 @@ port.
 
 Each plugin has a stable `id`, `version`, `apiVersion`, `scope`, Effect Schema,
 default options, required service tags, provided service tags, and Layer factory.
-A plugin receives only its declared dependencies. Two providers of a service
-require a `bindings` entry selecting the instance id. Runtime plugins cannot
-require session services. Dependencies are checked before activation, and a
-failed activation closes its partially acquired scope.
+A plugin receives only its declared dependencies (and the fiber's settings:
+logging, tracing and the current span, the clock); a host service it does not
+declare is not there, even one provided around `Agent.define` or `Agent.turn`.
+Two providers of a service require a `bindings` entry selecting the instance
+id. Runtime plugins cannot require session services. Dependencies are checked
+before activation, and a failed activation closes its partially acquired
+scope. An agent whose turns would have no memory, tool registry or step loop
+is refused by `Agent.define` (`config.graph`, naming the missing service).
 
 Options are given as `{ plugin, options }` entries in `Agent.define({ plugins })`.
-They merge over the plugin's defaults and decode through its schema;
-undeclared keys are refused. The [plugin reference](/docs/concepts/plugin-reference/)
+They merge over the plugin's defaults, nested objects key by key (an array,
+or an object of another of the shapes the schema allows, replaces its
+default), and decode through its schema; undeclared keys are refused. The [plugin reference](/docs/concepts/plugin-reference/)
 lists every first-party plugin's defaults and schema.
 
 ## Skills

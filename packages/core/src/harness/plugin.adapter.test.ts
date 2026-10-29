@@ -27,6 +27,28 @@ describe("definePlugin", () => {
     expect(await workspaceOf(namer.live({ excited: true }).pipe(Layer.provide(approval)))).toMatchObject({ _tag: "Success", success: "ws:true!" })
   })
 
+  test("nested options merge over the nested defaults, through live and build alike", async () => {
+    const nested = definePlugin({
+      id: "test/nested", version: "1", scope: "runtime",
+      config: Schema.Struct({
+        inbox: Schema.Struct({ maxPending: Schema.Number, attempts: Schema.Number }),
+        holder: Schema.Union([Schema.Struct({ mode: Schema.Literal("lease"), ttlMs: Schema.Number }), Schema.Struct({ mode: Schema.Literal("process") })]),
+      }),
+      defaults: { inbox: { maxPending: 20, attempts: 2 }, holder: { mode: "lease", ttlMs: 60_000 } },
+      provides: [SessionEnvironment],
+      layer: ({ inbox, holder }) => Layer.succeed(SessionEnvironment, { workspace: `${inbox.maxPending}/${inbox.attempts}/${holder.mode}` }),
+    })
+    const options = { inbox: { maxPending: 50 }, holder: { mode: "process" } } as const
+    expect(await workspaceOf(nested.live(options))).toMatchObject({ _tag: "Success", success: "50/2/process" })
+    expect(await workspaceOf(nested.live({ inbox: { attempts: 3 } }))).toMatchObject({ _tag: "Success", success: "20/3/lease" })
+    const built = await Effect.runPromise(Effect.scoped(nested.build(options, Context.empty())))
+    expect(Context.getUnsafe(built, SessionEnvironment).workspace).toBe("50/2/process")
+    const typo = { inbox: { maxPending: 50, typo: 1 } } as Parameters<typeof nested.live>[0]
+    expect(await workspaceOf(nested.live(typo))).toMatchObject({
+      _tag: "Failure", failure: { code: "config.options", plugin: "test/nested" },
+    })
+  })
+
   test("live refuses keys the config does not declare, with config.options", async () => {
     const extra = { excited: true, loud: true } as Partial<typeof namer.config.Encoded>
     expect(await workspaceOf(namer.live(extra).pipe(Layer.provide(approval)))).toMatchObject({

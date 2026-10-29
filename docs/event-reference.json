@@ -5266,7 +5266,12 @@
     {
       "code": "config.graph",
       "where": "`Agent.define`",
-      "meaning": "The plugin graph cannot be built (a missing provider, a cycle, a misplaced turn-dependent plugin)."
+      "meaning": "The plugin graph cannot be built (a missing provider, a cycle, a misplaced turn-dependent plugin), or the agent's turns would have no `ConversationMemory`, `ToolRegistry` or `StepLoop` (none from a plugin, `services` or `turnServices`)."
+    },
+    {
+      "code": "config.profile",
+      "where": "`resolveGraph`",
+      "meaning": "The configuration still carries `profile` or `profiles`, which the graph does not resolve: fold the selected profile's plugins, bindings and system into the configuration first."
     },
     {
       "code": "config.options",

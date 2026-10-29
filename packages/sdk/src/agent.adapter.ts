@@ -273,6 +273,9 @@ const hostCapabilities = (capabilities: ReadonlyArray<Capability>) => definePlug
 /** Services that exist only after an admitted turn has its bus, memory and tools slot. */
 const builtInTurnKeys: ReadonlyArray<string> = [RunContext, TurnEvents, TurnTasks, TurnMemory, TurnPrompt, TurnToolbox].map((tag) => tag.key)
 
+/** What every turn runs on: its memory, its tool registry and its step loop. */
+const turnPorts: ReadonlyArray<string> = [ConversationMemory, ToolRegistry, StepLoop].map((tag) => tag.key)
+
 /** Transitively defer subscribers and their dependants until TurnLive is built; strategy/registry plugins still build first. */
 const turnDependentNodes = (graph: PluginGraph): ReadonlyArray<PluginNode> => graph.nodes.reduce((late: ReadonlyArray<PluginNode>, node) => {
   const dependencies = [...node.plugin.requires, ...(node.plugin.optional ?? [])]
@@ -285,7 +288,10 @@ const turnDependentNodes = (graph: PluginGraph): ReadonlyArray<PluginNode> => gr
  * Build the agent's plugin graph once. Runtime plugins are activated here,
  * in the caller's scope; session plugins (if any) are activated per turn with
  * that turn's services. Host capabilities join the graph as its first
- * contributor.
+ * contributor. An agent whose turns would have no ConversationMemory,
+ * ToolRegistry or StepLoop (none provided by a plugin, none in `services`,
+ * none declared in `turnServices`) fails here with `config.graph`, naming
+ * it, rather than at its first turn.
  */
 const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scope.Scope> => Effect.gen(function* () {
   if (config.budgetTokens !== undefined && !isBudgetTokens(config.budgetTokens)) {
@@ -313,9 +319,13 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   const external = [SessionEnvironment.key, ...services.mapUnsafe.keys(), ...turnKeys, ...builtInTurnKeys]
   const graph = yield* resolveGraph(harness, plugins, external)
   const late = turnDependentNodes(graph)
-  const invalidLate = late.find((node) => node.plugin.scope === "runtime" || node.plugin.provides.some((key) =>
-    ([ConversationMemory.key, ToolRegistry.key, StepLoop.key] as ReadonlyArray<string>).includes(key)))
+  const invalidLate = late.find((node) => node.plugin.scope === "runtime" || node.plugin.provides.some((key) => turnPorts.includes(key)))
   if (invalidLate !== undefined) return yield* Effect.fail(failure("config.graph", `${invalidLate.entry.id}: a plugin requiring turn services must be session-scoped and cannot supply the turn's memory, registry or loop`))
+  // Every turn needs a memory, a registry and a loop: from a plugin, the host's services, or each turn's (declared in turnServices).
+  const unprovided = turnPorts.filter((key) => graph.providers[key] === undefined && !services.mapUnsafe.has(key) && !turnKeys.includes(key))
+  if (unprovided.length > 0) {
+    return yield* Effect.fail(failure("config.graph", `the agent has no ${unprovided.join(", ")}: no plugin provides it, and neither services nor turnServices carry it`))
+  }
   const beforeTurn: PluginGraph = { ...graph, nodes: graph.nodes.filter((node) => !late.includes(node)) }
   const afterTurn: PluginGraph = { ...graph, nodes: late }
   const workspace = config.workspace ?? "."

@@ -31,6 +31,7 @@ import {
   TaskActivity,
   TaskExecutor,
   Tasks,
+  ToolRegistry,
   TurnAdmissionOpen,
   TurnEvents,
   TurnMemory,
@@ -1310,6 +1311,23 @@ describe("images a tool returns", () => {
       return yield* Effect.flip(run(model))
     })))
     expect(error.message).toContain("Could not process image")
+  })
+})
+
+describe("the agent's graph", () => {
+  test("Agent.define refuses an agent whose turns would have no step loop or tool registry, naming them (config.graph)", async () => {
+    const refused = await Effect.runPromise(Effect.forEach([[memoryWindowPlugin, toolDiscoveryPlugin], [memoryWindowPlugin]], (plugins) =>
+      Effect.scoped(Effect.flip(Agent.define({ plugins, turnServices: [LanguageModel.LanguageModel] })))))
+    expect(refused.map((error) => error.code)).toEqual(["config.graph", "config.graph"])
+    expect(refused[0]!.message).toContain(StepLoop.key)
+    expect(refused[1]!.message).toContain(`${ToolRegistry.key}, ${StepLoop.key}`)
+  })
+
+  test("a step loop each turn's services must carry (turnServices) is enough to define the agent", async () => {
+    const fingerprint = await Effect.runPromise(Effect.scoped(Agent.define({
+      plugins: [memoryWindowPlugin, toolDiscoveryPlugin], turnServices: [LanguageModel.LanguageModel, StepLoop],
+    })).pipe(Effect.map((agent) => agent.fingerprint)))
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/)
   })
 })
 

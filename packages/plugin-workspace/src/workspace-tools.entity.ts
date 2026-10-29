@@ -29,7 +29,7 @@ const Glob = Schema.String.check(Schema.makeFilter((glob: string) =>
 
 /**
  * How `workspaceToolsPlugin` (and `workspaceTools`) works on the workspace,
- * `SessionEnvironment.workspace`. Flat: plugin defaults merge one level deep.
+ * `SessionEnvironment.workspace`. Flat.
  *
  * - `tools`: the tools to register (all seven by default). A skill whose
  *   tools are all left out is left out too.

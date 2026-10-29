@@ -346,6 +346,17 @@ describe("leases", () => {
     expect(half).toHaveLength(1)
   })))
 
+  test("the plugin's options need only the settings they change, at any depth: the rest keep their defaults", () => withLog((log) => Effect.gen(function* () {
+    const services = Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)
+    const built = yield* Effect.forEach([
+      { inbox: { maxPending: 50 } },
+      { writer: { batch: 8 }, retries: 3 },
+      { ownership: { mode: "lease", ttlMs: 120_000 } },
+      { ownership: { mode: "process" } },
+    ] as const, (options) => Layer.build(SessionsPluginLive(options).pipe(Layer.provide(services))).pipe(Effect.as("built"), Effect.catch((error) => Effect.succeed(error.code))))
+    expect(built).toEqual(["built", "built", "built", "built"])
+  })))
+
   test("under process ownership, a turn whose process stopped is reaped at the first touch, as is one that names no process", () => withLog((log) => Effect.gen(function* () {
     const crashed = yield* processOver(log, Option.some({ host: "h1", pid: 101, startedAt: 1 }), [202])
     const restarted = yield* processOver(log, Option.some({ host: "h1", pid: 202, startedAt: 2 }), [202])

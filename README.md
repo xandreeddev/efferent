@@ -193,8 +193,9 @@ in the framework guide for the id rule, the limits and the failure codes.
 
 Plugins are configured where the agent is defined: an entry in
 `Agent.define({ plugins })` is a plugin, or `{ plugin, id?, options }`. Options
-merge over the plugin's defaults and decode through its schema; undeclared keys
-are refused.
+merge over the plugin's defaults, nested objects key by key (an array, or an
+object of another of the shapes the schema allows, replaces its default), and
+decode through its schema; undeclared keys are refused.
 
 To use any OpenAI-compatible server — a local model or a self-hosted gateway,
 with or without a key — name it under the models plugin's `endpoints` and select
