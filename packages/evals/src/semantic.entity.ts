@@ -24,6 +24,6 @@ export type SemanticInput = typeof SemanticInput.Type
 export const SemanticResult = Schema.Struct({
   answers: SemanticAnswers,
   usage: EvaluationUsage,
-  metadata: Schema.Record(Schema.String, Schema.Unknown),
+  metadata: Schema.JsonObject,
 })
 export type SemanticResult = typeof SemanticResult.Type

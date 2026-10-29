@@ -11,7 +11,7 @@ export interface SemanticJevOptions {
   readonly evaluate: (input: SemanticInput, signal: AbortSignal) => PromiseLike<{ readonly answers: unknown }>
   readonly maxInputBytes?: number
   readonly timeoutMs?: number
-  readonly metadata?: Readonly<Record<string, unknown>>
+  readonly metadata?: Schema.JsonObject
 }
 
 export const makeSemanticJevJudge = (options: SemanticJevOptions) => Effect.gen(function* () {

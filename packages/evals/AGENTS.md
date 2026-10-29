@@ -12,14 +12,16 @@ The evaluation domain: tasks, runnables, candidates, trials, transcripts, outcom
 - A model call's `AiError` becomes `assessmentOfAiError(error)`: `unavailable` when the provider may answer on a retry (`isRetryable`), `provider` otherwise, its message led by the reason's tag.
 - A missing measurement stays unavailable, never a zero, and never passes a gate; `isUnavailable(error)` tells one from an error.
 - `gradingContext` never truncates: over budget is `unavailable`, and omissions are recorded by the app.
+- An app from outside (a configuration module, a host's value) goes through `parseEvaluationApp`; the runner parses its app too. A new cross-reference check is a rule of `AppViolation`, its `path` leading from the app to the value.
+- A `metadata` field (`Grade`, `EvaluationResult`, `SemanticResult`, `Assessment`) is a `Schema.JsonObject`: it is stored and exported as JSON.
 - Order with an explicit `Order` (`Order.String`, code-unit order), never the locale: fingerprints and comparison lines must match on every machine.
 - Persist each transcript event and the settled trial as they happen; a trial settles under `uninterruptibleMask`, so an interrupted one is stored as `cancelled`.
 - Service keys are `efferent/evals/<Name>` (per app: `efferent/evals/<id>/RunnableExecution`, `…/EvaluationEnvironment`); never rename one.
 
 ## Public surface
 
-- Domain schemas: `EvalId`, `EvalPath`, `Version`, `Fingerprints`, `EvaluationError`, `Task`, `Journey`, `Runnable`, `Candidate`, `Transcript`, `TranscriptEvent`, `Outcome`, `GradingContext`, `ContextBudget`, `Grader`, `Grade`, `Trial`, `Suite`, `Gate`, `GateFinding`, `Calibration`, `EvaluationRun`, `ReviewBundle`, `ReviewItem`, `CalibrationObservation`, `CalibrationReference`, `EvidenceProjection`, `ExportReceipt`.
-- App contract: `defineEvaluationApp`, `validateEvaluationApp`, `defineRunnable`, `defineGraderCalibration`, `runnableExecutionPort`, `evaluationEnvironmentPort` (types `EvaluationApp`, `EvaluationSelection` and the registrations).
+- Domain schemas: `EvalId`, `EvalPath`, `Version`, `Fingerprints`, `EvaluationError` (a refused app's `violations`), `AppViolation`, `Task`, `Journey`, `Runnable`, `Candidate`, `Transcript`, `TranscriptEvent`, `Outcome`, `GradingContext`, `ContextBudget`, `Grader`, `Grade`, `Trial`, `Suite`, `Gate`, `GateFinding`, `Calibration`, `EvaluationRun`, `ReviewBundle`, `ReviewItem`, `CalibrationObservation`, `CalibrationReference`, `EvidenceProjection`, `ExportReceipt`.
+- App contract: `defineEvaluationApp`, `parseEvaluationApp` (an app from a value: its shape, then `evaluationAppViolations`; `validateEvaluationApp` is its deprecated alias), `evaluationAppViolations`, `defineRunnable`, `defineGraderCalibration`, `runnableExecutionPort`, `evaluationEnvironmentPort` (types `EvaluationApp`, `EvaluationSelection` and the registrations).
 - Use cases: `runEvaluation`, `gradeEvaluation`, `calibrateGrader`, `gradeTrial`, `executionFingerprint`, `runGates`, `comparisonIssues`, `reviewBundle`, `approveReviews`, `gradingContext`, `fingerprint` (also `evaluationFingerprint`), `tasksFromDataset`.
 - Ports: `EvaluationServices`, `EvaluationRunStore`, `EvaluationExport`, `TrialExecution`, `TrialRecorder`, `EvidenceProjector`, `GraderAssessment`, `SemanticJudge`. A host composes `EvaluationServicesLive(app)` plus an `EvaluationRunStore` (evals-cli has the file one); `SemanticLlmLive` / `makeSemanticLlmJudge` (needs a `LanguageModel`), `SemanticJevLive` / `makeSemanticJevJudge`; `isolatedServices`.
 - Assessment: `assess`, `assessAll`, `semanticEvaluator`, `semanticResponseSchema`, `validateSemanticInput`, `validateSemanticAnswers`, `assessCompleteness`, `evaluationScores`, `projectEvaluatorInput`, `evaluatorRegistry`, `compareCalibrationMetric`, `summarizeCalibration`, `compareDecisionTrials`, `calibrationAgreement`, `selectionMetrics`, `assessmentOfAiError`, `reasonOf` (a cause as report text, for the CLI and exporters too), `validateDataset`, `validateMetrics`, `numericMetric`, `summarizeAssessments`, `unknownEvaluationUsage`, and their schemas.
@@ -44,7 +46,7 @@ None.
 | File | Role |
 |---|---|
 | `src/domain/` | entities (`*.entity.ts`) and their pure rules (`*.entity.functions.ts`): identity, task, trial, grader, suite, run, review, calibration, grading context |
-| `src/contracts/`, `src/ports/` | `EvaluationApp`, the registrations and their validation; the `Context.Service` ports and the per-app port factories |
+| `src/contracts/`, `src/ports/` | `EvaluationApp`, the registrations and `parseEvaluationApp`; the `Context.Service` ports and the per-app port factories |
 | `src/usecases/run-evaluation.usecase.functions.ts` | running, grading and calibrating: scoped trials, recorder, grades, gates |
 | `src/adapters/` | `EvaluationServicesLive`, `defineRunnable`, `defineGraderCalibration`, `isolatedServices`, the LLM and Jev semantic judges |
 | `src/graders/retrieval/` | ranking metrics and the three judged retrieval graders |
@@ -53,7 +55,7 @@ None.
 
 ## Tests
 
-- `src/testing/`: `evaluation.test.ts` (runner, gates, reasons), `scoped-layers.test.ts` (scopes, timeouts, late callbacks), `typed-ports.test.ts`, `grader-calibration.test.ts`; `src/semantic.test.ts`, `src/assessment.test.ts`, `src/evaluation-contract.test.ts`, `src/decision-comparison.test.ts`, `src/graders/retrieval/semantic-retrieval.test.ts`, `src/domain/identity.entity.functions.test.ts` (`reasonOf`), `src/stats.test.ts`; every judge is scripted, no keys.
+- `src/testing/`: `evaluation.test.ts` (runner, gates, reasons, app violations), `scoped-layers.test.ts` (scopes, timeouts, late callbacks), `typed-ports.test.ts`, `grader-calibration.test.ts`; `src/semantic.test.ts`, `src/assessment.test.ts`, `src/evaluation-contract.test.ts`, `src/decision-comparison.test.ts`, `src/graders/retrieval/semantic-retrieval.test.ts`, `src/domain/identity.entity.functions.test.ts` (`reasonOf`), `src/stats.test.ts`; every judge is scripted, no keys.
 - `bun run verify:packages` imports the packed package on Node and runs `scripts/evaluation-consumer.fixture.mjs` (a typed function suite through the packed CLI).
 - Run: `bun test packages/evals/src`.
 

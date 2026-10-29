@@ -113,6 +113,7 @@ const EFFECT_FN_CLEAN = [
 
 const UNKNOWN_JSON_CLEAN = [
   "sdk",
+  "evals",
   "evals-cli",
   "evals-langfuse",
   "evals-langsmith",

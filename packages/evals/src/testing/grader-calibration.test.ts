@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Schema } from "effect"
 import {
   defineGraderCalibration, defineEvaluationApp, EvalId, GraderAssessment, EvaluationError,
   EvaluationServicesLive, EvaluationRunStore, runEvaluation, gradeEvaluation, executionFingerprint,
-  runGates, validateEvaluationApp, unknownEvaluationUsage, calibrateGrader, CalibrationReference, CalibrationObservation,
+  runGates, parseEvaluationApp, unknownEvaluationUsage, calibrateGrader, CalibrationReference, CalibrationObservation,
 } from "../index.js"
 import { fixture } from "./fixture.testing.js"
 
@@ -77,9 +77,12 @@ test("validation rejects unbound gates, duplicate scopes and family leakage", as
   const base = fixture()
   const suite = base.suites[0]!
   const task = suite.tasks[0]!
-  await Promise.all([
-    { ...suite, tasks: [{ ...task, graders: [] }] },
-    { ...suite, tasks: [{ ...task, graders: [task.graders[0]!, task.graders[0]!] }] },
-    { ...suite, tasks: [task, { ...task, id: EvalId.make("other"), split: "calibration" }] },
-  ].map(async (invalid) => expect(await Effect.runPromise(validateEvaluationApp({ ...base, suites: [invalid] }).pipe(Effect.isFailure))).toBe(true)))
+  await Promise.all(([
+    [{ ...suite, tasks: [{ ...task, graders: [] }] }, "task-ungraded"],
+    [{ ...suite, tasks: [{ ...task, graders: [task.graders[0]!, task.graders[0]!] }] }, "binding-duplicate"],
+    [{ ...suite, tasks: [task, { ...task, id: EvalId.make("other"), split: "calibration" }] }, "split-mixed"],
+  ] as const).map(async ([invalid, rule]) => {
+    const refused = await Effect.runPromise(parseEvaluationApp({ ...base, suites: [invalid] }).pipe(Effect.flip))
+    expect(refused.violations?.[0]?.rule).toBe(rule)
+  }))
 })

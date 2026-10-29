@@ -5,7 +5,7 @@ import type {
   EvaluationSelection,
   GradingSelection
 } from "../contracts/evaluation-app.contract.js"
-import { validateEvaluationApp } from "../contracts/evaluation-app.contract.functions.js"
+import { parseEvaluationApp } from "../contracts/evaluation-app.contract.functions.js"
 import { EvaluationError, EvalId, EvalPath } from "../domain/identity.entity.js"
 import type { Trial } from "../domain/trial.entity.js"
 import type { Grade } from "../domain/grader.entity.js"
@@ -354,7 +354,7 @@ export const gradeEvaluation = (
   EvaluationRunStore | EvaluationServices
 > =>
   Effect.gen(function* () {
-    yield* validateEvaluationApp(app)
+    yield* parseEvaluationApp(app)
     const id = yield* decodeRunId(runId)
     if (source.application !== app.id)
       return yield* Effect.fail(
@@ -498,7 +498,7 @@ export const runEvaluation = (
   EvaluationRunStore | EvaluationServices
 > =>
   Effect.gen(function* () {
-    yield* validateEvaluationApp(app)
+    yield* parseEvaluationApp(app)
     const id = yield* decodeRunId(runId)
     if (
       (selection.concurrency !== undefined &&

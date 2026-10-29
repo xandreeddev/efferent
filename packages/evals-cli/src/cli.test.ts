@@ -230,3 +230,21 @@ test("a failure the CLI wraps stays its cause, and the message says what failed"
   expect(unloaded.message).toStartWith(`Cannot load evaluation configuration ${join(directory, "absent.config.ts")}: `)
   expect(unloaded.cause).toBeDefined()
 })
+
+// The configuration loader is tsx's, so the command line runs on Node here (as in run-main.adapter.test.ts).
+test("a configuration whose default export is not an app is refused by shape", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-config-"))
+  await writeFile(join(directory, "package.json"), JSON.stringify({ type: "module" }))
+  await writeFile(join(directory, "number.config.ts"), "export default 42\n")
+  await writeFile(join(directory, "factory.config.ts"), "export default (args: ReadonlyArray<string>) => ({ id: args.join(\" \") })\n")
+  const validate = async (file: string) => {
+    const child = Bun.spawn(
+      ["node", "--import", import.meta.resolve("tsx/esm"), join(import.meta.dir, "main.ts"), "validate", "--config", join(directory, file)],
+      { stdout: "ignore", stderr: "pipe" }
+    )
+    return [await child.exited, (await new Response(child.stderr).text()).trim()]
+  }
+  expect(await validate("number.config.ts")).toEqual([1, "invalid: Evaluation app refused (1 violation): shape: Expected object"])
+  expect(await validate("factory.config.ts")).toEqual([1, `invalid: Evaluation app refused (8 violations): ${
+    ["suites", "calibrations", "runnables", "graders", "projections"].map((key) => `shape at ${key}: Missing key`).join("; ")}; and 3 more`])
+}, 30_000)

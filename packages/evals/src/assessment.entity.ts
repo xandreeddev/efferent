@@ -28,7 +28,7 @@ export const EvaluationResult = Schema.Struct({
   startedAt: Schema.Number,
   endedAt: Schema.Number,
   usage: EvaluationUsage,
-  metadata: Schema.Record(Schema.String, Schema.Unknown),
+  metadata: Schema.JsonObject,
 })
 export type EvaluationResult = typeof EvaluationResult.Type
 /** `message` says what failed; `cause` keeps the failure it wraps (a schema or provider error) for an operator, never for a report. */
