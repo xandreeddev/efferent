@@ -7,6 +7,8 @@ import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, endpointOwnKey, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
+import { ModelsTransport } from "../ports/models-transport.port.js"
+import { transportFetch } from "../transport/models-transport.adapter.js"
 import {
   classifyLlmError,
   rejectEmptyResponse,
@@ -438,6 +440,22 @@ const withConfiguredEffortStream = <A, E, R>(
       : stream.pipe(Stream.provideService(CurrentModelCallPolicy, Option.some({ effort: effort.value }))),
   )))
 
+/**
+ * The fetch the SDK providers' HTTP client uses on a call: the
+ * `ModelsTransport`'s (which knows the proxy), when the model was built over
+ * one. It is provided innermost, inside the replayed build context, so a
+ * `FetchHttpClient.Fetch` in that context or around the call cannot send the
+ * call past the proxy. Without a transport the call keeps whatever fetch is
+ * in force, the global one by default.
+ */
+export const transportFetchOf = Effect.map(Effect.serviceOption(ModelsTransport), Option.map(transportFetch))
+
+const withFetch = (fetch: Option.Option<typeof globalThis.fetch>) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Option.match(fetch, { onNone: () => effect, onSome: (value) => Effect.provideService(effect, FetchHttpClient.Fetch, value) })
+
+const withFetchStream = (fetch: Option.Option<typeof globalThis.fetch>) => <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
+  Option.match(fetch, { onNone: () => stream, onSome: (value) => Stream.provideService(stream, FetchHttpClient.Fetch, value) })
+
 /** The routed model of one selection: its fallback rung, the persisted effort, described as requested. */
 const selectionModel = (
   primary: ModelSelection,
@@ -445,6 +463,7 @@ const selectionModel = (
   effort: EngineSettings["reasoningEffort"],
   context: Context.Context<AuthStore>,
   http: HttpClient.HttpClient,
+  fetch: Option.Option<typeof globalThis.fetch>,
 ): LanguageModel.LanguageModel => {
   const service = {
     [LanguageModel.TypeId]: LanguageModel.TypeId,
@@ -453,6 +472,7 @@ const selectionModel = (
         withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)),
         effort,
       ).pipe(
+        withFetch(fetch),
         Effect.provide(context),
         Effect.provideService(HttpClient.HttpClient, http),
       ) as never,
@@ -462,6 +482,7 @@ const selectionModel = (
     // call rides this router's fallback — one rung, no double-hop.
     streamText: ((options: unknown) =>
       withConfiguredEffortStream(streamWith(primary, options), effort).pipe(
+        withFetchStream(fetch),
         Stream.provideContext(context),
         Stream.provideService(HttpClient.HttpClient, http),
       )) as never,
@@ -472,7 +493,8 @@ const selectionModel = (
 /**
  * `LanguageModelLive` — the engine loop's `LanguageModel`, routed per call.
  * Requires `SettingsStore` + `AuthStore`; brings its own fetch-backed
- * `HttpClient` so drivers don't have to.
+ * `HttpClient` so drivers don't have to. Built over a `ModelsTransport`
+ * (as the models plugin builds it), every call goes through that transport.
  */
 export const LanguageModelLive = Layer.effect(
   LanguageModel.LanguageModel,
@@ -480,9 +502,10 @@ export const LanguageModelLive = Layer.effect(
     // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
     const context = replayableContext(yield* Effect.context<AuthStore | SettingsStore>())
     const http = yield* HttpClient.HttpClient
+    const fetch = yield* transportFetchOf
     // One settings read: the model of the selection it finds.
     const selected = currentSelection.pipe(
-      Effect.map(({ primary, fallback, effort }) => selectionModel(primary, fallback, effort, context, http)),
+      Effect.map(({ primary, fallback, effort }) => selectionModel(primary, fallback, effort, context, http, fetch)),
       Effect.provide(context),
     )
     const service: LanguageModel.LanguageModel = {
@@ -520,6 +543,6 @@ export const LanguageModelSelectionLive = (
     // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
     const context = replayableContext(yield* Effect.context<AuthStore>())
     const http = yield* HttpClient.HttpClient
-    return selectionModel(primary, fallback, Option.none(), context, http)
+    return selectionModel(primary, fallback, Option.none(), context, http, yield* transportFetchOf)
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))

@@ -43,7 +43,7 @@ export {
 export type { CompatConfig } from "./llm/compat.js"
 export type { UsageReading } from "./llm/sse.js"
 export { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL, toOpenAiCodexRequestBody } from "./llm/openAiCodex.js"
-export { normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7, OpenAiCodexWebSocketHttpClient } from "./llm/openAiCodexWebSocket.js"
+export { makeOpenAiCodexWebSocketHttpClient, normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7, OpenAiCodexWebSocketHttpClient } from "./llm/openAiCodexWebSocket.js"
 export {
   buildProvider,
   chatCompletionsUrl,
@@ -72,3 +72,19 @@ export type { ReasoningEffort } from "./llm/modelCatalog.js"
 export { UtilityLlmLive } from "./llm/utilityLlm.js"
 export { modelsPlugin, default } from "./plugin.adapter.js"
 export { CurrentModelEndpoints, ModelEndpoint, ModelEndpoints } from "./ports/model-endpoints.port.js"
+export { ModelsTransport } from "./ports/models-transport.port.js"
+export type { ModelsFetch, WebSocketProxy } from "./ports/models-transport.port.js"
+export { ModelsTransportLive, transportFetch } from "./transport/models-transport.adapter.js"
+export {
+  BUN_WEBSOCKET_PROXY_VERSION,
+  HttpProxyOptions,
+  NODE_WEBSOCKET_PROXY_VERSION,
+  NoProxyRule,
+  PROXY_VARIABLES,
+  ProxyConfig,
+  ProxyEnvironment,
+  ProxyInvalid,
+  ProxyUnsupported,
+  ProxyUrlOption,
+} from "./transport/http-proxy.entity.js"
+export { bypassesProxy, isLoopback, parseNoProxy, proxyFor, redactCredentials, resolveProxy } from "./transport/http-proxy.entity.functions.js"

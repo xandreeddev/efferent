@@ -23,8 +23,8 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  * Effect's core modules; each `effect/<module>` barrel that was its own v3
  * package (effect/ai was @effect/ai) is allowed by name, or all of them with
  * the raw `effect/` prefix beside `@effect/`. v4 no longer re-exports
- * fast-check, so property tests name it (core) where v3 reached it
- * through `effect`.
+ * fast-check, so property tests name it (core, plugin-models tests) where
+ * v3 reached it through `effect`.
  */
 const CHECKED = [
   "packages/core/src/**",
@@ -53,7 +53,10 @@ const CHECKED = [
 /**
  * The declared TYPE-ERASURE boundary: the router wrapping arbitrary provider
  * services, the compat/codex clients speaking effect/ai's generic surface,
- * the loop's prompt assembly, the bridge over dynamic MCP tools. `as never`
+ * the loop's prompt assembly, the bridge over dynamic MCP tools, the npm
+ * undici's fetch typed as the global one (its requests and responses have the
+ * global fetch types' shape but are distinct classes, so nothing downstream
+ * may rely on `instanceof Response` / `Headers`). `as never`
  * is the design there and nowhere else — a new one anywhere else fails.
  * Test scaffolding (scripted providers, stubbed ports) is out of scope.
  */
@@ -62,6 +65,7 @@ const ERASURE_BOUNDARY = [
   "packages/plugin-models/src/llm/compat.ts",
   "packages/plugin-models/src/llm/openAiCodex.ts",
   "packages/plugin-models/src/llm/providers.ts",
+  "packages/plugin-models/src/transport/undici-fetch.adapter.ts",
   "packages/plugin-agent-loop/src/loop.ts",
   "packages/core/src/mcp/bridge.ts",
   "packages/plugin-tool-discovery/src/registry.adapter.ts",
@@ -198,6 +202,26 @@ const config: typeof GateSuiteConfig.Encoded = {
             ]
       },
       {
+            "name": "plugin-models-tests",
+            "path": "packages/plugin-models/src/**/*.test.ts",
+            "canImport": [
+                  "plugin-models",
+                  "core"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+                  "@xandreed/core",
+                  "undici",
+                  "ws",
+                  "fast-check"
+            ]
+      },
+      {
             "name": "plugin-models",
             "path": "packages/plugin-models/src/**",
             "canImport": [
@@ -211,6 +235,7 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun",
                   "bun:",
                   "@xandreed/core",
+                  "undici",
                   "ws"
             ]
       },

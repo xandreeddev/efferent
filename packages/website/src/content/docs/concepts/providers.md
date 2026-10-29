@@ -186,6 +186,132 @@ Hosts composing layers themselves use the stores directly:
 `LocalAuthStoreLive(cwd, home)` and `LocalSettingsStoreLive(cwd, home)`. Each
 passes its [conformance kit](/docs/concepts/conformance).
 
+## Proxy
+
+When a proxy applies, every call the models plugin makes goes through one
+transport: the provider SDKs (`anthropic`, `openai`, OpenCode's `gpt-*`
+models), the OpenAI-compatible client (OpenCode's other models, `google`,
+configured endpoints), the OAuth token refreshes and the OpenAI
+subscription's WebSocket. Its proxy is the plugin's `proxy` option, else the
+environment's:
+
+```ts
+{ plugin: modelsPlugin, options: {
+  proxy: "http://proxy.corp.example:3128",
+  noProxy: "gateway.internal.example,10.0.0.0/8",
+} }
+```
+
+- **`proxy`** is one URL for every target, `http://` or `https://`; a value
+  without a scheme (`proxy.corp.example:3128`) reads as `http://`. Empty (the
+  default), `https_proxy` (then `HTTPS_PROXY`) serves `https:` targets and
+  `http_proxy` (then `HTTP_PROXY`) `http:` ones, lower case first as undici
+  and curl read them; an `https:` target falls back to the `http:` proxy, as
+  Node's own environment proxy does. The variables are read through
+  Effect's `Config` when the agent is defined, so a host's `ConfigProvider`
+  decides what the plugin sees. The runtime's own fetch reads the real
+  environment, though: Bun's always, Node's under `NODE_USE_ENV_PROXY`. A
+  `ConfigProvider` that hides the variables does not keep those fetches from
+  using them.
+- **`noProxy`** lists hosts that go direct, added to `no_proxy` (then
+  `NO_PROXY`) from the environment. Entries are separated by commas or
+  spaces: `example.com` (with its subdomains; `.example.com` and
+  `*.example.com` mean the same), `example.com:8443` (that port only), an IP
+  address (`10.1.2.3`, `[::1]`, `[2001:db8::1]:8080`), a range (`10.0.0.0/8`,
+  `fd00::/8`), or `*` for every host, which turns the proxy off.
+- **Loopback hosts always go direct**: `localhost` and its subdomains,
+  `127.0.0.0/8` and `::1`, so a local model server is never sent to the
+  proxy. On Bun this holds for the `proxy` option, not for a proxy in the
+  environment (see below).
+- A proxy URL may carry credentials (`http://user:pass@proxy:3128`); from
+  code, pass it as `Redacted.make(...)`. Error messages show a proxy as
+  `http://<redacted>@proxy:3128`, and credentials in any URL the OpenAI-compatible
+  client, the OAuth requests or the WebSocket report are redacted too.
+- SOCKS proxies (`socks5://`) and `ALL_PROXY` are not supported. A proxy URL
+  that is not an `http://` or `https://` URL fails `Agent.define`
+  (`config.options`), naming where it came from (`the proxy option`,
+  `HTTPS_PROXY`, ...). With `noProxy: "*"` the environment's proxy variables
+  are not read at all, so one meant for other tools is left alone.
+
+A call that fails at the proxy says so: `the request to
+https://api.anthropic.com through the proxy http://<redacted>@proxy:3128
+failed: ...`. On Bun, a proxy that refuses the request with any status other
+than 407 (Proxy Authentication Required) is the exception: Bun hands that
+refusal (a 403, say) back as the response itself, so it reads as the
+provider's own error.
+
+**On Node**, a proxied call goes through undici's `fetch` with a proxy agent
+(a CONNECT tunnel for every target) and a direct call through undici's own
+direct agent. Node's global `fetch` ignores `HTTPS_PROXY` unless
+`NODE_USE_ENV_PROXY` is set. The transport depends on neither that nor the
+global dispatcher and agents, so the `noProxy` and loopback hosts stay direct
+even when it is set, and with `noProxy: "*"` every call does. Without any
+proxy setting the plugin adds no transport: its calls use the runtime's own
+fetch, as they did before it knew proxies, and a `FetchHttpClient.Fetch` the
+host provides around a turn still reaches the provider SDKs. Corporate
+certificate authorities come from `NODE_EXTRA_CA_CERTS`.
+A proxy that closes the connection while a tunnel opens fails the call at
+once.
+
+**On Bun**, a proxied call passes fetch's `proxy` option. Bun's fetch applies
+`HTTPS_PROXY` and `HTTP_PROXY` from the environment by itself, honouring the
+environment's `NO_PROXY`: a host that only the `noProxy` option or the
+loopback rule exempts still goes through a proxy set in the environment, so
+list such hosts in `NO_PROXY` on Bun. For the same reason `noProxy: "*"`
+leaves a proxy in the environment in force on Bun: set `NO_PROXY=*` there
+instead. On a runtime that is neither Node nor Bun, a proxy setting fails
+`Agent.define` instead of being ignored.
+
+**The OpenAI subscription (`openai-codex`)** talks over a WebSocket. When the
+proxy applies to `chatgpt.com`, the socket tunnels through it: on Node with an
+`https.Agent` and its `proxyEnv` option (Node 24.5 and later, which the
+package requires), on Bun with Bun's own `WebSocket` and its `proxy` option
+(Bun 1.3.6 and later). Bun 1.3.0 to 1.3.5 cannot tunnel a WebSocket, so there
+the call fails with an `AuthError` (not retried, no fallback) instead of
+connecting directly past the proxy.
+
+Not covered: the Langfuse and LangSmith exporters make their own requests
+(`@xandreed/evals-langfuse`, `@xandreed/evals-langsmith`).
+
+### A transport of the host's own
+
+A host that needs its own HTTP stack (client certificates, a custom agent)
+provides `ModelsTransport` through `Agent.define({ services })`: every call
+goes through its `fetch`, and the plugin's `proxy` and `noProxy` options are
+refused, since they would not apply. Without `webSocketAgent`, the
+subscription's WebSocket connects the runtime's default way. A
+`webSocketAgent` route of the wrong kind for the runtime (`Agent` is for
+Node, `Proxy` for Bun) fails the call rather than connecting past the proxy.
+
+```ts
+import { Context } from "effect"
+import { ModelsTransport } from "@xandreed/plugin-models"
+
+declare const corporateFetch: typeof fetch // the host's own, with its certificates
+
+const services = Context.make(ModelsTransport, ModelsTransport.of({ fetch: corporateFetch }))
+```
+
+The OAuth login helpers (`exchangeAnthropicCode`, `exchangeOpenAiCodexCode`
+and the refresh functions) take a `fetch` too. A host that signs in behind a
+proxy gives them a transport's:
+
+```ts
+import { Effect } from "effect"
+import { exchangeAnthropicCode, ModelsTransport, ModelsTransportLive } from "@xandreed/plugin-models"
+
+declare const code: string
+declare const verifier: string
+
+const tokens = Effect.gen(function* () {
+  const transport = yield* ModelsTransport
+  return yield* exchangeAnthropicCode(code, verifier, { fetch: transport.fetch })
+}).pipe(Effect.provide(ModelsTransportLive({ proxy: "http://proxy.corp.example:3128" })))
+```
+
+`ModelsTransportLive` closes its connection pools with its layer, so provide
+it around the whole use, as above.
+
 ## Images
 
 A user's images (`UserMessage.attachments`) reach the model as image parts on

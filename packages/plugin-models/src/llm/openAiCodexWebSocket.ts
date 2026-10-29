@@ -1,7 +1,10 @@
 import { HttpClient, HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/http"
-import { Effect, Result } from "effect"
+import { Effect, Match, Option, Redacted, Result } from "effect"
 import { release } from "node:os"
 import WebSocket from "ws"
+import type { WebSocketProxy } from "../ports/models-transport.port.js"
+import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
+import { currentRuntime } from "../transport/models-transport.adapter.js"
 
 const WEBSOCKET_BETA = "responses_websockets=2026-02-06"
 const sessionIds = new Map<string, string>()
@@ -70,13 +73,96 @@ export const normalizeOpenAiCodexWebSocketEvent = (value: unknown): unknown => {
 export const isOpenAiCodexControlEvent = (type: unknown): boolean =>
   typeof type === "string" && (type.startsWith("codex.") || type === "responsesapi.websocket_timing")
 
+/** What the client uses of a WebSocket, whichever implementation opened it. */
+interface CodexSocket {
+  readonly send: (data: string) => void
+  readonly close: (code: number, reason: string) => void
+  readonly onOpen: (listener: () => void) => void
+  readonly onMessage: (listener: (data: unknown) => void) => void
+  readonly onError: (listener: (error: Error) => void) => void
+  readonly onClose: (listener: (code: number, reason: string) => void) => void
+}
+
+/** A socket of the `ws` client (on Bun, Bun's stand-in for it, which takes neither an agent nor a proxy). */
+const wsSocket = (socket: WebSocket): CodexSocket => ({
+  send: (data) => socket.send(data),
+  close: (code, reason) => socket.close(code, reason),
+  onOpen: (listener) => socket.addEventListener("open", () => listener()),
+  onMessage: (listener) => socket.addEventListener("message", (event) => listener(event.data)),
+  onError: (listener) => socket.addEventListener("error", (event) =>
+    listener(event.error instanceof Error ? event.error : new Error(event.message || "WebSocket handshake failed"))),
+  onClose: (listener) => socket.addEventListener("close", (event) => listener(event.code, event.reason)),
+})
+
+/**
+ * Bun's own WebSocket, which takes `headers` and a `proxy` in its options.
+ * The DOM declaration of `WebSocket` (the one in force with the DOM library)
+ * has no options argument, so the constructor is called through `Reflect`.
+ */
+const bunSocket = (url: string, options: { readonly headers: Record<string, string>; readonly proxy: string }): CodexSocket => {
+  const socket: globalThis.WebSocket = Reflect.construct(globalThis.WebSocket, [url, options])
+  return {
+    send: (data) => socket.send(data),
+    close: (code, reason) => socket.close(code, reason),
+    onOpen: (listener) => socket.addEventListener("open", () => listener()),
+    onMessage: (listener) => socket.addEventListener("message", (event) => listener(event.data)),
+    onError: (listener) => socket.addEventListener("error", (event) =>
+      listener(new Error("message" in event && typeof event.message === "string" && event.message.length > 0 ? event.message : "WebSocket handshake failed"))),
+    onClose: (listener) => socket.addEventListener("close", (event) => listener(event.code, event.reason)),
+  }
+}
+
+/** Open the socket: directly, with a Node agent (one that tunnels to the proxy, or a plain one), or through Bun's `proxy` option. */
+const openSocket = (url: string, headers: Record<string, string>, proxy: Option.Option<WebSocketProxy>): CodexSocket =>
+  Option.match(proxy, {
+    onNone: () => wsSocket(new WebSocket(url, { headers })),
+    onSome: (route) => Match.value(route).pipe(
+      Match.tag("Agent", ({ agent }) => wsSocket(new WebSocket(url, { headers, agent }))),
+      Match.tag("Proxy", ({ url: proxyUrl }) => bunSocket(url, { headers, proxy: Redacted.value(proxyUrl) })),
+      Match.exhaustive,
+    ),
+  })
+
+/**
+ * Why this runtime cannot use `route`, if it cannot: an `Agent` is for the
+ * `ws` client on Node (Bun's stand-in for `ws` takes no agent), a `Proxy` for
+ * Bun's own `WebSocket` (Node's ignores a `proxy` option). Either would
+ * connect directly past the proxy, so the call fails instead.
+ */
+const routeMismatch = (route: WebSocketProxy): Option.Option<string> => {
+  const runtime = currentRuntime()
+  return Match.value(route).pipe(
+    Match.tag("Agent", () => runtime._tag === "Node" ? Option.none() : Option.some(`the WebSocket route is a Node agent, which ${runtime._tag === "Bun" ? "Bun's WebSocket" : "this runtime's WebSocket"} cannot use`)),
+    Match.tag("Proxy", () => runtime._tag === "Bun" ? Option.none() : Option.some("the WebSocket route is a proxy URL for Bun's WebSocket, which this runtime's WebSocket would ignore")),
+    Match.exhaustive,
+    Option.map((why) => `${why}: refused rather than connecting directly past the proxy`),
+  )
+}
+
+/** A failed subscription request, as the HTTP client reports it (credentials redacted). */
+const transportFailure = (request: HttpClientRequest.HttpClientRequest, cause: unknown) => new HttpClientError.HttpClientError({
+  reason: new HttpClientError.TransportError({
+    request: request.pipe(
+      HttpClientRequest.setHeader("authorization", "[redacted]"),
+      HttpClientRequest.setHeader("chatgpt-account-id", "[redacted]"),
+    ),
+    description: `OpenAI subscription WebSocket failed: ${
+      redactCredentials(cause instanceof Error ? cause.message : String(cause))
+    }`,
+    cause,
+  }),
+})
+
 /** Adapt the ChatGPT Codex WebSocket protocol to an SSE-shaped HttpClient
  * response. OpenAiLanguageModel remains the sole protocol decoder, so text,
  * reasoning, tool calls, tool results, usage, and errors keep their standard
- * Effect representations instead of being reimplemented here. */
-export const OpenAiCodexWebSocketHttpClient = HttpClient.make(
-  (request, url, signal) =>
-    Effect.tryPromise({
+ * Effect representations instead of being reimplemented here. `proxy` is how
+ * the socket reaches ChatGPT (`ModelsTransport.webSocketAgent`); `None`
+ * connects directly. A route this runtime cannot use fails every request. */
+export const makeOpenAiCodexWebSocketHttpClient = (proxy: Option.Option<WebSocketProxy>) => HttpClient.make(
+  (request, url, signal) => Option.match(Option.flatMap(proxy, routeMismatch), {
+    onSome: (why) => Effect.fail(transportFailure(request, new Error(why))),
+    onNone: () => Effect.tryPromise({
       try: () => new Promise<HttpClientResponse.HttpClientResponse>((resolve, reject) => {
         const body = decodeBody(request)
         const safeRequest = request.pipe(
@@ -99,7 +185,7 @@ export const OpenAiCodexWebSocketHttpClient = HttpClient.make(
         headers["session-id"] = requestId
         headers["x-client-request-id"] = requestId
 
-        const socket = new WebSocket(websocketUrl(url), { headers })
+        const socket = openSocket(websocketUrl(url), headers, proxy)
         const state: {
           settled: boolean
           controller?: ReadableStreamDefaultController<Uint8Array>
@@ -123,7 +209,7 @@ export const OpenAiCodexWebSocketHttpClient = HttpClient.make(
         const abort = () => fail(new Error("OpenAI subscription request aborted"))
         signal.addEventListener("abort", abort, { once: true })
 
-        socket.addEventListener("open", () => {
+        socket.onOpen(() => {
           Result.match(Result.try(() => {
             socket.send(JSON.stringify({ type: "response.create", ...body }))
             state.settled = true
@@ -138,9 +224,9 @@ export const OpenAiCodexWebSocketHttpClient = HttpClient.make(
             )
           }), { onFailure: fail, onSuccess: resolve })
         })
-        socket.addEventListener("message", (event) => {
+        socket.onMessage((data) => {
           Result.match(Result.try(() => {
-            const text = eventText(event.data)
+            const text = eventText(data)
             if (text === undefined) return
             const parsed = normalizeOpenAiCodexWebSocketEvent(JSON.parse(text)) as Json
             const type = parsed["type"]
@@ -160,24 +246,15 @@ export const OpenAiCodexWebSocketHttpClient = HttpClient.make(
             }
           }), { onFailure: fail, onSuccess: () => undefined })
         })
-        socket.addEventListener("error", (event) =>
-          fail(event.error ?? new Error(event.message || "WebSocket handshake failed")),
-        )
-        socket.addEventListener("close", (event) => {
-          if (event.code !== 1000) fail(new Error(`OpenAI subscription WebSocket closed ${event.code}: ${event.reason}`))
+        socket.onError(fail)
+        socket.onClose((code, reason) => {
+          if (code !== 1000) fail(new Error(`OpenAI subscription WebSocket closed ${code}: ${reason}`))
         })
       }),
-      catch: (cause) => new HttpClientError.HttpClientError({
-        reason: new HttpClientError.TransportError({
-          request: request.pipe(
-            HttpClientRequest.setHeader("authorization", "[redacted]"),
-            HttpClientRequest.setHeader("chatgpt-account-id", "[redacted]"),
-          ),
-          description: `OpenAI subscription WebSocket failed: ${
-            cause instanceof Error ? cause.message : String(cause)
-          }`,
-          cause,
-        }),
-      }),
+      catch: (cause) => transportFailure(request, cause),
     }),
+  }),
 )
+
+/** The subscription client connecting directly, with no proxy. */
+export const OpenAiCodexWebSocketHttpClient = makeOpenAiCodexWebSocketHttpClient(Option.none())

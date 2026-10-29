@@ -5,6 +5,8 @@ import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMedi
 import type { ModelCallPolicy } from "@xandreed/core"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
 import type { CompletionUsage, UsageReading } from "./sse.js"
+import type { ModelsFetch } from "../ports/models-transport.port.js"
+import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 
 /**
  * A generic OpenAI-compatible `/chat/completions` `LanguageModel` over raw
@@ -78,8 +80,8 @@ export interface CompatConfig {
   /** How the endpoint's usage is read (default: every count, reasoning
    *  included; see `UsageReading`). */
   readonly usage?: UsageReading
-  /** Injectable for tests; defaults to global fetch. */
-  readonly fetchImpl?: typeof fetch
+  /** The fetch requests go through (the models plugin passes its `ModelsTransport`'s, which knows the proxy); defaults to the global fetch. */
+  readonly fetchImpl?: ModelsFetch
   /** Host-owned admission (e.g. reserve a worst-case cost) before every call. */
   readonly beforeRequest?: (body: Readonly<Record<string, unknown>>) => Effect.Effect<void, AiError.AiError>
   /** Per-call accounting/resource boundary. Non-streaming responses are fully
@@ -87,8 +89,9 @@ export interface CompatConfig {
   readonly aroundRequest?: (body: Readonly<Record<string, unknown>>, request: Effect.Effect<Response, AiError.AiError>) => Effect.Effect<Response, AiError.AiError>
 }
 
+/** A request that failed before any response, described with proxy credentials redacted (the description can reach a session log). */
 const aiUnknown = (moduleName: string, method: string, e: unknown): AiError.AiError =>
-  AiError.make({ module: moduleName, method, reason: new AiError.UnknownError({ description: String(e) }) })
+  AiError.make({ module: moduleName, method, reason: new AiError.UnknownError({ description: redactCredentials(String(e)) }) })
 
 const invalidOutput = (moduleName: string, method: string, description: string): AiError.AiError =>
   AiError.make({ module: moduleName, method, reason: new AiError.InvalidOutputError({ description }) })

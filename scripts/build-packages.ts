@@ -13,8 +13,11 @@ const manifests = new Map(await Promise.all(names.map(async (name) =>
 /** Each package declares the runtimes it supports; the published manifest keeps that declaration. */
 const undeclared = names.filter((name) => manifests.get(name)?.engines === undefined)
 if (undeclared.length > 0) { console.error(`Declare "engines" in the package.json of: ${undeclared.join(", ")}`); process.exit(1) }
-const runtimeNote = (engines: { readonly node?: string, readonly bun?: string }) =>
-  engines.node !== undefined && engines.bun !== undefined ? "Node 24 or Bun." : engines.node !== undefined ? "Node 24." : "Bun only."
+/** The runtimes a packed README names, from the declared `engines` (`>=24.5` reads as Node 24.5). */
+const runtimeNote = (engines: { readonly node?: string, readonly bun?: string }) => {
+  const node = engines.node === undefined ? undefined : `Node ${engines.node.replace(/^>=\s*/, "")}`
+  return node !== undefined && engines.bun !== undefined ? `${node} or Bun.` : node !== undefined ? `${node}.` : "Bun only."
+}
 const versions = new Map(Array.from(manifests.values(), (manifest) => [manifest.name, manifest.version]))
 /**
  * The build stamp the publish script checks: the commit the sources came from, whether the

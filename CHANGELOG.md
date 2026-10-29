@@ -371,6 +371,47 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   counts as where the turn's runs start. Migration: dashboards or queries
   keyed on root spans or parent names follow the new tree
   (`docs/framework.md`, "Traces and metrics").
+- **`@xandreed/plugin-models`: Node now honours `HTTPS_PROXY` and
+  `HTTP_PROXY` for model calls.** Node's fetch ignored them (unless
+  `NODE_USE_ENV_PROXY` was set), so on Node every model and OAuth call went
+  direct; now they go through the proxy those variables (or the new `proxy`
+  option) name, except the `noProxy` / `NO_PROXY` hosts and loopback. (On
+  Bun, whose fetch applied them already, only `NO_PROXY` exempts a host from
+  a proxy in the environment, as before.) With a proxy set, Node calls go
+  through undici's own agents rather than the global dispatcher, so a
+  dispatcher a host installed with `setGlobalDispatcher` no longer applies
+  to them, and on both runtimes a `FetchHttpClient.Fetch` a host provides
+  around a turn no longer reaches the provider SDK calls (without a proxy
+  nothing changes: the plugin then adds no transport). A proxy variable that
+  is not an `http://` or `https://` URL (`socks5://...`) now fails
+  `Agent.define`. Migration: to keep calls direct, set the plugin's
+  `noProxy: "*"` on Node, which holds under `NODE_USE_ENV_PROXY` too and
+  leaves a SOCKS proxy in the environment unread (on Bun, set `NO_PROXY=*`,
+  since Bun applies the environment's proxy to fetch itself); to keep a
+  custom HTTP stack or fetch, provide it as a `ModelsTransport` through
+  `Agent.define({ services })`.
+- **`@xandreed/plugin-models`: a proxied OpenAI subscription call fails on
+  Bun before 1.3.6.** Bun 1.3.0 to 1.3.5 cannot send a WebSocket through a
+  proxy, and the `openai-codex` WebSocket used to connect directly whatever
+  the proxy setting; when a proxy applies to `chatgpt.com` it now fails with
+  an `AuthError` (not retried, no fallback). Migration: run on Node or Bun
+  1.3.6 or newer, or exempt `chatgpt.com` with `NO_PROXY`.
+- **`@xandreed/plugin-models` requires Node 24.5 or newer** (`engines.node`
+  `>=24.5`, was `>=24`): Node honours the `proxyEnv` option of `https.Agent`,
+  which the subscription's WebSocket tunnels through, from 24.5. On older Node
+  a proxied WebSocket fails with an `AuthError` rather than connecting
+  directly.
+- **`@xandreed/plugin-models` depends on `undici`** (`^7.30.1`), imported
+  only on Node when a proxy applies; Bun never loads it.
+- **`@xandreed/plugin-models`: the plugin has two more options and one more
+  optional service.** `proxy` and `noProxy` join its options (the plugin
+  reference and graph fingerprints change), and `ModelsTransport` its
+  `optional` services: a host that provides one through
+  `Agent.define({ services })` and also sets `proxy` or `noProxy` is
+  refused. `LocalAuthStoreLive` is built with `Layer.effect` (it reads the
+  optional `ModelsTransport` once), and the `fetch` of
+  `TokenRequestOptions` and `MemoryAuthOptions` and the compat client's
+  `fetchImpl` take a `ModelsFetch` (any `fetch` is one).
 
 - **`@xandreed/plugin-sessions`: the default lease renews itself.**
   `sessionsDefaults.ownership` is `{ mode: "lease", ttlMs: 60_000, renew:
@@ -849,6 +890,42 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   span, where spans nest, the metrics, trace content), the event list and
   the journal vocabulary; the website's SDK and providers pages; the event
   reference lists `tool.refused`, `stream.fallback` and the reserved names.
+- `@xandreed/plugin-models`: proxy support for every call the plugin makes
+  (the provider SDKs, the OpenAI-compatible client, OAuth token refreshes,
+  the OpenAI subscription's WebSocket), on Node and on Bun. The `proxy`
+  option (a URL, `Redacted` when it carries credentials) else
+  `https_proxy` / `HTTPS_PROXY` and `http_proxy` / `HTTP_PROXY` (lower case
+  first, as undici and curl read them); `noProxy` added to `no_proxy` /
+  `NO_PROXY` (host names with their subdomains, ports, IP addresses, CIDR
+  ranges, `[::1]`, `*`); loopback always direct; a value without a scheme
+  reads as `http://`. Proxy credentials are redacted from error messages; a
+  failed proxied call names the proxy and the target, a proxy's 407 on Bun
+  included.
+- `@xandreed/plugin-models`: the `ModelsTransport` port (a `fetch`, and
+  `webSocketAgent` for the subscription's WebSocket) and
+  `ModelsTransportLive(options)`, a scoped layer that fails with
+  `ProxyInvalid`, `ProxyUnsupported` or a `ConfigError`: on Node undici's
+  `fetch` with a `ProxyAgent` and a direct `Agent`, and plain agents for
+  direct WebSockets (independent of `NODE_USE_ENV_PROXY` and the global
+  dispatcher and agents; a proxy that closes the connection while the tunnel
+  opens fails the call at once instead of undici reopening it in a loop), on
+  Bun fetch's `proxy` option and, from Bun 1.3.6, the native `WebSocket`'s.
+  With `noProxy: "*"` on Node it is undici's direct agent. Hosts give the
+  OAuth login helpers its `fetch`. The plugin builds a transport only when a
+  proxy applies (or for `noProxy: "*"` on Node); the routed model and the
+  utility model then provide its fetch as `FetchHttpClient.Fetch`
+  innermost, so an ambient one cannot route a call past it. The
+  subscription's WebSocket client refuses a route the runtime cannot use
+  (`Agent` is for Node, `Proxy` for Bun). Also exported: `transportFetch`,
+  `HttpProxyOptions`, `ProxyUrlOption`, `ProxyConfig`, `ProxyEnvironment`,
+  `NoProxyRule`, `ProxyInvalid`, `ProxyUnsupported`, `resolveProxy`,
+  `proxyFor`, `parseNoProxy`, `bypassesProxy`, `isLoopback`,
+  `redactCredentials`, `PROXY_VARIABLES`, `BUN_WEBSOCKET_PROXY_VERSION`,
+  `NODE_WEBSOCKET_PROXY_VERSION`, and `makeOpenAiCodexWebSocketHttpClient`
+  (`makeOpenAiCodexLanguageModel` takes an optional `webSocketProxy`).
+- Docs: the website's providers page "Proxy" (options, NO_PROXY syntax, Node
+  and Bun behaviour, the subscription's WebSocket, a host's own transport,
+  OAuth logins behind a proxy); `docs/framework.md` and the README mention it.
 
 - `@xandreed/core`: the busy signal. `TurnActivity` (the turns this
   process has in flight, read at one moment as `TurnsInFlight`: the turns
@@ -1001,6 +1078,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   ids and `engine.run` under it) and its token and cost metrics have reached
   a `node:http` collector. The plugin reference prints `Provides: none` for a
   plugin that provides nothing.
+- `bun run verify:packages` runs `scripts/proxy-consumer.fixture.mjs` on Node
+  24.5 or newer against the packed packages, with `NODE_USE_ENV_PROXY=1` and
+  environment proxies pointing at a dead port: model and utility calls
+  through a recording proxy (CONNECT), loopback and `noProxy` hosts direct
+  (direct WebSocket agents included), `HTTP_PROXY` with credentials, a dead
+  proxy named without its credentials, a resetting proxy failing at once,
+  the subscription WebSocket's CONNECT sent through the proxy, and every
+  call direct with `noProxy: "*"`. On Bun, the packed consumer sends a model
+  call through the `proxy` option to a recording proxy (absolute form). The
+  plugin-models tests run a recording proxy that handles CONNECT and
+  absolute-form requests and resolves `*.invalid` hosts locally, so nothing
+  reaches the network; the tests of direct requests skip when the machine
+  has a proxy in its environment (CONTRIBUTING.md). CI runs the proxy tests
+  again on Bun 1.3.6, where the subscription's WebSocket tunnels, so both
+  sides of that version gate are tested. A new foundry layer
+  `plugin-models-tests` lets them use `fast-check`.
+  `undici-fetch.adapter.ts` joins the declared type-erasure boundary. The
+  packed READMEs name the Node version a package's `engines` declares
+  (`plugin-models`: Node 24.5).
 
 ## 0.13.0
 

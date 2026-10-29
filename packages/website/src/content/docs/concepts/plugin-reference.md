@@ -649,7 +649,7 @@ Provides: `effect/ai/LanguageModel`, `@xandreed/core/UtilityLlm`, `@xandreed/cor
 
 Requires: `efferent/SessionEnvironment`
 
-Optional: `@xandreed/plugin-models/HostCredentials`
+Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/ModelsTransport`
 
 ### Defaults
 
@@ -662,7 +662,9 @@ Optional: `@xandreed/plugin-models/HostCredentials`
   "endpoints": {},
   "storage": "local",
   "credentials": {},
-  "credentialEnv": {}
+  "credentialEnv": {},
+  "proxy": "",
+  "noProxy": ""
 }
 ```
 
@@ -805,6 +807,19 @@ Optional: `@xandreed/plugin-models/HostCredentials`
       "additionalProperties": {
         "type": "string"
       }
+    },
+    "proxy": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "string"
+        }
+      ]
+    },
+    "noProxy": {
+      "type": "string"
     }
   },
   "required": [
@@ -815,7 +830,9 @@ Optional: `@xandreed/plugin-models/HostCredentials`
     "endpoints",
     "storage",
     "credentials",
-    "credentialEnv"
+    "credentialEnv",
+    "proxy",
+    "noProxy"
   ],
   "additionalProperties": true
 }

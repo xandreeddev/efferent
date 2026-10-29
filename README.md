@@ -20,6 +20,7 @@ Every package below except the new `@xandreed/plugin-workspace` and
 `@xandreed/plugin-telemetry` is published at `0.13.0` under npm's `latest`
 tag; those two ship with the next release (npm's older
 `@xandreed/plugin-telemetry` versions are an earlier, unrelated plugin).
+From the next release `@xandreed/plugin-models` needs Node 24.5 or newer.
 The historical `efferent` npm package is a different release line.
 
 ## Compose
@@ -201,6 +202,14 @@ never touches disk — for a server or a serverless host: credentials come from
 `credentials` (`Redacted` values), the environment variables `credentialEnv`
 names, or the host's `HostCredentials`, and settings edits stay in memory. See
 [credentials and storage](packages/website/src/content/docs/concepts/providers.md#credentials-and-storage).
+
+Every call the models plugin makes (the providers, OpenAI-compatible endpoints,
+OAuth token refreshes, the OpenAI subscription's WebSocket) goes through its
+`proxy` option, else `HTTPS_PROXY` / `HTTP_PROXY` from the environment, on Node
+as on Bun; `noProxy` (added to `NO_PROXY`) and loopback hosts go direct. On
+Bun, whose fetch applies a proxy from the environment by itself, only
+`NO_PROXY` exempts a host from that one, so list such hosts there. See
+[proxy](packages/website/src/content/docs/concepts/providers.md#proxy).
 
 ## Packages
 
