@@ -221,7 +221,7 @@ describe("starting and storing", () => {
       })
       const task = yield* h.tasks.start(h.parent, { instructions: "unstored", mode: "spawn" })
       yield* h.idle
-      expect(logged).toContainEqual(["Warn", `background task ${task.taskId} could not store its turn: session.log: the store is down`])
+      expect(logged).toContainEqual(["Warn", `background task ${task.taskId} could not store its turn: store.io: the store is down`])
       expect(logged.filter(([, message]) => message.includes("stopped"))).toEqual([])
       // The turn ended without a result: the task is lost, and the parent hears of it.
       const lost = yield* h.tasks.status(h.parent, task.taskId)
@@ -307,6 +307,21 @@ describe("cancel and removal", () => {
     expect((yield* Effect.flip(quick.tasks.cancel(quick.parent, "no-such-task")))._tag).toBe("TaskMissing")
   })))
 
+  test("a task whose turn is cancelled under it is logged as stopped, with how its turn was closed, not as a failure", () => {
+    const logged: Array<readonly [string, string]> = []
+    const capture = Logger.layer([Logger.make((options) => logged.push([options.logLevel, [options.message].flat().join(" ")]))])
+    return scenario(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const h = yield* harness({ turn: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)) })
+      const task = yield* h.tasks.start(h.parent, { instructions: "forever", mode: "spawn" })
+      yield* Deferred.await(entered)
+      expect(yield* h.tasks.cancel(h.parent, task.taskId)).toBe(true)
+      yield* h.idle
+      expect(logged).toContainEqual(["Info", `background task ${task.taskId} stopped: its turn was cancelled`])
+      expect(logged.filter(([level]) => level === "Warn")).toEqual([])
+    }).pipe(Effect.provide(capture)))
+  })
+
   test("removing the parent removes its tasks, and a removed parent starts none", () => scenario(Effect.gen(function* () {
     const h = yield* harness()
     yield* Ref.set(h.dropping, true)
@@ -340,6 +355,24 @@ describe("limits, failures and budgets", () => {
     expect(yield* h.reactions).toEqual([`[Background task ${task.taskId} failed]\n<task-output>\n(no reply: the model is unavailable)\n</task-output>`])
     const child = yield* h.sessions.read({ id: task.child, owner }, { kinds: ["turn.ended"] })
     expect(child.map((event) => event.data.reason)).toEqual(["failed"])
+  })))
+
+  test("a task whose turn fails with one of the writer's tags stores the code it stands for, as the HarnessError of that code did", () => scenario(Effect.gen(function* () {
+    const session = ConversationId.make("00000000-0000-4000-8000-0000000000c1")
+    const failures: ReadonlyArray<TurnError> = [
+      new SessionContended({ session, attempts: 3 }),
+      new ReservedKind({ kind: "turn.ended" }),
+      new SessionLogError({ code: "store.io", message: "the store is down" }),
+      new HarnessError({ code: "session.contended", message: "turn 1: 3 conflicting writes" }),
+    ]
+    const stored = yield* Effect.forEach(failures, (error) => Effect.gen(function* () {
+      const h = yield* harness({ turn: () => Effect.fail(error) })
+      const task = yield* h.tasks.start(h.parent, { instructions: "refused", mode: "spawn" })
+      yield* h.idle
+      const status = yield* h.tasks.status(h.parent, task.taskId)
+      return [status.status, Option.getOrNull(Option.map(status.failure, (failure) => failure.code))]
+    }), { concurrency: 1 })
+    expect(stored).toEqual([["failed", "session.contended"], ["failed", "events.reserved"], ["failed", "session.log"], ["failed", "session.contended"]])
   })))
 
   test("a task the host will not admit fails with the host's reason, and the parent still hears of it", () => scenario(Effect.gen(function* () {

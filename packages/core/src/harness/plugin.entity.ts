@@ -1,9 +1,15 @@
 import { Schema } from "effect"
 import type { Context, Effect, Layer, Scope } from "effect"
 
-export const PLUGIN_API_VERSION = 2
-/** Version 1 plugins (no capabilities, no optional services) still load. */
-export const SUPPORTED_PLUGIN_API_VERSIONS: ReadonlyArray<number> = [1, 2]
+/**
+ * The plugin API this core speaks. Version 3: the turn's writer and the
+ * ports over it fail with `TurnError` (`TurnClosed`, `ReservedKind`,
+ * `SessionContended`, `SessionLogError` raised as their tags, no longer as
+ * `HarnessError` codes).
+ */
+export const PLUGIN_API_VERSION = 3
+/** Version 1 (no capabilities, no optional services) and version 2 plugins still load. */
+export const SUPPORTED_PLUGIN_API_VERSIONS: ReadonlyArray<number> = [1, 2, 3]
 
 /**
  * A framework failure, told apart by its `code` (`harnessCodeOf`). `cause`

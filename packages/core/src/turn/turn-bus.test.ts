@@ -3,14 +3,18 @@ import { Tool } from "effect/ai"
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Tracer } from "effect"
 import { failureCode } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
+import { ConversationId } from "../domain/message.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
+import { SessionLogError } from "../session/session-log.entity.js"
 import { turnEndingOf } from "../session/sessions.entity.functions.js"
-import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
+import { ReservedKind, SessionContended, TurnClosed } from "../session/sessions.entity.js"
+import { harnessDefectsAsFailures, makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
 import { defineHostEvent, onEvent, onTool, subscribeAll } from "./turn-event.entity.functions.js"
 import type { TurnEvent } from "./turn-event.entity.js"
 
 const started = (step: number): TurnEvent => ({ _tag: "step.started", step, planned: false, activeTools: [] })
+const session = ConversationId.make("00000000-0000-4000-8000-0000000000e1")
 const Lookup = Tool.make("lookup", {
   parameters: Schema.Struct({ query: Schema.String }),
   success: Schema.Struct({ id: Schema.String }),
@@ -162,6 +166,28 @@ describe("the turn event bus", () => {
       return drained._tag === "Failure" ? `${failureCode(drained.failure)}: ${drained.failure.message}` : "none"
     }))
     expect(codes).toEqual(["reaction.died: no", "events.background: a background handler was interrupted"])
+    const closed = await drainedAfter(() => Effect.die(new TurnClosed({ session, turn: 1, reason: "cancelled" })))
+    expect(closed._tag === "Failure" ? [closed.failure._tag, failureCode(closed.failure)] : "none").toEqual(["TurnClosed", "turn.closed"])
+  })
+
+  test("harnessDefectsAsFailures restores a TurnError carried as a defect, from any copy of core, as the failure it is; any other defect stays one", async () => {
+    const restored = (defect: unknown) => Effect.runPromise(Effect.exit(harnessDefectsAsFailures(Effect.die(defect)))).then((exit) =>
+      Option.match(Exit.findErrorOption(exit), { onSome: (error) => `${error._tag} ${failureCode(error)}`, onNone: () => Exit.hasDies(exit) ? "died" : "other" }))
+    const outcomes = await Promise.all([
+      new TurnClosed({ session, turn: 1, reason: "cancelled" }),
+      { _tag: "TurnClosed", session, turn: 1, reason: "removed" },
+      new ReservedKind({ kind: "turn.ended" }),
+      new SessionContended({ session, attempts: 3 }),
+      new SessionLogError({ code: "store.io", message: "the disk is full" }),
+      new HarnessError({ code: "reaction.died", message: "no" }),
+      new Error("boom"),
+      { code: "ENOENT", message: "no such file" },
+      { _tag: "TurnClosed" },
+    ].map(restored))
+    expect(outcomes).toEqual([
+      "TurnClosed turn.closed", "TurnClosed turn.closed", "ReservedKind events.reserved", "SessionContended session.contended",
+      "SessionLogError session.log", "HarnessError reaction.died", "died", "died", "died",
+    ])
   })
 
   test("a background handler that publishes what it takes, past its queue's size, neither deadlocks nor drops or reorders it", async () => {

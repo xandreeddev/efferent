@@ -12,6 +12,7 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 - A request refused over an image is sent again only before any part arrived, and only when `onMediaRejected` dealt with the images.
 - Step spans carry a call's usage under the GenAI names and the run span the sum under `engine.usage.*`; content only with `captureTraceContent`, images by size.
 - `runSteps` computes a step's plan once and serves the model, the messages and the tool choice from it.
+- `runSteps` fails with a turn's `TurnError` as it is (`isTurnError`: the writer's `TurnClosed` keeps its tag, typed or carried as a defect), and with anything else (a provider's `AiError`) as `loop.failed`, that failure its `cause`.
 - The default corrective texts are model-facing: a host's `correctives` replaces them, and a change to them updates their pins.
 
 ## Public surface
@@ -48,7 +49,7 @@ Steering text (`pendingInput`) is the host's; the fold's summary message is core
 
 ## Tests
 
-- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:84`), plus streaming fallback and trace content.
+- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:84`), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
 - `src/loop.test.ts`: scripted-model runs (correctives, breaker, cap, the compact seam, steering, streaming parity and fallback, image refusals, a host's initial batch, spans) and the pure decisions (`:669`).
 - The sdk golden composes `stepLoopPlugin`.
 - Run: `bun test packages/plugin-agent-loop packages/sdk/src/agent.golden.test.ts`.

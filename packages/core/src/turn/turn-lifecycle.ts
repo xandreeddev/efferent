@@ -123,8 +123,8 @@ const finishFailed: Effect.Effect<void, never, TurnMemory | TurnEvents | RunCont
  * span as `efferent.usage.*_tokens` (the turn's `agent.turn` when
  * `guardTurn` runs under `traceTurn` with no span between, as in
  * `Agent.turn`; `traceTurn` records it itself when the turn returns). A
- * HarnessError carried as a defect (a subscriber's failure behind a `never`
- * error channel) fails the turn, typed.
+ * `TurnError` carried as a defect (a subscriber's or the writer's failure
+ * behind a `never` error channel) fails the turn, typed.
  */
 export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.Effect<
   TurnResult,
@@ -233,7 +233,7 @@ const turnEndAttributes = (exit: Exit.Exit<TurnResult, unknown>): Record<string,
  * carries the first three too. It ends with `efferent.outcome` (the
  * `TurnEnding` reason of the turn's exit: completed, partial, failed or
  * interrupted; a turn cancelled or reaped while it ran shows as failed with
- * `turn.closed`), `efferent.failure.code` when the turn failed or was
+ * `turn.closed`, its `TurnClosed`'s code), `efferent.failure.code` when the turn failed or was
  * interrupted, and the turn's usage
  * (`efferent.usage.{input,output,cache_read,cache_write,reasoning,total}_tokens`):
  * when it returned, from its result; when it failed, what `guardTurn`

@@ -383,7 +383,7 @@ describe("Agent.turn", () => {
     })).pipe(Effect.provide(capture)))
     expect(codes).toEqual(["host.failed", "completed"])
     expect(ended).toEqual([[1, "interrupted"], [2, "completed"]])
-    expect(logged).toContainEqual(["the failed turn's end was not stored: session.log: the store is busy", "run-1", 1])
+    expect(logged).toContainEqual(["the failed turn's end was not stored: store.busy: the store is busy", "run-1", 1])
   })
 
   test("a failing subscriber fails the turn, not the tool call", async () => {

@@ -1,4 +1,4 @@
-import { Clock, Context, Duration, Effect, Exit, Match, Metric, Option, Schema } from "effect"
+import { Cause, Clock, Context, Duration, Effect, Exit, Match, Metric, Option, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import {
   cacheKeyOf,
@@ -8,7 +8,6 @@ import {
   ConversationMemory,
   definePlugin,
   guardTurn,
-  harnessCodeOf,
   harnessDefectsAsFailures,
   HarnessError,
   isBudgetTokens,
@@ -16,6 +15,7 @@ import {
   normalizeUserMessage,
   openTurnTools,
   processActivity,
+  reasonOf,
   replayableContext,
   SessionEnvironment,
   Sessions,
@@ -45,6 +45,7 @@ import type {
   Plugin,
   ProcessActivity,
   Turn,
+  TurnClosed,
   TurnError,
   TurnInput,
   TurnLiveInput,
@@ -148,7 +149,8 @@ export interface Agent {
    * `turn.defect`), or interrupted (`turn.interrupted`); on success, a
    * failure to store that end fails the turn, and on failure one is logged.
    * A turn closed
-   * elsewhere (cancelled, reaped) fails with `turn.closed`. `use` runs in
+   * elsewhere (cancelled, reaped, its session removed) fails with that
+   * `TurnClosed` (stored as `turn.closed`). `use` runs in
    * the turn's scope with the turn's services (RunContext, TurnEvents,
    * TurnTasks and the input's `layer`) provided: the same instances the
    * tools, policy and subscriptions see. It returns `use`'s outcome with
@@ -173,7 +175,7 @@ const missing = (key: string) => failure("service.missing", `The agent's plugins
  * The turns `Agent.turn` ran, once each was admitted, by how they ended
  * (`efferent.outcome`: the `TurnEnding` reason of the turn's exit,
  * completed, partial, failed or interrupted; a turn cancelled or reaped
- * while it ran shows as failed, `turn.closed`), and how long each took:
+ * while it ran shows as failed, its `TurnClosed` stored as `turn.closed`), and how long each took:
  * from its admission to its end, or, for a turn the host began (its
  * `TurnWriter` passed in), from when `Agent.turn` took it to when
  * `Agent.turn` returned, before the host ends it. A turn that could not
@@ -232,9 +234,9 @@ const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effec
     Match.orElse((other) => `the turn could not begin (${other._tag}) in session ${turn.session.id}`),
   ))))
 
-/** The turn's body, until someone else closes the turn: then the body is interrupted and the turn fails. */
-const untilClosed = (writer: TurnWriter) => <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError, R> =>
-  Effect.raceFirst(body, writer.closed.pipe(Effect.flatMap((closed) => Effect.fail(failure("turn.closed", `turn ${closed.turn} was ${closed.reason}`)))))
+/** The turn's body, until someone else closes the turn: then the body is interrupted and the turn fails with that `TurnClosed`. */
+const untilClosed = (writer: TurnWriter) => <A, E, R>(body: Effect.Effect<A, E, R>): Effect.Effect<A, E | TurnClosed, R> =>
+  Effect.raceFirst(body, writer.closed.pipe(Effect.flatMap((closed) => Effect.fail(closed))))
 
 const required = <I, S>(context: Context.Context<never>, tag: Context.Service<I, S>): Effect.Effect<S, HarnessError> =>
   Option.match(Context.getOption(context, tag), { onNone: () => Effect.fail(missing(tag.key)), onSome: Effect.succeed })
@@ -413,7 +415,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
         Effect.provideService(StepLoop, loop),
         Effect.provide(context),
         untilClosed(writer),
-        // A HarnessError carried as a defect is stored with its own code, not as `turn.defect`.
+        // A TurnError carried as a defect is stored with its own code, not as `turn.defect`.
         harnessDefectsAsFailures,
         Effect.exit,
       )
@@ -421,10 +423,8 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       // On failure the turn's own cause wins: an end not stored is logged (the scope's end tries it again).
       if (Exit.isFailure(exit)) {
         yield* writer.end(turnEndingOf(exit)).pipe(
-          Effect.catch((error) => {
-            const code = Option.getOrElse(harnessCodeOf(error), () => error._tag)
-            return (code === "turn.closed" ? Effect.logDebug : Effect.logWarning)(`the failed turn's end was not stored: ${code}: ${error.message}`)
-          }),
+          Effect.catchTag("TurnClosed", (closed) => Effect.logDebug(`the failed turn's end was not stored: the turn was ${closed.reason}`)),
+          Effect.catch((error) => Effect.logWarning(`the failed turn's end was not stored: ${reasonOf(Cause.fail(error))}`)),
           Effect.annotateLogs(turnIdsOf(writer.admitted)),
         )
         return yield* Effect.failCause(exit.cause)

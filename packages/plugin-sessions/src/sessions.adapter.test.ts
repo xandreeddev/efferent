@@ -50,6 +50,8 @@ const kinds = (events: ReadonlyArray<SessionLogEvent>) => events.map((event) => 
 const all = (sessions: Service, address: SessionAddress) => sessions.read(address).pipe(Effect.map(kinds))
 /** A turn's failure by its framework code (`harnessCodeOf`), else its tag. */
 const codeOf = (error: TurnError): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
+/** A writer's refusal as `TurnClosed:<reason>`, any other failure by its code. */
+const refusalOf = (error: TurnError): string => error._tag === "TurnClosed" ? `TurnClosed:${error.reason}` : codeOf(error)
 
 describe("one turn at a time", () => {
   test("a turn opens with the message stored once; a second message is busy, a retry is the same turn, a changed retry conflicts", () => withLog((log) => Effect.gen(function* () {
@@ -127,7 +129,7 @@ describe("one turn at a time", () => {
       const ended = yield* writer.end({ reason: "completed", failure: Option.none() })
       expect(ended.pending).toBe(0)
       const late = yield* Effect.flip(writer.append([{ kind: "late", data: {} }]))
-      expect(codeOf(late)).toBe("turn.closed")
+      expect([late._tag, late._tag === "TurnClosed" ? late.reason : null, codeOf(late)]).toEqual(["TurnClosed", "ended", "turn.closed"])
     }))
     expect(Option.isNone((yield* sessions!.get(address)).open)).toBe(true)
     const next = yield* Effect.scoped(sessions!.begin(address, say("two")).pipe(Effect.map((writer) => writer.admitted.turn)))
@@ -185,17 +187,16 @@ describe("one turn at a time", () => {
     const first = yield* Effect.forkChild(writer.end({ reason: "completed", failure: Option.none() }))
     yield* Deferred.await(entered)
     const second = yield* Effect.forkChild(writer.end({ reason: "failed", failure: Option.none() }))
-    const late = yield* Effect.flip(writer.append([{ kind: "late", data: {} }]))
-    expect([codeOf(late), late.message]).toEqual(["turn.closed", "turn 1 is ending"])
-    expect(codeOf(yield* Effect.flip(writer.write(Ref.set(changed, true))))).toBe("turn.closed")
+    // Its own end under way: the writer's own `TurnClosed`, `ended`.
+    expect(refusalOf(yield* Effect.flip(writer.append([{ kind: "late", data: {} }])))).toBe("TurnClosed:ended")
+    expect(refusalOf(yield* Effect.flip(writer.write(Ref.set(changed, true))))).toBe("TurnClosed:ended")
     const refused = yield* Effect.flip(writer.transact(() => Effect.succeed({ drafts: [{ kind: "late", data: {} }], result: undefined })))
-    expect(codeOf(refused)).toBe("turn.closed")
+    expect(refusalOf(refused)).toBe("TurnClosed:ended")
     yield* Deferred.succeed(release, undefined)
     expect(yield* Fiber.join(first)).toEqual({ pending: 0 })
     expect(yield* Fiber.join(second)).toEqual({ pending: 0 })
     expect(yield* writer.end({ reason: "completed", failure: Option.none() })).toEqual({ pending: 0 })
-    const after = yield* Effect.flip(writer.write(Ref.set(changed, true)))
-    expect([codeOf(after), after.message]).toEqual(["turn.closed", "turn 1 has ended"])
+    expect(refusalOf(yield* Effect.flip(writer.write(Ref.set(changed, true))))).toBe("TurnClosed:ended")
     expect(yield* Ref.get(changed)).toBe(false)
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "answer.published@1", "turn.ended@1"])
   })))
@@ -337,9 +338,10 @@ describe("one turn at a time", () => {
     yield* TestClock.adjust("10 seconds")
     yield* Fiber.join(closing)
     const results = [yield* Fiber.join(running), yield* Fiber.join(queued), yield* Fiber.join(ending)]
-    expect(results.map((result) => result._tag === "Failure" ? codeOf(result.failure) : "success")).toEqual(["turn.closed", "turn.closed", "turn.closed"])
-    expect(codeOf(yield* Effect.flip(writer.flush))).toBe("turn.closed")
-    expect(codeOf(yield* Effect.flip(writer.end({ reason: "completed", failure: Option.none() })))).toBe("turn.closed")
+    // Refused as the scope closed them: the writer's own `TurnClosed`, `ended`.
+    expect(results.map((result) => result._tag === "Failure" ? refusalOf(result.failure) : "success")).toEqual(["TurnClosed:ended", "TurnClosed:ended", "TurnClosed:ended"])
+    expect(refusalOf(yield* Effect.flip(writer.flush))).toBe("TurnClosed:ended")
+    expect(refusalOf(yield* Effect.flip(writer.end({ reason: "completed", failure: Option.none() })))).toBe("TurnClosed:ended")
   })))
 })
 
@@ -354,7 +356,7 @@ describe("leases", () => {
     expect(next.admitted.turn).toBe(2)
     yield* writer.append([{ kind: "late", data: {} }])
     const refused = yield* Effect.flip(writer.flush)
-    expect(codeOf(refused)).toBe("turn.closed")
+    expect(refusalOf(refused)).toBe("TurnClosed:interrupted")
     const closed = yield* writer.closed
     expect(closed.reason).toBe("interrupted")
     expect(yield* all(second!, address)).toEqual(["turn.started@1", "turn.ended@1", "turn.started@2"])
@@ -369,7 +371,7 @@ describe("leases", () => {
     yield* writer.flush
     yield* TestClock.adjust("1 second")
     yield* writer.append([{ kind: "late", data: {} }])
-    expect(codeOf(yield* Effect.flip(writer.flush))).toBe("turn.closed")
+    expect(refusalOf(yield* Effect.flip(writer.flush))).toBe("TurnClosed:interrupted")
     expect((yield* writer.closed).reason).toBe("interrupted")
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "in-time@1"])
   })))
@@ -540,7 +542,7 @@ describe("leases", () => {
       expect((yield* Effect.scoped(sessions.begin(address, say("next")))).admitted.turn).toBe(2)
       const ended = (yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason, (event.data.failure as JsonObject | null)?.code ?? null])
       expect(ended).toEqual([[1, "interrupted", "turn.lease"], [2, "failed", "turn.unended"]])
-      expect(logged).toContainEqual(["turn 1's end was not stored when its scope closed: session.log: the store is busy", address.id, 1])
+      expect(logged).toContainEqual(["turn 1's end was not stored when its scope closed: store.busy: the store is busy", address.id, 1])
     }).pipe(Effect.provide(capture)))
   })
 
@@ -680,7 +682,7 @@ describe("cancel and removal", () => {
     yield* Effect.yieldNow
     yield* sessions!.cancel(address, writer.admitted.turn)
     const results = [yield* Fiber.join(running), yield* Fiber.join(queued)]
-    expect(results.map((result) => result._tag === "Failure" ? codeOf(result.failure) : "success")).toEqual(["turn.closed", "turn.closed"])
+    expect(results.map((result) => result._tag === "Failure" ? refusalOf(result.failure) : "success")).toEqual(["TurnClosed:cancelled", "TurnClosed:cancelled"])
     yield* Deferred.await(interrupted)
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "turn.ended@1"])
   })))
@@ -704,7 +706,7 @@ describe("cancel and removal", () => {
     yield* Effect.yieldNow
     expect((yield* sessions!.cancel(address, 1)).cancelled).toBe(true)
     const results = [yield* Fiber.join(deciding), yield* Fiber.join(flushing)]
-    expect(results.map((result) => result._tag === "Failure" ? codeOf(result.failure) : "success")).toEqual(["turn.closed", "turn.closed"])
+    expect(results.map((result) => result._tag === "Failure" ? refusalOf(result.failure) : "success")).toEqual(["TurnClosed:cancelled", "TurnClosed:cancelled"])
     yield* Scope.close(scope, Exit.void)
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "turn.ended@1"])
   })))
@@ -715,7 +717,7 @@ describe("cancel and removal", () => {
     const writer = yield* sessions!.begin(address, say("stop me"))
     expect((yield* sessions!.cancel(address, 1)).cancelled).toBe(true)
     expect((yield* writer.closed).reason).toBe("cancelled")
-    expect(codeOf(yield* Effect.flip(writer.append([{ kind: "after", data: {} }])))).toBe("turn.closed")
+    expect(refusalOf(yield* Effect.flip(writer.append([{ kind: "after", data: {} }])))).toBe("TurnClosed:cancelled")
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "turn.ended@1"])
   })))
 
@@ -725,7 +727,7 @@ describe("cancel and removal", () => {
     const writer = yield* holder!.begin(address, say("elsewhere"))
     expect((yield* other!.cancel(address, 1)).cancelled).toBe(true)
     yield* writer.append([{ kind: "after", data: {} }])
-    expect(codeOf(yield* Effect.flip(writer.flush))).toBe("turn.closed")
+    expect(refusalOf(yield* Effect.flip(writer.flush))).toBe("TurnClosed:cancelled")
     expect((yield* writer.closed).reason).toBe("cancelled")
   })))
 
@@ -743,9 +745,9 @@ describe("cancel and removal", () => {
     expect((yield* other!.cancel(address, 1)).cancelled).toBe(true)
     yield* Ref.set(unavailable, true)
     yield* writer.append([{ kind: "after", data: {} }])
-    expect(codeOf(yield* Effect.flip(writer.flush))).toBe("turn.closed")
+    expect(refusalOf(yield* Effect.flip(writer.flush))).toBe("TurnClosed:interrupted")
     expect((yield* writer.closed).reason).toBe("interrupted")
-    expect(codeOf(yield* Effect.flip(writer.append([{ kind: "later", data: {} }])))).toBe("turn.closed")
+    expect(refusalOf(yield* Effect.flip(writer.append([{ kind: "later", data: {} }])))).toBe("TurnClosed:interrupted")
   })))
 
   test("a turn nobody holds any more is reaped by a cancel as by a delivery: in either order it ends interrupted and its items wait again", () => withLog((log) => Effect.gen(function* () {
@@ -796,6 +798,18 @@ describe("cancel and removal", () => {
     expect((yield* writer.closed).reason).toBe("removed")
     expect((yield* Effect.flip(sessions!.get(address)))._tag).toBe("SessionMissing")
     expect((yield* Effect.flip(sessions!.get({ id: child.header.id, owner })))._tag).toBe("SessionMissing")
+    expect(refusalOf(yield* Effect.flip(writer.append([{ kind: "after", data: {} }])))).toBe("TurnClosed:removed")
+  })))
+
+  test("a removal on another instance closes the holder's writer at its next write or read", () => withLog((log) => Effect.gen(function* () {
+    const [holder, other] = yield* instancesOver(log, sessionsDefaults, sessionsDefaults)
+    const address = yield* created(holder!)
+    const writer = yield* holder!.begin(address, say("open"))
+    yield* other!.remove(address)
+    expect(refusalOf(yield* Effect.flip(writer.snapshot([])))).toBe("TurnClosed:removed")
+    expect((yield* writer.closed).reason).toBe("removed")
+    expect(refusalOf(yield* Effect.flip(writer.history([])))).toBe("TurnClosed:removed")
+    expect(refusalOf(yield* Effect.flip(writer.append([{ kind: "after", data: {} }])))).toBe("TurnClosed:removed")
   })))
 
   test("another owner sees no session", () => withLog((log) => Effect.gen(function* () {
@@ -881,11 +895,11 @@ describe("check, then append", () => {
       yield* Effect.flip(writer.transact(() => Effect.succeed({ drafts: [{ kind: "memory.message", data: {} }], result: undefined }))),
       yield* Effect.flip(writer.transact(() => Effect.succeed({ drafts: [{ kind: "inbox.dropped", data: { id: "i1", reason: "attempts" } }], result: undefined }))),
     ]
-    expect(refused.map((error) => [codeOf(error), error.message])).toEqual([
-      ["events.reserved", "turn.ended is the framework's kind"],
-      ["events.reserved", "step.usage is the framework's kind"],
-      ["events.reserved", "memory.message is the framework's kind"],
-      ["events.reserved", "inbox.dropped is the framework's kind"],
+    expect(refused.map((error) => [error._tag, error._tag === "ReservedKind" ? error.kind : null, codeOf(error)])).toEqual([
+      ["ReservedKind", "turn.ended", "events.reserved"],
+      ["ReservedKind", "step.usage", "events.reserved"],
+      ["ReservedKind", "memory.message", "events.reserved"],
+      ["ReservedKind", "inbox.dropped", "events.reserved"],
     ])
     // Nothing of a refused call is stored, the turn is still open, and the writer goes on.
     expect(Option.map((yield* sessions!.get(address)).open, (open) => open.turn)).toEqual(Option.some(1))
@@ -929,6 +943,29 @@ describe("contention and a broken log", () => {
     yield* Ref.set(conflicting, false)
     expect(yield* all(sessions!, address)).toEqual(["inbox.queued"])
     expect(Option.map((yield* sessions!.get(held)).open, (open) => open.turn)).toEqual(Option.some(1))
+  })))
+
+  test("a turn's write that keeps losing to other writers fails with SessionContended, its writer latched, and stores nothing", () => withLog((inner) => Effect.gen(function* () {
+    const conflicting = yield* Ref.make(false)
+    const log = SessionLog.of({
+      ...inner,
+      commit: (id, commit) => Ref.get(conflicting).pipe(Effect.flatMap((conflict) => conflict
+        ? Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 }))
+        : inner.commit(id, commit))),
+    })
+    const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
+    const address = yield* created(sessions!)
+    const writer = yield* sessions!.begin(address, say("contended"))
+    yield* Ref.set(conflicting, true)
+    const decided = yield* Effect.flip(writer.transact(() => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: undefined })))
+    expect(decided._tag === "SessionContended" ? [decided._tag, decided.session === address.id, decided.attempts] : [decided._tag]).toEqual(["SessionContended", true, 3])
+    yield* writer.append([{ kind: "note", data: {} }])
+    const flushed = yield* Effect.flip(writer.flush)
+    expect([flushed._tag, codeOf(flushed)]).toEqual(["SessionContended", "session.contended"])
+    // The append's failure latched: every later write is refused with it.
+    expect((yield* Effect.flip(writer.append([{ kind: "later", data: {} }])))._tag).toBe("SessionContended")
+    yield* Ref.set(conflicting, false)
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1"])
   })))
 
   test("a log that answers what its contract rules out is a defect, not a SessionLogError", () => withLog((inner) => Effect.gen(function* () {

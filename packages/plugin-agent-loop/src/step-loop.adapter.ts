@@ -1,7 +1,7 @@
 import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Option, Ref, Schema } from "effect"
-import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isHarnessError, reasonOf, StepLoop } from "@xandreed/core"
+import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, reasonOf, StepLoop } from "@xandreed/core"
 import type { AgentMessage, CompletionVerdict, LogEntry, LoopEvent, RunResult, StepInfo, StepPlan, StepRequest, StepResult, TokenUsage, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopToolChoice } from "./loop.js"
@@ -27,7 +27,7 @@ const resultsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<StepResult> 
  * over an image goes to `request.onMediaRejected`; when it records an
  * `OmitMedia`, the step is planned again and sent once more.
  */
-export const runSteps = (request: StepRequest): Effect.Effect<RunResult, HarnessError> => Effect.gen(function* () {
+export const runSteps = (request: StepRequest): Effect.Effect<RunResult, TurnError> => Effect.gen(function* () {
   const model = yield* Option.match(Context.getOption(request.handlers, LanguageModel.LanguageModel), {
     onNone: () => Effect.fail(new HarnessError({ code: "loop.model", message: "The turn's services carry no LanguageModel" })),
     onSome: Effect.succeed,
@@ -150,8 +150,9 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
     Effect.provide(handlers),
     Effect.provideService(LanguageModel.LanguageModel, model),
     Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
-    // What failed underneath (a provider's `AiError`) stays the cause; the message is its text, never its stack.
-    Effect.mapError((error) => isHarnessError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
+    // A turn's failure (a HarnessError, the writer's TurnClosed and the other TurnError tags) keeps its tag; what else
+    // failed underneath (a provider's `AiError`) is `loop.failed`, with it as the cause and its text, never its stack, as the message.
+    Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
   ))
   return {
     outcome: result.outcome === "ok" ? "completed" : "partial",

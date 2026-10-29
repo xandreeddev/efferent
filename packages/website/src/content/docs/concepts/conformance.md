@@ -256,14 +256,15 @@ The checks:
 - **writer**: writes are stored in order, stamped with the turn; the end
   stores `completed`, a failure's code, `turn.unended` for a scope closed
   without an end and `turn.interrupted` for an interrupted one; a write after
-  the end is `turn.closed`.
+  the end is refused with `TurnClosed` (`ended`).
 - **transact**: records outside a turn; `turn.*` kinds are `ReservedKind`.
   A turn's writer refuses a `turn.ended` or a `memory.message` with
-  `events.reserved`, storing nothing of that call and leaving the turn open,
+  `ReservedKind`, storing nothing of that call and leaving the turn open,
   and stores a reserved kind the framework's turn wrote (`frameworkDraft`).
 - **cancel**: ends exactly the open turn as cancelled; the holder's writer
   is closed at once on its own instance, and at its next write when the
-  cancel came from another.
+  cancel came from another; a write after it is refused with `TurnClosed`
+  (`cancelled`).
 - **cancel-unheld**: an inbox turn whose lease ran out is reaped by a
   cancel as by a delivery: whichever comes first, nothing is cancelled, the
   turn ends `interrupted` (`turn.lease`) and its item waits alike.
@@ -276,13 +277,14 @@ The checks:
 - **lease**: a turn within its lease is open and busy; past it, it is shown
   closed, a drain with nothing waiting stores nothing (only a turn that
   opens reaps), the next begin reaps it (`interrupted`, `turn.lease`) and the
-  old holder's writes are refused.
+  old holder's writes are refused with `TurnClosed` (`interrupted`).
 - **lease-renewal**: a write renews the lease from that write: a turn
   written to within its lease is still open and busy past its first lease,
   and reaped once a lease has passed since the write.
 - **process**, only with `processOwned`: a turn whose process stopped, or
   whose pid now belongs to a process that started later, is reaped by the
-  next begin; one whose process runs is held.
+  next begin, its writes refused with `TurnClosed` (`interrupted`); one
+  whose process runs is held.
 - **tenure**, only with `processOwned`: a turn is judged as it was taken,
   not by the reader's ownership: a process-owned instance shows a leased
   turn open and busy within its lease, its holder still writes, and once the

@@ -353,8 +353,8 @@ export const reportStage = (events: TurnEventsService, stage: string, done: numb
   fails with `events.reserved`, and so does the turn unless the caller
   handles it. A record appended through the turn's writer
   (`TurnWriter.append` or `transact`) under one of those names is refused
-  the same way, and nothing of that call is stored: only the framework's
-  turn writes them.
+  with `ReservedKind` (whose code is `events.reserved`), and nothing of that
+  call is stored: only the framework's turn writes them.
 - Nothing else is refused: other names in those namespaces, and the kinds a
   plugin records for itself, are accepted. Never use them: plugin-tasks
   reads the first `task.result` or `task.cancelled` in a task's child

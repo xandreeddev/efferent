@@ -123,7 +123,7 @@ const cancelledMidToolCall = Effect.gen(function* () {
   const asking = yield* Effect.forkChild(agent.turn({ turn: { session, userMessage: message, runId: "run-1" }, services: services(first.model) }, deliverAnswer))
   yield* Deferred.await(fetching)
 
-  // 2. cancel while fetch_page runs: the turn fails with turn.closed.
+  // 2. cancel while fetch_page runs: the turn fails with TurnClosed (turn.closed).
   const cancelled = yield* sessions.cancel(session, 1)
   const asked = yield* Fiber.await(asking)
   const afterCancel = yield* sessions.read(session)
@@ -162,9 +162,10 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
       }
     })))
 
-    // 1-2. The cancel closed turn 1 while fetch_page ran; the turn failed with turn.closed.
+    // 1-2. The cancel closed turn 1 while fetch_page ran; the turn failed with that TurnClosed, whose code is turn.closed.
     expect(observed.cancelled.cancelled).toBe(true)
-    expect(Option.map(Exit.findErrorOption(observed.asked), codeOf)).toEqual(Option.some("turn.closed"))
+    expect(Option.map(Exit.findErrorOption(observed.asked), (error) => [error._tag, error._tag === "TurnClosed" ? error.reason : null, codeOf(error)]))
+      .toEqual(Option.some(["TurnClosed", "cancelled", "turn.closed"]))
     // What is durable after the cancel: the turn's start, its whole first step, the turn's end as cancelled,
     // and no reply. Of the step in flight, only events its writer stored before the cancel remain (here at most
     // fetch_page's tool.started, depending on whether its commit won the race): never its call or result in memory.

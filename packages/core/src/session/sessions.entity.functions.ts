@@ -1,7 +1,20 @@
-import { Cause, Exit, Formatter, Option, Predicate, Result } from "effect"
+import { Cause, Exit, Formatter, Option, Predicate, Result, Schema } from "effect"
 import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
+import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import type { TurnEndReason } from "./session-event.entity.js"
-import type { NotResumable, TurnEnding } from "./sessions.entity.js"
+import { SessionLogError } from "./session-log.entity.js"
+import { ReservedKind, SessionContended, TurnClosed } from "./sessions.entity.js"
+import type { NotResumable, TurnEnding, TurnError } from "./sessions.entity.js"
+
+const taggedTurnErrors = [TurnClosed, ReservedKind, SessionContended, SessionLogError].map((error) => Schema.is(Schema.Struct(error.fields)))
+
+/**
+ * Whether a value is a `TurnError` (a `HarnessError`, `TurnClosed`,
+ * `ReservedKind`, `SessionContended` or `SessionLogError`), by its tag and
+ * fields, whichever copy of `@xandreed/core` made it: what
+ * `harnessDefectsAsFailures` restores from a defect.
+ */
+export const isTurnError = (value: unknown): value is TurnError => isHarnessError(value) || taggedTurnErrors.some((is) => is(value))
 
 /** The longest failure message a stored `turn.ended` keeps. */
 const MESSAGE_CHARS = 500
@@ -45,7 +58,7 @@ const failed = (failure: { readonly code: string; readonly message: string }): T
  *   `code`), else `turn.failed`; its message when it carries a `code`, else
  *   `<_tag>: <message>` (or the error as text);
  * - a defect: failed, `turn.defect` (a runner applies
- *   `harnessDefectsAsFailures` before taking the exit, so a `HarnessError`
+ *   `harnessDefectsAsFailures` before taking the exit, so a `TurnError`
  *   carried as a defect keeps its own code);
  * - an interruption only: interrupted, `turn.interrupted`.
  * Messages are cut to 500 characters. A runner whose exit has no outcome

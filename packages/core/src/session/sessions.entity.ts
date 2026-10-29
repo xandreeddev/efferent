@@ -193,11 +193,17 @@ export class ReservedKind extends Schema.TaggedError<ReservedKind>()("ReservedKi
   kind: Schema.String,
 }) {}
 
-/** The turn was closed by someone else: cancelled, its lease reaped, or its session removed. */
+/**
+ * The turn's writer takes no more writes: someone else closed the turn
+ * (`cancelled`; `interrupted`, its lease reaped or its holder gone;
+ * `removed`, its session removed), or it was `ended` by its own writer (its
+ * end stored or under way, or its scope closed). `TurnWriter.closed` gives
+ * only the first three.
+ */
 export class TurnClosed extends Schema.TaggedError<TurnClosed>()("TurnClosed", {
   session: ConversationId,
   turn: Schema.Int,
-  reason: Schema.Literals(["cancelled", "interrupted", "removed"]),
+  reason: Schema.Literals(["cancelled", "interrupted", "removed", "ended"]),
 }) {}
 
 /** The host would not open the turn (a budget, a quota): nothing was opened or counted. */
@@ -253,12 +259,14 @@ export const turnBeginCodes = {
 /**
  * What a turn's own writes fail with, and the ports on the turn's path that
  * write through them (`TurnWriter`, `RunContext`, the bus, memory, the step
- * loop, the tool registry, `Turn`, `TurnRunner`): `TurnClosed` once someone
- * else closed the turn, `ReservedKind` for a draft under one of the
+ * loop, the tool registry, `Turn`, `TurnRunner`): `TurnClosed` once the
+ * turn takes no more writes, `ReservedKind` for a draft under one of the
  * framework's kinds, `SessionContended` and `SessionLogError` from the
- * store, and a `HarnessError` for the rest. A writer may raise any of the
- * first four as the `HarnessError` of its code (`turn.closed`,
- * `events.reserved`, `session.contended`, `session.log`): `harnessCodeOf`
- * gives the same code for either form.
+ * store, and a `HarnessError` for the rest. Match the first four with
+ * `Effect.catchTag`; `harnessCodeOf` gives the code each stands for
+ * (`turn.closed`, `events.reserved`, `session.contended`, `session.log`),
+ * the code a turn failing with it stores. One carried as a defect behind a
+ * `never` error channel is restored by `harnessDefectsAsFailures`
+ * (`isTurnError` tells one, from any copy of core).
  */
 export type TurnError = HarnessError | TurnClosed | ReservedKind | SessionContended | SessionLogError
