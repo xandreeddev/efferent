@@ -4,7 +4,7 @@ import type { TokenUsage } from "../domain/token-usage.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { EntryId, LogBody, LogEntry } from "../memory/memory-log.entity.js"
 import { ModelRequestHeader } from "../turn/model-request.entity.js"
-import { ToolCompletedEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
+import { ContextBuiltEvent, ToolCompletedEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
 import type { TurnEvent as TurnEventType } from "../turn/turn-event.entity.js"
 import {
   InboxDroppedData,
@@ -139,14 +139,23 @@ const memorySchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unkno
   "fields" in member ? [[MemoryKindOf[member.fields._tag.schema.literal], StoredMemoryData(Schema.Struct(Struct.omit(member.fields, ["_tag"])))] as const] : [])
 
 /**
+ * Stored bus events whose later keys older records lack: `context.built`
+ * has `budgetTokens` from 0.14.0, so a record written before reads without it.
+ */
+const laterKeys: ReadonlyMap<string, Schema.Codec<unknown, unknown>> = new Map<string, Schema.Codec<unknown, unknown>>([
+  ["context.built", Schema.Struct(Struct.evolve(Struct.omit(ContextBuiltEvent.fields, ["_tag"]), { budgetTokens: (field) => Schema.optionalKey(field) }))],
+])
+
+/**
  * The stored schema of each bus event in `TURN_EVENT_KINDS` that is stored
  * whole under its own name (`step.usage` is `StepUsageData`, `tool.completed`
  * drops its payload). A bus event left out of `TURN_EVENT_KINDS` has none.
+ * A key an older release did not store is optional (`laterKeys`).
  */
 const busSchemas: ReadonlyArray<readonly [string, Schema.Codec<unknown, unknown>]> = TurnEvent.members.flatMap((member) => {
   const tag = member.fields._tag.schema.literal
   if (tag === "tool.completed" || !TURN_EVENT_KINDS.includes(tag)) return []
-  return [[tag, Schema.Struct(Struct.omit(member.fields, ["_tag"]))] as const]
+  return [[tag, laterKeys.get(tag) ?? Schema.Struct(Struct.omit(member.fields, ["_tag"]))] as const]
 })
 
 const journalSchemas: ReadonlyMap<string, Schema.Codec<unknown, unknown>> = new Map<string, Schema.Codec<unknown, unknown>>([

@@ -35,7 +35,7 @@ console.log(`Installing from temporary local registry into ${consumer}`)
 const install = Bun.spawn(["bun", "install", "--ignore-scripts", "--no-cache", "--cache-dir", join(consumer, ".install-cache")], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await install.exited !== 0) process.exit(1)
 await writeFile(join(consumer, "verify.ts"), `
-import { Context, Deferred, Effect, Layer, Option, Stream } from "effect"
+import { Context, Deferred, Effect, Layer, Option, Ref, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
 import { fileSystemConformance, makeMemoryFileSystem, Sessions, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
@@ -58,17 +58,20 @@ const turned = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  })
  const view = yield* sessions.create({ owner: "consumer" })
  const address = { id: view.header.id, owner: "consumer" }
- const outcome = yield* agent.turn({ turn: { session: address, userMessage: new UserMessage({ text: "world" }), runId: "run-1" }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
-  (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+ const admittedMeta = yield* Ref.make<unknown>(null)
+ const outcome = yield* agent.turn({ turn: { session: address, userMessage: new UserMessage({ text: "world" }), runId: "run-1", meta: { request: "r-1" } }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
+  (turn) => Ref.set(admittedMeta, turn.admitted.meta).pipe(Effect.andThen(turn.run({})), Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+ const started = yield* sessions.read(address, { kinds: ["turn.started"] })
  const fork = yield* sessions.fork(address, { origin: "fork", inherit: true })
- return { outcome, forked: fork.header.parent }
+ return { outcome, forked: fork.header.parent, meta: JSON.stringify([yield* Ref.get(admittedMeta), started[0]?.data.meta]) }
 })) )
 if (turned.outcome.outcome !== "completed" || Option.getOrNull(turned.outcome.reply) !== "hello world" || Option.isNone(turned.forked)) process.exit(1)
+if (turned.meta !== JSON.stringify([{ request: "r-1" }, { request: "r-1" }])) process.exit(1)
 if (turned.outcome.usage.totalTokens !== 5 || turned.outcome.usage.cacheWriteTokens !== 1 || turned.outcome.usage.reasoningTokens !== 1) process.exit(1)
 const rubric = semanticEvaluator({id:"external-quality",version:"1",questions:{supported:{type:"boolean",instructions:"Is the answer supported?"}},state:(input:{answer:string})=>input.answer})
 const assessments = await Effect.runPromise(assessAll([{evaluator:rubric,select:["supported"]}],{answer:"fixture"}).pipe(Effect.provide(SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))))
 if(assessments[0]?.status!=="scored" || assessments[0]?.metadata.backend!=="jev") process.exit(1)
-console.log("Composable agent turn, session fork, eval composition and optional rubric adapter passed")
+console.log("Composable agent turn with host meta, session fork, eval composition and optional rubric adapter passed")
 const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const done = yield* Deferred.make<string>()
  const react = (writer: TurnWriter) => Deferred.succeed(done, writer.admitted.userMessage.text).pipe(Effect.asVoid)

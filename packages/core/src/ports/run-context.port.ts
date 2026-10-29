@@ -3,7 +3,7 @@ import type { Effect } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
-import type { SessionAddress } from "../session/sessions.entity.js"
+import type { AdmittedTurn, SessionAddress } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { MemoryReader } from "./memory.port.js"
 import type { TurnEventsService, TurnTasksService } from "./turn-events.port.js"
@@ -15,6 +15,8 @@ export class RunContext extends Context.Service<RunContext, {
   readonly session: SessionAddress
   readonly runId: string
   readonly userMessage: UserMessage
+  /** The admitted turn as the session began it: its number, key, origin, command, claimed inbox items and the host's `meta`. */
+  readonly admitted: AdmittedTurn
   readonly memory: MemoryReader
   readonly events: TurnEventsService
   readonly tasks: TurnTasksService

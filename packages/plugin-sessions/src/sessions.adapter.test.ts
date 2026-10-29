@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
-import type { BeginTurn, SessionAddress, SessionLogEvent, TurnWriter } from "@xandreed/core"
+import { HarnessError, SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnWriter } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
@@ -75,12 +75,36 @@ describe("one turn at a time", () => {
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "step.started@1", "answer.published@1", "step.ended@1", "turn.ended@1", "turn.started@2", "turn.ended@2"])
   })))
 
-  test("a turn whose scope closes without an end ends as failed", () => withLog((log) => Effect.gen(function* () {
+  test("the host's meta is stored when given and shown on the writer, and a retry with other meta is the same turn", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    const meta = (value: JsonObject): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text: "find alpha" }), runId: "run-k1", key: "k1", command: {}, meta: value })
+    const writer = yield* sessions!.begin(address, meta({ request: "r1", tenant: "acme" }))
+    expect(writer.admitted.meta).toEqual({ request: "r1", tenant: "acme" })
+    expect(writer.started.data.meta).toEqual({ request: "r1", tenant: "acme" })
+    // The key's fingerprint is the message and the command: other metadata, or none, is a retry of the same turn.
+    const retried = yield* Effect.flip(sessions!.begin(address, meta({ request: "r2" })))
+    expect([retried._tag, retried._tag === "TurnDuplicate" ? retried.turn : null]).toEqual(["TurnDuplicate", 1])
+    yield* writer.end({ reason: "completed", failure: Option.none() })
+    expect((yield* Effect.flip(sessions!.begin(address, say("find alpha", "k1"))))._tag).toBe("TurnDuplicate")
+    // Without meta nothing is written: the stored turn.started is the same as before meta existed.
+    const plain = yield* Effect.scoped(sessions!.begin(address, say("plain", "k2")).pipe(Effect.map((other) => [other.admitted.meta, "meta" in other.started.data])))
+    expect(plain).toEqual([{}, false])
+    const stored = yield* sessions!.read(address, { kinds: ["turn.started"] })
+    expect(stored.map((event) => event.data.meta ?? null)).toEqual([{ request: "r1", tenant: "acme" }, null])
+  })))
+
+  test("a turn whose scope closes without an end ends as failed (turn.unended), or interrupted (turn.interrupted) when the scope was interrupted", () => withLog((log) => Effect.gen(function* () {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
     yield* Effect.scoped(sessions!.begin(address, say("left open")))
+    const begun = yield* Deferred.make<void>()
+    const held = yield* Effect.forkChild(Effect.scoped(sessions!.begin(address, say("interrupted")).pipe(
+      Effect.andThen(Deferred.succeed(begun, undefined)), Effect.andThen(Effect.never))))
+    yield* Deferred.await(begun)
+    yield* Fiber.interrupt(held)
     const events = yield* sessions!.read(address, { kinds: ["turn.ended"] })
-    expect(events.map((event) => event.data.reason)).toEqual(["failed"])
+    expect(events.map((event) => [event.data.reason, (event.data.failure as JsonObject | null)?.code])).toEqual([["failed", "turn.unended"], ["interrupted", "turn.interrupted"]])
     expect(Option.isNone((yield* sessions!.get(address)).open)).toBe(true)
   })))
 
@@ -116,7 +140,7 @@ describe("one turn at a time", () => {
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "answer.published@1", "turn.ended@1"])
   })))
 
-  test("an end the store refuses is tried again, by a later end or by the scope's own", () => withLog((inner) => Effect.gen(function* () {
+  test("an end the store refuses is tried again, by a later end or by the scope's own with that same ending", () => withLog((inner) => Effect.gen(function* () {
     const refusals = yield* Ref.make(0)
     const log = SessionLog.of({
       ...inner,
@@ -132,14 +156,20 @@ describe("one turn at a time", () => {
       yield* writer.append([{ kind: "after.refusal", data: {} }])
       expect(yield* writer.end({ reason: "completed", failure: Option.none() })).toEqual({ pending: 0 })
     }))
-    const scope = yield* Scope.make()
-    const writer = yield* sessions!.begin(address, say("two")).pipe(Scope.provide(scope))
-    yield* Ref.set(refusals, 1)
-    expect((yield* Effect.flip(writer.end({ reason: "completed", failure: Option.none() }))).code).toBe("session.log")
-    yield* Scope.close(scope, Exit.void)
-    expect(Option.isNone((yield* sessions!.get(address)).open)).toBe(true)
-    expect((yield* Effect.scoped(sessions!.begin(address, say("three")))).admitted.turn).toBe(3)
-    expect((yield* sessions!.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "completed"], [2, "failed"], [3, "failed"]])
+    // The scope's end stores the ending the turn tried, not `turn.unended` or `turn.interrupted`.
+    const refusedThenClosed = (text: string, ending: TurnEnding, closing: Exit.Exit<unknown, unknown>) => Effect.gen(function* () {
+      const scope = yield* Scope.make()
+      const writer = yield* sessions!.begin(address, say(text)).pipe(Scope.provide(scope))
+      yield* Ref.set(refusals, 1)
+      expect((yield* Effect.flip(writer.end(ending))).code).toBe("session.log")
+      yield* Scope.close(scope, closing)
+      expect(Option.isNone((yield* sessions!.get(address)).open)).toBe(true)
+    })
+    yield* refusedThenClosed("two", { reason: "completed", failure: Option.none() }, Exit.void)
+    yield* refusedThenClosed("three", { reason: "failed", failure: Option.some({ code: "host.failed", message: "the host failed" }) }, Exit.interrupt())
+    expect((yield* Effect.scoped(sessions!.begin(address, say("four")))).admitted.turn).toBe(4)
+    expect((yield* sessions!.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason, (event.data.failure as JsonObject | null)?.code ?? null]))
+      .toEqual([[1, "completed", null], [2, "completed", null], [3, "failed", "host.failed"], [4, "failed", "turn.unended"]])
     expect(yield* all(sessions!, address)).toContain("after.refusal@1")
   })))
 
@@ -542,16 +572,21 @@ describe("the inbox", () => {
     expect((yield* sessions!.read(address, { kinds: ["inbox.queued"] })).length).toBe(1)
   })))
 
-  test("an item whose turn fails waits again, and is dropped after too many attempts", () => withLog((log) => Effect.gen(function* () {
+  test("an item whose turn fails waits again, and is dropped after too many attempts; each turn stores its failure's code", () => withLog((log) => Effect.gen(function* () {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
     yield* sessions!.deliver(address, item("t1"))
     const failing = () => Effect.fail("the model is down")
+    const coded = () => Effect.fail(new HarnessError({ code: "model.unavailable", message: "no provider answered" }))
     expect((yield* sessions!.drain(address, failing, { maxTurns: 1 })).turns).toBe(1)
     expect((yield* sessions!.get(address)).pending).toBe(1)
-    expect((yield* sessions!.drain(address, failing, { maxTurns: 1 })).turns).toBe(1)
+    expect((yield* sessions!.drain(address, coded, { maxTurns: 1 })).turns).toBe(1)
     expect((yield* sessions!.get(address)).pending).toBe(0)
     expect((yield* sessions!.read(address, { kinds: ["inbox.dropped"] })).map((event) => event.data.id)).toEqual(["t1"])
+    expect((yield* sessions!.read(address, { kinds: ["turn.ended"] })).map((event) => [event.data.reason, event.data.failure])).toEqual([
+      ["failed", { code: "turn.failed", message: "the model is down" }],
+      ["failed", { code: "model.unavailable", message: "no provider answered" }],
+    ])
   })))
 
   test("an inbox turn interrupted before it wrote anything did not try its items: no attempt is counted", () => withLog((log) => Effect.gen(function* () {
@@ -568,6 +603,33 @@ describe("the inbox", () => {
     yield* sessions!.drain(address, tried, { maxTurns: 1 })
     expect((yield* sessions!.get(address)).pending).toBe(0)
     expect((yield* sessions!.read(address, { kinds: ["inbox.dropped"] })).map((event) => [Option.getOrNull(event.turn), event.data.id])).toEqual([[5, "t1"]])
+  })))
+
+  test("an inbox turn whose run interrupts itself ends interrupted and counts an attempt; one interrupted from outside counts none", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* sessions!.deliver(address, item("t1"))
+    const entered = yield* Deferred.make<void>()
+    const held = yield* Effect.forkChild(sessions!.drain(address, () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never))))
+    yield* Deferred.await(entered)
+    yield* Fiber.interrupt(held)
+    expect((yield* sessions!.get(address)).pending).toBe(1)
+    // The default `inbox.attempts` is 2: two runs that interrupt themselves drop the item, and the drain stops.
+    expect((yield* sessions!.drain(address, () => Effect.interrupt)).turns).toBe(2)
+    expect((yield* sessions!.get(address)).pending).toBe(0)
+    expect((yield* sessions!.read(address, { kinds: ["inbox.dropped"] })).map((event) => [Option.getOrNull(event.turn), event.data.id])).toEqual([[3, "t1"]])
+    expect((yield* sessions!.read(address, { kinds: ["turn.ended"] })).map((event) => [event.data.reason, (event.data.failure as JsonObject | null)?.code]))
+      .toEqual([["interrupted", "turn.interrupted"], ["interrupted", "turn.interrupted"], ["interrupted", "turn.interrupted"]])
+  })))
+
+  test("a HarnessError a run carries as a defect is stored with its own code; any other defect is turn.defect", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, inbox: { ...sessionsDefaults.inbox, attempts: 3 } })
+    const address = yield* created(sessions!)
+    yield* sessions!.deliver(address, item("t1"))
+    yield* sessions!.drain(address, () => Effect.die(new HarnessError({ code: "reaction.failed", message: "broken" })), { maxTurns: 1 })
+    yield* sessions!.drain(address, () => Effect.die(new Error("boom")), { maxTurns: 1 })
+    expect((yield* sessions!.read(address, { kinds: ["turn.ended"] })).map((event) => event.data.failure))
+      .toEqual([{ code: "reaction.failed", message: "broken" }, { code: "turn.defect", message: "Error: boom" }])
   })))
 
   test("a user's message and an inbox turn race: exactly one begins", () => withLog((log) => Effect.gen(function* () {
@@ -659,6 +721,23 @@ describe("admission", () => {
     expect((yield* Ref.get(admitted)).map((entry) => entry.split(":")[0])).toEqual(["user", "inbox"])
   })))
 
+  test("the host's admission sees each turn's meta, the inbox's from drain, and {} when none was given", () => withLog((log) => Effect.gen(function* () {
+    const seen = yield* Ref.make<ReadonlyArray<JsonObject>>([])
+    const recording = Layer.succeed(TurnAdmission, TurnAdmission.of({
+      admit: (turn, open) => Ref.update(seen, (all) => [...all, turn.meta]).pipe(Effect.andThen(open)),
+    }))
+    const sessions = yield* Effect.service(Sessions).pipe(Effect.provide(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), recording)))))
+    const address = yield* created(sessions)
+    const ended = (writer: TurnWriter) => writer.end({ reason: "completed", failure: Option.none() })
+    yield* Effect.scoped(sessions.begin(address, { ...say("one", "k1"), meta: { tenant: "acme" } }).pipe(Effect.flatMap(ended)))
+    yield* sessions.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    const drained = yield* Ref.make<ReadonlyArray<unknown>>([])
+    yield* sessions.drain(address, (writer) => Ref.set(drained, [writer.admitted.origin, writer.admitted.meta, writer.started.data.meta]), { maxTurns: 1, meta: { source: "drain" } })
+    expect(yield* Ref.get(drained)).toEqual(["inbox", { source: "drain" }, { source: "drain" }])
+    yield* Effect.scoped(sessions.begin(address, say("two", "k2")).pipe(Effect.flatMap(ended)))
+    expect(yield* Ref.get(seen)).toEqual([{ tenant: "acme" }, { source: "drain" }, {}])
+  })))
+
   test("a begin interrupted after its opening commit still closes the turn it opened", () => withLog((log) => Effect.gen(function* () {
     const committed = yield* Deferred.make<void>()
     const stalling = yield* Ref.make(true)
@@ -674,7 +753,8 @@ describe("admission", () => {
     yield* Deferred.await(committed)
     yield* Fiber.interrupt(beginning)
     expect(Option.isNone((yield* sessions.get(address)).open)).toBe(true)
-    expect((yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason])).toEqual([[1, "interrupted"]])
+    expect((yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason, (event.data.failure as JsonObject | null)?.code]))
+      .toEqual([[1, "interrupted", "turn.interrupted"]])
     expect((yield* sessions.get(address)).pending).toBe(1)
     yield* Ref.set(stalling, false)
     expect((yield* Effect.scoped(sessions.begin(address, say("next")))).admitted.turn).toBe(2)

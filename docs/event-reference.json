@@ -26,7 +26,7 @@
   "bus": [
     {
       "name": "turn.started",
-      "description": "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said. Not journaled from the bus: the session stored its own `turn.started` when the turn began. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
+      "description": "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model). Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` only when it was given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
       "transient": false,
       "stored": {
         "as": "recorded-elsewhere",
@@ -46,6 +46,11 @@
         {
           "name": "userMessage",
           "type": "{ text }",
+          "required": true
+        },
+        {
+          "name": "meta",
+          "type": "object",
           "required": true
         }
       ],
@@ -69,16 +74,20 @@
           },
           "userMessage": {
             "$ref": "#/definitions/UserMessageEncoded"
+          },
+          "meta": {
+            "type": "object"
           }
         },
         "required": [
           "_tag",
           "runId",
           "turn",
-          "userMessage"
+          "userMessage",
+          "meta"
         ],
         "additionalProperties": true,
-        "description": "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said. Not journaled from the bus: the session stored its own `turn.started` when the turn began. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
+        "description": "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model). Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` only when it was given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
         "definitions": {
           "UserMessageEncoded": {
             "type": "object",
@@ -699,7 +708,7 @@
     },
     {
       "name": "context.built",
-      "description": "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate and reservation, how many compactions the build applied, and the active tools. Journaled as `context.built`; the full request is journaled beside it as `request.prepared`.",
+      "description": "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate of the messages, the tokens reserved for the system prompt and tool schemas, the run's `budgetTokens` (the whole request's; memory compacted the messages toward `budgetTokens - reservedTokens`), how many compactions the build applied, and the active tools. Journaled as `context.built` (records written before 0.14.0 have no `budgetTokens`); the full request is journaled beside it as `request.prepared`.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -744,6 +753,11 @@
         },
         {
           "name": "reservedTokens",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "budgetTokens",
           "type": "integer",
           "required": true
         },
@@ -800,6 +814,11 @@
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
           },
+          "budgetTokens": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
           "compactions": {
             "type": "integer",
             "minimum": -9007199254740991,
@@ -822,11 +841,12 @@
           "systemFingerprint",
           "estimatedTokens",
           "reservedTokens",
+          "budgetTokens",
           "compactions",
           "activeTools"
         ],
         "additionalProperties": true,
-        "description": "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate and reservation, how many compactions the build applied, and the active tools. Journaled as `context.built`; the full request is journaled beside it as `request.prepared`."
+        "description": "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate of the messages, the tokens reserved for the system prompt and tool schemas, the run's `budgetTokens` (the whole request's; memory compacted the messages toward `budgetTokens - reservedTokens`), how many compactions the build applied, and the active tools. Journaled as `context.built` (records written before 0.14.0 have no `budgetTokens`); the full request is journaled beside it as `request.prepared`."
       }
     },
     {
@@ -1521,7 +1541,7 @@
     {
       "kind": "turn.started",
       "writer": "plugin-sessions, when `Sessions.begin` opens the turn",
-      "sensitive": "The user's message and the host's command.",
+      "sensitive": "The user's message, the host's command and the host's metadata (`meta`), when given.",
       "fields": [
         {
           "name": "runId",
@@ -1562,6 +1582,11 @@
           "name": "at",
           "type": "number",
           "required": true
+        },
+        {
+          "name": "meta",
+          "type": "object",
+          "required": false
         }
       ],
       "body": [],
@@ -1613,6 +1638,9 @@
                 ]
               }
             ]
+          },
+          "meta": {
+            "type": "object"
           }
         },
         "required": [
@@ -3755,6 +3783,11 @@
           "required": true
         },
         {
+          "name": "budgetTokens",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "compactions",
           "type": "integer",
           "required": true
@@ -3798,6 +3831,11 @@
             "maximum": 9007199254740991
           },
           "reservedTokens": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "budgetTokens": {
             "type": "integer",
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
@@ -4328,7 +4366,7 @@
     },
     {
       "kind": "turn.ended",
-      "writer": "plugin-sessions: the turn writer's `end`, `Sessions.cancel`, or a reap",
+      "writer": "plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap",
       "sensitive": "Failure messages, which may quote errors.",
       "fields": [
         {
@@ -4526,9 +4564,24 @@
       "meaning": "Someone else closed the turn (cancelled, reaped, the session removed); its later writes are refused."
     },
     {
+      "code": "turn.failed",
+      "where": "stored `turn.ended` failure (`turnEndingOf`)",
+      "meaning": "The turn failed with a typed error that has no `code` of its own; the message is `<_tag>: <message>`, or the error as text (reason failed)."
+    },
+    {
+      "code": "turn.defect",
+      "where": "stored `turn.ended` failure (`turnEndingOf`)",
+      "meaning": "The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `HarnessError` carried as a defect back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`."
+    },
+    {
+      "code": "turn.interrupted",
+      "where": "stored `turn.ended` failure",
+      "meaning": "The turn was interrupted before it ended: its body (`turnEndingOf`), the scope its writer lived in, or its begin after the opening commit (reason interrupted)."
+    },
+    {
       "code": "turn.unended",
       "where": "stored `turn.ended` failure",
-      "meaning": "The turn's scope closed before the turn was ended (reason failed or interrupted)."
+      "meaning": "The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, not this code."
     },
     {
       "code": "turn.lease",
@@ -4536,9 +4589,14 @@
       "meaning": "The turn's holder stopped writing and another instance reaped it (reason interrupted)."
     },
     {
-      "code": "inbox.turn",
-      "where": "stored `turn.ended` failure",
-      "meaning": "An inbox turn run by `Sessions.drain` failed."
+      "code": "turn.budget",
+      "where": "a run of the step loop (`turn.run`, `runTurnLoop`)",
+      "meaning": "The run's `budgetTokens` (the policy's, else the agent's) is not an integer of at least 1."
+    },
+    {
+      "code": "config.budget",
+      "where": "`Agent.define`",
+      "meaning": "The agent's `budgetTokens` is not an integer of at least 1."
     },
     {
       "code": "turn.unstarted",
@@ -4667,8 +4725,8 @@
     },
     {
       "code": "context.budget",
-      "where": "`@xandreed/plugin-memory-window`",
-      "meaning": "The current turn alone exceeds the context budget (`budgetTokens`)."
+      "where": "each step of a run; `@xandreed/plugin-memory-window`",
+      "meaning": "At a step, the system prompt and the active tools' schemas leave nothing of the context budget (`budgetTokens`); with the window strategy, also when the current turn alone does not fit the budget memory is given: the whole budget at the turn's start, what they leave at each step."
     },
     {
       "code": "session.log",

@@ -1,4 +1,9 @@
+import { Schema } from "effect"
+import { BudgetTokens } from "./token-usage.entity.js"
 import type { ModelPrice, TokenUsage, UsageBreakdown } from "./token-usage.entity.js"
+
+/** Whether a value is a valid token budget: an integer of at least 1 (`BudgetTokens`). */
+export const isBudgetTokens: (value: unknown) => value is BudgetTokens = Schema.is(BudgetTokens)
 
 export const zeroUsage: TokenUsage = {
   inputTokens: 0,

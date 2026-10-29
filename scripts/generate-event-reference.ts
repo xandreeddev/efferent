@@ -24,7 +24,7 @@ const fail = (message: string) => failures.push(message)
 
 /** Who writes each reserved kind, and what a host must treat as sensitive in it. */
 const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensitive: string }>> = {
-  "turn.started": { writer: "plugin-sessions, when `Sessions.begin` opens the turn", sensitive: "The user's message and the host's command." },
+  "turn.started": { writer: "plugin-sessions, when `Sessions.begin` opens the turn", sensitive: "The user's message, the host's command and the host's metadata (`meta`), when given." },
   "memory.system": { writer: "Memory, when the turn's system prompt (or a variant) changes", sensitive: "The full system prompt text." },
   "memory.section": { writer: "Memory: `turn.context(…)` and turn-tier prompt sections", sensitive: "Turn sections: the host's context for this turn, as the model sees it." },
   "memory.step": { writer: "Memory: the step policy's step context", sensitive: "Step context text." },
@@ -43,7 +43,7 @@ const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensi
   "context.built": { writer: "The turn's bus (stored from `context.built`)", sensitive: "None: fingerprints, counts and tool names." },
   "decision.recorded": { writer: "The turn's bus (stored from `decision.recorded`)", sensitive: "Candidate descriptions; the context itself only as a hash." },
   "request.prepared": { writer: "The turn, before each provider call (`TurnMemory.prepareRequest`)", sensitive: "The full system prompt text and every active tool declaration (and step context in `system` mode)." },
-  "turn.ended": { writer: "plugin-sessions: the turn writer's `end`, `Sessions.cancel`, or a reap", sensitive: "Failure messages, which may quote errors." },
+  "turn.ended": { writer: "plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap", sensitive: "Failure messages, which may quote errors." },
   "inbox.queued": { writer: "plugin-sessions: `Sessions.deliver` (a task's result, a host's item)", sensitive: "The item's content and source." },
   "inbox.dropped": { writer: "plugin-sessions: the end of the last turn that took the item and failed", sensitive: "None: the item id." },
 }
@@ -75,9 +75,13 @@ interface ErrorCode { readonly code: string; readonly where: string; readonly me
  */
 const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "turn.closed", where: "`Agent.turn`, the turn writer", meaning: "Someone else closed the turn (cancelled, reaped, the session removed); its later writes are refused." },
-  { code: "turn.unended", where: "stored `turn.ended` failure", meaning: "The turn's scope closed before the turn was ended (reason failed or interrupted)." },
+  { code: "turn.failed", where: "stored `turn.ended` failure (`turnEndingOf`)", meaning: "The turn failed with a typed error that has no `code` of its own; the message is `<_tag>: <message>`, or the error as text (reason failed)." },
+  { code: "turn.defect", where: "stored `turn.ended` failure (`turnEndingOf`)", meaning: "The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `HarnessError` carried as a defect back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`." },
+  { code: "turn.interrupted", where: "stored `turn.ended` failure", meaning: "The turn was interrupted before it ended: its body (`turnEndingOf`), the scope its writer lived in, or its begin after the opening commit (reason interrupted)." },
+  { code: "turn.unended", where: "stored `turn.ended` failure", meaning: "The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, not this code." },
   { code: "turn.lease", where: "stored `turn.ended` failure", meaning: "The turn's holder stopped writing and another instance reaped it (reason interrupted)." },
-  { code: "inbox.turn", where: "stored `turn.ended` failure", meaning: "An inbox turn run by `Sessions.drain` failed." },
+  { code: "turn.budget", where: "a run of the step loop (`turn.run`, `runTurnLoop`)", meaning: "The run's `budgetTokens` (the policy's, else the agent's) is not an integer of at least 1." },
+  { code: "config.budget", where: "`Agent.define`", meaning: "The agent's `budgetTokens` is not an integer of at least 1." },
   { code: "turn.unstarted", where: "the turn's memory", meaning: "Memory was asked to record, or for the turn's number, before the user's message was taken." },
   { code: "turn.persisted", where: "`TurnMemory.persistMessage`", meaning: "The user's message was taken twice in one turn." },
   { code: "turn.numbering", where: "the turn's memory", meaning: "Memory numbered the user's message differently from the turn the session stored." },
@@ -103,7 +107,7 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "request.model", where: "`@xandreed/plugin-models`", meaning: "The selected model could not be resolved or described." },
   { code: "request.memory", where: "`replayModelRequest`", meaning: "The memory events before a stored request did not decode." },
   { code: "memory.log", where: "the turn", meaning: "Stored memory events did not decode, or memory could not be stored." },
-  { code: "context.budget", where: "`@xandreed/plugin-memory-window`", meaning: "The current turn alone exceeds the context budget (`budgetTokens`)." },
+  { code: "context.budget", where: "each step of a run; `@xandreed/plugin-memory-window`", meaning: "At a step, the system prompt and the active tools' schemas leave nothing of the context budget (`budgetTokens`); with the window strategy, also when the current turn alone does not fit the budget memory is given: the whole budget at the turn's start, what they leave at each step." },
   { code: "session.log", where: "the turn writer", meaning: "The session store failed during the turn." },
   { code: "session.contended", where: "the turn writer, plugin-sessions", meaning: "Too many conflicting writes to the session in a row." },
   { code: "session.state", where: "the turn writer", meaning: "The session's state, kept in its head, did not decode." },
@@ -286,7 +290,7 @@ const body = (links: { readonly framework: string }) => [
   "When `Agent.turn` begins the turn itself and `Sessions.begin` refuses it, the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/sdk`). The HTTP status is a suggestion for a host serving turns over HTTP.",
   table(["Begin error", "Code", "Suggested HTTP status", "Meaning"], beginCodes.map((entry) => [code(entry.tag), code(entry.code), entry.http, entry.meaning])),
   "## Common turn error codes",
-  `Besides the begin codes, these are common \`HarnessError\` codes a turn fails with, or that a stored \`turn.ended\` carries in \`failure.code\`. The list is not exhaustive: it has every code the packages raise under ${OWNED_PREFIXES.filter((prefix) => prefix !== "task.").map((prefix) => code(`${prefix}*`)).join(", ")} (the generator checks), but other plugins raise codes of their own (a memory strategy's, a store's), and a host's own errors keep their own codes.`,
+  `Besides the begin codes, these are common \`HarnessError\` codes a turn fails with, or that a stored \`turn.ended\` carries in \`failure.code\`. A failed turn's \`turn.ended\` carries the code of the error it failed with (one of these, a plugin's, or a host's own), else \`turn.failed\`, \`turn.defect\` or \`turn.interrupted\` (\`turnEndingOf\` from \`@xandreed/core\`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: \`task.turn\`, \`task.deadline\`). The list is not exhaustive: it has every code the packages raise under ${OWNED_PREFIXES.filter((prefix) => prefix !== "task.").map((prefix) => code(`${prefix}*`)).join(", ")} (the generator checks), but other plugins raise codes of their own (a memory strategy's, a store's), and a host's own errors keep their own codes.`,
   table(["Code", "Where", "Meaning"], ERROR_CODES.map((entry) => [code(entry.code), entry.where, entry.meaning])),
   "## Feed and socket frames",
   "`@xandreed/plugin-render` turns a journal into client frames (`RenderFeed`); the host's projection names each record's `event` and `data`, and its cursor is the journal's `seq`. Over SSE, each connection starts with the preamble; a record carries its sequence as the event id, so a reconnecting `EventSource` resumes with `Last-Event-ID`. One `ready` frame follows the backlog (the first poll that finds nothing new), then a heartbeat comment while the feed is idle. The feed ends after `maxDurationMs`, and the client reconnects with its cursor.",

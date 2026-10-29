@@ -76,7 +76,7 @@ const recordingWriter = Effect.gen(function* () {
     session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: next.data,
   }))])
   const writer: TurnWriter = {
-    admitted: { session: { id: session, owner: "test" }, turn: 1, runId: "run-1", key: "run-1", origin: "user", userMessage, command: {}, claimed: [] },
+    admitted: { session: { id: session, owner: "test" }, turn: 1, runId: "run-1", key: "run-1", origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
     history: () => Effect.succeed([]),
     snapshot: () => Ref.get(stored),

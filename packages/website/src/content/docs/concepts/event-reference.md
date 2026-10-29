@@ -30,13 +30,14 @@ There are two kinds of events. The **bus** carries a turn's typed events (`TurnE
 
 ### `turn.started`
 
-Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said. Not journaled from the bus: the session stored its own `turn.started` when the turn began. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.
+Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model). Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` only when it was given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.
 
 | Field | Type |
 | --- | --- |
 | `runId` | `string` |
 | `turn` | `integer` |
 | `userMessage` | `{ text }` |
+| `meta` | `object` |
 
 ### `step.started`
 
@@ -121,7 +122,7 @@ Published by the tool registry when skills (and their tools) become active: alwa
 
 ### `context.built`
 
-Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate and reservation, how many compactions the build applied, and the active tools. Journaled as `context.built`; the full request is journaled beside it as `request.prepared`.
+Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate of the messages, the tokens reserved for the system prompt and tool schemas, the run's `budgetTokens` (the whole request's; memory compacted the messages toward `budgetTokens - reservedTokens`), how many compactions the build applied, and the active tools. Journaled as `context.built` (records written before 0.14.0 have no `budgetTokens`); the full request is journaled beside it as `request.prepared`.
 
 | Field | Type |
 | --- | --- |
@@ -133,6 +134,7 @@ Published before each provider call, once the step's context is built (none for 
 | `systemFingerprint` | `string` |
 | `estimatedTokens` | `integer` |
 | `reservedTokens` | `integer` |
+| `budgetTokens` | `integer` |
 | `compactions` | `integer` |
 | `activeTools` | `Array<string>` |
 
@@ -195,7 +197,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 
 | Kind | Written by | Sensitive content | Fields |
 | --- | --- | --- | --- |
-| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message and the host's command. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `entry`, `at` |
+| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message, the host's command and the host's metadata (`meta`), when given. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `entry`, `at`, `meta` |
 | `memory.system` | Memory, when the turn's system prompt (or a variant) changes | The full system prompt text. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.section` | Memory: `turn.context(…)` and turn-tier prompt sections | Turn sections: the host's context for this turn, as the model sees it. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.step` | Memory: the step policy's step context | Step context text. | `entry`, `runId`, `step`, `at`, `body` |
@@ -211,10 +213,10 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `tool.started` | The turn's bus (stored from `tool.started`) | Tool input. | `step`, `invocationId`, `tool`, `input`, `labels`, `stage` |
 | `tool.completed` | The turn's bus (stored from `tool.completed`) | None: input and result are left out. | `step`, `invocationId`, `tool`, `ok`, `durationMs`, `labels`, `stage` |
 | `completion.evaluated` | The turn's bus (stored from `completion.evaluated`) | The host's facts behind the verdict. | `step`, `verdict` |
-| `context.built` | The turn's bus (stored from `context.built`) | None: fingerprints, counts and tool names. | `step`, `turn`, `strategy`, `strategyVersion`, `fingerprint`, `systemFingerprint`, `estimatedTokens`, `reservedTokens`, `compactions`, `activeTools` |
+| `context.built` | The turn's bus (stored from `context.built`) | None: fingerprints, counts and tool names. | `step`, `turn`, `strategy`, `strategyVersion`, `fingerprint`, `systemFingerprint`, `estimatedTokens`, `reservedTokens`, `budgetTokens`, `compactions`, `activeTools` |
 | `decision.recorded` | The turn's bus (stored from `decision.recorded`) | Candidate descriptions; the context itself only as a hash. | `record` |
 | `request.prepared` | The turn, before each provider call (`TurnMemory.prepareRequest`) | The full system prompt text and every active tool declaration (and step context in `system` mode). | `version`, `runId`, `step`, `strategyVersion`, `system`, `render`, `through`, `contextFingerprint`, `tools`, `toolChoice`, `model`, `cacheKey`, `callPolicy` |
-| `turn.ended` | plugin-sessions: the turn writer's `end`, `Sessions.cancel`, or a reap | Failure messages, which may quote errors. | `reason`, `failure` |
+| `turn.ended` | plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap | Failure messages, which may quote errors. | `reason`, `failure` |
 | `inbox.queued` | plugin-sessions: `Sessions.deliver` (a task's result, a host's item) | The item's content and source. | `id`, `source`, `content` |
 | `inbox.dropped` | plugin-sessions: the end of the last turn that took the item and failed | None: the item id. | `id`, `reason` |
 
@@ -279,14 +281,18 @@ When `Agent.turn` begins the turn itself and `Sessions.begin` refuses it, the tu
 
 ## Common turn error codes
 
-Besides the begin codes, these are common `HarnessError` codes a turn fails with, or that a stored `turn.ended` carries in `failure.code`. The list is not exhaustive: it has every code the packages raise under `turn.*`, `events.*`, `request.*`, `loop.*`, `tools.*` (the generator checks), but other plugins raise codes of their own (a memory strategy's, a store's), and a host's own errors keep their own codes.
+Besides the begin codes, these are common `HarnessError` codes a turn fails with, or that a stored `turn.ended` carries in `failure.code`. A failed turn's `turn.ended` carries the code of the error it failed with (one of these, a plugin's, or a host's own), else `turn.failed`, `turn.defect` or `turn.interrupted` (`turnEndingOf` from `@xandreed/core`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: `task.turn`, `task.deadline`). The list is not exhaustive: it has every code the packages raise under `turn.*`, `events.*`, `request.*`, `loop.*`, `tools.*` (the generator checks), but other plugins raise codes of their own (a memory strategy's, a store's), and a host's own errors keep their own codes.
 
 | Code | Where | Meaning |
 | --- | --- | --- |
 | `turn.closed` | `Agent.turn`, the turn writer | Someone else closed the turn (cancelled, reaped, the session removed); its later writes are refused. |
-| `turn.unended` | stored `turn.ended` failure | The turn's scope closed before the turn was ended (reason failed or interrupted). |
+| `turn.failed` | stored `turn.ended` failure (`turnEndingOf`) | The turn failed with a typed error that has no `code` of its own; the message is `<_tag>: <message>`, or the error as text (reason failed). |
+| `turn.defect` | stored `turn.ended` failure (`turnEndingOf`) | The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `HarnessError` carried as a defect back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`. |
+| `turn.interrupted` | stored `turn.ended` failure | The turn was interrupted before it ended: its body (`turnEndingOf`), the scope its writer lived in, or its begin after the opening commit (reason interrupted). |
+| `turn.unended` | stored `turn.ended` failure | The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, not this code. |
 | `turn.lease` | stored `turn.ended` failure | The turn's holder stopped writing and another instance reaped it (reason interrupted). |
-| `inbox.turn` | stored `turn.ended` failure | An inbox turn run by `Sessions.drain` failed. |
+| `turn.budget` | a run of the step loop (`turn.run`, `runTurnLoop`) | The run's `budgetTokens` (the policy's, else the agent's) is not an integer of at least 1. |
+| `config.budget` | `Agent.define` | The agent's `budgetTokens` is not an integer of at least 1. |
 | `turn.unstarted` | the turn's memory | Memory was asked to record, or for the turn's number, before the user's message was taken. |
 | `turn.persisted` | `TurnMemory.persistMessage` | The user's message was taken twice in one turn. |
 | `turn.numbering` | the turn's memory | Memory numbered the user's message differently from the turn the session stored. |
@@ -312,7 +318,7 @@ Besides the begin codes, these are common `HarnessError` codes a turn fails with
 | `request.model` | `@xandreed/plugin-models` | The selected model could not be resolved or described. |
 | `request.memory` | `replayModelRequest` | The memory events before a stored request did not decode. |
 | `memory.log` | the turn | Stored memory events did not decode, or memory could not be stored. |
-| `context.budget` | `@xandreed/plugin-memory-window` | The current turn alone exceeds the context budget (`budgetTokens`). |
+| `context.budget` | each step of a run; `@xandreed/plugin-memory-window` | At a step, the system prompt and the active tools' schemas leave nothing of the context budget (`budgetTokens`); with the window strategy, also when the current turn alone does not fit the budget memory is given: the whole budget at the turn's start, what they leave at each step. |
 | `session.log` | the turn writer | The session store failed during the turn. |
 | `session.contended` | the turn writer, plugin-sessions | Too many conflicting writes to the session in a row. |
 | `session.state` | the turn writer | The session's state, kept in its head, did not decode. |

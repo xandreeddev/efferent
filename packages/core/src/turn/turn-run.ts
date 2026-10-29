@@ -1,6 +1,7 @@
 import { Context, Effect, Option } from "effect"
 import { LanguageModel } from "effect/ai"
 import { toolParametersSchema } from "../loop/toolSchema.js"
+import { isBudgetTokens } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { canonicalJson, estimateTokens, fingerprintOf } from "../memory/memory-log.entity.functions.js"
 import type { StepDirective, StepInfo } from "../ports/capability.port.js"
@@ -29,6 +30,7 @@ const defaultLimits: LoopLimits = { maxSteps: 50, toolConcurrency: 1, streaming:
 const defaultBudgetTokens = 64_000
 const incomplete: CompletionVerdict = { complete: false, awaiting: [], facts: {} }
 const noDirective: StepDirective = { context: Option.none(), toolChoice: Option.none() }
+const failure = (code: string, message: string) => new HarnessError({ code, message })
 
 /** The tokens the active tools' descriptions and parameter schemas take in a request. */
 export const schemaTokens = (tools: RunTools, active: ReadonlyArray<string>): number =>
@@ -43,8 +45,12 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
 
 /**
  * Prepare one run of the step loop over the turn's services, in this
- * order: the policy's planned skills are activated, the turn-tier sections
- * are recorded, and memory is maintained for the turn's start. Everything
+ * order: the run's budget is checked (`turn.budget` unless it is an integer
+ * of at least 1), the policy's planned skills are activated, the turn-tier
+ * sections are recorded, and memory is maintained for the turn's start
+ * with the whole budget. Each step gives memory what the system prompt and
+ * the active tools' schemas leave of the budget, and fails with
+ * `context.budget` when they leave nothing. Everything
  * where this runs (the policy's services, the turn's, a host layer's) is
  * captured: the policy callbacks, the prompt sections and the tool handlers
  * run with it.
@@ -64,6 +70,7 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
     const number = yield* memory.number
     const limits: LoopLimits = { ...defaultLimits, ...options.limits, ...policy.limits }
     const budget = policy.budgetTokens ?? options.budgetTokens ?? defaultBudgetTokens
+    if (!isBudgetTokens(budget)) return yield* Effect.fail(failure("turn.budget", `budgetTokens must be an integer of at least 1, not ${budget}`))
     const stepContext = policy.stepContext ?? "tail"
     yield* Option.match(Option.fromNullishOr(policy.initial), {
       onNone: () => Effect.void,
@@ -81,7 +88,11 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
         onSome: (text) => session.record([{ _tag: "StepContext", step: info.stepIndex, text }], info.stepIndex).pipe(Effect.asVoid),
       })
       const reserved = estimateTokens(system) + schemaTokens(tools, info.activeTools)
-      yield* session.maintain({ phase: "step", lastUsage: info.lastUsage, budgetTokens: Math.max(1, budget - reserved), views: tools.views })
+      if (budget <= reserved) {
+        return yield* Effect.fail(failure("context.budget",
+          `The system prompt and tool schemas take ${reserved} tokens, all of the ${budget}-token context budget: raise budgetTokens or offer fewer tools`))
+      }
+      yield* session.maintain({ phase: "step", lastUsage: info.lastUsage, budgetTokens: budget - reserved, views: tools.views })
       const built = yield* session.build({ stepContext: stepContext === "tail" ? "tail" : "none" })
       const render = yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none")
       // A reaction may record memory now: the header's cut (`through`) keeps it for the next step.
@@ -89,7 +100,7 @@ export const stepRequestOf = <P>(policy: TurnPolicy<P>, options: TurnRunOptions 
         _tag: "context.built", step: info.stepIndex, turn: number,
         strategy: session.strategy.id, strategyVersion: session.strategy.version,
         fingerprint: built.fingerprint, systemFingerprint: fingerprintOf(system),
-        estimatedTokens: built.estimatedTokens, reservedTokens: reserved,
+        estimatedTokens: built.estimatedTokens, reservedTokens: reserved, budgetTokens: budget,
         compactions: built.compactions.length, activeTools: info.activeTools,
       })
       const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""

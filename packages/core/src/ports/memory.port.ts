@@ -75,7 +75,11 @@ export interface MemoryReader {
 export interface MaintainSignal {
   readonly phase: "turn-start" | "step"
   readonly lastUsage: Option.Option<TokenUsage>
-  /** Tokens available to the messages (system and tool schemas already deducted). */
+  /**
+   * Tokens available to the messages, at least 1: at `step`, what the system
+   * prompt and the active tool schemas leave of the run's budget; at
+   * `turn-start`, the run's whole budget (nothing is built yet).
+   */
   readonly budgetTokens: number
   readonly views: ToolViews
 }
