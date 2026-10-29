@@ -2,8 +2,8 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ConfigProvider, Context, Effect, Option, Predicate, Redacted, Schema } from "effect"
-import { LanguageModel } from "effect/ai"
+import { ConfigProvider, Context, Effect, Option, Redacted, Schema } from "effect"
+import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import {
   AuthStore,
@@ -421,7 +421,8 @@ describe("models plugin proxy", () => {
 
   test.skipIf(tunnels)(`below Bun ${BUN_WEBSOCKET_PROXY_VERSION} the OpenAI subscription refuses a proxied WebSocket instead of connecting directly`, async () => {
     const { outcome, seen } = await subscriptionCall()
-    expect(Predicate.isTagged(outcome, "AuthError")).toBe(true)
+    // The LanguageModel's own error, as authentication: not retried, no fallback.
+    expect(AiError.isAiError(outcome) && outcome.reason._tag === "AuthenticationError").toBe(true)
     expect(String(outcome)).toContain(`Bun ${Bun.version} cannot send a WebSocket through a proxy`)
     expect(seen).toEqual([])
   }, 30_000)

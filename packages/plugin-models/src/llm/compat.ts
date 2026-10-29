@@ -1,9 +1,12 @@
 import { AiError, LanguageModel, Prompt, Tool } from "effect/ai"
-import { Effect, Result, Option, Schema, Stream } from "effect"
+import { Effect, Option, Schema, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
 import type { ModelCallPolicy } from "@xandreed/core"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
-import type { CompletionUsage, UsageReading } from "./sse.js"
+import type { UsageReading } from "./sse.js"
+import type { ChatCompletion } from "./chat-wire.entity.js"
+import { decodeChatCompletion, decodeToolArguments, gatewayErrorOf, isModelRejection, isQuotaExhausted } from "./chat-wire.entity.functions.js"
+import { publicReasoningEffort } from "./modelCatalog.js"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 
@@ -21,42 +24,32 @@ import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 
 type Json = Record<string, unknown>
 
-const record = (value: unknown): Json =>
-  typeof value === "object" && value !== null ? value as Json : {}
-
-/** Gateways sometimes encode a semantic model/billing rejection behind an
- * HTTP status normally associated with auth. Preserve the provider meaning
- * so agents and evals do not diagnose "bad key" for an unsupported model. */
-const semanticGatewayError = (
+/**
+ * The reason a gateway's failed request fails with, from its status and the
+ * structured error of its body. A rejected model is an invalid request
+ * whatever the status (gateways answer it with one normally meaning a bad
+ * key, so agents and evals do not diagnose "bad key" for an unsupported
+ * model). An exhausted balance or quota (a 402, or an error type or code
+ * naming one: `isQuotaExhausted`) is a `QuotaExhaustedError`, which is not
+ * retried and does not fall back; a plain 429 stays a rate limit. Any other
+ * status is mapped as effect/ai maps it.
+ */
+const gatewayFailure = (
   moduleName: string,
-  method: string,
+  status: number,
   body: string,
-): Option.Option<AiError.AiError> =>
-  Option.flatMap(
-    Option.fromNullishOr(Result.getOrUndefined(Result.try(() => JSON.parse(body) as unknown))),
-    (decoded) => {
-      const error = record(record(decoded)["error"])
-      const type = typeof error["type"] === "string" ? error["type"] : ""
-      const message = typeof error["message"] === "string" ? error["message"] : ""
-      if (type === "ModelError" || /model .*not supported/i.test(message)) {
-        return Option.some(AiError.make({
-          module: moduleName,
-          method,
-          reason: new AiError.InvalidRequestError({
-            description: message.length > 0 ? message : "the selected model is not supported",
-          }),
-        }))
-      }
-      if (type === "CreditsError" || /insufficient (?:balance|credits)|usage limit|quota/i.test(message)) {
-        return Option.some(AiError.make({
-          module: moduleName,
-          method,
-          reason: new AiError.UnknownError({ description: `CreditsError: ${message || "provider quota exhausted"}` }),
-        }))
-      }
-      return Option.none()
-    },
-  )
+  http: typeof AiError.HttpContext.Type,
+): AiError.AiErrorReason => {
+  const error = gatewayErrorOf(body)
+  const message = Option.getOrElse(Option.flatMap(error, (found) => Option.fromNullishOr(found.message)), () => "")
+  if (Option.exists(error, isModelRejection)) {
+    return new AiError.InvalidRequestError({ description: message.length > 0 ? message : "the selected model is not supported" })
+  }
+  if (isQuotaExhausted(Option.some(status), error)) {
+    return new AiError.QuotaExhaustedError({ metadata: { [moduleName]: { ...Option.getOrElse(error, () => ({})) } }, http })
+  }
+  return AiError.reasonFromHttpStatus({ status, http, description: body.slice(0, 500) })
+}
 
 export interface CompatConfig {
   /** Module name for `AiError` provenance (e.g. "OpenCode"). */
@@ -96,6 +89,10 @@ const aiUnknown = (moduleName: string, method: string, e: unknown): AiError.AiEr
 
 const invalidOutput = (moduleName: string, method: string, description: string): AiError.AiError =>
   AiError.make({ module: moduleName, method, reason: new AiError.InvalidOutputError({ description }) })
+
+/** A response the provider got wrong (not the model): a protocol failure, which the loop does not answer with a corrective turn. */
+const invalidResponse = (moduleName: string, method: string, description: string): AiError.AiError =>
+  AiError.make({ module: moduleName, method, reason: new AiError.InvalidResponseError({ description }) })
 
 const requestInfo = (chatUrl: string) => ({
   method: "POST" as const,
@@ -340,24 +337,6 @@ export const thinkingParams = (model: string): Record<string, unknown> => {
   return {}
 }
 
-interface ChatCompletion {
-  readonly choices?: ReadonlyArray<{
-    readonly finish_reason?: string
-    readonly message?: {
-      readonly content?: string | null
-      /** DeepSeek-native vocabulary (kimi-k2.7-code, deepseek serve this). */
-      readonly reasoning_content?: string | null
-      /** OpenRouter-style vocabulary (kimi-k2.6 via Moonshot serves this). */
-      readonly reasoning?: string | null
-      readonly tool_calls?: ReadonlyArray<{
-        readonly id?: string
-        readonly function?: { readonly name?: string; readonly arguments?: string }
-      }>
-    }
-  }>
-  readonly usage?: CompletionUsage
-}
-
 /** Parse one non-streaming completion into `@effect/ai` encoded parts. */
 export const fromChatCompletion = (
   moduleName: string,
@@ -367,7 +346,7 @@ export const fromChatCompletion = (
   Effect.gen(function* () {
     const choice = body.choices?.[0]
     if (choice === undefined) {
-      return yield* Effect.fail(invalidOutput(moduleName, "generateText", "the completion carried no choices"))
+      return yield* Effect.fail(invalidResponse(moduleName, "generateText", "the completion carried no choices"))
     }
     const message = choice.message ?? {}
     // The gateway fronts multiple upstreams with two reasoning vocabularies —
@@ -376,16 +355,17 @@ export const fromChatCompletion = (
     const reasoning = message.reasoning_content ?? message.reasoning
     const text = message.content
     const toolCalls = yield* Effect.forEach(message.tool_calls ?? [], (tc) =>
-      Effect.try({
-        try: () => ({
+      decodeToolArguments(tc.function?.arguments ?? "{}").pipe(
+        Effect.map((params) => ({
           type: "tool-call" as const,
           id: tc.id ?? "",
           name: tc.function?.name ?? "",
-          params: JSON.parse(tc.function?.arguments ?? "{}") as unknown,
-        }),
-        catch: () =>
+          params,
+        })),
+        Effect.mapError(() =>
           invalidOutput(moduleName, "generateText", `tool call ${tc.function?.name ?? "?"} carried unparseable JSON arguments`),
-      }),
+        ),
+      ),
     )
     return [
       ...(reasoning !== null && reasoning !== undefined && reasoning.length > 0
@@ -417,7 +397,8 @@ const requestSettings = (config: CompatConfig, cacheKey: Option.Option<string>, 
       onNone: () => ({}),
       onSome: (value) => ({
         ...(value.maxOutputTokens === undefined ? {} : { max_tokens: value.maxOutputTokens }),
-        ...(config.thinking === "disabled" || config.reasoningEffort !== undefined ? {} : { reasoning_effort: value.effort }),
+        // The call policy's effort in the chat-completions vocabulary (`max`, `xhigh` and `none` are no gateway's).
+        ...(config.thinking === "disabled" || config.reasoningEffort !== undefined ? {} : { reasoning_effort: publicReasoningEffort(value.effort) }),
       }),
     }),
   },
@@ -490,8 +471,6 @@ const failStatus = (
       try: () => res.text(),
       catch: (e) => aiUnknown(config.moduleName, method, e),
     })
-    const semantic = semanticGatewayError(config.moduleName, method, text)
-    if (Option.isSome(semantic)) return yield* Effect.fail(semantic.value)
     // (forEach, not Object.fromEntries — this lib config's Headers type has
     // no entries(); the mutation is contained to this literal.)
     const headers: Record<string, string> = {}
@@ -502,10 +481,8 @@ const failStatus = (
       AiError.make({
         module: config.moduleName,
         method,
-        reason: AiError.reasonFromHttpStatus({
-          status: res.status,
-          http: { request: requestInfo(config.chatUrl), response: { status: res.status, headers }, body: text.slice(0, 500) },
-          description: text.slice(0, 500),
+        reason: gatewayFailure(config.moduleName, res.status, text, {
+          request: requestInfo(config.chatUrl), response: { status: res.status, headers }, body: text.slice(0, 500),
         }),
       }),
     )
@@ -530,11 +507,7 @@ export const makeCompatLanguageModel = (
           try: () => res.text(),
           catch: (e) => aiUnknown(config.moduleName, "generateText", e),
         })
-        const parsed = yield* Effect.try({
-          try: () => JSON.parse(text) as ChatCompletion,
-          catch: () =>
-            invalidOutput(config.moduleName, "generateText", `the completion body was not JSON: ${text.slice(0, 200)}`),
-        })
+        const parsed = yield* decodeChatCompletion(config.moduleName, text)
         return (yield* fromChatCompletion(config.moduleName, parsed, config.usage)) as never
       }),
     streamText: (options) =>
@@ -550,7 +523,7 @@ export const makeCompatLanguageModel = (
           }
           const body = res.body
           if (body === null) {
-            return yield* Effect.fail(invalidOutput(config.moduleName, "streamText", "the streaming response carried no body"))
+            return yield* Effect.fail(invalidResponse(config.moduleName, "streamText", "the streaming response carried no body"))
           }
           return sseStreamParts({ moduleName: config.moduleName, body, ...(config.usage === undefined ? {} : { usage: config.usage }) })
         }),

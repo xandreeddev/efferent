@@ -13,6 +13,8 @@ import { CurrentEmptyResponseTolerance } from "@xandreed/core"
  * - An HTTP 200 with no text/tool-call/reasoning content is rejected as a
  *   transient failure (the "empty response that fake-completes a turn
  *   mid-thought" class) and rides the same retries.
+ * - An exhausted balance or quota (`QuotaExhaustedError`) is PERMANENT:
+ *   it fails fast and never reaches the fallback model.
  * - A 429 whose `Retry-After` exceeds {@link MAX_HONORED_RETRY_AFTER_MS} is
  *   a daily quota, not an outage — {@link classifyLlmError} calls it
  *   PERMANENT so it fails fast instead of burning retries into the same
@@ -58,6 +60,9 @@ export const classifyLlmError = (error: unknown): ErrorClass => {
     return e?._tag === "HttpClientError" && e.reason?._tag === "TransportError" ? "transient" : "permanent"
   }
   const reason = error.reason
+  // An exhausted balance or quota, whatever status carried it (a gateway's
+  // 402, a 429 naming `insufficient_quota`): no retry or fallback fixes it.
+  if (reason._tag === "QuotaExhaustedError") return "permanent"
   const response = "http" in reason ? reason.http?.response : undefined
   if (response !== undefined) {
     if (response.status === 429) {

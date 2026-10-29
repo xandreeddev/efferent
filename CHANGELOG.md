@@ -49,6 +49,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   mode (such as "Blocking", once read as diagnostic) no longer decodes.
 - `positiveInt` returns an `Effect` failing with `invalid` instead of
   silently using the fallback. `EvaluationError` has a new code, `missing`.
+- `@xandreed/plugin-models`: the routed models fail a credential they
+  cannot get (none stored, a failed refresh, a proxy the runtime cannot
+  tunnel) with an `AiError` whose reason is `AuthenticationError`, not a raw
+  `AuthError`; it is still not retried and goes to no fallback.
+- `makeOpenAiCodexWebSocketHttpClient(proxy, sessions?)` and
+  `OpenAiCodexWebSocketHttpClient` share no process-wide session map: pass
+  `makeOpenAiCodexSessions()` to keep a conversation's session id (without
+  one, each request gets a fresh id). The routed models keep one cache per
+  layer, up to 1024 conversations.
 
 ### Added
 
@@ -66,6 +75,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   for example). Drain them with `Sessions.drain`.
 - `runCliMain` (with `CliProcess` and `nodeProcess`), `readJson` and
   `readText` in `@xandreed/evals-cli`; `EvalPath` in `@xandreed/evals`.
+- The routed model's `generateObject`; `makeOpenAiCodexSessions`,
+  `OpenAiCodexSessions`, `OPENAI_CODEX_SESSION_CAPACITY` and
+  `OpenAiErrorBody` in `@xandreed/plugin-models`.
 
 ### Fixed
 
@@ -136,6 +148,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The LangSmith export sends encoded values (`null`, not Option objects),
   and exporting again updates the runs and feedback the first export
   created.
+- An exhausted balance or quota (a 402, `CreditsError`,
+  `insufficient_quota`) is a `QuotaExhaustedError`: no retries, no fallback.
+  A plain 429 whose message says "quota" is a retried `RateLimitError`.
+- A provider body or stream chunk that is not JSON, is `null` or has the
+  wrong shape is an `InvalidResponseError`; the agent loop no longer answers
+  it with corrective turns.
+- `openai-codex`: a normal socket close ends the stream instead of hanging
+  the call, and an `error` event before any other is answered with its
+  status (a server error is retried) instead of a decode failure.
+- `openai` sends the configured reasoning effort and output cap to models
+  that take an effort; OpenCode chat models get `xhigh`/`max` as `high` and
+  `none` as `low`; utility calls use `fastReasoningEffort`.
 
 ### Repository
 

@@ -8,7 +8,7 @@ import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel
 import type { Credential, ModelCallPolicy, ModelSelection } from "@xandreed/core"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { makeCompatLanguageModel, promptWithImageLabels } from "./compat.js"
-import { imageInputFor, usesOpenCodeResponses } from "./modelCatalog.js"
+import { imageInputFor, publicReasoningEffort, reasoningEffortsFor, usesOpenCodeResponses } from "./modelCatalog.js"
 import { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL } from "./openAiCodex.js"
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
@@ -133,6 +133,22 @@ const missingKey = (selection: ModelSelection): AuthError =>
     message: `no credential for ${selection.provider} — sign in through the AuthStore (storage "local" keeps it in ~/.efferent/runtime/auth.json), or give the models plugin one in credentials or credentialEnv (storage "memory")`,
   })
 
+/**
+ * A call policy as an OpenAI Responses model's options carry it: its output
+ * cap, and (when the route sends one) its effort. The public-API SDK union
+ * has no none/xhigh/max — clamp to the nearest supported value (only the
+ * subscription dialect is probe-verified for `none`).
+ */
+const responsesPolicy = (policy: Option.Option<ModelCallPolicy>, sendsEffort: boolean) => Option.match(policy, {
+  onNone: () => ({}),
+  onSome: (value) => ({
+    ...(value.maxOutputTokens === undefined
+      ? {}
+      : { max_output_tokens: value.maxOutputTokens }),
+    ...(sendsEffort ? { reasoning: { effort: publicReasoningEffort(value.effort) } } : {}),
+  }),
+})
+
 /** The OpenCode Responses options: what the model is built with, and what its descriptor records. */
 const openCodeResponsesConfig = (cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>) => ({
   // UI tools contain genuinely optional fields. OpenAI strict
@@ -140,24 +156,18 @@ const openCodeResponsesConfig = (cacheKey: Option.Option<string>, policy: Option
   // calling and let Effect decode the domain schema.
   strictJsonSchema: false,
   prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
-  ...Option.match(policy, {
-    onNone: () => ({}),
-    onSome: (value) => ({
-      ...(value.maxOutputTokens === undefined
-        ? {}
-        : { max_output_tokens: value.maxOutputTokens }),
-      reasoning: {
-        // The public-API SDK union has no none/xhigh/max —
-        // clamp to the nearest supported value (only the
-        // subscription dialect is probe-verified for `none`).
-        effort: value.effort === "xhigh" || value.effort === "max"
-          ? "high" as const
-          : value.effort === "none"
-            ? "low" as const
-            : value.effort,
-      },
-    }),
-  }),
+  ...responsesPolicy(policy, true),
+})
+
+/**
+ * The OpenAI API options: what the model is built with, and what its
+ * descriptor records. The effort is sent to a model that takes one
+ * (`reasoningEffortsFor`), clamped to the public vocabulary; a model that
+ * takes none (a non-reasoning one) is sent none, which it would refuse.
+ */
+const openAiConfig = (selection: ModelSelection, cacheKey: Option.Option<string>, policy: Option.Option<ModelCallPolicy>) => ({
+  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
+  ...responsesPolicy(policy, reasoningEffortsFor(formatModelSelection(selection)).length > 0),
 })
 
 /** `<url>/chat/completions` of an OpenAI-compatible base URL. */
@@ -323,7 +333,7 @@ const buildBuiltInProvider = (
   if (selection.provider === "openai") {
     return key === undefined
       ? Effect.fail(missingKey(selection))
-      : Effect.flatMap(Effect.service(CurrentPromptCacheKey), (cacheKey) =>
+      : Effect.flatMap(Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }), ({ cacheKey, policy }) =>
           OpenAiClient.make({ apiKey: key }).pipe(
             Effect.flatMap((client) =>
               OpenAiLanguageModel.make({
@@ -331,10 +341,8 @@ const buildBuiltInProvider = (
                 // The per-conversation cache lane, same as the compat path —
                 // one shared constant lane cross-evicts between conversations
                 // (construction happens per call, inside the run's fiber, so
-                // the reference is set here).
-                config: {
-                  prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
-                },
+                // the reference and the call policy are set here).
+                config: openAiConfig(selection, cacheKey, policy),
               }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
             ),
             Effect.map((svc) => ({ svc, prependClaudeCode: false, images })),
@@ -369,7 +377,9 @@ export const buildProvider = (
         ? { systemPrelude: built.prependClaudeCode ? CLAUDE_CODE_SYSTEM : null }
         : responses
           ? openCodeResponsesConfig(cacheKey, policy)
-          : { prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent") }
+          : selection.provider === "openai"
+            ? openAiConfig(selection, cacheKey, policy)
+            : { prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent") }
       const descriptor = { provider: selection.provider, model: selection.modelId, settings }
       return {
         ...built,

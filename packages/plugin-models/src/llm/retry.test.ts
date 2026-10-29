@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { AiError } from "effect/ai"
-import { Cause, Effect, Exit, Option, Stream } from "effect"
+import { Cause, Effect, Exit, Fiber, Option, Ref, Stream } from "effect"
+import { TestClock } from "effect/testing"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import { classifyLlmError, rejectEmptyResponse, retryableLlmStream } from "./retry.js"
+import { classifyLlmError, rejectEmptyResponse, retryableLlm, retryableLlmStream } from "./retry.js"
 
 const request = { method: "POST" as const, url: "https://gw.example/chat", urlParams: [], headers: {} }
 /** A provider status failure, as the adapters build it. */
@@ -45,6 +46,28 @@ describe("classifyLlmError", () => {
     // No header / garbage header: plain transient 429.
     expect(classifyLlmError(httpError(429))).toBe("transient")
     expect(classifyLlmError(quota429("soon-ish"))).toBe("transient")
+  })
+
+  test("an exhausted quota is permanent whatever status carried it", () => {
+    expect(classifyLlmError(reasonError(new AiError.QuotaExhaustedError({})))).toBe("permanent")
+    expect(classifyLlmError(reasonError(new AiError.QuotaExhaustedError({ http: { request, response: { status: 429, headers: {} } } })))).toBe("permanent")
+  })
+})
+
+describe("retryableLlm", () => {
+  /** How many attempts a call failing with `error` (then succeeding) takes, the backoff run on a test clock. */
+  const attempts = (error: AiError.AiError) => Effect.runPromise(Effect.gen(function* () {
+    const count = yield* Ref.make(0)
+    const call = Ref.updateAndGet(count, (n) => n + 1).pipe(Effect.flatMap((n) => n === 1 ? Effect.fail(error) : Effect.succeed("ok")))
+    const fiber = yield* Effect.forkChild(Effect.exit(retryableLlm("test")(call)))
+    yield* TestClock.adjust("1 minute")
+    yield* Fiber.join(fiber)
+    return yield* Ref.get(count)
+  }).pipe(Effect.provide(TestClock.layer())))
+
+  test("an exhausted quota fails at once; a plain 429 is retried", async () => {
+    expect(await attempts(reasonError(new AiError.QuotaExhaustedError({ http: { request, response: { status: 429, headers: {} } } })))).toBe(1)
+    expect(await attempts(httpError(429))).toBe(2)
   })
 })
 

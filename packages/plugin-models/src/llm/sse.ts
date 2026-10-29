@@ -1,6 +1,8 @@
 import { AiError } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Effect, Option, Result, Stream } from "effect"
+import type { CompletionUsage, StreamChunk, StreamToolCall } from "./chat-wire.entity.js"
+import { chunkErrorOf, decodeStreamChunk, decodeToolArguments, isQuotaExhausted } from "./chat-wire.entity.functions.js"
 
 /**
  * The OpenAI-compatible SSE wire → `@effect/ai` `StreamPartEncoded`s, as a
@@ -14,23 +16,11 @@ import { Effect, Option, Result, Stream } from "effect"
  * A DONE sentinel is concatenated after the wire lines so the flush (open
  * chunk ends → accumulated tool calls → finish) runs even when the gateway
  * never sends `[DONE]`; a second sentinel is idempotent via `flushed`.
+ *
+ * Each chunk is decoded (`chat-wire.entity.ts`): a `data:` line that is no
+ * chunk (not JSON, `null`, a field of the wrong type) fails the stream with
+ * the provider's `InvalidResponseError`, never the model's invalid output.
  */
-
-/** The usage object OpenAI-compatible completions carry (streaming sends it
- *  on the last chunk under `stream_options: {include_usage: true}`). */
-export interface CompletionUsage {
-  readonly prompt_tokens?: number
-  readonly completion_tokens?: number
-  readonly total_tokens?: number
-  /** DeepSeek-style cache accounting. */
-  readonly prompt_cache_hit_tokens?: number
-  /** Moonshot-style cache accounting. */
-  readonly cached_tokens?: number
-  /** OpenAI-native cache reads; gateways (OpenCode's among them) add the cache writes. */
-  readonly prompt_tokens_details?: { readonly cached_tokens?: number; readonly cache_write_tokens?: number }
-  /** OpenAI-native reasoning accounting, counted inside `completion_tokens`. */
-  readonly completion_tokens_details?: { readonly reasoning_tokens?: number }
-}
 
 /** How a compat endpoint's usage is read. */
 export interface UsageReading {
@@ -48,7 +38,7 @@ export interface UsageReading {
  *  parser — the gateway fronts upstreams with three cache vocabularies.
  *  `prompt_tokens` already counts the cached and written tokens: it is the
  *  full input, and `completion_tokens` the full output, reasoning included. */
-export const usageFromCompletion = (usage: CompletionUsage | undefined, reading: UsageReading = {}) => {
+export const usageFromCompletion = (usage: CompletionUsage | null | undefined, reading: UsageReading = {}) => {
   const input = usage?.prompt_tokens ?? 0
   const cached =
     usage?.prompt_cache_hit_tokens ??
@@ -65,33 +55,12 @@ export const usageFromCompletion = (usage: CompletionUsage | undefined, reading:
 }
 
 export const finishReasonFromWire = (
-  raw: string | undefined,
+  raw: string | null | undefined,
 ): "stop" | "length" | "content-filter" | "tool-calls" => {
   if (raw === "tool_calls") return "tool-calls"
   if (raw === "length") return "length"
   if (raw === "content_filter") return "content-filter"
   return "stop"
-}
-
-/** One `data:` chunk of a streaming chat completion. */
-interface StreamChunk {
-  readonly choices?: ReadonlyArray<{
-    readonly finish_reason?: string | null
-    readonly delta?: {
-      readonly content?: string | null
-      /** DeepSeek-native vocabulary (kimi-k2.7-code, deepseek serve this). */
-      readonly reasoning_content?: string | null
-      /** OpenRouter-style vocabulary (kimi-k2.6 via Moonshot serves this). */
-      readonly reasoning?: string | null
-      readonly tool_calls?: ReadonlyArray<{
-        readonly index?: number
-        readonly id?: string
-        readonly function?: { readonly name?: string; readonly arguments?: string }
-      }>
-    }
-  }>
-  readonly usage?: CompletionUsage | null
-  readonly error?: unknown
 }
 
 interface ToolCallAccum {
@@ -188,9 +157,7 @@ const emptyAccum: ToolCallAccum = { id: "", name: "", args: "" }
 
 const mergeToolFragment = (
   calls: ReadonlyArray<ToolCallAccum>,
-  fragment: NonNullable<
-    NonNullable<NonNullable<StreamChunk["choices"]>[number]["delta"]>["tool_calls"]
-  >[number],
+  fragment: StreamToolCall,
 ): ReadonlyArray<ToolCallAccum> => {
   const index = fragment.index ?? 0
   const padded =
@@ -217,13 +184,16 @@ const applyChunk = (
   chunk: StreamChunk,
 ): Effect.Effect<Emit, AiError.AiError> => {
   if (chunk.error !== undefined && chunk.error !== null) {
+    const error = chunkErrorOf(chunk.error)
     return Effect.fail(
       AiError.make({
         module: moduleName,
         method: "streamText",
-        reason: new AiError.UnknownError({
-          description: `the stream carried an error chunk: ${JSON.stringify(chunk.error).slice(0, 500)}`,
-        }),
+        reason: isQuotaExhausted(Option.none(), error)
+          ? new AiError.QuotaExhaustedError({ metadata: { [moduleName]: { ...Option.getOrElse(error, () => ({})) } } })
+          : new AiError.UnknownError({
+            description: `the stream carried an error chunk: ${JSON.stringify(chunk.error).slice(0, 500)}`,
+          }),
       }),
     )
   }
@@ -260,19 +230,20 @@ const flush = (moduleName: string, reading: UsageReading, state: SseState): Effe
     : Effect.gen(function* () {
         const [closed, closeParts] = emitThen(closeText(state), closeReasoning)
         const toolParts = yield* Effect.forEach(closed.toolCalls, (call, index) =>
-          Effect.try({
-            try: (): Part => ({
+          decodeToolArguments(call.args.length > 0 ? call.args : "{}").pipe(
+            Effect.map((params): Part => ({
               type: "tool-call",
               id: call.id.length > 0 ? call.id : `call_${index}`,
               name: call.name,
-              params: JSON.parse(call.args.length > 0 ? call.args : "{}") as unknown,
-            }),
-            catch: () =>
+              params,
+            })),
+            Effect.mapError(() =>
               malformed(
                 moduleName,
                 `tool call ${call.name.length > 0 ? call.name : "?"} carried unparseable JSON arguments`,
               ),
-          }),
+            ),
+          ),
         )
         const finish: Part = {
           type: "finish",
@@ -300,10 +271,7 @@ const step = (
 ): Effect.Effect<Emit, AiError.AiError> =>
   payload === DONE
     ? flush(moduleName, reading, state)
-    : Effect.try({
-        try: () => JSON.parse(payload) as StreamChunk,
-        catch: () => malformed(moduleName, `a data: line was not JSON: ${payload.slice(0, 200)}`),
-      }).pipe(Effect.flatMap((chunk) => applyChunk(moduleName, state, chunk)))
+    : decodeStreamChunk(moduleName, payload).pipe(Effect.flatMap((chunk) => applyChunk(moduleName, state, chunk)))
 
 /** Parse a streaming chat-completions body into encoded stream parts. */
 export const sseStreamParts = (options: {

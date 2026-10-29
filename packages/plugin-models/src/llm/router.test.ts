@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
-import { Effect, Layer, Metric, Option, Redacted, Ref, Stream, Tracer } from "effect"
+import { Effect, Layer, Metric, Option, Redacted, Ref, Schema, Stream, Tracer } from "effect"
 import { AuthStore, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, SettingsStore } from "@xandreed/core"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { generateWith, LanguageModelLive, LanguageModelSelectionLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
@@ -278,6 +278,14 @@ describe("withFallbackRung", () => {
     expect(calls).toHaveLength(1)
   })
 
+  test("an exhausted quota never falls back, though a 429 carried it", async () => {
+    const quota = AiError.make({ module: "Test", method: "generateText", reason: new AiError.QuotaExhaustedError({ http: { request, response: { status: 429, headers: {} } } }) })
+    const { call, calls } = scripted({ "opencode:kimi-k2.6": Effect.fail(quota), "google:gemini-3.5-flash": Effect.succeed("saved") })
+    const exit = await Effect.runPromiseExit(withFallbackRung(primary, fallback, call))
+    expect(exit._tag).toBe("Failure")
+    expect(calls).toEqual([{ model: "opencode:kimi-k2.6", isFallback: false }])
+  })
+
   test("no fallback configured, or fallback === primary → the error passes through", async () => {
     const { call, calls } = scripted({ "opencode:kimi-k2.6": Effect.fail(transient) })
     const none = await Effect.runPromiseExit(withFallbackRung(primary, Option.none(), call))
@@ -413,5 +421,57 @@ describe("trace content and span parents", () => {
     }).pipe(Effect.withTracer(capturingTracer(spans)))).finally(() => server.stop(true))
     const call = spans.find((span) => span.name === "providers.generate")
     expect(["efferent.session.id", "efferent.run.id", "efferent.turn", "host.tenant"].map((key) => call?.attributes.get(key))).toEqual(["s-1", "run-1", 1, "t-1"])
+  })
+})
+
+/** An AuthStore with one local credential (an OpenAI-compatible URL), or none; `asked` records the providers read. */
+const localAuth = (baseUrl: Option.Option<string>, asked: Array<string> = []) => Layer.succeed(AuthStore, AuthStore.of({
+  all: Effect.succeed(new Map()),
+  get: (provider) => Effect.sync(() => asked.push(provider)).pipe(Effect.as(Option.map(baseUrl, (url) => ({ type: "local" as const, baseUrl: url })))),
+  resolveKey: () => Effect.succeed(Option.none()),
+  set: () => Effect.void,
+  remove: () => Effect.void,
+}))
+
+describe("the routed model's surface", () => {
+  test("generateObject is routed like generateText: the selection's provider, a JSON-schema request, the decoded object", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: async (request) => {
+        bodies.push(await request.json() as Record<string, unknown>)
+        return Response.json({ choices: [{ finish_reason: "stop", message: { content: `{"covered":true}` } }], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } })
+      },
+    })
+    const value = await Effect.runPromise(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection("object-local:judge"))
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelSelectionLive(selection, Option.none()).pipe(Layer.provide(localAuth(Option.some(`http://127.0.0.1:${server.port}/v1`))))),
+      )
+      const response = yield* model.generateObject({ prompt: "Is it covered?", objectName: "verdict", schema: Schema.Struct({ covered: Schema.Boolean }) })
+      return response.value
+    })).finally(() => server.stop(true))
+    expect(value).toEqual({ covered: true })
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]).toMatchObject({ model: "judge", response_format: { type: "json_schema", json_schema: { name: "verdict" } } })
+  })
+
+  test("a credential the call cannot have fails it with an AiError (authentication), on every method; no retry, no fallback", async () => {
+    const asked: Array<string> = []
+    const failures = await Effect.runPromise(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection("opencode:glm-5.2"))
+      const fallback = yield* Effect.fromOption(parseModelSelection("google:gemini-3.5-flash"))
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelSelectionLive(selection, Option.some(fallback)).pipe(Layer.provide(localAuth(Option.none(), asked)))),
+      )
+      return yield* Effect.all([
+        Effect.flip(model.generateText({ prompt: "hi" })),
+        Effect.flip(model.generateObject({ prompt: "hi", schema: Schema.Struct({ ok: Schema.Boolean }) })),
+        Effect.flip(Stream.runDrain(model.streamText({ prompt: "hi" }))),
+      ])
+    }))
+    expect(failures.map((error) => AiError.isAiError(error) ? error.reason._tag : "escaped")).toEqual(["AuthenticationError", "AuthenticationError", "AuthenticationError"])
+    expect(String(failures[0])).toContain("no credential for opencode")
+    expect(asked).toEqual(["opencode", "opencode", "opencode"])
   })
 })

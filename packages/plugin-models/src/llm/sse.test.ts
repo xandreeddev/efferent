@@ -207,17 +207,22 @@ describe("sseStreamParts", () => {
     })
   })
 
-  test("a non-JSON data line is an invalid output", async () => {
-    const exit = await Effect.runPromiseExit(
-      Stream.runCollect(
-        sseStreamParts({
-          moduleName: "Test",
-          body: bodyFromChunks([enc.encode("data: {nope\n\n")]),
-        }),
-      ),
-    )
-    expect(exit._tag).toBe("Failure")
-    expect(JSON.stringify(exit)).toContain("InvalidOutputError")
+  /** The reason a stream of these wire lines fails with. */
+  const failureOf = (text: string) =>
+    Effect.runPromise(Effect.flip(Stream.runCollect(sseStreamParts({ moduleName: "Test", body: bodyFromChunks([enc.encode(text)]) }))))
+
+  test("a data line that is no chunk (not JSON, null, a field of the wrong type) is the provider's invalid response, not the model's output", async () => {
+    const lines = ["data: {nope\n\n", wire("null"), wire(`{"choices":[{"delta":{"tool_calls":{"index":0}}}]}`), wire(`{"choices":[{"delta":{"content":["a","part"]}}]}`)]
+    const failures = await Promise.all(lines.map(failureOf))
+    expect(failures.map((error) => error.reason._tag)).toEqual(["InvalidResponseError", "InvalidResponseError", "InvalidResponseError", "InvalidResponseError"])
+    expect(failures[0]!.message).toContain("{nope")
+  })
+
+  test("an error chunk naming an exhausted quota is a QuotaExhaustedError; any other is retried as before", async () => {
+    const quota = await failureOf(wire(`{"error":{"type":"CreditsError","message":"Insufficient balance"}}`))
+    expect(quota.reason._tag).toBe("QuotaExhaustedError")
+    const other = await failureOf(wire(`{"error":{"message":"quota of requests per minute reached"}}`))
+    expect(other.reason._tag).toBe("UnknownError")
   })
 
   test("an error chunk mid-stream fails the stream", async () => {
