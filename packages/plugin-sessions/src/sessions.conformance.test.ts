@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Option } from "effect"
 import { TestClock } from "effect/testing"
-import { frameworkDraft, SessionLog, SessionLogMemoryLive, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
-import type { ConformanceCheck, SessionsInstance, SessionsSubject } from "@xandreed/core"
+import { frameworkDraft, HarnessError, harnessCodeOf, isHarnessError, isTurnError, SessionLog, SessionLogMemoryLive, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
+import type { ConformanceCheck, SessionsInstance, SessionsSubject, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
 import type { ProcessLiveness, SessionsConfig } from "./sessions-state.entity.js"
@@ -96,6 +96,25 @@ describe("the Sessions kit catches careless backends", () => {
       }),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, trusting)))).toEqual(["transact"])
+  })
+
+  test("one whose turn writers raise their refusals as HarnessError codes fails the checks that read them", async () => {
+    const asCode = (error: TurnError): TurnError => isHarnessError(error) ? error
+      : new HarnessError({ code: Option.getOrElse(harnessCodeOf(error), () => error._tag), message: error._tag })
+    const flattened = <E>(error: E | TurnError) => isTurnError(error) ? asCode(error) : error
+    const coded = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer): TurnWriter => ({
+          ...writer,
+          append: (drafts) => writer.append(drafts).pipe(Effect.mapError(asCode)),
+          flush: writer.flush.pipe(Effect.mapError(asCode)),
+          transact: (decide) => writer.transact(decide).pipe(Effect.mapError(flattened)),
+        }))),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "transact", "writer"])
   })
 
   test("one that begins a reused run id's turn under a new one fails only the run-id check", async () => {

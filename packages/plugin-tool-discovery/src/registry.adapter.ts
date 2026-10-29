@@ -18,6 +18,7 @@ import {
   HarnessError,
   IntentMatcher,
   isHarnessError,
+  isTurnError,
   mediaSlotsOf,
   reasonOf,
   recordDecision,
@@ -326,11 +327,12 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       // its stack, with the host's paths, goes to the log only.
       const value: unknown = Exit.isSuccess(exit) ? exit.value
         : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${firstLine(reasonOf(exit.cause)).slice(0, 300)}`))
-      // A HarnessError the handler died with is the turn's, not the tool's: a subscriber failed on an event the
-      // handler published (`tool.progress`, `skills.activated`), or the store failed load_skill's activation. Like a
-      // failure on `tool.started`, it fails the turn once `tool.completed` is out, instead of reaching the model as a ToolDefect.
-      const turnFailure = Exit.isSuccess(exit) ? Option.none<HarnessError>()
-        : Option.fromNullishOr(exit.cause.reasons.flatMap((reason) => Cause.isDieReason(reason) && isHarnessError(reason.defect) ? [reason.defect] : [])[0])
+      // A TurnError the handler died with is the turn's, not the tool's: a subscriber failed on an event the
+      // handler published (`tool.progress`, `skills.activated`), or the writer or the store failed load_skill's
+      // activation (`TurnClosed`, `SessionLogError`...). Like a failure on `tool.started`, it fails the turn once
+      // `tool.completed` is out, instead of reaching the model as a ToolDefect.
+      const turnFailure = Exit.isSuccess(exit) ? Option.none<TurnError>()
+        : Option.fromNullishOr(exit.cause.reasons.flatMap((reason) => Cause.isDieReason(reason) && isTurnError(reason.defect) ? [reason.defect] : [])[0])
       if (Exit.isFailure(exit) && Option.isNone(Cause.findErrorOption(exit.cause)) && Option.isNone(turnFailure)) {
         yield* Effect.logError(`${name} failed unexpectedly`, exit.cause).pipe(Effect.annotateLogs({ tool: name, invocationId }))
       }

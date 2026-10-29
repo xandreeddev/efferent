@@ -6,7 +6,8 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 
 - Change the head's `sessions` state only in a guarded commit (`guarded`: compare-and-swap on the revision, planned again after a conflict) with the events that justify it; no backend reads that state.
 - Fail with `SessionLogError` only for the store (the log's own, or stored data that does not decode: `session.state`, `session.decode`, its `cause` kept); `guarded` gives up as `SessionContended` after `retries` conflicts; a value of the plugin's own that does not encode, or an answer the log's contract rules out, is a defect (`Effect.orDie`, `Effect.die`).
-- Write a turn's events only through its writer (`makeTurnWriter`): one fiber in queue order, consecutive appends in one commit, the framework's reserved kinds refused unless marked (`events.reserved`).
+- Write a turn's events only through its writer (`makeTurnWriter`): one fiber in queue order, consecutive appends in one commit, the framework's reserved kinds refused unless marked (`ReservedKind`).
+- Raise the writer's failures as `TurnError`'s tags, never as a `HarnessError` of their codes: `TurnClosed` with its reason (`ended` for its own end or a closed scope), `ReservedKind`, `SessionContended`, the log's own `SessionLogError`; a `HarnessError` only for the writer's own state (`session.encode`, `session.state`) and a write that died (`session.defect`), with its `cause`. Match them with `Effect.catchTag`, never by code.
 - Judge an open turn by its own record (a lease end, or none and its holder process) through `isHeld`, never by the reading instance's ownership.
 - Refuse a begin, never queue or replace one: `SessionBusy`, `TurnDuplicate`, `KeyConflict`, `RunIdReused`, `NotResumable`, `NothingPending`.
 - Count an inbox attempt only for a turn that wrote something; drop an item once `inbox.attempts` turns took it and failed.
@@ -28,7 +29,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:341` | exact for one item, `src/sessions.adapter.test.ts:964`; the join unpinned |
+| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:341` | exact for one item, `src/sessions.adapter.test.ts:1001`; the join unpinned |
 | `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:255` | unpinned |
 
 ## Erasure files
@@ -50,7 +51,7 @@ None.
 ## Tests
 
 - `src/sessions.adapter.test.ts`: one turn at a time, leases, activity, cancel and removal, check then append, contention and a broken log, the inbox, resuming, forks, admission, over the in-memory log.
-- `src/sessions.conformance.test.ts`: core's `sessionsConformance` over the in-memory log, and the kit's self-tests (careless instances that must fail the named checks).
+- `src/sessions.conformance.test.ts`: core's `sessionsConformance` over the in-memory log, and the kit's self-tests (careless instances that must fail the named checks, a writer raising its refusals as `HarnessError` codes among them).
 - Elsewhere: plugin-session-sqlite runs the same kit and its crash tests over SQLite; the sdk journeys and golden (`packages/sdk/src/resume.journey.test.ts`, `agent.golden.test.ts`) compose `SessionsLive`; `verify:packages` runs the kit on Node over the packed package.
 - Run: `bun test packages/plugin-sessions packages/plugin-session-sqlite`.
 

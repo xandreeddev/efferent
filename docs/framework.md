@@ -152,7 +152,7 @@ the host's layer, the tools opened, `use`, the reply and the end. It carries
 and, on a resume, `efferent.resumes` (the turn it resumes),
 and ends with `efferent.outcome` (completed, partial, failed or interrupted,
 `turnEndingOf` the turn's exit; a turn cancelled or reaped while it ran
-shows as failed with `turn.closed`), `efferent.failure.code` when the turn
+shows as failed with `turn.closed`, its `TurnClosed`'s code), `efferent.failure.code` when the turn
 failed or was interrupted (`turn.interrupted`), and the turn's usage as
 `efferent.usage.{input,output,cache_read,cache_write,reasoning,total}_tokens`:
 the `TurnResult`'s when it returned, what its provider calls spent before it
@@ -482,8 +482,9 @@ turn that cannot begin fails with the reason as its code (`session.busy`,
 [Images and multi-part messages](#images-and-multi-part-messages); all of
 them are `turnBeginCodes` from `@xandreed/core`, also exported by `@xandreed/sdk`, with suggested HTTP statuses
 in the [event reference](event-reference.md#begin-codes)); a turn someone else
-closes (a cancel, a reaped lease, a removed session) fails with
-`turn.closed`.
+closes (a cancel, a reaped lease, a removed session) fails with that
+`TurnClosed` (`Effect.catchTag("TurnClosed", …)`; its `reason` says which,
+its code is `turn.closed`).
 
 **The host's metadata.** `meta` is a JSON object the host attaches to a
 turn: a request id, a client, a tenant. It is stored in the session's
@@ -507,7 +508,7 @@ inbox turns with it.
 | failed with a `HarnessError`, or another tagged error with a string `code` (`AuthError`) | `failed` | the error's own code, with its message |
 | failed with a begin refusal, `TurnClosed`, `ReservedKind` or a `SessionLogError` | `failed` | the code its tag stands for (`TAGGED_CODES`: `session.busy`, `turn.closed`, `events.reserved`, `session.log`, ...), message `<_tag>: <message>`, its fields as JSON when it has none (a `SessionLogError`: its own message) |
 | failed with any other error, an untagged one with a `code` included | `failed` | `turn.failed`, message `<_tag>: <message>` (or the error as text) |
-| died with a defect | `failed` | `turn.defect` (`Agent.turn` first turns a `HarnessError` carried as a defect back into a failure, which keeps its own code) |
+| died with a defect | `failed` | `turn.defect` (`Agent.turn` first turns a `TurnError` carried as a defect back into a failure, which keeps its own tag and code) |
 | was interrupted, and nothing failed | `interrupted` | `turn.interrupted` |
 
 An error wins over an interruption in the same cause, and messages are cut
@@ -521,8 +522,8 @@ fiber is interrupted is ended by its writer's scope instead, as
 `interrupted` with `turn.interrupted`. A host ending its own writer, or
 composing a runner by hand, uses the same function:
 `writer.end(turnEndingOf(exit))`, with `harnessDefectsAsFailures` applied
-before taking the exit so a `HarnessError` carried as a defect keeps its
-code.
+before taking the exit so a `TurnError` carried as a defect (`isTurnError`)
+keeps its code.
 
 A prompt is text sent to a model; the user's message is a `UserMessage` value
 (`new UserMessage({ text, attachments })`: text, images or both, never
@@ -1639,7 +1640,7 @@ interrupted (`turn.interrupted`) too. An append the store fails, or whose
 commit dies with a defect (`session.defect`, logged with its cause), fails
 the writer's every later write and flush with that error, so nothing waits
 on it. The writer refuses a draft under a reserved kind (below) with
-`events.reserved`, storing nothing of that call, unless the framework's turn
+`ReservedKind` (`events.reserved`), storing nothing of that call, unless the framework's turn
 wrote it (`frameworkDraft`: memory's events, the bus's and
 `request.prepared`). Outside a turn, `Sessions.transact(address,
 decide)` is the same check-then-append (a page action, a setting); the
@@ -1654,17 +1655,28 @@ unreachable, busy, or data that does not decode (`session.state`,
 `session.decode`), with what failed underneath as its `cause`; a log that
 answers what its contract rules out is a defect.
 
-The writer's methods fail with `TurnError` (`@xandreed/core`): `TurnClosed`,
-`ReservedKind`, `SessionContended`, `SessionLogError` or a `HarnessError`. So
-do the turn's ports that write through it (`RunContext.flush`, `write` and
+The writer's methods fail with `TurnError` (`@xandreed/core`): `TurnClosed`
+once it takes no more writes (its `reason`: `cancelled`, `interrupted` for a
+reaped lease or a stopped holder, `removed`, or `ended` once its own end is
+stored or under way, or its scope closed), `ReservedKind`,
+`SessionContended` (`retries` conflicting commits in a row), the store's
+`SessionLogError`, or a `HarnessError` (`session.defect`, and
+`session.encode` or `session.state` for the writer's own state). So do the
+turn's ports that write through it (`RunContext.flush`, `write` and
 `activate`; the bus's `publish` and `drain`; memory's records; the step
 loop's `run`; the tool registry's `open`, `activate`, `apply` and `select`;
 `Turn.run`, `context`, `flush` and `write`; `TaskExecutor`) and
-`Agent.turn`, which fails with `TurnError` or the host layer's error. The
-writer may raise each of the first four as the `HarnessError` of its code
-(`turn.closed`, `events.reserved`, `session.contended`, `session.log`):
-read a failure's code with `harnessCodeOf`, which gives that code for
-either form, rather than its `code` field.
+`Agent.turn`, which fails with `TurnError` or the host layer's error. Match
+the tags with `Effect.catchTag("TurnClosed", …)`, never by comparing a
+code; `harnessCodeOf` gives the code each stands for (`turn.closed`,
+`events.reserved`, `session.contended`, `session.log`), the one a turn
+failing with it stores. One carried as a defect behind a `never` error
+channel (a subscriber's `Effect.orDie`) is restored as the failure it is
+by `harnessDefectsAsFailures` (`isTurnError`, from any copy of core).
+Plugin API version 3 marks this contract: a `Sessions` implementation
+raises the tags, not `HarnessError`s of their codes, and
+`sessionsConformance` checks it; plugins of API versions 1 and 2 still
+load.
 
 **Ownership** is configured:
 
@@ -1683,7 +1695,7 @@ either form, rather than its `code` field.
   **The keep-alive** is what lets a step write nothing for longer than the
   lease: a provider call that streams for two minutes, or a tool that runs
   for five, would otherwise lose its turn under `"on-commit"` (the step's
-  first write after it is refused, the turn closes with `turn.closed`, and
+  first write after it is refused, the turn closes with `TurnClosed`, and
   the next begin reaps it as `turn.lease`). While the turn's writer is
   open, every `everyMs` it commits the state alone with the lease extended,
   in order with the turn's writes; the first renewal comes one interval
@@ -1795,7 +1807,7 @@ counts. User messages never queue. `drain(address, run, { maxTurns, meta })` run
 inbox turns while items wait, the session is free and the host admits them,
 at most `maxTurns` (three), each begun with `meta`. Each ends completed
 when `run` succeeds, and otherwise as `turnEndingOf` gives for its failure:
-the error's own code (a `HarnessError` carried as a defect included),
+the error's own code (a `TurnError` carried as a defect included),
 `turn.failed`, `turn.defect` or `turn.interrupted`. A `run` that interrupts
 itself (an `Effect.interrupt`, or joining an interrupted fiber) ends
 `interrupted` but counts an attempt even when it wrote nothing, so an item

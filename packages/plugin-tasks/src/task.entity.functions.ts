@@ -1,5 +1,5 @@
 import { Cause, Exit, Option, Schema } from "effect"
-import { framed, isHarnessError } from "@xandreed/core"
+import { framed, harnessCodeOf, isHarnessError, reasonOf } from "@xandreed/core"
 import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnError, TurnOutcome } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started } from "./task-records.entity.js"
@@ -59,7 +59,12 @@ export const isChildOf = (view: SessionView, parent: string): boolean =>
 /** A child that no longer exists: its parent's removal took it. */
 export const goneEnd: TaskEnd = { status: "cancelled", reply: Option.none(), failure: Option.some({ code: "task.removed", message: "the task's session was removed" }) }
 
-/** How the child's turn went, as its result records it: a turn past its deadline is interrupted. */
+/**
+ * How the child's turn went, as its result records it: a turn past its
+ * deadline is interrupted; a failed one stores its error's framework code
+ * (`harnessCodeOf`: a `HarnessError`'s own, carried as a defect included, or
+ * the code a tag such as `TurnClosed` stands for), else `task.turn`.
+ */
 export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option<TurnOutcome>, TurnError>): Result => Exit.match(exit, {
   onSuccess: (outcome) => Option.match(outcome, {
     onNone: () => ({ taskId, outcome: "interrupted", reply: Option.none(), failure: Option.some({ code: "task.deadline", message: "the task ran out of time" }) }),
@@ -72,7 +77,10 @@ export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option
     const error = Cause.squash(cause)
     return {
       taskId, outcome: "failed", reply: Option.none(),
-      failure: Option.some(isHarnessError(error) ? { code: error.code, message: error.message } : { code: "task.turn", message: "the task's turn failed" }),
+      failure: Option.some(Option.match(harnessCodeOf(error), {
+        onNone: () => ({ code: "task.turn", message: "the task's turn failed" }),
+        onSome: (code) => ({ code, message: isHarnessError(error) ? error.message : reasonOf(Cause.fail(error)) }),
+      })),
     }
   },
 })

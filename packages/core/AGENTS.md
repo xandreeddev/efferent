@@ -24,8 +24,14 @@ raised code the list lacks), and never rename or remove one; first-party
 code builds a `HarnessError` of one with `harnessError(code, message, cause)`.
 The writer and the ports on the turn's path over it fail with `TurnError`
 (`src/session/sessions.entity.ts`), most of whose members have no `code`
-field: read a turn failure's code with `harnessCodeOf`, and widen a port
-to `TurnError` only when its implementations reach the writer.
+field: match `TurnClosed`, `ReservedKind`, `SessionContended` and
+`SessionLogError` by tag (`Effect.catchTag`), read a turn failure's code
+with `harnessCodeOf`, and widen a port to `TurnError` only when its
+implementations reach the writer. `isTurnError` tells one by its tag and
+fields, from any copy of core: `harnessDefectsAsFailures` and the bus
+restore one carried as a defect, and a loop or a registry lets one through
+rather than wrap it. `PLUGIN_API_VERSION` is 3 since the writer raises the
+tags; versions 1 and 2 still load.
 
 The step loop lives in `@xandreed/plugin-agent-loop`, plugin activation in
 `@xandreed/runtime`, sessions in `@xandreed/plugin-sessions`, and the

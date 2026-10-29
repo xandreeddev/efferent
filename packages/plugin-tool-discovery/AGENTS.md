@@ -7,7 +7,7 @@ Core's `ToolRegistry` over every contributed capability: it registers the tools 
 - A call refused before its handler runs goes through `refuse`: it publishes `tool.refused` and returns `{ error, message }` as the call's result, for the model to correct.
 - Only `skills.unknown` and `capability.forbidden` are refusals of an activation (`refusalCodes`); any other failure there, such as the store's, is the turn's.
 - A handler's defect reaches the model as `ToolDefect` with the first line of its message (at most 300 characters); the whole cause goes to the log only.
-- A `HarnessError` a handler dies with (a subscriber failing on its event, the store failing an activation) fails the turn after `tool.completed`, never as the call's result.
+- A `TurnError` a handler dies with (`isTurnError`: a subscriber failing on its event, the writer or the store failing an activation, `TurnClosed` included) fails the turn after `tool.completed`, never as the call's result.
 - Activation is one `SynchronizedRef.modifyEffect`: record `ToolsActivated` before publishing `skills.activated`; the active set only grows within a turn.
 - Read-only tools share `readConcurrency` permits; every other tool runs alone on the write lane.
 - Always-on skills are never in the catalogue and their instructions never reach the model: guidance goes in tool descriptions or a prompt section.
@@ -25,16 +25,16 @@ Core's `ToolRegistry` over every contributed capability: it registers the tools 
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `load_skill` description | `src/registry.adapter.ts:68` | sdk golden |
-| `read_skill_reference` description | `src/registry.adapter.ts:76` | unpinned |
-| Catalogue heading and lines (`catalogText`) | `src/registry.adapter.ts:114-120` | sdk golden |
-| Skill instructions (`skillInstructions`: `## id`, `Tools:`, `References (read_skill_reference):`, `Now available:`), also for matcher-seeded exchanges | `src/registry.adapter.ts:105-111` | sdk golden; exact, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:188` |
-| `ToolInactive` messages | `src/registry.adapter.ts:295-296` | exact (not loaded), `packages/plugin-workspace/src/workspace-tools.journey.test.ts:183`; not available: unpinned |
-| `ToolCallLimit` message | `src/registry.adapter.ts:307` | exact, `packages/sdk/src/agent.trace.test.ts:239` |
-| `Forbidden`, `CallLimit` messages; `Denied` carries the policy's | `src/registry.adapter.ts:299`, `:305`, `:302` | codes only, `src/registry.adapter.test.ts:300`; the denial's text, `:324` |
-| `ToolDefect` message | `src/registry.adapter.ts:324` | exact, `src/registry.adapter.test.ts:350` |
-| `SkillLoadLimit`, `UnknownReference` messages; `Unknown skills: …` | `src/registry.adapter.ts:263`, `:275`, `:245` | unpinned |
-| `SkillNotLoaded` message | `src/registry.adapter.ts:274` | contains, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:260` |
+| `load_skill` description | `src/registry.adapter.ts:69` | sdk golden |
+| `read_skill_reference` description | `src/registry.adapter.ts:77` | unpinned |
+| Catalogue heading and lines (`catalogText`) | `src/registry.adapter.ts:115-121` | sdk golden |
+| Skill instructions (`skillInstructions`: `## id`, `Tools:`, `References (read_skill_reference):`, `Now available:`), also for matcher-seeded exchanges | `src/registry.adapter.ts:106-112` | sdk golden; exact, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:188` |
+| `ToolInactive` messages | `src/registry.adapter.ts:296-297` | exact (not loaded), `packages/plugin-workspace/src/workspace-tools.journey.test.ts:183`; not available: unpinned |
+| `ToolCallLimit` message | `src/registry.adapter.ts:308` | exact, `packages/sdk/src/agent.trace.test.ts:239` |
+| `Forbidden`, `CallLimit` messages; `Denied` carries the policy's | `src/registry.adapter.ts:300`, `:306`, `:303` | codes only, `src/registry.adapter.test.ts:300`; the denial's text, `:324` |
+| `ToolDefect` message | `src/registry.adapter.ts:325` | exact, `src/registry.adapter.test.ts:350` |
+| `SkillLoadLimit`, `UnknownReference` messages; `Unknown skills: …` | `src/registry.adapter.ts:264`, `:276`, `:246` | unpinned |
+| `SkillNotLoaded` message | `src/registry.adapter.ts:275` | contains, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:260` |
 
 ## Erasure files
 

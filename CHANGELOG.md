@@ -49,6 +49,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `HarnessError` annotations on a turn's `use`, or on code calling these
   ports, to `TurnError`; implementations returning `HarnessError` still
   satisfy the ports.
+- Match a turn writer's failures by tag (`Effect.catchTag("TurnClosed" |
+  "ReservedKind" | "SessionContended" | "SessionLogError", …)`) instead of
+  `code === "turn.closed"`, and handle `TurnClosed.reason` `"ended"` where
+  reasons are matched exhaustively. A custom `Sessions` writer raises these
+  tags and reruns `sessionsConformance`; a `SessionLog` is unaffected.
 
 ### Breaking
 
@@ -156,6 +161,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and `StepLoop.run`, `RunTools` and `ToolRegistry.open`, `TaskExecutor`,
   `Turn`, `TurnRunner.turn` and `Agent.turn` (which fails with
   `TurnError | E`). Types only: what is raised and stored is unchanged.
+- The turn writer, `Agent.turn` and task turns fail with `TurnClosed`
+  (`cancelled`, `interrupted`, `removed`, `ended`), `ReservedKind`,
+  `SessionContended` or the store's `SessionLogError` instead of
+  `HarnessError` codes; stored codes are unchanged. Reading a removed
+  session through the writer fails with `TurnClosed` (`removed`).
+- `PLUGIN_API_VERSION` is 3 (API 1 and 2 plugins still load), and
+  `sessionsConformance` asserts the tags.
+- `harnessDefectsAsFailures` restores any `TurnError` carried as a defect
+  (`E | TurnError`), and `runSteps` and the tool registry pass `TurnError`s
+  through.
 
 ### Added
 
@@ -209,6 +224,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/sdk`) and gains `SessionContended: "session.contended"`.
 - `reasonOf` is exported from `@xandreed/evals`: a failure's cause as
   report text (`code: message`), never a stack.
+- `isTurnError` in `@xandreed/core`.
 
 ### Fixed
 
@@ -390,6 +406,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   stores `session.contended`.
 - SQLite store errors keep SQLite's error as `cause`, and `isStoreBusy`
   recognises `store.busy`.
+- A task whose turn fails with `SessionContended`, `ReservedKind` or
+  `SessionLogError` stores that tag's code instead of `task.turn`.
 
 ### Repository
 

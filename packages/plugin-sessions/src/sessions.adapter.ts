@@ -1,16 +1,16 @@
-import { Clock, Context, Effect, Exit, Layer, Option, PubSub, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
+import { Cause, Clock, Context, Effect, Exit, Layer, Option, PubSub, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
 import {
   canonicalJson,
   ConversationId,
   EntryId,
   HarnessError,
-  harnessCodeOf,
   harnessDefectsAsFailures,
   InboxFull,
   KeyConflict,
   normalizeUserMessage,
   NothingPending,
   NotResumable,
+  reasonOf,
   RESERVED_KINDS,
   resumeRefusal,
   ReservedKind,
@@ -435,7 +435,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const once: Effect.Effect<Option.Option<boolean>, SessionMissing | SessionContended | SessionLogError, R> = Effect.scoped(Effect.gen(function* () {
       const runId = yield* Effect.sync(() => crypto.randomUUID())
       const open = yield* openTurn(address, meta === undefined ? { _tag: "Inbox", runId } : { _tag: "Inbox", runId, meta })
-      // A HarnessError carried as a defect keeps its own code, as in `Agent.turn`.
+      // A TurnError carried as a defect keeps its own tag and code, as in `Agent.turn`.
       const exit = yield* Effect.exit(harnessDefectsAsFailures(run(open.writer)))
       // The turn ends with what ended `run`: its error's code, `turn.defect` or `turn.interrupted`.
       const ending = turnEndingOf(Exit.map(exit, () => ({ outcome: "completed" as const })))
@@ -449,15 +449,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       // The drain closes its own turns, so it drains what they leave: its end counts what waits (items delivered
       // during the turn included). An end not stored is logged, and the drain goes on: the scope tries the end
       // again, and lets the turn go when that fails too, so the next begin reaps it and takes its items again.
+      const unstored = `inbox turn ${open.writer.admitted.turn} of ${address.id} did not store its end`
       return yield* open.writer.end(ending).pipe(
         Effect.map((ended) => Option.some(ended.pending > 0)),
-        Effect.catch((error) => {
-          const code = Option.getOrElse(harnessCodeOf(error), () => error._tag)
-          return (code === "turn.closed" ? Effect.logDebug : Effect.logWarning)(`inbox turn ${open.writer.admitted.turn} of ${address.id} did not store its end: ${code}: ${error.message}`).pipe(
-            Effect.annotateLogs(turnLogIds(address.id, open.writer.admitted.turn)),
-            Effect.as(Option.some(true)),
-          )
-        }),
+        Effect.catchTag("TurnClosed", (closed) => Effect.logDebug(`${unstored}: the turn was ${closed.reason}`).pipe(Effect.as(Option.some(true)))),
+        Effect.catch((error) => Effect.logWarning(`${unstored}: ${reasonOf(Cause.fail(error))}`).pipe(Effect.as(Option.some(true)))),
+        Effect.annotateLogs(turnLogIds(address.id, open.writer.admitted.turn)),
       )
     })).pipe(
       Effect.catchTags({

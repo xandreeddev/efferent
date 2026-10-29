@@ -129,6 +129,7 @@ const STRINGIFIED_CAUSE_CLEAN = [
 
 const ERROR_CODE_COMPARE_CLEAN = [
   "core",
+  "sdk",
   "evals",
   "evals-cli",
   "evals-langfuse",
@@ -140,6 +141,8 @@ const ERROR_CODE_COMPARE_CLEAN = [
   "plugin-memory-digest",
   "plugin-tool-discovery",
   "plugin-models",
+  "plugin-sessions",
+  "plugin-tasks",
   "plugin-render",
   "plugin-workspace",
   "plugin-telemetry",

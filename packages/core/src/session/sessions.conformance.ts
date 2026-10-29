@@ -1,4 +1,4 @@
-import { Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Scope } from "effect"
+import { Deferred, Effect, Exit, Fiber, Match, Option, Ref, Schema, Scope } from "effect"
 import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
@@ -12,7 +12,7 @@ import { TurnEndedData } from "./session-event.entity.js"
 import { frameworkDraft } from "./session-event.entity.functions.js"
 import type { JsonObject, SessionLogEvent } from "./session-log.entity.js"
 import { TurnRefused } from "./sessions.entity.js"
-import type { AdmittedTurn, BeginTurn, InboxItem, SessionAddress, TurnEnding } from "./sessions.entity.js"
+import type { AdmittedTurn, BeginTurn, InboxItem, SessionAddress, TurnEnding, TurnError } from "./sessions.entity.js"
 
 type Service = Context.Service.Shape<typeof Sessions>
 type Admission = Context.Service.Shape<typeof TurnAdmission>
@@ -95,10 +95,20 @@ const refusal = (sessions: Service, address: SessionAddress, input: BeginTurn) =
   onFailure: (error) => error._tag === "NotResumable" ? `NotResumable:${error.reason}` : error._tag,
   onSuccess: (writer) => `opened turn ${writer.admitted.turn}`,
 }))
-/** What a write after the turn was closed failed with: a flush, so a write that is queued is tried. */
+/**
+ * A writer's refusal as the kit compares it: `TurnClosed:<reason>`,
+ * `ReservedKind`, any other failure as `<tag>(<code>)` (a `HarnessError` of
+ * the code a tag stands for is not that tag).
+ */
+const refusalOf = (error: TurnError): string => Match.value(error).pipe(
+  Match.tag("TurnClosed", (closed) => `TurnClosed:${closed.reason}`),
+  Match.tag("ReservedKind", () => "ReservedKind"),
+  Match.orElse((other) => `${other._tag}(${failureCode(other)})`),
+)
+/** What a write after the turn was closed failed with (`refusalOf`): a flush, so a write that is queued is tried. */
 const writeRefused = (writer: TurnWriter) => writer.append([{ kind: "conformance.late", data: {} }]).pipe(
   Effect.andThen(writer.flush),
-  Effect.match({ onFailure: failureCode, onSuccess: () => "stored" }),
+  Effect.match({ onFailure: refusalOf, onSuccess: () => "stored" }),
 )
 /** A scope of the check's own, closed when the check ends if it is still open. */
 const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(scope, Exit.void))
@@ -116,9 +126,13 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * `AttachmentRejected` and an inbox turn with nothing to take with
  * `NothingPending`, opening nothing; the writer storing in order and its
  * end storing how the turn ended (completed, failed with a code, a scope
- * closed unended or interrupted); writing outside a turn and the reserved
- * kinds, refused there and to a turn's writer unless the framework's turn
- * wrote them (`frameworkDraft`); cancel and removal closing the writer, and
+ * closed unended or interrupted), a write after its own end refused as
+ * `TurnClosed` (`ended`); writing outside a turn and the reserved kinds,
+ * refused as `ReservedKind` there and to a turn's writer unless the
+ * framework's turn wrote them (`frameworkDraft`); cancel and removal closing
+ * the writer, a write after a cancel, a reap or a stopped holder refused as
+ * `TurnClosed` with its reason (a writer must raise these tags, not a
+ * `HarnessError` of their codes), and
  * a turn nobody holds any more reaped alike by a cancel or a delivery,
  * whichever comes first; the inbox (delivered once
  * per id, taken by one inbox turn, waiting for the open turn, given back
@@ -380,7 +394,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
         yield* expect("writer", ended.pending === 0, `the end reports ${ended.pending} items waiting`)
         return yield* writeRefused(writer)
       }))
-      yield* expect("writer", late === "turn.closed", `a write after the end gave ${late}`)
+      yield* expect("writer", late === "TurnClosed:ended", `a write after the end gave ${late}`)
       yield* Effect.scoped(sessions.begin(address, say("two")).pipe(Effect.tap((writer) =>
         writer.end({ reason: "failed", failure: Option.some({ code: "conformance.failed", message: "the host failed" }) }))))
       yield* Effect.scoped(sessions.begin(address, say("three")))
@@ -410,8 +424,8 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const refused = [
         yield* Effect.flip(writer.append([{ kind: "conformance.note", data: {} }, { kind: "turn.ended", data: { reason: "completed", failure: null } }])),
         yield* Effect.flip(writer.transact(() => Effect.succeed({ drafts: [{ kind: "memory.message", data: {} }], result: undefined }))),
-      ].map(failureCode)
-      yield* expect("transact", refused.every((code) => code === "events.reserved"), `a turn's writer recording turn.ended and memory.message gave ${refused.join()}`)
+      ].map(refusalOf)
+      yield* expect("transact", refused.every((refusal) => refusal === "ReservedKind"), `a turn's writer recording turn.ended and memory.message gave ${refused.join()}`)
       yield* expect("transact", Option.contains(yield* openTurn(sessions, address), 1), "a turn.ended a host appended closed the turn")
       yield* writer.append([frameworkDraft("step.started", { step: 0 }), { kind: "conformance.answer", data: {} }])
       yield* writer.end(completed)
@@ -427,10 +441,12 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("cancel", cancelled.cancelled && cancelled.pending === 0, `cancelling the open turn answered ${canonicalJson(cancelled)}`)
       const closed = yield* local.closed
       yield* expect("cancel", closed.reason === "cancelled" && closed.turn === 1, `the holder's writer was closed as ${closed.reason}`)
-      yield* expect("cancel", (yield* writeRefused(local)) === "turn.closed", "the cancelled writer still writes")
+      const localRefusal = yield* writeRefused(local)
+      yield* expect("cancel", localRefusal === "TurnClosed:cancelled", `a write to the cancelled writer gave ${localRefusal}`)
       const remote = yield* holder.sessions.begin(address, say("elsewhere"))
       yield* expect("cancel", (yield* other.sessions.cancel(address, 2)).cancelled, "another instance could not cancel the open turn")
-      yield* expect("cancel", (yield* writeRefused(remote)) === "turn.closed", "a writer cancelled from another instance still writes")
+      const remoteRefusal = yield* writeRefused(remote)
+      yield* expect("cancel", remoteRefusal === "TurnClosed:cancelled", `a write to a writer cancelled from another instance gave ${remoteRefusal}`)
       const closedRemotely = yield* remote.closed
       yield* expect("cancel", closedRemotely.reason === "cancelled", `a writer cancelled from another instance was closed as ${closedRemotely.reason}`)
       const third = yield* holder.sessions.begin(address, say("three"))
@@ -538,7 +554,8 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("lease", next.admitted.turn === 2, `the begin after the lease opened turn ${next.admitted.turn}`)
       const reaped = endings(yield* second.sessions.read(address, { kinds: ["turn.ended"] }))
       yield* expect("lease", reaped === "1:interrupted:turn.lease", `the expired turn was closed as ${reaped || "nothing"}`)
-      yield* expect("lease", (yield* writeRefused(writer)) === "turn.closed", "the old holder still writes")
+      const late = yield* writeRefused(writer)
+      yield* expect("lease", late === "TurnClosed:interrupted", `a write by the old holder gave ${late}`)
       const closed = yield* writer.closed
       yield* expect("lease", closed.reason === "interrupted", `the old holder's writer was closed as ${closed.reason}`)
     })),
@@ -578,7 +595,8 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
           yield* expect("process", Option.isNone(yield* openTurn(restarted.sessions, address)), "a turn whose process stopped is shown open")
           const next = yield* restarted.sessions.begin(address, say("after the restart"))
           yield* expect("process", next.admitted.turn === 2, `the begin after the crash opened turn ${next.admitted.turn}`)
-          yield* expect("process", (yield* writeRefused(writer)) === "turn.closed", "the stopped process's writer still writes")
+          const late = yield* writeRefused(writer)
+          yield* expect("process", late === "TurnClosed:interrupted", `a write by the stopped process's writer gave ${late}`)
           // The pid came back: a process that started later under it is not the one holding the turn.
           const reborn = yield* named(202, 3, [202])
           const third = yield* reborn.sessions.begin(address, say("pid reused"))

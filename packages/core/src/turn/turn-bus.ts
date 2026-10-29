@@ -1,9 +1,9 @@
 import { Cause, Context, Deferred, Effect, Fiber, Option, Queue, Ref, Semaphore } from "effect"
 import type { Scope } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
-import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
 import type { SubscribeOptions, TurnEventsService, TurnTasksService } from "../ports/turn-events.port.js"
+import { isTurnError } from "../session/sessions.entity.functions.js"
 import type { TurnError } from "../session/sessions.entity.js"
 import type { TurnEvent } from "./turn-event.entity.js"
 import { randomUuid } from "../util/random-id.js"
@@ -22,14 +22,15 @@ type Queued<E> =
 
 /**
  * A background handler's failure as the turn fails with it: its typed error,
- * or a HarnessError it carried as a defect, as a failure; any other defect
- * stays the defect it is; an interruption alone fails with `events.background`.
+ * or a `TurnError` it carried as a defect (`isTurnError`), as a failure; any
+ * other defect stays the defect it is; an interruption alone fails with
+ * `events.background`.
  */
 const failureOf = (cause: Cause.Cause<TurnError>): Cause.Cause<TurnError> => Option.match(Cause.findErrorOption(cause), {
   onSome: Cause.fail,
   onNone: () => {
     const defect = Cause.squash(cause)
-    return isHarnessError(defect) ? Cause.fail(defect)
+    return isTurnError(defect) ? Cause.fail(defect)
       : Cause.hasInterruptsOnly(cause) ? Cause.fail(new HarnessError({ code: "events.background", message: "a background handler was interrupted" }))
       : cause
   },
@@ -170,8 +171,11 @@ export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksServic
 
 /**
  * Callbacks with a `never` error channel (the loop's, a tool wrapper's
- * publish) carry a HarnessError as a defect; this restores it as a failure
- * at the turn boundary so a subscriber failure fails the turn, typed.
+ * publish) carry a `TurnError` as a defect: a `HarnessError`, or a writer's
+ * `TurnClosed`, `ReservedKind`, `SessionContended` or `SessionLogError`.
+ * This restores it as a failure at the turn boundary (`isTurnError`, from
+ * any copy of core), so a subscriber or writer failure fails the turn,
+ * typed, with its own tag and code; any other defect stays one.
  */
-export const harnessDefectsAsFailures = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError, R> =>
-  effect.pipe(Effect.catchDefect((defect) => isHarnessError(defect) ? Effect.fail(defect) : Effect.die(defect)))
+export const harnessDefectsAsFailures = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | TurnError, R> =>
+  effect.pipe(Effect.catchDefect((defect) => isTurnError(defect) ? Effect.fail(defect) : Effect.die(defect)))

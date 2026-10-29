@@ -5197,8 +5197,8 @@
   "errorCodes": [
     {
       "code": "turn.closed",
-      "where": "`Agent.turn`, the turn writer",
-      "meaning": "Someone else closed the turn (cancelled, reaped, the session removed); its later writes are refused."
+      "where": "`Agent.turn`, the turn writer (`TurnClosed`)",
+      "meaning": "The turn takes no more writes: someone else closed it (`cancelled`; `interrupted`, reaped; `removed`, its session removed), or it `ended` (its own end stored or under way, or its scope closed). The writer and `Agent.turn` fail with `TurnClosed`, whose `reason` says which; this is the code it stands for."
     },
     {
       "code": "turn.failed",
@@ -5208,7 +5208,7 @@
     {
       "code": "turn.defect",
       "where": "stored `turn.ended` failure (`turnEndingOf`)",
-      "meaning": "The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `HarnessError` carried as a defect back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`."
+      "meaning": "The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `TurnError` carried as a defect (a `HarnessError`, `TurnClosed`, ...) back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`."
     },
     {
       "code": "turn.interrupted",
@@ -5252,7 +5252,7 @@
     },
     {
       "code": "events.reserved",
-      "where": "publishing a host event; a turn writer's `append` or `transact`",
+      "where": "publishing a host event; a turn writer's `append` or `transact` and `Sessions.transact` (`ReservedKind`)",
       "meaning": "The host event's name, or the draft's kind, is one of the reserved kinds; only the framework's turn writes those (`frameworkDraft`)."
     },
     {
@@ -5432,17 +5432,17 @@
     },
     {
       "code": "session.log",
-      "where": "the turn writer; a turn failing with a `SessionLogError`",
+      "where": "the turn writer, a turn failing with a `SessionLogError`",
       "meaning": "The session store failed during the turn. A turn that fails with a `SessionLogError` stores this code; the error's own `code` (`store.io`, ...) says what failed."
     },
     {
       "code": "session.contended",
-      "where": "the turn writer (a `HarnessError`); plugin-sessions' `Sessions` and the `Tasks` over it (`SessionContended`)",
+      "where": "the turn writer, plugin-sessions' `Sessions` and the `Tasks` over it (`SessionContended`)",
       "meaning": "Too many conflicting writes to the session in a row: nothing was written, and a retry may succeed."
     },
     {
       "code": "session.state",
-      "where": "the turn writer; plugin-sessions' `Sessions` (a `SessionLogError`)",
+      "where": "the turn writer (a `HarnessError`); plugin-sessions' `Sessions` (a `SessionLogError`)",
       "meaning": "The session's state, kept in its head, did not decode."
     },
     {

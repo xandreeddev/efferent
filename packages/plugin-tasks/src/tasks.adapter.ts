@@ -1,8 +1,8 @@
-import { Clock, Effect, Layer, Option, Ref, Schema } from "effect"
+import { Cause, Clock, Effect, Layer, Option, Ref, Schema } from "effect"
 import {
   ConversationId,
-  HarnessError,
   MemoryKindOf,
+  reasonOf,
   SessionExists,
   Sessions,
   TaskConflict,
@@ -84,21 +84,23 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     return { drafts: records.length > 0 ? [] : [{ kind: TASK_RESULT, data: yield* resultJson(result) }], result: undefined }
   })).pipe(Effect.catchTag("ReservedKind", reservedIsDefect), Effect.asVoid)
 
-  /** The turn's body until its deadline (then none) or until someone else closes the turn. */
+  /** The turn's body until its deadline (then none) or until someone else closes the turn (then its `TurnClosed`). */
   const bounded = (body: Effect.Effect<TurnOutcome, TurnError>, writer: TurnWriter, deadline: Option.Option<number>) => Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis
     const timed = Option.match(deadline, {
       onNone: () => body.pipe(Effect.map(Option.some)),
       onSome: (at) => body.pipe(Effect.timeoutOption(Math.max(0, at - now))),
     })
-    return yield* Effect.raceFirst(timed, writer.closed.pipe(Effect.flatMap((closed) =>
-      Effect.fail(new HarnessError({ code: "turn.closed", message: `turn ${closed.turn} was ${closed.reason}` })))))
+    return yield* Effect.raceFirst(timed, writer.closed.pipe(Effect.flatMap((closed) => Effect.fail(closed))))
   })
 
   /**
    * The child's one turn: begun once (its key is the task's) with the
    * starter's `meta`, its result recorded before it ends unless it was
-   * cancelled.
+   * cancelled. Once the turn is begun, a write the turn's writer refuses is
+   * logged here: `TurnClosed` (the turn was closed under it: cancelled,
+   * removed) as the task stopping, anything else (the result or the end not
+   * stored) as a failure.
    */
   const runChild = (parent: SessionAddress, task: TaskView, meta: JsonObject, deadline: Option.Option<number>) => {
     const child = childOf(parent, task.child)
@@ -108,15 +110,21 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
         key: deliveryId(task.taskId), command: { task: task.taskId }, meta,
       })
       // A cancel that landed after the task was read, before its turn began.
-      if ((yield* sessions.read(child, { kinds: [TASK_CANCELLED] })).length > 0) return yield* writer.end({ reason: "cancelled", failure: Option.none() })
-      const exit = yield* Effect.exit(bounded(executor.turn(writer, { ...task, status: "running" }), writer, deadline))
-      const result = resultOf(task.taskId, exit)
-      const data = yield* resultJson(result)
-      yield* writer.transact((foreign) => Effect.succeed({
-        drafts: foreign.some((event) => event.kind === TASK_CANCELLED) ? [] : [{ kind: TASK_RESULT, data }],
-        result: undefined,
-      }))
-      return yield* writer.end({ reason: result.outcome, failure: result.failure })
+      const cancelledFirst = (yield* sessions.read(child, { kinds: [TASK_CANCELLED] })).length > 0
+      const turn = cancelledFirst ? writer.end({ reason: "cancelled", failure: Option.none() }) : Effect.gen(function* () {
+        const exit = yield* Effect.exit(bounded(executor.turn(writer, { ...task, status: "running" }), writer, deadline))
+        const result = resultOf(task.taskId, exit)
+        const data = yield* resultJson(result)
+        yield* writer.transact((foreign) => Effect.succeed({
+          drafts: foreign.some((event) => event.kind === TASK_CANCELLED) ? [] : [{ kind: TASK_RESULT, data }],
+          result: undefined,
+        }))
+        return yield* writer.end({ reason: result.outcome, failure: result.failure })
+      })
+      return yield* turn.pipe(
+        Effect.catchTag("TurnClosed", (closed) => Effect.logInfo(`background task ${task.taskId} stopped: its turn was ${closed.reason}`)),
+        Effect.catch((error) => Effect.logWarning(`background task ${task.taskId} could not store its turn: ${reasonOf(Cause.fail(error))}`)),
+      )
     })).pipe(
       Effect.catchTags({
         // Begun elsewhere, or before: that run records the result.
@@ -131,11 +139,6 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
         TurnRefused: (refused: TurnRefused) => recordEnd(child, {
           taskId: task.taskId, outcome: "failed", reply: Option.none(), failure: Option.some({ code: "task.refused", message: refused.message }),
         }),
-        // The turn was closed under it (cancelled, removed): nothing more to record. Any other failure is the
-        // store's (the result or the end not stored): a failure, logged as one.
-        HarnessError: (error) => error.code === "turn.closed"
-          ? Effect.logInfo(`background task ${task.taskId} stopped: ${error.message}`)
-          : Effect.logWarning(`background task ${task.taskId} could not store its turn: ${error.code}: ${error.message}`),
       }),
       Effect.asVoid,
     )

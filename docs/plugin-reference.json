@@ -2,7 +2,7 @@
   {
     "id": "@xandreed/plugin-session-sqlite",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
     "optional": [],
@@ -31,7 +31,7 @@
   {
     "id": "@xandreed/plugin-session-sqlite/log",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
     "optional": [],
@@ -59,7 +59,7 @@
   {
     "id": "@xandreed/plugin-sessions",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [
       "efferent/SessionLog",
@@ -225,7 +225,7 @@
   {
     "id": "@xandreed/plugin-workspace/local",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
     "optional": [],
@@ -267,7 +267,7 @@
   {
     "id": "@xandreed/plugin-workspace/skills",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [
       "@xandreed/core/FileSystem"
@@ -370,7 +370,7 @@
   {
     "id": "@xandreed/plugin-workspace/tools",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [
       "@xandreed/core/FileSystem",
@@ -614,7 +614,7 @@
   {
     "id": "@xandreed/plugin-models",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [
       "efferent/SessionEnvironment"
@@ -815,7 +815,7 @@
   {
     "id": "@xandreed/plugin-memory-window",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
     "optional": [],
@@ -915,7 +915,7 @@
   {
     "id": "@xandreed/plugin-memory-summary",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
     "optional": [],
@@ -1033,7 +1033,7 @@
   {
     "id": "@xandreed/plugin-memory-digest",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "session",
     "requires": [
       "@xandreed/core/UtilityLlm"
@@ -1072,7 +1072,7 @@
   {
     "id": "@xandreed/plugin-tool-discovery",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [
       "efferent/Capabilities"
@@ -1153,7 +1153,7 @@
   {
     "id": "@xandreed/plugin-agent-loop/steps",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
     "optional": [],
@@ -1172,7 +1172,7 @@
   {
     "id": "@xandreed/plugin-tasks",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [
       "efferent/Sessions",
@@ -1227,7 +1227,7 @@
   {
     "id": "@xandreed/plugin-telemetry",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "session",
     "requires": [
       "efferent/RunContext",
@@ -1301,7 +1301,7 @@
   {
     "id": "@xandreed/plugin-render/surface",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [
       "efferent/render/Store",
@@ -1334,7 +1334,7 @@
   {
     "id": "@xandreed/plugin-render/feed",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "runtime",
     "requires": [
       "efferent/render/JournalTail"
@@ -1387,7 +1387,7 @@
   {
     "id": "@xandreed/plugin-render/output",
     "version": "0.14.0",
-    "apiVersion": 2,
+    "apiVersion": 3,
     "scope": "session",
     "requires": [
       "efferent/ui/OutputAdmission",

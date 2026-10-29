@@ -41,14 +41,19 @@ export interface Decided<A> {
  * order by one writer, consecutive appends in one commit, each commit
  * guarded by the session's revision and the turn's lease: a write the
  * session no longer accepts (cancelled, reaped, removed) closes the writer,
- * and every later write fails with `turn.closed`. An append the store
- * fails, or whose commit dies with a defect (`session.defect`, logged with
- * its cause), fails every later write and flush with that error. `append`
- * and `transact` refuse a draft under one of the framework's kinds
- * (`RESERVED_KINDS`) with `events.reserved`, storing nothing of that call,
- * unless the framework's turn wrote it (`frameworkDraft`): only the turn
- * records memory, the bus's events and `request.prepared`. Every method
- * fails with a `TurnError`: read its code with `harnessCodeOf`.
+ * and every later write fails with `TurnClosed` (its `reason`; `ended` once
+ * the writer's own end is stored or under way, or its scope closed). An
+ * append the store fails (`SessionLogError`, or `SessionContended` after
+ * too many conflicts in a row), or whose commit dies with a defect
+ * (`HarnessError` `session.defect`, logged with its cause), fails every
+ * later write and flush with that error. `append` and `transact` refuse a
+ * draft under one of the framework's kinds (`RESERVED_KINDS`) with
+ * `ReservedKind`, storing nothing of that call, unless the framework's turn
+ * wrote it (`frameworkDraft`): only the turn records memory, the bus's
+ * events and `request.prepared`. Every method fails with a `TurnError`:
+ * match its tags with `Effect.catchTag("TurnClosed", …)`, read its code
+ * with `harnessCodeOf`. An implementation raises the tags, never a
+ * `HarnessError` of their codes (`sessionsConformance` checks it).
  */
 export interface TurnWriter {
   readonly admitted: AdmittedTurn
@@ -66,7 +71,7 @@ export interface TurnWriter {
   /**
    * Run `op` in queue order (after everything queued before it). When
    * someone else closes the turn meanwhile, `op` is interrupted and the
-   * write fails with `turn.closed`.
+   * write fails with that `TurnClosed`.
    */
   readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | TurnError>
   /**
@@ -89,7 +94,7 @@ export interface TurnWriter {
    * wait.
    */
   readonly end: (ending: TurnEnding) => Effect.Effect<{ readonly pending: number }, TurnError>
-  /** Completes when someone else closed the turn; never when it ends by `end`. */
+  /** Completes when someone else closed the turn (never with `ended`); never when it ends by `end`. */
   readonly closed: Effect.Effect<TurnClosed>
 }
 
@@ -191,7 +196,7 @@ export class Sessions extends Context.Service<Sessions, {
    * while the end of its last turn counts items waiting (ones delivered
    * during that turn included) and stops once one counts none. A turn whose
    * `run` succeeds ends completed; one whose `run` fails ends with its
-   * error's code (`turnEndingOf`, a `HarnessError` carried as a defect
+   * error's code (`turnEndingOf`, a `TurnError` carried as a defect
    * included): `turn.failed`, `turn.defect` or `turn.interrupted` when it has
    * none. A `run` that interrupts itself counts an attempt for the items it
    * took, even when it wrote nothing.

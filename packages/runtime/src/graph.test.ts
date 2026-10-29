@@ -30,6 +30,11 @@ describe("plugin graph", () => {
     expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [self])))).toHaveProperty("_tag", "Failure")
     expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [{ ...provider, apiVersion: 99 }])))).toHaveProperty("_tag", "Failure")
   })
+  test("plugins of the current API and of every earlier one still supported load", async () => {
+    expect(provider.apiVersion).toBe(3)
+    const loaded = await Promise.all([1, 2, 3].map((apiVersion) => Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [{ ...provider, apiVersion }])))))
+    expect(loaded.map((result) => result._tag)).toEqual(["Success", "Success", "Success"])
+  })
   test("bindings select providers and failed activation disposes acquired resources", async () => {
     const released: string[] = []
     const tracked = definePlugin({ ...{
