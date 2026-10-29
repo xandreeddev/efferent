@@ -69,7 +69,8 @@ console.log("The skills directory plugin read a SKILL.md tree over the packed lo
  * The workspace tools over the packed packages: one agent turn with
  * `localSystemPlugin` and `workspaceToolsPlugin` in a fresh directory, a
  * scripted model reading a file, loading the edit and shell skills, editing
- * it and running a command with stdin and a host variable. Run by
+ * it, running a command with stdin and a host variable, and reading an
+ * image, which the next request sends as an image. Run by
  * `verify.ts` on Bun and by `node-imports.mjs` on Node, which import the
  * names it uses. The script is JSON, so the same text is TypeScript and
  * JavaScript.
@@ -77,12 +78,15 @@ console.log("The skills directory plugin read a SKILL.md tree over the packed lo
 const workspaceJourney = `
 const workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), "efferent-workspace-")))
 await writeFile(join(workspaceRoot, "notes.md"), "- buy milk\\n")
+const workspacePixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+await writeFile(join(workspaceRoot, "chart.png"), Buffer.from(workspacePixel, "base64"))
 const workspaceUsage = { inputTokens: { total: 3 }, outputTokens: { total: 1 } }
 const workspaceCalls = [
  { name: "read", params: { path: "notes.md" } },
  { name: "load_skill", params: { skills: ["workspace.edit", "workspace.shell"] } },
  { name: "edit", params: { path: "notes.md", edits: [{ oldText: "milk", newText: "oat milk" }] } },
  { name: "bash", params: { command: "cat notes.md -; echo \\"$WORKSPACE_PROBE\\"", stdin: "from stdin\\n" } },
+ { name: "read", params: { path: "chart.png" } },
 ]
 const workspaceScript = JSON.parse(JSON.stringify([
  ...workspaceCalls.map((step, at) => [{ type: "tool-call", id: "w" + at, name: step.name, params: step.params }, { type: "finish", reason: "tool-calls", usage: workspaceUsage }]),
@@ -93,7 +97,7 @@ const workspaceTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function*
  const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
  const agent = yield* Agent.define({
   plugins: [memoryWindowPlugin, { plugin: toolDiscoveryPlugin, options: { grants: ["fs.write", "shell.exec"] } }, stepLoopPlugin, localSystemPlugin, { plugin: workspaceToolsPlugin, options: { bashEnv: { WORKSPACE_PROBE: "probe" } } }],
-  turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 6 }, workspace: workspaceRoot,
+  turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 7 }, workspace: workspaceRoot,
  })
  const model = yield* LanguageModel.make({
   generateText: (options) => Effect.sync(() => workspaceScript[workspacePrompts.push(JSON.stringify(options.prompt.content)) - 1]),
@@ -106,11 +110,16 @@ const workspaceTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function*
 const workspaceNotes = await readFile(join(workspaceRoot, "notes.md"), "utf8")
 await rm(workspaceRoot, { recursive: true, force: true })
 const workspaceLast = String(workspacePrompts[workspacePrompts.length - 1] ?? "")
-if (workspaceTurn.outcome !== "completed" || workspaceNotes !== "- buy oat milk\\n" || !workspaceLast.includes("- buy oat milk\\\\nfrom stdin\\\\nprobe\\\\n[Exit code 0.]")) {
+// The image read's tool result: its text the one-line view (no base64), the image a file part of its modelOutput.
+const workspaceRead = [...JSON.parse(workspaceLast || "[]")].filter((message) => message.role === "tool").flatMap((message) => [...message.content])
+ .find((part) => part.result === "[Image chart.png (image/png, 70 B).]")
+const workspaceImageSent = workspaceRead !== undefined && [...(workspaceRead.modelOutput ?? [])].some((output) => output.type === "file" && output.mediaType === "image/png" && output.data === workspacePixel)
+if (workspaceTurn.outcome !== "completed" || workspaceNotes !== "- buy oat milk\\n" || !workspaceLast.includes("- buy oat milk\\\\nfrom stdin\\\\nprobe\\\\n[Exit code 0.]")
+ || !workspaceImageSent) {
  console.error("The workspace tools journey failed: " + JSON.stringify({ outcome: workspaceTurn.outcome, notes: workspaceNotes, last: workspaceLast.slice(-600) }))
  process.exit(1)
 }
-console.log("The workspace tools read, edited and ran a command (stdin, host variable) in an Agent.turn on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
+console.log("The workspace tools read, edited and ran a command (stdin, host variable) and read an image in an Agent.turn on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
 `
 await writeFile(join(consumer, "verify.ts"), `
 import { Context, Deferred, Effect, Layer, Option, Ref, Stream } from "effect"

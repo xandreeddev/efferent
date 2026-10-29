@@ -63,6 +63,19 @@ ls, find, grep and bash; beside them is the skill directory loader
 - `edit` refuses a file that is not valid UTF-8 (`decodeText` says
   `lossy`); `read`, `write`, `edit` and `grep` refuse a `stat` kind other
   than file or directory (`NotAFile`) before any read.
+- `read` over a binary file (`binaryRead`): with `readImages`, bytes core's
+  `sniffImageType` calls an image become an `Image` result through
+  `mediaFromBytes` (the only image parsing; none here), whose view selects
+  it (`readMedia`) so memory stores it once, by its slot, and sends it as
+  an image of the result; an image `mediaFromBytes` refuses is an
+  `ImageRejected` note, never its bytes. The type comes from the bytes;
+  `mediaTypeOf` (the name's extension) is only for `Binary`. The image
+  check runs after the NUL probe, never before it (a text file may begin
+  with `GIF89a`): a PNG's IHDR length always holds a NUL, a WebP's RIFF
+  size does under 16 MB, a JPEG's and a GIF's headers do in practice
+  (tests read a PNG, a GIF and a WebP from disk). A file over
+  `maxFileBytes` is refused before either; `fileTooLargeHint` tells the
+  model to read a smaller copy when the name is an image's.
 - `write` and `edit` hold a per-file lock (an `RcMap` of semaphores keyed
   by the real path) built with the capability, which is runtime-scoped, so
   turns of different sessions editing one file are serialised; they write
@@ -75,8 +88,9 @@ ls, find, grep and bash; beside them is the skill directory loader
   `spillKeep` files. `Bash` is read with `Effect.serviceOption` when
   the capability is built: without it there is no `bash` tool.
 - The key-free journey (`workspace-tools.journey.test.ts`) drives the tools
-  through `Agent.define` with a scripted model; `verify:packages` runs a
-  packed version of it on Bun and Node.
+  through `Agent.define` with a scripted model (an image `read` included:
+  the next request carries it, the log holds its base64 once);
+  `verify:packages` runs a packed version of it on Bun and Node.
 - `src/skills/`: `skillsDirectoryPlugin` (runtime-scoped, requires
   `FileSystem`, reads `SessionEnvironment` when present, contributes
   `Capabilities`) loads directories of `SKILL.md` files once per agent. The

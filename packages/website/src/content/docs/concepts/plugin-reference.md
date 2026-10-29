@@ -442,6 +442,7 @@ Optional: `@xandreed/core/Bash`
   "grepMatches": 100,
   "grepLineChars": 500,
   "maxFileBytes": 33554432,
+  "readImages": true,
   "fuzzyEdit": true,
   "bashTimeoutMs": 120000,
   "bashMaxTimeoutMs": 600000,
@@ -551,6 +552,9 @@ Optional: `@xandreed/core/Bash`
       "minimum": 1024,
       "maximum": 1073741824
     },
+    "readImages": {
+      "type": "boolean"
+    },
     "fuzzyEdit": {
       "type": "boolean"
     },
@@ -624,6 +628,7 @@ Optional: `@xandreed/core/Bash`
     "grepMatches",
     "grepLineChars",
     "maxFileBytes",
+    "readImages",
     "fuzzyEdit",
     "bashTimeoutMs",
     "bashMaxTimeoutMs",

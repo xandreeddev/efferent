@@ -143,11 +143,12 @@ const agent = yield* Agent.define({
 })
 ```
 
-Paths stay inside the workspace (links resolved), `write` and `edit` leave
-`.git` and `.efferent` alone, and commands get an allowlisted environment
-without the host's keys. This is a guardrail against mistakes, not a sandbox:
-`bash` can reach anything the host process can. See
-[Workspace tools](docs/framework.md#workspace-tools).
+`read` returns PNG, JPEG, GIF and WebP files as images the model sees
+(`readImages`, on by default). Paths stay inside the workspace (links
+resolved), `write` and `edit` leave `.git` and `.efferent` alone, and
+commands get an allowlisted environment without the host's keys. This is a
+guardrail against mistakes, not a sandbox: `bash` can reach anything the
+host process can. See [Workspace tools](docs/framework.md#workspace-tools).
 
 Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)
 that `stackPlugins` composes the way the graph does. A turn is public steps

@@ -31,13 +31,18 @@ const stop = (text: string): Part => [{ type: "text", text }, { type: "finish", 
 interface Request {
   readonly tools: ReadonlyArray<string>
   readonly prompt: string
+  /** What the request tells the model `read` does. */
+  readonly read: string
 }
 
-/** A model that answers with the script, step by step, and keeps every request's tools and prompt. */
+/** A model that answers with the script, step by step, and keeps every request's tools, prompt and read description. */
 const scripted = (script: ReadonlyArray<Part>) => Effect.gen(function* () {
   const seen = yield* Ref.make<ReadonlyArray<Request>>([])
   const model = yield* LanguageModel.make({
-    generateText: (options) => Ref.modify(seen, (all): [number, ReadonlyArray<Request>] => [all.length, [...all, { tools: options.tools.map((tool) => tool.name), prompt: JSON.stringify(options.prompt.content) }]]).pipe(
+    generateText: (options) => Ref.modify(seen, (all): [number, ReadonlyArray<Request>] => [all.length, [...all, {
+      tools: options.tools.map((tool) => tool.name), prompt: JSON.stringify(options.prompt.content),
+      read: options.tools.find((tool) => tool.name === "read")?.description ?? "",
+    }]]).pipe(
       Effect.map((index) => (script[index] ?? stop("done")) as never)),
     streamText: () => Stream.die("not scripted") as never,
   })
@@ -145,6 +150,34 @@ describe("workspace tools journey", () => {
     expect(seen.progress.map((event) => event.text).join("")).toContain(`session=${conversation}`)
     expect(seen.progress.map((event) => `${event.invocationId}@${event.step}`)).toContain("run-1:call:3@3")
     expect(seen.stored.some((event) => event.kind === "tool.progress")).toBe(false)
+  })
+
+  test("reads an image and sees it in the next request; the session log stores it once, through its slot", async () => {
+    const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+    const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const root = yield* workspace
+      yield* Effect.promise(() => writeFile(join(root, "chart.png"), Buffer.from(pixelPng, "base64")))
+      return yield* turnOver(root, [], [
+        call("c1", "read", { path: "chart.png" }),
+        stop("A one-pixel chart."),
+      ], "what does the chart show?")
+    })))
+    expect(seen.outcome.outcome).toBe("completed")
+    expect(seen.outcome.reply).toEqual(Option.some("A one-pixel chart."))
+    const [first, afterRead] = seen.requests
+    expect(first?.read).toContain("A PNG, JPEG, GIF or WebP image (up to 3.75 MB and 8000 pixels a side) is returned as an image you can see")
+    expect(first?.prompt).not.toContain(pixelPng)
+    const messages = JSON.parse(afterRead?.prompt ?? "[]") as ReadonlyArray<{ readonly role: string; readonly content: ReadonlyArray<Record<string, unknown>> }>
+    const result = messages.find((message) => message.role === "tool")?.content[0]
+    expect(result?.["result"]).toBe("[Image chart.png (image/png, 70 B).]")
+    expect(result?.["modelOutput"]).toMatchObject([
+      { type: "text", text: "[Image chart.png (image/png, 70 B).]" },
+      { type: "file", mediaType: "image/png", data: pixelPng, fileName: "chart.png" },
+    ])
+    const recorded = seen.stored.filter((event) => event.kind === "memory.tool-result")
+    const body = (recorded[0]?.data as { readonly body?: Record<string, unknown> } | undefined)?.body
+    expect(body?.["media"]).toEqual([{ path: ["image"], fingerprint: expect.any(String), mediaType: "image/png", bytes: 70 }])
+    expect(JSON.stringify(seen.stored).split(pixelPng).length - 1).toBe(1)
   })
 
   test("without the grants, loading workspace.edit is forbidden and edit stays inactive", async () => {
