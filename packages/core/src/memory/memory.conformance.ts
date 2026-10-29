@@ -32,9 +32,9 @@ export const inMemoryLog = Effect.gen(function* () {
       ? turnStartedDraft(entry.turn, {
         runId: entry.runId, key: entry.runId, origin: "user", userMessage: entry.body.userMessage, command: {}, claimed: [], entry: entry.id, at: entry.at,
       }).pipe(Effect.map(Option.some))
-      : draftOfEntry(entry)).pipe(Effect.mapError(codec))).pipe(
+      : draftOfEntry(entry)).pipe(Effect.mapError(codec)), { concurrency: 1 }).pipe(
       Effect.map((drafts) => drafts.flatMap(Option.toArray)),
-      Effect.flatMap((drafts) => Effect.forEach(drafts, (draft) => storedJson(draft.data).pipe(Effect.mapError(codec))).pipe(
+      Effect.flatMap((drafts) => Effect.forEach(drafts, (draft) => storedJson(draft.data).pipe(Effect.mapError(codec)), { concurrency: 1 }).pipe(
         Effect.flatMap((data) => Ref.update(stored, (all) => [...all, ...Arr.zip(drafts, data).map(([draft, json], index): SessionLogEvent => ({
           session: conversation, seq: all.length + index + 1, turn: draft.turn, kind: draft.kind, at: 0, data: json,
         }))])),

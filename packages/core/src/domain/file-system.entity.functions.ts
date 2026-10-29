@@ -39,8 +39,8 @@ export const walkGlob = (
     (reason) => new FsError({ path: glob, reason: "Invalid", message: `not a usable glob pattern: ${reason}` }))
   return Effect.all({
     matcher: compiled(pattern, dot),
-    exclusions: Effect.forEach(options.exclude ?? [], (exclude) => compiled(exclude, true).pipe(Effect.map((matcher) => ({ byPath: exclude.includes("/"), matches: matcher.matches })))),
-  }).pipe(Effect.flatMap(({ matcher, exclusions }) => {
+    exclusions: Effect.forEach(options.exclude ?? [], (exclude) => compiled(exclude, true).pipe(Effect.map((matcher) => ({ byPath: exclude.includes("/"), matches: matcher.matches }))), { concurrency: 1 }),
+  }, { concurrency: 1 }).pipe(Effect.flatMap(({ matcher, exclusions }) => {
     const excluded = (name: string, path: string) => exclusions.some((exclusion) => exclusion.matches(exclusion.byPath ? path : name))
     const visit = (relative: string, found: Chunk.Chunk<string>): Effect.Effect<Chunk.Chunk<string>, FsError> => list(under(cwd, relative)).pipe(
       Effect.catchIf((error) => relative !== "" && (error.reason === "Permission" || error.reason === "NotFound"), () => Effect.succeed<ReadonlyArray<DirEntry>>([])),

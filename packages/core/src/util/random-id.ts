@@ -13,7 +13,7 @@ const stamped = (byte: number, index: number): number =>
  * generator.
  */
 export const randomUuid: Effect.Effect<string> = Effect.map(
-  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 255)),
+  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 255), { concurrency: 1 }),
   (bytes) => {
     const digits = bytes.map((byte, index) => hex(stamped(byte, index))).join("")
     return `${digits.slice(0, 8)}-${digits.slice(8, 12)}-${digits.slice(12, 16)}-${digits.slice(16, 20)}-${digits.slice(20)}`

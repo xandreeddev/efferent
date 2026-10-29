@@ -45,7 +45,7 @@ export const resolveGraph = (
       Effect.mapError((error) => new HarnessError({ code: "config.options", plugin: entry.id, message: String(error) })),
     )
     return { entry, plugin, options }
-  }))
+  }), { concurrency: 1 })
   const keys = [...new Set(nodes.flatMap((node) => node.plugin.provides))]
   const providers = Object.fromEntries(yield* Effect.forEach(keys, (key) => Effect.gen(function* () {
     const candidates = nodes.filter((node) => node.plugin.provides.includes(key))
@@ -57,9 +57,9 @@ export const resolveGraph = (
       return yield* invalid(`${key}: choose a binding from ${candidates.map((node) => node.entry.id).join(", ")}`)
     }
     return [key, binding ?? candidates[0]!.entry.id] as const
-  })))
+  }), { concurrency: 1 }))
   yield* Effect.forEach(Object.keys(config.bindings ?? {}), (key) =>
-    keys.includes(key) ? Effect.void : invalid(`binding references an unavailable service: ${key}`))
+    keys.includes(key) ? Effect.void : invalid(`binding references an unavailable service: ${key}`), { concurrency: 1 })
   const contributors = (key: string, except: PluginNode): ReadonlyArray<PluginNode> =>
     nodes.filter((node) => node !== except && contributes(node).includes(key))
   const contributed = new Set(nodes.flatMap(contributes))
@@ -75,7 +75,7 @@ export const resolveGraph = (
       return invalid(`${node.entry.id}: runtime plugins cannot depend on session service ${key}`)
     }
     return Effect.void
-  }))
+  }, { concurrency: 1 }), { concurrency: 1 })
   const order = (remaining: ReadonlyArray<PluginNode>, sorted: ReadonlyArray<PluginNode>): Effect.Effect<ReadonlyArray<PluginNode>, HarnessError> => {
     if (remaining.length === 0) return Effect.succeed(sorted)
     const ready = remaining.filter((node) => [...node.plugin.requires, ...optional(node)].every((key) =>

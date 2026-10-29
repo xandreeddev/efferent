@@ -32,4 +32,4 @@ export const validateBindings = <I, R>(bindings: ReadonlyArray<EvaluatorBinding<
 
 /** Also used to rescore saved evidence; no task execution or export is involved. */
 export const assessAll = <I, R>(bindings: ReadonlyArray<EvaluatorBinding<I, R>>, input: I) =>
-  validateBindings(bindings).pipe(Effect.andThen(Effect.forEach(bindings, (binding) => assess(binding, input))))
+  validateBindings(bindings).pipe(Effect.andThen(Effect.forEach(bindings, (binding) => assess(binding, input), { concurrency: 1 })))

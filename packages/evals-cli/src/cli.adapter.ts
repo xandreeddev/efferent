@@ -236,7 +236,7 @@ export const evaluationCli = (
                 message: `No configured exporter ${id}`
               })
             )
-      })
+      }, { concurrency: 1 })
       yield* writeJson(resolve(directory, "export-receipts.json"), receipts)
       output(receipts)
       return 0
@@ -366,7 +366,7 @@ export const evaluationCli = (
           onFailure: (error) => ({ provider: id, error: error.message })
         })
       )
-    })
+    }, { concurrency: 1 })
     if (exports.length)
       yield* writeJson(resolve(directory, "export-receipts.json"), exports)
     output({

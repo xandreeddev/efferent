@@ -66,7 +66,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
       return yield* Effect.fail(new HarnessError({ code: "events.depth", message: `${event._tag} published ${current} levels deep; a reaction cycle?` }))
     }
     const all = yield* Ref.get(subscribers)
-    yield* Effect.forEach(all, (subscriber) => subscriber.deliver(event), { discard: true }).pipe(Effect.provideService(depth, current + 1))
+    yield* Effect.forEach(all, (subscriber) => subscriber.deliver(event), { concurrency: 1, discard: true }).pipe(Effect.provideService(depth, current + 1))
   })
 
   /**
@@ -133,7 +133,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
   /** Drain every background subscription; again while draining queued more (reactions of reactions). */
   const drain: Effect.Effect<void, HarnessError> = Effect.gen(function* () {
     const before = yield* Ref.get(queued)
-    yield* Effect.forEach(yield* Ref.get(subscribers), (subscriber) => subscriber.drain, { discard: true })
+    yield* Effect.forEach(yield* Ref.get(subscribers), (subscriber) => subscriber.drain, { concurrency: 1, discard: true })
     if ((yield* Ref.get(queued)) !== before) yield* Effect.suspend(() => drain)
   })
   return { publish, subscribe, drain, activity: Ref.get(queued) }
@@ -153,7 +153,7 @@ export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksServic
     yield* Ref.update(tasks, (all) => [...all, { tag, fiber }])
   })
   const pending = (tag: string) => Ref.get(tasks).pipe(
-    Effect.flatMap((all) => Effect.forEach(all.filter((task) => task.tag === tag), (task) => Effect.sync(() => task.fiber.pollUnsafe()))),
+    Effect.flatMap((all) => Effect.forEach(all.filter((task) => task.tag === tag), (task) => Effect.sync(() => task.fiber.pollUnsafe()), { concurrency: 1 })),
     Effect.map((polls) => polls.some((exit) => exit === undefined)),
   )
   /** Joins from `from` on, then again for tasks the joined ones forked meanwhile. */
@@ -161,7 +161,7 @@ export const makeTurnTasks = (scope: Scope.Scope): Effect.Effect<TurnTasksServic
     Effect.flatMap((all) => all.length === from ? Effect.void : Effect.forEach(
       all.slice(from).filter((task) => tags.length === 0 || tags.includes(task.tag)),
       (task) => Fiber.join(task.fiber),
-      { discard: true },
+      { concurrency: 1, discard: true },
     ).pipe(Effect.andThen(Effect.suspend(() => awaitFrom(tags, all.length))))),
   )
   return { fork, pending, await: (tags) => awaitFrom(tags, 0), activity: Ref.get(tasks).pipe(Effect.map((all) => all.length)) }

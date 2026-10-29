@@ -136,7 +136,7 @@ export const makeOpenAiCodexLanguageModel = (args: {
       onSome: Effect.succeed,
       onNone: () => makeOpenAiCodexSessions(),
     })),
-  }).pipe(
+  }, { concurrency: 1 }).pipe(
     Effect.flatMap(({ cacheKey, policy, sessions }) =>
       OpenAiClient.make({
         apiKey: args.accessToken,

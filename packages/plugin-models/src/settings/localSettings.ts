@@ -50,7 +50,7 @@ const writeKey = (
 
 export const LocalSettingsStoreLive = (cwd: string, home: string) =>
   Layer.succeed(SettingsStore, {
-    load: Effect.forEach(configPaths(cwd, home), readConfig).pipe(
+    load: Effect.forEach(configPaths(cwd, home), readConfig, { concurrency: 1 }).pipe(
       Effect.map((configs) => settingsFromRecord(configs.reduce((acc, c) => ({ ...acc, ...c }), {}))),
     ),
     setRole: (role: ModelRole, selection: Option.Option<string>) =>

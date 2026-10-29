@@ -45,7 +45,7 @@ export const onTool = <Params extends Schema.Top, Success extends Schema.Top, R>
 
 /** Attach several subscriptions to one bus. */
 export const subscribeAll = <R>(events: TurnEventsService, subscriptions: ReadonlyArray<Subscription<R>>) =>
-  Effect.forEach(subscriptions, (subscription) => subscription(events), { discard: true })
+  Effect.forEach(subscriptions, (subscription) => subscription(events), { concurrency: 1, discard: true })
 
 /**
  * An application's own typed event. Its name is the host's namespace

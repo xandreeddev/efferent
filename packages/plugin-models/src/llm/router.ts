@@ -106,7 +106,7 @@ const countUsage = (label: string, usage: TokenUsage) =>
       Metric.update(byModel(llmCacheWriteTokens, label), usage.cacheWriteTokens),
       Metric.update(byModel(llmReasoningTokens, label), usage.reasoningTokens),
     ],
-    { discard: true },
+    { concurrency: 1, discard: true },
   )
 
 /**
@@ -124,7 +124,7 @@ const traceContentVariable: Effect.Effect<boolean> = Config.option(Config.String
  * provides from the run's `captureTraceContent`, or `EFFERENT_TRACE_CONTENT=1`
  * for the whole process), `[redacted]` otherwise. Read per call.
  */
-const tracedContent = Effect.all([Effect.service(CurrentTraceContent), traceContentVariable]).pipe(Effect.map(([capture, variable]) =>
+const tracedContent = Effect.all([Effect.service(CurrentTraceContent), traceContentVariable], { concurrency: 1 }).pipe(Effect.map(([capture, variable]) =>
   (content: string): string => capture || variable ? content.slice(0, 500) : "[redacted]"))
 
 const shapeOptions = (

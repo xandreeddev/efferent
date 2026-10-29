@@ -140,42 +140,6 @@ const EFFECT_FN_CLEAN = [
   "plugin-memory-digest",
 ].map(src)
 
-const CONCURRENCY_STATED = [
-  "evals-langfuse",
-  "evals-langsmith",
-  "sdk",
-  "plugin-memory-summary",
-  "plugin-memory-digest",
-  "plugin-tool-discovery",
-].map(src)
-
-/**
- * `effect/match-over-tag-switch` runs everywhere on a `switch` or else-if
- * ladder over `_tag`; in the packages listed it also refuses ternary
- * chains and the `type`, `role` and `mode` discriminants. Everywhere else
- * is the rule's `boundary`, where those later matches are tolerated.
- */
-const MATCH_CHAINS_CLEAN = [
-  "evals",
-  "evals-cli",
-  "evals-langfuse",
-  "evals-langsmith",
-  "plugin-agent-loop",
-  "runtime",
-  "plugin-memory-window",
-  "plugin-memory-summary",
-  "plugin-memory-digest",
-  "plugin-tool-discovery",
-  "plugin-models",
-  "plugin-session-sqlite",
-  "plugin-sessions",
-  "plugin-tasks",
-  "plugin-render",
-  "plugin-workspace",
-  "plugin-telemetry",
-  "foundry",
-].map(src)
-
 /**
  * The files that had no role suffix when `architecture/role-suffix-required`
  * arrived. FROZEN: the list only shrinks. The gate fails on an entry that
@@ -322,11 +286,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-let", include: CHECKED },
     { rule: "effect/no-loop-statements", include: CHECKED },
     { rule: "effect/no-nullable-return", include: CHECKED },
-    {
-      rule: "effect/match-over-tag-switch",
-      include: CHECKED,
-      boundary: CHECKED.filter((glob) => !MATCH_CHAINS_CLEAN.includes(glob)),
-    },
+    { rule: "effect/match-over-tag-switch", include: CHECKED },
     { rule: "effect/no-as-any", include: CHECKED },
     {
       rule: "effect/no-as-never",
@@ -361,7 +321,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: ERROR_CODE_COMPARE_CLEAN, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
     { rule: "effect/prefer-effect-fn", include: EFFECT_FN_CLEAN, exclude: TEST_SCAFFOLDING },
-    { rule: "effect/require-concurrency-option", include: CONCURRENCY_STATED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/require-concurrency-option", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "quality/no-skipped-tests", include: CHECKED },
     { rule: "quality/no-empty-catch", include: CHECKED },
     { rule: "architecture/no-raw-promise-core", include: CHECKED },

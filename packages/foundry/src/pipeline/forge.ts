@@ -70,7 +70,7 @@ export interface ForgeResult {
 
 /** A version-4 UUID drawn from `Random` (a seeded `Random` repeats it): one run's id. */
 const freshRunId: Effect.Effect<RunId> = Effect.map(
-  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 255)),
+  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 255), { concurrency: 1 }),
   (bytes) => {
     const digits = bytes
       .map((byte, index) => (index === 6 ? (byte & 0x0f) | 0x40 : index === 8 ? (byte & 0x3f) | 0x80 : byte).toString(16).padStart(2, "0"))

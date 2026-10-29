@@ -61,7 +61,7 @@ export const loadConfig = (configPath: string): Effect.Effect<LoadedConfig, Conf
             ),
           ),
           registry: decodeRegistry(configPath, module),
-        }),
+        }, { concurrency: 1 }),
     ),
     Effect.map(({ config, registry }) => ({
       config,
@@ -94,6 +94,9 @@ export const gatesFromConfig = (
   ...(config.typecheck ? [makeTypecheckGate(config.tsconfig)] : []),
 ]
 
+/** Source files read at once: one read per finding, none depending on another. */
+const READ_CONCURRENCY = 8
+
 /** Error findings with fingerprints keyed on their source line's content —
  *  exported for the profile session's baseline mint at `:lock`. */
 export const fingerprintFindings = (
@@ -114,6 +117,7 @@ export const fingerprintFindings = (
           })),
         ),
     }),
+    { concurrency: READ_CONCURRENCY },
   )
 
 const readBaseline = (baselinePath: string): Effect.Effect<ReadonlySet<string>, ConfigError> =>

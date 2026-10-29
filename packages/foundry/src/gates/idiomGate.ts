@@ -75,6 +75,7 @@ const activate = (
           }),
       },
     ),
+    { concurrency: 1 },
   )
 
 /**

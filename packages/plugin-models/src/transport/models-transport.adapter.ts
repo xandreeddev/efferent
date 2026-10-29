@@ -25,7 +25,7 @@ export const currentRuntime = (): Runtime => {
 
 /** The proxy variables of the environment, read through `Config` (a test swaps the `ConfigProvider`). */
 const readEnvironment: Effect.Effect<ProxyEnvironment, Config.ConfigError> = Effect.forEach(PROXY_VARIABLES, (name) =>
-  Config.option(Config.String(name)).pipe(Effect.map((value) => Option.toArray(Option.map(value, (text) => [name, text] as const))))).pipe(
+  Config.option(Config.String(name)).pipe(Effect.map((value) => Option.toArray(Option.map(value, (text) => [name, text] as const)))), { concurrency: 1 }).pipe(
   Effect.map((entries): ProxyEnvironment => Object.fromEntries(entries.flat())),
 )
 
@@ -147,7 +147,7 @@ const nodeDirect = (undici: Undici) => Effect.gen(function* () {
   yield* Effect.addFinalizer(() => Effect.all([
     destroyDispatcher(dispatcher),
     Effect.sync(() => [sockets.https, sockets.http].forEach((agent) => agent.destroy())),
-  ], { discard: true }))
+  ], { concurrency: 1, discard: true }))
   return {
     fetch: undiciFetch(undici.fetch, dispatcher),
     webSocket: (target: URL): WebSocketProxy => ({ _tag: "Agent", agent: isSecure(target) ? sockets.https : sockets.http }),
@@ -195,9 +195,9 @@ const nodeTransport = (config: ProxyConfig, version: string) => Effect.gen(funct
   }
   const dispatchers: ReadonlyArray<Dispatcher> = [...Option.toArray(Option.map(httpsRoute, (route) => route.dispatcher)), ...(sameUrl ? [] : Option.toArray(Option.map(httpRoute, (route) => route.dispatcher)))]
   yield* Effect.addFinalizer(() => Effect.all([
-    Effect.forEach(dispatchers, destroyDispatcher, { discard: true }),
+    Effect.forEach(dispatchers, destroyDispatcher, { concurrency: 1, discard: true }),
     Effect.sync(() => [...Option.toArray(socketAgents.https), ...Option.toArray(socketAgents.http)].forEach((agent) => agent.destroy())),
-  ], { discard: true }))
+  ], { concurrency: 1, discard: true }))
   const routeFor = (target: URL) => Option.flatMap(proxyFor(target, config), () => isSecure(target) ? httpsRoute : httpRoute)
   const fetch: ModelsFetch = (input, init) => Option.match(Option.flatMap(targetOf(input), (target) => Option.map(routeFor(target), (route) => [target, route] as const)), {
     onNone: () => direct.fetch(input, init),

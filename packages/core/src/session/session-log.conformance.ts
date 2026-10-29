@@ -192,7 +192,7 @@ export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck>
       yield* expect("lineage", Option.exists(forked.header.parent, (lineage) => lineage.id === parent && lineage.through === 1 && lineage.turnAtFork === 1), "the lineage changed")
       yield* log.create(headerOf(grandchild, owner, Option.some({ id: child, through: 0, turnAtFork: 1 })))
       yield* log.remove(parent)
-      const gone = yield* Effect.forEach([parent, child, grandchild], (id) => Effect.flip(log.head(id)))
+      const gone = yield* Effect.forEach([parent, child, grandchild], (id) => Effect.flip(log.head(id)), { concurrency: 1 })
       yield* expect("lineage", gone.every((error) => error._tag === "SessionMissing"), "a removed session or child is still there")
       const read = yield* Effect.flip(log.read(parent, { after: 0, limit: Option.none(), kinds: [] }))
       yield* expect("lineage", read._tag === "SessionMissing", "a removed session still reads")

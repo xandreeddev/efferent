@@ -246,7 +246,7 @@ const buildProviderService = (
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
 ): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> =>
-  Effect.flatMap(Effect.all({ endpoints: Effect.service(CurrentModelEndpoints), transport: Effect.serviceOption(ModelsTransport) }), ({ endpoints, transport }) => {
+  Effect.flatMap(Effect.all({ endpoints: Effect.service(CurrentModelEndpoints), transport: Effect.serviceOption(ModelsTransport) }, { concurrency: 1 }), ({ endpoints, transport }) => {
     const endpoint = Option.fromNullishOr(endpoints[selection.provider])
     if (Option.isSome(endpoint)) {
       const configured = endpoint.value
@@ -273,7 +273,7 @@ const buildBuiltInProvider = (
       return Effect.all({
         cacheKey: Effect.service(CurrentPromptCacheKey),
         policy: Effect.service(CurrentModelCallPolicy),
-      }).pipe(
+      }, { concurrency: 1 }).pipe(
         Effect.flatMap(({ cacheKey, policy }) =>
           OpenAiClient.make({ apiKey: key, apiUrl: OPENCODE_RESPONSES_API_URL }).pipe(
             Effect.flatMap((client) =>
@@ -344,7 +344,7 @@ const buildBuiltInProvider = (
   if (selection.provider === "openai") {
     return key === undefined
       ? Effect.fail(missingKey(selection))
-      : Effect.flatMap(Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }), ({ cacheKey, policy }) =>
+      : Effect.flatMap(Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }, { concurrency: 1 }), ({ cacheKey, policy }) =>
           OpenAiClient.make({ apiKey: key }).pipe(
             Effect.flatMap((client) =>
               OpenAiLanguageModel.make({

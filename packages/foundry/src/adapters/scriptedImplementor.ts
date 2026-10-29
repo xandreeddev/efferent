@@ -25,6 +25,7 @@ export const makeScriptedImplementor = (
       const writes = steps[attempt - 1] ?? []
       return Effect.forEach(writes, (write) =>
         writeWorkspaceFile(workspaceDir, write.path, write.content),
+        { concurrency: 1 },
       ).pipe(
         Effect.mapError((e) => new ImplementorError({ attempt, message: e.message })),
         Effect.as({

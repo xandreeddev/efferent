@@ -194,16 +194,16 @@ export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Se
           AND (? IS NULL OR updated_at < ? OR (updated_at = ? AND id < ?))
         ORDER BY updated_at DESC, id DESC LIMIT ?`)
         .all(query.owner, parent, parent, before?.updatedAt ?? null, before?.updatedAt ?? null, before?.updatedAt ?? null, before?.id ?? null, Math.max(0, query.limit))
-    }).pipe(Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeHead(row).pipe(Effect.map((head) => headOf(head, now)))))))),
+    }).pipe(Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeHead(row).pipe(Effect.map((head) => headOf(head, now))), { concurrency: 1 }))))),
     read: (id, query) => Effect.gen(function* () {
       if ((yield* operation(() => headRow(id))) === null) return yield* Effect.fail(new SessionMissing({ session: id }))
       const kinds = query.kinds.length === 0 ? "" : ` AND kind IN (${query.kinds.map(() => "?").join(", ")})`
       const limit = Option.match(query.limit, { onNone: () => -1, onSome: (value) => Math.max(0, value) })
       const rows = yield* operation(() => db.query<Record<string, unknown>, Array<string | number>>(`SELECT seq, turn, kind, at, data FROM session_log_events WHERE session_id = ? AND seq > ?${kinds} ORDER BY seq LIMIT ?`)
         .all(id, query.after, ...query.kinds, limit))
-      return yield* Effect.forEach(rows, (row) => decodeEvent(row).pipe(Effect.map(eventOf(id))))
+      return yield* Effect.forEach(rows, (row) => decodeEvent(row).pipe(Effect.map(eventOf(id))), { concurrency: 1 })
     }),
-    commit: (id, commit) => Effect.forEach(commit.events, (draft) => asStored(draft.data)).pipe(Effect.flatMap((data) => Clock.clockWith((clock) => operation(() => db.transaction((): Outcome => {
+    commit: (id, commit) => Effect.forEach(commit.events, (draft) => asStored(draft.data), { concurrency: 1 }).pipe(Effect.flatMap((data) => Clock.clockWith((clock) => operation(() => db.transaction((): Outcome => {
       // The time is read under the write lock: a commit that waited for it is judged, and stamped, when it writes.
       const at = clock.currentTimeMillisUnsafe()
       const head = db.query<{ readonly seq: number; readonly revision: number }, [string]>("SELECT seq, revision FROM session_heads WHERE id = ?").get(id)

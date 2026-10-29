@@ -232,7 +232,7 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
         const toolEvents = events.flatMap((event, index) => (event._tag === "tool.started" || event._tag === "tool.completed") && event.step === step ? [index] : [])
         yield* expect(check, started >= 0 && ended > started && evaluated > ended, `step ${step}: started ${started}, ended ${ended}, evaluated ${evaluated}`)
         yield* expect(check, toolEvents.every((index) => index > started && index < ended), `step ${step}: tool events outside the step`)
-      }))
+      }), { concurrency: 1 })
       yield* expect(check, events.some((event) => event._tag === "tool.completed" && event.step === 0), "the probe call of step 0 was not published")
     }),
   },

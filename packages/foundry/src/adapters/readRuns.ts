@@ -5,6 +5,9 @@ import { FactoryRun } from "../domain/FactoryRun.js"
 
 const decodeRun = Schema.decodeUnknownEffect(Schema.fromJsonString(FactoryRun))
 
+/** Run artifacts read at once: each read stands alone and a bad one is skipped. */
+const READ_CONCURRENCY = 8
+
 /**
  * Read the persisted run history back from a `makeFileRunSink` directory —
  * the memory read (`deriveLessons` is the fold over it). DEFENSIVE by
@@ -32,6 +35,7 @@ export const readRuns = (dir: string): Effect.Effect<ReadonlyArray<FactoryRun>> 
             Effect.tapError(() => Effect.logWarning(`the run artifact ${name} is unreadable or does not decode; it is skipped`)),
             Effect.orElseSucceed(() => [] as ReadonlyArray<FactoryRun>),
           ),
+        { concurrency: READ_CONCURRENCY },
       ),
     ),
     Effect.map((batches) =>

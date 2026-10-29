@@ -50,7 +50,7 @@ export const draftOfEntry = (entry: LogEntry): Effect.Effect<Option.Option<Sessi
   }))
 
 export const draftsOfEntries = (entries: ReadonlyArray<LogEntry>): Effect.Effect<ReadonlyArray<SessionDraft>, Schema.SchemaError> =>
-  Effect.forEach(entries, draftOfEntry).pipe(Effect.map((drafts) => drafts.flatMap(Option.toArray)))
+  Effect.forEach(entries, draftOfEntry, { concurrency: 1 }).pipe(Effect.map((drafts) => drafts.flatMap(Option.toArray)))
 
 /** What a framework draft carries; a symbol of the global registry, so every copy of core agrees on it. */
 const FRAMEWORK_DRAFT = Symbol.for("efferent/FrameworkDraft")
@@ -112,7 +112,7 @@ export const entryOfEvent = (event: SessionLogEvent): Effect.Effect<Option.Optio
 
 /** The memory log held in a session's events, in log order. */
 export const entriesOfEvents = (events: ReadonlyArray<SessionLogEvent>): Effect.Effect<ReadonlyArray<LogEntry>, Schema.SchemaError> =>
-  Effect.forEach(events, entryOfEvent).pipe(Effect.map((entries) => entries.flatMap(Option.toArray)))
+  Effect.forEach(events, entryOfEvent, { concurrency: 1 }).pipe(Effect.map((entries) => entries.flatMap(Option.toArray)))
 
 /** A completed tool's input and result are in the memory log (the call and its `memory.tool-result`). */
 const OMITTED_FROM_TOOL_COMPLETED = ["result", "encoded", "input"] as const
@@ -142,6 +142,7 @@ export const turnUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number
   Effect.forEach(
     events.filter((event) => event.kind === "step.usage" && Option.contains(event.turn, turn)),
     (event) => canonical(event.data).pipe(Effect.flatMap(decodeStepUsage)),
+    { concurrency: 1 },
   ).pipe(Effect.map((records) => sumUsage(records.map((record) => record.usage))))
 
 /**

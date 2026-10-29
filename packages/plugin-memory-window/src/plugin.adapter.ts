@@ -79,7 +79,7 @@ const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: P
     const compacted = yield* Effect.forEach(older, ({ entry, result }) =>
       signal.views.compact(result.toolName, result.encoded, inputs.get(String(result.toolCallId)) ?? {}).pipe(
         Effect.map((text) => Option.toArray(Option.filter(text, (value) => value !== result.view)).map((value) => ({ id: entry.id, text: value }))),
-      )).pipe(Effect.map((all) => all.flat()))
+      ), { concurrency: 1 }).pipe(Effect.map((all) => all.flat()))
     const views: ReadonlyArray<CompactionAction> = compacted.length === 0 ? [] : [{
       _tag: "CompactViews", entries: compacted.map((item) => item.id), texts: compacted.map((item) => item.text),
     }]

@@ -52,7 +52,7 @@ const runsOf = (chunks: ReadonlyArray<BashChunk>): ReadonlyArray<{ readonly stre
 /** Keep the newest `keep` spill files of the directory (they are named by time), removing the rest; best effort. */
 const prune = (access: WorkspaceAccess, dir: string, keep: number): Effect.Effect<void> => access.fs.list(dir).pipe(
   Effect.map((entries) => Arr.sort(entries.filter((entry) => entry.kind === "file" && /^bash-.*\.log$/.test(entry.name)).map((entry) => entry.name), Order.String)),
-  Effect.flatMap((names) => Effect.forEach(names.slice(0, Math.max(0, names.length - keep)), (name) => access.fs.remove(access.path.join(dir, name)), { discard: true })),
+  Effect.flatMap((names) => Effect.forEach(names.slice(0, Math.max(0, names.length - keep)), (name) => access.fs.remove(access.path.join(dir, name)), { concurrency: 1, discard: true })),
   Effect.ignore({ log: "Warn", message: `the older spill files in ${dir} were not pruned` }),
 )
 
@@ -128,7 +128,7 @@ export const bashTool = (context: WorkspaceToolContext): RegisteredTool => defin
 
     const step = (state: Gathered, group: ReadonlyArray<BashEvent>): Effect.Effect<Gathered> => Effect.gen(function* () {
       const chunks = group.filter(isChunk)
-      yield* Effect.forEach(runsOf(chunks), (current) => publishToolProgress(current.stream, current.text), { discard: true })
+      yield* Effect.forEach(runsOf(chunks), (current) => publishToolProgress(current.stream, current.text), { concurrency: 1, discard: true })
       const text = chunks.map((chunk) => chunk.text).join("")
       const bytes = state.bytes + utf8Length(text)
       const breaks = state.breaks + (text.split("\n").length - 1)

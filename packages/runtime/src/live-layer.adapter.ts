@@ -40,7 +40,7 @@ export const makeLiveLayer = <A, E, R>(initial: Layer.Layer<A, E, R>) => Effect.
   yield* Effect.addFinalizer(() => gate.withPermits(1)(Effect.gen(function* () {
     yield* Ref.set(closed, true)
     const remaining = yield* Ref.getAndSet(generations, new Map())
-    yield* Effect.forEach(remaining.values(), (generation) => Scope.close(generation.scope, Exit.void))
+    yield* Effect.forEach(remaining.values(), (generation) => Scope.close(generation.scope, Exit.void), { concurrency: 1 })
   })))
   const acquire = gate.withPermits(1)(Effect.gen(function* () {
     if (yield* Ref.get(closed)) return yield* Effect.fail(unavailable())
@@ -51,7 +51,7 @@ export const makeLiveLayer = <A, E, R>(initial: Layer.Layer<A, E, R>) => Effect.
     yield* Ref.set(generations, new Map([...all, [id, { ...generation, leases: generation.leases + 1 }]]))
     return generation
   }))
-  const closeAll = (scopes: ReadonlyArray<Scope.Closeable>) => Effect.forEach(scopes, (scope) => Scope.close(scope, Exit.void), { discard: true })
+  const closeAll = (scopes: ReadonlyArray<Scope.Closeable>) => Effect.forEach(scopes, (scope) => Scope.close(scope, Exit.void), { concurrency: 1, discard: true })
   const release = (lease: Generation<A>) => gate.withPermits(1)(Effect.gen(function* () {
     const all = yield* Ref.get(generations)
     const generation = all.get(lease.id)

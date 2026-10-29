@@ -636,7 +636,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const toolResults = responseToolResults(content)
         yield* Effect.forEach(toolResults, (tr) => Metric.update(tagged(engineToolCalls, {
           "engine.tool": tr.toolName, "engine.ok": tr.ok ? "true" : "false",
-        }), 1))
+        }), 1), { concurrency: 1 })
 
         // --- Degenerate-loop circuit breaker ---
         // A turn whose progress signature was already seen produced nothing

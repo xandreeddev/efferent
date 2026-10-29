@@ -273,7 +273,7 @@ export const turnConformance = (
       const result = yield* turns.turn(input(session, "run-1"), (turn) => Effect.gen(function* () {
         yield* turn.events.subscribe(
           (event) => event._tag === "host" && event.name === "conformance.echo" && typeof event.data.n === "number" ? Option.some(event.data.n) : Option.none(),
-          (n) => Ref.update(handled, (all) => [...all, n]).pipe(Effect.andThen(n === 0 ? Effect.forEach([1, 2, 3], (next) => turn.events.publish(echo(next)), { discard: true }) : Effect.void)),
+          (n) => Ref.update(handled, (all) => [...all, n]).pipe(Effect.andThen(n === 0 ? Effect.forEach([1, 2, 3], (next) => turn.events.publish(echo(next)), { concurrency: 1, discard: true }) : Effect.void)),
           { mode: "background", capacity: 1 },
         )
         yield* turn.events.publish(echo(0))

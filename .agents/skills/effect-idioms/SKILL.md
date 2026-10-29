@@ -71,9 +71,12 @@ before using it; do not trust Effect 3 memory.
 
 ## 5. Concurrency, scopes, time bounds
 
-- Always state `concurrency` on `Effect.forEach` and `Effect.all`: a number,
-  or a config option (`digestConcurrency`); `"unbounded"` only in
-  conformance kits (`effect/require-concurrency-option`). No `Promise.all`.
+- Always state `concurrency` on `Effect.forEach` and `Effect.all`: `1` when
+  order, a shared resource or the first failure matters (writes to one log,
+  ordered events, decoding that reports the first bad item); a number, or a
+  config option (`digestConcurrency`), for independent I/O; `"unbounded"`
+  only in conformance kits (`effect/require-concurrency-option`). No
+  `Promise.all`.
 - Give `Stream.callback` a `bufferSize`.
 - Every wait on something outside the process has a bound:
   `Effect.timeoutOrElse({ duration, orElse })`.

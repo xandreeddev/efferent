@@ -119,6 +119,7 @@ export const vendoredPackFiles = (
         Effect.tryPromise({ try: () => fs.readFile(path.join(dir, name), "utf8"), catch: unknownPack }).pipe(
           Effect.map((content) => ({ path: `${packName}/${name}`, content })),
         ),
+        { concurrency: 1 },
       ),
     ),
   )

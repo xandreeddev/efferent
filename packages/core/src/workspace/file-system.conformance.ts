@@ -50,7 +50,7 @@ const refuses = (id: string, what: string, effect: Effect.Effect<unknown, FsErro
 const globTree = ({ fs, root, symlink }: FileSystemFixture) => Effect.gen(function* () {
   const files = [".hidden/h.ts", "docs/x.md", "file1.txt", "file2.txt", "file10.txt", "node_modules/m/i.ts", "top.ts",
     "src/.dot.ts", "src/a.ts", "src/b.ts", "src/c.js", "src/deep/d.ts", "src/deep/deeper/e.ts"]
-  yield* Effect.forEach(files, (file) => fs.write(under(root, file), file, { createParents: true }), { discard: true })
+  yield* Effect.forEach(files, (file) => fs.write(under(root, file), file, { createParents: true }), { concurrency: 1, discard: true })
   yield* symlink(under(root, "top.ts"), under(root, "link.ts"))
   yield* symlink(under(root, "src"), under(root, "linked"))
 })
@@ -119,7 +119,7 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
     fsCheck("readBytes returns the range asked for, what there is of a range past the end, and refuses a negative offset", "read-bytes", ({ fs }, at) => Effect.gen(function* () {
       yield* fs.write(at("digits.txt"), "0123456789")
       const ranges = [{ offset: 2, length: 3 }, { offset: 8 }, { offset: 5, length: 100 }, { offset: 20 }, { offset: 3, length: 0 }, { length: 4 }, {}]
-      const read = yield* Effect.forEach(ranges, (range) => fs.readBytes(at("digits.txt"), range).pipe(Effect.map(decoded)))
+      const read = yield* Effect.forEach(ranges, (range) => fs.readBytes(at("digits.txt"), range).pipe(Effect.map(decoded)), { concurrency: 1 })
       const expected = ["234", "89", "56789", "", "", "0123", "0123456789"]
       yield* expect("read-bytes", read.join("|") === expected.join("|"), `ranges ${show(ranges)} read ${show(read)}, not ${show(expected)}`)
       yield* refuses("read-bytes", "a negative offset", fs.readBytes(at("digits.txt"), { offset: -1 }), "Invalid", at("digits.txt"))
@@ -185,11 +185,11 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       yield* fs.write(at("file.txt"), "x")
       yield* fs.mkdir(at("dir"))
       yield* symlink(at("nowhere"), at("dangling"))
-      const found = yield* Effect.forEach(["file.txt", "dir", "missing", "missing/below", "dangling"], (path) => fs.exists(at(path)))
+      const found = yield* Effect.forEach(["file.txt", "dir", "missing", "missing/below", "dangling"], (path) => fs.exists(at(path)), { concurrency: 1 })
       yield* expect("exists", show(found) === show([true, true, false, false, false]), `exists for file, dir, missing, missing/below, dangling link: ${show(found)}`)
     })),
     fsCheck("list returns entries sorted by name with their kinds, links unfollowed; a file fails with NotDirectory and a missing path with NotFound", "list", ({ fs, symlink }, at) => Effect.gen(function* () {
-      yield* Effect.forEach(["b.txt", "C.txt", "a.txt", ".hidden"], (name) => fs.write(at(`dir/${name}`), name, { createParents: true }), { discard: true })
+      yield* Effect.forEach(["b.txt", "C.txt", "a.txt", ".hidden"], (name) => fs.write(at(`dir/${name}`), name, { createParents: true }), { concurrency: 1, discard: true })
       yield* fs.mkdir(at("dir/a"))
       yield* symlink(at("dir/a"), at("dir/link"))
       const listed = yield* fs.list(at("dir"))
@@ -260,7 +260,7 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       yield* fs.mkdir(at("two/three/four"), { recursive: true })
       yield* fs.mkdir(at("two/three/four"), { recursive: true })
       yield* fs.mkdir(at("one"), { recursive: true })
-      const kinds = yield* Effect.forEach(["one", "two", "two/three", "two/three/four"], (path) => fs.stat(at(path)).pipe(Effect.map((info) => info.kind)))
+      const kinds = yield* Effect.forEach(["one", "two", "two/three", "two/three/four"], (path) => fs.stat(at(path)).pipe(Effect.map((info) => info.kind)), { concurrency: 1 })
       yield* expect("mkdir", kinds.every((kind) => kind === "directory"), `after mkdir the paths are ${show(kinds)}`)
       yield* fs.write(at("file"), "x")
       yield* refuses("mkdir", "a recursive mkdir over a file", fs.mkdir(at("file"), { recursive: true }), "Exists", at("file"))
@@ -270,7 +270,7 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       yield* symlink(at("target"), at("abs-link"))
       yield* symlink("target/inner", at("rel-link"))
       const root = yield* fs.realPath(at(""))
-      const resolved = yield* Effect.forEach(["abs-link/inner/file.txt", "rel-link/file.txt", "target"], (path) => fs.realPath(at(path)))
+      const resolved = yield* Effect.forEach(["abs-link/inner/file.txt", "rel-link/file.txt", "target"], (path) => fs.realPath(at(path)), { concurrency: 1 })
       const expected = [under(root, "target/inner/file.txt"), under(root, "target/inner/file.txt"), under(root, "target")]
       yield* expect("real-path", show(resolved) === show(expected), `realPath gave ${show(resolved)}, not ${show(expected)}`)
       yield* refuses("real-path", "realPath of a missing path", fs.realPath(at("missing")), "NotFound", at("missing"))
@@ -289,7 +289,7 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       yield* fs.remove(at("link"))
       const afterLink = yield* fs.exists(at("full/inner/leaf.txt"))
       yield* fs.remove(at("full"), { recursive: true })
-      const gone = yield* Effect.forEach(["file.txt", "empty", "full", "link"], (path) => fs.exists(at(path)))
+      const gone = yield* Effect.forEach(["file.txt", "empty", "full", "link"], (path) => fs.exists(at(path)), { concurrency: 1 })
       yield* expect("remove", kept === "leaf" && afterLink && gone.every((exists) => !exists),
         `refused removal kept ${show(kept)}, removing the link kept its target ${show(afterLink)}, removed paths exist ${show(gone)}`)
     })),
@@ -307,7 +307,7 @@ export const fileSystemConformance = (subject: FileSystemSubject): ReadonlyArray
       yield* fs.remove(at("recursive-link/"), { recursive: true })
       yield* fs.remove(at("via/sub"), { recursive: true })
       const links = yield* Effect.forEach(["link", "recursive-link"], (name) => Effect.result(fs.stat(at(name), { followSymlinks: false })).pipe(
-        Effect.map((result) => result._tag === "Success" ? result.success.kind : result.failure.reason)))
+        Effect.map((result) => result._tag === "Success" ? result.success.kind : result.failure.reason)), { concurrency: 1 })
       const left = [yield* fs.exists(at("dir/sub")), yield* fs.read(at("dir/other/kept.txt")), (yield* fs.stat(at("via"), { followSymlinks: false })).kind]
       yield* expect("remove-paths", show(links) === show(["NotFound", "NotFound"]) && show(left) === show([false, "kept", "symlink"]),
         `after removing link/ and recursive-link/ they are ${show(links)}; after removing via/sub, dir/sub exists ${show(left[0])}, dir/other/kept.txt reads ${show(left[1])} and via is a ${show(left[2])}`)

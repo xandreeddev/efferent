@@ -111,8 +111,9 @@ denylist. Its messages never repeat what matched. A rule entry's `boundary`
 globs drop the matches the rule marks `toleratedAtBoundary`:
 `effect/no-as-never`'s plain `as never` (where type erasure is the
 design), and `effect/match-over-tag-switch`'s ternary chains and
-`type`/`role`/`mode` discriminants (in the packages not yet converted;
-its `switch` and ladder on `_tag` report everywhere). A rule entry's
+`type`/`role`/`mode` discriminants (its `switch` and ladder on `_tag`
+report everywhere; the root config names no boundary for it, every
+package being converted). A rule entry's
 `allow` names exact files the rule skips, a frozen list that only
 shrinks: an entry naming a file the rule does not check, or one it no
 longer flags, is itself a finding under the rule's id

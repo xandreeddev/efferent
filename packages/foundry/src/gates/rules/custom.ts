@@ -88,7 +88,7 @@ const decodeArray = (
   raw: unknown,
 ): Effect.Effect<ReadonlyArray<IdiomRule>, ConfigError> =>
   Array.isArray(raw)
-    ? Effect.forEach(raw, (entry, index) => decodeOne(configPath, `${label}[${index}]`, entry))
+    ? Effect.forEach(raw, (entry, index) => decodeOne(configPath, `${label}[${index}]`, entry), { concurrency: 1 })
     : Effect.fail(
         new ConfigError({ path: configPath, message: `${label} must be an array of rules` }),
       )
@@ -138,6 +138,7 @@ export const decodeRegistry = (
         ? Effect.map(
             Effect.forEach(module.rulePacks, (pack, index) =>
               decodePack(configPath, index, pack),
+              { concurrency: 1 },
             ),
             (nested) => nested.flat(),
           )

@@ -42,7 +42,7 @@ export const normalizeUserMessage = (message: UserMessage): Effect.Effect<UserMe
   }
   return Effect.forEach(attachments, (media, index) => normalizeMedia(media).pipe(
     Effect.mapError((error) => new AttachmentRejected({ reason: error.reason, index, message: `attachment ${index}: ${error.message}` })),
-  )).pipe(Effect.flatMap((normalized) => {
+  ), { concurrency: 1 }).pipe(Effect.flatMap((normalized) => {
     const chars = normalized.reduce((sum, media) => sum + media.data.length, 0)
     return chars > MEDIA_LIMITS.requestChars
       ? Effect.fail(new AttachmentRejected({ reason: "TooLargeTogether", message: `the attachments take ${chars} base64 characters together, more than ${MEDIA_LIMITS.requestChars}` }))

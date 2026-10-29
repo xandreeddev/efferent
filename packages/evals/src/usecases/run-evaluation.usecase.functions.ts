@@ -442,7 +442,8 @@ export const gradeEvaluation = (
           () => Effect.void,
           suite!.timeoutMs
         )
-      })
+      }),
+      { concurrency: 1 }
     )
     const run: EvaluationRun = {
       ...source,
@@ -599,7 +600,7 @@ export const runEvaluation = (
           runTrial(app, id, suite, task, candidate, sample, selection),
         { concurrency: suite.concurrency }
       )
-    })
+    }, { concurrency: 1 })
     const settled = trials.flat()
     const run: EvaluationRun = {
       version: 1,

@@ -67,7 +67,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
   const parentRecords = (parent: SessionAddress) => sessions.read(parent, { kinds: [TASK_STARTED, "inbox.queued"] })
 
   const listOf = (parent: SessionAddress) => parentRecords(parent).pipe(Effect.flatMap((events) =>
-    Effect.forEach(startedOf(events), (started) => viewOf(parent, started, deliveredOf(events)))))
+    Effect.forEach(startedOf(events), (started) => viewOf(parent, started, deliveredOf(events)), { concurrency: 1 })))
 
   /** The task as its parent started it, and where it stands. */
   const recordOf = (parent: SessionAddress, taskId: string) => Effect.gen(function* () {
@@ -287,9 +287,9 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
 
   const reconcile = (parent: SessionAddress) => Effect.gen(function* () {
     const tasks = yield* listOf(parent)
-    const delivered = yield* Effect.forEach(tasks.filter((task) => isFinished(task.status) && !task.delivered), (task) => deliverNotice(parent, task))
+    const delivered = yield* Effect.forEach(tasks.filter((task) => isFinished(task.status) && !task.delivered), (task) => deliverNotice(parent, task), { concurrency: 1 })
     const waiting = tasks.filter((task) => task.status === "pending")
-    yield* Effect.forEach(waiting, (task) => runner.run(work(parent, task.taskId)), { discard: true })
+    yield* Effect.forEach(waiting, (task) => runner.run(work(parent, task.taskId)), { concurrency: 1, discard: true })
     return { delivered: delivered.filter((done) => done.delivered).length, started: waiting.length }
   })
 

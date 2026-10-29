@@ -131,7 +131,7 @@ export const decodeSpecDocText = (
       onSome: Effect.succeed,
     })
     const sections = yield* parseSections(fm.body)
-    const checks = yield* Effect.forEach(sections.bullets.Checks, parseCheckBullet)
+    const checks = yield* Effect.forEach(sections.bullets.Checks, parseCheckBullet, { concurrency: 1 })
     const fields = fm.fields
     const numeric = (key: string, fallback: number): number => {
       const raw = fields[key]

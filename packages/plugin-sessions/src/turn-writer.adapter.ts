@@ -102,7 +102,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   const foreign = yield* Ref.make<ReadonlyArray<SessionLogEvent>>([])
   const position = yield* Ref.make<Position>({ ...input.position, localAt: yield* Clock.currentTimeMillis })
 
-  const refuseWaiting = (error: HarnessError) => Ref.get(waiting).pipe(Effect.flatMap((all) => Effect.forEach(all, (refuse) => refuse(error), { discard: true })))
+  const refuseWaiting = (error: HarnessError) => Ref.get(waiting).pipe(Effect.flatMap((all) => Effect.forEach(all, (refuse) => refuse(error), { concurrency: 1, discard: true })))
   const close = (reason: TurnClosed["reason"]): Effect.Effect<void> => Effect.gen(function* () {
     if (yield* Ref.get(ended)) return
     const error = harness("turn.closed", `turn ${admitted.turn} was ${reason}`)
@@ -111,7 +111,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     yield* refuseWaiting(error)
   })
   const refuseIfFailed = Ref.get(failed).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: Effect.fail })))
-  const refuseIfSealed = Effect.all([Ref.get(ending), Ref.get(ended)]).pipe(Effect.flatMap(([closing, done]) => Option.isNone(closing) ? Effect.void
+  const refuseIfSealed = Effect.all([Ref.get(ending), Ref.get(ended)], { concurrency: 1 }).pipe(Effect.flatMap(([closing, done]) => Option.isNone(closing) ? Effect.void
     : Effect.fail(harness("turn.closed", done ? `turn ${admitted.turn} has ended` : `turn ${admitted.turn} is ending`))))
   /** A draft under one of the framework's kinds is refused unless the framework's turn wrote it. */
   const refuseIfReserved = (drafts: ReadonlyArray<TurnDraft>) => Option.match(unmarkedReservedDraft(drafts), {
@@ -231,7 +231,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   })
 
   yield* Effect.forkIn(Queue.takeBetween(queue, 1, config.writer.batch).pipe(
-    Effect.flatMap((chunk) => Effect.forEach(groupsOf(chunk), (item) => process(item).pipe(Effect.catchDefect(died)), { discard: true })),
+    Effect.flatMap((chunk) => Effect.forEach(groupsOf(chunk), (item) => process(item).pipe(Effect.catchDefect(died)), { concurrency: 1, discard: true })),
     Effect.forever,
   ), scope)
 
@@ -278,7 +278,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       const dropped = yield* Effect.forEach(after.dropped, (item) => droppedData(item).pipe(
         Effect.map((data): TurnDraft => ({ kind: "inbox.dropped", data })),
         Effect.mapError((error) => harness("session.encode", error.message)),
-      ))
+      ), { concurrency: 1 })
       return { drafts: [{ kind: closing.kind, data: closing.data }, ...dropped], next: after.state, result: pendingOf(after.state).length }
     }), { renew: false })
     yield* Ref.set(ended, true)
