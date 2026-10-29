@@ -4,9 +4,11 @@ import type { SpecSlug } from "./SpecDoc.js"
 import { SpecSlug as SpecSlugSchema } from "./SpecDoc.js"
 import { parseFrontmatter } from "./frontmatter.js"
 
-/** A SpecDoc file that doesn't decode — names the exact violation. */
+/** A SpecDoc file that doesn't decode — names the exact violation. `cause`
+ *  is the schema's own failure, when the fields were refused by `SpecDoc`. */
 export class SpecDocParseError extends Data.TaggedError("SpecDocParseError")<{
   readonly message: string
+  readonly cause?: unknown
 }> {}
 
 const SECTION_HEADERS = ["Acceptance", "Checks", "Constraints", "Non-goals"] as const
@@ -166,7 +168,7 @@ export const decodeSpecDocText = (
     }
     // The message names the rejected value, so a bad spec says what it holds.
     return yield* Schema.decodeUnknownEffect(SpecDoc)(candidate, { reportInput: true }).pipe(
-      Effect.mapError((error) => new SpecDocParseError({ message: String(error) })),
+      Effect.mapError((error) => new SpecDocParseError({ message: error.message, cause: error })),
     )
   })
 

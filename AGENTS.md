@@ -43,8 +43,9 @@ Build output goes under `.artifacts`.
 file under `packages/*/src`, tests included (tsc errors are `ts/<code>`), then
 tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 `no-as-never` and the rules from `no-json-parse` to
-`require-concurrency-option` skip test code (`*.test.ts`, `*.bench.ts`,
-`testing.ts`, `*.testing.ts`, `testing.port.ts`, `testing/`). A rule marked
+`require-concurrency-option`, but `no-instanceof-tagged-error`, skip test
+code (`*.test.ts`, `*.bench.ts`, `testing.ts`, `*.testing.ts`,
+`testing.port.ts`, `testing/`). A rule marked
 "per package" runs in the packages its list in `foundry.config.ts` names
 (`STRINGIFIED_CAUSE_CLEAN`, `EFFECT_FN_CLEAN`, …): to add a package, fix
 its findings and add its line, never the baseline. An `allow` list
@@ -107,7 +108,7 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 | `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-ambient-time-random` and `no-option-unwrap` |
 | `x.conformance.ts` | a port's kit, exported and shipped | base except `no-option-unwrap` and `no-error-code-compare` |
 | `index.ts`, `main.ts` | the public surface, as explicit named exports; a command line's entry | base (`main.ts` may read `process.env`) |
-| `x.test.ts`, `testing.ts`, `x.testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never` and the rules from `no-json-parse` to `require-concurrency-option` |
+| `x.test.ts`, `testing.ts`, `x.testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never` and the rules from `no-json-parse` to `require-concurrency-option` but `no-instanceof-tagged-error` |
 | any other name (`loop.ts`) | older modules, listed in `ROLELESS_FILES` | base; `role-suffix-required` refuses a new one: give it one of the roles above |
 
 ## Ports, adapters and composition

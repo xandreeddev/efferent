@@ -3,6 +3,7 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { definePlugin } from "./plugin.adapter.js"
 import { ActionPolicy, SessionEnvironment } from "../ports/harness.port.js"
 import { HarnessError } from "./plugin.entity.js"
+import { isHarnessError } from "./plugin.entity.functions.js"
 
 /** Provides a workspace named from its options and whether the ActionPolicy it requires allows naming it. */
 const namer = definePlugin({
@@ -56,6 +57,14 @@ describe("definePlugin", () => {
     })
   })
 
+  test("config.options keeps the schema's failure as its cause, and its message as the message", async () => {
+    const extra = { loud: true } as Partial<typeof namer.config.Encoded>
+    const refused = await Effect.runPromise(Effect.flip(Layer.build(namer.live(extra).pipe(Layer.provide(approval))).pipe(Effect.scoped)))
+    expect(refused.cause).toMatchObject({ _tag: "SchemaError" })
+    expect(refused.message).toBe((refused.cause as Error).message)
+    expect(refused.message).toContain("loud")
+  })
+
   test("build decodes the same way: missing options default, full options are unchanged", async () => {
     const services = Context.make(ActionPolicy, { authorize: () => Effect.fail(new HarnessError({ code: "policy.denied", message: "no" })) })
     const workspace = (options: unknown) => Effect.runPromise(Effect.scoped(namer.build(options, services)).pipe(
@@ -79,6 +88,23 @@ describe("definePlugin", () => {
       code: "skills.duplicate", message: "two skills x", plugin: "test/failing",
     })
     expect(await built(new HarnessError({ code: "own.code", message: "inner", plugin: "inner/plugin" }))).toMatchObject({ code: "own.code", plugin: "inner/plugin" })
+    const underneath = new Error("permission denied")
+    expect((await built(new HarnessError({ code: "skills.root", message: "cannot list skills", cause: underneath }))).cause).toBe(underneath)
+  })
+
+  test("any other failure is plugin.activation: what failed is its cause, and its text (not its stack) the message's", async () => {
+    class NoShell extends Schema.TaggedError<NoShell>()("NoShell", { message: Schema.String }) {}
+    const missing = new NoShell({ message: "no executable zsh" })
+    missing.stack = "NoShell: no executable zsh\n    at find (/home/user/project/src/shell.ts:3:9)"
+    const failing = definePlugin({
+      id: "test/shell", version: "1", scope: "runtime", config: Schema.Struct({}), defaults: {},
+      provides: [SessionEnvironment], layer: () => Layer.effect(SessionEnvironment, Effect.fail(missing)),
+    })
+    const error = await Effect.runPromise(Effect.flip(Effect.scoped(failing.build({}, Context.empty()))))
+    expect([error.code, error.plugin, error.message]).toEqual(["plugin.activation", "test/shell", "test/shell failed to activate: NoShell: no executable zsh"])
+    expect(error.cause).toBe(missing)
+    const undecoded = await Effect.runPromise(Effect.flip(Effect.scoped(namer.build({ loud: true }, Context.empty()))))
+    expect([undecoded.code, undecoded.cause]).toMatchObject(["plugin.activation", { _tag: "SchemaError" }])
   })
 
   test("build keeps the code of a HarnessError the layer dies with; any other defect is plugin.defect", async () => {
@@ -91,6 +117,11 @@ describe("definePlugin", () => {
       code: "skills.duplicate", message: "two skills x", plugin: "test/dying",
     })
     expect(await built(new Error("boom"))).toMatchObject({ code: "plugin.defect", plugin: "test/dying" })
+    const boom = new TypeError("x is not a function")
+    const defect = await built(boom)
+    expect([defect.message, defect.cause]).toEqual(["test/dying died while activating: TypeError: x is not a function", boom])
+    const underneath = new Error("disk full")
+    expect((await built(new HarnessError({ code: "skills.files", message: "cannot read a skill", cause: underneath }))).cause).toBe(underneath)
   })
 
   test("build matches a HarnessError by its tag and fields, so one from another copy of core keeps its code too", async () => {
@@ -103,6 +134,6 @@ describe("definePlugin", () => {
       provides: [SessionEnvironment], layer: () => Layer.effect(SessionEnvironment, Effect.fail(new OtherCopyHarnessError({ code: "skills.duplicate", message: "two skills x" }))),
     })
     const error = await Effect.runPromise(Effect.flip(Effect.scoped(failing.build({}, Context.empty()))))
-    expect([error instanceof HarnessError, error.code, error.message, error.plugin]).toEqual([true, "skills.duplicate", "two skills x", "test/other-copy"])
+    expect([isHarnessError(error), error.code, error.message, error.plugin]).toEqual([true, "skills.duplicate", "two skills x", "test/other-copy"])
   })
 })
