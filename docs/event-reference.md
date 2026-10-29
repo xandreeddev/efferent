@@ -303,9 +303,14 @@ Besides the begin codes, these are common `HarnessError` codes a turn fails with
 | `service.missing` | `Agent.turn` | A service the turn needs is not provided by the agent's plugins or the turn's services. |
 | `config.graph` | `Agent.define` | The plugin graph cannot be built (a missing provider, a cycle, a misplaced turn-dependent plugin). |
 | `config.options` | `Agent.define`, activating a plugin | A plugin's options did not decode with its schema. |
-| `plugin.activation` | activating a plugin (a session plugin's, every turn) | The plugin's layer failed to build. |
+| `plugin.activation` | activating a plugin (a session plugin's, every turn) | The plugin's layer failed to build with an error that is not a `HarnessError` (one that is keeps its own code: `skills.duplicate`, `skills.root`, ...). |
 | `plugin.defect` | activating a plugin (a session plugin's, every turn) | The plugin's layer died with a defect while it was built. |
 | `tools.duplicate` | building the tool registry | Two capabilities define a tool of the same name. |
+| `skills.duplicate` | building the tool registry | Two capabilities define a skill with the same id (a host's and a skills directory's: set the directory's `idPrefix`). |
+| `skills.tools` | building the tool registry | A skill names a tool no capability registers. |
+| `skills.files` | `skillsFromFiles`; `@xandreed/plugin-workspace` skills directory (`strict`) | A skills tree has an issue: a `SKILL.md` without frontmatter or description, an id already used, a reference over the size limit. The message names each file. |
+| `skills.root` | `@xandreed/plugin-workspace` skills directory | A `required` skills root does not exist, or a root or a file in it cannot be read. |
+| `skills.limit` | `collectSkillFiles`; `@xandreed/plugin-workspace` skills directory | A skills root holds more files (`maxFiles`) or text (`maxBytes`) than allowed, or the roots more skills than `maxSkills`. |
 | `tools.opened` | `openTurnTools` | The turn's tools were opened twice. |
 | `tools.unavailable` | the turn's tools | The tools were used before `openTurnTools` opened them. |
 | `loop.model` | the step loop | The turn's services carry no `LanguageModel`. |

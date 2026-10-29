@@ -124,6 +124,66 @@ They merge over the plugin's defaults and decode through its schema;
 undeclared keys are refused. The [plugin reference](/docs/concepts/plugin-reference/)
 lists every first-party plugin's defaults and schema.
 
+## Skills
+
+A skill is a catalogue line the model always sees, instructions it loads
+on demand (`load_skill`) and reference documents it reads after that
+(`read_skill_reference`); `@xandreed/plugin-tool-discovery` serves all
+three. A host defines skills in code (`defineSkill`) or as files: a
+directory with a `SKILL.md` in it, the Agent Skills layout.
+
+```md
+---
+name: commit-style
+description: How to write a commit message in this repository.
+---
+
+Lowercase, verb-led titles. Examples are in references/examples.md.
+```
+
+`skillsDirectoryPlugin` from `@xandreed/plugin-workspace` reads such
+directories once, when the agent is defined, through the `FileSystem`
+port (`localSystemPlugin` provides the local disk):
+
+```ts
+import { localSystemPlugin, skillsDirectoryPlugin } from "@xandreed/plugin-workspace"
+
+const agent = yield* Agent.define({
+  plugins: [localSystemPlugin, skillsDirectoryPlugin, memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin],
+  turnServices: [LanguageModel.LanguageModel],
+  workspace: "/srv/project",                 // .agents/skills is read from here
+})
+```
+
+- **Where.** `roots` (default `[".agents/skills"]`) are absolute or relative
+  to the agent's `workspace`. Every `SKILL.md` below a root, at any depth,
+  is a skill; a missing root is skipped unless `required`. To read several
+  directories, list them in one instance's `roots`.
+- **Ids.** The frontmatter `id` or `name`; otherwise the skill directory's
+  path below the root (`release/checklist`); for a `SKILL.md` at the root
+  itself, the root's name. `idPrefix` goes before each.
+- **References.** Every other text file of a skill's directory, by its path
+  there (`references/examples.md`, `scripts/check.sh`). Binary files, dot
+  entries and `node_modules` are left out, and a file over
+  `maxReferenceBytes` (64 KiB) is too.
+- **Tools.** By default (`tools: "ignore"`) a file skill activates no tools.
+  With `tools: "declared"`, the `tools` its frontmatter lists must be
+  registered by the host or a plugin, or `Agent.define` fails with
+  `skills.tools`.
+- **Always-on skills** (`always: true`) are active from the first step; the
+  plugin puts their instructions in a static system-prompt section.
+- **Failures.** A skill id the host or another plugin also defines fails
+  `Agent.define` with `skills.duplicate`: set `idPrefix`. A bad `SKILL.md`
+  (no frontmatter, no description, an id already used) is logged and left
+  out, or with `strict` fails with `skills.files`. More than `maxFiles`
+  files or `maxBytes` of text in a root, or `maxSkills` skills, fails with
+  `skills.limit`.
+
+`readSkillFiles` and `collectSkillFiles` from `@xandreed/core` are the same
+reading for a host that loads skills itself and passes them in
+`capabilities`. The [plugin reference](/docs/concepts/plugin-reference/)
+lists every option and its default.
+
 ## Sessions
 
 A composable agent keeps each conversation as a session: one append-only

@@ -37,8 +37,9 @@ if (await install.exited !== 0) process.exit(1)
 /**
  * The FileSystem and Bash kits over the packed `@xandreed/plugin-workspace`
  * adapters, each check in a fresh directory under the system's temporary
- * directory: run by `verify.ts` on Bun and by `node-imports.mjs` on Node,
- * which import the names it uses and define `linkTo` (`fs.symlink`).
+ * directory, then its skills directory plugin over a SKILL.md tree there:
+ * run by `verify.ts` on Bun and by `node-imports.mjs` on Node, which import
+ * the names it uses and define `linkTo` (`fs.symlink`).
  */
 const localKits = `
 const temporary = Effect.acquireRelease(Effect.promise(() => mkdtemp(join(tmpdir(), "efferent-kit-"))), (dir) => Effect.promise(() => rm(dir, { recursive: true, force: true })))
@@ -51,16 +52,26 @@ const localKitFailures = (await Effect.runPromise(Effect.forEach(localKitChecks,
  Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
 if (localKitFailures.length > 0) { console.error(localKitFailures.join("\\n")); process.exit(1) }
 console.log("The FileSystem and Bash kits passed over the packed local adapters on " + (typeof Bun === "undefined" ? "Node" : "Bun") + " (" + localKitChecks.length + " checks)")
+const skillsWorkspace = await mkdtemp(join(tmpdir(), "efferent-skills-"))
+await mkdir(join(skillsWorkspace, ".agents/skills/greet/references"), { recursive: true })
+await writeFile(join(skillsWorkspace, ".agents/skills/greet/SKILL.md"), "---\\nname: greet\\ndescription: Greet people.\\n---\\nSay hello.\\n")
+await writeFile(join(skillsWorkspace, ".agents/skills/greet/references/tone.md"), "# Tone\\n\\nWarm.\\n")
+const directorySkills = await Effect.runPromise(Effect.scoped(Layer.build(SkillsDirectoryPluginLive().pipe(
+ Layer.provide(Layer.merge(FileSystemLive, Layer.succeed(SessionEnvironment, { workspace: skillsWorkspace })))))).pipe(
+ Effect.map((context) => Context.get(context, Capabilities).flatMap((capability) => capability.skills))))
+await rm(skillsWorkspace, { recursive: true, force: true })
+if (directorySkills.length !== 1 || directorySkills[0]?.id !== "greet" || directorySkills[0]?.references[0]?.id !== "references/tone.md") { console.error("The skills directory read " + JSON.stringify(directorySkills)); process.exit(1) }
+console.log("The skills directory plugin read a SKILL.md tree over the packed local file system on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
 `
 await writeFile(join(consumer, "verify.ts"), `
 import { Context, Deferred, Effect, Layer, Option, Ref, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
-import { mkdtemp, rm, symlink } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Bash, bashConformance, FileSystem, fileSystemConformance, makeMemoryFileSystem, Sessions, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { Bash, bashConformance, Capabilities, FileSystem, fileSystemConformance, makeMemoryFileSystem, Sessions, SessionEnvironment, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
-import { BashLive, FileSystemLive } from "@xandreed/plugin-workspace"
+import { BashLive, FileSystemLive, SkillsDirectoryPluginLive } from "@xandreed/plugin-workspace"
 import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
@@ -234,11 +245,11 @@ const turnServices = await Effect.runPromise(Effect.scoped(Effect.gen(function* 
 })))
 const agent = Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], system: "Be brief." })
 const turn = await runKit("turn", turnConformance(agent, turnServices))
-const { mkdtemp, rm, symlink } = await import("node:fs/promises")
+const { mkdir, mkdtemp, rm, symlink, writeFile } = await import("node:fs/promises")
 const { tmpdir } = await import("node:os")
 const { join } = await import("node:path")
-const { Bash, bashConformance, FileSystem } = await import("@xandreed/core")
-const { BashLive, FileSystemLive } = await import("@xandreed/plugin-workspace")
+const { Bash, bashConformance, Capabilities, FileSystem, SessionEnvironment } = await import("@xandreed/core")
+const { BashLive, FileSystemLive, SkillsDirectoryPluginLive } = await import("@xandreed/plugin-workspace")
 const linkTo = (target, path) => Effect.tryPromise(() => symlink(target, path))
 // The model store kits over every adapter plugin-models ships: in memory, and on files in temporary directories.
 const { authStoreConformance, AuthStore, ModelCatalog, modelCatalogConformance, SettingsStore, settingsStoreConformance } = await import("@xandreed/core")

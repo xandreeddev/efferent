@@ -73,7 +73,8 @@ in a temporary external project through a temporary local npm registry, and exer
 SDK sessions, replacement plugins, persistence, forks and custom evals on Bun,
 then imports every Node-capable package on Node; it also runs the `FileSystem`
 and `Bash` kits over the packed `@xandreed/plugin-workspace` adapters on both
-Bun and Node. Publishing is a separate release action:
+Bun and Node, and loads a `SKILL.md` tree through the packed skills directory
+plugin on both. Publishing is a separate release action:
 `bun run publish:packages` checks the build stamp (`.artifacts/packages/build.json`)
 against the current commit and a clean tree, then publishes in dependency order; it is a
 dry run unless `--publish` is passed (see [publishing](../CONTRIBUTING.md#publishing)).
@@ -683,12 +684,14 @@ const plugins = [{ plugin: localSystemPlugin, options: { killBackground: false }
 **Workspace tools.** The tools an agent works on a workspace with (read,
 write, edit, ls, find, grep and bash, over `FileSystem` and `Bash`) are to
 ship in `@xandreed/plugin-workspace` beside these adapters; this release has
-the adapters and `localSystemPlugin` only. Until then, a host's own tools
-use the two services directly.
+the adapters, `localSystemPlugin` and `skillsDirectoryPlugin` (see
+[Skills from a directory](#skills-from-a-directory)), not the tools yet.
+Until then, a host's own tools use the two services directly.
 
 **Tool discovery.** Hosts contribute tools (`defineTool`: handler, view,
-annotations) and skills (`defineSkill`, or `skillsFromFiles` over
-`<skill>/SKILL.md` and `<skill>/references/*.md`). The registry keeps a
+annotations) and skills (`defineSkill`, `skillsFromFiles` over files the host
+read, or directories of `SKILL.md` files through `skillsDirectoryPlugin`: see
+[Skills from a directory](#skills-from-a-directory)). The registry keeps a
 grow-only active set in memory:
 
 1. Tier 1: the skill catalogue is a static system-prompt section.
@@ -725,6 +728,81 @@ system prompt is the configured prefix, then the `static`
 sections, then the `session` sections, each tier by `order`. `turn` sections
 are recorded as turn context when the first run starts.
 
+### Skills from a directory
+
+A skill can be a directory with a `SKILL.md` in it, the Agent Skills
+layout: frontmatter, then the instructions `load_skill` returns; every
+other text file of the directory is a reference `read_skill_reference`
+serves by its path there (`references/formats.md`, `scripts/check.sh`).
+Core reads such trees without IO: `readSkillFiles(files, options)` returns a `SkillTree` (the
+skills, each with its directory, and the issues met) and never fails, and
+`skillsFromFiles` is the same made strict (`skills.files` naming every
+issue). `collectSkillFiles(root, { maxFiles, maxBytes, maxFileBytes })`
+reads a directory's text files through the `FileSystem` port's `glob`: links
+are not entered, dot entries, `node_modules` and binary files are left out,
+and more files or bytes than allowed fail with `skills.limit`. A file other
+than a `SKILL.md` over `maxFileBytes` is not read: it is collected with its
+`size`, and `readSkillFiles` leaves it out with a warning. Binary and unread
+files do not count toward `maxBytes`.
+
+- Every `SKILL.md`, at any depth, is a skill, and its directory is the
+  skill's; a nested skill's files are its own, not its parent's. Files
+  outside every skill directory are not read.
+- Frontmatter: `description` (or `summary`, which wins) is required and is
+  the catalogue line (made one line); `id` or `name` is the id, else the
+  directory's path below the root (`release/checklist`), else, for a
+  `SKILL.md` at the root itself, the root's name; `version` defaults to a
+  fingerprint of the skill as read, so it changes whenever its `SKILL.md` or
+  a reference it serves does; `tools` and `permissions` are lists (or text
+  split on commas and whitespace, so an item with a space in it is written
+  as a list); `always` is `true` or `false`, in any case. Other fields (`license`, `metadata`, `allowed-tools`)
+  are ignored. The frontmatter is the YAML subset skill files use: quotes,
+  `>` and `|` blocks, `- item` and `[a, b]` lists, ` #` comments, a
+  byte-order mark and CRLF; keys indented under another (`metadata:`) are
+  not read.
+- An issue is an `error` that leaves a skill out (no frontmatter, no
+  description, an id already used) or a `warning` that leaves out part of
+  one (a reference over `maxReferenceBytes` or whose path is not a valid id,
+  an unreadable value).
+
+`skillsDirectoryPlugin` (`@xandreed/plugin-workspace`, runtime-scoped,
+requires `FileSystem`) loads directories once per `Agent.define` and
+contributes their skills as one capability, so tool discovery lists them
+with the host's:
+
+```ts
+import { localSystemPlugin, skillsDirectoryPlugin } from "@xandreed/plugin-workspace"
+
+const plugins = [
+  localSystemPlugin,                                                              // FileSystem (and Bash) on the local disk
+  { plugin: skillsDirectoryPlugin, options: { roots: [".agents/skills", "/opt/team-skills"] } },
+  memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin,
+]
+```
+
+Its options are flat. `roots` (default `[".agents/skills"]`) are absolute or
+relative to the agent's `workspace` (`SessionEnvironment`, else the working
+directory); a missing root is skipped unless `required` (`skills.root`).
+`tools` is `"ignore"` by default: a file skill is instructions and
+references only, and activates no tool; with `"declared"`, its `tools` must
+name registered tools or `Agent.define` fails with `skills.tools`.
+`idPrefix` goes before every id. The first root wins an id two roots
+define. With `strict`, any issue fails `Agent.define` with `skills.files`;
+without it, each is logged as a warning and what it names is left out.
+`maxReferenceBytes` (64 KiB) caps a reference (a larger file is not read
+and does not count toward `maxBytes`), `maxFiles` (2000) and `maxBytes`
+(8 MiB) each root, and `maxSkills` (200) all of them (`skills.limit`). Tool discovery activates `always` skills at each turn's
+start but lists only the others, so the plugin renders the always-on
+skills' instructions in a static section (`alwaysSection`, at
+`sectionOrder` 850, before the catalogue at 900). A skill id the host or
+another plugin also defines fails `Agent.define` with `skills.duplicate`:
+give the directory an `idPrefix` (`"project."`). To read several
+directories, give one instance several `roots`: the capability and the
+always-on section have fixed ids (`SKILLS_CAPABILITY_ID`,
+`ALWAYS_SECTION_ID`), which two instances would share. The skills are read
+when the agent is defined; a changed file is seen by the next
+`Agent.define`.
+
 ### Typed plugin layers
 
 `definePlugin` returns a `TypedPlugin`: the `Plugin` the graph loads, plus its
@@ -745,10 +823,12 @@ defaults and its layer:
 | `@xandreed/plugin-tool-discovery` | `ToolDiscoveryLive` | `ToolRegistry`, `Capabilities` (catalogue) | `Capabilities` |
 | `@xandreed/plugin-agent-loop` | `StepLoopLive` | `StepLoop` | — |
 | `@xandreed/plugin-workspace` | `LocalSystemPluginLive` | `FileSystem`, `Bash` | — (fails with `ShellMissing` when the shell is not installed) |
+| `@xandreed/plugin-workspace` | `SkillsDirectoryPluginLive` | `Capabilities` (the directory's skills) | `FileSystem` (and `SessionEnvironment` when present) |
 
 The schemas are `SessionsConfig`, `TasksConfig`, `MemoryWindowConfig`,
-`MemorySummaryConfig`, `MemoryDigestConfig`, `ToolDiscoveryConfig` and
-`LocalSystemConfig`, with `sessionsDefaults`, `localSystemDefaults` and so
+`MemorySummaryConfig`, `MemoryDigestConfig`, `ToolDiscoveryConfig`,
+`LocalSystemConfig` and `SkillsDirectoryConfig`, with `sessionsDefaults`,
+`localSystemDefaults`, `skillsDirectoryDefaults` and so
 on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
 
 `stackPlugins(next)(base)` composes them the way the graph activates plugins:

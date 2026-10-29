@@ -4878,7 +4878,7 @@
     {
       "code": "plugin.activation",
       "where": "activating a plugin (a session plugin's, every turn)",
-      "meaning": "The plugin's layer failed to build."
+      "meaning": "The plugin's layer failed to build with an error that is not a `HarnessError` (one that is keeps its own code: `skills.duplicate`, `skills.root`, ...)."
     },
     {
       "code": "plugin.defect",
@@ -4889,6 +4889,31 @@
       "code": "tools.duplicate",
       "where": "building the tool registry",
       "meaning": "Two capabilities define a tool of the same name."
+    },
+    {
+      "code": "skills.duplicate",
+      "where": "building the tool registry",
+      "meaning": "Two capabilities define a skill with the same id (a host's and a skills directory's: set the directory's `idPrefix`)."
+    },
+    {
+      "code": "skills.tools",
+      "where": "building the tool registry",
+      "meaning": "A skill names a tool no capability registers."
+    },
+    {
+      "code": "skills.files",
+      "where": "`skillsFromFiles`; `@xandreed/plugin-workspace` skills directory (`strict`)",
+      "meaning": "A skills tree has an issue: a `SKILL.md` without frontmatter or description, an id already used, a reference over the size limit. The message names each file."
+    },
+    {
+      "code": "skills.root",
+      "where": "`@xandreed/plugin-workspace` skills directory",
+      "meaning": "A `required` skills root does not exist, or a root or a file in it cannot be read."
+    },
+    {
+      "code": "skills.limit",
+      "where": "`collectSkillFiles`; `@xandreed/plugin-workspace` skills directory",
+      "meaning": "A skills root holds more files (`maxFiles`) or text (`maxBytes`) than allowed, or the roots more skills than `maxSkills`."
     },
     {
       "code": "tools.opened",

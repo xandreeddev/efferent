@@ -87,7 +87,7 @@ point the models plugin at any OpenAI-compatible endpoint.
 | `@xandreed/plugin-session-sqlite` | SQLite session store (Bun) |
 | `@xandreed/plugin-tasks` | Background tasks |
 | `@xandreed/plugin-render` | Render surfaces, event feeds and streaming |
-| `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`; Linux and macOS) |
+| `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`; Linux and macOS), and skills from directories of `SKILL.md` files (`skillsDirectoryPlugin`) |
 | `@xandreed/evals`, `-evals-cli`, `-evals-langfuse`, `-evals-langsmith` | Tasks, trials, graders and suites; the `efferent-eval` CLI; exporters (Node 24) |
 
 ## Build and verify
@@ -106,8 +106,10 @@ The distribution build prepares artifacts under `.artifacts/` using each
 package's manifest version and matching internal dependency versions. The
 consumer check installs local tarballs outside the monorepo, runs a
 composable agent's turn, a session fork and an eval composition on Bun,
-imports every Node-capable package on Node, and runs the `FileSystem` and
-`Bash` kits over the local adapters of `@xandreed/plugin-workspace` on both.
+imports every Node-capable package on Node, runs the `FileSystem` and
+`Bash` kits over the local adapters of `@xandreed/plugin-workspace` on both,
+and loads a `SKILL.md` tree through the packed skills directory plugin on
+both.
 
 See [the framework guide](/docs/concepts/harness/) and the
 [source and contributing guide](https://github.com/xandreeddev/efferent).

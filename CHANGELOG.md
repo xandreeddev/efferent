@@ -265,6 +265,55 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   0.13 reader drops a message's images and fails on a message without text;
   a replay of a request with images diverges there (`request.diverged`).
   Logs written before 0.14.0 decode unchanged in 0.14.0.
+- **`@xandreed/core`: `skillsFromFiles` reads a whole tree, and names
+  references by path.** It is now `readSkillFiles` made strict (below):
+  - A reference's id is its path below the skill's directory
+    (`references/formats.md`; it was `formats`), and every other text file
+    of the directory is a reference (it was `references/**/*.md` only).
+  - A `SKILL.md` at any depth is a skill (it was `<skill>/SKILL.md` only),
+    and the files under a nested skill are its own, not its parent's. A
+    `SKILL.md` at the root of the tree needs an `id` or a `name` (or
+    `options.rootName`).
+  - A skill's default `version` is a fingerprint of the skill as read (it
+    was `"1"`), so a change to its `SKILL.md` or to a reference it serves
+    changes it, and with it tool discovery's skill-selection `candidateHash`
+    in decision records.
+  - The Agent Skills fields are read: `name` as `id` and `description` as
+    `summary` (`id` and `summary` win); the summary is made one line.
+    Frontmatter is read as the YAML subset skill files use (`>` and `|`
+    blocks, lists, quotes, comments, a byte-order mark, CRLF); keys indented
+    under another (`metadata:`) are no longer read as top-level ones.
+  - `tools` and `permissions` given as text are split on whitespace as well
+    as commas (`permissions: fs write` was one permission, `fs write`; it is
+    now two), and `always` is read in any case (`TRUE` is true; it was
+    `true` only).
+  - It fails with `skills.files` naming every issue at once
+    (`<path>: <reason>; ...`), warnings included (an `always` that is not
+    `true` or `false`, a frontmatter line that is not `key: value`, a
+    reference over `maxReferenceBytes`, a reference whose path is not a
+    valid id); it failed on the first bad skill.
+  - `SkillFile` is a schema now (a value and a type), from
+    `harness/skill-files.entity.ts`; the `harness/skill-files.ts` module is
+    gone. Imports from `@xandreed/core` are unchanged.
+
+  Migration: read a reference by its path
+  (`read_skill_reference({ skill, reference: "references/formats.md" })`);
+  a skill whose recorded decisions should keep the old version sets
+  `version: 1` in its frontmatter; a file under a skill's directory that
+  should not be a reference moves out of it; a `tools` or `permissions` item
+  with a space in it is written as a list (`[fs write]`, or `- fs write`
+  lines), since text is split on spaces.
+- **`@xandreed/core`: a plugin layer that fails with a `HarnessError` fails
+  with that error's code.** `definePlugin`'s `build` (what the plugin graph
+  and `Agent.define` activate) turned every layer failure into
+  `plugin.activation`, with the error as text in the message. A
+  `HarnessError` now keeps its code and message, as it already did through
+  the typed `live` layer, and `build` names the plugin when the error names
+  none: `Agent.define` fails with `skills.duplicate`, `tools.duplicate` or
+  `skills.tools` from tool discovery, for example. The error is told by its
+  tag and fields, so one from a second copy of `@xandreed/core` keeps its
+  code too. Other failures are still `plugin.activation`. Migration: a
+  host that matched `plugin.activation` for these matches their own codes.
 
 ### Added
 
@@ -548,6 +597,52 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Docs: `docs/framework.md` "Images and multi-part messages", the website's
   SDK and sessions page, a provider table of the routes that take images,
   and the new kit checks on the conformance page.
+- `@xandreed/core`: skills from a tree of files.
+  `readSkillFiles(files, { tools, maxReferenceBytes, rootName })` returns a
+  `SkillTree`: every skill that loaded, with the directory of its
+  `SKILL.md`, and the issues met (`SkillFileIssue`: an `error` leaves a
+  skill out, a `warning` part of one). It never fails. The id rule:
+  frontmatter `id`, else `name`, else the directory's path below the root
+  (`release/checklist`), else, for a `SKILL.md` at the root, `rootName`.
+  `tools: "ignore"` drops the tools a `SKILL.md` declares. A reference
+  whose path is not a valid id is left out with a warning, not the skill.
+  `collectSkillFiles(root, { maxFiles, maxBytes, maxFileBytes })` reads the
+  text files under a directory through the `FileSystem` port's `glob`
+  (links not entered; dot entries, `node_modules` and binary files left
+  out), failing with `skills.limit` past `maxFiles` or `maxBytes`; a file
+  other than a `SKILL.md` over `maxFileBytes` is not read, and is collected
+  with its `size` (`SkillFile.size`) for `readSkillFiles` to warn about.
+  Binary files and unread ones do not count toward `maxBytes`. Also
+  exported: the schemas `SkillFile`, `SkillFileIssue`, `SkillTree`, `SkillTreeEntry`,
+  `SkillFilesOptions`, `CollectSkillFilesOptions`, and `skillIssuesText`.
+- `@xandreed/plugin-workspace`: `skillsDirectoryPlugin` (plugin id
+  `@xandreed/plugin-workspace/skills`, runtime-scoped, requires
+  `FileSystem`, contributes `Capabilities`) loads directories of `SKILL.md`
+  files, `.agents/skills` in the agent's workspace by default, once per
+  `Agent.define`. Tool discovery lists them in its catalogue, `load_skill`
+  returns a skill's instructions and `read_skill_reference` the other files
+  of its directory; the instructions of skills marked `always` are rendered
+  in a static section (`alwaysSection`, `sectionOrder`). Flat options:
+  `roots` (absolute, or relative to the workspace), `required`, `strict`,
+  `tools` (`"ignore"` by default: file skills activate no tools),
+  `idPrefix`, `maxReferenceBytes`, `maxSkills`, `maxFiles`, `maxBytes`. The
+  first root wins an id two roots define; one instance with several `roots`
+  is how to read several directories (the capability and section ids are
+  fixed). A file over `maxReferenceBytes` is not read and does not count
+  toward `maxBytes`. A skill id the host or another plugin also defines
+  fails `Agent.define` with `skills.duplicate` (set
+  `idPrefix`); a missing `required` root fails with `skills.root`, a limit
+  with `skills.limit`, any issue under `strict` with `skills.files` (without
+  `strict`, issues are logged and what they name is left out). Also
+  `SkillsDirectoryPluginLive`, `SkillsDirectoryConfig`,
+  `skillsDirectoryDefaults`, and, for a host that composes capabilities
+  itself, `loadSkillsDirectory(config, workspace)` (the skills) and
+  `skillsCapability(skills, config)` (them as one capability, with the
+  always-on section), whose ids are `SKILLS_CAPABILITY_ID` and
+  `ALWAYS_SECTION_ID`.
+- Docs: skills from a directory in `docs/framework.md`, the website's SDK
+  and sessions page and the README; the event reference lists the
+  `skills.*` codes.
 
 ### Fixed
 
@@ -600,6 +695,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `storage: "memory"`, two turns, a login, a role edit, a logout, the catalog
   and a utility call leave both empty. `@xandreed/sdk` tests the plugin at
   the agent level (a dev dependency).
+- `bun run verify:packages` loads a `SKILL.md` tree with the packed
+  `SkillsDirectoryPluginLive` over `FileSystemLive`, on Bun and on Node. The
+  plugin reference page says what each plugin contributes and reads when
+  present (`Contributes`, `Optional`), and "none" for a plugin that provides
+  nothing.
 
 ## 0.13.0
 
