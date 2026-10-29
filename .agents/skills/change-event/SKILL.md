@@ -73,8 +73,11 @@ kept by hand and checked against it. Update the ones your change touches:
 
 - `JOURNAL`: writer and sensitivity of every journal kind.
 - `RECORDED_AS`: where each `RECORDED_ELSEWHERE` event ends up.
-- `ERROR_CODES` / `TASK_CODES`: a new code raised under an owned prefix
-  (`turn.`, `events.`, `request.`, `loop.`, `tools.`, `task.`).
+- `ERROR_CODES` / `TASK_CODES`: where a new code comes from and what it
+  means. Add the code to `HARNESS_CODES` (core) too: the script fails on a
+  code a package raises that the list does not hold (the kits' own
+  `conformance.*` aside), and on a listed code without an entry. A code
+  is never renamed or removed; one no longer raised keeps its entry.
 
 Then `bun run docs:generate` and keep `docs/event-reference.json`,
 `docs/event-reference.md` and the website's `concepts/event-reference.md` in

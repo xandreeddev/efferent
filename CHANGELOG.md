@@ -437,6 +437,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/evals-langsmith` pass `effect/no-stringified-cause`.
 - `effect/no-stringified-cause` runs over `packages/core`, and
   `effect/no-instanceof-tagged-error` runs over test code too.
+- The event reference's "Error codes" section (formerly "Common turn error
+  codes", now at `#error-codes`) lists every code in `HARNESS_CODES` with
+  where it comes from and what it means, the store, storage, auth,
+  settings, skills, capability, memory and module codes included.
+  `bun run docs:generate` fails when a package raises a code that is not
+  published (in any namespace but the kits' `conformance.*`), or when a
+  published code has no entry.
 
 ## 0.14.0 — 2026-10-29
 

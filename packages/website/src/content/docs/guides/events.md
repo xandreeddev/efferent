@@ -465,7 +465,7 @@ Three places say how a turn ended; two of them carry the failure's code:
   (a subscriber's, a plugin's, yours), else `turn.failed`, `turn.defect` or
   `turn.interrupted`. A turn its writer's scope closed before anyone ended it
   stores `turn.unended`, and a reaped one `turn.lease`. The
-  [event reference](/docs/concepts/event-reference/#common-turn-error-codes) lists them.
+  [event reference](/docs/concepts/event-reference/#error-codes) lists them.
 - The live `turn.ended`: `outcome` (completed, partial or failed), `reply`
   and `usage`, no code.
 
