@@ -8,6 +8,14 @@
           "_id": "Option",
           "_tag": "Some",
           "value": "record-alpha-b"
+        },
+        "usage": {
+          "inputTokens": 300,
+          "outputTokens": 30,
+          "totalTokens": 330,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": 0
         }
       },
       "events": [
@@ -61,9 +69,9 @@
           "turn": 1,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "33c046762af",
+          "fingerprint": "c07c91772d8",
           "systemFingerprint": "eb326f7eed",
-          "estimatedTokens": 229,
+          "estimatedTokens": 242,
           "reservedTokens": 303,
           "compactions": 0,
           "activeTools": [
@@ -78,9 +86,9 @@
           "turn": 1,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "cee0018c482",
+          "fingerprint": "9464a1884d4",
           "systemFingerprint": "3f61f4eeed",
-          "estimatedTokens": 385,
+          "estimatedTokens": 412,
           "reservedTokens": 347,
           "compactions": 0,
           "activeTools": [
@@ -101,6 +109,14 @@
           "_id": "Option",
           "_tag": "Some",
           "value": "layer saw turn 1 with 18 entries | written in order | turn 2"
+        },
+        "usage": {
+          "inputTokens": 0,
+          "outputTokens": 0,
+          "totalTokens": 0,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": 0
         }
       },
       "events": [
@@ -129,6 +145,14 @@
           "_id": "Option",
           "_tag": "Some",
           "value": "record-gamma-a"
+        },
+        "usage": {
+          "inputTokens": 200,
+          "outputTokens": 20,
+          "totalTokens": 220,
+          "cacheReadTokens": 0,
+          "cacheWriteTokens": 0,
+          "reasoningTokens": 0
         }
       },
       "events": [
@@ -163,9 +187,9 @@
           "turn": 4,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "7ad37a04a8a",
+          "fingerprint": "1496b479b05",
           "systemFingerprint": "eb326f7eed",
-          "estimatedTokens": 899,
+          "estimatedTokens": 939,
           "reservedTokens": 387,
           "compactions": 1,
           "activeTools": [
@@ -182,9 +206,9 @@
           "turn": 4,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "dc5b606abf6",
+          "fingerprint": "8166b06ec9a",
           "systemFingerprint": "eb326f7eed",
-          "estimatedTokens": 1021,
+          "estimatedTokens": 1074,
           "reservedTokens": 387,
           "compactions": 1,
           "activeTools": [
@@ -1345,8 +1369,10 @@
           "providerOptions": {
             "engine": {
               "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
               "inputTokens": 100,
               "outputTokens": 10,
+              "reasoningTokens": 0,
               "totalTokens": 110
             }
           }
@@ -1481,8 +1507,10 @@
           "providerOptions": {
             "engine": {
               "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
               "inputTokens": 100,
               "outputTokens": 10,
+              "reasoningTokens": 0,
               "totalTokens": 110
             }
           }
@@ -1578,8 +1606,10 @@
           "providerOptions": {
             "engine": {
               "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
               "inputTokens": 100,
               "outputTokens": 10,
+              "reasoningTokens": 0,
               "totalTokens": 110
             }
           }
@@ -1918,8 +1948,10 @@
           "providerOptions": {
             "engine": {
               "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
               "inputTokens": 100,
               "outputTokens": 10,
+              "reasoningTokens": 0,
               "totalTokens": 110
             }
           }
@@ -1969,8 +2001,10 @@
           "providerOptions": {
             "engine": {
               "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
               "inputTokens": 100,
               "outputTokens": 10,
+              "reasoningTokens": 0,
               "totalTokens": 110
             }
           }

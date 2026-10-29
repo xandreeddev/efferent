@@ -83,6 +83,97 @@ runLoop({
 
 The trace snapshots do not modify the message buffer, tool arguments, persistence callbacks or cancellation scopes. Exporters should preserve parent IDs when naming steps or grouping use cases. A timed-out evaluation awaits scoped cleanup; browser/provider adapters must bound their own finalizers rather than leave paid work running in disconnected fibers.
 
+## Token usage
+
+Every provider response the step loop handles is one `assistant.message`
+event carrying a `TokenUsage`, and is stored as one `step.usage` record
+(step, model, usage):
+
+| Field | Counts |
+|---|---|
+| `inputTokens` | the full input: uncached input, cache reads and cache writes |
+| `cacheReadTokens` | input read from the provider's prompt cache |
+| `cacheWriteTokens` | input written to the provider's prompt cache |
+| `outputTokens` | the full output, reasoning included |
+| `reasoningTokens` | output spent on reasoning |
+| `totalTokens` | `inputTokens + outputTokens` |
+
+The invariants: `cacheReadTokens + cacheWriteTokens <= inputTokens`,
+`reasoningTokens <= outputTokens`, `totalTokens = inputTokens + outputTokens`,
+no count below 0. `extractUsage` (the loop's reading of a response) and
+`tokenUsage(counts)` (the constructor for hand-built usage, such as a
+`UtilityCompletion`'s) hold them: an output reported below its reasoning is
+raised to it, and an input below its cache counts likewise. The rest are
+functions, not stored fields: `uncachedInputTokens(u)` is input minus both
+cache counts; `usageBreakdown(u)` splits a usage into the five kinds a call
+is billed by (`input` uncached, `cacheRead`, `cacheWrite`, `reasoning`, and
+`output` without its reasoning), each at least 0 and summing to
+`totalTokens`; `costOf(u, price)` prices them with a `ModelPrice`
+(per million tokens; `reasoning` is optional and falls back to the output
+price). `addUsage`, `sumUsage` and `zeroUsage` add usages up.
+
+```ts
+const result = yield* agent.turn(input, (turn) => turn.run({}).pipe(
+  Effect.map((run) => ({ outcome: run.outcome, reply: Option.some(run.text) }))))
+const cost = costOf(result.usage, { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 })
+```
+
+Where the counts appear:
+
+- `RunResult.usage`: one run of the step loop (`turn.run(policy)`), the sum
+  of its `assistant.message` usage. A `StepLoop` must return exactly that sum
+  (`stepLoopConformance` checks it).
+- `RunContext.usage` and `Turn.usage`: the turn's running total, every run
+  of it included.
+- `TurnResult.usage`, returned by `Agent.turn` (and by `guardTurn` in a
+  host's own composition): the turn's total. The bus `turn.ended` event
+  carries the same total, but only a subscription still open when it is
+  published sees it (see [the turn as services](#the-turn-as-services)).
+- `turnUsageOf(events, turn)`: the same total read back from a session's
+  stored events, the turn's `step.usage` records summed. `turnConformance`
+  checks that it equals `TurnResult.usage`. The stored `turn.ended` record
+  carries no usage.
+- Spans: the `engine.turn` span of each provider step carries the call's
+  usage under the OpenTelemetry GenAI names: `gen_ai.usage.input_tokens`,
+  `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`,
+  `gen_ai.usage.cache_creation.input_tokens` and
+  `gen_ai.usage.reasoning.output_tokens`. The `engine.run` span carries the
+  run's sums under efferent's names,
+  `engine.usage.{input,output,cache_read,cache_write,reasoning,total}_tokens`,
+  so a backend that sums `gen_ai.usage.*` over a trace does not count a step
+  twice. effect/ai's own `LanguageModel` span of each call carries the same
+  input and output counts (the `anthropic` and `openai` providers set them;
+  `@effect/ai-anthropic` names cache writes
+  `gen_ai.usage.cache_write.input_tokens` there): sum one level, not both.
+  The models plugin's `providers.generate` span carries
+  `llm.usage.{input,output,cache_read,cache_write,reasoning}_tokens`, and
+  the same names are counters per `llm.model`.
+
+A turn's usage counts what the step loop received. It does not count calls
+outside the loop: a memory digester's or summarizer's `UtilityLlm` calls
+(their `UtilityCompletion.usage` goes to their caller; the models plugin's
+counters do include them). Nor does it count a provider attempt whose
+response never reached the loop as a decoded response: a malformed response
+the loop corrects, or an attempt that failed (one the models plugin retried,
+a stream cut off after its first part). A provider may bill those, so a
+turn's usage can be below the provider's invoice.
+
+Records written before 0.14.0 have no `cacheWriteTokens` or
+`reasoningTokens`; they decode with 0 (`step.usage`, the usage stamp on a
+stored assistant message, `assistantUsage`). Their `inputTokens` already
+held any cache writes, so `uncachedInputTokens` of such a record counts the
+writes as uncached input.
+
+What each provider reports:
+
+| Provider (route) | Input and cache reads | Cache writes | Reasoning |
+|---|---|---|---|
+| `anthropic` (Messages API) | `input_tokens` + both cache counts; reads: `cache_read_input_tokens` | `cache_creation_input_tokens` | not reported: 0 (thinking is inside `output_tokens`) |
+| `openai`, `openai-codex` and OpenCode `gpt-*` models (Responses API) | `input_tokens`; reads: `input_tokens_details.cached_tokens` | `input_tokens_details.cache_write_tokens` when sent, else 0 | `output_tokens_details.reasoning_tokens` |
+| OpenCode's other models (chat completions) | `prompt_tokens`; reads: `prompt_cache_hit_tokens`, `cached_tokens` or `prompt_tokens_details.cached_tokens` | `prompt_tokens_details.cache_write_tokens` when sent, else 0 | `completion_tokens_details.reasoning_tokens` |
+| `google` (Gemini's OpenAI-compatible API) | as chat completions | as chat completions | 0: not read (Gemini's `completion_tokens` may leave its thoughts out) |
+| configured endpoints and `local` credentials | as chat completions | as chat completions | `completion_tokens_details.reasoning_tokens`, whatever `standardOnly` says |
+
 ## Host-planned initial tool batch
 
 `runLoop` accepts optional `initialStep: [{ name, params }]`. A host can classify
@@ -212,12 +303,16 @@ const agent = yield* Agent.define({
 **One turn.** `agent.turn(input, use)` opens memory and tools for one admitted
 turn and hands `use` a `Turn`: `userMessage`, `memory` (read-only), `events`,
 `tasks`, `tools` (`match`, `apply`, `select`, `activate`, `active`),
-`context(entry)`, `reply(text)`, `run(policy)`, `flush` and `write(op)`. The
-turn is scoped: subscriptions and tasks end with it. On success, tasks and
-background subscriptions settle before the reply is recorded. The reply is
-recorded exactly once, with a `failed` outcome when `use` fails, is interrupted,
-or finalizer work fails. On failure or interruption, the original cause is
-preserved and pending tasks are interrupted when the turn's scope closes.
+`context(entry)`, `reply(text)`, `run(policy)`, `usage`, `flush` and
+`write(op)`. The turn is scoped: subscriptions and tasks end with it. On
+success, tasks and background subscriptions settle before the reply is
+recorded. The reply is recorded exactly once, with a `failed` outcome when
+`use` fails, is interrupted, or finalizer work fails. On failure or
+interruption, the original cause is preserved and pending tasks are
+interrupted when the turn's scope closes. On success `agent.turn` returns a
+`TurnResult`: the `TurnOutcome` `use` returned (`outcome`, `reply`) and the
+turn's `usage`, every run's provider calls summed (see
+[token usage](#token-usage)).
 
 `input.turn` is either a turn the host already began (the `TurnWriter` from
 `Sessions.begin`: the host ends it, after its own closing records) or a
@@ -513,18 +608,22 @@ and `RunContext` (which carries the turn's `session`). It provides:
   `turn.started` is published; once), `context(entry)` (before
   `persistMessage` it waits, and is recorded right after the message:
   memory records nothing of the turn before its message, `turn.unstarted`),
-  `persistReply(outcome)` (`turn.reply`, then `turn.ended` is published;
-  once, and a no-op when the message was never persisted). The stored
-  `turn.ended` is the writer's `end`, the turn's closing commit;
+  `persistReply(outcome)` (`turn.reply`, then `turn.ended` is published
+  with the turn's usage; once, and a no-op when the message was never
+  persisted). The stored `turn.ended` is the writer's `end`, the turn's
+  closing commit;
 - `TurnToolbox`: `open` (once; the handlers run with the opener's services)
   and `tools` (fails with `tools.unavailable` before `open`);
 - `TurnPrompt`: `system(variant)` and `turnSections`;
-- `RunContext`, `TurnEvents` and `TurnTasks`.
+- `RunContext` (its `usage` is the turn's running total: a second bus
+  subscriber, after the writer, sums every `assistant.message`), `TurnEvents`
+  and `TurnTasks`.
 
 The lifecycle is functions over them: `openTurnTools`, `turnTools` (the
 host's view), `settleTurn` (join the tasks, drain the reactions, until quiet),
 `finishTurn(outcome)` (persist the reply, drain, flush), `guardTurn(body)`
-(settle on success, else finish as failed keeping the cause), `turnOf(options)`
+(settle on success, else finish as failed keeping the cause; on success it
+returns the `TurnResult`, the outcome with `RunContext.usage`), `turnOf(options)`
 (the `Turn` a host's code gets), and `stepRequestOf(policy, options)` and
 `runTurnLoop(policy, options)` for one run of the step loop. `cacheKeyOf(prefix,
 conversation)` builds the prompt-cache key.
@@ -575,7 +674,9 @@ A host composing by hand uses the same pieces over a
 `MemoryDigestLive()` per turn over the turn's services. `turnConformance`
 checks a composition: the writer first, the message before the matcher's
 history, the reply and the turn's end exactly once on success, failure and
-interrupt, tasks joined before the reply, and the host layer seeing only
+interrupt, tasks joined before the reply, a model-driven turn's
+`TurnResult.usage` equal to its stored `step.usage` records (`turnUsageOf`),
+and the host layer seeing only
 earlier turns.
 
 ## Sessions: one log per session

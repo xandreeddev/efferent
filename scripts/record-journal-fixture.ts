@@ -172,7 +172,7 @@ const scripted = (script: ReadonlyArray<Part>) => Effect.gen(function* () {
 })
 
 const digester = Context.make(UtilityLlm, UtilityLlm.of({
-  complete: () => Effect.succeed(new UtilityCompletion({ text: "- record-alpha-b\nrecord-unknown", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0 } })),
+  complete: () => Effect.succeed(new UtilityCompletion({ text: "- record-alpha-b\nrecord-unknown", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } })),
 }))
 const matcher = Context.make(IntentMatcher, IntentMatcher.of({
   id: "keyword", version: "1",

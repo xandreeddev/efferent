@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Effect, Layer, Option, Ref, Schema, Stream, Tracer } from "effect"
 import { Failure } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import { DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
@@ -716,6 +716,44 @@ test("step trace content is explicit, includes replay context and is off by defa
     () => [{ type: "text", text: "private answer" }, finish("stop")])
   expect(snapshots[1]?.has("engine.step.input")).toBe(false)
   expect(snapshots[1]?.has("engine.step.output")).toBe(false)
+})
+
+
+/** A tracer keeping every span it starts, to read their attributes once they ended. */
+const capturingTracer = (spans: Array<Tracer.NativeSpan>) => Tracer.make({
+  span: (options) => {
+    const span = new Tracer.NativeSpan(options)
+    spans.push(span)
+    return span
+  },
+})
+
+test("the run's usage sums its steps; each step's span carries its call's usage, the run's span the sum", async () => {
+  const spans: Array<Tracer.NativeSpan> = []
+  const billed = (reason: "stop" | "tool-calls", input: { readonly total: number; readonly cacheRead: number; readonly cacheWrite: number }, output: { readonly total: number; readonly reasoning: number }) => ({
+    ...finish(reason),
+    usage: {
+      inputTokens: { ...input, uncached: input.total - input.cacheRead - input.cacheWrite },
+      outputTokens: { ...output, text: output.total - output.reasoning },
+    },
+  })
+  const result = await run(runLoop({ system: "sys", messages: [user("echo")], toolkit: kit }).pipe(Effect.withTracer(capturingTracer(spans))), (call) => call === 0
+    ? [{ type: "tool-call", id: "c1", name: "echo", params: { value: "x" } }, billed("tool-calls", { total: 1000, cacheRead: 700, cacheWrite: 200 }, { total: 60, reasoning: 40 })]
+    : [{ type: "text", text: "done" }, billed("stop", { total: 1500, cacheRead: 900, cacheWrite: 300 }, { total: 80, reasoning: 50 })])
+  expect(result.usage).toEqual({ inputTokens: 2500, outputTokens: 140, totalTokens: 2640, cacheReadTokens: 1600, cacheWriteTokens: 500, reasoningTokens: 90 })
+  const read = (span: Tracer.NativeSpan | undefined, keys: ReadonlyArray<string>) => keys.map((key) => span?.attributes.get(key))
+  const genAi = ["gen_ai.usage.input_tokens", "gen_ai.usage.output_tokens", "gen_ai.usage.cache_read.input_tokens", "gen_ai.usage.cache_creation.input_tokens", "gen_ai.usage.reasoning.output_tokens"]
+  expect(spans.filter((span) => span.name === "engine.turn").map((span) => read(span, genAi))).toEqual([
+    [1000, 60, 700, 200, 40],
+    [1500, 80, 900, 300, 50],
+  ])
+  const runSpan = spans.find((span) => span.name === "engine.run")
+  expect(read(runSpan, [
+    "engine.usage.input_tokens", "engine.usage.output_tokens", "engine.usage.cache_read_tokens",
+    "engine.usage.cache_write_tokens", "engine.usage.reasoning_tokens", "engine.usage.total_tokens",
+  ])).toEqual([2500, 140, 1600, 500, 90, 2640])
+  // The GenAI names stay on the calls: a backend summing them over the trace counts each call once per level.
+  expect([...(runSpan?.attributes.keys() ?? [])].filter((key) => key.startsWith("gen_ai."))).toEqual([])
 })
 
 

@@ -26,23 +26,41 @@ export interface CompletionUsage {
   readonly prompt_cache_hit_tokens?: number
   /** Moonshot-style cache accounting. */
   readonly cached_tokens?: number
-  /** OpenAI-native cache accounting. */
-  readonly prompt_tokens_details?: { readonly cached_tokens?: number }
+  /** OpenAI-native cache reads; gateways (OpenCode's among them) add the cache writes. */
+  readonly prompt_tokens_details?: { readonly cached_tokens?: number; readonly cache_write_tokens?: number }
+  /** OpenAI-native reasoning accounting, counted inside `completion_tokens`. */
+  readonly completion_tokens_details?: { readonly reasoning_tokens?: number }
+}
+
+/** How a compat endpoint's usage is read. */
+export interface UsageReading {
+  /**
+   * Read `completion_tokens_details.reasoning_tokens` (default true). The
+   * built-in `google` provider sets false: Gemini's `completion_tokens` may
+   * leave its thoughts out, which would break reasoning inside the output,
+   * so its reasoning reads 0. Configured endpoints and `local` credentials
+   * read it.
+   */
+  readonly reasoning?: boolean
 }
 
 /** The vendor cached-token fallback chain, shared with the non-streaming
  *  parser — the gateway fronts upstreams with three cache vocabularies.
- *  `prompt_tokens` already counts the cached tokens: it is the full input. */
-export const usageFromCompletion = (usage: CompletionUsage | undefined) => {
+ *  `prompt_tokens` already counts the cached and written tokens: it is the
+ *  full input, and `completion_tokens` the full output, reasoning included. */
+export const usageFromCompletion = (usage: CompletionUsage | undefined, reading: UsageReading = {}) => {
   const input = usage?.prompt_tokens ?? 0
   const cached =
     usage?.prompt_cache_hit_tokens ??
     usage?.cached_tokens ??
     usage?.prompt_tokens_details?.cached_tokens ??
     0
+  const written = usage?.prompt_tokens_details?.cache_write_tokens ?? 0
+  const output = usage?.completion_tokens ?? 0
+  const reasoning = reading.reasoning === false ? 0 : usage?.completion_tokens_details?.reasoning_tokens ?? 0
   return {
-    inputTokens: { total: input, uncached: Math.max(0, input - cached), cacheRead: cached },
-    outputTokens: { total: usage?.completion_tokens ?? 0 },
+    inputTokens: { total: input, uncached: Math.max(0, input - cached - written), cacheRead: cached, cacheWrite: written },
+    outputTokens: { total: output, text: Math.max(0, output - reasoning), reasoning },
   }
 }
 
@@ -236,7 +254,7 @@ const applyChunk = (
 /** The end-of-stream flush: close open chunks, emit the accumulated tool
  *  calls (unparseable arguments are an invalid output — the loop's
  *  corrective path), then the finish with the folded usage. */
-const flush = (moduleName: string, state: SseState): Effect.Effect<Emit, AiError.AiError> =>
+const flush = (moduleName: string, reading: UsageReading, state: SseState): Effect.Effect<Emit, AiError.AiError> =>
   state.flushed
     ? Effect.succeed([state, []])
     : Effect.gen(function* () {
@@ -262,7 +280,7 @@ const flush = (moduleName: string, state: SseState): Effect.Effect<Emit, AiError
             toolParts.length > 0
               ? "tool-calls"
               : finishReasonFromWire(Option.getOrUndefined(closed.finishReason)),
-          usage: usageFromCompletion(Option.getOrUndefined(closed.usage)),
+          usage: usageFromCompletion(Option.getOrUndefined(closed.usage), reading),
         }
         return [
           { ...closed, flushed: true },
@@ -276,11 +294,12 @@ const DONE = "[DONE]"
 
 const step = (
   moduleName: string,
+  reading: UsageReading,
   state: SseState,
   payload: string,
 ): Effect.Effect<Emit, AiError.AiError> =>
   payload === DONE
-    ? flush(moduleName, state)
+    ? flush(moduleName, reading, state)
     : Effect.try({
         try: () => JSON.parse(payload) as StreamChunk,
         catch: () => malformed(moduleName, `a data: line was not JSON: ${payload.slice(0, 200)}`),
@@ -290,6 +309,8 @@ const step = (
 export const sseStreamParts = (options: {
   readonly moduleName: string
   readonly body: ReadableStream<Uint8Array>
+  /** How the final chunk's usage is read (see `usageFromCompletion`). */
+  readonly usage?: UsageReading
 }): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> =>
   Stream.fromReadableStream({
     evaluate: () => options.body,
@@ -311,6 +332,6 @@ export const sseStreamParts = (options: {
     Stream.concat(Stream.succeed(DONE)),
     // Each step's parts are emitted one by one.
     Stream.mapAccumEffect(() => initialState, (state, payload: string) =>
-      step(options.moduleName, state, payload),
+      step(options.moduleName, options.usage ?? {}, state, payload),
     ),
   )

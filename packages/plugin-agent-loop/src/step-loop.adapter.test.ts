@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Context, Effect, Option, Stream } from "effect"
-import { CurrentAgentStep, HarnessError, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages } from "@xandreed/core"
-import type { CompletionVerdict, RunResult, StepInfo, StepRequest } from "@xandreed/core"
+import { addUsage, CurrentAgentStep, extractUsage, HarnessError, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, zeroUsage } from "@xandreed/core"
+import type { CompletionVerdict, RunResult, StepInfo, StepRequest, TokenUsage } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
 /**
@@ -18,8 +18,8 @@ const minimalLoop = StepLoop.of({
     const toolkit = yield* request.tools.toolkit.pipe(Effect.provide(handlers))
     const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, HarnessError> => request.completion(info).pipe(
       Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, verdict })))
-    const step = (index: number, text: string): Effect.Effect<RunResult, HarnessError> => Effect.gen(function* () {
-      if (index >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text, steps: index } satisfies RunResult
+    const step = (index: number, text: string, usage: TokenUsage): Effect.Effect<RunResult, HarnessError> => Effect.gen(function* () {
+      if (index >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text, steps: index, usage } satisfies RunResult
       const activeTools = yield* request.tools.active
       const info: StepInfo = { stepIndex: index, activeTools, lastUsage: Option.none() }
       const planned = index === 0 ? request.initial : Option.none()
@@ -51,15 +51,21 @@ const minimalLoop = StepLoop.of({
       )
       const content: ReadonlyArray<unknown> = response.content
       const entries = yield* request.record(index, responseToAgentMessages(content))
+      const used = extractUsage(undefined, content)
+      const total = addUsage(usage, used)
+      yield* request.events.publish({
+        _tag: "assistant.message", step: index, text: responseText(content), reasoning: "", model: Option.none(),
+        toolCalls: responseToolCalls(content).map((call) => ({ id: call.id, tool: call.toolName, input: call.args })), usage: used,
+      })
       yield* request.events.publish({ _tag: "step.ended", step: index, status: "completed", results: entries.flatMap((entry) =>
         entry.body._tag === "ToolResult" ? [{ entry: entry.id, toolCallId: entry.body.toolCallId, tool: entry.body.toolName, ok: !entry.body.isError }] : []) })
       const first = yield* evaluate(info)
       const verdict = first.complete || first.awaiting.length === 0 ? first : yield* request.tasks.await(first.awaiting).pipe(Effect.andThen(evaluate(info)))
       const reply = responseText(content).length > 0 ? responseText(content) : text
-      if (verdict.complete || responseToolCalls(content).length === 0) return { outcome: "completed", reason: "completed", text: reply, steps: index + 1 } satisfies RunResult
-      return yield* step(index + 1, reply)
+      if (verdict.complete || responseToolCalls(content).length === 0) return { outcome: "completed", reason: "completed", text: reply, steps: index + 1, usage: total } satisfies RunResult
+      return yield* step(index + 1, reply, total)
     })
-    return yield* step(0, "")
+    return yield* step(0, "", zeroUsage)
   }),
 })
 

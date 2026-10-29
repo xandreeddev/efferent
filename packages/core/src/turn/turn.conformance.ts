@@ -1,12 +1,17 @@
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
+import { LanguageModel } from "effect/ai"
+import type { Response } from "effect/ai"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from "effect"
 import type { Scope } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
+import { sameUsage } from "../conformance.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
+import { addUsage, tokenUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { IntentMatcher } from "../ports/capability.port.js"
 import { RunContext } from "../ports/run-context.port.js"
 import { Sessions } from "../ports/sessions.port.js"
+import { turnUsageOf } from "../session/session-event.entity.functions.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
 import type { SessionAddress } from "../session/sessions.entity.js"
 import type { TurnRunner } from "../ports/turn.port.js"
@@ -31,19 +36,52 @@ const ofRun = (all: ReadonlyArray<SessionLogEvent>, runId: string): ReadonlyArra
 }
 const names = (session: Session, runId: string) => stored(session).pipe(Effect.map((all) => ofRun(all, runId).map((event) => event.kind)))
 
+/** What the billing model reports for its call `index` (from 0): every count, cache reads and writes inside the input, reasoning inside the output. */
+const billedCall = (index: number) => ({
+  inputTokens: { total: 100 + index, uncached: 50 + index, cacheRead: 40, cacheWrite: 10 },
+  outputTokens: { total: 20, text: 15, reasoning: 5 },
+})
+
+/** A model answering every call with text and `billedCall`'s usage; `calls` counts the calls it answered. */
+const billingModel = Effect.gen(function* () {
+  const calls = yield* Ref.make(0)
+  const model = yield* LanguageModel.make({
+    generateText: () => Ref.getAndUpdate(calls, (count) => count + 1).pipe(Effect.map((index): Array<Response.PartEncoded> => [
+      { type: "text", text: `answer ${index}` },
+      { type: "finish", reason: "stop", usage: billedCall(index) },
+    ])),
+    streamText: () => Stream.die("the conformance model does not stream"),
+  })
+  return { model, calls: Ref.get(calls) }
+})
+
+/** The usage of the billing model's first `count` calls, summed. */
+const billedTotal = (count: number) => Array.from({ length: count }, (_, index) => billedCall(index)).reduce(
+  (total, call) => addUsage(total, tokenUsage({
+    inputTokens: call.inputTokens.total, outputTokens: call.outputTokens.total,
+    cacheReadTokens: call.inputTokens.cacheRead, cacheWriteTokens: call.inputTokens.cacheWrite, reasoningTokens: call.outputTokens.reasoning,
+  })),
+  zeroUsage,
+)
+
 /**
  * The turn contract, as checks any composition of the turn must pass (an
  * `Agent`, or a host's own composition of `TurnLive` and the lifecycle):
  * the session's writer is the bus's first subscriber; the user's message
  * is in memory before the matcher reads the history; the reply is recorded
  * and the turn ended exactly once on success, failure and interrupt; tasks
- * are joined before the reply; and the host layer sees only earlier turns.
+ * are joined before the reply; a model-driven turn's `TurnResult.usage` is
+ * what its stored `step.usage` records sum to (`turnUsageOf`); and the host
+ * layer sees only earlier turns.
  *
  * `runner` is acquired afresh for each check. `services` are merged into
  * every turn's services (the model, the `Sessions` the turns begin with, and
  * whatever else the runner requires); each check makes its own session, and
  * the kit adds its own IntentMatcher, which the runner's tools must consult
- * (plugin-tool-discovery does).
+ * (plugin-tool-discovery does). The usage check runs the turn's loop twice
+ * with the kit's own model, which answers with text only, under a policy
+ * that completes after the first reply (`requireCompletion: false`, a
+ * complete verdict); its expected counts follow the calls the model answered.
  */
 export const turnConformance = (
   runner: Effect.Effect<TurnRunner, HarnessError, Scope.Scope>,
@@ -121,6 +159,33 @@ export const turnConformance = (
       const kinds = yield* names(session, "run-1")
       yield* expect("tasks-joined", kinds.includes("conformance.task") && kinds.indexOf("conformance.task") < kinds.indexOf("turn.reply"),
         `the task's event came ${kinds.includes("conformance.task") ? "after the reply" : "never"}`)
+    })),
+    check("a model-driven turn returns its usage: what its stored step.usage records sum to", "usage", (turns, session) => Effect.gen(function* () {
+      const billing = yield* billingModel
+      const runs = yield* Ref.make(zeroUsage)
+      const during = yield* Ref.make(zeroUsage)
+      const result = yield* turns.turn({ ...input(session, "run-1"), services: Context.make(LanguageModel.LanguageModel, billing.model) }, (turn) => Effect.gen(function* () {
+        // Pinned against the runner's own limits: no completion nudge, so each run makes one call.
+        const policy = {
+          limits: { streaming: false, maxSteps: 2, requireCompletion: false },
+          completion: () => Effect.succeed({ complete: true, awaiting: [], facts: {} }),
+        }
+        const first = yield* turn.run(policy)
+        const second = yield* turn.run(policy)
+        yield* Ref.set(runs, addUsage(first.usage, second.usage))
+        yield* Ref.set(during, yield* turn.usage)
+        return { outcome: "completed" as const, reply: Option.some(second.text) }
+      }))
+      yield* expect("usage", sameUsage(yield* Ref.get(during), yield* Ref.get(runs)), `Turn.usage read ${JSON.stringify(yield* Ref.get(during))}, the turn's runs ${JSON.stringify(yield* Ref.get(runs))}`)
+      const all = yield* stored(session)
+      const number = Option.flatMap(Option.fromNullishOr(all.find((event) => event.kind === "turn.started" && event.data.runId === "run-1")), (event) => event.turn)
+      yield* expect("usage", Option.isSome(number), "the turn's turn.started was not stored")
+      const total = yield* turnUsageOf(all, Option.getOrElse(number, () => -1)).pipe(Effect.mapError((error) => new ConformanceFailure({ check: "usage", message: error.message })))
+      yield* expect("usage", sameUsage(result.usage, total), `the turn returned ${JSON.stringify(result.usage)}, its stored step.usage records sum to ${JSON.stringify(total)}`)
+      yield* expect("usage", sameUsage(result.usage, yield* Ref.get(runs)), `the turn returned ${JSON.stringify(result.usage)}, its runs ${JSON.stringify(yield* Ref.get(runs))}`)
+      const calls = yield* billing.calls
+      yield* expect("usage", calls >= 2 && sameUsage(result.usage, billedTotal(calls)),
+        `the turn's usage lost the provider's counts: ${JSON.stringify(result.usage)} for ${calls} model calls, which reported ${JSON.stringify(billedTotal(calls))}`)
     })),
     check("the host layer is built before the message: it sees only earlier turns", "layer-before-message", (turns, session) => Effect.gen(function* () {
       const seen = yield* Ref.make<ReadonlyArray<string>>([])

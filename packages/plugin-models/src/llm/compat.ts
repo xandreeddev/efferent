@@ -4,7 +4,7 @@ import { Effect, Result, Option, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
 import type { ModelCallPolicy } from "@xandreed/core"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
-import type { CompletionUsage } from "./sse.js"
+import type { CompletionUsage, UsageReading } from "./sse.js"
 
 /**
  * A generic OpenAI-compatible `/chat/completions` `LanguageModel` over raw
@@ -75,6 +75,9 @@ export interface CompatConfig {
    *  thinking defaults or call policy — for endpoints that reject the
    *  gateway extensions (Gemini's OpenAI-compatible API). */
   readonly standardOnly?: boolean
+  /** How the endpoint's usage is read (default: every count, reasoning
+   *  included; see `UsageReading`). */
+  readonly usage?: UsageReading
   /** Injectable for tests; defaults to global fetch. */
   readonly fetchImpl?: typeof fetch
   /** Host-owned admission (e.g. reserve a worst-case cost) before every call. */
@@ -221,6 +224,7 @@ interface ChatCompletion {
 export const fromChatCompletion = (
   moduleName: string,
   body: ChatCompletion,
+  reading: UsageReading = {},
 ): Effect.Effect<ReadonlyArray<unknown>, AiError.AiError> =>
   Effect.gen(function* () {
     const choice = body.choices?.[0]
@@ -257,7 +261,7 @@ export const fromChatCompletion = (
         type: "finish",
         reason:
           toolCalls.length > 0 ? "tool-calls" : finishReasonFromWire(choice.finish_reason),
-        usage: usageFromCompletion(body.usage),
+        usage: usageFromCompletion(body.usage, reading),
       },
     ]
   })
@@ -393,7 +397,7 @@ export const makeCompatLanguageModel = (
           catch: () =>
             invalidOutput(config.moduleName, "generateText", `the completion body was not JSON: ${text.slice(0, 200)}`),
         })
-        return (yield* fromChatCompletion(config.moduleName, parsed)) as never
+        return (yield* fromChatCompletion(config.moduleName, parsed, config.usage)) as never
       }),
     streamText: (options) =>
       Stream.unwrap(
@@ -410,7 +414,7 @@ export const makeCompatLanguageModel = (
           if (body === null) {
             return yield* Effect.fail(invalidOutput(config.moduleName, "streamText", "the streaming response carried no body"))
           }
-          return sseStreamParts({ moduleName: config.moduleName, body })
+          return sseStreamParts({ moduleName: config.moduleName, body, ...(config.usage === undefined ? {} : { usage: config.usage }) })
         }),
       ) as never,
   }).pipe(Effect.map((model) => describeModel(model,

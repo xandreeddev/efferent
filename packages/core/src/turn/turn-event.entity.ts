@@ -131,7 +131,7 @@ export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
   toolCalls: Schema.Array(Schema.Struct({ id: Schema.String, tool: Schema.String, input: Schema.Unknown })),
   usage: TokenUsage,
 }).annotate({
-  description: "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage. Journaled only as `step.usage` (step, model, usage): the content itself is memory's `memory.message`.",
+  description: "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, model, usage): the content itself is memory's `memory.message`.",
 })
 
 /** A streamed increment — transient: never journaled, restated by assistant.message. */
@@ -149,8 +149,10 @@ export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {
   turn: Schema.Int,
   outcome: Schema.Literals(["completed", "partial", "failed"]),
   reply: Schema.OptionFromNullOr(Schema.String),
+  /** The turn's usage: its `assistant.message` usage summed (`RunContext.usage`). */
+  usage: TokenUsage,
 }).annotate({
-  description: "Published once when the turn's reply is recorded (`TurnMemory.persistReply`, from `guardTurn`), also when the turn fails, with outcome failed. Under `Agent.turn` that is after `use`, the host's per-turn layer and the turn-dependent plugins have closed, and their subscriptions with them: only a subscription whose scope is still open sees it, such as one made with `Scope.provide(observerScope)` over the caller's outer scope, or one registered around `TurnLive` by a host composing the turn itself. Otherwise read the `TurnOutcome` `Agent.turn` returns, or the stored `turn.reply` and `turn.ended`. Not journaled from the bus: memory stores `turn.reply` and the session its own `turn.ended` (reason and failure).",
+  description: "Published once when the turn's reply is recorded (`TurnMemory.persistReply`, from `guardTurn`), also when the turn fails, with outcome failed; `usage` is the turn's usage, the usage of its `assistant.message` events summed (`RunContext.usage`). Under `Agent.turn` it is published after `use`, the host's per-turn layer and the turn-dependent plugins have closed, and their subscriptions with them: only a subscription whose scope is still open sees it, such as one made with `Scope.provide(observerScope)` over the caller's outer scope, or one registered around `TurnLive` by a host composing the turn itself. Otherwise read the `TurnResult` `Agent.turn` returns (its `usage` is the same total), or the stored `turn.reply` and `turn.ended`, and `turnUsageOf` over the stored events. Not journaled from the bus: memory stores `turn.reply` and the session its own `turn.ended` (reason and failure, no usage).",
 })
 
 /** An application's own event (see `defineHostEvent`); `name` is the host's namespace. */

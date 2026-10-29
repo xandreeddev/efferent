@@ -1,5 +1,6 @@
 import type { Context, Effect, Layer, Option, Scope } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
+import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { SkillDefinition } from "../harness/capability.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { CompletionVerdict } from "../turn/turn-event.entity.js"
@@ -39,6 +40,17 @@ export interface TurnOutcome {
   readonly reply: Option.Option<string>
 }
 
+/**
+ * What a turn runner returns: the outcome `use` gave, and the turn's usage,
+ * the usage of its `assistant.message` events summed (the stored
+ * `step.usage` records of the turn sum to the same, see `turnUsageOf`).
+ * Calls outside the step loop (a memory digester's or summarizer's utility
+ * model) and responses that never decoded are not in it.
+ */
+export interface TurnResult extends TurnOutcome {
+  readonly usage: TokenUsage
+}
+
 export interface TurnTools {
   /** Ask the matcher without writing anything (run it beside other pre-turn work). */
   readonly match: (userMessage: UserMessage) => Effect.Effect<SkillMatch, HarnessError>
@@ -66,6 +78,8 @@ export interface Turn {
   /** Answer without the loop; still a recorded turn. */
   readonly reply: (text: string) => Effect.Effect<TurnOutcome>
   readonly run: <R = never>(policy: TurnPolicy<R>) => Effect.Effect<RunResult, HarnessError, R>
+  /** The turn's usage so far, every run of it included (`RunContext.usage`). */
+  readonly usage: Effect.Effect<TokenUsage>
   /** Wait until every journal write queued so far is stored (e.g. before delivering an answer). */
   readonly flush: Effect.Effect<void, HarnessError>
   /** Run a host store write in journal order and return its result. */
@@ -116,5 +130,5 @@ export interface TurnRunner {
   readonly turn: <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
     use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
-  ) => Effect.Effect<TurnOutcome, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  ) => Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 }

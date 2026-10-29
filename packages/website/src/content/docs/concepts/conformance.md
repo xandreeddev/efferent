@@ -19,8 +19,8 @@ transports (see [render kits](#render-kits)).
 | `sessionLogConformance(log)` | dense sequence numbers, one revision per commit, compare-and-swap, the `notAfter` clock check, JSON kept by value, reads by position and kind, listing order, children and their removal | a `SessionLog` |
 | `sessionLogRecoveryConformance(subject)` | reopening, several open handles, interrupted commits, a handle whose scope never closed, the exact `notAfter` boundary | a way to open a `SessionLog` |
 | `memoryConformance(memory, services)` | own entry ids, a log that reads back exactly after a reopen, views and artifacts kept, a pure build, append-only maintenance | a memory strategy |
-| `stepLoopConformance(loop)` | per-step event order, validation before dispatch, planned batches, forced tool choices, no call after completion, the step cap | a `StepLoop` |
-| `turnConformance(runner, services)` | the writer first, the message before the matcher's history, the reply and the end exactly once, tasks joined before the reply | a turn composition |
+| `stepLoopConformance(loop)` | per-step event order, validation before dispatch, planned batches, forced tool choices, no call after completion, the run's usage (the sum of its `assistant.message` usage), the step cap | a `StepLoop` |
+| `turnConformance(runner, services)` | the writer first, the message before the matcher's history, the reply and the end exactly once, tasks joined before the reply, a model-driven turn's usage equal to its stored `step.usage` records (`turnUsageOf`), the host layer seeing only earlier turns | a turn composition |
 
 Every core kit returns `ReadonlyArray<ConformanceCheck>`. A check has a `name` and
 a `run` effect that succeeds, or fails with a `ConformanceFailure` whose

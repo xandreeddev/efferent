@@ -42,6 +42,11 @@ const reply = Effect.scoped(Effect.gen(function* () {
 }))
 ```
 
+`agent.turn` returns what `use` returned with the turn's token usage
+(`outcome.usage`: every model call the step loop handled in the turn, cache
+reads and writes and reasoning included). [Token usage](/docs/concepts/providers/#token-usage)
+lists what it leaves out (utility calls, failed or retried attempts).
+
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere.
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores
 them in a SQLite file on Bun; any other store can implement the `SessionLog`

@@ -18,8 +18,8 @@ Port contracts ship as conformance kits (`*.conformance.ts`, each exported
 from `src/index.ts`). Run a port's kit against every adapter of it, and when
 the port changes, on Node too (`verify:packages`). The session-log kits share
 the private helpers in `src/conformance.functions.ts` (`check`, `expect`,
-`fail`, `freshId`, `headerOf`, `atTime`), which are not exported; new kits use
-them too. That file is test support for the kits, not an entity's behaviour,
+`fail`, `freshId`, `headerOf`, `atTime`), and the step-loop and turn kits
+`sameUsage`; they are not exported, and new kits use them too. That file is test support for the kits, not an entity's behaviour,
 so it is not paired with `conformance.entity.ts`.
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

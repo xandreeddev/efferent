@@ -1,4 +1,5 @@
 import { Context, Effect, Layer, Option, Ref, Schema, Scope, Semaphore } from "effect"
+import { addUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { fingerprintOf } from "../memory/memory-log.entity.functions.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
@@ -44,11 +45,12 @@ type MessageState =
 /**
  * One admitted turn's services, over the turn's writer, built in this order:
  * the event bus and the tasks, with the writer as the bus's FIRST
- * subscriber (every stored event is queued before any reaction runs); then
- * the memory session, opened over the session's earlier memory events where
- * this layer is built (a digester or summarizer there is used), and
- * RunContext. It also holds the tools slot (`TurnToolbox`) and the prompt
- * state (`TurnPrompt`). The message was stored when the turn began; memory
+ * subscriber (every stored event is queued before any reaction runs) and
+ * the turn's usage (`RunContext.usage`) as the second; then the memory
+ * session, opened over the session's earlier memory events where this
+ * layer is built (a digester or summarizer there is used), and RunContext.
+ * It also holds the tools slot (`TurnToolbox`) and the prompt state
+ * (`TurnPrompt`). The message was stored when the turn began; memory
  * takes it at `TurnMemory.persistMessage`, and records nothing before it
  * (`TurnMemory.context` waits for it). Tasks run in the layer's scope:
  * they are interrupted when it closes.
@@ -70,6 +72,12 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const tasks = yield* makeTurnTasks(scope)
   // The writer is the first subscriber: every stored event is queued before any reaction runs.
   yield* events.subscribe(storedDraft(admitted.turn), (draft) => draft instanceof HarnessError ? Effect.fail(draft) : writer.append([draft]))
+  // The turn's usage: what its stored `step.usage` records hold, summed as they are queued.
+  const usage = yield* Ref.make(zeroUsage)
+  yield* events.subscribe(
+    (event) => event._tag === "assistant.message" ? Option.some(event.usage) : Option.none(),
+    (step) => Ref.update(usage, (total) => addUsage(total, step)),
+  )
   const message = yield* Ref.make<MessageState>({ _tag: "Waiting", early: [] })
   // What memory was opened over, as stored: the base of every request snapshot.
   const history = yield* Ref.make(Option.none<ReadonlyArray<LogEntry>>())
@@ -114,6 +122,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     activate: (skills) => openTools.pipe(Effect.flatMap((tools) => tools.activate(skills, "host"))),
     flush: writer.flush,
     write: writer.write,
+    usage: Ref.get(usage),
   })
 
   // The request snapshot: the history memory was opened over, then the turn's stored events,
@@ -174,7 +183,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       const number = yield* taken
       if (Option.isNone(number) || (yield* Ref.getAndSet(replied, true))) return
       yield* session.record([{ _tag: "TurnEnded", outcome: outcome.outcome, reply: outcome.reply }], 0)
-      yield* events.publish({ _tag: "turn.ended", runId: admitted.runId, turn: number.value, outcome: outcome.outcome, reply: outcome.reply })
+      yield* events.publish({ _tag: "turn.ended", runId: admitted.runId, turn: number.value, outcome: outcome.outcome, reply: outcome.reply, usage: yield* Ref.get(usage) })
     }),
   })
 

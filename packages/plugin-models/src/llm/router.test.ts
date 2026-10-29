@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel } from "effect/ai"
-import { Effect, Layer, Metric, Option, Ref, Stream } from "effect"
+import { FetchHttpClient } from "effect/http"
+import { Effect, Layer, Metric, Option, Ref, Stream, Tracer } from "effect"
 import { AuthStore, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, SettingsStore } from "@xandreed/core"
-import { LanguageModelLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
+import { generateWith, LanguageModelLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
 
 const finish = {
   type: "finish",
@@ -61,7 +62,7 @@ const streamedParts = [
   {
     type: "finish",
     reason: "tool-calls",
-    usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } },
+    usage: { inputTokens: { total: 10, uncached: 3, cacheRead: 4, cacheWrite: 3 }, outputTokens: { total: 5, text: 3, reasoning: 2 } },
   },
 ]
 
@@ -88,6 +89,12 @@ describe("tapStreamTelemetry", () => {
         [["llm.model", label]],
       ),
     ).toBe(5)
+    const shares = await Promise.all([
+      counterValue("llm.usage.cache_read_tokens", "prompt tokens of routed LLM calls read from the provider's prompt cache", [["llm.model", label]]),
+      counterValue("llm.usage.cache_write_tokens", "prompt tokens of routed LLM calls written to the provider's prompt cache", [["llm.model", label]]),
+      counterValue("llm.usage.reasoning_tokens", "completion tokens of routed LLM calls spent on reasoning", [["llm.model", label]]),
+    ])
+    expect(shares).toEqual([4, 3, 2])
     expect(
       await counterValue(
         "llm.requests",
@@ -132,6 +139,58 @@ describe("tapStreamTelemetry", () => {
         ],
       ),
     ).toBe(0)
+  })
+})
+
+/** A tracer keeping every span it starts, to read their attributes once they ended. */
+const capturingTracer = (spans: Array<Tracer.NativeSpan>) => Tracer.make({
+  span: (options) => {
+    const span = new Tracer.NativeSpan(options)
+    spans.push(span)
+    return span
+  },
+})
+
+describe("generateWith", () => {
+  test("a call's usage moves every token counter and lands on its providers.generate span", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: () => Response.json({
+        choices: [{ finish_reason: "stop", message: { content: "ok" } }],
+        usage: {
+          prompt_tokens: 1000, completion_tokens: 60, total_tokens: 1060,
+          prompt_tokens_details: { cached_tokens: 700, cache_write_tokens: 200 },
+          completion_tokens_details: { reasoning_tokens: 40 },
+        },
+      }),
+    })
+    // A local credential: a standard-only route that still reads the reasoning.
+    const auth = Layer.succeed(AuthStore, AuthStore.of({
+      all: Effect.succeed(new Map()),
+      get: () => Effect.succeed(Option.some({ type: "local" as const, baseUrl: `http://127.0.0.1:${server.port}/v1` })),
+      resolveKey: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      remove: () => Effect.void,
+    }))
+    const label = "usage-local:generate-parity"
+    const spans: Array<Tracer.NativeSpan> = []
+    await Effect.runPromise(Effect.fromOption(parseModelSelection(label)).pipe(
+      Effect.flatMap((selection) => generateWith(selection, { prompt: "hi" })),
+      Effect.withTracer(capturingTracer(spans)),
+      Effect.provide(Layer.merge(auth, FetchHttpClient.layer)),
+    )).finally(() => server.stop(true))
+    const counters = await Promise.all([
+      counterValue("llm.usage.input_tokens", "prompt tokens consumed by routed LLM calls", [["llm.model", label]]),
+      counterValue("llm.usage.output_tokens", "completion tokens produced by routed LLM calls", [["llm.model", label]]),
+      counterValue("llm.usage.cache_read_tokens", "prompt tokens of routed LLM calls read from the provider's prompt cache", [["llm.model", label]]),
+      counterValue("llm.usage.cache_write_tokens", "prompt tokens of routed LLM calls written to the provider's prompt cache", [["llm.model", label]]),
+      counterValue("llm.usage.reasoning_tokens", "completion tokens of routed LLM calls spent on reasoning", [["llm.model", label]]),
+    ])
+    expect(counters).toEqual([1000, 60, 700, 200, 40])
+    const span = spans.find((found) => found.name === "providers.generate")
+    expect([
+      "llm.usage.input_tokens", "llm.usage.output_tokens", "llm.usage.cache_read_tokens", "llm.usage.cache_write_tokens", "llm.usage.reasoning_tokens",
+    ].map((key) => span?.attributes.get(key))).toEqual([1000, 60, 700, 200, 40])
   })
 })
 

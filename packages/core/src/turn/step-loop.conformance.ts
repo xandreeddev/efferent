@@ -3,9 +3,11 @@ import type { Response } from "effect/ai"
 import { Context, Effect, Option, Ref, Schema, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
+import { sameUsage } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
+import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import { CurrentAgentStep } from "../loop/stepContext.js"
 import { entryId } from "../memory/memory-log.entity.functions.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
@@ -36,6 +38,15 @@ export const probeCall = (id: string, n: number): ReadonlyArray<Part> => [
   { type: "finish", reason: "tool-calls", usage },
 ]
 export const textReply = (text: string): ReadonlyArray<Part> => [{ type: "text", text }, { type: "finish", reason: "stop", usage }]
+
+/** A provider's usage with every count: cache reads and writes inside the input, reasoning inside the output. */
+const billed = (input: number, output: number) => ({
+  inputTokens: { total: input, uncached: input - 30, cacheRead: 20, cacheWrite: 10 },
+  outputTokens: { total: output, text: output - 3, reasoning: 3 },
+})
+/** The same reply with another usage on its finish part. */
+const withUsage = (reply: ReadonlyArray<Part>, value: ReturnType<typeof billed>): ReadonlyArray<Part> =>
+  reply.map((part) => part.type === "finish" ? { ...part, usage: value } : part)
 
 interface Scenario {
   readonly script: ReadonlyArray<ReadonlyArray<Part>>
@@ -142,7 +153,7 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * The `StepLoop` contract, as checks any implementation must pass:
  * per-step event order, recorded results on `step.ended`, planned batches
  * without a provider call, forced tool choices, awaiting verdicts, no call
- * after completion, and the step cap.
+ * after completion, the run's usage, and the step cap.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
   {
@@ -230,6 +241,17 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
         completion: () => Effect.succeed({ complete: true, awaiting: [], facts: {} }),
       })
       yield* expect("complete", providerCalls.length === 1 && result.outcome === "completed", `${providerCalls.length} provider calls, ${result.outcome}`)
+    }),
+  },
+  {
+    name: "RunResult.usage is the sum of the run's assistant.message usage, cache writes and reasoning included",
+    run: Effect.gen(function* () {
+      const { events, result } = yield* observe(loop, { script: [withUsage(probeCall("c1", 1), billed(100, 10)), withUsage(textReply("done"), billed(140, 20))] })
+      const published = events.flatMap((event) => event._tag === "assistant.message" ? [event.usage] : [])
+      const total = sumUsage(published)
+      yield* expect("usage", published.length === 2 && sameUsage(result.usage, total), `the run reported ${JSON.stringify(result.usage)}, its ${published.length} assistant messages ${JSON.stringify(total)}`)
+      yield* expect("usage", total.inputTokens === 240 && total.cacheReadTokens === 40 && total.cacheWriteTokens === 20 && total.outputTokens === 30 && total.reasoningTokens === 6 && total.totalTokens === 270,
+        `the assistant messages did not carry the provider's usage: ${JSON.stringify(total)}`)
     }),
   },
   {

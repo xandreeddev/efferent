@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
 import { Deferred, Effect, Fiber, Option, Schema } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, Failure, modelRequestDescriptorOf } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, extractUsage, Failure, modelRequestDescriptorOf } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel, thinkingParams } from "./compat.js"
 
 const completion = (body: unknown, status = 200): typeof fetch =>
@@ -203,7 +203,7 @@ describe("makeCompatLanguageModel", () => {
       {
         type: "finish",
         reason: "tool-calls",
-        usage: { inputTokens: { total: 5, uncached: 5, cacheRead: 0 }, outputTokens: { total: 3 } },
+        usage: { inputTokens: { total: 5, uncached: 5, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 3, text: 3, reasoning: 0 } },
       },
     ])
   })
@@ -292,6 +292,39 @@ describe("makeCompatLanguageModel", () => {
     )
     const finish = parts[parts.length - 1] as { usage: { inputTokens: { cacheRead: number } } }
     expect(finish.usage.inputTokens.cacheRead).toBe(90)
+  })
+
+  test("cache writes and reasoning are read from the usage details; an endpoint read without reasoning (Google's) reports none", async () => {
+    const body = {
+      choices: [{ finish_reason: "stop", message: { content: "x" } }],
+      usage: {
+        prompt_tokens: 1000, completion_tokens: 30, total_tokens: 1030,
+        prompt_tokens_details: { cached_tokens: 600, cache_write_tokens: 300 },
+        // A gateway may count more reasoning than completion: the loop's extraction raises the output to it.
+        completion_tokens_details: { reasoning_tokens: 50 },
+      },
+    }
+    const usageOf = (parts: ReadonlyArray<unknown>) => (parts[parts.length - 1] as { usage: unknown }).usage
+    expect(usageOf(await Effect.runPromise(fromChatCompletion("Test", body)))).toEqual({
+      inputTokens: { total: 1000, uncached: 100, cacheRead: 600, cacheWrite: 300 },
+      outputTokens: { total: 30, text: 0, reasoning: 50 },
+    })
+    expect(usageOf(await Effect.runPromise(fromChatCompletion("Test", body, { reasoning: false })))).toEqual({
+      inputTokens: { total: 1000, uncached: 100, cacheRead: 600, cacheWrite: 300 },
+      outputTokens: { total: 30, text: 30, reasoning: 0 },
+    })
+    const extracted = extractUsage(undefined, await Effect.runPromise(fromChatCompletion("Test", body)))
+    expect([extracted.outputTokens, extracted.reasoningTokens, extracted.totalTokens]).toEqual([50, 50, 1050])
+    // The model reads them the same way. A standard-only endpoint (a configured one, a local server) still
+    // reads its reasoning; only a model told not to (the built-in google provider) reads none.
+    const generated = (config: { readonly standardOnly?: boolean; readonly usage?: { readonly reasoning?: boolean } }) => Effect.runPromise(Effect.gen(function* () {
+      const svc = yield* makeCompatLanguageModel({ moduleName: "Test", model: "m", chatUrl: "https://gw.example/chat/completions", ...config, fetchImpl: completion(body) })
+      const res = yield* svc.generateText({ prompt: "hello" })
+      return extractUsage(res.usage, res.content)
+    }))
+    expect((await generated({ standardOnly: false })).reasoningTokens).toBe(50)
+    expect((await generated({ standardOnly: true })).reasoningTokens).toBe(50)
+    expect(await generated({ standardOnly: true, usage: { reasoning: false } })).toEqual({ inputTokens: 1000, outputTokens: 30, totalTokens: 1030, cacheReadTokens: 600, cacheWriteTokens: 300, reasoningTokens: 0 })
   })
 
   test("unparseable tool arguments are an invalid output (the loop's corrective path)", async () => {

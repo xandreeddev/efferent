@@ -7,6 +7,8 @@ import { Context, Schema } from "effect"
  * from `apiKey`, then the environment variable `apiKeyEnv` names, then the
  * AuthStore's key for `<name>`; with none, no Authorization header is sent.
  * `standardOnly` (default true) sends only standard chat-completions fields.
+ * The endpoint's usage is read in full: cache reads and writes from
+ * `prompt_tokens_details`, reasoning from `completion_tokens_details`.
  */
 export const ModelEndpoint = Schema.Struct({
   url: Schema.String,

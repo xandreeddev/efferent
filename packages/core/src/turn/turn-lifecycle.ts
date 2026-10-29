@@ -6,7 +6,7 @@ import type { RunTools } from "../ports/tool-registry.port.js"
 import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
 import { TurnMemory, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
-import type { Turn, TurnOutcome, TurnTools } from "../ports/turn.port.js"
+import type { Turn, TurnOutcome, TurnResult, TurnTools } from "../ports/turn.port.js"
 import { harnessDefectsAsFailures } from "./turn-bus.js"
 import { runTurnLoop } from "./turn-run.js"
 import type { TurnRunServices } from "./turn-run.js"
@@ -53,13 +53,14 @@ export const finishTurn = (outcome: TurnOutcome): Effect.Effect<void, HarnessErr
 
 /**
  * Run a turn's body to its end: once it succeeds, the turn settles (tasks
- * and background reactions) and finishes with its outcome. When it fails
- * or is interrupted, the turn finishes as failed and keeps the body's
- * cause. A HarnessError carried as a defect (a subscriber's failure behind
- * a `never` error channel) fails the turn, typed.
+ * and background reactions) and finishes with its outcome, returned with
+ * the turn's usage (`RunContext.usage`, the same total `turn.ended`
+ * carries). When it fails or is interrupted, the turn finishes as failed
+ * and keeps the body's cause. A HarnessError carried as a defect (a
+ * subscriber's failure behind a `never` error channel) fails the turn, typed.
  */
 export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.Effect<
-  TurnOutcome,
+  TurnResult,
   E | HarnessError,
   R | TurnMemory | TurnEvents | TurnTasks | RunContext
 > => harnessDefectsAsFailures(body.pipe(Effect.tap(() => settleTurn))).pipe(
@@ -69,6 +70,10 @@ export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.
     onFailure: () => finishTurn(failed).pipe(Effect.catchCause(() => Effect.void)),
   })),
   Effect.tap(finishTurn),
+  Effect.flatMap((outcome) => RunContext.pipe(
+    Effect.flatMap((run) => run.usage),
+    Effect.map((usage): TurnResult => ({ outcome: outcome.outcome, reply: outcome.reply, usage })),
+  )),
 )
 
 /**
@@ -93,6 +98,7 @@ export const turnOf = (options: TurnRunOptions = {}): Effect.Effect<Turn, Harnes
       context: memory.context,
       reply: (text) => Effect.succeed<TurnOutcome>({ outcome: "completed", reply: Option.some(text) }),
       run: (policy) => runTurnLoop(policy, options).pipe(Effect.provide(services)),
+      usage: run.usage,
       flush: run.flush,
       write: run.write,
     } satisfies Turn

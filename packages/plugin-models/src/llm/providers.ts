@@ -227,6 +227,8 @@ const buildBuiltInProvider = (
           model: selection.modelId,
           // As before: no cache key, thinking defaults or call policy for Gemini.
           standardOnly: true,
+          // Gemini's completion_tokens may leave its thoughts out: its reasoning reads 0.
+          usage: { reasoning: false },
         }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
   }
   if (selection.provider === "anthropic") {

@@ -141,6 +141,8 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
     reason: result.reason,
     text: result.finalText,
     steps: yield* Ref.get(steps),
+    // The loop's sum of the usage each `assistant.message` carried.
+    usage: result.usage,
   } satisfies RunResult
 })
 

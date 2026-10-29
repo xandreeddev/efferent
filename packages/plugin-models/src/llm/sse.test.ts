@@ -33,7 +33,7 @@ const collect = (
     ),
   )
 
-const zeroUsage = { inputTokens: { total: 0, uncached: 0, cacheRead: 0 }, outputTokens: { total: 0 } }
+const zeroUsage = { inputTokens: { total: 0, uncached: 0, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 0, text: 0, reasoning: 0 } }
 
 describe("sseStreamParts", () => {
   test("text deltas: start → deltas → end → finish with the final-chunk usage", async () => {
@@ -54,7 +54,7 @@ describe("sseStreamParts", () => {
       {
         type: "finish",
         reason: "stop",
-        usage: { inputTokens: { total: 5, uncached: 5, cacheRead: 0 }, outputTokens: { total: 2 } },
+        usage: { inputTokens: { total: 5, uncached: 5, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 2, text: 2, reasoning: 0 } },
       },
     ])
   })
@@ -180,8 +180,31 @@ describe("sseStreamParts", () => {
         `[DONE]`,
       ),
     )
-    const finish = parts[parts.length - 1] as { usage: { inputTokens: { total: number; uncached: number; cacheRead: number } } }
-    expect(finish.usage.inputTokens).toEqual({ total: 100, uncached: 10, cacheRead: 90 })
+    const finish = parts[parts.length - 1] as { usage: { inputTokens: unknown } }
+    expect(finish.usage.inputTokens).toEqual({ total: 100, uncached: 10, cacheRead: 90, cacheWrite: 0 })
+  })
+
+  test("cache writes and reasoning fold from the streamed usage's details", async () => {
+    const usage = `{"choices":[],"usage":{"prompt_tokens":1000,"completion_tokens":60,"total_tokens":1060,` +
+      `"prompt_tokens_details":{"cached_tokens":700,"cache_write_tokens":200},"completion_tokens_details":{"reasoning_tokens":45}}}`
+    const parts = await collect(wire(`{"choices":[{"delta":{"content":"x"},"finish_reason":"stop"}]}`, usage, `[DONE]`))
+    expect((parts[parts.length - 1] as { usage: unknown }).usage).toEqual({
+      inputTokens: { total: 1000, uncached: 100, cacheRead: 700, cacheWrite: 200 },
+      outputTokens: { total: 60, text: 15, reasoning: 45 },
+    })
+  })
+
+  test("an endpoint read without reasoning (Google's) reports none", async () => {
+    const text = wire(
+      `{"choices":[{"delta":{"content":"x"},"finish_reason":"stop"}]}`,
+      `{"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":4,"completion_tokens_details":{"reasoning_tokens":40}}}`,
+      `[DONE]`,
+    )
+    const parts = await Effect.runPromise(Stream.runCollect(sseStreamParts({ moduleName: "Test", body: bodyFromChunks([enc.encode(text)]), usage: { reasoning: false } })))
+    expect((parts[parts.length - 1] as { usage: unknown }).usage).toEqual({
+      inputTokens: { total: 10, uncached: 10, cacheRead: 0, cacheWrite: 0 },
+      outputTokens: { total: 4, text: 4, reasoning: 0 },
+    })
   })
 
   test("a non-JSON data line is an invalid output", async () => {

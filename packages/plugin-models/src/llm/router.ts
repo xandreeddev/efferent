@@ -2,8 +2,8 @@ import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Clock, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
 import type { Context } from "effect"
-import { AuthStore, CurrentModelCallPolicy, describeModel, formatModelSelection, HarnessError, parseModelSelection, resolvingModel, SettingsStore } from "@xandreed/core"
-import type { ModelSelection } from "@xandreed/core"
+import { AuthStore, CurrentModelCallPolicy, describeModel, extractUsage, formatModelSelection, HarnessError, parseModelSelection, resolvingModel, SettingsStore } from "@xandreed/core"
+import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
 import {
@@ -31,7 +31,10 @@ const configError = (message: string): AiError.AiError =>
  * The routed-call metrics — every LLM request crosses this seam, so this is
  * the ONE place tokens and latency are counted. Tagged per resolved model;
  * exported by `TracingLive`'s metric reader (Prometheus: `llm_usage_*_total`,
- * `llm_request_duration_*`, `llm_requests_total` by outcome).
+ * `llm_request_duration_*`, `llm_requests_total` by outcome). The input
+ * counter holds the full input (cache reads and writes inside it), the
+ * output counter the full output (reasoning inside it); the cache and
+ * reasoning counters are those shares.
  */
 const llmInputTokens = Metric.counter("llm.usage.input_tokens", {
   description: "prompt tokens consumed by routed LLM calls",
@@ -39,6 +42,18 @@ const llmInputTokens = Metric.counter("llm.usage.input_tokens", {
 })
 const llmOutputTokens = Metric.counter("llm.usage.output_tokens", {
   description: "completion tokens produced by routed LLM calls",
+  incremental: true,
+})
+const llmCacheReadTokens = Metric.counter("llm.usage.cache_read_tokens", {
+  description: "prompt tokens of routed LLM calls read from the provider's prompt cache",
+  incremental: true,
+})
+const llmCacheWriteTokens = Metric.counter("llm.usage.cache_write_tokens", {
+  description: "prompt tokens of routed LLM calls written to the provider's prompt cache",
+  incremental: true,
+})
+const llmReasoningTokens = Metric.counter("llm.usage.reasoning_tokens", {
+  description: "completion tokens of routed LLM calls spent on reasoning",
   incremental: true,
 })
 const llmRequests = Metric.counter("llm.requests", {
@@ -66,13 +81,30 @@ const countRequest = (label: string, outcome: "ok" | "error", isFallback?: boole
     1,
   )
 
-/** Effect's usage: the input total (cache reads included) and the output total. */
-const usageTotals = (usage: unknown) => {
-  const u = usage as
-    | { readonly inputTokens?: { readonly total?: number }; readonly outputTokens?: { readonly total?: number } }
-    | undefined
-  return { input: u?.inputTokens?.total ?? 0, output: u?.outputTokens?.total ?? 0 }
-}
+/** Effect's usage, read as the step loop reads it (`extractUsage`): every count of the call. */
+const usageOf = (usage: unknown): TokenUsage => extractUsage(usage, [])
+
+/** A call's usage as span attributes, named as its counters. */
+const usageAttributes = (usage: TokenUsage) => ({
+  "llm.usage.input_tokens": usage.inputTokens,
+  "llm.usage.output_tokens": usage.outputTokens,
+  "llm.usage.cache_read_tokens": usage.cacheReadTokens,
+  "llm.usage.cache_write_tokens": usage.cacheWriteTokens,
+  "llm.usage.reasoning_tokens": usage.reasoningTokens,
+})
+
+/** A call's usage added to the per-model token counters. */
+const countUsage = (label: string, usage: TokenUsage) =>
+  Effect.all(
+    [
+      Metric.update(byModel(llmInputTokens, label), usage.inputTokens),
+      Metric.update(byModel(llmOutputTokens, label), usage.outputTokens),
+      Metric.update(byModel(llmCacheReadTokens, label), usage.cacheReadTokens),
+      Metric.update(byModel(llmCacheWriteTokens, label), usage.cacheWriteTokens),
+      Metric.update(byModel(llmReasoningTokens, label), usage.reasoningTokens),
+    ],
+    { discard: true },
+  )
 
 const tracedContent = (content: string): string =>
   process.env["EFFERENT_TRACE_CONTENT"] === "1" ? content.slice(0, 500) : "[redacted]"
@@ -179,8 +211,7 @@ export const generateWith = (
       Effect.tap((res) =>
         Effect.annotateCurrentSpan({
           "llm.finish_reason": String(res.finishReason),
-          "llm.usage.input_tokens": usageTotals(res.usage).input,
-          "llm.usage.output_tokens": usageTotals(res.usage).output,
+          ...usageAttributes(usageOf(res.usage)),
           "llm.response_chars": res.text.length,
           "llm.tool_calls": res.content
             .flatMap((part) => {
@@ -192,15 +223,7 @@ export const generateWith = (
           "llm.fallback": isFallback,
         }),
       ),
-      Effect.tap((res) =>
-        Effect.all(
-          [
-            Metric.update(byModel(llmInputTokens, label), usageTotals(res.usage).input),
-            Metric.update(byModel(llmOutputTokens, label), usageTotals(res.usage).output),
-          ],
-          { discard: true },
-        ),
-      ),
+      Effect.tap((res) => countUsage(label, usageOf(res.usage))),
       Effect.tap(() => countRequest(label, "ok", isFallback)),
       Effect.tapError(() => countRequest(label, "error", isFallback)),
       // Duration of successful calls only, as before.
@@ -336,22 +359,13 @@ export const tapStreamTelemetry =
               Effect.flatMap((s) =>
                 Effect.annotateCurrentSpan({
                   "llm.finish_reason": String(p.reason),
-                  "llm.usage.input_tokens": usageTotals(p.usage).input,
-                  "llm.usage.output_tokens": usageTotals(p.usage).output,
+                  ...usageAttributes(usageOf(p.usage)),
                   "llm.response_chars": s.textChars,
                   "llm.tool_calls": s.toolNames.join(","),
                   "llm.reasoning": tracedContent(s.reasoning),
                 }),
               ),
-              Effect.andThen(
-                Effect.all(
-                  [
-                    Metric.update(byModel(llmInputTokens, label), usageTotals(p.usage).input),
-                    Metric.update(byModel(llmOutputTokens, label), usageTotals(p.usage).output),
-                  ],
-                  { discard: true },
-                ),
-              ),
+              Effect.andThen(countUsage(label, usageOf(p.usage))),
               Effect.as(part),
             )
           }),

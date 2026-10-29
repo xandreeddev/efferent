@@ -2,6 +2,8 @@ import { Clock, Effect, Option } from "effect"
 import { ConformanceFailure } from "./conformance.entity.js"
 import type { ConformanceCheck } from "./conformance.entity.js"
 import { ConversationId } from "./domain/message.entity.js"
+import { zeroUsage } from "./domain/token-usage.entity.functions.js"
+import type { TokenUsage } from "./domain/token-usage.entity.js"
 import type { SessionHeader } from "./session/session-log.entity.js"
 
 /*
@@ -11,6 +13,10 @@ import type { SessionHeader } from "./session/session-log.entity.js"
 
 export const fail = (check: string, message: string) => Effect.fail(new ConformanceFailure({ check, message }))
 export const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(check, message)
+
+/** Two usages with every count equal. */
+export const sameUsage = (a: TokenUsage, b: TokenUsage): boolean =>
+  (Object.keys(zeroUsage) as ReadonlyArray<keyof TokenUsage>).every((key) => a[key] === b[key])
 
 /** A fresh id per session, so a kit can run against a shared store. */
 export const freshId = Effect.sync(() => ConversationId.make(crypto.randomUUID()))
