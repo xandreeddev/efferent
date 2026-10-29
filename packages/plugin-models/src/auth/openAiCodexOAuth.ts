@@ -6,6 +6,10 @@ import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 
 /** ChatGPT Plus/Pro OAuth protocol used by the OpenAI Codex subscription. */
 export const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+/** The originator registered with `OPENAI_CODEX_CLIENT_ID`. The authorize
+ * request, the token and the subscription transports must all send it: the
+ * backend keys model entitlement to the client/originator pair. */
+export const OPENAI_CODEX_ORIGINATOR = "pi"
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
 const TOKEN_URL = "https://auth.openai.com/oauth/token"
 export const OPENAI_CODEX_CALLBACK_PORT = 1455
@@ -111,10 +115,7 @@ export const beginOpenAiCodexOAuth: Effect.Effect<OpenAiCodexOAuthBegin> =
       state,
       id_token_add_organizations: "true",
       codex_cli_simplified_flow: "true",
-      // This flow uses Pi's registered OAuth client id, so the authorize
-      // request must identify the same client originator as the token and
-      // subscription transports.
-      originator: "pi",
+      originator: OPENAI_CODEX_ORIGINATOR,
     }).forEach(([key, value]) => url.searchParams.set(key, value))
     return { verifier: pkce.verifier, state, authorizeUrl: url.toString(), callbackPort: OPENAI_CODEX_CALLBACK_PORT, callbackPath: OPENAI_CODEX_CALLBACK_PATH }
   })

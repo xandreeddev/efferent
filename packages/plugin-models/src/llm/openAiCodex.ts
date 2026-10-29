@@ -5,6 +5,7 @@ import { Effect, Result, Option, Redacted, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, foldStreamParts } from "@xandreed/core"
 import { makeOpenAiCodexWebSocketHttpClient } from "./openAiCodexWebSocket.js"
 import type { WebSocketProxy } from "../ports/models-transport.port.js"
+import { OPENAI_CODEX_ORIGINATOR } from "../auth/openAiCodexOAuth.js"
 
 export const OPENAI_CODEX_API_URL = "https://chatgpt.com/backend-api/codex"
 
@@ -37,7 +38,7 @@ export const toOpenAiCodexRequestBody = (
   const configuredText = record(value["text"])
   // ChatGPT's subscription endpoint is not the public Responses API and
   // rejects this otherwise-standard field. Agent timeouts/step limits remain
-  // the execution bound; Pi's working adapter likewise omits it.
+  // the execution bound.
   const supported = Object.fromEntries(
     Object.entries(value).filter(([key]) => key !== "max_output_tokens"),
   )
@@ -66,10 +67,9 @@ const transformRequest = (
   const withHeaders = request.pipe(
     HttpClientRequest.setHeaders({
       "chatgpt-account-id": accountId,
-      // This adapter uses Pi's registered OAuth client. The backend keys
-      // model entitlement to that client/originator pair, so this header is
-      // part of the protocol (Luna otherwise returns a misleading 404).
-      originator: "pi",
+      // Part of the protocol: the backend keys model entitlement to the
+      // OAuth client/originator pair (Luna otherwise returns a misleading 404).
+      originator: OPENAI_CODEX_ORIGINATOR,
       "OpenAI-Beta": "responses=experimental",
       accept: "text/event-stream",
     }),

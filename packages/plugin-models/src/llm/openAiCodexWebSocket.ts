@@ -5,6 +5,7 @@ import WebSocket from "ws"
 import type { WebSocketProxy } from "../ports/models-transport.port.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 import { currentRuntime } from "../transport/models-transport.adapter.js"
+import { OPENAI_CODEX_ORIGINATOR } from "../auth/openAiCodexOAuth.js"
 
 const WEBSOCKET_BETA = "responses_websockets=2026-02-06"
 const sessionIds = new Map<string, string>()
@@ -24,8 +25,8 @@ const websocketUrl = (url: URL): string => {
   return next.toString()
 }
 
-/** ChatGPT's Luna router currently keys its internal route on Pi's
- * time-ordered UUIDv7 session shape; UUIDv4 reaches a nonexistent rollout
+/** ChatGPT's Luna router currently keys its internal route on a
+ * time-ordered UUIDv7 session id; UUIDv4 reaches a nonexistent rollout
  * alias. Keep one v7 id per Efferent conversation/cache key. */
 export const openAiCodexUuidV7 = (now = Date.now()): string => {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16))
@@ -215,7 +216,7 @@ export const makeOpenAiCodexWebSocketHttpClient = (proxy: Option.Option<WebSocke
           }),
         )
         headers["openai-beta"] = WEBSOCKET_BETA
-        headers["user-agent"] = `pi (${process.platform} ${release()}; ${process.arch})`
+        headers["user-agent"] = `${OPENAI_CODEX_ORIGINATOR} (${process.platform} ${release()}; ${process.arch})`
         const requestId = sessionIdFor(body["prompt_cache_key"])
         body["prompt_cache_key"] = requestId
         headers["session-id"] = requestId
@@ -269,7 +270,7 @@ export const makeOpenAiCodexWebSocketHttpClient = (proxy: Option.Option<WebSocke
             const parsed = normalizeOpenAiCodexWebSocketEvent(JSON.parse(text)) as Json
             const type = parsed["type"]
             // Subscription-only control frames are not Responses API events.
-            // Pi consumes these out-of-band; the Effect model decoder should
+            // They are consumed out-of-band; the Effect model decoder should
             // see only the standard response stream vocabulary.
             if (isOpenAiCodexControlEvent(type)) return
             // A request refused before any event is a 400, as over HTTP.
