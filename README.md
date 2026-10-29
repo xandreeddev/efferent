@@ -91,6 +91,32 @@ bad ones are refused) and `modelCatalogConformance` (a `ModelCatalog`: valid,
 unique, stable entries). See
 [conformance kits](packages/website/src/content/docs/concepts/conformance.md).
 
+### Workspace tools
+
+`workspaceToolsPlugin` gives the model seven tools over the agent's
+`workspace`: `read`, `ls`, `find` and `grep` from the first step, `write` and
+`edit` once the turn holds `fs.write`, and `bash` once it holds `shell.exec`.
+`localSystemPlugin` provides the disk and the shell they work through:
+
+```ts
+import { localSystemPlugin, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
+
+const agent = yield* Agent.define({
+  plugins: [
+    memoryWindowPlugin, stepLoopPlugin, localSystemPlugin, workspaceToolsPlugin,
+    { plugin: toolDiscoveryPlugin, options: { grants: ["fs.write", "shell.exec"], maxCallsPerRun: 200 } },
+  ],
+  turnServices: [LanguageModel.LanguageModel],
+  workspace: "/srv/checkout",
+})
+```
+
+Paths stay inside the workspace (links resolved), `write` and `edit` leave
+`.git` and `.efferent` alone, and commands get an allowlisted environment
+without the host's keys. This is a guardrail against mistakes, not a sandbox:
+`bash` can reach anything the host process can. See
+[Workspace tools](docs/framework.md#workspace-tools).
+
 Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)
 that `stackPlugins` composes the way the graph does. A turn is public steps
 over typed services (`TurnLive`, `persistMessage`, `openTurnTools`,
@@ -165,7 +191,7 @@ names, or the host's `HostCredentials`, and settings edits stay in memory. See
 | `@xandreed/plugin-session-sqlite` | SQLite session store (Bun only) |
 | `@xandreed/plugin-tasks` | Background tasks |
 | `@xandreed/plugin-render` | Render surfaces, event feeds and streaming |
-| `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`; Linux and macOS), and skills from directories of `SKILL.md` files (`skillsDirectoryPlugin`) |
+| `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`), the workspace tools `read`, `write`, `edit`, `ls`, `find`, `grep` and `bash` (`workspaceToolsPlugin`), and skills from directories of `SKILL.md` files (`skillsDirectoryPlugin`); Linux and macOS |
 | `@xandreed/evals` | Tasks, trials, graders and suites; app adapters, local reports and retrieval metrics |
 | `@xandreed/evals-cli` | The `efferent-eval` command line (Node 24) |
 | `@xandreed/evals-langfuse`, `@xandreed/evals-langsmith` | Optional evaluation exporters (Node 24) |
@@ -192,7 +218,9 @@ The consumer check installs local tarballs outside the monorepo, runs a
 composable agent's turn, a session fork, an eval composition and a SQLite
 session log with a background task on Bun, then imports every Node-capable
 package on Node, and runs the `FileSystem` and `Bash` kits over the local
-adapters on both. It also compiles every `@xandreed/*` import in the README,
+adapters, loads a `SKILL.md` tree through the skills directory plugin, and
+runs an agent turn that reads, edits and runs a command through the
+workspace tools, on both. It also compiles every `@xandreed/*` import in the README,
 the guides and the website docs against the packed packages, and checks that
 each plugin's version is its package's. `bun run docs:generate` writes the
 plugin and event references.

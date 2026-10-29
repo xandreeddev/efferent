@@ -1,0 +1,160 @@
+import { Effect, Option, Result } from "effect"
+import type { Context, Path } from "effect"
+import { compileGlob, FileSystem, FsError, SessionEnvironment } from "@xandreed/core"
+import type { Failure, FsReason } from "@xandreed/core"
+import type { WorkspaceRoot, WorkspaceTarget } from "./workspace-path.entity.js"
+
+type Fs = Context.Service.Shape<typeof FileSystem>
+
+/** The workspace a call works in (`WorkspaceRoot`), with the file system and path functions it uses. */
+export type WorkspaceAccess = WorkspaceRoot & { readonly fs: Fs; readonly path: Path.Path }
+
+const failure = (error: string, message: string): Failure => ({ error, message })
+
+const reasons: Partial<Record<FsReason, (display: string) => Failure>> = {
+  NotFound: (display) => failure("NotFound", `${display} does not exist`),
+  IsDirectory: (display) => failure("IsDirectory", `${display} is a directory`),
+  NotDirectory: (display) => failure("NotDirectory", `${display} is not a directory, or a part of the path before it is a file`),
+  Permission: (display) => failure("Permission", `permission denied: ${display}`),
+}
+
+/** A file-system failure as the model reads it: what went wrong with the path it gave. */
+export const fsFailure = (display: string) => (error: FsError): Failure =>
+  reasons[error.reason]?.(display) ?? failure(error.reason, `${display}: ${error.message}`)
+
+/** Whether `path` is `root` or below it. */
+export const isWithin = (root: string, path: string): boolean => path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`)
+
+/**
+ * Open the workspace of the call: `SessionEnvironment.workspace` made
+ * absolute (against the process's directory) and resolved by the file
+ * system; one that cannot be resolved fails with `WorkspaceMissing`.
+ */
+export const openWorkspace = (path: Path.Path): Effect.Effect<WorkspaceAccess, Failure, FileSystem | SessionEnvironment> => Effect.gen(function* () {
+  const fs = yield* FileSystem
+  const { workspace } = yield* SessionEnvironment
+  const lexicalRoot = path.resolve(workspace)
+  const root = yield* fs.realPath(lexicalRoot).pipe(Effect.mapError((error) =>
+    failure("WorkspaceMissing", `the workspace directory cannot be opened (${error.reason}): ${error.message}`)))
+  return { fs, path, root, lexicalRoot }
+})
+
+/** How a path appears to the model: relative to the root (`.` for the root itself), or absolute outside it. */
+export const displayOf = (access: WorkspaceAccess, absolute: string): string => {
+  const base = isWithin(access.root, absolute) ? access.root : isWithin(access.lexicalRoot, absolute) ? access.lexicalRoot : undefined
+  if (base === undefined) return absolute
+  const relative = access.path.relative(base, absolute)
+  return relative === "" ? "." : relative
+}
+
+/**
+ * Where a path really is: its `realPath`, or, for a path that does not
+ * exist yet, the real path of its nearest existing ancestor followed by the
+ * missing names. A link on the way whose target is missing is refused
+ * (`Invalid`): what it would create is not where the path says.
+ */
+const canonicalOf = (access: WorkspaceAccess, target: string): Effect.Effect<string, FsError> => access.fs.realPath(target).pipe(
+  Effect.catchIf((error) => error.reason === "NotFound", (missing) => {
+    const parent = access.path.dirname(target)
+    if (parent === target) return Effect.fail(missing)
+    return access.fs.stat(target, { followSymlinks: false }).pipe(Effect.matchEffect({
+      onSuccess: () => Effect.fail(new FsError({ path: target, reason: "Invalid", message: "it is a symbolic link to something that does not exist" })),
+      onFailure: (error) => error.reason === "NotFound"
+        ? canonicalOf(access, parent).pipe(Effect.map((dir) => access.path.join(dir, access.path.basename(target))))
+        : Effect.fail(error),
+    }))
+  }),
+)
+
+/**
+ * Resolve a path a tool was given: relative to the workspace root, or
+ * absolute. With `confine`, a path written outside the root is refused
+ * before anything is read, and so is one whose real location (links
+ * resolved, through the nearest existing ancestor) is outside it
+ * (`OutsideWorkspace`). This is a guardrail against mistakes, not a
+ * sandbox: what a path names can change between this check and its use.
+ */
+export const resolveTarget = (access: WorkspaceAccess, input: string, options: { readonly confine: boolean }): Effect.Effect<WorkspaceTarget, Failure> => Effect.gen(function* () {
+  const lexical = access.path.resolve(access.root, input.length === 0 ? "." : input)
+  const display = displayOf(access, lexical)
+  const inside = (path: string) => isWithin(access.root, path) || isWithin(access.lexicalRoot, path)
+  if (options.confine && !inside(lexical)) {
+    return yield* Effect.fail(failure("OutsideWorkspace", `${input} is outside the workspace; use a path under its root`))
+  }
+  const path = yield* canonicalOf(access, lexical).pipe(Effect.mapError(fsFailure(display)))
+  if (options.confine && !isWithin(access.root, path)) {
+    return yield* Effect.fail(failure("OutsideWorkspace", `${display} leads outside the workspace through a symbolic link`))
+  }
+  return { path, display }
+})
+
+/** A compiled `protect` glob: the pattern, and whether a path relative to the root matches it. */
+export interface ProtectRule {
+  readonly glob: string
+  readonly matches: (relative: string) => boolean
+}
+
+/** Compile `protect` globs (dot entries included); fails with the first pattern that does not compile. */
+export const compileProtect = (globs: ReadonlyArray<string>): Result.Result<ReadonlyArray<ProtectRule>, string> =>
+  Result.all(globs.map((glob) => Result.mapError(Result.map(compileGlob(glob, { dot: true }), (matcher): ProtectRule => ({ glob, matches: matcher.matches })),
+    (reason) => `protect glob ${glob} is not usable: ${reason}`)))
+
+/** A glob's segments, without the empty and `.` ones `compileGlob` ignores. */
+const segmentsOf = (glob: string): ReadonlyArray<string> => glob.split("/").filter((segment) => segment.length > 0 && segment !== ".")
+
+/** Whether a segment's braces close within it (a `{a/b,c}` spans segments, and cannot be matched one segment at a time). */
+const ownBraces = (segment: string): boolean => (segment.match(/\{/g) ?? []).length === (segment.match(/\}/g) ?? []).length
+
+/**
+ * What is left of a path glob's segments once its leading ones have matched
+ * the directory names `names`: globs relative to below that directory. A
+ * `**` may take none, some or all of the names, so there can be several;
+ * none when the glob cannot reach below the directory, or names it (or a
+ * directory above it).
+ */
+const remainderBelow = (pattern: ReadonlyArray<string>, names: ReadonlyArray<string>): ReadonlyArray<string> => {
+  const [head, ...rest] = pattern
+  const [name, ...below] = names
+  if (name === undefined) return pattern.length === 0 ? [] : [`./${pattern.join("/")}`]
+  if (head === undefined) return []
+  if (head === "**") return [`./${pattern.join("/")}`, ...names.flatMap((_, at) => remainderBelow(rest, names.slice(at)))]
+  return Result.match(compileGlob(head, { dot: true }), {
+    onFailure: () => [],
+    onSuccess: (segment) => segment.matches(name) ? remainderBelow(rest, below) : [],
+  })
+}
+
+/**
+ * The `exclude` globs as a walk from a directory must be given them, the
+ * directory written relative to the root (`""` for the root; none when it
+ * is outside the workspace). A name (no `/`) applies at any depth, so it is
+ * kept. A path is relative to the root, and the walk matches it against
+ * paths relative to where it starts: its leading segments are matched
+ * against the directory's names and what is left is kept, anchored there
+ * with `./`. A path that cannot reach below the directory, or that names
+ * the directory or one above it (the walk was asked to go there), is
+ * dropped, and so is every path when the directory is outside the
+ * workspace. A path whose braces span segments is kept as it is.
+ */
+export const excludesBelow = (excludes: ReadonlyArray<string>, directory: Option.Option<string>): ReadonlyArray<string> => [...new Set(excludes.flatMap((glob) => {
+  if (!glob.includes("/")) return [glob]
+  return Option.match(directory, {
+    onNone: () => [],
+    onSome: (relative) => {
+      const names = segmentsOf(relative)
+      const pattern = segmentsOf(glob)
+      return names.length === 0 || !pattern.every(ownBraces) ? [glob] : remainderBelow(pattern, names)
+    },
+  })
+}))]
+
+/**
+ * Refuse a write to a protected path: the path as written and where it
+ * really is are both checked, relative to the root, against every rule.
+ */
+export const checkWritable = (access: WorkspaceAccess, target: WorkspaceTarget, rules: ReadonlyArray<ProtectRule>): Effect.Effect<void, Failure> => {
+  const relatives = [target.display, isWithin(access.root, target.path) ? access.path.relative(access.root, target.path) : ""]
+    .filter((relative) => relative.length > 0 && relative !== "." && !relative.startsWith("/") && !relative.startsWith(".."))
+  const rule = rules.find((candidate) => relatives.some((relative) => candidate.matches(relative)))
+  return rule === undefined ? Effect.void : Effect.fail(failure("Protected", `${target.display} is protected (${rule.glob}); the workspace tools do not change it`))
+}

@@ -113,8 +113,17 @@ ships no Google provider). Cost, not correctness.
   to come: images in tool results, `image_url` parts and labels on
   chat-completions routes (which send a label line per image today), resizing, PDFs,
   and a `MediaStore` port for sessions too large to keep images inline.
-- **Native grep** — structured content matches over `walkGlob` (the
-  `FileSystem` port has `glob`, nothing searches file contents yet).
+- **`.gitignore` in the workspace tools** — `find` and `grep` prune only
+  their `exclude` names; honouring ignore files (or calling `rg`/`fd` when
+  installed) is the next step for large repositories.
+- **A sandboxed `Bash`** — the workspace tools are a guardrail, not a
+  sandbox; a container or bubblewrap `Bash` and `FileSystem` pair (passing
+  both kits) would confine commands as well.
+- **Bounded `grep` matching** — the workspace `grep` runs the model's
+  regular expression synchronously in the host process; nested repetition
+  is refused, but other backtracking patterns (`(a|a)*`) can still hold the
+  process. Matching off the main thread under a time budget, or with a
+  linear-time engine, would bound it.
 - **LSP tool** — park until a concrete need; naturally skill-shaped.
 - **Wider code-highlight coverage** — the new TUI has NO syntax
   highlighting yet; if/when it returns, `@opentui/core` bundles only
@@ -125,7 +134,8 @@ ships no Google provider). Cost, not correctness.
 - `--cwd` outside the repo dies on the Solid preload (bunfig is
   cwd-relative) — error message should say so.
 - `Bash.exec` / `collectBashResult` keep a command's whole output: no cap or
-  truncation yet.
+  truncation in the port (the workspace `bash` tool folds `Bash.stream` into
+  a tail and a spill file instead).
 - Fast input bursts: Enter in the same terminal chunk as text can land as a
   newline instead of running a `:` command.
 

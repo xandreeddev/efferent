@@ -10,6 +10,7 @@
       "efferent/SessionLog",
       "efferent/TurnAdmission"
     ],
+    "contributes": [],
     "defaults": {
       "path": ".efferent/runtime/sessions.db"
     },
@@ -37,6 +38,7 @@
     "provides": [
       "efferent/SessionLog"
     ],
+    "contributes": [],
     "defaults": {
       "path": ".efferent/runtime/sessions.db"
     },
@@ -67,6 +69,7 @@
     "provides": [
       "efferent/Sessions"
     ],
+    "contributes": [],
     "defaults": {
       "ownership": {
         "mode": "lease",
@@ -226,6 +229,7 @@
       "@xandreed/core/FileSystem",
       "@xandreed/core/Bash"
     ],
+    "contributes": [],
     "defaults": {
       "shell": "bash",
       "killBackground": true,
@@ -268,6 +272,9 @@
       "efferent/SessionEnvironment"
     ],
     "provides": [],
+    "contributes": [
+      "efferent/Capabilities"
+    ],
     "defaults": {
       "roots": [
         ".agents/skills"
@@ -357,6 +364,245 @@
     }
   },
   {
+    "id": "@xandreed/plugin-workspace/tools",
+    "version": "0.13.0",
+    "apiVersion": 2,
+    "scope": "runtime",
+    "requires": [
+      "@xandreed/core/FileSystem",
+      "efferent/SessionEnvironment"
+    ],
+    "optional": [
+      "@xandreed/core/Bash"
+    ],
+    "provides": [],
+    "contributes": [
+      "efferent/Capabilities"
+    ],
+    "defaults": {
+      "tools": [
+        "read",
+        "write",
+        "edit",
+        "ls",
+        "find",
+        "grep",
+        "bash"
+      ],
+      "always": [
+        "read"
+      ],
+      "confine": true,
+      "protect": [
+        ".git/**",
+        ".efferent/**"
+      ],
+      "exclude": [
+        "node_modules",
+        ".git",
+        ".efferent"
+      ],
+      "maxLines": 2000,
+      "maxBytes": 51200,
+      "lsEntries": 500,
+      "findResults": 1000,
+      "grepMatches": 100,
+      "grepLineChars": 500,
+      "maxFileBytes": 33554432,
+      "fuzzyEdit": true,
+      "bashTimeoutMs": 120000,
+      "bashMaxTimeoutMs": 600000,
+      "bashEnv": {},
+      "bashInheritEnv": false,
+      "bashEnvAllow": [
+        "PATH",
+        "HOME",
+        "USER",
+        "LOGNAME",
+        "LANG",
+        "LC_*",
+        "TERM",
+        "SHELL",
+        "TMPDIR",
+        "TZ"
+      ],
+      "bashSessionEnv": false,
+      "spillDir": ".efferent/runtime/tool-output",
+      "spillKeep": 50,
+      "progressMs": 250,
+      "environmentSection": true,
+      "sectionOrder": 800
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "edit",
+              "ls",
+              "find",
+              "grep",
+              "bash"
+            ]
+          }
+        },
+        "always": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "read",
+              "edit",
+              "shell"
+            ]
+          }
+        },
+        "confine": {
+          "type": "boolean"
+        },
+        "protect": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "maxLines": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "maxBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 10485760
+        },
+        "lsEntries": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "findResults": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100000
+        },
+        "grepMatches": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "grepLineChars": {
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 100000
+        },
+        "maxFileBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1073741824
+        },
+        "fuzzyEdit": {
+          "type": "boolean"
+        },
+        "bashTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "bashMaxTimeoutMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "bashEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "bashInheritEnv": {
+          "type": "boolean"
+        },
+        "bashEnvAllow": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "bashSessionEnv": {
+          "type": "boolean"
+        },
+        "spillDir": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spillKeep": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
+        },
+        "progressMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60000
+        },
+        "environmentSection": {
+          "type": "boolean"
+        },
+        "sectionOrder": {
+          "type": "integer",
+          "minimum": -9007199254740991,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "tools",
+        "always",
+        "confine",
+        "protect",
+        "exclude",
+        "maxLines",
+        "maxBytes",
+        "lsEntries",
+        "findResults",
+        "grepMatches",
+        "grepLineChars",
+        "maxFileBytes",
+        "fuzzyEdit",
+        "bashTimeoutMs",
+        "bashMaxTimeoutMs",
+        "bashEnv",
+        "bashInheritEnv",
+        "bashEnvAllow",
+        "bashSessionEnv",
+        "spillDir",
+        "spillKeep",
+        "progressMs",
+        "environmentSection",
+        "sectionOrder"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
     "id": "@xandreed/plugin-models",
     "version": "0.13.0",
     "apiVersion": 2,
@@ -374,6 +620,7 @@
       "@xandreed/core/SettingsStore",
       "@xandreed/core/ModelCatalog"
     ],
+    "contributes": [],
     "defaults": {
       "model": "",
       "fastModel": "",
@@ -545,6 +792,9 @@
     "provides": [
       "efferent/ConversationMemory"
     ],
+    "contributes": [
+      "efferent/Capabilities"
+    ],
     "defaults": {
       "compactPreviousTurn": true,
       "turnContext": "current",
@@ -642,6 +892,7 @@
     "provides": [
       "efferent/ConversationMemory"
     ],
+    "contributes": [],
     "defaults": {
       "triggerRatio": 0.8,
       "keepRatio": 0.16,
@@ -754,6 +1005,7 @@
     "provides": [
       "efferent/ResultDigester"
     ],
+    "contributes": [],
     "defaults": {
       "maxSourceChars": 48000
     },
@@ -784,6 +1036,9 @@
     "optional": [],
     "provides": [
       "efferent/ToolRegistry"
+    ],
+    "contributes": [
+      "efferent/Capabilities"
     ],
     "defaults": {
       "grants": [],
@@ -861,6 +1116,7 @@
     "provides": [
       "efferent/StepLoop"
     ],
+    "contributes": [],
     "defaults": {},
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -882,6 +1138,9 @@
     "optional": [],
     "provides": [
       "efferent/Tasks"
+    ],
+    "contributes": [
+      "efferent/Capabilities"
     ],
     "defaults": {
       "maxRunning": 2,
@@ -934,6 +1193,7 @@
     "provides": [
       "efferent/render/Render"
     ],
+    "contributes": [],
     "defaults": {
       "maxBytes": 32768
     },
@@ -965,6 +1225,7 @@
     "provides": [
       "efferent/render/Feed"
     ],
+    "contributes": [],
     "defaults": {
       "pollMs": 200,
       "maxPollMs": 1000,
@@ -1020,6 +1281,7 @@
       "efferent/ui/Output",
       "efferent/ui/OutputTools"
     ],
+    "contributes": [],
     "defaults": {
       "maxBytes": 32768
     },

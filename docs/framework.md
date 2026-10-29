@@ -72,9 +72,10 @@ under `.artifacts/packages`. `bun run verify:packages` packs them, installs them
 in a temporary external project through a temporary local npm registry, and exercises
 SDK sessions, replacement plugins, persistence, forks and custom evals on Bun,
 then imports every Node-capable package on Node; it also runs the `FileSystem`
-and `Bash` kits over the packed `@xandreed/plugin-workspace` adapters on both
-Bun and Node, and loads a `SKILL.md` tree through the packed skills directory
-plugin on both. Publishing is a separate release action:
+and `Bash` kits over the packed `@xandreed/plugin-workspace` adapters, loads a
+`SKILL.md` tree through the packed skills directory plugin, and runs an agent
+turn in which a scripted model reads, edits and runs a command through the
+workspace tools, on both Bun and Node. Publishing is a separate release action:
 `bun run publish:packages` checks the build stamp (`.artifacts/packages/build.json`)
 against the current commit and a clean tree, then publishes in dependency order; it is a
 dry run unless `--publish` is passed (see [publishing](../CONTRIBUTING.md#publishing)).
@@ -779,11 +780,11 @@ const plugins = [{ plugin: localSystemPlugin, options: { killBackground: false }
 ```
 
 **Workspace tools.** The tools an agent works on a workspace with (read,
-write, edit, ls, find, grep and bash, over `FileSystem` and `Bash`) are to
-ship in `@xandreed/plugin-workspace` beside these adapters; this release has
-the adapters, `localSystemPlugin` and `skillsDirectoryPlugin` (see
-[Skills from a directory](#skills-from-a-directory)), not the tools yet.
-Until then, a host's own tools use the two services directly.
+write, edit, ls, find, grep and bash, over `FileSystem` and `Bash`) ship in
+`@xandreed/plugin-workspace` beside these adapters as `workspaceToolsPlugin`
+(see [Workspace tools](#workspace-tools)); the skills directory loader,
+`skillsDirectoryPlugin`, is there too (see
+[Skills from a directory](#skills-from-a-directory)).
 
 **Tool discovery.** Hosts contribute tools (`defineTool`: handler, view,
 annotations) and skills (`defineSkill`, `skillsFromFiles` over files the host
@@ -902,6 +903,137 @@ always-on section have fixed ids (`SKILLS_CAPABILITY_ID`,
 when the agent is defined; a changed file is seen by the next
 `Agent.define`.
 
+### Workspace tools
+
+`workspaceToolsPlugin` (from `@xandreed/plugin-workspace`; runtime scope,
+built once per agent) gives the model seven tools over the agent's
+workspace, the `workspace` of `Agent.define` (`SessionEnvironment`). Each
+call works through the `FileSystem`, `Bash` and `SessionEnvironment` of the
+turn it runs in, so `localSystemPlugin` (the local disk and shell), an
+in-memory `FileSystemMemoryLive` or a host's own adapters all serve them.
+`workspaceTools(config)` builds the same capability for a host that stacks
+layers itself.
+
+| Tool | Skill | Parameters | Result |
+| --- | --- | --- | --- |
+| `read` | `workspace.read` (always on) | `path`, `offset`, `limit` | a window of a text file's lines (`Text`), or `Binary` with the media type its name suggests |
+| `ls` | `workspace.read` | `path`, `limit` | a directory's entries and their kinds |
+| `find` | `workspace.read` | `pattern` (a glob), `path`, `limit` | file paths relative to the root |
+| `grep` | `workspace.read` | `pattern`, `path`, `glob`, `ignoreCase`, `literal`, `context`, `limit` | matching lines with context |
+| `write` | `workspace.edit` (`fs.write`) | `path`, `content` | bytes written, created or not |
+| `edit` | `workspace.edit` (`fs.write`) | `path`, `edits: [{ oldText, newText }]` | blocks replaced, first changed line, a unified diff |
+| `bash` | `workspace.shell` (`shell.exec`) | `command`, `timeout` (seconds), `stdin` | the output's tail, exit code, signal, termination, the spill file |
+
+A failure is data the model reads in the same run (`{ error, message }`:
+`NotFound`, `OutsideWorkspace`, `Protected`, `NoMatch`, `Ambiguous`,
+`Overlap`, `WouldEmpty`, `FileTooLarge`, `InvalidPattern`, `NotUtf8`,
+`NotAFile`, …); a non-zero
+exit, a signal and a timeout are `bash` results, not failures. The
+`workspace.environment` section (tier `session`, order `sectionOrder`) tells
+the model where the workspace is and how the enabled tools behave; the
+skills have no instructions, since an always-on skill's instructions never
+reach the model.
+
+**Permissions.** `write` and `edit` need `fs.write` and `bash` needs
+`shell.exec` (`WORKSPACE_PERMISSIONS`). Tool discovery grants nothing by
+default: give the grants with its `grants` option or a turn's
+`PermissionGrants`. Without them, `load_skill` refuses `workspace.edit` and
+`workspace.shell` with `capability.forbidden` and the tools stay inactive (a
+call returns `ToolInactive`); with `edit` or `shell` in `always` and no
+grant, the turn fails with `capability.forbidden`. Without a `Bash` service
+when the agent is defined, there is no `bash` tool and no `workspace.shell`
+skill (a warning is logged). A coding turn reads and edits a lot: raise tool
+discovery's `maxCallsPerRun` (64 by default) for such hosts, to 200 or more.
+
+**A guardrail, not a sandbox.** With `confine` (the default), a path is
+resolved against the root and refused when it is written outside it or its
+real location is (links resolved, through the nearest ancestor that exists,
+so a new file under a linked directory is checked too; a link to a missing
+target is never written through). `write` and `edit` refuse the `protect`
+globs (`.git/**` and `.efferent/**` by default). `find` and `grep` walk with
+`walkGlob`, which never enters a linked directory and prunes the `exclude`
+names (`node_modules`, `.git`, `.efferent`; an entry with a `/` is a path
+relative to the root, wherever the walk starts); `grep` resolves each file
+again before reading it. `read`, `write`, `edit` and `grep` refuse a pipe,
+socket or device (`NotAFile`) rather than wait on it. These checks catch a
+model's mistakes. They are not a security boundary: a path can change
+between the check and its use, and `bash` runs any command the host process
+may run, reading and writing anything it can reach. Nor do they bound
+`grep`'s time: its regular expression runs synchronously in the host
+process, and interrupting the turn cannot stop it. Cutting lines to
+`grepLineChars` bounds patterns that match in linear time, and a pattern
+that repeats a repeating group (`(a+)+`, the usual exponential form) is
+refused with `InvalidPattern`, but other backtracking patterns (overlapping
+alternatives such as `(a|a)*`) can still hold the process for a long time
+on a hostile line. Commands get the configured `bashEnv` over an
+allowlist of the host's variables (`bashEnvAllow`, the same names as
+`BASH_ENV_ALLOWLIST`), so provider keys stay out unless `bashInheritEnv`
+passes everything; `bashSessionEnv` adds `EFFERENT_SESSION_ID`,
+`EFFERENT_RUN_ID` and `EFFERENT_WORKSPACE`. For untrusted work, give the
+agent a `FileSystem` and `Bash` that run inside a container or VM.
+
+**Output.** `read` shows at most `maxLines` lines (2000) or `maxBytes`
+(50 KB) and says which `offset` continues; a single longer line is shown cut.
+`ls`, `find` and `grep` stop at `lsEntries` (500), `findResults` (1000) and
+`grepMatches` (100), and what `find` and `grep` show the model is cut to
+`maxLines` and `maxBytes` too; `grep` cuts lines to `grepLineChars` (500)
+before matching them, and, searching a directory, takes at most a quarter of
+its limit from one file. Files over `maxFileBytes` (32 MB) or with a NUL
+byte in their first 8 KB are not read as text; a file that is not valid
+UTF-8 is shown with U+FFFD and a notice (`lossy`). `bash` keeps the tail of
+a command's output (stdout and stderr in the order they came) within the
+same `maxLines` and `maxBytes`; once the output is longer, it is written to
+`spillDir` (`.efferent/runtime/tool-output`, inside the workspace, so `read`
+can open it) up to `maxFileBytes`, past which nothing more is saved and the
+result says `fullOutputCut`, and the result names the file; only the newest
+`spillKeep` (50) files are kept. While a command runs, its output is
+published as transient `tool.progress` events (`channel` `stdout` or
+`stderr`): gathered over `progressMs` (250), then one event per run of
+output from one stream. The timeout is the model's
+`timeout` or `bashTimeoutMs` (120 s), at most `bashMaxTimeoutMs` (600 s); a
+command that runs past it is killed with its process group.
+
+**Edits.** `edit` applies several replacements at once, all matched against
+the file as it was: each `oldText` must appear exactly once, the spans must
+not overlap, and edits that change nothing fail with `NoChange`. With
+`fuzzyEdit` (the default), text not found exactly is matched once more over
+whole lines with whitespace, Unicode compatibility forms, curly quotes and
+dashes normalised; that match must be unique too, and the result says
+`normalized`; it covers the matched lines' last line break only when
+`oldText` ends with one, as an exact match would. A byte-order mark and CRLF
+line endings are kept. A file that is not valid UTF-8 is refused
+(`NotUtf8`): writing its decoded text back would turn every byte that is
+not into U+FFFD. The result carries a unified diff (effect's `TextDiff`, at
+most 10 000 edits searched per change) for a host's UI; the model is shown
+one line. `write` refuses to empty a non-empty file. Both write through a
+temporary file and a rename, so a reader never sees half a file, except
+when the rename would change the file's permissions: a file with execute,
+setuid, setgid or sticky bits, or one whose mode the temporary file (made
+under the process's umask) did not get, such as a private or read-only file
+(or a group-writable one under umask 022), is written in place, keeping its
+mode. Both hold a
+per-file lock, so two sessions editing one file wait for each other.
+
+`WorkspaceToolsConfig` is flat (defaults merge one level deep): `tools`,
+`always` (`["read"]`; also `edit`, `shell`), `confine`, `protect`,
+`exclude`, `maxLines`, `maxBytes`, `lsEntries`, `findResults`,
+`grepMatches`, `grepLineChars`, `maxFileBytes`, `fuzzyEdit`,
+`bashTimeoutMs`, `bashMaxTimeoutMs`, `bashEnv`, `bashInheritEnv` (`false`),
+`bashEnvAllow`, `bashSessionEnv`, `spillDir` (relative to the root; `null`
+saves nothing), `spillKeep`, `progressMs`, `environmentSection` and
+`sectionOrder`. Hosts react to edits with `onTool(workspaceToolSchemas.edit,
+…)`, which hands them the typed `EditResult` with its diff.
+
+```ts
+import { localSystemPlugin, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
+
+const plugins = [
+  localSystemPlugin,
+  { plugin: workspaceToolsPlugin, options: { always: ["read", "edit"], bashTimeoutMs: 300_000 } },
+  { plugin: toolDiscoveryPlugin, options: { grants: ["fs.write", "shell.exec"], maxCallsPerRun: 200 } },
+]
+```
+
 ### Typed plugin layers
 
 `definePlugin` returns a `TypedPlugin`: the `Plugin` the graph loads, plus its
@@ -923,12 +1055,14 @@ defaults and its layer:
 | `@xandreed/plugin-agent-loop` | `StepLoopLive` | `StepLoop` | — |
 | `@xandreed/plugin-workspace` | `LocalSystemPluginLive` | `FileSystem`, `Bash` | — (fails with `ShellMissing` when the shell is not installed) |
 | `@xandreed/plugin-workspace` | `SkillsDirectoryPluginLive` | `Capabilities` (the directory's skills) | `FileSystem` (and `SessionEnvironment` when present) |
+| `@xandreed/plugin-workspace` | `WorkspaceToolsPluginLive` | `Capabilities` (the workspace tools) | — at build (`Bash` used when there); each call needs `FileSystem` and `SessionEnvironment`, `bash` also `Bash` |
 
 The schemas are `SessionsConfig`, `TasksConfig`, `MemoryWindowConfig`,
 `MemorySummaryConfig`, `MemoryDigestConfig`, `ToolDiscoveryConfig`,
-`LocalSystemConfig` and `SkillsDirectoryConfig`, with `sessionsDefaults`,
-`localSystemDefaults`, `skillsDirectoryDefaults` and so
-on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
+`LocalSystemConfig`, `SkillsDirectoryConfig` and `WorkspaceToolsConfig`, with
+`sessionsDefaults`, `localSystemDefaults`, `skillsDirectoryDefaults`,
+`workspaceToolsDefaults` and so on; plugin-render exports
+`renderSurfaceDefaults` and `renderFeedDefaults`.
 
 `stackPlugins(next)(base)` composes them the way the graph activates plugins:
 `next` is built over everything `base` provides, the two `Capabilities`
