@@ -24,6 +24,14 @@ export interface BashFixture {
  */
 export interface BashSubject {
   readonly open: (planted: Readonly<Record<string, string>>) => Effect.Effect<BashFixture, unknown, Scope.Scope>
+  /**
+   * Whether a reader that falls behind holds the command back (true when
+   * left out). Bun (1.3) reads a child's pipes ahead of any reader into its
+   * own memory, so an adapter over those pipes declares false there, and the
+   * backpressure check then asks only that a slow reader gets all of the
+   * output, in order.
+   */
+  readonly holdsBack?: boolean
 }
 
 const show = (value: unknown): string => JSON.stringify(value)
@@ -53,8 +61,11 @@ const planted = { EFFERENT_KIT_SECRET: "planted-secret", LC_EFFERENT_KIT: "plant
  * planted secret); a timeout kills the whole process group, a background
  * child included, and reports `timeout`; `cwd` is honoured and a missing one
  * fails with `CwdMissing`; a signal is reported; UTF-8 split across writes
- * arrives whole; interrupting the stream kills the command and what it
- * started. Each must finish within 30 seconds.
+ * arrives whole; a reader that falls behind holds the command back (output
+ * is never gathered without bound; see `holdsBack`) and still gets all of
+ * it, in order;
+ * interrupting the stream kills the command and what it started. Each must
+ * finish within 30 seconds.
  */
 export const bashConformance = (subject: BashSubject): ReadonlyArray<ConformanceCheck> => {
   const bashCheck = (name: string, id: string, body: (fixture: BashFixture) => Effect.Effect<void, unknown, Scope.Scope>, plant: Readonly<Record<string, string>> = {}): ConformanceCheck =>
@@ -179,6 +190,31 @@ export const bashConformance = (subject: BashSubject): ReadonlyArray<Conformance
     bashCheck("UTF-8 written in two pieces arrives as whole characters", "utf8", (fixture) => Effect.gen(function* () {
       const result = yield* run(fixture, "printf '\\303'; sleep 0.2; printf '\\251\\n'; printf '\\342\\234' >&2; sleep 0.2; printf '\\223' >&2")
       yield* expect("utf8", result.stdout === "é\n" && result.stderr === "✓", `a split é and ✓ arrived as ${show(result.stdout)} and ${show(result.stderr)}`)
+    })),
+    bashCheck("a reader that falls behind holds the command back, then gets all of its output in order", "backpressure", (fixture) => Effect.gen(function* () {
+      // 64 MB of "y\n": far more than an adapter may hold for a reader that stopped after the first chunk.
+      const size = 64 * 1024 * 1024
+      const first = yield* Deferred.make<void>()
+      const go = yield* Deferred.make<void>()
+      const reading = yield* Effect.forkScoped(fixture.bash.stream(`yes | head -c ${size}; touch written`, { cwd: fixture.root }).pipe(
+        Stream.tap(() => Deferred.succeed(first, undefined).pipe(Effect.andThen(Deferred.await(go)))),
+        Stream.runFold(() => ({ bytes: 0, ordered: true, last: "\n", exits: 0 }), (state, event) => event._tag === "BashExit" ? { ...state, exits: state.exits + 1 } : {
+          bytes: state.bytes + event.text.length,
+          ordered: state.ordered && event.stream === "stdout" && !`${state.last}${event.text}`.includes("yy") && !`${state.last}${event.text}`.includes("\n\n"),
+          last: event.text.at(-1) ?? state.last,
+          exits: state.exits,
+        }),
+        Effect.ensuring(Deferred.succeed(first, undefined)),
+      ))
+      yield* Deferred.await(first)
+      yield* Effect.sleep("1 second")
+      const meanwhile = yield* run(fixture, "if [ -e written ]; then echo finished; else echo held; fi")
+      yield* Deferred.succeed(go, undefined)
+      const read = yield* Fiber.join(reading)
+      if (subject.holdsBack !== false) yield* expect("backpressure", meanwhile.stdout === "held\n",
+        "the command wrote all of its output while its reader was stuck on the first chunk: the adapter gathered it without bound")
+      yield* expect("backpressure", read.bytes === size && read.ordered && read.exits === 1,
+        `once read, the output was ${read.bytes} of ${size} characters, ${read.ordered ? "in order" : "out of order"}, with ${read.exits} BashExit events`)
     })),
     bashCheck("interrupting the stream kills the command and what it started, and returns", "interrupt", (fixture) => Effect.gen(function* () {
       const started = yield* runUntil(fixture, "sleep 30 & echo $! > child.pid; echo $$ > shell.pid; printf started; wait", "started")

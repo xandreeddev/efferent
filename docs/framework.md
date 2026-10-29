@@ -99,7 +99,9 @@ See [evaluation-domain.md](evaluation-domain.md) for interfaces, lifecycle, comm
 ## Distribution
 
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
-under `.artifacts/packages`. `bun run verify:packages` packs them, installs them
+under `.artifacts/packages`, leaving test code out (`*.test.*`, `testing` modules and
+folders). `bun run verify:packages` refuses a build that is not of `HEAD`, was made
+from a tree with changes (unless `--allow-dirty`) or holds test code; it packs them, installs them
 in a temporary external project through a temporary local npm registry, and exercises
 SDK sessions, replacement plugins, persistence, forks and custom evals on Bun,
 then imports every Node-capable package on Node; it also runs the `FileSystem`
@@ -1586,9 +1588,13 @@ background tasks. Two layers split the work:
   `open`); a host writes its own over its database. The SQLite log reads the
   clock once its transaction holds the write lock, so a commit that waited
   for another connection past its `notAfter` is refused and events carry the
-  time they were written; a lock held past its 5 s busy timeout fails with
-  `SessionLogError` code `store.busy`, and processes opening one new file at
-  once wait for each other rather than fail.
+  time they were written. A call waits for another connection's lock between
+  tries in Effect, never on the thread (the connection's `busy_timeout` is
+  0), and fails with `SessionLogError` code `store.busy` after 5 s;
+  processes opening one new file at once wait for each other rather than
+  fail. The file is WAL with `synchronous = NORMAL` (a power loss may drop
+  the last commits, never tear one), and a row that does not decode fails
+  with code `store.decode`.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it.

@@ -136,6 +136,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `mergeOptions` and `PartialOptions` in `@xandreed/core`.
 - `frameworkDraft`, `isFrameworkDraft`, `unmarkedReservedDraft`,
   `RunIdReused`, `TaskConflict` and `turnBeginCodes.RunIdReused`.
+- `retrievalItems`, `RetrievalItem`, `RetrievalJudge` and
+  `semanticRetrievalGraders(judge, { rubric })` in `@xandreed/evals`, whose
+  rubric fingerprint follows the prompt; `GrepResult.unreadable` and
+  `GrepUnreadable` in `@xandreed/plugin-workspace`; the bash kit's
+  `backpressure` check, with `BashSubject.holdsBack`.
 
 ### Fixed
 
@@ -258,6 +263,20 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A task's child session is created only after `task.started` is stored, a
   retried start finishes a half-done one, and task store failures are
   logged as warnings.
+- `BashLive` no longer gathers a command's output without bound: on Node a
+  slow reader holds the command back on a full pipe (Bun reads child pipes
+  ahead regardless). An error reading stdout or stderr fails the stream with
+  `SpawnFailed`.
+- The SQLite session log no longer blocks the JavaScript thread waiting for
+  another connection's lock: it retries for up to 5 s, then fails with
+  `store.busy`. It runs WAL with `synchronous = NORMAL`, and a damaged row
+  fails with `SessionLogError` code `store.decode` instead of a defect
+  (`list` and `read` used to say `store.io`).
+- `grep` names the files it could not read (permission denied) instead of
+  counting them as binary or too large. `read`, `ls`, `find` and `grep` show
+  their real `limit` maximum, and a larger value is refused rather than
+  quietly lowered.
+- Retrieval judges get the ids they must return.
 
 ### Repository
 
@@ -284,6 +303,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   that CI will refuse the grown file. A foundry config can declare
   `registration` (the lists every package must appear in) and
   `baseline: "empty"`.
+- Package builds leave out test code. `verify:packages` refuses a build of
+  another commit, a build from a tree with changes (`--allow-dirty` checks a
+  local build) and built packages holding test code.
 
 ## 0.14.0 — 2026-10-29
 

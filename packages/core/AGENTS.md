@@ -35,8 +35,9 @@ tests also hold the kits' self-tests, careless wrappers of the plugin's own
 adapter that must fail; `taskRunnerConformance` has its self-test here,
 over fiber runners written in the test. The registry kit builds its turns
 over `TurnLive` and a writer of its own that keeps the turn in memory: a
-kit ships in the build, which leaves `testing.ts` files out, so it cannot
-import `recordingTurnWriter`.
+kit ships in the build, which leaves test code out (`*.test.*`, `testing`
+modules and folders: `scripts/build-check.ts`), so it cannot import
+`recordingTurnWriter`.
 
 The `FileSystem` and `Bash` ports are what agent tools work through. Core
 ships the ports, the in-memory `FileSystemMemoryLive` and the two kits; the

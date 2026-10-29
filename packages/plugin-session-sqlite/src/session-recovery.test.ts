@@ -3,7 +3,7 @@ import { Database } from "bun:sqlite"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Effect, Layer, Option, Schema, Stream } from "effect"
+import { Context, Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { ConversationId, SessionLogEvent, Sessions, turnEndedOf, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
@@ -63,7 +63,7 @@ const withLog = <A, E>(path: string, body: (log: SessionLog["Service"]) => Effec
   Effect.scoped(makeSessionLogSqlite(path).pipe(Effect.flatMap(body)))
 
 describe("processes opening one new file at once", () => {
-  test("all open it: the busy timeout covers switching the file to WAL", () => run(Effect.gen(function* () {
+  test("all open it: the wait for a busy lock covers switching the file to WAL", () => run(Effect.gen(function* () {
     const path = databasePath()
     const openers = yield* Effect.forEach(range(4), () => holder("open", path), { concurrency: "unbounded" })
     yield* Effect.forEach(openers, go, { discard: true })
@@ -95,6 +95,22 @@ describe("a commit waiting for another process's write lock", () => {
     expect(committed.events.map((event) => event.at)).toEqual([committed.at])
     expect((yield* log.head(id)).updatedAt).toBe(committed.at)
     expect(yield* exited(second)).toBe(0)
+  })), 30_000)
+
+  test("waits without blocking the thread: other fibers keep running until it commits", () => run(Effect.gen(function* () {
+    const path = databasePath()
+    const id = freshId()
+    const log = yield* makeSessionLogSqlite(path)
+    yield* log.create(header(id))
+    const ticks = yield* Ref.make(0)
+    yield* holder("hold-lock", path, "1000")
+    const ticker = yield* Effect.forkScoped(Effect.forever(Effect.sleep("10 millis").pipe(Effect.andThen(Ref.update(ticks, (n) => n + 1)))))
+    const committed = yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "waited", turn: Option.none(), data: {} }], state: Option.none() })
+    const counted = yield* Ref.get(ticks)
+    yield* Fiber.interrupt(ticker)
+    expect(committed.revision).toBe(1)
+    // About a hundred ticks while the lock is held; a wait that blocked the thread would let none through.
+    expect(counted).toBeGreaterThan(20)
   })), 30_000)
 
   test("fails with store.busy when the lock is held past the busy timeout, and goes on once the holder is gone", () => run(Effect.gen(function* () {

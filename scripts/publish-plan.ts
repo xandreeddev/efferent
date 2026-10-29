@@ -60,6 +60,17 @@ export const topological = (pending: ReadonlyArray<Built>, placed: ReadonlyArray
     : topological(pending.filter((built) => !ready.includes(built)), [...placed, ...[...ready].sort((a, b) => a.manifest.name.localeCompare(b.manifest.name))], names)
 }
 
+/** Why the build is not of `HEAD` (`head` is `git rev-parse HEAD`): none when it is. */
+export const notOfHead = (stamp: BuildStamp, head: Ran): ReadonlyArray<string> =>
+  !head.success ? ["git cannot read HEAD; run this from a git checkout"]
+    : stamp.commit === null ? ["the build was not made in a git checkout; rebuild"]
+    : stamp.commit !== head.stdout ? [`the build is from ${stamp.commit.slice(0, 11)}, but HEAD is ${head.stdout.slice(0, 11)}; rebuild`]
+    : []
+
+/** Why the build is not of a clean tree: none when it is. */
+export const notClean = (stamp: BuildStamp): ReadonlyArray<string> =>
+  stamp.dirty ? ["the build was made from a working tree with changes (or ignored files in a package's published folders); rebuild from a clean checkout"] : []
+
 /** Every check that needs no network, reported together, and the publish order. */
 export const planPublish = ({ stamp, builds, head, status, whoami, publisher }: PublishState): PublishPlan => {
   const none = builds.length === 0 ? [`${output} holds no built packages; run bun run build:packages first`] : []
@@ -75,11 +86,8 @@ export const planPublish = ({ stamp, builds, head, status, whoami, publisher }: 
     : versions.size === 1 && stamp.version !== version ? [`build.json records version ${stamp.version ?? "(mixed)"}, but the packages are at ${version}; rebuild`] : []
   const stale = builds.filter(({ manifest, source }) => manifest.name !== source.name || manifest.version !== source.version)
     .map(({ dir, manifest, source }) => `${label(manifest)} was built, but packages/${dir}/package.json is now ${label(source)}; rebuild`)
-  const commit = !head.success ? ["git cannot read HEAD; publish from a git checkout"]
-    : stamp.commit === null ? ["the build was not made in a git checkout; rebuild"]
-    : stamp.commit !== head.stdout ? [`the build is from ${stamp.commit.slice(0, 11)}, but HEAD is ${head.stdout.slice(0, 11)}; rebuild`]
-    : []
-  const builtDirty = stamp.dirty ? ["the build was made from a working tree with changes (or ignored files in a package's published folders); rebuild from a clean checkout"] : []
+  const commit = notOfHead(stamp, head)
+  const builtDirty = notClean(stamp)
   const changes = status.stdout.split("\n").filter((line) => line.trim().length > 0)
   const dirty = !status.success ? ["git cannot read the working tree status"]
     : changes.length > 0 ? [`the working tree has changes; commit, stash or remove them: ${changes.slice(0, 10).map((line) => line.trim()).join(", ")}${changes.length > 10 ? `, and ${changes.length - 10} more` : ""}`]

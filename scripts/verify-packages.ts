@@ -4,11 +4,42 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promis
 import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, relative } from "node:path"
+import { Result, Schema } from "effect"
+import { isTestCode, verifyRefusals } from "./build-check.js"
 import { importsFor, importsOf, regionsOf } from "./guide-snippets.js"
+import { BuildStamp } from "./publish-plan.js"
 const root = join(import.meta.dir, "..")
 /** The consumer installs the Effect the packages were built against, and the repo's TypeScript. */
 const rootManifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { readonly dependencies: { readonly effect: string }, readonly devDependencies: { readonly typescript: string } }
 const packages = join(root, ".artifacts/packages")
+/**
+ * Only the build of HEAD is checked, so a build left over from other sources cannot pass:
+ * `build.json` must record HEAD and a clean tree, and the packages must hold no test code.
+ * `--allow-dirty` accepts a build of uncommitted changes, to check them before committing.
+ */
+const args = process.argv.slice(2)
+const unknownArgs = args.filter((arg) => arg !== "--allow-dirty")
+if (unknownArgs.length > 0) {
+  console.error(`Unknown argument: ${unknownArgs.join(" ")}\nUsage: bun run verify:packages [--allow-dirty]`)
+  process.exit(2)
+}
+const stampFile = Bun.file(join(packages, "build.json"))
+const stamp = Schema.decodeUnknownResult(Schema.fromJsonString(BuildStamp))(await stampFile.exists() ? await stampFile.text() : "")
+if (Result.isFailure(stamp)) {
+  console.error(`Refusing to verify: .artifacts/packages/build.json is missing or not valid; run bun run build:packages first`)
+  process.exit(1)
+}
+const headRun = Bun.which("git") === null ? undefined : Bun.spawnSync(["git", "rev-parse", "HEAD"], { cwd: root, stdout: "pipe", stderr: "pipe" })
+const refusals = verifyRefusals({
+  stamp: stamp.success,
+  head: { success: headRun?.success ?? false, stdout: headRun?.stdout.toString().trim() ?? "", stderr: headRun?.stderr.toString().trim() ?? "" },
+  testCode: Array.from(new Bun.Glob("*/dist/**/*").scanSync({ cwd: packages, onlyFiles: true })).filter((file) => isTestCode(file.split("/").slice(2).join("/"))).sort(),
+  allowDirty: args.includes("--allow-dirty"),
+})
+if (refusals.length > 0) {
+  console.error(`Refusing to verify:\n${refusals.map((reason) => `  - ${reason}`).join("\n")}`)
+  process.exit(1)
+}
 const tarballs = join(root, ".artifacts/tarballs")
 await mkdir(tarballs, { recursive: true })
 const manifests = Array.from(new Bun.Glob("*/package.json").scanSync({ cwd: packages }))
@@ -48,7 +79,7 @@ const temporary = Effect.acquireRelease(Effect.promise(() => mkdtemp(join(tmpdir
 const localFileSystem = await Effect.runPromise(Effect.service(FileSystem).pipe(Effect.provide(FileSystemLive)))
 const localKitChecks = [
  ...fileSystemConformance({ open: temporary.pipe(Effect.map((root) => ({ fs: localFileSystem, root, symlink: linkTo }))) }),
- ...bashConformance({ open: (planted) => Effect.all({ root: temporary, bash: Effect.service(Bash).pipe(Effect.provide(BashLive({ parentEnv: { ...process.env, ...planted } }))) }) }),
+ ...bashConformance({ open: (planted) => Effect.all({ root: temporary, bash: Effect.service(Bash).pipe(Effect.provide(BashLive({ parentEnv: { ...process.env, ...planted } }))) }), holdsBack: typeof Bun === "undefined" }),
 ]
 const localKitFailures = (await Effect.runPromise(Effect.forEach(localKitChecks, (check) => Effect.result(check.run).pipe(
  Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()

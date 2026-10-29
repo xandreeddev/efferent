@@ -1,5 +1,6 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
+import { isTestCode } from "./build-check.js"
 import { distributionDependencies } from "./distribution-manifest.js"
 
 // Build an isolated publish tree; development keeps source exports and workspace links.
@@ -58,7 +59,8 @@ await Promise.all(names.map(async (name) => {
   const target = join(output, name)
   const original = manifests.get(name)!
   const version = original.version
-  const files = Array.from(new Bun.Glob("src/**/*").scanSync({ cwd: source, onlyFiles: true })).filter((file) => !/\.(test|bench)\.[^.]+$/.test(file) && !file.endsWith("testing.ts"))
+  // Test code (isTestCode) stays out of the package, its declarations too; nothing published imports it.
+  const files = Array.from(new Bun.Glob("src/**/*").scanSync({ cwd: source, onlyFiles: true })).filter((file) => !isTestCode(file))
   await Promise.all(files.map(async (file) => {
     const destination = join(target, file.replace(/^src\//, "dist/").replace(/\.tsx?$/, ".js"))
     await mkdir(join(destination, ".."), { recursive: true })
@@ -68,7 +70,8 @@ await Promise.all(names.map(async (name) => {
     if (file.endsWith(".ts")) await writeFile(destination, shebang + await transpiler.transform(code))
     else await cp(join(source, file), destination)
   }))
-  await cp(join(declarations, name, "src"), join(target, "dist"), { recursive: true })
+  const typesOf = join(declarations, name, "src")
+  await cp(typesOf, join(target, "dist"), { recursive: true, filter: (from) => !isTestCode(relative(typesOf, from)) })
   await Promise.all(["skills", "profiles"].map(async (asset) => {
     if (await Bun.file(join(source, asset)).exists() || Array.from(new Bun.Glob(`${asset}/**/*`).scanSync({ cwd: source })).length > 0) await cp(join(source, asset), join(target, asset), { recursive: true })
   }))

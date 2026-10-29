@@ -596,6 +596,7 @@ check. The adapter's parent environment must be the process's own plus
 ```ts
 interface BashSubject {
   readonly open: (planted: Readonly<Record<string, string>>) => Effect.Effect<BashFixture, unknown, Scope.Scope>
+  readonly holdsBack?: boolean // whether a slow reader holds the command back; true when left out
 }
 interface BashFixture {
   readonly bash: Bash["Service"]
@@ -626,6 +627,13 @@ The checks:
 - **signal**: a command killed by a signal reports `termination: "signal"`
   and the signal's name.
 - **utf8**: a character written in two pieces arrives whole.
+- **backpressure**: a reader that stops after the first chunk holds the
+  command back: 64 MB of output is not all written a second later (the
+  adapter must not gather output without bound), and once reading resumes
+  every character arrives, in order, with one `BashExit`. Bun (1.3) reads a
+  child's pipes ahead of any reader, into its own memory, so a subject over
+  those pipes on Bun sets `holdsBack: false` and only the second half is
+  checked; `BashLive` passes the whole check on Node.
 - **interrupt**: interrupting the stream returns, and kills the command and
   the child it started.
 

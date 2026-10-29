@@ -49,6 +49,7 @@ export * from "./graders/retrieval/contextual-relevancy.functions.js"
 export * from "./domain/review.entity.js"
 export * from "./domain/review.entity.functions.js"
 export * from "./graders/retrieval/semantic-retrieval.entity.js"
+export * from "./graders/retrieval/semantic-retrieval.entity.functions.js"
 export * from "./graders/retrieval/semantic-grader.adapter.js"
 
 export {

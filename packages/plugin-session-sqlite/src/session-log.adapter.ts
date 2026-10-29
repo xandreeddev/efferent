@@ -2,11 +2,12 @@ import { Database } from "bun:sqlite"
 import { mkdir } from "node:fs/promises"
 import { chmodSync } from "node:fs"
 import { dirname } from "node:path"
-import { Clock, Effect, Layer, Match, Option, Schema } from "effect"
+import { Clock, Duration, Effect, Layer, Match, Option, Predicate, Schedule, Schema } from "effect"
 import type { Scope } from "effect"
 import {
   ConversationId,
   definePlugin,
+  JsonObject,
   LeaseExpired,
   RevisionConflict,
   SessionExists,
@@ -14,58 +15,123 @@ import {
   SessionLogError,
   SessionMissing,
 } from "@xandreed/core"
-import type { JsonObject, SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "@xandreed/core"
+import type { SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "@xandreed/core"
 
-interface HeadRow {
-  readonly id: string
-  readonly owner: string
-  readonly origin: string
-  readonly created_at: number
-  readonly meta: string
-  readonly parent_id: string | null
-  readonly parent_through: number | null
-  readonly turn_at_fork: number | null
-  readonly seq: number
-  readonly revision: number
-  readonly state: string
-  readonly updated_at: number
-}
+/** A column holding a JSON object as text. */
+const JsonColumn = Schema.fromJsonString(JsonObject)
 
-interface EventRow {
-  readonly seq: number
-  readonly turn: number | null
-  readonly kind: string
-  readonly at: number
-  readonly data: string
-}
+/** A `session_heads` row, decoded: a row that is not one (a damaged or hand-edited file) fails with `store.decode`. */
+const HeadRow = Schema.Struct({
+  id: ConversationId,
+  owner: Schema.String,
+  origin: Schema.String,
+  created_at: Schema.Number,
+  meta: JsonColumn,
+  parent_id: Schema.NullOr(ConversationId),
+  parent_through: Schema.NullOr(Schema.Int),
+  turn_at_fork: Schema.NullOr(Schema.Int),
+  seq: Schema.Int,
+  revision: Schema.Int,
+  state: JsonColumn,
+  updated_at: Schema.Number,
+})
 
-/** SQLite's busy result and its extended forms (`SQLITE_BUSY_TIMEOUT`, …): the lock stayed taken past `busy_timeout`. */
+/** A `session_log_events` row, decoded like `HeadRow`. */
+const EventRow = Schema.Struct({ seq: Schema.Int, turn: Schema.NullOr(Schema.Int), kind: Schema.String, at: Schema.Number, data: JsonColumn })
+
+/** SQLite's busy result and its extended forms (`SQLITE_BUSY_SNAPSHOT`, …): another connection holds the lock. */
 const busy = (error: unknown): boolean =>
-  typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" && error.code.startsWith("SQLITE_BUSY")
-/** A store failure as a SessionLogError: `store.busy` when another connection held the lock too long, else `code`. */
+  Predicate.hasProperty(error, "code") && Predicate.isString(error.code) && error.code.startsWith("SQLITE_BUSY")
+/** A store failure as a SessionLogError: `store.busy` when another connection held the lock, else `code`. */
 const failure = (code: string) => (error: unknown) => new SessionLogError({ code: busy(error) ? "store.busy" : code, message: String(error) })
-const json = (text: string): JsonObject => JSON.parse(text) as JsonObject
+/** A row decoded with `schema`, or `store.decode` naming the table. */
+const decodeRow = <S extends Schema.Decoder<unknown>>(schema: S, table: string) => {
+  const decode = Schema.decodeUnknownEffect(schema)
+  return (row: unknown): Effect.Effect<S["Type"], SessionLogError, S["DecodingServices"]> =>
+    decode(row).pipe(Effect.mapError((error) => new SessionLogError({ code: "store.decode", message: `a ${table} row does not decode: ${error.message}` })))
+}
+const decodeHead = decodeRow(HeadRow, "session_heads")
+const decodeEvent = decodeRow(EventRow, "session_log_events")
+/** The value as it is stored and read back (JSON), so a commit returns the events a later read does. */
+const asStored = (data: JsonObject): JsonObject => JSON.parse(JSON.stringify(data))
 
-const headOf = (row: HeadRow, now: number): SessionHead => ({
+/**
+ * How long a call waits in all for a lock another connection holds before
+ * it fails with `store.busy`. SQLite's own busy wait would sleep on the
+ * JavaScript thread (bun:sqlite is synchronous) and stop every fiber, so
+ * the connection's `busy_timeout` is 0 and the waiting happens here,
+ * between tries: 2 ms doubling to 100 ms, jittered.
+ */
+const BUSY_WAIT = Duration.seconds(5)
+const busyRetry = Schedule.exponential("2 millis").pipe(
+  Schedule.modifyDelay(({ duration }) => Effect.succeed(Math.min(Duration.toMillis(duration), 100))),
+  Schedule.jittered,
+  Schedule.upTo({ duration: BUSY_WAIT }),
+)
+
+/** `effect` again, by `busyRetry`, while it fails with `store.busy`. */
+const whileBusy = <A, R>(effect: Effect.Effect<A, SessionLogError, R>): Effect.Effect<A, SessionLogError, R> =>
+  effect.pipe(Effect.retry({ schedule: busyRetry, while: (error) => error.code === "store.busy" }))
+
+/** One synchronous store call, tried again while another connection holds the lock it needs. */
+const operation = <A>(work: () => A) => whileBusy(Effect.try({ try: work, catch: failure("store.io") }))
+
+/**
+ * The session log's SQLite file, opened (and created, readable by its owner
+ * only) for the scope: WAL with `synchronous = NORMAL`, foreign keys on, no
+ * busy wait on the thread (`busy_timeout = 0`, see `BUSY_WAIT`), and the
+ * tables in place.
+ */
+export const openSessionDatabase = (path: string): Effect.Effect<Database, SessionLogError, Scope.Scope> => Effect.gen(function* () {
+  yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: failure("store.open") })
+  const db = yield* Effect.acquireRelease(
+    Effect.try({ try: () => new Database(path, { create: true, strict: true }), catch: failure("store.open") }),
+    (database) => Effect.sync(() => database.close()),
+  )
+  yield* operation(() => chmodSync(path, 0o600))
+  yield* operation(() => db.exec("PRAGMA busy_timeout = 0; PRAGMA foreign_keys = ON;"))
+  // Switching a new file to WAL takes a lock that another process opening it at once may hold: tried until it is WAL.
+  yield* whileBusy(Effect.try({
+    try: () => db.query<{ readonly journal_mode: string }, []>("PRAGMA journal_mode = WAL").get()?.journal_mode,
+    catch: failure("store.io"),
+  }).pipe(Effect.filterOrFail((mode) => mode === "wal", (mode) => new SessionLogError({ code: "store.busy", message: `the journal stayed ${mode ?? "unknown"}, not WAL` }))))
+  yield* operation(() => db.exec("PRAGMA synchronous = NORMAL;"))
+  // Under the write lock, so a process never creates its tables over a schema another is still writing.
+  yield* operation(() => db.transaction(() => db.exec(`
+    CREATE TABLE IF NOT EXISTS session_heads (
+      id TEXT PRIMARY KEY, owner TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, meta TEXT NOT NULL,
+      parent_id TEXT REFERENCES session_heads(id) ON DELETE CASCADE, parent_through INTEGER, turn_at_fork INTEGER,
+      seq INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT '{}', updated_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS session_heads_owner ON session_heads(owner, updated_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS session_heads_parent ON session_heads(parent_id);
+    CREATE TABLE IF NOT EXISTS session_log_events (
+      session_id TEXT NOT NULL REFERENCES session_heads(id) ON DELETE CASCADE, seq INTEGER NOT NULL, turn INTEGER,
+      kind TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id, seq));
+    CREATE INDEX IF NOT EXISTS session_log_events_kind ON session_log_events(session_id, kind, seq);
+  `)).immediate())
+  return db
+})
+
+const headOf = (row: typeof HeadRow.Type, now: number): SessionHead => ({
   header: {
-    id: ConversationId.make(row.id),
+    id: row.id,
     owner: row.owner,
     origin: row.origin,
     createdAt: row.created_at,
-    meta: json(row.meta),
+    meta: row.meta,
     parent: row.parent_id === null ? Option.none() : Option.some({
-      id: ConversationId.make(row.parent_id), through: row.parent_through ?? 0, turnAtFork: row.turn_at_fork ?? 0,
+      id: row.parent_id, through: row.parent_through ?? 0, turnAtFork: row.turn_at_fork ?? 0,
     }),
   },
   seq: row.seq,
   revision: row.revision,
-  state: json(row.state),
+  state: row.state,
   updatedAt: row.updated_at,
   now,
 })
 
-const eventOf = (session: ConversationId) => (row: EventRow): SessionLogEvent => ({
-  session, seq: row.seq, turn: Option.fromNullishOr(row.turn), kind: row.kind, at: row.at, data: json(row.data),
+const eventOf = (session: ConversationId) => (row: typeof EventRow.Type): SessionLogEvent => ({
+  session, seq: row.seq, turn: Option.fromNullishOr(row.turn), kind: row.kind, at: row.at, data: row.data,
 })
 
 /** A commit's outcome inside its transaction, with the time it was decided at. */
@@ -82,33 +148,15 @@ type Outcome =
  * writes. The clock is the caller's Effect `Clock`, read once the transaction
  * holds the write lock: a commit that waited for another connection past its
  * `notAfter` is refused, and events carry the time they were committed. A
- * lock held past the 5 s `busy_timeout` fails with `store.busy`.
+ * call waits for another connection's lock without blocking the thread, for
+ * up to 5 s (`BUSY_WAIT`), then fails with `store.busy`. The journal is WAL
+ * with `synchronous = NORMAL`: a commit is atomic and survives a crash of
+ * the process; a power loss may drop the last commits, never tear one. A
+ * row that does not decode fails with `store.decode`, whichever call read it.
  */
 export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Service"], SessionLogError, Scope.Scope> => Effect.gen(function* () {
-  yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: failure("store.open") })
-  const db = yield* Effect.acquireRelease(
-    Effect.try({ try: () => new Database(path, { create: true, strict: true }), catch: failure("store.open") }),
-    (database) => Effect.sync(() => database.close()),
-  )
-  const operation = <A>(work: () => A) => Effect.try({ try: work, catch: failure("store.io") })
-  yield* operation(() => chmodSync(path, 0o600))
-  // The busy timeout first: switching a new file to WAL takes a lock that another process opening it at once may hold.
-  yield* operation(() => db.exec(`
-    PRAGMA busy_timeout = 5000;
-    PRAGMA journal_mode = WAL;
-    PRAGMA foreign_keys = ON;
-    CREATE TABLE IF NOT EXISTS session_heads (
-      id TEXT PRIMARY KEY, owner TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, meta TEXT NOT NULL,
-      parent_id TEXT REFERENCES session_heads(id) ON DELETE CASCADE, parent_through INTEGER, turn_at_fork INTEGER,
-      seq INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT '{}', updated_at INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS session_heads_owner ON session_heads(owner, updated_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS session_heads_parent ON session_heads(parent_id);
-    CREATE TABLE IF NOT EXISTS session_log_events (
-      session_id TEXT NOT NULL REFERENCES session_heads(id) ON DELETE CASCADE, seq INTEGER NOT NULL, turn INTEGER,
-      kind TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id, seq));
-    CREATE INDEX IF NOT EXISTS session_log_events_kind ON session_log_events(session_id, kind, seq);
-  `))
-  const headRow = (id: string) => db.query<HeadRow, [string]>("SELECT * FROM session_heads WHERE id = ?").get(id)
+  const db = yield* openSessionDatabase(path)
+  const headRow = (id: string) => db.query<Record<string, unknown>, [string]>("SELECT * FROM session_heads WHERE id = ?").get(id)
   /** Remove a session; its events and child sessions cascade (inside the caller's transaction). */
   const removeTree = (id: string) => db.query("DELETE FROM session_heads WHERE id = ?").run(id)
 
@@ -126,31 +174,32 @@ export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Se
       if (outcome === "exists") return yield* Effect.fail(new SessionExists({ session: header.id }))
       if (outcome === "orphan") return yield* Effect.fail(new SessionMissing({ session: Option.match(header.parent, { onNone: () => header.id, onSome: (parent) => parent.id }) }))
       const row = yield* operation(() => headRow(header.id))
-      return row === null ? yield* Effect.fail(new SessionLogError({ code: "store.io", message: "the new session was not stored" })) : headOf(row, now)
+      if (row === null) return yield* Effect.fail(new SessionLogError({ code: "store.io", message: "the new session was not stored" }))
+      return headOf(yield* decodeHead(row), now)
     }),
     head: (id) => Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis
       const row = yield* operation(() => headRow(id))
-      return row === null ? yield* Effect.fail(new SessionMissing({ session: id })) : headOf(row, now)
+      if (row === null) return yield* Effect.fail(new SessionMissing({ session: id }))
+      return headOf(yield* decodeHead(row), now)
     }),
     list: (query) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => operation(() => {
       const before = Option.getOrNull(query.before)
       const parent = Option.getOrNull(query.parent)
-      return db.query<HeadRow, [string, string | null, string | null, number | null, number | null, number | null, string | null, number]>(`
+      return db.query<Record<string, unknown>, [string, string | null, string | null, number | null, number | null, number | null, string | null, number]>(`
         SELECT * FROM session_heads
         WHERE owner = ? AND ((? IS NULL AND parent_id IS NULL) OR parent_id = ?)
           AND (? IS NULL OR updated_at < ? OR (updated_at = ? AND id < ?))
         ORDER BY updated_at DESC, id DESC LIMIT ?`)
         .all(query.owner, parent, parent, before?.updatedAt ?? null, before?.updatedAt ?? null, before?.updatedAt ?? null, before?.id ?? null, Math.max(0, query.limit))
-        .map((row) => headOf(row, now))
-    }))),
+    }).pipe(Effect.flatMap((rows) => Effect.forEach(rows, (row) => decodeHead(row).pipe(Effect.map((head) => headOf(head, now)))))))),
     read: (id, query) => Effect.gen(function* () {
       if ((yield* operation(() => headRow(id))) === null) return yield* Effect.fail(new SessionMissing({ session: id }))
       const kinds = query.kinds.length === 0 ? "" : ` AND kind IN (${query.kinds.map(() => "?").join(", ")})`
       const limit = Option.match(query.limit, { onNone: () => -1, onSome: (value) => Math.max(0, value) })
-      return yield* operation(() => db.query<EventRow, Array<string | number>>(`SELECT seq, turn, kind, at, data FROM session_log_events WHERE session_id = ? AND seq > ?${kinds} ORDER BY seq LIMIT ?`)
-        .all(id, query.after, ...query.kinds, limit)
-        .map(eventOf(id)))
+      const rows = yield* operation(() => db.query<Record<string, unknown>, Array<string | number>>(`SELECT seq, turn, kind, at, data FROM session_log_events WHERE session_id = ? AND seq > ?${kinds} ORDER BY seq LIMIT ?`)
+        .all(id, query.after, ...query.kinds, limit))
+      return yield* Effect.forEach(rows, (row) => decodeEvent(row).pipe(Effect.map(eventOf(id))))
     }),
     commit: (id, commit) => Clock.clockWith((clock) => operation(() => db.transaction((): Outcome => {
       // The time is read under the write lock: a commit that waited for it is judged, and stamped, when it writes.
@@ -160,7 +209,7 @@ export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Se
       if (head.revision !== commit.expect) return { _tag: "Conflict", actual: head.revision }
       if (Option.isSome(commit.notAfter) && at > commit.notAfter.value) return { _tag: "Expired", at }
       const events = commit.events.map((draft, index): SessionLogEvent => ({
-        session: id, seq: head.seq + index + 1, turn: draft.turn, kind: draft.kind, at, data: json(JSON.stringify(draft.data)),
+        session: id, seq: head.seq + index + 1, turn: draft.turn, kind: draft.kind, at, data: asStored(draft.data),
       }))
       const insert = db.query("INSERT INTO session_log_events (session_id, seq, turn, kind, at, data) VALUES (?, ?, ?, ?, ?, ?)")
       events.forEach((event) => insert.run(id, event.seq, Option.getOrNull(event.turn), event.kind, at, JSON.stringify(event.data)))

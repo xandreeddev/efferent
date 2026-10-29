@@ -2,10 +2,11 @@ import { spawn } from "node:child_process"
 import type { ChildProcess } from "node:child_process"
 import { constants } from "node:fs"
 import { access, stat } from "node:fs/promises"
+import type { Readable } from "node:stream"
 import { Cause, Clock, Deferred, Effect, Layer, MutableRef, Option, Queue, Result, Stream } from "effect"
-import type { Context } from "effect"
+import type { Context, Scope } from "effect"
 import { Bash, BashError, collectBashResult, resolveBashEnv } from "@xandreed/core"
-import type { BashEvent, BashOptions } from "@xandreed/core"
+import type { BashChunk, BashEvent, BashExit, BashOptions } from "@xandreed/core"
 import { bashExitOf, errorMessageOf, executableCandidates, isClosedInput } from "./local-system.entity.functions.js"
 import { localSystemDefaults } from "./local-system.entity.js"
 import type { BashLiveOptions } from "./local-system.entity.js"
@@ -57,6 +58,86 @@ const killGroup = (child: ChildProcess, exited: boolean): void => Option.match(O
 })
 
 /**
+ * The most events a command's stream holds before the command is made to
+ * wait: a pipe read is at most 64 KB on Node, so about 1 MB of output.
+ */
+export const OUTPUT_BUFFER = 16
+
+/** An event on its way into the stream, and the pipe it came from (paused until it is in); none for the events of the end. */
+interface Held {
+  readonly event: BashEvent
+  readonly pipe: Option.Option<Readable>
+}
+
+/** How a command's output pipes feed its stream (`relayOutput`). */
+export interface OutputRelay {
+  /** Read `pipe` as `name`: UTF-8, a character split between reads arriving whole; an error on it fails the stream. */
+  readonly attach: (name: BashChunk["stream"], pipe: Readable) => void
+  /** Stop pausing the pipes: what is left of the output is read at once. */
+  readonly flow: () => void
+  /** The decoders' last characters, then `exit`, after everything before them; the stream ends after the exit. */
+  readonly finish: (exit: BashExit) => void
+}
+
+/**
+ * The bridge from a command's output pipes to its stream's buffer (`queue`,
+ * which holds at most `OUTPUT_BUFFER` events). An event goes straight in
+ * while there is room and nothing waits before it. Otherwise it waits, in
+ * arrival order, and the pipe it came from is paused, so the command blocks
+ * on a full pipe instead of its output piling up in memory; a fiber of the
+ * stream's scope moves waiting events in as the reader takes them, and
+ * resumes their pipes. `flow` ends the pausing, for once the command has
+ * exited (what is left then is the pipes' content, and whatever a
+ * background process writes in `exitGraceMs`). An error on a pipe fails the
+ * stream with `SpawnFailed`.
+ */
+export const relayOutput = (queue: Queue.Queue<BashEvent, BashError | Cause.Done>): Effect.Effect<OutputRelay, never, Scope.Scope> => Effect.gen(function* () {
+  const waiting = yield* Queue.unbounded<Held>()
+  /** Events waiting or on their way in: while there are any, a new event waits behind them. */
+  const behind = MutableRef.make(0)
+  const flowing = MutableRef.make(false)
+  const pipes = MutableRef.make<ReadonlyArray<Readable>>([])
+  const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() }
+  const wait = (event: BashEvent, pipe: Option.Option<Readable>): void => {
+    if (Option.isSome(pipe) && !MutableRef.get(flowing)) pipe.value.pause()
+    MutableRef.increment(behind)
+    Queue.offerUnsafe(waiting, { event, pipe })
+  }
+  /** Straight into the stream when nothing waits and there is room; otherwise behind what waits, with `pipe` paused. */
+  const deliver = (event: BashEvent, pipe: Readable): void => {
+    if (MutableRef.get(behind) > 0 || !Queue.offerUnsafe(queue, event)) wait(event, Option.some(pipe))
+  }
+  const chunk = (name: BashChunk["stream"], text: string): Option.Option<BashChunk> =>
+    text.length === 0 ? Option.none() : Option.some({ _tag: "BashChunk", stream: name, text })
+  yield* Queue.take(waiting).pipe(
+    Effect.flatMap(({ event, pipe }) => Queue.offer(queue, event).pipe(Effect.andThen(Effect.sync(() => {
+      MutableRef.decrement(behind)
+      Option.map(pipe, (readable) => readable.resume())
+      // The exit is the stream's last event.
+      if (event._tag === "BashExit") Queue.endUnsafe(queue)
+    })))),
+    Effect.forever,
+    Effect.forkScoped,
+  )
+  return {
+    attach: (name, pipe) => {
+      MutableRef.update(pipes, (all) => [...all, pipe])
+      pipe.on("data", (bytes: Uint8Array) => Option.map(chunk(name, decoders[name].decode(bytes, { stream: true })), (event) => deliver(event, pipe)))
+      pipe.on("error", (error) => Queue.failCauseUnsafe(queue, Cause.fail(new BashError({ reason: "SpawnFailed", message: `could not read the command's ${name}: ${errorMessageOf(error)}` }))))
+    },
+    flow: () => {
+      MutableRef.set(flowing, true)
+      MutableRef.get(pipes).forEach((pipe) => pipe.resume())
+    },
+    finish: (exit) => {
+      Option.map(chunk("stdout", decoders.stdout.decode()), (event) => wait(event, Option.none()))
+      Option.map(chunk("stderr", decoders.stderr.decode()), (event) => wait(event, Option.none()))
+      wait(exit, Option.none())
+    },
+  }
+})
+
+/**
  * Commands on the local machine through `node:child_process`, for Node and
  * Bun: `<shell> -c <command>`, detached into a process group of its own, in
  * an environment `resolveBashEnv` builds from `parentEnv`. The shell is
@@ -65,16 +146,20 @@ const killGroup = (child: ChildProcess, exited: boolean): void => Option.match(O
  * `ShellMissing`. Each command checks its `cwd` first (`CwdMissing`); its
  * stdin is written and closed (a command that never reads it is fine), its
  * stdout and stderr decoded as UTF-8 per stream, a character split between
- * reads arriving whole. A timeout, or a caller that stops reading before
+ * reads arriving whole. While the command runs, its output is read only as
+ * fast as the stream is (`relayOutput`): on Node a reader that falls behind
+ * holds the command back on a full pipe, so output is never gathered
+ * without bound (Bun reads a child's pipes ahead into its own memory, the
+ * reader notwithstanding). A timeout, or a caller that stops reading before
  * the end, kills the whole group; with `killBackground` (the default) so
  * does the command's return. The stream ends once the command has exited
  * and its output has closed, or `exitGraceMs` after the exit if something
  * still holds the output open; the adapter then closes its end of the
  * output pipes, so a background process kept with `killBackground: false`
  * that still writes to them gets `EPIPE` or dies of `SIGPIPE` unless it was
- * started with its own output (`cmd > log 2>&1 &`). Output is buffered
- * without bound until it is read. POSIX only (Linux and macOS): it relies
- * on process groups. Passes `bashConformance` on Bun and Node.
+ * started with its own output (`cmd > log 2>&1 &`). POSIX only (Linux and
+ * macOS): it relies on process groups. Passes `bashConformance` on Bun and
+ * Node (on Bun without the hold-back half of `backpressure`).
  */
 export const makeBash = (options: BashLiveOptions = {}): Effect.Effect<BashShape, BashError> => Effect.gen(function* () {
   const { shell, killBackground, exitGraceMs } = { ...localSystemDefaults, ...options }
@@ -86,10 +171,9 @@ export const makeBash = (options: BashLiveOptions = {}): Effect.Effect<BashShape
     const clock = yield* Effect.clockWith((current) => Effect.succeed(current))
     const exited = yield* Deferred.make<Exited, BashError>()
     const closed = yield* Deferred.make<void>()
-    /** Set once the stream's `BashExit` is out: from then on, stopping early no longer kills the command. */
+    /** Set once the stream's `BashExit` is on its way: from then on, stopping early no longer kills the command. */
     const finished = MutableRef.make(false)
-    const decoders = { stdout: new TextDecoder(), stderr: new TextDecoder() }
-    const emit = (name: "stdout" | "stderr", text: string): boolean => text.length > 0 && Queue.offerUnsafe(queue, { _tag: "BashChunk", stream: name, text })
+    const output = yield* relayOutput(queue)
     const started = yield* Clock.currentTimeMillis
     const child = yield* Effect.acquireRelease(Effect.try({
       try: () => {
@@ -99,8 +183,8 @@ export const makeBash = (options: BashLiveOptions = {}): Effect.Effect<BashShape
           detached: true,
           stdio: [run.stdin === undefined ? "ignore" : "pipe", "pipe", "pipe"],
         })
-        spawned.stdout?.on("data", (chunk: Uint8Array) => emit("stdout", decoders.stdout.decode(chunk, { stream: true })))
-        spawned.stderr?.on("data", (chunk: Uint8Array) => emit("stderr", decoders.stderr.decode(chunk, { stream: true })))
+        if (spawned.stdout !== null) output.attach("stdout", spawned.stdout)
+        if (spawned.stderr !== null) output.attach("stderr", spawned.stderr)
         spawned.once("error", (error) => Deferred.doneUnsafe(exited, Effect.fail(new BashError({ reason: "SpawnFailed", message: errorMessageOf(error) }))))
         spawned.once("exit", (code, signal) => Deferred.doneUnsafe(exited, Effect.succeed({ code, signal, at: clock.currentTimeMillisUnsafe() })))
         spawned.once("close", () => Deferred.doneUnsafe(closed, Effect.void))
@@ -128,18 +212,17 @@ export const makeBash = (options: BashLiveOptions = {}): Effect.Effect<BashShape
       })),
     )
     if (killBackground) killGroup(child, true)
+    // Once the command has exited, what is left of its output is read at once rather than as the stream is read.
+    output.flow()
     const drained = yield* Deferred.await(closed).pipe(Effect.timeoutOption(exitGraceMs))
     if (Option.isNone(drained)) {
       // Something the command started still holds its output open: stop reading it.
       child.stdout?.destroy()
       child.stderr?.destroy()
     }
-    emit("stdout", decoders.stdout.decode())
-    emit("stderr", decoders.stderr.decode())
     MutableRef.set(finished, true)
-    yield* Queue.offer(queue, bashExitOf({ code: end.code, signal: end.signal, timedOut, durationMs: end.at - started }))
-    yield* Queue.end(queue)
-  }))
+    output.finish(bashExitOf({ code: end.code, signal: end.signal, timedOut, durationMs: end.at - started }))
+  }), { bufferSize: OUTPUT_BUFFER })
 
   return Bash.of({ stream, exec: (command, run) => collectBashResult(stream(command, run)) })
 })

@@ -4,9 +4,11 @@ import { Effect, Schema, Ref } from "effect"
 import {
   EvalId,
   gradingContext,
+  retrievalItems,
   semanticRetrievalGraders,
   RetrievalContext
 } from "../../index.js"
+import type { RetrievalItem } from "../../index.js"
 const input: RetrievalContext = {
   query: "When does it start?",
   documents: [
@@ -116,4 +118,35 @@ test("duplicate judge verdicts cannot substitute for a missing document", async 
     Effect.flatMap(GraderAssessment, (port) => port.assess(projected, candidate)).pipe(Effect.provide(grader.layer))), Effect.result))
   expect(result._tag).toBe("Failure")
   if (result._tag === "Failure") expect(result.failure.code).toBe("invalid")
+})
+test("the judge is given the ids its verdicts must carry, with their text, and can answer from them alone", async () => {
+  const seen: Array<readonly [string, ReadonlyArray<RetrievalItem>]> = []
+  const graders = semanticRetrievalGraders((measure, _projected, items) => Effect.sync(() => {
+    seen.push([measure, items])
+    return { verdicts: items.map((item, index) => ({ id: item.id, relevant: index === 0, reason: item.text })) }
+  }))
+  const projected = await Effect.runPromise(context())
+  const grades = await Effect.runPromise(Effect.forEach(graders, (grader) =>
+    Effect.flatMap(GraderAssessment, (port) => port.assess(projected, candidate)).pipe(Effect.provide(grader.layer))))
+  expect(grades.map((grade) => grade.metrics[0]?.value)).toEqual([1, 1, 1 / 3])
+  expect(seen).toEqual([
+    ["contextual-precision", [{ id: "a", text: "Starts at eight. Bring water." }, { id: "b", text: "Starts at nine." }]],
+    ["contextual-recall", [{ id: "claim:0", text: "Starts at eight." }]],
+    ["contextual-relevancy", [{ id: "a/statement:0", text: "Starts at eight." }, { id: "a/statement:1", text: "Bring water." }, { id: "b/statement:0", text: "Starts at nine." }]],
+  ])
+  expect(retrievalItems("contextual-recall", input)).toEqual([{ id: "claim:0", text: "Starts at eight." }])
+})
+test("the rubric fingerprint follows the rubric the judge works from", () => {
+  const judge = () => Effect.succeed({ verdicts: [] })
+  const rubricOf = (options?: Parameters<typeof semanticRetrievalGraders>[1]) =>
+    semanticRetrievalGraders(judge, options).map((grader) => grader.definition.fingerprints["rubric"])
+  const first = rubricOf({ rubric: { "contextual-precision": "Is the passage useful? v1", "contextual-recall": "Is the claim supported? v1" } })
+  const second = rubricOf({ rubric: { "contextual-precision": "Is the passage useful? v2", "contextual-recall": "Is the claim supported? v1" } })
+  expect(first[0]).not.toBe(second[0])
+  expect(first[1]).toBe(second[1])
+  expect(first[0]).not.toBe(first[1])
+  expect(first[0]?.startsWith("retrieval-contextual-precision:1:")).toBe(true)
+  expect(rubricOf({ rubric: { "contextual-precision": "Is the passage useful? v1" } })[0]).toBe(first[0])
+  expect(rubricOf()).toEqual(["retrieval-contextual-precision:1", "retrieval-contextual-recall:1", "retrieval-contextual-relevancy:1"])
+  expect(first[2]).toBe("retrieval-contextual-relevancy:1")
 })
