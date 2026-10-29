@@ -1,6 +1,7 @@
 import { Schema, SchemaTransformation } from "effect"
 import { Media, MediaSlot } from "../domain/media.entity.js"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
+import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { DecisionId } from "../decision-record.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 
@@ -144,7 +145,7 @@ export const LogBody = Schema.Union(
   }),
   Schema.TaggedStruct("Compaction", { strategy: Schema.String, version: Schema.String, action: CompactionAction }),
   Schema.TaggedStruct("TurnEnded", {
-    outcome: Schema.Literals(["completed", "partial", "failed"]),
+    outcome: TurnOutcomeKind,
     reply: Schema.OptionFromNullOr(Schema.String),
   })],
 )

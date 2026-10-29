@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { TokenUsage } from "../domain/token-usage.entity.js"
+import { TurnEnding, TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
 import { TURN_EVENT_NAMES } from "../turn/turn-event.entity.js"
@@ -28,7 +29,7 @@ export const TurnStartedData = Schema.Struct({
   runId: Schema.String,
   /** The host's idempotency key: a second begin with it is the same turn. */
   key: Schema.String,
-  origin: Schema.Literals(["user", "inbox"]),
+  origin: TurnOrigin,
   userMessage: UserMessage,
   /** The host's own input beside the message (an attachment, a reference), part of the key's fingerprint. */
   command: JsonObject,
@@ -50,25 +51,13 @@ export const TurnStartedData = Schema.Struct({
 })
 export type TurnStartedData = typeof TurnStartedData.Type
 
-export const TurnEndReason = Schema.Literals(["completed", "partial", "failed", "cancelled", "interrupted"])
-export type TurnEndReason = typeof TurnEndReason.Type
-
 /**
- * Closes a turn. Not model-visible: what later turns remember is `turn.reply`.
- * `failure.code` is the failing error's code when it has one
- * (`harnessCodeOf`: a `HarnessError`'s, a begin refusal's); otherwise one of
- * the framework's codes, `turn.failed` (a typed error without a code),
- * `turn.defect`, `turn.interrupted` (an interrupted turn or scope),
- * `turn.unended` (a scope closed before its turn ended) or `turn.lease` (a
- * reaped turn), or a code the closer passes to `writer.end` itself
- * (plugin-tasks: `task.turn`, `task.deadline`; a host's own). A cancel
- * stores none.
+ * Closes a turn: the `TurnEnding` its closer recorded (see `TurnFailure` for
+ * the codes a failure stores). Not model-visible: what later turns remember
+ * is `turn.reply`. A cancel stores no failure.
  */
-export const TurnEndedData = Schema.Struct({
-  reason: TurnEndReason,
-  failure: Schema.OptionFromNullOr(Schema.Struct({ code: Schema.String, message: Schema.String })),
-})
-export type TurnEndedData = typeof TurnEndedData.Type
+export const TurnEndedData = TurnEnding
+export type TurnEndedData = TurnEnding
 
 /** An inbox item as delivered (`inbox.queued`): its stable id, who sent it and the text a turn shows the model. */
 export const InboxQueuedData = Schema.Struct({

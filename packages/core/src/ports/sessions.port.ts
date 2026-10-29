@@ -1,6 +1,7 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope, Stream } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
+import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
 import type { JsonObject, SessionExists, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "../session/session-log.entity.js"
 import type {
   AdmittedTurn,
@@ -14,7 +15,6 @@ import type {
   SessionView,
   TurnBeginError,
   TurnClosed,
-  TurnEnding,
   TurnError,
 } from "../session/sessions.entity.js"
 

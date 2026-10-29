@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
+import { TurnEndReason, TurnFailure } from "../domain/turn-vocabulary.entity.js"
 
 /*
  * Background tasks: a turn starts a task, the task runs as one turn of a
@@ -12,7 +13,7 @@ export const TaskMode = Schema.Literals(["fork", "spawn"])
 export type TaskMode = typeof TaskMode.Type
 
 /** Where a task stands, read from its child session. */
-export const TaskStatus = Schema.Literals(["pending", "running", "completed", "partial", "failed", "interrupted", "cancelled"])
+export const TaskStatus = Schema.Literals(["pending", "running", ...TurnEndReason.literals])
 export type TaskStatus = typeof TaskStatus.Type
 
 export const TaskView = Schema.Struct({
@@ -25,7 +26,7 @@ export const TaskView = Schema.Struct({
   /** The child's final reply, once it has one. */
   reply: Schema.OptionFromNullOr(Schema.String),
   /** Why it did not complete (refused, out of time, failed), when that is known. */
-  failure: Schema.OptionFromNullOr(Schema.Struct({ code: Schema.String, message: Schema.String })),
+  failure: Schema.OptionFromNullOr(TurnFailure),
   /** Whether the result reached the parent's inbox. */
   delivered: Schema.Boolean,
 })

@@ -722,8 +722,9 @@ const checks = authStoreConformance(store, { refresh: endpoint.probe, corrupt: d
 ## Render kits
 
 `@xandreed/plugin-render` exports three kits for its ports. Their checks have
-the same shape, `name` and `run`, and fail with that package's own
-`ConformanceFailure` (`check`, `message`) or a `RenderError`:
+the same shape, `name` and `run`, and fail with core's
+`ConformanceFailure` (`check`, `message`; the package re-exports it) or a
+`RenderError`:
 
 | Kit | Checks | Run against |
 | --- | --- | --- |

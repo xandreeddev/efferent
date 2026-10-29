@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Exit, Option, Schema } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
+import type { TurnEndReason } from "../domain/turn-vocabulary.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { SessionLogError } from "./session-log.entity.js"
 import { ReservedKind, SessionBusy, SessionContended, TurnClosed } from "./sessions.entity.js"
 import { resumeRefusal, turnEndingOf } from "./sessions.entity.functions.js"
 import type { ResumableTurn } from "./sessions.entity.functions.js"
-import type { TurnEndReason } from "./session-event.entity.js"
 
 class Untold extends Schema.TaggedError<Untold>()("Untold", { attempt: Schema.Number }) {}
 class Explained extends Schema.TaggedError<Explained>()("Explained", { message: Schema.String }) {}

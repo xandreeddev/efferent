@@ -1,6 +1,7 @@
 import type { Context, Effect, Layer, Option, Scope } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
+import type { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import type { SkillDefinition } from "../harness/capability.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { CompletionVerdict } from "../turn/turn-event.entity.js"
@@ -58,7 +59,7 @@ export interface TurnPolicy<R = never> {
 }
 
 export interface TurnOutcome {
-  readonly outcome: "completed" | "partial" | "failed"
+  readonly outcome: TurnOutcomeKind
   /** The reply follow-up turns remember. */
   readonly reply: Option.Option<string>
 }

@@ -1,10 +1,10 @@
 import { Cause, Exit, Formatter, Option, Predicate, Result, Schema } from "effect"
+import type { TurnEndReason, TurnEnding, TurnFailure, TurnOrigin, TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import { isHarnessError } from "../harness/plugin.entity.functions.js"
-import type { TurnEndReason } from "./session-event.entity.js"
 import { SessionLogError } from "./session-log.entity.js"
 import { ReservedKind, SessionContended, TurnClosed } from "./sessions.entity.js"
-import type { NotResumable, TurnEnding, TurnError } from "./sessions.entity.js"
+import type { NotResumable, TurnError } from "./sessions.entity.js"
 
 const taggedTurnErrors = [TurnClosed, ReservedKind, SessionContended, SessionLogError].map((error) => Schema.is(Schema.Struct(error.fields)))
 
@@ -43,10 +43,10 @@ const messageOfError = (error: unknown): string => Option.isSome(stringField(err
   })
 
 /** A typed error as a stored failure: its framework code (`harnessCodeOf`), else `turn.failed`, and its message. */
-const failureOfError = (error: unknown): { readonly code: string; readonly message: string } =>
+const failureOfError = (error: unknown): TurnFailure =>
   ({ code: Option.getOrElse(harnessCodeOf(error), () => "turn.failed"), message: messageOfError(error) })
 
-const failed = (failure: { readonly code: string; readonly message: string }): TurnEnding =>
+const failed = (failure: TurnFailure): TurnEnding =>
   ({ reason: "failed", failure: Option.some({ code: failure.code, message: clipped(failure.message) }) })
 
 /**
@@ -64,7 +64,7 @@ const failed = (failure: { readonly code: string; readonly message: string }): T
  * Messages are cut to 500 characters. A runner whose exit has no outcome
  * maps it first: `turnEndingOf(Exit.map(exit, () => ({ outcome: "completed" })))`.
  */
-export const turnEndingOf = (exit: Exit.Exit<{ readonly outcome: "completed" | "partial" | "failed" }, unknown>): TurnEnding => Exit.match(exit, {
+export const turnEndingOf = (exit: Exit.Exit<{ readonly outcome: TurnOutcomeKind }, unknown>): TurnEnding => Exit.match(exit, {
   onSuccess: (value): TurnEnding => ({ reason: value.outcome, failure: Option.none() }),
   onFailure: (cause): TurnEnding => Option.match(Cause.findErrorOption(cause), {
     onSome: (error) => failed(failureOfError(error)),
@@ -83,7 +83,7 @@ export const turnEndingOf = (exit: Exit.Exit<{ readonly outcome: "completed" | "
  */
 export interface ResumableTurn {
   readonly turn: number
-  readonly origin: "user" | "inbox"
+  readonly origin: TurnOrigin
   readonly resumes: Option.Option<number>
   readonly ended: Option.Option<TurnEndReason>
 }

@@ -1,7 +1,7 @@
 import { Cause, Effect, Exit, Option, Schema } from "effect"
 import { framed, harnessCodeOf, isHarnessError, readStored, reasonOf, SessionLogError } from "@xandreed/core"
-import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnError, TurnOutcome } from "@xandreed/core"
-import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
+import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnError, TurnFailure, TurnOutcome } from "@xandreed/core"
+import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskOutcome, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started } from "./task-records.entity.js"
 
 const decodeStarted = Schema.decodeUnknownOption(TaskStarted)
@@ -10,7 +10,7 @@ const decodeResult = Schema.decodeUnknownOption(TaskResult)
 /** The inbox id a task's result is delivered under: once per task. */
 export const deliveryId = (taskId: string): string => `task:${taskId}`
 
-const FINISHED: ReadonlyArray<TaskStatus> = ["completed", "partial", "failed", "interrupted"]
+const FINISHED: ReadonlyArray<TaskStatus> = TaskOutcome.literals
 
 /** Done and worth telling the parent about (a cancelled task tells nothing). */
 export const isFinished = (status: TaskStatus): boolean => FINISHED.includes(status)
@@ -30,7 +30,7 @@ export const deliveredOf = (events: ReadonlyArray<SessionLogEvent>): Effect.Effe
 export interface TaskEnd {
   readonly status: TaskStatus
   readonly reply: Option.Option<string>
-  readonly failure: Option.Option<{ readonly code: string; readonly message: string }>
+  readonly failure: Option.Option<TurnFailure>
 }
 
 const began = (view: SessionView): boolean =>

@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { ConversationId, JsonObject, TaskMode } from "@xandreed/core"
+import { ConversationId, JsonObject, TaskMode, TurnEndReason, TurnFailure } from "@xandreed/core"
 
 /*
  * What the tasks plugin records. In the parent: `task.started` (the outbox
@@ -21,16 +21,14 @@ export const TaskStarted = Schema.Struct({
 })
 export type TaskStarted = typeof TaskStarted.Type
 
-export const TaskOutcome = Schema.Literals(["completed", "partial", "failed", "interrupted"])
+export const TaskOutcome = TurnEndReason.pick(["completed", "partial", "failed", "interrupted"])
 export type TaskOutcome = typeof TaskOutcome.Type
-
-export const TaskFailure = Schema.Struct({ code: Schema.String, message: Schema.String })
 
 export const TaskResult = Schema.Struct({
   taskId: ConversationId,
   outcome: TaskOutcome,
   reply: Schema.OptionFromNullOr(Schema.String),
-  failure: Schema.OptionFromNullOr(TaskFailure),
+  failure: Schema.OptionFromNullOr(TurnFailure),
 })
 export type TaskResult = typeof TaskResult.Type
 

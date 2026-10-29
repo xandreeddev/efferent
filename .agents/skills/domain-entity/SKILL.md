@@ -44,6 +44,14 @@ see a file by its suffix, so the suffix decides which rules apply.
 - Not a struct with `isX: boolean` and fields that are meaningful only when
   it is true; not optional fields that must appear together.
 - A closed set of words is `Schema.Literals([...])` (`BashTermination`).
+- Declare a vocabulary once and import it; never copy its words into
+  another schema or a TS type. The turn's words (origin, outcome, end
+  reason, failure, ending, step status) are in
+  `core/src/domain/turn-vocabulary.entity.ts`. A subset is
+  `.pick([...])` (`TaskOutcome`), a superset spreads `.literals`
+  (`TaskStatus`), and a union's tags come from
+  `.pipe(Schema.toTaggedUnion("_tag"))`: `discriminants` in order
+  (`TURN_EVENT_NAMES`), `isAnyOf([...])` as a guard.
 - Branch over a union with `Match.valueTags` (skill `effect-idioms`).
 
 ## 4. Invariants live in the schema
@@ -87,6 +95,7 @@ JSON has no `undefined`, and stored payloads outlive the code that wrote them.
 - [ ] Schemas and types in `.entity.ts`, behaviour in `.entity.functions.ts`
 - [ ] Struct for data, Class for a named concept built with `new`; no methods
 - [ ] Variants as tagged structs, not boolean flags
+- [ ] A vocabulary declared once, imported where it is used
 - [ ] Every invariant in the schema; functions trust the decoded type
 - [ ] Every id field branded
 - [ ] Absence encoded deliberately (`OptionFromNullOr` vs `optionalKey`)
