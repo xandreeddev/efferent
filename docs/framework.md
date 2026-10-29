@@ -1591,7 +1591,8 @@ background tasks. Two layers split the work:
   for another connection past its `notAfter` is refused and events carry the
   time they were written. A call waits for another connection's lock between
   tries in Effect, never on the thread (the connection's `busy_timeout` is
-  0), and fails with `SessionLogError` code `store.busy` after 5 s;
+  0), and fails with `SessionLogError` code `store.busy` (`isStoreBusy`;
+  SQLite's error is its `cause`) after 5 s;
   processes opening one new file at once wait for each other rather than
   fail. The file is WAL with `synchronous = NORMAL` (a power loss may drop
   the last commits, never tear one), and a row that does not decode fails
@@ -1645,7 +1646,13 @@ decide)` is the same check-then-append (a page action, a setting); the
 framework's journal kinds (`JOURNAL_KINDS`; among them `request.prepared`
 holds each request's full system text and tool declarations, see durable
 model requests) and every bus event's name are refused there
-(`RESERVED_KINDS`).
+(`RESERVED_KINDS`). A `Sessions` call whose commit keeps losing to other
+writers (planned again from the new head each time, `retries` times, 8 by
+default) fails with `SessionContended` (`session.contended`; a host answers
+503) and stores nothing. `SessionLogError` is the store's own failure only:
+unreachable, busy, or data that does not decode (`session.state`,
+`session.decode`), with what failed underneath as its `cause`; a log that
+answers what its contract rules out is a defect.
 
 **Ownership** is configured:
 

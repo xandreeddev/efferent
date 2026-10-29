@@ -41,6 +41,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   begin code, handle `SessionContended` where `Sessions` or `Tasks` errors
   are matched exhaustively, and raise a tagged error or a `HarnessError`
   where a stored code used to be read from an untagged error.
+- Handle `SessionContended` (503, retry later) where you matched
+  `SessionLogError` code `session.contended`, and treat `SessionLogError`
+  as a store failure only.
 
 ### Breaking
 
@@ -133,6 +136,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   refusals, `TurnClosed` and `ReservedKind` store their own codes instead
   of `turn.failed`, a `SessionLogError` stores `session.log`, and an
   untagged value with a `code` stores `turn.failed`.
+- `@xandreed/plugin-sessions`: writes that keep conflicting fail with
+  `SessionContended` instead of `SessionLogError` `session.contended`, and
+  `Tasks` passes it on. A log answer its contract rules out
+  (`session.expired`, `session.begin`, `session.create`), or a value of the
+  plugin's own that does not encode (`session.encode`), is a defect.
+- `@xandreed/plugin-tasks`: `tasks.encode`, `tasks.kind` and `tasks.lost`
+  are defects, no longer `SessionLogError`s.
 
 ### Added
 
@@ -362,6 +372,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/plugin-models` describes a request or response stream that
   fails with a value that is not an `Error` by its code and message instead
   of `[object Object]`, with proxy credentials redacted.
+- A begin through `Agent.turn` that loses to other writers fails with
+  `session.contended`, not `session.log`, and a turn that fails on it
+  stores `session.contended`.
+- SQLite store errors keep SQLite's error as `cause`, and `isStoreBusy`
+  recognises `store.busy`.
 
 ### Repository
 
@@ -457,6 +472,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `runtime`, `plugin-agent-loop` and `plugin-models` pass
   `effect/no-stringified-cause`, and `plugin-models` and `plugin-workspace`
   read a foreign error's code with core's `errorCodeOf`.
+- `plugin-session-sqlite` passes `effect/no-stringified-cause` and
+  `effect/no-error-code-compare`.
 
 ## 0.14.0 — 2026-10-29
 

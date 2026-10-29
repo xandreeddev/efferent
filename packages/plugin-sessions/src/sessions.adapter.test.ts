@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { awaitIdle, frameworkDraft, HarnessError, MediaFingerprint, mediaFromBase64, SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import { awaitIdle, frameworkDraft, HarnessError, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnWriter } from "@xandreed/core"
 import { SessionsPluginLive } from "./plugin.adapter.js"
 import { processLiveness } from "./process-liveness.adapter.js"
@@ -890,6 +890,69 @@ describe("check, then append", () => {
     yield* writer.append([frameworkDraft("step.started", { step: 0 }), { kind: "answer.published", data: { text: "hi" } }])
     yield* writer.end({ reason: "completed", failure: Option.none() })
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "step.started@1", "answer.published@1", "turn.ended@1"])
+  })))
+})
+
+describe("contention and a broken log", () => {
+  test("a write that keeps losing to other writers fails with SessionContended after the configured attempts, and stores nothing", () => withLog((inner) => Effect.gen(function* () {
+    const conflicting = yield* Ref.make(false)
+    const tries = yield* Ref.make(0)
+    const log = SessionLog.of({
+      ...inner,
+      commit: (id, commit) => Ref.get(conflicting).pipe(Effect.flatMap((conflict) => conflict
+        ? Ref.update(tries, (n) => n + 1).pipe(Effect.andThen(Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 }))))
+        : inner.commit(id, commit))),
+    })
+    const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
+    const address = yield* created(sessions!)
+    const held = yield* created(sessions!)
+    const writer = yield* sessions!.begin(held, say("held"))
+    yield* sessions!.deliver(address, { id: "i1", source: {}, content: "waiting" })
+    yield* Ref.set(conflicting, true)
+    const contended = [
+      yield* Effect.flip(sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: undefined }))),
+      yield* Effect.flip(sessions!.deliver(address, { id: "i2", source: {}, content: "another" })),
+      yield* Effect.flip(Effect.scoped(sessions!.begin(address, say("one")))),
+      yield* Effect.flip(sessions!.drain(address, () => Effect.void)),
+      yield* Effect.flip(sessions!.cancel(held, writer.admitted.turn)),
+    ]
+    expect(contended.map((error) => error._tag === "SessionContended" ? [error._tag, error.session === held.id ? "held" : "address", error.attempts] : [error._tag])).toEqual([
+      ["SessionContended", "address", 3],
+      ["SessionContended", "address", 3],
+      ["SessionContended", "address", 3],
+      ["SessionContended", "address", 3],
+      ["SessionContended", "held", 3],
+    ])
+    expect(yield* Ref.get(tries)).toBe(15)
+    yield* Ref.set(conflicting, false)
+    expect(yield* all(sessions!, address)).toEqual(["inbox.queued"])
+    expect(Option.map((yield* sessions!.get(held)).open, (open) => open.turn)).toEqual(Option.some(1))
+  })))
+
+  test("a log that answers what its contract rules out is a defect, not a SessionLogError", () => withLog((inner) => Effect.gen(function* () {
+    const broken = yield* Ref.make(false)
+    const log = SessionLog.of({
+      ...inner,
+      // A session created without a parent reported missing.
+      create: (header) => Ref.get(broken).pipe(Effect.flatMap((on) => on ? Effect.fail(new SessionMissing({ session: header.id })) : inner.create(header))),
+      commit: (id, commit) => Ref.get(broken).pipe(Effect.flatMap((on) => !on ? inner.commit(id, commit)
+        // A turn's opening commit stored, and answered without its events.
+        : commit.events.some((event) => event.kind === "turn.started") ? inner.commit(id, commit).pipe(Effect.map((committed) => ({ ...committed, events: [] })))
+        // A commit without `notAfter` refused as expired.
+        : commit.events.some((event) => event.kind === "note") ? Effect.fail(new LeaseExpired({ session: id, notAfter: 0, now: 1 }))
+        : inner.commit(id, commit))),
+    })
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* Ref.set(broken, true)
+    const exits: ReadonlyArray<Exit.Exit<unknown, unknown>> = [
+      yield* Effect.exit(sessions!.create({ owner })),
+      yield* Effect.exit(Effect.scoped(sessions!.begin(address, say("one")))),
+      yield* Effect.exit(sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: undefined }))),
+    ]
+    expect(exits.map((exit) => [Exit.hasDies(exit), Option.isNone(Exit.findErrorOption(exit))])).toEqual([[true, true], [true, true], [true, true]])
+    // The turn whose begin died was closed by its scope.
+    expect(Option.isNone((yield* sessions!.get(address)).open)).toBe(true)
   })))
 })
 

@@ -5437,8 +5437,8 @@
     },
     {
       "code": "session.contended",
-      "where": "the turn writer, plugin-sessions",
-      "meaning": "Too many conflicting writes to the session in a row."
+      "where": "the turn writer (a `HarnessError`); plugin-sessions' `Sessions` and the `Tasks` over it (`SessionContended`)",
+      "meaning": "Too many conflicting writes to the session in a row: nothing was written, and a retry may succeed."
     },
     {
       "code": "session.state",
@@ -5447,8 +5447,8 @@
     },
     {
       "code": "session.encode",
-      "where": "the turn writer; plugin-sessions' `Sessions` (a `SessionLogError`)",
-      "meaning": "The writer's closing `turn.ended` did not encode; for `Sessions`, a record it stores (a `turn.started`, a `turn.ended` it writes itself, an inbox record) or the session's state did not."
+      "where": "the turn writer",
+      "meaning": "The writer's closing `turn.ended` did not encode. plugin-sessions' `Sessions` no longer raises it for a record or a state of its own since `SessionLogError` became storage only (it is a defect now); older journals may hold it."
     },
     {
       "code": "session.decode",
@@ -5463,17 +5463,17 @@
     {
       "code": "session.begin",
       "where": "`Sessions.begin` (a `SessionLogError`)",
-      "meaning": "The begin's opening commit came back uncommitted, or without the turn's `turn.started`."
+      "meaning": "The begin's opening commit came back uncommitted, or without the turn's `turn.started`. No longer raised since `SessionLogError` became storage only (it is a defect now); older journals may hold it."
     },
     {
       "code": "session.create",
       "where": "`Sessions.create` (a `SessionLogError`)",
-      "meaning": "The store answered the creation of a session without a parent with `SessionMissing`."
+      "meaning": "The store answered the creation of a session without a parent with `SessionMissing`. No longer raised since `SessionLogError` became storage only (it is a defect now); older journals may hold it."
     },
     {
       "code": "session.expired",
       "where": "plugin-sessions' commits (a `SessionLogError`)",
-      "meaning": "The store refused a commit made without a lease guard as expired (`LeaseExpired`)."
+      "meaning": "The store refused a commit made without a lease guard as expired (`LeaseExpired`). No longer raised since `SessionLogError` became storage only (it is a defect now); older journals may hold it."
     },
     {
       "code": "store.open",
@@ -5503,17 +5503,17 @@
     {
       "code": "tasks.encode",
       "where": "`@xandreed/plugin-tasks` (a `SessionLogError`)",
-      "meaning": "A task's `task.started` or `task.result` did not encode."
+      "meaning": "A task's `task.started` or `task.result` did not encode. No longer raised since `SessionLogError` became storage only (it is a defect now); older journals may hold it."
     },
     {
       "code": "tasks.kind",
       "where": "`@xandreed/plugin-tasks` (a `SessionLogError`)",
-      "meaning": "The session refused one of the tasks plugin's records as a reserved kind (`ReservedKind`); its kinds are not reserved."
+      "meaning": "The session refused one of the tasks plugin's records as a reserved kind (`ReservedKind`); its kinds are not reserved. No longer raised since `SessionLogError` became storage only (it is a defect now); older journals may hold it."
     },
     {
       "code": "tasks.lost",
       "where": "`Tasks.start` (a `SessionLogError`)",
-      "meaning": "The task was started, but the parent session does not hold it when read back."
+      "meaning": "The task was started, but the parent session does not hold it when read back. No longer raised since `SessionLogError` became storage only (it is a defect now); older journals may hold it."
     },
     {
       "code": "auth.corrupt",

@@ -123,6 +123,7 @@ const STRINGIFIED_CAUSE_CLEAN = [
   "plugin-render",
   "plugin-workspace",
   "plugin-telemetry",
+  "plugin-session-sqlite",
   "foundry",
 ].map(src)
 
@@ -142,6 +143,7 @@ const ERROR_CODE_COMPARE_CLEAN = [
   "plugin-render",
   "plugin-workspace",
   "plugin-telemetry",
+  "plugin-session-sqlite",
   "foundry",
 ].map(src)
 
