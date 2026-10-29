@@ -1,6 +1,6 @@
 ---
 title: Workspace tools
-description: read, write, edit, ls, find, grep and bash over an agent's workspace, with permissions, confinement and output limits.
+description: read, write, edit, ls, find, grep and bash over an agent's workspace, with permissions, confinement, output limits and images.
 ---
 
 # Workspace tools
@@ -34,7 +34,7 @@ the turn it runs in.
 
 | Tool | Skill | Parameters | What the model gets |
 | --- | --- | --- | --- |
-| `read` | `workspace.read`, on from the first step | `path`, `offset`, `limit` | up to 2000 lines or 50 KB of a text file, and the `offset` to continue from; a binary file is reported, not shown |
+| `read` | `workspace.read`, on from the first step | `path`, `offset`, `limit` | up to 2000 lines or 50 KB of a text file, and the `offset` to continue from; a PNG, JPEG, GIF or WebP image, as an image; any other binary file is reported, not shown |
 | `ls` | `workspace.read` | `path`, `limit` | a directory's entries; directories end in `/`, links in `@` |
 | `find` | `workspace.read` | `pattern`, `path`, `limit` | the files whose path matches a glob (`**/*.ts`), relative to the root |
 | `grep` | `workspace.read` | `pattern`, `path`, `glob`, `ignoreCase`, `literal`, `context`, `limit` | `path:line:text` for each matching line, with context lines when asked |
@@ -107,6 +107,32 @@ hostile line. To run untrusted work, give the agent a
   published as transient `tool.progress` events, one per run of output from
   one stream, for a host to show live.
 
+## Images
+
+`read` returns a PNG, JPEG, GIF or WebP file as an image the model sees
+(its tool description says so). The type is the one its bytes are, whatever
+its name says: core's `sniffImageType` reads it, and `mediaFromBytes`
+checks the image. The result is `{ _tag: "Image", path, image }`, its view
+text one line, `[Image docs/chart.png (image/png, 182 KB).]`, and the image
+goes to the model with it, as an image of the tool result. The session
+stores the image once, inside the result. A route that reads no images gets
+a label line in its place (see [Images](/docs/concepts/providers#images)
+for the routes and the limits).
+
+An image over 3.75 MiB (`MEDIA_LIMITS.imageBytes`) or 8000 pixels a side,
+or one whose header gives no size, is not sent: `read` returns an
+`ImageRejected` note with its path, type, size and why, and, for a size,
+tells the model to read a smaller copy (scaled down or recompressed with
+`bash`). A file over `maxFileBytes` is refused (`FileTooLarge`) before this
+check, unread; for an image the refusal says to read a smaller copy too, and
+the tool description gives the smaller of the two limits.
+
+Set `readImages: false` to keep images out of the session, for models that
+read text only (an endpoint without `images`, or memory with
+`maxMediaChars: 0`): such a model would get a label line, while the session
+still stored the bytes. With it, images are reported as binary files, like
+any other.
+
 ## Edits
 
 `edit` takes several replacements at once. Each `oldText` must appear
@@ -141,7 +167,8 @@ The options are flat; every one has a default
 | `maxLines`, `maxBytes` | 2000, 51 200 | the most `read`, `find` and `grep` show, and the tail `bash` keeps |
 | `lsEntries`, `findResults`, `grepMatches` | 500, 1000, 100 | caps on `ls`, `find` and `grep` |
 | `grepLineChars` | 500 | the width `grep` cuts lines to |
-| `maxFileBytes` | 32 MB | the largest file read as text, and the most of an output `bash` saves |
+| `maxFileBytes` | 32 MB | the largest file `read`, `edit` and `grep` load (an image too), and the most of an output `bash` saves |
+| `readImages` | `true` | `read` returns PNG, JPEG, GIF and WebP files as images |
 | `fuzzyEdit` | `true` | the normalised fallback of `edit` |
 | `bashTimeoutMs`, `bashMaxTimeoutMs` | 120 000, 600 000 | a command's timeout, and the most the model may ask for |
 | `bashEnv`, `bashInheritEnv`, `bashEnvAllow` | `{}`, `false`, the allowlist | a command's environment |

@@ -4,8 +4,10 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import type { Scope } from "effect"
-import { Bash, Capabilities, FileSystem, Failure, makeMemoryFileSystem, SessionEnvironment } from "@xandreed/core"
+import { Bash, Capabilities, FileSystem, Failure, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, SessionEnvironment, toolResultMedia } from "@xandreed/core"
 import type { Capability } from "@xandreed/core"
+import { makeRegistry } from "@xandreed/plugin-tool-discovery"
+import type { DiscoveryConfig } from "@xandreed/plugin-tool-discovery"
 import { activateGraph, resolveGraph } from "@xandreed/runtime"
 import { BashLive } from "./bash.adapter.js"
 import { localFileSystem } from "./file-system.adapter.js"
@@ -62,14 +64,14 @@ describe("read", () => {
     const seen = await scoped(Effect.gen(function* () {
       const { root, capability, call } = yield* bench({ maxLines: 3 })
       yield* io(() => writeFile(join(root, "notes.txt"), "one\ntwo\nthree\nfour\nfive\n"))
-      yield* io(() => writeFile(join(root, "logo.png"), new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])))
+      yield* io(() => writeFile(join(root, "font.woff2"), new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0, 1, 0, 0, 0, 0, 0, 13])))
       yield* io(() => mkdir(join(root, "src")))
       const first = yield* succeeds(ReadResult)(call("read", { path: "notes.txt" }))
       const second = yield* succeeds(ReadResult)(call("read", { path: "notes.txt", offset: 4 }))
       return {
         first, second,
         firstView: shown(capability, "read", first, { path: "notes.txt" }),
-        binary: yield* succeeds(ReadResult)(call("read", { path: "logo.png" })),
+        binary: yield* succeeds(ReadResult)(call("read", { path: "font.woff2" })),
         directory: yield* errorOf(call("read", { path: "src" })),
         past: yield* fails(call("read", { path: "notes.txt", offset: 9 })),
         missing: yield* errorOf(call("read", { path: "nope.txt" })),
@@ -78,7 +80,7 @@ describe("read", () => {
     expect(seen.first).toEqual({ _tag: "Text", path: "notes.txt", text: "one\ntwo\nthree", firstLine: 1, lastLine: 3, totalLines: 5, next: 4, clipped: false, lossy: false })
     expect(seen.firstView).toBe("one\ntwo\nthree\n[Showing lines 1-3 of 5. Use offset=4 to continue.]")
     expect(seen.second).toMatchObject({ text: "four\nfive", next: null })
-    expect(seen.binary).toEqual({ _tag: "Binary", path: "logo.png", bytes: 12, mediaType: "image/png" })
+    expect(seen.binary).toEqual({ _tag: "Binary", path: "font.woff2", bytes: 12, mediaType: "font/woff2" })
     expect([seen.directory, seen.past.error, seen.missing]).toEqual(["IsDirectory", "OffsetPastEnd", "NotFound"])
     expect(seen.past.message).toContain("has 5 lines")
   })
@@ -102,6 +104,86 @@ describe("read", () => {
     }))
     expect(seen.result).toMatchObject({ _tag: "Text", text: "caf\ufffd\nx=1", lossy: true })
     expect(seen.view).toContain("is not valid UTF-8")
+  })
+})
+
+describe("read images", () => {
+  /** A 1x1 PNG, 70 bytes. */
+  const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  const pixel = new Uint8Array(Buffer.from(pixelPng, "base64"))
+  /** A 1x1 GIF89a (43 bytes) and a 1x1 lossless WebP (34 bytes), as image tools write them. */
+  const pixelGif = new Uint8Array(Buffer.from("R0lGODlhAQABAIAAAP///wAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==", "base64"))
+  const pixelWebp = new Uint8Array(Buffer.from("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==", "base64"))
+  /** The PNG grown past `MEDIA_LIMITS.imageBytes`: a valid header, then zeros. */
+  const oversized = (() => {
+    const file = new Uint8Array(MEDIA_LIMITS.imageBytes + 1)
+    file.set(pixel)
+    return file
+  })()
+  const discovery: DiscoveryConfig = {
+    grants: [], loadSkill: true, maxCallsPerRun: 8, maxSkillLoadsPerRun: 4, readConcurrency: 2, matcherTimeoutMs: 1_000, catalogVersion: "test",
+  }
+
+  /** Read `path` through the capability, then show its encoded result through the registry's views, as memory records it. */
+  const readThroughRegistry = (options: Partial<WorkspaceToolsConfig>, files: Readonly<Record<string, Uint8Array>>, path: string) => Effect.gen(function* () {
+    const { root, capability, call } = yield* bench(options)
+    yield* Effect.forEach(Object.entries(files), ([name, content]) => io(() => writeFile(join(root, name), content)), { discard: true })
+    const result = yield* succeeds(ReadResult)(call("read", { path }))
+    const encoded = Schema.encodeSync(ReadResult)(result)
+    const registry = yield* makeRegistry(discovery, [capability])
+    const view = yield* registry.views.view("read", encoded, { path }, false)
+    const checked = yield* toolResultMedia(encoded, view.media ?? [])
+    return { result, encoded, view, checked }
+  })
+
+  test("a PNG on disk is returned as an image; through the registry its view sends it, by one slot that memory's check keeps", async () => {
+    const seen = await scoped(readThroughRegistry({}, { "chart.png": pixel }, "chart.png"))
+    const image = Effect.runSync(mediaFromBytes(pixel, { name: "chart.png" }))
+    expect(seen.result).toEqual({ _tag: "Image", path: "chart.png", image })
+    expect(seen.encoded).toEqual({ _tag: "Image", path: "chart.png", image: { ...image, data: pixelPng } })
+    expect(seen.view.text).toBe("[Image chart.png (image/png, 70 B).]")
+    expect(seen.view.text).not.toContain(pixelPng)
+    expect(seen.view.media).toEqual([{ path: ["image"], fingerprint: image.fingerprint, mediaType: "image/png", bytes: 70 }])
+    expect(seen.view.subjects.map((subject) => subject.id)).toEqual(["chart.png"])
+    expect(seen.checked).toEqual({ slots: seen.view.media ?? [], labels: [] })
+  })
+
+  test("a GIF and a WebP on disk are images too: the NUL probe takes them for binary, and their bytes give the type", async () => {
+    const files = { "anim.gif": pixelGif, "photo.webp": pixelWebp }
+    const gif = await scoped(readThroughRegistry({}, files, "anim.gif"))
+    const webp = await scoped(readThroughRegistry({}, files, "photo.webp"))
+    expect(gif.result).toEqual({ _tag: "Image", path: "anim.gif", image: Effect.runSync(mediaFromBytes(pixelGif, { name: "anim.gif" })) })
+    expect(webp.result).toEqual({ _tag: "Image", path: "photo.webp", image: Effect.runSync(mediaFromBytes(pixelWebp, { name: "photo.webp" })) })
+    expect([gif.view.text, webp.view.text]).toEqual(["[Image anim.gif (image/gif, 43 B).]", "[Image photo.webp (image/webp, 34 B).]"])
+    expect([gif.view.media?.map((slot) => slot.mediaType), webp.view.media?.map((slot) => slot.mediaType)]).toEqual([["image/gif"], ["image/webp"]])
+  })
+
+  test("an image over maxFileBytes is refused unread, and told to read a smaller copy", async () => {
+    const seen = await scoped(Effect.gen(function* () {
+      const { root, call } = yield* bench({ maxFileBytes: 1_024 })
+      const large = new Uint8Array(2_048)
+      large.set(pixel)
+      yield* io(() => writeFile(join(root, "big.png"), large))
+      yield* io(() => writeFile(join(root, "big.log"), "x".repeat(2_048)))
+      return { image: yield* fails(call("read", { path: "big.png" })), text: yield* fails(call("read", { path: "big.log" })) }
+    }))
+    expect(seen.image).toEqual({ error: "FileTooLarge", message: "big.png is 2 KB, more than the 1 KB read loads; to see it, make a smaller copy with bash (scaled down or recompressed) and read that" })
+    expect(seen.text).toEqual({ error: "FileTooLarge", message: "big.log is 2 KB, more than the 1 KB read loads; use grep to find lines in it, or bash (head, tail, sed -n) for parts of it" })
+  })
+
+  test("an image over the size cap is a note without its bytes, and its view sends no image", async () => {
+    const seen = await scoped(readThroughRegistry({}, { "big.png": oversized }, "big.png"))
+    expect(seen.result).toMatchObject({ _tag: "ImageRejected", path: "big.png", mediaType: "image/png", bytes: MEDIA_LIMITS.imageBytes + 1, reason: "TooLarge" })
+    expect(seen.view.text).toContain("big.png is an image (image/png, 3.8 MB) that read cannot show")
+    expect(seen.view.media).toBeUndefined()
+    expect(JSON.stringify(seen.encoded).length).toBeLessThan(1_000)
+  })
+
+  test("with readImages false a PNG is a binary file again, and nothing is sent", async () => {
+    const seen = await scoped(readThroughRegistry({ readImages: false }, { "chart.png": pixel }, "chart.png"))
+    expect(seen.result).toEqual({ _tag: "Binary", path: "chart.png", bytes: 70, mediaType: "image/png" })
+    expect(seen.view.text).toBe("[chart.png is a binary file (70 B, image/png); it cannot be shown as text.]")
+    expect(seen.view.media).toBeUndefined()
   })
 })
 

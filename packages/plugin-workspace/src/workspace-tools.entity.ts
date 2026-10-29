@@ -1,5 +1,5 @@
 import { Result, Schema } from "effect"
-import { BASH_ENV_ALLOWLIST, BashTermination, compileGlob } from "@xandreed/core"
+import { AttachmentRejectedReason, BASH_ENV_ALLOWLIST, BashTermination, compileGlob, ImageMediaType, Media } from "@xandreed/core"
 
 /** The seven workspace tools, by the names the model calls them. */
 export const WorkspaceToolName = Schema.Literals(["read", "write", "edit", "ls", "find", "grep", "bash"])
@@ -51,6 +51,13 @@ const Glob = Schema.String.check(Schema.makeFilter((glob: string) =>
  *   matches them, and shown cut.
  * - `maxFileBytes`: the largest file `read`, `edit` and `grep` load, and
  *   the most of a command's output `bash` saves.
+ * - `readImages`: `read` returns a PNG, JPEG, GIF or WebP image (by its
+ *   bytes, whatever its name) as an image the model is sent; `false`
+ *   reports it as a binary file, as any other. A host whose models read
+ *   text only (a route without image parts, such as an endpoint without
+ *   `images`, or memory with `maxMediaChars: 0`) sets `false`: the model
+ *   would get a label line in the image's place, and the session would
+ *   still store the bytes.
  * - `fuzzyEdit`: when an edit's text is not found, match it once more over
  *   whole lines with whitespace, Unicode compatibility forms and smart
  *   quotes normalised (the match must still be unique).
@@ -82,6 +89,7 @@ export const WorkspaceToolsConfig = Schema.Struct({
   grepMatches: between(1, 10_000),
   grepLineChars: between(16, 100_000),
   maxFileBytes: between(1_024, 1_073_741_824),
+  readImages: Schema.Boolean,
   fuzzyEdit: Schema.Boolean,
   bashTimeoutMs: atLeast(1),
   bashMaxTimeoutMs: atLeast(1),
@@ -110,6 +118,7 @@ export const workspaceToolsDefaults: WorkspaceToolsConfig = {
   grepMatches: 100,
   grepLineChars: 500,
   maxFileBytes: 33_554_432,
+  readImages: true,
   fuzzyEdit: true,
   bashTimeoutMs: 120_000,
   bashMaxTimeoutMs: 600_000,
@@ -140,7 +149,13 @@ export type ReadParams = typeof ReadParams.Type
  * was longer than the window's bytes and only its start is shown; `lossy`
  * when the file is not valid UTF-8 and the bytes that are not show as
  * U+FFFD, which `edit` refuses), or a binary file (a NUL byte in its first
- * 8 KB), with the media type its name suggests.
+ * 8 KB). With `readImages`, a binary file whose bytes are a PNG, JPEG, GIF
+ * or WebP image is an `Image` (core's `mediaFromBytes`: the type its bytes
+ * are, its size and fingerprint), which the view sends the model as an
+ * image of the result; one core refuses (over `MEDIA_LIMITS.imageBytes`,
+ * over `MEDIA_LIMITS.maxPixels` a side, or a header without a size) is an
+ * `ImageRejected` note: its type, size and why. Any other binary file is
+ * `Binary`, with the media type its name suggests.
  */
 export const ReadResult = Schema.Union([
   Schema.TaggedStruct("Text", {
@@ -157,6 +172,17 @@ export const ReadResult = Schema.Union([
     path: Schema.String,
     bytes: Schema.Int,
     mediaType: Schema.NullOr(Schema.String),
+  }),
+  Schema.TaggedStruct("Image", {
+    path: Schema.String,
+    image: Media,
+  }),
+  Schema.TaggedStruct("ImageRejected", {
+    path: Schema.String,
+    mediaType: ImageMediaType,
+    bytes: Schema.Int,
+    reason: AttachmentRejectedReason,
+    message: Schema.String,
   }),
 ])
 export type ReadResult = typeof ReadResult.Type

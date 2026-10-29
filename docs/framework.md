@@ -976,7 +976,7 @@ layers itself.
 
 | Tool | Skill | Parameters | Result |
 | --- | --- | --- | --- |
-| `read` | `workspace.read` (always on) | `path`, `offset`, `limit` | a window of a text file's lines (`Text`), or `Binary` with the media type its name suggests |
+| `read` | `workspace.read` (always on) | `path`, `offset`, `limit` | a window of a text file's lines (`Text`); an image (`Image`, sent to the model as an image) or a note on one it cannot send (`ImageRejected`); or `Binary` with the media type its name suggests |
 | `ls` | `workspace.read` | `path`, `limit` | a directory's entries and their kinds |
 | `find` | `workspace.read` | `pattern` (a glob), `path`, `limit` | file paths relative to the root |
 | `grep` | `workspace.read` | `pattern`, `path`, `glob`, `ignoreCase`, `literal`, `context`, `limit` | matching lines with context |
@@ -1040,11 +1040,30 @@ agent a `FileSystem` and `Bash` that run inside a container or VM.
 before matching them, and, searching a directory, takes at most a quarter of
 its limit from one file. Files over `maxFileBytes` (32 MB) or with a NUL
 byte in their first 8 KB are not read as text; a file that is not valid
-UTF-8 is shown with U+FFFD and a notice (`lossy`). `bash` keeps the tail of
-a command's output (stdout and stderr in the order they came) within the
-same `maxLines` and `maxBytes`; once the output is longer, it is written to
-`spillDir` (`.efferent/runtime/tool-output`, inside the workspace, so `read`
-can open it) up to `maxFileBytes`, past which nothing more is saved and the
+UTF-8 is shown with U+FFFD and a notice (`lossy`). A binary file whose
+bytes are a PNG, JPEG, GIF or WebP image (sniffed by core's
+`sniffImageType`, whatever its name says, and built with `mediaFromBytes`)
+is returned as an image with `readImages` (the default):
+`{ _tag: "Image", path, image }`, `image` a `Media` named by the path. The
+view's text is one line, `[Image docs/chart.png (image/png, 182 KB).]`, the
+view sends the image with it, and memory stores the image once (see
+[Images and multi-part messages](#images-and-multi-part-messages)). An
+image over `MEDIA_LIMITS.imageBytes` (3.75 MiB) or `maxPixels` (8000) a
+side, or one whose header gives no size, is an `ImageRejected` note
+instead (its path, type, size, `reason` and `message`), without its bytes;
+the model is told why, and, for a size, to read a smaller copy. A file over
+`maxFileBytes` is refused (`FileTooLarge`) before any of this, unread; for
+a file named as one of those images the refusal, too, says to read a
+smaller copy, and the `read` description states the smaller of the two
+limits. With `readImages: false` an image is `Binary` like any other binary
+file. A host whose models read text only (routes that send a label line in
+an image's place, or memory with `maxMediaChars: 0`) sets it: the model
+would get a label line, and the session would still store the bytes.
+`bash` keeps the tail of a command's output (stdout and stderr in the
+order they came) within the same `maxLines` and `maxBytes`; once the
+output is longer, it is written to `spillDir`
+(`.efferent/runtime/tool-output`, inside the workspace, so `read` can open
+it) up to `maxFileBytes`, past which nothing more is saved and the
 result says `fullOutputCut`, and the result names the file; only the newest
 `spillKeep` (50) files are kept. While a command runs, its output is
 published as transient `tool.progress` events (`channel` `stdout` or
@@ -1077,12 +1096,13 @@ per-file lock, so two sessions editing one file wait for each other.
 `WorkspaceToolsConfig` is flat (defaults merge one level deep): `tools`,
 `always` (`["read"]`; also `edit`, `shell`), `confine`, `protect`,
 `exclude`, `maxLines`, `maxBytes`, `lsEntries`, `findResults`,
-`grepMatches`, `grepLineChars`, `maxFileBytes`, `fuzzyEdit`,
-`bashTimeoutMs`, `bashMaxTimeoutMs`, `bashEnv`, `bashInheritEnv` (`false`),
-`bashEnvAllow`, `bashSessionEnv`, `spillDir` (relative to the root; `null`
-saves nothing), `spillKeep`, `progressMs`, `environmentSection` and
-`sectionOrder`. Hosts react to edits with `onTool(workspaceToolSchemas.edit,
-…)`, which hands them the typed `EditResult` with its diff.
+`grepMatches`, `grepLineChars`, `maxFileBytes`, `readImages` (`true`),
+`fuzzyEdit`, `bashTimeoutMs`, `bashMaxTimeoutMs`, `bashEnv`,
+`bashInheritEnv` (`false`), `bashEnvAllow`, `bashSessionEnv`, `spillDir`
+(relative to the root; `null` saves nothing), `spillKeep`, `progressMs`,
+`environmentSection` and `sectionOrder`. Hosts react to edits with
+`onTool(workspaceToolSchemas.edit, …)`, which hands them the typed
+`EditResult` with its diff.
 
 ```ts
 import { localSystemPlugin, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
@@ -1346,6 +1366,11 @@ const screenshot = defineTool({
   },
 })
 ```
+
+The workspace tools' `read` returns images this way: with `readImages` (the
+default) a PNG, JPEG, GIF or WebP file of the workspace is an `Image`
+result whose view's `media` selects it (see
+[Workspace tools](#workspace-tools)).
 
 Memory stores the result once, as the tool encoded it, images included, and
 records where each image sent with it sits in that value (`MediaSlot`s, the

@@ -413,6 +413,7 @@
       "grepMatches": 100,
       "grepLineChars": 500,
       "maxFileBytes": 33554432,
+      "readImages": true,
       "fuzzyEdit": true,
       "bashTimeoutMs": 120000,
       "bashMaxTimeoutMs": 600000,
@@ -517,6 +518,9 @@
           "minimum": 1024,
           "maximum": 1073741824
         },
+        "readImages": {
+          "type": "boolean"
+        },
         "fuzzyEdit": {
           "type": "boolean"
         },
@@ -590,6 +594,7 @@
         "grepMatches",
         "grepLineChars",
         "maxFileBytes",
+        "readImages",
         "fuzzyEdit",
         "bashTimeoutMs",
         "bashMaxTimeoutMs",

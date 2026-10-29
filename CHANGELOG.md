@@ -665,8 +665,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   service there is no `bash` tool. Failures are `Failure` data. `read` shows
   windows of at most 2000 lines or 50 KB with the offset to continue from,
   and reports binary files (a NUL byte in the first 8 KB) with the media type
-  their name suggests, and a file that is not valid UTF-8 with U+FFFD and a
-  notice (`lossy`); `ls`, `find` (globs through `walkGlob`) and `grep`
+  their name suggests (images aside: see `readImages` below), and a file
+  that is not valid UTF-8 with U+FFFD and a notice (`lossy`); `ls`, `find`
+  (globs through `walkGlob`) and `grep`
   (regular expressions or literal text, case, context, lines cut to 500
   characters before matching, a quarter of the limit per file; a pattern
   that repeats a repeating group, such as `(a+)+`, is refused as
@@ -942,6 +943,35 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   endpoint's `images`), SDK page and conformance page; the roadmap (MCP
   images, resizing, PDFs, a `MediaStore`). `verify:packages` sends a tool's
   image through `toChatMessages` and `promptWithImageLabels` on Node.
+- `@xandreed/plugin-workspace`: `read` returns images. With the new
+  `readImages` option (`WorkspaceToolsConfig`, default `true`), a binary
+  file whose bytes are a PNG, JPEG, GIF or WebP image (sniffed by core's
+  `sniffImageType`, whatever its name, and built with `mediaFromBytes`) is
+  `ReadResult`'s new `Image { path, image: Media }`, the image named by its
+  path; the tool's view selects it, so the model is sent it as an image of
+  the result (`[Image chart.png (image/png, 70 B).]` as its text) and the
+  session stores it once, through its slot. An image over
+  `MEDIA_LIMITS.imageBytes` or `maxPixels` a side, or one whose header gives
+  no size, is the new `ImageRejected { path, mediaType, bytes, reason,
+  message }` instead: a note with why (and, for a size, to read a smaller
+  copy), never its bytes. A file over `maxFileBytes` is still refused
+  unread (`FileTooLarge`); when its name is one of those images, the
+  refusal says to read a smaller copy instead of using `grep`. Other binary
+  files stay `Binary`, and so do images with `readImages: false`, which a
+  host whose models read text only sets. With `readImages`, the `read`
+  description tells the model it can look at images, up to the smaller of
+  `MEDIA_LIMITS.imageBytes` and `maxFileBytes`. Unit tests (PNG, JPEG, GIF,
+  WebP, a type from the bytes and not the name, oversized bytes and pixels,
+  a corrupt header, `readImages: false`, the description's limit), the tool
+  through the registry's views (a GIF and a WebP on disk among them, and an
+  image over `maxFileBytes`), and a key-free journey in which a scripted
+  model reads an image and the next request carries it, the log holding its
+  base64 once; the packed journey in `verify:packages` reads an image on Bun
+  and Node and checks that the next request sends it as a `file` part of
+  the tool result's `modelOutput`. Docs: `docs/framework.md` "Workspace
+  tools" and "Images and multi-part messages", the website's workspace page,
+  the README. Not a break: `ReadResult` gains two members, but
+  `@xandreed/plugin-workspace` has not been published yet.
 - `@xandreed/core`: skills from a tree of files.
   `readSkillFiles(files, { tools, maxReferenceBytes, rootName })` returns a
   `SkillTree`: every skill that loaded, with the directory of its

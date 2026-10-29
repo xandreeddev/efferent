@@ -1,7 +1,8 @@
-import { Option } from "effect"
-import type { BashOptions } from "@xandreed/core"
+import { Effect, Match, Option, Schema } from "effect"
+import { ImageMediaType, MEDIA_LIMITS, mediaFromBytes, sniffImageType } from "@xandreed/core"
+import type { AttachmentRejectedReason, BashOptions, Media } from "@xandreed/core"
 import { renderSearchLines } from "./text-search.entity.functions.js"
-import { formatBytes, headLines } from "./text-window.entity.functions.js"
+import { formatBytes, headLines, mediaTypeOf } from "./text-window.entity.functions.js"
 import type { BashToolResult, EditResult, FindResult, GrepResult, LsResult, ReadResult, WorkspaceSkillName, WorkspaceToolName, WorkspaceToolsConfig, WriteResult } from "./workspace-tools.entity.js"
 
 /** The skill each tool belongs to, by its short name. */
@@ -10,11 +11,21 @@ export const skillOfTool: Readonly<Record<WorkspaceToolName, WorkspaceSkillName>
 }
 
 const seconds = (ms: number): string => `${Math.round(ms / 1_000)} s`
+/**
+ * The largest image `read` returns, as the model is told it:
+ * `MEDIA_LIMITS.imageBytes` (3.75 MB), or `maxFileBytes` when that is less
+ * (`read` refuses a larger file before it reads it). Rounded down, so never
+ * more than the limit.
+ */
+const imageLimit = (config: WorkspaceToolsConfig): string => {
+  const bytes = Math.min(MEDIA_LIMITS.imageBytes, config.maxFileBytes)
+  return bytes < 1_048_576 ? `${Math.floor(bytes * 100 / 1_024) / 100} KB` : `${Math.floor(bytes * 100 / 1_048_576) / 100} MB`
+}
 const listed = (names: ReadonlyArray<string>): string => names.length === 0 ? "nothing" : names.join(", ")
 
 /** What the model is told each tool does, with the configured limits in it. */
 export const toolDescriptions = (config: WorkspaceToolsConfig): Readonly<Record<WorkspaceToolName, string>> => ({
-  read: `Read a text file of the workspace. Shows at most ${config.maxLines} lines or ${formatBytes(config.maxBytes)} at a time; when more is left, the result says which offset to continue from. offset is the first line to show (1-based), limit how many lines. A binary file is reported, not shown. To see a directory, use ls.`,
+  read: `Read a text file of the workspace${config.readImages ? ", or look at an image" : ""}. Shows at most ${config.maxLines} lines or ${formatBytes(config.maxBytes)} at a time; when more is left, the result says which offset to continue from. offset is the first line to show (1-based), limit how many lines. ${config.readImages ? `A PNG, JPEG, GIF or WebP image (up to ${imageLimit(config)} and ${MEDIA_LIMITS.maxPixels} pixels a side) is returned as an image you can see; another binary file is reported, not shown.` : "A binary file is reported, not shown."} To see a directory, use ls.`,
   write: "Create a file, or replace all of an existing one, with content; missing directories are created. To change part of a file, use edit. Emptying a non-empty file is refused.",
   edit: "Change part of a file by replacing exact text. Each edit's oldText must appear exactly once in the file: copy it from read (without the notice lines), with enough surrounding lines to be unique. All edits are matched against the file as it was before this call and must not overlap; newText replaces oldText (empty to delete it). Line endings and a byte-order mark are kept.",
   ls: `List a directory (by default the workspace root): one entry per line, directories ending in /, symbolic links in @. At most ${config.lsEntries} entries.`,
@@ -55,19 +66,72 @@ export const bashEnvironment = (config: WorkspaceToolsConfig, session: Option.Op
 
 /* ── what the model sees of each result ── */
 
-export const renderRead = (result: ReadResult): string => result._tag === "Binary"
-  ? `[${result.path} is a binary file (${formatBytes(result.bytes)}${result.mediaType === null ? "" : `, ${result.mediaType}`}); it cannot be shown as text.]`
-  : result.totalLines === 0 ? `[${result.path} is empty.]`
-  : [
-    result.text,
-    ...(result.clipped ? [`[Line ${result.firstLine} is longer than the window; only its start is shown. Use bash (cut, head -c) to see the rest.]`] : []),
-    ...(result.lossy ? [`[${result.path} is not valid UTF-8: bytes that are not show as �. edit refuses such a file; change it with bash.]`] : []),
-    ...(result.next === null ? [] : [`[Showing lines ${result.firstLine}-${result.lastLine} of ${result.totalLines}. Use offset=${result.next} to continue.]`]),
-  ].join("\n")
+/**
+ * What `read` returns for a binary file (a NUL byte in its first 8 KB).
+ * With `readImages`, bytes that are a PNG, JPEG, GIF or WebP image (sniffed,
+ * whatever the name says) become an `Image` through `mediaFromBytes`, named
+ * by the path; an image it refuses (over `MEDIA_LIMITS.imageBytes`, over
+ * `MEDIA_LIMITS.maxPixels` a side, or a header without a size) is an
+ * `ImageRejected` note, without the bytes. Anything else is `Binary`, with
+ * the media type the name suggests.
+ */
+export const binaryRead = (path: string, bytes: Uint8Array, readImages: boolean): Effect.Effect<ReadResult> =>
+  Option.match(readImages ? sniffImageType(bytes) : Option.none(), {
+    onNone: () => Effect.succeed<ReadResult>({ _tag: "Binary", path, bytes: bytes.length, mediaType: Option.getOrNull(mediaTypeOf(path)) }),
+    onSome: (mediaType) => mediaFromBytes(bytes, { name: path }).pipe(Effect.match({
+      onSuccess: (image): ReadResult => ({ _tag: "Image", path, image }),
+      onFailure: (rejected): ReadResult => ({ _tag: "ImageRejected", path, mediaType, bytes: bytes.length, reason: rejected.reason, message: rejected.message }),
+    })),
+  })
 
-export const compactRead = (result: ReadResult): string => result._tag === "Binary"
-  ? `(read ${result.path}: binary, ${formatBytes(result.bytes)})`
-  : `(read ${result.path}: lines ${result.firstLine}-${result.lastLine} of ${result.totalLines})`
+/**
+ * What the model can do about a file over `maxFileBytes`, which `read`
+ * refuses unread: with `readImages`, a file named as a PNG, JPEG, GIF or
+ * WebP image is told to read a smaller copy; any other to read parts of it.
+ */
+export const fileTooLargeHint = (path: string, readImages: boolean): string =>
+  readImages && Option.exists(mediaTypeOf(path), Schema.is(ImageMediaType))
+    ? "to see it, make a smaller copy with bash (scaled down or recompressed) and read that"
+    : "use grep to find lines in it, or bash (head, tail, sed -n) for parts of it"
+
+/** The images `read`'s view sends with its result: an `Image`'s, once. */
+export const readMedia = (result: ReadResult): ReadonlyArray<Media> => Match.valueTags(result, {
+  Text: () => [],
+  Binary: () => [],
+  Image: (read) => [read.image],
+  ImageRejected: () => [],
+})
+
+/** What the model can do about an image `read` cannot send, by why. */
+const rejectedHint: Readonly<Record<AttachmentRejectedReason, string>> = {
+  TooLarge: " To see it, make a smaller copy with bash (scaled down or recompressed) and read that.",
+  TooManyPixels: " To see it, make a smaller copy with bash (scaled down) and read that.",
+  Unreadable: " The file may be damaged or cut short.",
+  Empty: "",
+  InvalidBase64: "",
+  UnsupportedType: "",
+  TooMany: "",
+  TooLargeTogether: "",
+}
+
+export const renderRead = (result: ReadResult): string => Match.valueTags(result, {
+  Binary: (binary) => `[${binary.path} is a binary file (${formatBytes(binary.bytes)}${binary.mediaType === null ? "" : `, ${binary.mediaType}`}); it cannot be shown as text.]`,
+  Image: (read) => `[Image ${read.path} (${read.image.mediaType}, ${formatBytes(read.image.bytes)}).]`,
+  ImageRejected: (read) => `[${read.path} is an image (${read.mediaType}, ${formatBytes(read.bytes)}) that read cannot show: ${read.message}.${rejectedHint[read.reason]}]`,
+  Text: (text) => text.totalLines === 0 ? `[${text.path} is empty.]` : [
+    text.text,
+    ...(text.clipped ? [`[Line ${text.firstLine} is longer than the window; only its start is shown. Use bash (cut, head -c) to see the rest.]`] : []),
+    ...(text.lossy ? [`[${text.path} is not valid UTF-8: bytes that are not show as �. edit refuses such a file; change it with bash.]`] : []),
+    ...(text.next === null ? [] : [`[Showing lines ${text.firstLine}-${text.lastLine} of ${text.totalLines}. Use offset=${text.next} to continue.]`]),
+  ].join("\n"),
+})
+
+export const compactRead = (result: ReadResult): string => Match.valueTags(result, {
+  Binary: (binary) => `(read ${binary.path}: binary, ${formatBytes(binary.bytes)})`,
+  Image: (read) => `(read ${read.path}: ${read.image.mediaType} image, ${formatBytes(read.image.bytes)})`,
+  ImageRejected: (read) => `(read ${read.path}: ${read.mediaType} image not shown, ${read.reason})`,
+  Text: (text) => `(read ${text.path}: lines ${text.firstLine}-${text.lastLine} of ${text.totalLines})`,
+})
 
 export const renderWrite = (result: WriteResult): string =>
   `${result.created ? "Created" : "Replaced"} ${result.path} (${formatBytes(result.bytes)}).`

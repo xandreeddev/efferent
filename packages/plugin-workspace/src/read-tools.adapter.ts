@@ -4,13 +4,13 @@ import type { Path, RcMap, Semaphore } from "effect"
 import { defineTool, Failure } from "@xandreed/core"
 import type { RegisteredTool, Subject } from "@xandreed/core"
 import { compilePattern, searchText } from "./text-search.entity.functions.js"
-import { decodeText, formatBytes, lineWindow, looksBinary, mediaTypeOf } from "./text-window.entity.functions.js"
+import { decodeText, formatBytes, lineWindow, looksBinary } from "./text-window.entity.functions.js"
 import { displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget } from "./workspace-path.entity.functions.js"
 import type { ProtectRule, WorkspaceAccess } from "./workspace-path.entity.functions.js"
 import type { WorkspaceTarget } from "./workspace-path.entity.js"
 import { FindParams, FindResult, GrepParams, GrepResult, LsParams, LsResult, ReadParams, ReadResult } from "./workspace-tools.entity.js"
 import type { GrepLine, WorkspaceToolsConfig } from "./workspace-tools.entity.js"
-import { compactFind, compactGrep, compactLs, compactRead, renderFind, renderGrep, renderLs, renderRead, toolDescriptions } from "./workspace-tools.entity.functions.js"
+import { binaryRead, compactFind, fileTooLargeHint, compactGrep, compactLs, compactRead, readMedia, renderFind, renderGrep, renderLs, renderRead, toolDescriptions } from "./workspace-tools.entity.functions.js"
 
 /** What every workspace tool is built with: the configuration, the path functions, the compiled `protect` globs and the per-file write locks. */
 export interface WorkspaceToolContext {
@@ -39,7 +39,7 @@ const LsTool = (description: string) => Tool.make("ls", { description, parameter
 const FindTool = (description: string) => Tool.make("find", { description, parameters: FindParams, success: FindResult, failure: Failure, failureMode: "return" })
 const GrepTool = (description: string) => Tool.make("grep", { description, parameters: GrepParams, success: GrepResult, failure: Failure, failureMode: "return" })
 
-/** `read`: a window of a text file's lines, or what a binary file is. */
+/** `read`: a window of a text file's lines, an image (`readImages`), or what a binary file is. */
 export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: ReadTool(toolDescriptions(config).read),
   handler: (params) => Effect.gen(function* () {
@@ -49,10 +49,10 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
     if (info.kind === "directory") return yield* Effect.fail(failure("IsDirectory", `${target.display} is a directory; use ls to list it`))
     if (info.kind !== "file") return yield* Effect.fail(notAFile(target.display, "read"))
     if (info.size > config.maxFileBytes) {
-      return yield* Effect.fail(failure("FileTooLarge", `${target.display} is ${formatBytes(info.size)}, more than the ${formatBytes(config.maxFileBytes)} read loads; use grep to find lines in it, or bash (head, tail, sed -n) for parts of it`))
+      return yield* Effect.fail(failure("FileTooLarge", `${target.display} is ${formatBytes(info.size)}, more than the ${formatBytes(config.maxFileBytes)} read loads; ${fileTooLargeHint(target.display, config.readImages)}`))
     }
     const bytes = yield* access.fs.readBytes(target.path).pipe(Effect.mapError(fsFailure(target.display)))
-    if (looksBinary(bytes)) return { _tag: "Binary" as const, path: target.display, bytes: bytes.length, mediaType: Option.getOrNull(mediaTypeOf(target.display)) }
+    if (looksBinary(bytes)) return yield* binaryRead(target.display, bytes, config.readImages)
     const decoded = decodeText(bytes)
     const window = lineWindow(decoded.text, { offset: params.offset ?? 1, limit: Math.min(params.limit ?? config.maxLines, config.maxLines), maxBytes: config.maxBytes })
     return yield* Result.match(window, {
@@ -63,7 +63,7 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
       }),
     })
   }),
-  view: { version: "1", render: renderRead, compact: compactRead, subjects: (result) => fileSubjects(result.path) },
+  view: { version: "1", render: renderRead, compact: compactRead, subjects: (result) => fileSubjects(result.path), media: readMedia },
   annotations: { readOnly: true },
 })
 
