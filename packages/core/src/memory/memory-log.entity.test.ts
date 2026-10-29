@@ -1,7 +1,14 @@
 import { describe, expect, test } from "bun:test"
-import { Option, Schema } from "effect"
+import { Effect, Option, Schema } from "effect"
+import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaFromBase64, mediaLabel } from "../domain/media.entity.functions.js"
+import { MEDIA_LIMITS } from "../domain/media.entity.js"
+import type { Media } from "../domain/media.entity.js"
+import type { AgentMessage } from "../domain/message.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
-import { buildContext, canonicalJson, fingerprintOf } from "./memory-log.entity.functions.js"
+import type { RenderOptions } from "./memory-log.entity.functions.js"
+import {
+  buildContext, canonicalJson, digestTranscript, emptyQuery, entryId, estimateMessageTokens, fingerprintOf, queryLog, rawTranscript, referenceTranscript, renderLog,
+} from "./memory-log.entity.functions.js"
 import { LogBody, LogEntry } from "./memory-log.entity.js"
 
 /** A TurnStarted entry exactly as earlier releases stored it: the user's message under `prompt`. */
@@ -25,7 +32,7 @@ describe("the memory log's TurnStarted entry", () => {
     expect(encoded).not.toContain("userMessage")
     const built = buildContext([entry], {
       strategy: "test", currentTurn: 1, currentRun: "run-1", turnContext: "current", replies: true,
-      stepContext: "tail", digests: false, media: { mode: "none", maxImages: 0 },
+      stepContext: "tail", digests: false, media: { mode: "none", maxImages: 0, maxChars: 0 },
     })
     expect(built.messages).toEqual([{ role: "user", content: "hi" }])
     expect(built.fingerprint).toBe(fingerprintOf(canonicalJson([{ role: "user", content: "hi" }])))
@@ -33,5 +40,79 @@ describe("the memory log's TurnStarted entry", () => {
 
   test("a user message is never blank", () => {
     expect(Option.isNone(Schema.decodeUnknownOption(LogBody)({ _tag: "TurnStarted", prompt: "" }))).toBe(true)
+  })
+})
+
+const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+const pixelGif = "R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7"
+const png = Effect.runSync(mediaFromBase64(pixelPng, { name: "a.png" }))
+const gif = Effect.runSync(mediaFromBase64(pixelGif, { name: "b.gif" }))
+
+const started = (turn: number, text: string, attachments: ReadonlyArray<Media>): LogEntry => ({
+  id: entryId(`run-${turn}`, 0), runId: `run-${turn}`, turn, step: 0, at: 0,
+  body: { _tag: "TurnStarted", userMessage: new UserMessage(attachments.length === 0 ? { text } : { text, attachments }) },
+})
+const replied = (turn: number): LogEntry => ({
+  id: entryId(`run-${turn}`, 1), runId: `run-${turn}`, turn, step: 0, at: 0, body: { _tag: "TurnEnded", outcome: "completed", reply: Option.some(`reply ${turn}`) },
+})
+const options = (currentTurn: number, media: RenderOptions["media"]): RenderOptions => ({
+  strategy: "test", currentTurn, currentRun: `run-${currentTurn}`, turnContext: "current", replies: true, stepContext: "tail", digests: false, media,
+})
+const users = (messages: ReadonlyArray<AgentMessage>) => messages.flatMap((message) => message.role === "user" ? [message.content] : [])
+const log = [started(1, "first", [png]), replied(1), started(2, "second", [gif]), replied(2), started(3, "", [png, gif])]
+
+describe("a user message with images in the memory log", () => {
+  test("is stored with its images under attachments; a text-only one exactly as before", () => {
+    const encoded = Schema.encodeSync(LogEntry)(started(1, "look", [png]))
+    expect(encoded.body).toEqual({ _tag: "TurnStarted", prompt: "look", attachments: [png] })
+    expect(Schema.decodeUnknownSync(LogEntry)(encoded)).toEqual(started(1, "look", [png]))
+    expect(Schema.encodeSync(LogEntry)(started(1, "look", [])).body).toEqual({ _tag: "TurnStarted", prompt: "look" })
+    expect(Option.isSome(Schema.decodeUnknownOption(LogBody)({ _tag: "TurnStarted", prompt: "", attachments: [png] }))).toBe(true)
+  })
+
+  test("none: only the current turn's images are sent, images first and no empty text part; earlier ones are label lines", () => {
+    expect(users(renderLog(log, options(3, { mode: "none", maxImages: 8, maxChars: 20_000_000 })))).toEqual([
+      `first\n${mediaLabel(png)}`,
+      `second\n${mediaLabel(gif)}`,
+      [png, gif],
+    ])
+    expect(users(renderLog(log.slice(0, 3), options(2, { mode: "none", maxImages: 8, maxChars: 20_000_000 })))[1]).toEqual([gif, { type: "text", text: "second" }])
+  })
+
+  test("inline: earlier turns' images too, newest turn first and a whole turn at a time, within maxImages and maxChars", () => {
+    expect(users(renderLog(log, options(3, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })))).toEqual([
+      [png, { type: "text", text: "first" }], [gif, { type: "text", text: "second" }], [png, gif],
+    ])
+    expect(users(renderLog(log, options(3, { mode: "inline", maxImages: 3, maxChars: 20_000_000 })))).toEqual([
+      `first\n${mediaLabel(png)}`, [gif, { type: "text", text: "second" }], [png, gif],
+    ])
+    expect(users(renderLog(log, options(3, { mode: "inline", maxImages: 1, maxChars: 20_000_000 })))[2]).toEqual([png, { type: "text", text: mediaLabel(gif) }])
+    expect(users(renderLog(log, options(3, { mode: "inline", maxImages: 8, maxChars: png.data.length }))).at(2)).toEqual([png, { type: "text", text: mediaLabel(gif) }])
+    expect(users(renderLog(log, options(3, { mode: "inline", maxImages: 0, maxChars: 0 })))[2]).toBe(`${mediaLabel(png)}\n${mediaLabel(gif)}`)
+  })
+
+  test("a request never sends more than MEDIA_LIMITS.requestImages images, whatever maxImages says", () => {
+    const many = [1, 2, 3, 4, 5].flatMap((turn) => [started(turn, `turn ${turn}`, [png, gif]), replied(turn)]).slice(0, -1)
+    const sent = users(renderLog(many, options(5, { mode: "inline", maxImages: 20, maxChars: 20_000_000 })))
+    expect(sent.flatMap((content) => typeof content === "string" ? [] : content.filter((part) => part.type === "media")).length).toBe(MEDIA_LIMITS.requestImages)
+    expect(sent[0]).toBe(`turn 1\n${mediaLabel(png)}\n${mediaLabel(gif)}`)
+  })
+
+  test("the context fingerprint hashes the messages with each image's data elided; the estimate counts an image, not its base64", () => {
+    const render = options(3, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })
+    const built = buildContext(log, render)
+    expect(built.fingerprint).toBe(fingerprintOf(canonicalJson(built.messages.map(elideMediaData))))
+    expect(built.fingerprint).not.toBe(fingerprintOf(canonicalJson(built.messages)))
+    const imageOnly: ReadonlyArray<AgentMessage> = [{ role: "user", content: [png] }]
+    expect(estimateMessageTokens(imageOnly)).toBe(Math.ceil(canonicalJson(elideMediaData(imageOnly[0])).length / 3) + IMAGE_TOKEN_ESTIMATE)
+    expect(built.estimatedTokens).toBeLessThan(5 * IMAGE_TOKEN_ESTIMATE)
+  })
+
+  test("text search, transcripts and digests see an image as its label, never its base64", () => {
+    expect(queryLog(log, { ...emptyQuery, text: Option.some(pixelPng.slice(20, 40)) })).toEqual([])
+    expect(queryLog(log, { ...emptyQuery, text: Option.some(String(gif.fingerprint)) }).map((entry) => entry.turn)).toEqual([2, 3])
+    expect(users(referenceTranscript(log))).toEqual([`first\n${mediaLabel(png)}`, `second\n${mediaLabel(gif)}`, `${mediaLabel(png)}\n${mediaLabel(gif)}`])
+    expect(canonicalJson(rawTranscript(log))).not.toContain(pixelGif.slice(0, 30))
+    expect(digestTranscript(log, { result: 100, total: 10_000 })).toContain(`User: first\n${mediaLabel(png)}`)
   })
 })

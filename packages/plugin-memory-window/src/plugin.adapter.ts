@@ -11,6 +11,7 @@ import {
   estimateMessageTokens,
   Failure,
   HarnessError,
+  MEDIA_LIMITS,
   ledgerOf,
   openLogSession,
   pendingCompaction,
@@ -33,14 +34,24 @@ export const MemoryWindowConfig = Schema.Struct({
   digestOnWriteChars: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
   /** Show recorded digests in place of the results they digest. */
   digests: Schema.Boolean,
+  /**
+   * How images reach the model: the current turn's attachments are sent as
+   * images first, within `maxImages` and `maxMediaChars` (with the defaults a
+   * message's own images always fit); `none` shows earlier images as label
+   * lines, `inline` sends earlier turns' images too, newest turn first, while
+   * they fit.
+   */
   media: Schema.Literals(["none", "inline"]),
+  /** Images one request sends as images, never more than `MEDIA_LIMITS.requestImages` (and artifact reference lines one result shows). */
   maxImages: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Base64 characters of the images one request sends, at most `MEDIA_LIMITS.requestChars`; 0 sends none (text only). */
+  maxMediaChars: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: MEDIA_LIMITS.requestChars }))),
 })
 export type MemoryWindowConfig = typeof MemoryWindowConfig.Type
 export const memoryWindowDefaults: MemoryWindowConfig = {
   compactPreviousTurn: true, turnContext: "current", replies: true,
   spillMinChars: 2_000, previewChars: 600, ledgerTurnChars: 240,
-  digestOnWriteChars: 0, digests: true, media: "none", maxImages: 8,
+  digestOnWriteChars: 0, digests: true, media: "none", maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
 }
 
 export const WINDOW_STRATEGY = { id: "window", version: "1" } as const
@@ -51,7 +62,7 @@ const preview = (entry: LogEntry, view: string, chars: number): string =>
 /** The window policy: compact older turns, spill oversized results, then drop the oldest turns. */
 export const windowPolicy = (config: MemoryWindowConfig): MemoryPolicy => ({
   strategy: WINDOW_STRATEGY,
-  render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages } },
+  render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages, maxChars: config.maxMediaChars } },
   digestOnWrite: config.digestOnWriteChars === 0 ? Option.none() : Option.some((result) => result.chars >= config.digestOnWriteChars),
   maintain: (input) => decide(config, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
 })

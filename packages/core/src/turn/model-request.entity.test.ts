@@ -3,6 +3,7 @@ import { Option, Schema } from "effect"
 import { Tool } from "effect/ai"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { modelRequestTools } from "./model-request.entity.functions.js"
+import { MemoryRenderRecipe } from "./model-request.entity.js"
 
 /** A provider-defined tool whose configuration carries a credential, as a remote tool server's does. */
 const RemoteTools = Tool.providerDefined({
@@ -44,5 +45,12 @@ describe("a request header's provider-defined tools", () => {
   test("the digest is SHA-256 over the UTF-8 bytes, across several blocks", () => {
     const [declared] = modelRequestTools([LongNote({ note: `${"é∑".repeat(40)}${"x".repeat(70)}` })])
     expect(canonicalJson(declared)).toContain("c37e6fcebf600ea7ab5009666aba1c1d3d3efdef0f7723219715a06299be50f6")
+  })
+})
+
+describe("a request header's render recipe", () => {
+  test("one written before 0.14.0 has no media budget in characters: it reads the request limit", () => {
+    const old = { strategy: "window", currentTurn: 1, currentRun: "r", turnContext: "current", replies: true, stepContext: "tail", digests: true, media: { mode: "none", maxImages: 8 } }
+    expect(Schema.decodeUnknownSync(MemoryRenderRecipe)(old).media).toEqual({ mode: "none", maxImages: 8, maxChars: 20_000_000 })
   })
 })

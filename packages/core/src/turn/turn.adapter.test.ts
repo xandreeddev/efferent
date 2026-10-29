@@ -19,7 +19,7 @@ import { guardTurn, openTurnTools } from "./turn-lifecycle.js"
 
 const policy: MemoryPolicy = {
   strategy: { id: "test", version: "1" },
-  render: { turnContext: "current", replies: true, digests: true, media: { mode: "none", maxImages: 0 } },
+  render: { turnContext: "current", replies: true, digests: true, media: { mode: "none", maxImages: 0, maxChars: 0 } },
   digestOnWrite: Option.none(),
   maintain: () => Effect.succeed({ actions: [], digest: [] }),
 }

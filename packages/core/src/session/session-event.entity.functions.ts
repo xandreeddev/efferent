@@ -64,13 +64,16 @@ export const turnStartedOf = (event: SessionLogEvent): Effect.Effect<TurnStarted
 export const turnEndedOf = (event: SessionLogEvent): Effect.Effect<TurnEnded, Schema.SchemaError> =>
   Schema.decodeUnknownEffect(TurnEndedData)(canonical(event.data))
 
-/** One stored event → the memory entry it is, if it is one. */
+/**
+ * One stored event → the memory entry it is, if it is one. A `turn.started`
+ * is decoded once: its user message, attachments included, is the entry's.
+ */
 export const entryOfEvent = (event: SessionLogEvent): Effect.Effect<Option.Option<LogEntry>, Schema.SchemaError> => {
   if (event.kind === "turn.started") {
-    return turnStartedOf(event).pipe(Effect.flatMap((started) => decodeEntry({
+    return turnStartedOf(event).pipe(Effect.map((started): Option.Option<LogEntry> => Option.some({
       id: started.entry, runId: started.runId, turn: turnOf(event), step: 0, at: started.at,
-      body: { _tag: "TurnStarted", prompt: started.userMessage.text },
-    })), Effect.map(Option.some))
+      body: { _tag: "TurnStarted", userMessage: started.userMessage },
+    })))
   }
   const tag = tagOfKind.get(event.kind)
   if (tag === undefined) return Effect.succeed(Option.none())

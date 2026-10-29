@@ -2,6 +2,7 @@ import { Effect, Option } from "effect"
 import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, freshId, headerOf } from "../conformance.functions.js"
+import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import type { SessionLog } from "../ports/session-log.port.js"
 import type { JsonObject, SessionDraft } from "./session-log.entity.js"
@@ -18,9 +19,10 @@ const rich: JsonObject = { zeta: 1, alpha: { b: [true, false, { y: "ü", x: 0.5 
 /**
  * The SessionLog contract, as checks any backend must pass: dense sequence
  * numbers, one revision per commit, compare-and-swap, the `notAfter` clock
- * check, JSON kept by value, reads by position and kind, listing order,
- * children and their removal. Every check uses fresh ids and a fresh owner,
- * so the kit is safe on a shared database.
+ * check, JSON kept by value, an event as large as a turn's images may make
+ * it (`MEDIA_LIMITS.requestChars` base64 characters), reads by position and
+ * kind, listing order, children and their removal. Every check uses fresh
+ * ids and a fresh owner, so the kit is safe on a shared database.
  */
 export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck> => {
   return [
@@ -95,6 +97,22 @@ export const sessionLogConformance = (log: Log): ReadonlyArray<ConformanceCheck>
       const [event] = yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
       yield* expect("json", event !== undefined && canonicalJson(event.data) === canonicalJson(rich), `data came back as ${JSON.stringify(event?.data)}`)
       yield* expect("json", canonicalJson((yield* log.head(id)).state) === canonicalJson(rich), "the state came back different")
+    })),
+    check("an event holding MEDIA_LIMITS.requestChars of base64 (a message's images at their limit) comes back whole", "large", (owner) => Effect.gen(function* () {
+      const id = yield* freshId
+      yield* log.create(headerOf(id, owner))
+      const each = MEDIA_LIMITS.requestChars / MEDIA_LIMITS.attachments
+      const large: JsonObject = {
+        userMessage: {
+          text: "large",
+          attachments: Array.from({ length: MEDIA_LIMITS.attachments }, (_, index) => ({ type: "media", data: `${"QUJD".repeat(each / 4 - 1)}${String(index).padStart(4, "0")}` })),
+        },
+      }
+      yield* log.commit(id, { expect: 0, ...noEvents, events: [draft("large", large, Option.some(1))] })
+      const [event] = yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
+      const chars = (data: JsonObject | undefined) => canonicalJson(data ?? {}).length
+      yield* expect("large", event !== undefined && chars(event.data) === chars(large) && canonicalJson(event.data) === canonicalJson(large),
+        `an event of ${chars(large)} characters came back with ${chars(event?.data)}`)
     })),
     check("input and returned JSON are detached from stored heads and events", "json-isolation", (owner) => Effect.gen(function* () {
       const id = yield* freshId

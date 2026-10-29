@@ -63,6 +63,14 @@ output with its reasoning. [Token usage](docs/framework.md#token-usage) lists
 what it leaves out (utility calls, failed or retried attempts) and what each
 provider reports.
 
+A user's message can carry images (`new UserMessage({ text, attachments })`,
+built with `mediaFromBytes` or `mediaFromBase64`): stored inline in the
+session, checked when the turn begins, and sent to the model as image parts
+on the Anthropic and Responses routes; chat-completions routes get a label
+line per image for now (see [Images and multi-part
+messages](docs/framework.md#images-and-multi-part-messages) for the routes
+and the memory budgets).
+
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere;
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores them
 in a SQLite file on Bun, and any other store can implement the `SessionLog` port.

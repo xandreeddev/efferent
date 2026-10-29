@@ -3,6 +3,7 @@ import { Cause, Clock, Context, Effect, Exit, Option, Ref, Schema, Semaphore } f
 import {
   ActionPolicy,
   activationsOf,
+  attachmentsOf,
   canonicalJson,
   PermissionGrants,
   catalogOf,
@@ -311,8 +312,11 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
         version: 1,
         id: DecisionId.make(`${run.runId}:skill-selection`),
         family: "skill-selection",
-        // Hashed under its original key, so decision context hashes are unchanged.
-        contextHash: fingerprintOf(canonicalJson({ message: userMessage.text, active: activeNow, history: history.length })),
+        // Hashed under its original key, so decision context hashes are unchanged; images join by fingerprint, only when there are some.
+        contextHash: fingerprintOf(canonicalJson({
+          message: userMessage.text, active: activeNow, history: history.length,
+          ...(attachmentsOf(userMessage).length === 0 ? {} : { attachments: attachmentsOf(userMessage).map((media) => media.fingerprint) }),
+        })),
         candidateHash,
         policyVersion: `${selector.id}@${selector.version}`,
         candidates: candidates.map((skill) => ({ id: skill.id, description: skill.summary })),

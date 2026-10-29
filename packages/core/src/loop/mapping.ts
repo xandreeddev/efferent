@@ -7,6 +7,7 @@ import type {
   TextPart,
   ToolCallPart,
   ToolResultPart,
+  UserContentPart,
 } from "../domain/message.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { tokenUsage } from "../domain/token-usage.entity.functions.js"
@@ -88,13 +89,23 @@ const withoutEngineStamp = (blob: unknown): unknown => {
   return rest
 }
 
-/** `AgentMessage[]` → `@effect/ai` encoded prompt messages (spreadable). */
+/**
+ * A multi-part user message's parts → `@effect/ai` prompt parts: text as
+ * text (an empty text part is left out: providers refuse them), an image as
+ * a `file` part with its base64 data, type and name.
+ */
+const userPromptParts = (parts: ReadonlyArray<UserContentPart>): ReadonlyArray<unknown> =>
+  parts.flatMap((part): ReadonlyArray<unknown> => part.type === "text"
+    ? part.text.length === 0 ? [] : [{ type: "text", text: part.text, ...withOptions(part.providerOptions) }]
+    : [{ type: "file", mediaType: part.mediaType, data: part.data, ...(part.name === undefined ? {} : { fileName: part.name }) }])
+
+/** `AgentMessage[]` → `@effect/ai` encoded prompt messages (spreadable). A text-only user message stays a string. */
 export const toPromptMessages = (
   messages: ReadonlyArray<AgentMessage>,
 ): ReadonlyArray<unknown> =>
   messages.map((m) => {
     if (m.role === "user") {
-      return { role: "user", content: m.content }
+      return { role: "user", content: typeof m.content === "string" ? m.content : userPromptParts(m.content) }
     }
     if (m.role === "assistant") {
       return {

@@ -34,4 +34,12 @@ the in-memory backend and the kits. `resolveBashEnv` is the one place the
 inherited-environment allowlist is applied. `bashConformance` has no adapter
 in core: its self-test runs it against fakes that run nothing.
 
+Images are `Media` values (`src/domain/media.entity.ts`): base64 inline,
+checked from their bytes by `mediaFromBytes` / `mediaFromBase64` (the only
+image sniffing and header parsing in the repository), within `MEDIA_LIMITS`.
+A user's message carries them as `attachments`; `normalizeUserMessage` is
+what `Sessions.begin` stores. Anything that turns a log into text (search,
+transcripts, traces, fingerprints, estimates) goes through `elideMediaData`
+or `userMessageText`, never the base64.
+
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

@@ -5,6 +5,7 @@ import {
   digestTranscript,
   estimateMessageTokens,
   HarnessError,
+  MEDIA_LIMITS,
   openLogSession,
   UtilityLlm,
 } from "@xandreed/core"
@@ -21,14 +22,25 @@ export const MemorySummaryConfig = Schema.Struct({
   replies: Schema.Boolean,
   /** Show recorded tool digests in place of the results they digest. */
   digests: Schema.Boolean,
+  /**
+   * How images reach the model: the current turn's attachments are sent as
+   * images first, within `maxImages` and `maxMediaChars` (with the defaults a
+   * message's own images always fit); `none` shows earlier images as label
+   * lines, `inline` sends earlier turns' images too, newest turn first, while
+   * they fit.
+   */
   media: Schema.Literals(["none", "inline"]),
+  /** Images one request sends as images, never more than `MEDIA_LIMITS.requestImages` (and artifact reference lines one result shows). */
   maxImages: Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Base64 characters of the images one request sends, at most `MEDIA_LIMITS.requestChars`; 0 sends none (text only). */
+  maxMediaChars: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: MEDIA_LIMITS.requestChars }))),
   /** Instructions for the summarizer; the transcript and any earlier summary follow. */
   instructions: Schema.String,
 })
 export type MemorySummaryConfig = typeof MemorySummaryConfig.Type
 export const memorySummaryDefaults: MemorySummaryConfig = {
-  triggerRatio: 0.8, keepRatio: 0.16, cooldownTurns: 3, turnContext: "current", replies: true, digests: true, media: "none", maxImages: 8,
+  triggerRatio: 0.8, keepRatio: 0.16, cooldownTurns: 3, turnContext: "current", replies: true, digests: true, media: "none",
+  maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
   instructions: "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
 }
 
@@ -53,7 +65,7 @@ const keepFrom = (entries: ReadonlyArray<LogEntry>, turn: number, keepTokens: nu
  */
 export const summaryPolicy = (config: MemorySummaryConfig, summarize: (prompt: string) => Effect.Effect<string, HarnessError>): MemoryPolicy => ({
   strategy: SUMMARY_STRATEGY,
-  render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages } },
+  render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages, maxChars: config.maxMediaChars } },
   digestOnWrite: Option.none(),
   maintain: (input) => decide(config, summarize, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
 })

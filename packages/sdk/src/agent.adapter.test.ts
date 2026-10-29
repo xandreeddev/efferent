@@ -14,6 +14,9 @@ import {
   Failure,
   HarnessError,
   IntentMatcher,
+  MediaFingerprint,
+  mediaFromBase64,
+  mediaLabel,
   onTool,
   RunContext,
   replayModelRequest,
@@ -1061,6 +1064,50 @@ describe("resuming a turn", () => {
       ["turn.not-resumable", `turn 1.5 of session ${conversation} cannot be resumed (missing)`],
       ["turn.not-resumable", `turn NaN of session ${conversation} cannot be resumed (missing)`],
     ])
+  })
+})
+
+describe("a turn's images", () => {
+  const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+  test("an image-only message reaches the first request as a file part, normalised; step-0 dispatch passes its check; a later turn sees it as a label", async () => {
+    const { outcome, seen, events, replayed, pixel } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { seen, model } = yield* scripted([stop("a pixel"), stop("still a pixel")])
+      const pixel = yield* mediaFromBase64(pixelPng, { name: "pixel.png" })
+      const careless = { ...pixel, mediaType: "image/webp" as const, bytes: 9, fingerprint: MediaFingerprint.make("ffffffffffffffff") }
+      const input = inputFor(journal, "run-1", "replaced below", model)
+      const outcome = yield* agent.turn({ ...input, turn: { ...input.turn, userMessage: new UserMessage({ text: "", attachments: [careless] }) } }, (turn) =>
+        turn.run({ limits: { requireCompletion: false } }).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+      yield* agent.turn(inputFor(journal, "run-2", "and now?", model), (turn) =>
+        turn.run({ limits: { requireCompletion: false } }).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+      const events = yield* journal.stored
+      const replayed = yield* replayModelRequest(events, "run-1", 0)
+      return { outcome, seen: yield* Ref.get(seen), events, replayed, pixel }
+    })))
+    expect([outcome.outcome, outcome.reply]).toEqual(["completed", Option.some("a pixel")])
+    expect(named(events, "turn.started")[0]?.data.userMessage).toEqual({ text: "", attachments: [pixel] })
+    const first = JSON.parse(seen[0]?.prompt ?? "[]") as ReadonlyArray<{ readonly role: string; readonly content: unknown }>
+    expect(first.at(1)).toMatchObject({ role: "user", content: [{ type: "file", mediaType: "image/png", data: pixelPng, fileName: "pixel.png" }] })
+    expect(JSON.stringify(replayed.prompt.content)).toBe(seen[0]?.prompt ?? "")
+    expect(seen[1]?.prompt).toContain(JSON.stringify(mediaLabel(pixel)).slice(1, -1))
+    expect(seen[1]?.prompt).not.toContain(pixelPng)
+  })
+
+  test("an attachment that is not an image fails the turn before it begins (turn.attachment-rejected)", async () => {
+    const { error, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      const pixel = yield* mediaFromBase64(pixelPng)
+      const input = inputFor(journal, "run-1", "look", model)
+      const error = yield* Effect.flip(agent.turn({ ...input, turn: { ...input.turn, userMessage: new UserMessage({ text: "look", attachments: [{ ...pixel, data: "aGVsbG8gd29ybGQ=" }] }) } }, (turn) => turn.reply("never")))
+      return { error, events: yield* journal.stored }
+    })))
+    expect(error.code).toBe("turn.attachment-rejected")
+    expect(error.message).toContain("UnsupportedType")
+    expect(events).toEqual([])
   })
 })
 

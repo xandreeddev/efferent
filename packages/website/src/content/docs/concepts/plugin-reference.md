@@ -486,7 +486,8 @@ Requires: none
   "digestOnWriteChars": 0,
   "digests": true,
   "media": "none",
-  "maxImages": 8
+  "maxImages": 8,
+  "maxMediaChars": 20000000
 }
 ```
 
@@ -544,6 +545,11 @@ Requires: none
       "type": "integer",
       "minimum": 0,
       "maximum": 9007199254740991
+    },
+    "maxMediaChars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20000000
     }
   },
   "required": [
@@ -556,7 +562,8 @@ Requires: none
     "digestOnWriteChars",
     "digests",
     "media",
-    "maxImages"
+    "maxImages",
+    "maxMediaChars"
   ],
   "additionalProperties": true
 }
@@ -582,6 +589,7 @@ Requires: none
   "digests": true,
   "media": "none",
   "maxImages": 8,
+  "maxMediaChars": 20000000,
   "instructions": "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript."
 }
 ```
@@ -653,6 +661,11 @@ Requires: none
       "minimum": 0,
       "maximum": 9007199254740991
     },
+    "maxMediaChars": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 20000000
+    },
     "instructions": {
       "type": "string"
     }
@@ -666,6 +679,7 @@ Requires: none
     "digests",
     "media",
     "maxImages",
+    "maxMediaChars",
     "instructions"
   ],
   "additionalProperties": true

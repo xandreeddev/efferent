@@ -1,4 +1,5 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
+import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 
@@ -39,7 +40,12 @@ export const MemoryRenderRecipe = Schema.Struct({
   replies: Schema.Boolean,
   stepContext: Schema.Literals(["tail", "none"]),
   digests: Schema.Boolean,
-  media: Schema.Struct({ mode: Schema.Literals(["none", "inline"]), maxImages: Schema.Int }),
+  media: Schema.Struct({
+    mode: Schema.Literals(["none", "inline"]),
+    maxImages: Schema.Int,
+    /** Base64 characters of the images sent as images; a header written before 0.14.0 reads `MEDIA_LIMITS.requestChars`. */
+    maxChars: Schema.Int.pipe(Schema.withDecodingDefaultKey(Effect.succeed(MEDIA_LIMITS.requestChars))),
+  }),
 })
 export type MemoryRenderRecipe = typeof MemoryRenderRecipe.Type
 

@@ -108,8 +108,11 @@ ships no Google provider). Cost, not correctness.
 
 - **Session branching** — fork a conversation from any message; the
   checkpoint model already supports the data shape, the UI is the work.
-- **Image attachments** — `FilePart`s exist in `effect/ai`; needs input
-  syntax + encoding.
+- **Images beyond the user's message** — a user's images ship
+  (`UserMessage.attachments`, stored inline, sent as `file` parts). Still
+  to come: images in tool results, `image_url` parts and labels on
+  chat-completions routes (which send a label line per image today), resizing, PDFs,
+  and a `MediaStore` port for sessions too large to keep images inline.
 - **Native grep** — structured content matches over `walkGlob` (the
   `FileSystem` port has `glob`, nothing searches file contents yet).
 - **LSP tool** — park until a concrete need; naturally skill-shaped.

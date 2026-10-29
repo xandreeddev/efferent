@@ -1,6 +1,11 @@
 import { Effect, Option, Schema } from "effect"
-import type { AgentMessage, ToolResultPart } from "../domain/message.entity.js"
+import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
+import { MEDIA_LIMITS } from "../domain/media.entity.js"
+import type { Media } from "../domain/media.entity.js"
+import type { AgentMessage, ToolResultPart, UserContentPart } from "../domain/message.entity.js"
 import { handoffToMessage } from "../loop/mapping.js"
+import { attachmentsOf, userMessageText } from "../turn/user-message.entity.functions.js"
+import type { UserMessage } from "../turn/user-message.entity.js"
 import type { ArtifactRef, BuiltContext, CompactionAction, EntryId, LogBody, LogEntry, Subject } from "./memory-log.entity.js"
 import { EntryId as EntryIdSchema } from "./memory-log.entity.js"
 
@@ -26,8 +31,12 @@ export const fingerprintOf = (text: string): string => {
 /** A deliberately conservative estimate for mixed prose and JSON. */
 export const estimateTokens = (text: string): number => Math.ceil(text.length / 3)
 
+/**
+ * The messages' tokens, estimated: each message's JSON as text, with an
+ * image counted as `IMAGE_TOKEN_ESTIMATE` tokens instead of its base64.
+ */
 export const estimateMessageTokens = (messages: ReadonlyArray<AgentMessage>): number =>
-  messages.reduce((sum, message) => sum + estimateTokens(canonicalJson(message)), 0)
+  messages.reduce((sum, message) => sum + estimateTokens(canonicalJson(elideMediaData(message))) + mediaSlotsOf(message).length * IMAGE_TOKEN_ESTIMATE, 0)
 
 export const entryId = (runId: string, index: number): EntryId => EntryIdSchema.make(`${runId}:${index}`)
 
@@ -94,11 +103,18 @@ export interface RenderOptions {
   /** Show recorded tool digests in place of the results they digest. */
   readonly digests: boolean
   /**
-   * How artifacts reach the model. `none`: a reference line after the
-   * result's text. `inline` is reserved for image parts; messages carry text
-   * only today, so it renders like `none`.
+   * How images reach the model. The current turn's attachments are sent as
+   * images first, in order, while they fit; `none` shows every earlier image
+   * as a `mediaLabel` line, `inline` sends earlier turns' images too, newest
+   * turn first and a whole turn at a time, while they fit. Together they stay
+   * within `maxImages` images (and never more than
+   * `MEDIA_LIMITS.requestImages`) and `maxChars` base64 characters; an image
+   * left out is a label line. With the memory plugins' defaults a message's
+   * own images always fit; `maxChars: 0` sends none (text only). An
+   * `ArtifactRef` is a reference line after its result's text in both modes,
+   * at most `maxImages` of them.
    */
-  readonly media: { readonly mode: "none" | "inline"; readonly maxImages: number }
+  readonly media: { readonly mode: "none" | "inline"; readonly maxImages: number; readonly maxChars: number }
 }
 
 /** The reference lines a result's artifacts add to its text. */
@@ -127,16 +143,78 @@ interface RenderState {
 const userRoleMessage = (content: string): AgentMessage => ({ role: "user", content })
 const assistantMessage = (text: string): AgentMessage => ({ role: "assistant", content: [{ type: "text", text }] })
 
+/** An image of the log: the entry whose message holds it and its position there. */
+const imageKey = (entry: LogEntry, index: number): string => `${entry.id}#${index}`
+
+interface InlineChoice {
+  readonly chosen: ReadonlySet<string>
+  readonly images: number
+  readonly chars: number
+  /** A turn did not fit: no older turn is sent inline. */
+  readonly full: boolean
+}
+
+const noneChosen: InlineChoice = { chosen: new Set<string>(), images: 0, chars: 0, full: false }
+
+/**
+ * The images a render sends as images: the current turn's attachments, in
+ * order, while they fit; then, in `inline` mode, each earlier kept turn's,
+ * newest first, a whole turn at a time, until one does not fit. At most
+ * `maxImages` of them, never more than `MEDIA_LIMITS.requestImages` (a
+ * provider shrinks or refuses the images of a request that carries many),
+ * within `maxChars`. Which images are sent changes only when a turn starts.
+ */
+const inlineImages = (entries: ReadonlyArray<LogEntry>, options: RenderOptions, kept: (entry: LogEntry) => boolean): ReadonlySet<string> => {
+  const turns = entries.flatMap((entry) => entry.body._tag === "TurnStarted" && kept(entry) && attachmentsOf(entry.body.userMessage).length > 0
+    ? [{ entry, images: attachmentsOf(entry.body.userMessage) }] : [])
+    .filter(({ entry }) => entry.turn === options.currentTurn || options.media.mode === "inline")
+    .sort((left, right) => right.entry.turn - left.entry.turn)
+  const maxImages = Math.min(options.media.maxImages, MEDIA_LIMITS.requestImages)
+  const fits = (choice: InlineChoice, images: ReadonlyArray<Media>): boolean =>
+    choice.images + images.length <= maxImages && choice.chars + images.reduce((sum, media) => sum + media.data.length, 0) <= options.media.maxChars
+  return turns.reduce((choice: InlineChoice, { entry, images }): InlineChoice => {
+    if (choice.full) return choice
+    if (entry.turn === options.currentTurn) {
+      return images.reduce((current: InlineChoice, media, index): InlineChoice => current.full || !fits(current, [media]) ? { ...current, full: true } : {
+        ...current, chosen: new Set([...current.chosen, imageKey(entry, index)]), images: current.images + 1, chars: current.chars + media.data.length,
+      }, choice)
+    }
+    return fits(choice, images) ? {
+      ...choice,
+      chosen: new Set([...choice.chosen, ...images.map((_, index) => imageKey(entry, index))]),
+      images: choice.images + images.length,
+      chars: choice.chars + images.reduce((sum, media) => sum + media.data.length, 0),
+    } : { ...choice, full: true }
+  }, noneChosen).chosen
+}
+
+/**
+ * The user's message as the model is sent it: its text alone when it has no
+ * image; otherwise the images sent as images first, then one text part with
+ * the text and a label line for each image left out (no empty text part).
+ * With no image sent, it is its text and labels as one string.
+ */
+const userMessageContent = (entry: LogEntry, message: UserMessage, inline: ReadonlySet<string>): AgentMessage => {
+  const images = attachmentsOf(message)
+  const sent = images.flatMap((media, index): ReadonlyArray<Media> => inline.has(imageKey(entry, index)) ? [media] : [])
+  if (sent.length === 0) return userRoleMessage(userMessageText(message))
+  const text = [message.text, ...images.flatMap((media, index) => inline.has(imageKey(entry, index)) ? [] : [mediaLabel(media)])]
+    .filter((line) => line.length > 0).join("\n")
+  const parts: ReadonlyArray<UserContentPart> = [...sent, ...(text.length === 0 ? [] : [{ type: "text" as const, text }])]
+  return { role: "user", content: parts }
+}
+
 export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<AgentMessage> => {
   const applied = appliedCompactions(entries, options.strategy)
   const digests = options.digests ? digestsOf(entries) : new Map<string, string>()
   const pinned: ReadonlySet<string> = new Set(entries.flatMap((entry) => entry.body._tag === "ToolResult" && entry.body.pinned ? [String(entry.body.toolCallId)] : []))
   const kept = (entry: LogEntry): boolean => entry.turn > applied.cutTurn
   const stepContext = options.stepContext === "none" ? [] : entries.filter((entry) => entry.body._tag === "StepContext" && entry.runId === options.currentRun).slice(-1)
+  const inline = inlineImages(entries, options, kept)
   const initial: RenderState = { out: [], lastText: new Map() }
   const body = entries.reduce((state: RenderState, entry): RenderState => {
     const b: LogBody = entry.body
-    if (b._tag === "TurnStarted") return kept(entry) ? { ...state, out: [...state.out, userRoleMessage(b.userMessage.text)] } : state
+    if (b._tag === "TurnStarted") return kept(entry) ? { ...state, out: [...state.out, userMessageContent(entry, b.userMessage, inline)] } : state
     if (b._tag === "TurnContext") {
       return kept(entry) && (options.turnContext === "all" || entry.turn === options.currentTurn)
         ? { ...state, out: [...state.out, userRoleMessage(b.text)] } : state
@@ -174,11 +252,16 @@ export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptio
   return mergeToolMessages([...Option.toArray(applied.preamble), ...body, ...tail])
 }
 
+/**
+ * The rebuild of one request, with its fingerprint: the hash of the
+ * messages' canonical JSON, each image's `data` replaced by its fingerprint
+ * (`elideMediaData`), so a text-only context hashes as it always did.
+ */
 export const buildContext = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): BuiltContext => {
   const messages = renderLog(entries, options)
   return {
     messages,
-    fingerprint: fingerprintOf(canonicalJson(messages)),
+    fingerprint: fingerprintOf(canonicalJson(messages.map(elideMediaData))),
     estimatedTokens: estimateMessageTokens(messages),
     compactions: appliedCompactions(entries, options.strategy).ids,
     through: Option.fromNullishOr(entries.at(-1)?.id),
@@ -209,23 +292,27 @@ export const activationsOf = (entries: ReadonlyArray<LogEntry>): { readonly skil
       tools: [...active.tools, ...entry.body.tools.filter((tool) => !active.tools.includes(tool))],
     }, { skills: [], tools: [] })
 
-/** A compact user/assistant transcript for classifiers: user messages and replies only. */
+/** A compact user/assistant transcript for classifiers: user messages (an image as its label line) and replies only. */
 export const referenceTranscript = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<AgentMessage> =>
   entries.flatMap((entry): ReadonlyArray<AgentMessage> => {
-    if (entry.body._tag === "TurnStarted") return [userRoleMessage(entry.body.userMessage.text)]
+    if (entry.body._tag === "TurnStarted") return [userRoleMessage(userMessageText(entry.body.userMessage))]
     if (entry.body._tag === "TurnEnded") {
       return Option.match(entry.body.reply, { onNone: () => [], onSome: (text) => text.length === 0 ? [] : [{ role: "assistant", content: [{ type: "text", text }] }] })
     }
     return []
   })
 
-/** The full-fidelity transcript: messages with every tool result's encoded value. */
+/**
+ * The full-fidelity transcript: messages with every tool result's encoded
+ * value. Images are left out: a user's image is its label line, an image in
+ * an encoded value has its `data` replaced by its fingerprint.
+ */
 export const rawTranscript = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<AgentMessage> =>
   mergeToolMessages(entries.flatMap((entry): ReadonlyArray<AgentMessage> => {
-    if (entry.body._tag === "TurnStarted") return [userRoleMessage(entry.body.userMessage.text)]
+    if (entry.body._tag === "TurnStarted") return [userRoleMessage(userMessageText(entry.body.userMessage))]
     if (entry.body._tag === "Message") return [entry.body.message]
     if (entry.body._tag === "ToolResult") {
-      return [{ role: "tool", content: [{ type: "tool-result", toolCallId: entry.body.toolCallId, toolName: entry.body.toolName, output: entry.body.encoded, isError: entry.body.isError }] }]
+      return [{ role: "tool", content: [{ type: "tool-result", toolCallId: entry.body.toolCallId, toolName: entry.body.toolName, output: elideMediaData(entry.body.encoded), isError: entry.body.isError }] }]
     }
     return []
   }))
@@ -253,7 +340,7 @@ export const queryLog = (entries: ReadonlyArray<LogEntry>, query: LogQuery): Rea
       onSome: (wanted) => entry.body._tag === "ToolResult" && entry.body.subjects.some((subject) =>
         subject.kind === wanted.kind && Option.match(wanted.id, { onNone: () => true, onSome: (id) => subject.id === id })),
     }) &&
-    Option.match(query.text, { onNone: () => true, onSome: (text) => canonicalJson(entry.body).toLowerCase().includes(text.toLowerCase()) }))
+    Option.match(query.text, { onNone: () => true, onSome: (text) => canonicalJson(elideMediaData(entry.body)).toLowerCase().includes(text.toLowerCase()) }))
   return Option.match(query.limit, { onNone: () => matches, onSome: (limit) => matches.slice(-limit) })
 }
 
@@ -287,7 +374,7 @@ const clipText = (text: string, max: number): string => text.length <= max ? tex
 export const digestTranscript = (entries: ReadonlyArray<LogEntry>, caps: { readonly result: number; readonly total: number }): string => {
   const lines = entries.flatMap((entry): ReadonlyArray<string> => {
     const body = entry.body
-    if (body._tag === "TurnStarted") return [`User: ${body.userMessage.text}`]
+    if (body._tag === "TurnStarted") return [`User: ${userMessageText(body.userMessage)}`]
     if (body._tag === "Message") return Option.toArray(Option.map(assistantText(body.message), (text) => `Assistant: ${text}`))
     if (body._tag === "ToolResult") return [`Tool ${body.toolName}${body.isError ? " (failed)" : ""}: ${clipText(body.view, caps.result)}`]
     if (body._tag === "TurnEnded") return Option.toArray(Option.map(body.reply, (reply) => `Reply: ${reply}`))
@@ -305,7 +392,7 @@ export const ledgerOf = (entries: ReadonlyArray<LogEntry>, throughTurn: number, 
   const turns = [...new Set(kept.map((entry) => entry.turn))].sort((left, right) => left - right)
   const lines = turns.flatMap((turn) => {
     const inTurn = kept.filter((entry) => entry.turn === turn)
-    const asked = inTurn.flatMap((entry) => entry.body._tag === "TurnStarted" ? [entry.body.userMessage.text] : []).at(0)
+    const asked = inTurn.flatMap((entry) => entry.body._tag === "TurnStarted" ? [userMessageText(entry.body.userMessage)] : []).at(0)
     const reply = inTurn.flatMap((entry) => entry.body._tag === "TurnEnded" ? Option.toArray(entry.body.reply) : []).at(-1)
     return asked === undefined ? [] : [`- Asked: ${clipText(asked, perTurnChars)}${reply === undefined ? "" : ` — replied: ${clipText(reply, perTurnChars)}`}`]
   })

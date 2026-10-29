@@ -19,11 +19,11 @@ transports (see [render kits](#render-kits)).
 
 | Kit | Checks | Run against |
 | --- | --- | --- |
-| `sessionLogConformance(log)` | dense sequence numbers, one revision per commit, compare-and-swap, the `notAfter` clock check, JSON kept by value, reads by position and kind, listing order, children and their removal | a `SessionLog` |
+| `sessionLogConformance(log)` | dense sequence numbers, one revision per commit, compare-and-swap, the `notAfter` clock check, JSON kept by value, an event as large as a message's images at their limit (`MEDIA_LIMITS.requestChars` base64 characters), reads by position and kind, listing order, children and their removal | a `SessionLog` |
 | `sessionLogRecoveryConformance(subject)` | reopening, several open handles, interrupted commits, a handle whose scope never closed, the exact `notAfter` boundary | a way to open a `SessionLog` |
-| `memoryConformance(memory, services)` | own entry ids, a log that reads back exactly after a reopen, views and artifacts kept, a pure build, append-only maintenance | a memory strategy |
+| `memoryConformance(memory, services)` | own entry ids, a log that reads back exactly after a reopen, views and artifacts kept, a pure build, append-only maintenance, a message's images through a reopen (the current turn's built as image parts, an earlier turn's as image parts or label lines) | a memory strategy |
 | `stepLoopConformance(loop)` | per-step event order, validation before dispatch, planned batches, forced tool choices, no call after completion, the run's usage (the sum of its `assistant.message` usage), the step cap | a `StepLoop` |
-| `turnConformance(runner, services)` | the writer first, the message before the matcher's history, the reply and the end exactly once, tasks joined before the reply, a model-driven turn's usage equal to its stored `step.usage` records (`turnUsageOf`), the host layer seeing only earlier turns | a turn composition |
+| `turnConformance(runner, services)` | the writer first, the message before the matcher's history, the reply and the end exactly once, tasks joined before the reply, a model-driven turn's usage equal to its stored `step.usage` records (`turnUsageOf`), the user's attachments stored with the turn and reaching the first request as image parts, the host layer seeing only earlier turns | a turn composition |
 | `fileSystemConformance(subject)` | round trips, `createParents`, byte ranges, append, rename, `stat` and links, sorted listings, `glob`, `mkdir`, `realPath`, the `remove` rules, the `reason` of every failure | a way to open a `FileSystem` over an empty directory |
 | `bashConformance(subject)` | exit codes as results, separate streams, output before exit, stdin, the inherited-environment allowlist, timeouts and interrupts that kill the process group, `cwd`, signals, UTF-8 | a way to open a `Bash` adapter |
 | `authStoreConformance(store)` | an absent provider, API key, `local` and OAuth credentials read back and resolve as they should (the key `Redacted`), an expired token the store cannot refresh fails with an `AuthError` naming the provider and never returns the stale token, `set` replaces, `remove` deletes everywhere and is a no-op for an absent provider, providers are isolated | an `AuthStore` |
@@ -43,6 +43,11 @@ selection that is not `"<provider>:<modelId>"`, a count below 1, left by an
 older unchecked write) could not be put back, so the check that would touch it
 fails before writing anything. `@xandreed/plugin-models` runs these three kits against
 its file and in-memory stores, on Bun and on Node.
+
+The image checks of
+`memoryConformance` and `turnConformance` need a memory whose budget admits
+one small image, as the memory plugins' defaults do: one set to send no
+images (`maxImages: 0` or `maxMediaChars: 0`) fails them.
 
 ## Running a kit
 

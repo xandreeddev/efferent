@@ -21,7 +21,10 @@ import type {
  * session plus its head (see `session-log.entity.ts`). Everything above it
  * (turns, leases, the inbox, memory) is the sessions plugin's; a backend
  * only keeps the log, the head and the compare-and-swap, and passes
- * `sessionLogConformance`.
+ * `sessionLogConformance`. One event can be large: a user's images are
+ * stored inline in its `turn.started`, up to `MEDIA_LIMITS.requestChars`
+ * base64 characters together, so a backend must hold an event of that size
+ * (the kit checks one).
  */
 export class SessionLog extends Context.Service<SessionLog, {
   /** Create an empty session (seq 0, revision 0). A child's parent must exist. */

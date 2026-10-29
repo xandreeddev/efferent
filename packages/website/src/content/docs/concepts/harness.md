@@ -73,6 +73,20 @@ down, say) is tried again with a new key. The new turn's `admitted.resumes`
 and its `turn.started` carry `1`. The framework guide's sessions section
 has the rules and the keys in full.
 
+A user's message can carry images:
+`new UserMessage({ text, attachments: [image] })`, the text empty or not, an
+image built with `mediaFromBytes(bytes)` or `mediaFromBase64(data)` from
+`@xandreed/core` (PNG, JPEG, GIF or WebP, within `MEDIA_LIMITS`). The session
+checks each image again from its bytes when the turn begins and stores it
+inline, once, in the turn's start; an image it refuses fails the turn with
+`turn.attachment-rejected` before anything is stored. The current turn's
+images are sent to the model first, within the memory plugins' `maxImages`
+and `maxMediaChars` (with the defaults a message's own images always fit;
+`maxMediaChars: 0` sends none); their `media` option says whether earlier
+turns' images are sent too (`inline`) or shown as a label line (`none`, the
+default). [Images](/docs/concepts/providers/#images) lists the routes that
+take them: the others get a label line in place of each image.
+
 The turn's stored end says how it ended: completed, partial or failed as
 `use` returned it; failed with the error's own code (a `HarnessError`'s),
 `turn.failed` (an error without a code) or `turn.defect`; or interrupted,

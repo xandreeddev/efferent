@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { HarnessError, SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import { HarnessError, MediaFingerprint, mediaFromBase64, SessionLog, SessionLogError, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnWriter } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
 import { SessionsLive } from "./sessions.adapter.js"
@@ -52,6 +52,26 @@ describe("one turn at a time", () => {
     const changedText = yield* Effect.flip(sessions!.begin(address, say("find beta", "k1", { canvas: "c1" })))
     const changedCommand = yield* Effect.flip(sessions!.begin(address, say("find alpha", "k1", { canvas: "c2" })))
     expect([changedText._tag, changedCommand._tag]).toEqual(["KeyConflict", "KeyConflict"])
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1"])
+  })))
+
+  test("a message's images are normalised once: stored and admitted so, a retry with the same images is the same turn, other images conflict", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    const pixel = yield* mediaFromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", { name: "pixel.png" })
+    const careless = { ...pixel, mediaType: "image/gif" as const, bytes: 1, fingerprint: MediaFingerprint.make("00000000deadbeef") }
+    const asked = (attachments: ReadonlyArray<typeof pixel>, key = "k1"): BeginTurn =>
+      ({ _tag: "User", userMessage: new UserMessage({ text: "", attachments }), runId: `run-${key}`, key, command: {} })
+    const writer = yield* sessions!.begin(address, asked([careless]))
+    expect(writer.admitted.userMessage.attachments).toEqual([pixel])
+    expect(writer.started.data.userMessage).toEqual({ text: "", attachments: [pixel] })
+    expect(Option.isNone((yield* sessions!.get(address)).title)).toBe(true)
+    const retried = yield* Effect.flip(sessions!.begin(address, asked([careless])))
+    expect(retried._tag).toBe("TurnDuplicate")
+    const other = yield* Effect.flip(sessions!.begin(address, asked([{ ...pixel, name: "renamed.png" }])))
+    expect(other._tag).toBe("KeyConflict")
+    const rejected = yield* Effect.flip(sessions!.begin(address, asked([{ ...pixel, data: "aGVsbG8gd29ybGQ=" }], "k2")))
+    expect([rejected._tag, rejected._tag === "AttachmentRejected" ? rejected.reason : null]).toEqual(["AttachmentRejected", "UnsupportedType"])
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1"])
   })))
 

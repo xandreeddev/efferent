@@ -2,6 +2,9 @@ import { Context, Effect, Option, Ref, Schema } from "effect"
 import type { Scope } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
+import { pixelPng } from "../conformance.functions.js"
+import { mediaFromBase64, mediaLabel } from "../domain/media.entity.functions.js"
+import type { Media } from "../domain/media.entity.js"
 import { ConversationId, ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
@@ -69,7 +72,13 @@ const recordTurn = (session: MemorySession, userMessage: string, reply: string) 
  * The ConversationMemory contract, as checks any strategy must pass: own
  * entry ids, a log that reads back exactly after a reopen, views and
  * artifacts kept, a pure build, the step context only when asked,
- * append-only maintenance and a reference transcript without tool traffic.
+ * append-only maintenance, a reference transcript without tool traffic, and
+ * a message's images kept through a reopen and built (never with an empty
+ * text part): the current turn's as image parts, an earlier turn's as image
+ * parts or label lines. That check needs a media budget that admits one
+ * small image, as the memory plugins' defaults do: a strategy set to send
+ * none (`maxImages: 0` or `maxChars: 0`) fails it, as it fails
+ * `turnConformance`'s.
  * `services` are the turn services the strategy needs (a summarizer…); each
  * session is opened with them provided.
  */
@@ -131,6 +140,31 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       yield* session.maintain({ phase: "step", lastUsage: Option.none(), budgetTokens: 100_000, views })
       const after = yield* session.entries
       yield* expect("append-only", encodeEntries(after.slice(0, before.length)) === encodeEntries(before), "maintenance rewrote earlier entries")
+    })),
+    check("a message's images survive a reopen; the current turn's are built as image parts, an earlier turn's as image parts or label lines", "attachments", (open, log) => Effect.gen(function* () {
+      const image: Media = yield* mediaFromBase64(pixelPng, { name: "pixel.png" }).pipe(
+        Effect.mapError((error) => new ConformanceFailure({ check: "attachments", message: error.message })),
+      )
+      const session = yield* open(log, "run-1")
+      yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "what is this?", attachments: [image] }) }], 0)
+      yield* session.record([{ _tag: "TurnEnded", outcome: "completed", reply: Option.some("a pixel") }], 0)
+      const other = yield* open(log, "run-2")
+      yield* other.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "", attachments: [image] }) }], 0)
+      const reopened = yield* open(log, "run-2")
+      yield* expect("attachments", encodeEntries(yield* reopened.entries) === encodeEntries(yield* other.entries), "the reopened log lost or changed an image")
+      const users = (yield* reopened.build({ stepContext: "tail" })).messages.filter((message) => message.role === "user")
+      const shown = users.map((message) => typeof message.content === "string"
+        ? message.content.includes(mediaLabel(image)) ? "label" : "missing"
+        : message.content.some((part) => part.type === "text" && part.text.length === 0) ? "empty text"
+          : message.content.some((part) => part.type === "media" && part.fingerprint === image.fingerprint && part.data === image.data) ? "image" : "missing")
+      const [earlier, current] = [shown[0] ?? "missing", shown[1] ?? "missing"]
+      yield* expect("attachments", shown.length === 2 && (earlier === "image" || earlier === "label") && current === "image",
+        `the earlier message showed its image as ${earlier} (an image or its label line), the current turn's as ${current} (its image, with the same data)`)
+      const firstText = Option.match(Option.fromNullishOr(users[0]), {
+        onNone: () => "",
+        onSome: (message) => typeof message.content === "string" ? message.content : message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"),
+      })
+      yield* expect("attachments", firstText.includes("what is this?"), "the first message lost its text")
     })),
     check("the reference transcript holds user messages and replies, never tool traffic", "reference", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")

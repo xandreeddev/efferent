@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option } from "effect"
-import { ConversationId, ConversationMemory, inMemoryLog, memoryConformance, openLogSession, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { ConversationId, ConversationMemory, inMemoryLog, MEDIA_LIMITS, memoryConformance, openLogSession, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 import type { MemoryPolicy, Plugin } from "@xandreed/core"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -8,7 +8,7 @@ import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 /** A test-only strategy: keep the last two turns, drop the rest. */
 const rollingPolicy: MemoryPolicy = {
   strategy: { id: "rolling", version: "1" },
-  render: { turnContext: "current", replies: true, digests: true, media: { mode: "none", maxImages: 0 } },
+  render: { turnContext: "current", replies: true, digests: true, media: { mode: "none", maxImages: MEDIA_LIMITS.requestImages, maxChars: MEDIA_LIMITS.requestChars } },
   digestOnWrite: Option.none(),
   maintain: ({ turn }) => Effect.succeed({ actions: turn > 2 ? [{ _tag: "DropTurns", throughTurn: turn - 2, ledger: "" }] : [], digest: [] }),
 }
@@ -54,5 +54,17 @@ describe("the summary strategy reads its summarizer where the session is opened"
       return yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005a1"), runId: "run-1", log: stored.log })
     }))))
     expect(exit._tag === "Failure" ? exit.failure.code : "opened").toBe("memory.summary")
+  })
+})
+
+describe("the attachments check", () => {
+  test("refuses a strategy that labels the current turn's image instead of sending it", async () => {
+    const textOnly: MemoryPolicy = { ...rollingPolicy, render: { ...rollingPolicy.render, media: { mode: "none", maxImages: MEDIA_LIMITS.requestImages, maxChars: 0 } } }
+    const check = memoryConformance(ConversationMemory.of({
+      strategy: textOnly.strategy,
+      open: ({ runId, log }) => openLogSession(log, textOnly, { runId }),
+    })).find((candidate) => candidate.name.startsWith("a message's images"))
+    const exit = check === undefined ? undefined : await Effect.runPromise(Effect.result(check.run))
+    expect(exit?._tag === "Failure" ? exit.failure.message : "passed").toContain("the current turn's as label")
   })
 })

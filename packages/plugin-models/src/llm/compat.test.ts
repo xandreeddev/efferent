@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Tool } from "effect/ai"
+import { Prompt, Tool } from "effect/ai"
 import { Deferred, Effect, Fiber, Option, Schema } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, extractUsage, Failure, modelRequestDescriptorOf } from "@xandreed/core"
-import { fromChatCompletion, makeCompatLanguageModel, thinkingParams } from "./compat.js"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, extractUsage, Failure, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, toPromptMessages } from "@xandreed/core"
+import type { AgentMessage } from "@xandreed/core"
+import { fromChatCompletion, makeCompatLanguageModel, thinkingParams, toChatMessages } from "./compat.js"
 
 const completion = (body: unknown, status = 200): typeof fetch =>
   ((_url: unknown, _init?: unknown) =>
@@ -388,4 +389,25 @@ test("interrupting a provider call aborts fetch while response bytes are pending
     yield* Fiber.interrupt(fiber)
   }))
   expect(aborted).toEqual([true])
+})
+
+describe("toChatMessages: a user's images", () => {
+  const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  const chat = (messages: ReadonlyArray<AgentMessage>) => toChatMessages(Prompt.make(toPromptMessages(messages) as Prompt.RawInput))
+
+  test("an image-only message is its label line, never empty content", async () => {
+    const image = await Effect.runPromise(mediaFromBase64(pixel, { name: "pixel.png" }))
+    expect(chat([{ role: "user", content: [image] }])).toEqual([{ role: "user", content: mediaLabel(image) }])
+    expect(mediaLabel(image)).toBe("[image omitted: image/png, 70 B, pixel.png]")
+  })
+
+  test("text and an image: the text, then the image's label line", async () => {
+    const image = await Effect.runPromise(mediaFromBase64(pixel))
+    expect(chat([{ role: "user", content: [image, { type: "text", text: "what is this?" }] }]))
+      .toEqual([{ role: "user", content: `what is this?\n${mediaLabel(image)}` }])
+  })
+
+  test("a text-only message is sent as before", () => {
+    expect(chat([{ role: "user", content: "hi" }])).toEqual([{ role: "user", content: "hi" }])
+  })
 })
