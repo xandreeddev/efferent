@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Option, Redacted } from "effect"
@@ -119,6 +119,24 @@ describe("LocalAuthStoreLive", () => {
     expect(written["anthropic"]?.access).toBe("fresh-access")
   })
 
+  test("a refresh whose response keeps the refresh token stays signed in, the token written back whole", async () => {
+    const { home, cwd } = setupWithPaths({
+      anthropic: { type: "oauth", access: "stale", refresh: "kept-refresh", expires: Date.now() - 1 },
+    })
+    const transport = Layer.succeed(ModelsTransport, ModelsTransport.of({
+      fetch: () => Promise.resolve(Response.json({ access_token: "fresh-access", expires_in: 3600 })),
+    }))
+    const stored = await Effect.runPromise(Effect.gen(function* () {
+      const auth = yield* AuthStore
+      expect(Option.map(yield* auth.resolveKey(ProviderId.make("anthropic")), Redacted.value)).toEqual(Option.some("fresh-access"))
+      return yield* auth.get(ProviderId.make("anthropic"))
+    }).pipe(Effect.provide(LocalAuthStoreLive(cwd, home).pipe(Layer.provide(transport)))))
+    expect(Option.getOrThrow(stored)).toMatchObject({ type: "oauth", access: "fresh-access", refresh: "kept-refresh" })
+    const written = JSON.parse(readFileSync(join(home, ".efferent", "auth.json"), "utf-8")) as Record<string, Record<string, unknown>>
+    expect(written["anthropic"]?.["refresh"]).toBe("kept-refresh")
+    expect(Number.isFinite(written["anthropic"]?.["expires"])).toBe(true)
+  })
+
   test("an expired non-anthropic oauth fails with a clear message (no refresh wired)", async () => {
     const layer = setup({
       openai: { type: "oauth", access: "stale", refresh: "r", expires: Date.now() - 1 },
@@ -175,5 +193,67 @@ describe("LocalAuthStore — the write surface (:login / :logout)", () => {
     ) as Record<string, unknown>
     expect("openai" in globalFile).toBe(false)
     expect("openai" in localFile).toBe(false)
+  })
+
+  test("concurrent logins in one process all land, through temp files of their own", async () => {
+    const { layer, home } = setupWithPaths({ opencode: "sk-opencode" })
+    const providers = ["openai", "google", "anthropic", "groq", "mistral", "xai"]
+    const all = await Effect.runPromise(Effect.gen(function* () {
+      const store = yield* AuthStore
+      yield* Effect.forEach(providers, (provider) => store.set(ProviderId.make(provider), { type: "api_key", key: `sk-${provider}` }), { concurrency: "unbounded" })
+      return yield* store.all
+    }).pipe(Effect.provide(layer)))
+    expect([...all.keys()].toSorted()).toEqual(["opencode", ...providers].toSorted())
+    expect(readdirSync(join(home, ".efferent"))).toEqual(["auth.json"])
+  })
+
+  test("an entry this version cannot read is not listed, and a write keeps it as it is", async () => {
+    const future = { type: "passkey", handle: "h-1" }
+    const { layer, home } = setupWithPaths({ opencode: "sk-opencode", acme: future })
+    const all = await Effect.runPromise(Effect.gen(function* () {
+      const store = yield* AuthStore
+      yield* store.set(ProviderId.make("openai"), { type: "api_key", key: "sk-openai" })
+      return yield* store.all
+    }).pipe(Effect.provide(layer)))
+    expect([...all.keys()].toSorted()).toEqual(["openai", "opencode"])
+    const written = JSON.parse(readFileSync(join(home, ".efferent", "auth.json"), "utf-8")) as Record<string, unknown>
+    expect(written["acme"]).toEqual(future)
+  })
+})
+
+describe("LocalAuthStore — a file it cannot use", () => {
+  test("a corrupt auth.json fails every call with auth.corrupt and is left as it was", async () => {
+    const { layer, home } = setupWithPaths({})
+    const path = join(home, ".efferent", "auth.json")
+    writeFileSync(path, "{ \"anthropic\": ")
+    const failures = await Effect.runPromise(Effect.gen(function* () {
+      const store = yield* AuthStore
+      return yield* Effect.all([
+        Effect.flip(store.get(opencode)),
+        Effect.flip(store.all),
+        Effect.flip(store.resolveKey(opencode)),
+        Effect.flip(store.set(opencode, { type: "api_key", key: "sk-new" })),
+        Effect.flip(store.remove(opencode)),
+      ])
+    }).pipe(Effect.provide(layer)))
+    expect(failures.map((failure) => [failure._tag, failure.code])).toEqual(failures.map(() => ["AuthError", "auth.corrupt"]))
+    expect(failures[0]?.message).toContain(path)
+    expect(readFileSync(path, "utf-8")).toBe("{ \"anthropic\": ")
+  })
+
+  test("a file that cannot be read, or holds no JSON object, is corrupt too; a missing one is empty", async () => {
+    const home = mkdtempSync(join(tmpdir(), "engine-auth-home-"))
+    const cwd = mkdtempSync(join(tmpdir(), "engine-auth-cwd-"))
+    const run = <A>(effect: Effect.Effect<A, unknown, AuthStore>) => Effect.runPromise(effect.pipe(Effect.provide(LocalAuthStoreLive(cwd, home))))
+    expect((await run(Effect.flatMap(Effect.service(AuthStore), (store) => store.all))).size).toBe(0)
+    // A directory where the file should be: reading it fails with EISDIR.
+    mkdirSync(join(home, ".efferent", "auth.json"), { recursive: true })
+    mkdirSync(join(cwd, ".efferent"), { recursive: true })
+    writeFileSync(join(cwd, ".efferent", "auth.json"), "[\"sk-in-a-list\"]")
+    const unreadable = await run(Effect.flip(Effect.flatMap(Effect.service(AuthStore), (store) => store.get(opencode))))
+    expect([unreadable.code, unreadable.message.includes("could not be read")]).toEqual(["auth.corrupt", true])
+    rmSync(join(home, ".efferent", "auth.json"), { recursive: true })
+    const notAnObject = await run(Effect.flip(Effect.flatMap(Effect.service(AuthStore), (store) => store.get(opencode))))
+    expect([notAnObject.code, notAnObject.message.includes("does not hold a JSON object")]).toEqual(["auth.corrupt", true])
   })
 })

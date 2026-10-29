@@ -25,6 +25,11 @@ export type Credential = typeof Credential.Type
 export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
   provider: Schema.String,
   message: Schema.String,
+  /**
+   * `auth.corrupt`: the store's backing data could not be read or decoded.
+   * Nothing was read as absent and nothing was written over it.
+   */
+  code: Schema.optionalKey(Schema.Literal("auth.corrupt")),
 }) {}
 
 /**
@@ -32,8 +37,15 @@ export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
  * usable secret (refreshing a near-expiry OAuth token first, and persisting
  * it where the store keeps credentials), so a credential added mid-session
  * takes effect on the next call with no restart. `None` means the provider
- * is not configured. `authStoreConformance` checks a store against this
- * contract.
+ * is not configured.
+ *
+ * One refresh of a credential runs at a time: concurrent calls on one
+ * expired token send one token request and share its result. A `set` or
+ * `remove` made while that request is in flight wins over the refreshed
+ * token. A store whose backing data cannot be read or decoded fails every
+ * call with an `AuthError` of code `auth.corrupt` instead of reading it as
+ * empty, so no write replaces credentials it could not read.
+ * `authStoreConformance` checks a store against this contract.
  */
 export class AuthStore extends Context.Service<AuthStore, {
     readonly all: Effect.Effect<ReadonlyMap<string, Credential>, AuthError>

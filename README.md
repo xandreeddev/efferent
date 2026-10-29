@@ -115,9 +115,10 @@ ports agent tools work through (`FileSystemMemoryLive` is an in-memory file
 system; `FileSystemLive` and `BashLive` from `@xandreed/plugin-workspace`
 are the local disk and shell, and pass both kits on Bun and Node), and for the
 models plugin's ports `authStoreConformance` (an `AuthStore`: credentials read
-back, resolve and refresh or fail as they should), `settingsStoreConformance`
-(a `SettingsStore`, writable or read-only: values read back typed, clear, and
-bad ones are refused) and `modelCatalogConformance` (a `ModelCatalog`: valid,
+back, resolve and refresh or fail as they should, one refresh at a time, a
+logout during a refresh sticks, damaged data fails instead of reading empty),
+`settingsStoreConformance` (a `SettingsStore`, writable or read-only: values
+read back typed, clear, bad ones are refused, damaged data fails) and `modelCatalogConformance` (a `ModelCatalog`: valid,
 unique, stable entries). See
 [conformance kits](packages/website/src/content/docs/concepts/conformance.md).
 

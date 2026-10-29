@@ -28,12 +28,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   freeze before the first publish holds. Stored freezes still decode.
 - `decodeSse` returns a `Result`: a malformed record fails with
   `RenderError` code `invalid` instead of throwing.
+- A damaged or unreadable `auth.json` or `config.json` fails with an
+  `AuthError` of code `auth.corrupt` (or a `SettingsError` of code
+  `settings.corrupt`) naming the file, instead of reading as empty and being
+  overwritten on the next write. A corrupt `config.json` used to be ignored
+  with a warning: fix or remove the file.
 
 ### Added
 
 - `reasonOf(cause)` in `@xandreed/core`: a cause as one line of text that is
   safe for reports, stored records and model-facing failures (`code:
   message`, `interrupted`, or the defect's message; never a stack).
+- `authStoreConformance(store, { refresh?, corrupt? })` and
+  `settingsStoreConformance(store, { writable, corrupt? })` check
+  single-flight refresh, a logout during a refresh, and damaged backing
+  data (`AuthStoreConformanceOptions`, `AuthStoreRefreshProbe`,
+  `SettingsStoreConformanceOptions`). `AuthError` and `SettingsError` have
+  an optional `code`.
 
 ### Fixed
 
@@ -59,6 +70,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - SSE and WebSocket feed failures are logged. `sseNodePeer` drops a client
   that has not taken a write within its new `timeout` parameter (2 seconds),
   and no longer leaks its close listener.
+- The file credential store refreshes an expiring OAuth token once, however
+  many calls need it at the same moment; a login or logout made during the
+  refresh wins; writes no longer share one temp file. Entries the plugin
+  cannot read are kept on write.
+- A refresh whose response leaves out the refresh token keeps the stored one
+  (it used to sign the user out silently). Malformed Anthropic and OpenAI
+  Codex token responses fail with an `AuthError` that never quotes the
+  response, and the token request and its commit cannot be interrupted
+  apart.
 
 ### Repository
 

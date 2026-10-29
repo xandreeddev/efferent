@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Schema, SynchronizedRef } from "effect"
+import { Effect, Option, Ref, Schema, SynchronizedRef } from "effect"
 import { parseModelSelection } from "../domain/model-selection.entity.functions.js"
 import { EngineSettings, SettingsError, SettingsStore } from "../ports/settings-store.port.js"
 import type { ModelRole, SettingsKey } from "../ports/settings-store.port.js"
 import { settingsStoreConformance } from "./settings-store.conformance.js"
+import type { SettingsStoreConformanceOptions } from "./settings-store.conformance.js"
 
 type Store = typeof SettingsStore.Service
 
@@ -45,8 +46,30 @@ const reference = (initial = new EngineSettings({})) => Effect.gen(function* () 
   })
 })
 
-const failedChecks = (store: Store, writable: boolean) => Effect.runPromise(Effect.forEach(settingsStoreConformance(store, { writable }), (check) =>
+const failedChecks = (store: Store, writable: boolean, options: Partial<SettingsStoreConformanceOptions> = {}) => Effect.runPromise(Effect.forEach(settingsStoreConformance(store, { writable, ...options }), (check) =>
   Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))).pipe(Effect.map((failed) => failed.flat().toSorted())))
+
+/**
+ * The reference store over backing data the kit can damage: while damaged,
+ * it fails every call with `settings.corrupt`, or (`damaged: "defaults"`)
+ * reads defaults and writes over it.
+ */
+const damageable = (damaged: "fail" | "defaults", initial = new EngineSettings({})) => Effect.gen(function* () {
+  const store = yield* reference(initial)
+  const isDamaged = yield* Ref.make(false)
+  const readable = <A>(effect: Effect.Effect<A, SettingsError>, fallback: Effect.Effect<A, SettingsError>) => Ref.get(isDamaged).pipe(Effect.flatMap((now) =>
+    !now ? effect
+      : damaged === "fail" ? Effect.fail(new SettingsError({ code: "settings.corrupt", message: "the data is damaged" }))
+      : fallback))
+  return {
+    store: SettingsStore.of({
+      load: readable(store.load, Effect.succeed(new EngineSettings({}))),
+      setRole: (role, value) => readable(store.setRole(role, value), store.setRole(role, value)),
+      set: (key, value) => readable(store.set(key, value), store.set(key, value)),
+    }),
+    corrupt: Effect.acquireRelease(Ref.set(isDamaged, true), () => Ref.set(isDamaged, false)),
+  }
+})
 
 const seeded = new EngineSettings({ model: Option.some("seed:general"), fastModel: Option.some("seed:fast"), maxAttempts: Option.some(7), sandbox: Option.some(false) })
 
@@ -67,6 +90,14 @@ describe("the SettingsStore kit", () => {
     const store = Effect.runSync(reference(legacy))
     expect(await failedChecks(store, true)).toEqual(["bad-role", "bad-values", "clear", "role", "values"])
     expect(Schema.encodeSync(EngineSettings)(await Effect.runPromise(store.load))).toEqual(Schema.encodeSync(EngineSettings)(legacy))
+  })
+
+  test("a store that fails on damaged data passes the corrupt check, writable or read-only", async () => {
+    const writable = Effect.runSync(damageable("fail", seeded))
+    expect(await failedChecks(writable.store, true, { corrupt: writable.corrupt })).toEqual([])
+    const readOnly = Effect.runSync(damageable("fail", seeded))
+    const refusing = SettingsStore.of({ ...readOnly.store, setRole: () => Effect.fail(new SettingsError({ message: "read-only" })), set: () => Effect.fail(new SettingsError({ message: "read-only" })) })
+    expect(await failedChecks(refusing, false, { corrupt: readOnly.corrupt })).toEqual([])
   })
 
   test("a read-only store passes the read-only checks", async () => {
@@ -107,6 +138,12 @@ describe("the SettingsStore kit catches stores that break the contract", () => {
       set: (key, value) => Option.isNone(value) ? Effect.void : store.set(key, value),
     })
     expect(await failedChecks(sticky, true)).toEqual(["clear", "role"])
+  })
+
+  test("a store that reads damaged data as defaults fails the corrupt check, and is left as it was", async () => {
+    const { store, corrupt } = Effect.runSync(damageable("defaults", seeded))
+    expect(await failedChecks(store, true, { corrupt })).toEqual(["corrupt"])
+    expect(Schema.encodeSync(EngineSettings)(await Effect.runPromise(store.load))).toEqual(Schema.encodeSync(EngineSettings)(seeded))
   })
 
   test("a read-only store that accepts writes silently fails the read-only check", async () => {

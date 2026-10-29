@@ -2,6 +2,7 @@ import { Clock, Effect, Option } from "effect"
 import { AuthError } from "@xandreed/core"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
+import { decodeTokenResponse } from "./token-response.entity.functions.js"
 
 /**
  * Anthropic OAuth (Claude Pro/Max subscription) — the full protocol:
@@ -55,11 +56,16 @@ export interface TokenRequestOptions {
 export const tokenTime = (options: TokenRequestOptions): Effect.Effect<number> =>
   options.now === undefined ? Clock.currentTimeMillis : Effect.succeed(options.now)
 
-/** One token-endpoint POST; refresh and exchange share it verbatim. */
+/**
+ * One token-endpoint POST; refresh and exchange share it verbatim.
+ * `previous` is the refresh token a refresh sends, kept when the response
+ * does not rotate it.
+ */
 const postToken = (
   body: Record<string, string>,
   stage: string,
   options: TokenRequestOptions,
+  previous: Option.Option<string>,
 ): Effect.Effect<RefreshedTokens, AuthError> => {
   const fail = oauthError(stage)
   return Effect.tryPromise({
@@ -78,21 +84,11 @@ const postToken = (
       (res) => res.ok,
       (res) => fail(`status ${res.status}: ${res.text.slice(0, 200)}`),
     ),
-    Effect.flatMap((res) =>
-      Effect.try({
-        try: () =>
-          JSON.parse(res.text) as {
-            access_token: string
-            refresh_token: string
-            expires_in: number
-          },
-        catch: () => fail("the token response was not JSON"),
-      }),
-    ),
-    Effect.flatMap((data) => Effect.map(tokenTime(options), (now) => ({
-      access: data.access_token,
-      refresh: data.refresh_token,
-      expires: now + data.expires_in * 1000 - 5 * 60 * 1000,
+    Effect.flatMap((res) => decodeTokenResponse(res.text, previous).pipe(Effect.mapError(fail))),
+    Effect.flatMap((issued) => Effect.map(tokenTime(options), (now) => ({
+      access: issued.access,
+      refresh: issued.refresh,
+      expires: now + issued.lifetimeMs - 5 * 60 * 1000,
     }))),
   )
 }
@@ -110,6 +106,7 @@ export const refreshAnthropicToken = (
     },
     "token refresh",
     options,
+    Option.some(refreshToken),
   )
 
 /* ------------------------------------------------------------------ */
@@ -182,6 +179,7 @@ export const exchangeAnthropicCode = (
     },
     "code exchange",
     options,
+    Option.none(),
   )
 
 export interface AuthRedirect {

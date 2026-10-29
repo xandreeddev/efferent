@@ -738,8 +738,8 @@ is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
 `taskRunnerConformance(make, { interruptsOnClose? })`,
 `tasksConformance(make)`, `toolRegistryConformance(make)`,
 `fileSystemConformance(subject)`,
-`bashConformance(subject)`, `authStoreConformance(store)`,
-`settingsStoreConformance(store, { writable })` and
+`bashConformance(subject)`, `authStoreConformance(store, { refresh?, corrupt? })`,
+`settingsStoreConformance(store, { writable, corrupt? })` and
 `modelCatalogConformance(catalog, { includes? })` (from `@xandreed/core`) are
 the port contracts as runnable checks: each returns `ConformanceCheck`s
 (`name`, and a `run` effect that fails with a `ConformanceFailure` naming the
