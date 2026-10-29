@@ -1,6 +1,6 @@
 import { homedir } from "node:os"
 import { LanguageModel } from "effect/ai"
-import { Config as EffectConfig, Effect, Layer, Match, Option, Redacted, Schema } from "effect"
+import { Config as EffectConfig, Context, Effect, Layer, Match, Option, Redacted, Schema } from "effect"
 import { AuthStore, definePlugin, EngineSettings, HarnessError, ModelCatalog, SessionEnvironment, SettingsError, SettingsStore, UtilityLlm } from "@xandreed/core"
 import type { Credential } from "@xandreed/core"
 import { CredentialInputs } from "./auth/credential-input.entity.js"
@@ -14,6 +14,9 @@ import { LocalSettingsStoreLive } from "./settings/localSettings.js"
 import { MemorySettingsStoreLive } from "./settings/memory-settings.adapter.js"
 import { HostCredentials } from "./ports/host-credentials.port.js"
 import { CurrentModelEndpoints, ModelEndpoints } from "./ports/model-endpoints.port.js"
+import { ModelsTransport } from "./ports/models-transport.port.js"
+import { ProxyUrlOption } from "./transport/http-proxy.entity.js"
+import { modelsTransportFor } from "./transport/models-transport.adapter.js"
 
 const Config = Schema.Struct({
   model: Schema.String,
@@ -28,6 +31,10 @@ const Config = Schema.Struct({
   credentials: CredentialInputs,
   /** Memory storage only: provider id → the environment variable holding its API key, read when the plugin starts. */
   credentialEnv: Schema.Record(Schema.String, Schema.String),
+  /** The proxy every model and OAuth call goes through (http:// or https://, credentials allowed, Redacted from code); empty: HTTPS_PROXY / HTTP_PROXY from the environment. */
+  proxy: ProxyUrlOption,
+  /** Hosts that go direct, in NO_PROXY syntax, added to NO_PROXY from the environment; "*" turns the proxy off. Loopback hosts always go direct. */
+  noProxy: Schema.String,
   // An unknown key is named, never its value: a misspelt `credentials` may hold a secret.
 }).annotate({ messageUnexpectedKey: "not an option of the models plugin" }).check(Schema.makeFilter((config) =>
   config.storage === "memory" || (Object.keys(config.credentials).length === 0 && Object.keys(config.credentialEnv).length === 0)
@@ -79,18 +86,48 @@ const localStores = (config: Config, workspace: string) => {
   return Layer.mergeAll(settings, LocalAuthStoreLive(workspace, home, ".efferent/runtime", config.inheritPrevious ? ".efferent" : undefined))
 }
 
+const optionError = (message: string) => new HarnessError({ code: "config.options", plugin: "@xandreed/plugin-models", message })
+
+/**
+ * The network path of every call the plugin makes: the host's own
+ * `ModelsTransport` when it provides one (then the `proxy` and `noProxy`
+ * options would not apply, so setting them is refused), else the transport
+ * the options and the environment's proxy variables call for
+ * (`modelsTransportFor`), which fails the plugin on an unusable proxy URL.
+ * When no proxy applies there is none, and the calls use the runtime's own
+ * fetch as before (a `FetchHttpClient.Fetch` the host provides included).
+ */
+const transportLayer = (config: Config): Effect.Effect<Layer.Layer<never, HarnessError>, HarnessError> => Effect.flatMap(Effect.serviceOption(ModelsTransport), Option.match({
+  onSome: (host) => Redacted.isRedacted(config.proxy) || config.proxy.length > 0 || config.noProxy.length > 0
+    ? Effect.fail(optionError("the host provides ModelsTransport, so the proxy and noProxy options would not apply: give the proxy to the host's transport"))
+    : Effect.succeed(Layer.succeed(ModelsTransport, host)),
+  onNone: () => Effect.succeed(Layer.effectContext(modelsTransportFor({ proxy: config.proxy, noProxy: config.noProxy }).pipe(
+    Effect.map(Option.match({
+      onNone: () => Context.empty(),
+      onSome: (transport): Context.Context<never> => Context.make(ModelsTransport, transport),
+    })),
+    Effect.mapError((error) => optionError(error.message)),
+  ))),
+}))
+
 /**
  * The models plugin: the routed `LanguageModel`, the fast `UtilityLlm`, the
  * `ModelCatalog`, and the `AuthStore` and `SettingsStore` they read.
  * Runtime-scoped: built once per `Agent.define`, so credentials, refreshed
  * tokens and settings edits held in memory last across turns. A turn's own
  * services win over it (a per-turn `LanguageModel` replaces the routed one).
+ * When a proxy applies (the `proxy` option, else the environment's
+ * `https_proxy` / `HTTPS_PROXY` and `http_proxy` / `HTTP_PROXY`), every call
+ * it makes (the providers, the OpenAI-compatible endpoints, OAuth token
+ * refreshes, the OpenAI subscription's WebSocket) goes through one
+ * `ModelsTransport`, the `noProxy` / `NO_PROXY` hosts and loopback direct;
+ * so do they through a host's own transport.
  */
 export const modelsPlugin = definePlugin({
   id: "@xandreed/plugin-models", version: "0.13.0", scope: "runtime", config: Config,
-  defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {}, storage: "local", credentials: {}, credentialEnv: {} },
+  defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {}, storage: "local", credentials: {}, credentialEnv: {}, proxy: "", noProxy: "" },
   requires: [SessionEnvironment],
-  optional: [HostCredentials],
+  optional: [HostCredentials, ModelsTransport],
   provides: [LanguageModel.LanguageModel, UtilityLlm, AuthStore, SettingsStore, ModelCatalog],
   layer: (config) => Layer.unwrap(Effect.gen(function* () {
     const { workspace } = yield* SessionEnvironment
@@ -98,11 +135,13 @@ export const modelsPlugin = definePlugin({
     const stores = yield* Match.value(config.storage).pipe(
       Match.when("memory", () => Effect.succeed(memoryStores(config))),
       Match.when("local", () => Option.isSome(host)
-        ? Effect.fail(new HarnessError({ code: "config.options", plugin: "@xandreed/plugin-models", message: `the host provides HostCredentials, which needs storage: "memory"` }))
+        ? Effect.fail(optionError(`the host provides HostCredentials, which needs storage: "memory"`))
         : Effect.succeed(localStores(config, workspace))),
       Match.exhaustive,
     )
-    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints))
+    const transport = yield* transportLayer(config)
+    // The transport sits beneath everything that calls out: the stores' token refreshes, the routed model and the utility model.
+    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints)).pipe(Layer.provideMerge(transport))
     return Layer.mergeAll(LanguageModelLive, UtilityLlmLive, ConfiguredModelCatalogLive).pipe(Layer.provideMerge(base))
   })),
 })

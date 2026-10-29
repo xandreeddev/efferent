@@ -2,8 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Option, Redacted } from "effect"
+import { Effect, Layer, Option, Redacted } from "effect"
 import { AuthStore, ProviderId } from "@xandreed/core"
+import { ModelsTransport } from "../ports/models-transport.port.js"
 import { LocalAuthStoreLive } from "./localAuth.js"
 
 const setup = (global: Record<string, unknown>, local?: Record<string, unknown>) => {
@@ -96,6 +97,26 @@ describe("LocalAuthStoreLive", () => {
         expect(Redacted.value(Option.getOrThrow(anthropic))).toBe("fresh-access")
       }).pipe(Effect.provide(layer)),
     )
+  })
+
+  test("an expired oauth token refreshes through the ModelsTransport the store is built over, and is written back", async () => {
+    const { home, cwd } = setupWithPaths({
+      anthropic: { type: "oauth", access: "stale", refresh: "refresh-token", expires: Date.now() - 1 },
+    })
+    const urls: Array<string> = []
+    const transport = Layer.succeed(ModelsTransport, ModelsTransport.of({
+      fetch: (input) => {
+        urls.push(String(input))
+        return Promise.resolve(Response.json({ access_token: "fresh-access", refresh_token: "fresh-refresh", expires_in: 3600 }))
+      },
+    }))
+    const key = await Effect.runPromise(Effect.gen(function* () {
+      return yield* (yield* AuthStore).resolveKey(ProviderId.make("anthropic"))
+    }).pipe(Effect.provide(LocalAuthStoreLive(cwd, home).pipe(Layer.provide(transport)))))
+    expect(Option.map(key, Redacted.value)).toEqual(Option.some("fresh-access"))
+    expect(urls).toEqual(["https://platform.claude.com/v1/oauth/token"])
+    const written = JSON.parse(readFileSync(join(home, ".efferent", "auth.json"), "utf-8")) as Record<string, { readonly access?: unknown }>
+    expect(written["anthropic"]?.access).toBe("fresh-access")
   })
 
   test("an expired non-anthropic oauth fails with a clear message (no refresh wired)", async () => {

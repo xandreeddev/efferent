@@ -1,9 +1,12 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { Clock, Effect, Layer, Option, Redacted } from "effect"
+import type { Context } from "effect"
 import { asJsonRecord, AuthError, AuthStore, parseJsonWarn } from "@xandreed/core"
 import type { Credential, ProviderId } from "@xandreed/core"
 import { isUsableAt, refreshCredential } from "./credential-refresh.entity.functions.js"
+import type { TokenRequestOptions } from "./anthropicOAuth.js"
+import { ModelsTransport } from "../ports/models-transport.port.js"
 
 /**
  * The on-disk credential store — the SAME `auth.json` vocabulary the previous
@@ -98,73 +101,77 @@ export const authPaths = (cwd: string, home: string, directory = ".efferent"): R
 
 /**
  * `LocalAuthStoreLive(cwd, home)` — read-through: every call re-reads disk,
- * so a credential added mid-session applies on the next request.
+ * so a credential added mid-session applies on the next request. A token
+ * refresh goes through the `ModelsTransport` the layer is built over, if any.
  */
 export const LocalAuthStoreLive = (cwd: string, home: string, directory = ".efferent", fallbackDirectory?: string) => {
   const paths = [...(fallbackDirectory === undefined ? [] : authPaths(cwd, home, fallbackDirectory)), ...authPaths(cwd, home, directory)]
-  return (
-  Layer.succeed(AuthStore, {
-    all: Effect.gen(function* () {
-      const files = yield* Effect.forEach(paths, readAuthFile)
-      return new Map(files.flatMap((f) => [...f.entries]))
-    }),
-    get: (provider: ProviderId) =>
-      Effect.gen(function* () {
-        // Local overrides global: read in order, later files win.
+  return Layer.effect(AuthStore, Effect.map(Effect.serviceOption(ModelsTransport), (transport): Context.Service.Shape<typeof AuthStore> => {
+    // Token refreshes go through the transport the store was built over (the plugin's proxy), else the global fetch.
+    const tokens: TokenRequestOptions = Option.match(transport, { onNone: () => ({}), onSome: ({ fetch }) => ({ fetch }) })
+    return {
+      all: Effect.gen(function* () {
         const files = yield* Effect.forEach(paths, readAuthFile)
-        const merged = new Map(files.flatMap((f) => [...f.entries]))
-        return Option.fromNullishOr(merged.get(provider))
+        return new Map(files.flatMap((f) => [...f.entries]))
       }),
-    resolveKey: (provider: ProviderId) =>
-      Effect.gen(function* () {
-        const files = yield* Effect.forEach(paths, readAuthFile)
-        const holder = [...files]
-          .reverse()
-          .find((f) => f.entries.has(provider))
-        const cred = holder?.entries.get(provider)
-        if (cred === undefined) return Option.none<Redacted.Redacted<string>>()
-        if (cred.type === "api_key") return Option.some(Redacted.make(cred.key))
-        if (cred.type === "local") return Option.none<Redacted.Redacted<string>>()
-        // OAuth: refresh when near expiry, persisting back to the file that
-        // held the credential. Each subscription protocol stays in its auth
-        // module; `refreshCredential` dispatches by provider id.
-        if (isUsableAt(cred, yield* Clock.currentTimeMillis)) {
-          return Option.some(Redacted.make(cred.access))
-        }
-        const updated = yield* refreshCredential(provider, cred)
-        // Refresh inherited credentials into the current store, preserving the
-        // previous installation's files until the user explicitly logs out.
-        const target = holder !== undefined && authPaths(cwd, home, directory).includes(holder.path)
-          ? holder : yield* readAuthFile(authPaths(cwd, home, directory)[0] ?? "")
-        yield* writeAuthFile(
-          target.path,
-          new Map([...target.entries, [provider, updated] as const]),
-        )
-        return Option.some(Redacted.make(updated.access))
-      }),
-    set: (provider: ProviderId, credential: Credential) =>
-      Effect.gen(function* () {
-        // Logins land in the GLOBAL file — credentials belong to the user,
-        // not one workspace (a local entry still overrides on read).
-        const globalPath = authPaths(cwd, home, directory)[0] ?? ""
-        const file = yield* readAuthFile(globalPath)
-        yield* writeAuthFile(
-          globalPath,
-          new Map([...file.entries, [provider, credential] as const]),
-        )
-      }),
-    remove: (provider: ProviderId) =>
-      // Logout removes the provider from EVERY tier that holds it, so a
-      // stale local override can't silently resurrect the credential.
-      Effect.forEach(paths, (path) =>
+      get: (provider: ProviderId) =>
         Effect.gen(function* () {
-          const file = yield* readAuthFile(path)
-          if (!file.entries.has(provider)) return
+          // Local overrides global: read in order, later files win.
+          const files = yield* Effect.forEach(paths, readAuthFile)
+          const merged = new Map(files.flatMap((f) => [...f.entries]))
+          return Option.fromNullishOr(merged.get(provider))
+        }),
+      resolveKey: (provider: ProviderId) =>
+        Effect.gen(function* () {
+          const files = yield* Effect.forEach(paths, readAuthFile)
+          const holder = [...files]
+            .reverse()
+            .find((f) => f.entries.has(provider))
+          const cred = holder?.entries.get(provider)
+          if (cred === undefined) return Option.none<Redacted.Redacted<string>>()
+          if (cred.type === "api_key") return Option.some(Redacted.make(cred.key))
+          if (cred.type === "local") return Option.none<Redacted.Redacted<string>>()
+          // OAuth: refresh when near expiry, persisting back to the file that
+          // held the credential. Each subscription protocol stays in its auth
+          // module; `refreshCredential` dispatches by provider id.
+          if (isUsableAt(cred, yield* Clock.currentTimeMillis)) {
+            return Option.some(Redacted.make(cred.access))
+          }
+          const updated = yield* refreshCredential(provider, cred, tokens)
+          // Refresh inherited credentials into the current store, preserving the
+          // previous installation's files until the user explicitly logs out.
+          const target = holder !== undefined && authPaths(cwd, home, directory).includes(holder.path)
+            ? holder : yield* readAuthFile(authPaths(cwd, home, directory)[0] ?? "")
           yield* writeAuthFile(
-            path,
-            new Map([...file.entries].filter(([p]) => p !== provider)),
+            target.path,
+            new Map([...target.entries, [provider, updated] as const]),
+          )
+          return Option.some(Redacted.make(updated.access))
+        }),
+      set: (provider: ProviderId, credential: Credential) =>
+        Effect.gen(function* () {
+          // Logins land in the GLOBAL file — credentials belong to the user,
+          // not one workspace (a local entry still overrides on read).
+          const globalPath = authPaths(cwd, home, directory)[0] ?? ""
+          const file = yield* readAuthFile(globalPath)
+          yield* writeAuthFile(
+            globalPath,
+            new Map([...file.entries, [provider, credential] as const]),
           )
         }),
-      ).pipe(Effect.asVoid),
+      remove: (provider: ProviderId) =>
+        // Logout removes the provider from EVERY tier that holds it, so a
+        // stale local override can't silently resurrect the credential.
+        Effect.forEach(paths, (path) =>
+          Effect.gen(function* () {
+            const file = yield* readAuthFile(path)
+            if (!file.entries.has(provider)) return
+            yield* writeAuthFile(
+              path,
+              new Map([...file.entries].filter(([p]) => p !== provider)),
+            )
+          }),
+        ).pipe(Effect.asVoid),
+    }
   }))
 }

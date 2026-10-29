@@ -47,6 +47,22 @@ no file: credentials come from `credentials` (`Redacted` secrets),
 memory, and `inheritPrevious` is ignored. See the website's providers page,
 "Credentials and storage".
 
+When a proxy applies, every call the models plugin makes (the provider SDKs,
+the OpenAI-compatible client, OAuth token refreshes, the OpenAI subscription's
+WebSocket) goes through one `ModelsTransport`, built from the plugin's `proxy`
+option, else `https_proxy` / `HTTPS_PROXY` and `http_proxy` / `HTTP_PROXY`
+(read through Effect's `Config`), with the `noProxy` option and `NO_PROXY`
+hosts and loopback going direct. On Node it goes through undici with its own
+agents (Node's own fetch ignores those variables unless `NODE_USE_ENV_PROXY`
+is set, and the transport does not depend on it). On Bun it goes through
+fetch's `proxy` option; Bun's fetch applies a proxy from the environment by
+itself, so there only `NO_PROXY` exempts a host from that one. The routed
+model provides the transport's fetch as `FetchHttpClient.Fetch` innermost on
+every call, so an ambient one cannot route a call past the proxy. Without a
+proxy the plugin adds no transport, and the calls use the runtime's fetch as
+before. A host gives its own transport through `Agent.define({ services })`.
+See the website's providers page, "Proxy".
+
 ## Evals
 
 For typed datasets, reusable evaluators, task/journey composition and native prompt

@@ -1,5 +1,7 @@
 import { Clock, Effect, Option } from "effect"
 import { AuthError } from "@xandreed/core"
+import type { ModelsFetch } from "../ports/models-transport.port.js"
+import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 
 /**
  * Anthropic OAuth (Claude Pro/Max subscription) — the full protocol:
@@ -39,12 +41,13 @@ const oauthError = (stage: string) => (detail: string): AuthError =>
 
 /**
  * How one token request is made, for both subscription providers. `fetch`
- * replaces the global fetch (a test stub, a host's own transport); `now` is
+ * replaces the global fetch (a test stub, or a `ModelsTransport`'s fetch, so
+ * the request goes through the models plugin's proxy); `now` is
  * the time the new token's expiry is counted from, in epoch ms (default: the
  * Effect `Clock`).
  */
 export interface TokenRequestOptions {
-  readonly fetch?: typeof globalThis.fetch
+  readonly fetch?: ModelsFetch
   readonly now?: number
 }
 
@@ -69,7 +72,7 @@ const postToken = (
       })
       return { ok: res.ok, status: res.status, text: await res.text() }
     },
-    catch: (e) => fail(String(e)),
+    catch: (e) => fail(redactCredentials(String(e))),
   }).pipe(
     Effect.filterOrFail(
       (res) => res.ok,

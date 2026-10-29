@@ -3,15 +3,17 @@ import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { Effect, Option, Redacted } from "effect"
-import type { Scope } from "effect"
+import type { Context, Scope } from "effect"
 import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, modelRequestDescriptorOf } from "@xandreed/core"
 import type { Credential, ModelCallPolicy, ModelSelection } from "@xandreed/core"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { makeCompatLanguageModel } from "./compat.js"
-import { makeOpenAiCodexLanguageModel } from "./openAiCodex.js"
+import { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL } from "./openAiCodex.js"
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import type { ModelEndpoint } from "../ports/model-endpoints.port.js"
+import { ModelsTransport } from "../ports/models-transport.port.js"
+import type { WebSocketProxy } from "../ports/models-transport.port.js"
 
 /**
  * Per-provider `LanguageModel` construction. Built PER REQUEST from a
@@ -164,17 +166,40 @@ const endpointKey = (endpoint: ModelEndpoint, stored: Redacted.Redacted<string> 
     Option.filter((value) => value.length > 0),
   )
 
+/** The transport the plugin was built over, if any: the compat client's fetch goes through it. */
+type Transport = Option.Option<Context.Service.Shape<typeof ModelsTransport>>
+
+/** The compat client's `fetchImpl`: the transport's fetch, or (no transport) the global one. */
+const compatFetch = (transport: Transport) =>
+  Option.match(transport, { onNone: () => ({}), onSome: ({ fetch }) => ({ fetchImpl: fetch }) })
+
+/**
+ * How the OpenAI subscription's WebSocket reaches ChatGPT: what the
+ * transport says, directly without one. A transport that refuses (a proxy
+ * applies that the runtime cannot tunnel a WebSocket through) fails the call
+ * with the provider's `AuthError`, which is not retried and does not fall back.
+ */
+const codexWebSocketProxy = (transport: Transport): Effect.Effect<Option.Option<WebSocketProxy>, AuthError> =>
+  Option.match(Option.flatMap(transport, (found) => Option.fromNullishOr(found.webSocketAgent)), {
+    onNone: () => Effect.succeed(Option.none()),
+    onSome: (route) => route(new URL(OPENAI_CODEX_API_URL)).pipe(
+      Effect.mapError((error) => new AuthError({ provider: "openai-codex", message: error.message })),
+    ),
+  })
+
 const endpointModel = (
   selection: ModelSelection,
   url: string,
   key: Option.Option<string>,
   standardOnly: boolean,
+  transport: Transport,
 ): Effect.Effect<BuiltProvider> =>
   makeCompatLanguageModel({
     moduleName: selection.provider,
     chatUrl: chatCompletionsUrl(url),
     model: selection.modelId,
     standardOnly,
+    ...compatFetch(transport),
     ...Option.match(key, { onNone: () => ({}), onSome: (apiKey) => ({ apiKey }) }),
   }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
 
@@ -184,21 +209,22 @@ const buildProviderService = (
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
 ): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> =>
-  Effect.flatMap(Effect.service(CurrentModelEndpoints), (endpoints) => {
+  Effect.flatMap(Effect.all({ endpoints: Effect.service(CurrentModelEndpoints), transport: Effect.serviceOption(ModelsTransport) }), ({ endpoints, transport }) => {
     const endpoint = Option.fromNullishOr(endpoints[selection.provider])
     if (Option.isSome(endpoint)) {
-      return endpointModel(selection, endpoint.value.url, endpointKey(endpoint.value, key), endpoint.value.standardOnly ?? true)
+      return endpointModel(selection, endpoint.value.url, endpointKey(endpoint.value, key), endpoint.value.standardOnly ?? true, transport)
     }
     if (credential?.type === "local" && credential.baseUrl !== undefined) {
-      return endpointModel(selection, credential.baseUrl, Option.none(), true)
+      return endpointModel(selection, credential.baseUrl, Option.none(), true, transport)
     }
-    return buildBuiltInProvider(selection, credential, key)
+    return buildBuiltInProvider(selection, credential, key, transport)
   })
 
 const buildBuiltInProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
+  transport: Transport,
 ): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => {
   const oauth = credential?.type === "oauth"
   if (selection.provider === "opencode") {
@@ -226,6 +252,7 @@ const buildBuiltInProvider = (
       chatUrl: OPENCODE_CHAT_URL,
       apiKey: Redacted.value(key),
       model: selection.modelId,
+      ...compatFetch(transport),
     }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
   }
   if (selection.provider === "google") {
@@ -240,6 +267,7 @@ const buildBuiltInProvider = (
           standardOnly: true,
           // Gemini's completion_tokens may leave its thoughts out: its reasoning reads 0.
           usage: { reasoning: false },
+          ...compatFetch(transport),
         }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
   }
   if (selection.provider === "anthropic") {
@@ -266,7 +294,8 @@ const buildBuiltInProvider = (
     if (Option.isNone(accountId)) {
       return Effect.fail(new AuthError({ provider: selection.provider, message: "the OpenAI subscription token has no ChatGPT account id — sign in to the subscription again and store the new token" }))
     }
-    return makeOpenAiCodexLanguageModel({ model: selection.modelId, accessToken: key, accountId: accountId.value }).pipe(
+    return codexWebSocketProxy(transport).pipe(
+      Effect.flatMap((webSocketProxy) => makeOpenAiCodexLanguageModel({ model: selection.modelId, accessToken: key, accountId: accountId.value, webSocketProxy })),
       Effect.map((svc) => ({ svc, prependClaudeCode: false })),
     )
   }

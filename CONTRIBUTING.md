@@ -22,6 +22,10 @@ bun test              # colocated unit tests — key-free by design
 bun run foundry demo  # the forge-loop E2E over a scripted implementor
 ```
 
+The tests expect no proxy in the environment: Bun's fetch sends even the
+loopback servers they start to `HTTP_PROXY` / `HTTPS_PROXY`, so run them with
+those unset (the proxy tests that would go direct skip when one is set).
+
 House rules the gates enforce (see the root `AGENTS.md` for the full list):
 errors are `Schema.TaggedError` values (no `try`/`catch`/`throw`), state is a
 fold (no `let`, no loop statements), absence is `Option`, union branching is

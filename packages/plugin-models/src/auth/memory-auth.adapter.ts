@@ -2,6 +2,8 @@ import { Clock, Effect, Layer, Match, Option, Redacted, Ref, Semaphore, Synchron
 import { AuthStore } from "@xandreed/core"
 import type { AuthError, Credential, ProviderId } from "@xandreed/core"
 import { HostCredentials } from "../ports/host-credentials.port.js"
+import { ModelsTransport } from "../ports/models-transport.port.js"
+import type { ModelsFetch } from "../ports/models-transport.port.js"
 import { toCredential, toCredentialInput } from "./credential-input.entity.functions.js"
 import { isUsableAt, refreshCredential } from "./credential-refresh.entity.functions.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
@@ -9,8 +11,8 @@ import type { OAuthCredential } from "./credential-refresh.entity.js"
 
 /** How the in-memory store reaches the OAuth token endpoints. */
 export interface MemoryAuthOptions {
-  /** Replaces the global fetch for token refreshes. */
-  readonly fetch?: typeof globalThis.fetch
+  /** The fetch token refreshes go through; default: the `ModelsTransport`'s when the layer is built over one, else the global fetch. */
+  readonly fetch?: ModelsFetch
 }
 
 /** Each provider's two locks: `commit` orders set, remove and a refresh's write; `refresh` lets one refresh run at a time. */
@@ -27,8 +29,9 @@ type Refreshed = { readonly _tag: "Key"; readonly key: Redacted.Redacted<string>
  * Credentials live in memory for the layer's lifetime: the host's
  * `HostCredentials.load` (when the host provides that service), overlaid by
  * `seed`. `resolveKey` refreshes a near-expiry anthropic or openai-codex
- * OAuth token in memory, one refresh per provider at a time, and hands the
- * new token to `HostCredentials.save`.
+ * OAuth token in memory, one refresh per provider at a time (through the
+ * `ModelsTransport` it was built over, so through the plugin's proxy), and
+ * hands the new token to `HostCredentials.save`.
  *
  * A login or logout (`set`, `remove`) does not wait for a refresh's token
  * request; it waits only while a refreshed token is committed, which
@@ -50,7 +53,11 @@ export const MemoryAuthStoreLive = (
     })
     const state = yield* Ref.make<ReadonlyMap<string, Credential>>(new Map([...loaded, ...seed]))
     const locks = yield* SynchronizedRef.make<ReadonlyMap<string, ProviderLocks>>(new Map())
-    const tokens: TokenRequestOptions = options.fetch === undefined ? {} : { fetch: options.fetch }
+    const transport = yield* Effect.serviceOption(ModelsTransport)
+    const tokens: TokenRequestOptions = Option.match(Option.orElse(Option.fromNullishOr(options.fetch), () => Option.map(transport, (found) => found.fetch)), {
+      onNone: () => ({}),
+      onSome: (fetch) => ({ fetch }),
+    })
 
     const locksOf = (provider: ProviderId) => SynchronizedRef.modifyEffect(locks, (all) => Option.match(Option.fromNullishOr(all.get(provider)), {
       onSome: (found) => Effect.succeed([found, all] as const),

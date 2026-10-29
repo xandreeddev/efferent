@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises"
+import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, relative } from "node:path"
 const root = join(import.meta.dir, "..")
@@ -114,10 +115,13 @@ await writeFile(join(consumer, "verify.ts"), `
 import { Context, Deferred, Effect, Layer, Option, Ref, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
+import { connect, createServer } from "node:net"
+import type { Socket } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { awaitIdle, Bash, bashConformance, Capabilities, FileSystem, fileSystemConformance, makeMemoryFileSystem, Sessions, SessionEnvironment, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskActivity, TaskExecutor, Tasks, TurnActivity, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
+import { modelsPlugin } from "@xandreed/plugin-models"
 import { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
 import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
@@ -194,6 +198,51 @@ console.log("The FileSystem kit passed over the packed in-memory file system (" 
 const linkTo = (target: string, path: string) => Effect.tryPromise(() => symlink(target, path))
 ${localKits}
 ${workspaceJourney}
+// The packed models plugin's proxy on Bun: fetch's own proxy option sends an http: endpoint's call to the proxy in
+// absolute form. The proxy forwards *.invalid hosts (which no DNS resolves) to 127.0.0.1.
+const chatEndpoint = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: async (request) => {
+ const body = await request.json() as { readonly model?: unknown }
+ return Response.json({ choices: [{ finish_reason: "stop", message: { content: "answered " + String(body.model) } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })
+} })
+const chatPort = chatEndpoint.port
+const proxied: Array<string> = []
+const proxySockets: Array<Socket> = []
+const recordingProxy = createServer((client) => {
+ proxySockets.push(client)
+ client.on("error", () => client.destroy())
+ client.once("data", (chunk: Buffer) => {
+  const head = chunk.toString("latin1")
+  const target = head.split(" ")[1] ?? ""
+  proxied.push(head.split("\\r\\n")[0] ?? "")
+  const url = URL.canParse(target) ? new URL(target) : null
+  if (url === null || !url.hostname.endsWith(".invalid")) return client.end("HTTP/1.1 403 Forbidden\\r\\ncontent-length: 0\\r\\nconnection: close\\r\\n\\r\\n")
+  const upstream = connect(Number(url.port), "127.0.0.1", () => {
+   upstream.write(head.replace(target, url.pathname + url.search), "latin1")
+   upstream.pipe(client)
+   client.pipe(upstream)
+  })
+  upstream.on("error", () => client.destroy())
+  proxySockets.push(upstream)
+ })
+})
+const proxyPort = await new Promise<number>((resolve) => recordingProxy.listen(0, "127.0.0.1", () => {
+ const address = recordingProxy.address()
+ resolve(typeof address === "object" && address !== null ? address.port : 0)
+}))
+const viaProxy = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
+ const services = yield* modelsPlugin.build({ ...modelsPlugin.defaults, storage: "memory", model: "stub:general", proxy: "http://127.0.0.1:" + proxyPort,
+  endpoints: { stub: { url: "http://models.proxy-test.invalid:" + chatPort + "/v1" } } }, Context.make(SessionEnvironment, { workspace: process.cwd() }))
+ return (yield* Context.getUnsafe(services, LanguageModel.LanguageModel).generateText({ prompt: "hi" })).text
+})).pipe(Effect.timeout("20 seconds"), Effect.orElseSucceed(() => "no reply")))
+proxySockets.forEach((socket) => socket.destroy())
+recordingProxy.close()
+chatEndpoint.stop(true)
+const expectedProxied = ["POST http://models.proxy-test.invalid:" + chatPort + "/v1/chat/completions HTTP/1.1"]
+if (viaProxy !== "answered general" || JSON.stringify(proxied) !== JSON.stringify(expectedProxied)) {
+ console.error("The packed models plugin's proxy on Bun: " + viaProxy + ", the proxy saw " + JSON.stringify(proxied))
+ process.exit(1)
+}
+console.log("The packed models plugin sent a model call through its proxy option on Bun (absolute form)")
 `)
 /**
  * The documentation's imports must exist in the packed packages: every
@@ -368,6 +417,22 @@ if (await modelsNode.exited !== 0) process.exit(1)
 if ((await readdir(freshHome)).length > 0 || (await readdir(freshCwd)).length > 0) { console.error("The memory-storage models consumer wrote to its HOME or working directory"); process.exit(1) }
 await rm(freshHome, { recursive: true, force: true })
 await rm(freshCwd, { recursive: true, force: true })
+// The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
+// environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
+await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))
+const deadPort = await new Promise<number>((resolve) => {
+  const probe = createServer()
+  probe.listen(0, "127.0.0.1", () => {
+    const address = probe.address()
+    probe.close(() => resolve(typeof address === "object" && address !== null ? address.port : 9))
+  })
+})
+const quietEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(https?|no|all)_proxy$/i.test(name)))
+const proxyNode = Bun.spawn(["node", join(consumer, "proxy-consumer.mjs")], {
+  cwd: consumer, stdout: "inherit", stderr: "inherit",
+  env: { ...quietEnv, NODE_USE_ENV_PROXY: "1", HTTP_PROXY: `http://127.0.0.1:${deadPort}`, HTTPS_PROXY: `http://127.0.0.1:${deadPort}` },
+})
+if (await proxyNode.exited !== 0) process.exit(1)
 // The installed bin runs as a command, which needs the shebang the build keeps.
 const evalBin = Bun.spawn([join(consumer, "node_modules/.bin/efferent-eval"), "--help"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const evalHelp = await new Response(evalBin.stdout).text()

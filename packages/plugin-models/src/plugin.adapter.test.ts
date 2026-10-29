@@ -2,8 +2,9 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ConfigProvider, Context, Effect, Option, Redacted, Schema } from "effect"
+import { ConfigProvider, Context, Effect, Option, Predicate, Redacted, Schema } from "effect"
 import { LanguageModel } from "effect/ai"
+import { FetchHttpClient } from "effect/http"
 import {
   AuthStore,
   authStoreConformance,
@@ -17,7 +18,12 @@ import {
 } from "@xandreed/core"
 import type { ConformanceCheck } from "@xandreed/core"
 import { HostCredentials } from "./ports/host-credentials.port.js"
+import { ModelsTransport } from "./ports/models-transport.port.js"
+import type { ModelsFetch } from "./ports/models-transport.port.js"
 import { modelsPlugin } from "./plugin.adapter.js"
+import { BUN_WEBSOCKET_PROXY_VERSION } from "./transport/http-proxy.entity.js"
+import { atLeastVersion } from "./transport/http-proxy.entity.functions.js"
+import { startRecordingProxy } from "./transport/recording-proxy.testing.js"
 
 /** Every temporary directory a test makes, removed once the file's tests ran, whether they passed or not. */
 const made: Array<string> = []
@@ -111,7 +117,7 @@ describe("models plugin scope", () => {
   test("is built once per agent (runtime) and may use the host's HostCredentials", () => {
     expect(modelsPlugin.scope).toBe("runtime")
     expect(modelsPlugin.requires).toEqual([SessionEnvironment.key])
-    expect(modelsPlugin.optional).toEqual([HostCredentials.key])
+    expect(modelsPlugin.optional).toEqual([HostCredentials.key, ModelsTransport.key])
   })
 })
 
@@ -259,5 +265,183 @@ describe("models plugin options with secrets", () => {
     expect(misspelt).toContain(`["apiKey"]`)
     expect(misspelt).not.toContain("sk-misspelt-secret")
     expect(extra).not.toContain("sk-extra-secret")
+  })
+})
+
+/** A host's own transport: records every URL its fetch is asked for, and answers with `respond`. */
+const hostTransport = (respond: (url: string) => Response) => {
+  const urls: Array<string> = []
+  const fetch: ModelsFetch = (input) => {
+    const url = String(input)
+    urls.push(url)
+    return Promise.resolve(respond(url))
+  }
+  return { urls, services: Context.make(ModelsTransport, ModelsTransport.of({ fetch })) }
+}
+
+/** The plugin's services under an empty environment: no proxy variable leaks in from the machine running the tests. */
+const noEnvironment = Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env: {} }))
+
+describe("models plugin proxy", () => {
+  test("model and utility calls go through the proxy option to a host only the proxy reaches", async () => {
+    const server = chatServer()
+    const proxy = await startRecordingProxy()
+    const port = new URL(server.url).port
+    const replies = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const services = yield* build(".", {
+        storage: "memory", model: "stub:general", fastModel: "stub:fast",
+        endpoints: { stub: { url: `http://models.proxy-test.invalid:${port}/v1` } },
+        credentials: { stub: { type: "api_key", key: Redacted.make("stub-key") } },
+        proxy: proxy.url,
+      })
+      const reply = yield* Context.getUnsafe(services, LanguageModel.LanguageModel).generateText({ prompt: "hi" })
+      const title = yield* Context.getUnsafe(services, UtilityLlm).complete("a title")
+      return [reply.text, title.text]
+    })).pipe(noEnvironment, Effect.ensuring(Effect.promise(proxy.close)), Effect.ensuring(Effect.sync(server.stop))))
+    expect(replies).toEqual(["from the endpoint", "from the endpoint"])
+    expect(proxy.seen.map((request) => request.target)).toEqual([
+      `http://models.proxy-test.invalid:${port}/v1/chat/completions`,
+      `http://models.proxy-test.invalid:${port}/v1/chat/completions`,
+    ])
+    expect(server.seen).toEqual([{ auth: "Bearer stub-key", model: "general" }, { auth: "Bearer stub-key", model: "fast" }])
+  })
+
+  test("HTTP_PROXY from the environment applies, and noProxy sends a host direct", async () => {
+    const server = chatServer()
+    const proxy = await startRecordingProxy()
+    const port = new URL(server.url).port
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const services = yield* build(".", {
+        storage: "memory", model: "stub:general",
+        endpoints: { stub: { url: `http://models.proxy-test.invalid:${port}/v1` }, direct: { url: `http://direct.proxy-test.invalid:${port}/v1` } },
+        noProxy: "direct.proxy-test.invalid",
+      })
+      const model = Context.getUnsafe(services, LanguageModel.LanguageModel)
+      const proxied = yield* model.generateText({ prompt: "hi" })
+      yield* Context.getUnsafe(services, SettingsStore).setRole("general", Option.some("direct:general"))
+      // Direct, the .invalid host does not resolve: the call fails, and the proxy never sees it.
+      const direct = yield* Effect.flip(model.generateText({ prompt: "hi" }).pipe(Effect.timeout("20 seconds")))
+      return { proxied: proxied.text, direct: String(direct) }
+    })).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env: { HTTP_PROXY: proxy.url } })),
+      Effect.ensuring(Effect.promise(proxy.close)),
+      Effect.ensuring(Effect.sync(server.stop)),
+    ))
+    expect(outcome.proxied).toBe("from the endpoint")
+    expect(outcome.direct).not.toContain("through the proxy")
+    expect(proxy.seen.map((request) => request.target)).toEqual([`http://models.proxy-test.invalid:${port}/v1/chat/completions`])
+  }, 30_000)
+
+  test("HTTPS_PROXY from the environment carries an SDK provider's call (CONNECT)", async () => {
+    const proxy = await startRecordingProxy()
+    const error = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const services = yield* build(".", {
+        storage: "memory", model: "anthropic:claude-test",
+        credentials: { anthropic: { type: "api_key", key: Redacted.make("anthropic-key") } },
+      })
+      // The test proxy refuses every host but *.invalid, so the call fails after its CONNECT.
+      return yield* Effect.flip(Context.getUnsafe(services, LanguageModel.LanguageModel).generateText({ prompt: "hi" }).pipe(Effect.timeout("20 seconds")))
+    })).pipe(
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env: { HTTPS_PROXY: proxy.url } })),
+      Effect.ensuring(Effect.promise(proxy.close)),
+    ))
+    expect(String(error)).not.toContain("TimeoutError")
+    expect(proxy.seen.length).toBeGreaterThan(0)
+    expect(proxy.seen.every((request) => request.kind === "connect" && request.target === "api.anthropic.com:443")).toBe(true)
+  }, 30_000)
+
+  test("without a proxy the plugin adds no transport: a FetchHttpClient.Fetch the host provides still carries the SDK providers' calls", async () => {
+    const reached: Array<string> = []
+    const hostFetch = Object.assign((input: string | URL | Request) => {
+      reached.push(input instanceof Request ? input.url : String(input))
+      return Promise.resolve(Response.json({ type: "error", error: { type: "invalid_request_error", message: "answered by the host's fetch" } }, { status: 400 }))
+    }, { preconnect: () => undefined })
+    const error = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const services = yield* build(".", {
+        storage: "memory", model: "anthropic:claude-test",
+        credentials: { anthropic: { type: "api_key", key: Redacted.make("anthropic-key") } },
+      })
+      return yield* Effect.flip(Context.getUnsafe(services, LanguageModel.LanguageModel).generateText({ prompt: "hi" }).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, hostFetch),
+      ))
+    })).pipe(noEnvironment))
+    expect(String(error)).toContain("answered by the host's fetch")
+    expect(reached).toEqual(["https://api.anthropic.com/v1/messages?beta=true"])
+  })
+
+  test("a host's ModelsTransport carries the SDK providers' calls, whatever FetchHttpClient.Fetch is around them", async () => {
+    const host = hostTransport(() => Response.json({ type: "error", error: { type: "invalid_request_error", message: "refused by the host transport" } }, { status: 400 }))
+    const bypassed: Array<string> = []
+    const bypass = Object.assign((input: string | URL | Request) => {
+      bypassed.push(String(input))
+      return Promise.resolve(new Response("bypassed", { status: 500 }))
+    }, { preconnect: () => undefined })
+    const error = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const services = yield* build(".", {
+        storage: "memory", model: "anthropic:claude-test",
+        credentials: { anthropic: { type: "api_key", key: Redacted.make("anthropic-key") } },
+      }, host.services)
+      return yield* Effect.flip(Context.getUnsafe(services, LanguageModel.LanguageModel).generateText({ prompt: "hi" }).pipe(
+        Effect.provideService(FetchHttpClient.Fetch, bypass),
+      ))
+    })).pipe(noEnvironment))
+    expect(String(error)).toContain("refused by the host transport")
+    expect(host.urls).toEqual(["https://api.anthropic.com/v1/messages?beta=true"])
+    expect(bypassed).toEqual([])
+  })
+
+  test("OAuth token refreshes go through the transport", async () => {
+    const host = hostTransport(() => Response.json({ access_token: "fresh-access", refresh_token: "fresh-refresh", expires_in: 3600 }))
+    const key = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const services = yield* build(".", {
+        storage: "memory",
+        credentials: { anthropic: { type: "oauth", access: Redacted.make("stale"), refresh: Redacted.make("refresh"), expires: 1 } },
+      }, host.services)
+      return yield* Context.getUnsafe(services, AuthStore).resolveKey(ProviderId.make("anthropic"))
+    })).pipe(noEnvironment))
+    expect(Option.map(key, Redacted.value)).toEqual(Option.some("fresh-access"))
+    expect(host.urls).toEqual(["https://platform.claude.com/v1/oauth/token"])
+  })
+
+  /** An OpenAI subscription call through a recording proxy, which refuses `chatgpt.com`: the call's error, and what the proxy saw. */
+  const subscriptionCall = async () => {
+    const proxy = await startRecordingProxy()
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const services = yield* build(".", {
+        storage: "memory", model: "openai-codex:gpt-test",
+        credentials: { "openai-codex": { type: "oauth", access: Redacted.make("access"), refresh: Redacted.make("refresh"), expires: Date.now() + 3_600_000, accountId: "account" } },
+        proxy: proxy.url,
+      })
+      return yield* Effect.flip(Context.getUnsafe(services, LanguageModel.LanguageModel).generateText({ prompt: "hi" }).pipe(Effect.timeout("20 seconds")))
+    })).pipe(noEnvironment, Effect.ensuring(Effect.promise(proxy.close))))
+    return { outcome, seen: proxy.seen }
+  }
+  // CI runs this file on Bun 1.3.6 too, so both sides of the gate run somewhere.
+  const tunnels = atLeastVersion(Bun.version, BUN_WEBSOCKET_PROXY_VERSION)
+
+  test.skipIf(tunnels)(`below Bun ${BUN_WEBSOCKET_PROXY_VERSION} the OpenAI subscription refuses a proxied WebSocket instead of connecting directly`, async () => {
+    const { outcome, seen } = await subscriptionCall()
+    expect(Predicate.isTagged(outcome, "AuthError")).toBe(true)
+    expect(String(outcome)).toContain(`Bun ${Bun.version} cannot send a WebSocket through a proxy`)
+    expect(seen).toEqual([])
+  }, 30_000)
+
+  test.if(tunnels)(`from Bun ${BUN_WEBSOCKET_PROXY_VERSION} the OpenAI subscription's WebSocket tunnels through the proxy (CONNECT chatgpt.com:443)`, async () => {
+    const { outcome, seen } = await subscriptionCall()
+    expect(String(outcome)).not.toContain("cannot send a WebSocket through a proxy")
+    expect(seen.length).toBeGreaterThan(0)
+    expect(seen.every((request) => request.kind === "connect" && request.target === "chatgpt.com:443")).toBe(true)
+  }, 30_000)
+
+  test("an unusable proxy option fails the plugin without repeating its credentials", async () => {
+    const refused = await Effect.runPromise(Effect.flip(Effect.scoped(build(".", { proxy: "socks5://user:proxy-secret@proxy:1080" }))).pipe(noEnvironment))
+    expect(refused.message).toContain("the proxy option is a socks5:// proxy")
+    expect(refused.message).not.toContain("proxy-secret")
+  })
+
+  test("a host's ModelsTransport and the proxy options together are refused", async () => {
+    const host = hostTransport(() => new Response("unused"))
+    const refused = await Effect.runPromise(Effect.flip(Effect.scoped(build(".", { proxy: "http://proxy:3128" }, host.services))).pipe(noEnvironment))
+    expect(refused.message).toContain("the host provides ModelsTransport, so the proxy and noProxy options would not apply")
   })
 })

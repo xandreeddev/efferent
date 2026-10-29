@@ -2,6 +2,7 @@ import { Effect, Result, Option } from "effect"
 import { AuthError } from "@xandreed/core"
 import { generatePkce, tokenTime } from "./anthropicOAuth.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
+import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 
 /** ChatGPT Plus/Pro OAuth protocol used by the OpenAI Codex subscription. */
 export const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -69,7 +70,7 @@ const postToken = (
       })
       return { ok: response.ok, status: response.status, text: await response.text() }
     },
-    catch: (error) => oauthError(stage, String(error)),
+    catch: (error) => oauthError(stage, redactCredentials(String(error))),
   }).pipe(
     Effect.filterOrFail(
       (response) => response.ok,

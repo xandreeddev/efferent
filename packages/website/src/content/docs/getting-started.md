@@ -20,6 +20,7 @@ npm install @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @x
 ```
 
 All framework packages are published at `0.13.0` under npm's `latest` tag.
+From the next release `@xandreed/plugin-models` needs Node 24.5 or newer.
 
 ## Compose
 

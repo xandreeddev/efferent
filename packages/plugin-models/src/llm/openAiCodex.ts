@@ -3,7 +3,8 @@ import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { Effect, Result, Option, Redacted, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, foldStreamParts } from "@xandreed/core"
-import { OpenAiCodexWebSocketHttpClient } from "./openAiCodexWebSocket.js"
+import { makeOpenAiCodexWebSocketHttpClient } from "./openAiCodexWebSocket.js"
+import type { WebSocketProxy } from "../ports/models-transport.port.js"
 
 export const OPENAI_CODEX_API_URL = "https://chatgpt.com/backend-api/codex"
 
@@ -114,6 +115,8 @@ export const makeOpenAiCodexLanguageModel = (args: {
   readonly model: string
   readonly accessToken: Redacted.Redacted<string>
   readonly accountId: string
+  /** How the WebSocket reaches ChatGPT (`ModelsTransport.webSocketAgent`); default: directly. */
+  readonly webSocketProxy?: Option.Option<WebSocketProxy>
 }) =>
   Effect.all({
     cacheKey: Effect.service(CurrentPromptCacheKey),
@@ -123,7 +126,7 @@ export const makeOpenAiCodexLanguageModel = (args: {
       OpenAiClient.make({
         apiKey: args.accessToken,
         apiUrl: OPENAI_CODEX_API_URL,
-        transformClient: () => OpenAiCodexWebSocketHttpClient.pipe(
+        transformClient: () => makeOpenAiCodexWebSocketHttpClient(args.webSocketProxy ?? Option.none()).pipe(
           // Replacing the transport also replaces OpenAiClient's underlying
           // request pipeline, so reproduce its base URL + bearer steps here.
           HttpClient.mapRequest((request) =>

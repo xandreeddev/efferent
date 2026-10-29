@@ -2,12 +2,12 @@ import { Prompt } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Effect, Layer, Option } from "effect"
 import { AuthStore, extractUsage, parseModelSelection, replayableContext, SettingsStore, UtilityError, UtilityLlm } from "@xandreed/core"
-import { generateWith } from "./router.js"
+import { generateWith, transportFetchOf } from "./router.js"
 
 /**
  * The fast helper tier: one-shot completions on `fastModel ?? model`. No
  * toolkit, no cache breakpoints, no loop — a title/digest call that can never
- * park a turn.
+ * park a turn. Built over a `ModelsTransport`, its calls go through it.
  */
 export const UtilityLlmLive = Layer.effect(
   UtilityLlm,
@@ -15,6 +15,7 @@ export const UtilityLlmLive = Layer.effect(
     // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
     const context = replayableContext(yield* Effect.context<AuthStore | SettingsStore>())
     const http = yield* HttpClient.HttpClient
+    const fetch = yield* transportFetchOf
     const settings = yield* SettingsStore
 
     return {
@@ -39,6 +40,8 @@ export const UtilityLlmLive = Layer.effect(
             responseFormat: { type: "text" },
           }).pipe(
             Effect.mapError((e) => new UtilityError({ message: String(e) })),
+            // The transport's fetch innermost, as the routed model sets it (router.ts).
+            (call) => Option.match(fetch, { onNone: () => call, onSome: (value) => Effect.provideService(call, FetchHttpClient.Fetch, value) }),
             Effect.provide(context),
             Effect.provideService(HttpClient.HttpClient, http),
           )
