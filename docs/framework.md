@@ -1809,6 +1809,18 @@ back with sorted keys: the requests a model sees do not depend on the store
 (a JSON column may reorder keys), and the SDK checks this over the memory,
 SQLite and key-reordering stores against the golden requests.
 
+A record is read by its fields only once decoded. `readStored(kind, events)`
+decodes the events of one of the kinds in `StoredData` (`turn.started`,
+`turn.ended`, `inbox.queued`, `inbox.dropped`, `step.usage`,
+`request.prepared`) with that kind's schema and fails with the first
+`SchemaError`; a lookup by key goes through `readStoredKeys`, which decodes
+a `turn.started`'s `runId`, `key` and `entry` (`TurnStartedKeys`) or a
+`request.prepared`'s `runId` and `step` (`RequestPreparedKeys`), never a
+user's message and its images. The framework's readers fail on a row that
+does not decode (plugin-sessions and plugin-tasks with `session.decode`, a
+turn with `memory.log` or `request.decode`) rather than skip it or read it
+as something else.
+
 **The inbox.** `deliver(address, { id, source, content })` puts an item in
 the session's inbox, once per id, up to `inbox.maxPending` (20). Items wait
 for the next inbox turn: `begin(address, { _tag: "Inbox", runId })` claims

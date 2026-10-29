@@ -1,5 +1,5 @@
-import { Cause, Exit, Option, Schema } from "effect"
-import { framed, harnessCodeOf, isHarnessError, reasonOf } from "@xandreed/core"
+import { Cause, Effect, Exit, Option, Schema } from "effect"
+import { framed, harnessCodeOf, isHarnessError, readStored, reasonOf, SessionLogError } from "@xandreed/core"
 import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnError, TurnOutcome } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started } from "./task-records.entity.js"
@@ -22,9 +22,10 @@ export const isActive = (status: TaskStatus): boolean => status === "pending" ||
 export const startedOf = (events: ReadonlyArray<SessionLogEvent>): ReadonlyArray<Started> =>
   events.filter((event) => event.kind === TASK_STARTED).flatMap((event) => Option.toArray(decodeStarted(event.data)))
 
-/** The inbox ids a session has had delivered. */
-export const deliveredOf = (events: ReadonlyArray<SessionLogEvent>): ReadonlySet<string> =>
-  new Set(events.filter((event) => event.kind === "inbox.queued").map((event) => String(event.data.id)))
+/** The inbox ids a session has had delivered; an `inbox.queued` record that does not decode fails with `session.decode`. */
+export const deliveredOf = (events: ReadonlyArray<SessionLogEvent>): Effect.Effect<ReadonlySet<string>, SessionLogError> => readStored("inbox.queued", events).pipe(
+  Effect.map((queued) => new Set(queued.map((item) => item.data.id))),
+  Effect.mapError((error) => new SessionLogError({ code: "session.decode", message: error.message, cause: error })))
 
 export interface TaskEnd {
   readonly status: TaskStatus

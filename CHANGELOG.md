@@ -78,6 +78,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `McpToolDescriptor` an `inputSchema` that is JSON; narrow completion
   `facts` and the `data` of host events you publish directly to JSON, or
   publish through `defineHostEvent`.
+- Read stored records through `readStored` and `readStoredKeys` rather than
+  `event.data.<field>`.
 
 ### Breaking
 
@@ -238,6 +240,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `McpToolDescriptor.inputSchema` and the capability catalogue's
   `inputSchema`/`outputSchema` are `Schema.JsonObject`, and `catalogOf`
   returns `Effect<CapabilityCatalog>`.
+- A stored record that does not decode now fails instead of reading as "no
+  match" or an empty value: in plugin-sessions, lookup, begin, delivery and
+  inbox turns fail with `SessionLogError` `session.decode` (an
+  `inbox.queued` row whose `source` is not an object no longer reads as
+  `{}`); in plugin-tasks, `list` and `status` fail with `session.decode`;
+  in core, `modelRequestHeaderOf` and `replayModelRequest` fail with
+  `request.decode` where they used to report `request.missing`.
 
 ### Added
 
@@ -292,6 +301,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `reasonOf` is exported from `@xandreed/evals`: a failure's cause as
   report text (`code: message`), never a stack.
 - `isTurnError` in `@xandreed/core`.
+- `readStored(kind, events)` in `@xandreed/core` decodes a session's
+  `turn.started`, `turn.ended`, `inbox.queued`, `inbox.dropped`,
+  `step.usage` and `request.prepared` records (`StoredData`, `Stored`), and
+  `readStoredKeys` decodes only a turn's `runId`, `key` and `entry`, or a
+  request's `runId` and `step`, never a user's message or its images.
 
 ### Fixed
 
@@ -597,6 +611,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `effect/no-unknown-json` runs in core; four files are exempt for now
   (`UNKNOWN_JSON_EDGES`: the MCP bridge, plugin entry options, the model
   request descriptor and the deprecated JSON helpers).
+- `effect/no-record-cast` runs in plugin-sessions.
 
 ## 0.14.0 — 2026-10-29
 

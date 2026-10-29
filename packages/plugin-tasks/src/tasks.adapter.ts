@@ -65,15 +65,15 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
 
   const parentRecords = (parent: SessionAddress) => sessions.read(parent, { kinds: [TASK_STARTED, "inbox.queued"] })
 
-  const listOf = (parent: SessionAddress) => parentRecords(parent).pipe(Effect.flatMap((events) =>
-    Effect.forEach(startedOf(events), (started) => viewOf(parent, started, deliveredOf(events)), { concurrency: 1 })))
+  const listOf = (parent: SessionAddress) => parentRecords(parent).pipe(Effect.flatMap((events) => deliveredOf(events).pipe(Effect.flatMap((delivered) =>
+    Effect.forEach(startedOf(events), (started) => viewOf(parent, started, delivered), { concurrency: 1 })))))
 
   /** The task as its parent started it, and where it stands. */
   const recordOf = (parent: SessionAddress, taskId: string) => Effect.gen(function* () {
     const events = yield* parentRecords(parent)
     const started = startedOf(events).find((record) => record.taskId === taskId)
     return started === undefined ? yield* Effect.fail(new TaskMissing({ session: parent.id, taskId }))
-      : { started, task: yield* viewOf(parent, started, deliveredOf(events)) }
+      : { started, task: yield* viewOf(parent, started, yield* deliveredOf(events)) }
   })
 
   const taskOf = (parent: SessionAddress, taskId: string) => recordOf(parent, taskId).pipe(Effect.map(({ task }) => task))

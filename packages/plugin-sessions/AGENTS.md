@@ -6,6 +6,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 
 - Change the head's `sessions` state only in a guarded commit (`guarded`: compare-and-swap on the revision, planned again after a conflict) with the events that justify it; no backend reads that state.
 - Fail with `SessionLogError` only for the store (the log's own, or stored data that does not decode: `session.state`, `session.decode`, its `cause` kept); `guarded` gives up as `SessionContended` after `retries` conflicts; a value of the plugin's own that does not encode, or an answer the log's contract rules out, is a defect (`Effect.orDie`, `Effect.die`).
+- Read a stored record's fields through core's `readStored` (`turn.ended`, `inbox.queued`), and look a turn up by its key or run through `readStoredKeys`, which decodes the keys alone, never the message and its images; never read `event.data.<field>` unchecked. A row that does not decode fails with `session.decode`.
 - Write a turn's events only through its writer (`makeTurnWriter`): one fiber in queue order, consecutive appends in one commit, the framework's reserved kinds refused unless marked (`ReservedKind`).
 - Raise the writer's failures as `TurnError`'s tags, never as a `HarnessError` of their codes: `TurnClosed` with its reason (`ended` for its own end or a closed scope), `ReservedKind`, `SessionContended`, the log's own `SessionLogError`; a `HarnessError` only for the writer's own state (`session.encode`, `session.state`) and a write that died (`session.defect`), with its `cause`. Match them with `Effect.catchTag`, never by code.
 - Judge an open turn by its own record (a lease end, or none and its holder process) through `isHeld`, never by the reading instance's ownership.
@@ -29,8 +30,8 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:341` | exact for one item, `src/sessions.adapter.test.ts:1001`; the join unpinned |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:255` | unpinned |
+| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:355` | exact for one item, `src/sessions.adapter.test.ts:1034`; the join unpinned |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:269` | exact, `src/sessions.adapter.test.ts:1186` |
 
 ## Erasure files
 

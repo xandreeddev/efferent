@@ -11,7 +11,7 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import { IntentMatcher } from "../ports/capability.port.js"
 import { RunContext } from "../ports/run-context.port.js"
 import { Sessions } from "../ports/sessions.port.js"
-import { turnUsageOf } from "../session/session-event.entity.functions.js"
+import { entriesOfEvents, readStored, readStoredKeys, turnUsageOf } from "../session/session-event.entity.functions.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
 import type { SessionAddress, TurnBeginError, TurnError } from "../session/sessions.entity.js"
 import type { TurnRunner } from "../ports/turn.port.js"
@@ -35,12 +35,21 @@ interface Session {
 const stored = (session: Session) => session.sessions.read(session.address).pipe(
   Effect.mapError((error) => new HarnessError({ code: "conformance.session", message: error._tag })),
 )
+/** Stored data that does not decode, as the HarnessError the check fails with. */
+const undecodable = (error: { readonly message: string }) => new HarnessError({ code: "conformance.session", message: `undecodable stored data: ${error.message}` })
+/** The `turn.started` of the turn run `runId` began, found by its keys. */
+const startOf = (all: ReadonlyArray<SessionLogEvent>, runId: string): Effect.Effect<Option.Option<SessionLogEvent>, HarnessError> =>
+  readStoredKeys("turn.started", all).pipe(
+    Effect.map((starts) => Option.map(Option.fromNullishOr(starts.find((started) => started.keys.runId === runId)), (started) => started.event)),
+    Effect.mapError(undecodable),
+  )
 /** The events of the turn run `runId` began. */
-const ofRun = (all: ReadonlyArray<SessionLogEvent>, runId: string): ReadonlyArray<SessionLogEvent> => {
-  const turn = Option.flatMap(Option.fromNullishOr(all.find((event) => event.kind === "turn.started" && event.data.runId === runId)), (event) => event.turn)
-  return Option.match(turn, { onNone: () => [], onSome: (number) => all.filter((event) => Option.contains(event.turn, number)) })
-}
-const names = (session: Session, runId: string) => stored(session).pipe(Effect.map((all) => ofRun(all, runId).map((event) => event.kind)))
+const ofRun = (all: ReadonlyArray<SessionLogEvent>, runId: string): Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError> =>
+  startOf(all, runId).pipe(Effect.map((start) => Option.match(Option.flatMap(start, (event) => event.turn), {
+    onNone: () => [],
+    onSome: (number) => all.filter((event) => Option.contains(event.turn, number)),
+  })))
+const names = (session: Session, runId: string) => stored(session).pipe(Effect.flatMap((all) => ofRun(all, runId)), Effect.map((events) => events.map((event) => event.kind)))
 
 /** What the billing model reports for its call `index` (from 0): every count, cache reads and writes inside the input, reasoning inside the output. */
 const billedCall = (index: number) => ({
@@ -164,9 +173,17 @@ export const turnConformance = (
       yield* Deferred.await(started)
       yield* Fiber.interrupt(fiber)
       const all = yield* stored(session)
-      const per = (runId: string, kind: string, field: (event: SessionLogEvent) => unknown) => ofRun(all, runId).filter((event) => event.kind === kind).map(field).join("+")
-      const replies = ["run-1", "run-2", "run-3"].map((runId) => `${runId}:${per(runId, "turn.reply", (event) => (event.data.body as { readonly outcome?: unknown } | undefined)?.outcome)}`)
-      const endings = ["run-1", "run-2", "run-3"].map((runId) => `${runId}:${per(runId, "turn.ended", (event) => event.data.reason)}`)
+      // Each run's replies (its memory's TurnEnded entries) and ends, decoded.
+      const runs = yield* Effect.forEach(["run-1", "run-2", "run-3"], (runId) => ofRun(all, runId).pipe(
+        Effect.flatMap((own) => Effect.all([entriesOfEvents(own.filter((event) => event.kind === "turn.reply")), readStored("turn.ended", own)], { concurrency: 1 }).pipe(
+          Effect.mapError(undecodable))),
+        Effect.map(([entries, ends]) => ({
+          reply: `${runId}:${entries.flatMap((entry) => entry.body._tag === "TurnEnded" ? [entry.body.outcome] : []).join("+")}`,
+          ending: `${runId}:${ends.map((ended) => ended.data.reason).join("+")}`,
+        })),
+      ), { concurrency: 1 })
+      const replies = runs.map((run) => run.reply)
+      const endings = runs.map((run) => run.ending)
       yield* expect("ended-once", replies.join() === "run-1:completed,run-2:failed,run-3:failed", `the replies were ${replies.join()}`)
       yield* expect("ended-once", endings.join() === "run-1:completed,run-2:failed,run-3:interrupted", `the turns ended ${endings.join()}`)
     })),
@@ -196,7 +213,7 @@ export const turnConformance = (
       }))
       yield* expect("usage", sameUsage(yield* Ref.get(during), yield* Ref.get(runs)), `Turn.usage read ${JSON.stringify(yield* Ref.get(during))}, the turn's runs ${JSON.stringify(yield* Ref.get(runs))}`)
       const all = yield* stored(session)
-      const number = Option.flatMap(Option.fromNullishOr(all.find((event) => event.kind === "turn.started" && event.data.runId === "run-1")), (event) => event.turn)
+      const number = Option.flatMap(yield* startOf(all, "run-1"), (event) => event.turn)
       yield* expect("usage", Option.isSome(number), "the turn's turn.started was not stored")
       const total = yield* turnUsageOf(all, Option.getOrElse(number, () => -1)).pipe(Effect.mapError((error) => new ConformanceFailure({ check: "usage", message: error.message })))
       yield* expect("usage", sameUsage(result.usage, total), `the turn returned ${JSON.stringify(result.usage)}, its stored step.usage records sum to ${JSON.stringify(total)}`)
@@ -229,8 +246,8 @@ export const turnConformance = (
         ? message.content.flatMap((part) => part.type === "file" ? [part] : []) : [])
       yield* expect("attachments", files.some((part) => part.mediaType === image.mediaType && part.data === image.data),
         `the first request carried ${files.length} file parts, none of them the attached ${image.mediaType}`)
-      const started = (yield* stored(session)).find((event) => event.kind === "turn.started" && event.data.runId === "run-1")
-      yield* expect("attachments", JSON.stringify(started?.data.userMessage ?? null).includes(image.fingerprint), "the stored turn.started does not hold the attachment")
+      const started = yield* startOf(yield* stored(session), "run-1")
+      yield* expect("attachments", Option.exists(started, (event) => JSON.stringify(event.data.userMessage ?? null).includes(image.fingerprint)), "the stored turn.started does not hold the attachment")
     })),
     check("the host layer is built before the message: it sees only earlier turns", "layer-before-message", (turns, session) => Effect.gen(function* () {
       const seen = yield* Ref.make<ReadonlyArray<string>>([])
@@ -267,7 +284,7 @@ export const turnConformance = (
       yield* expect("begin-refusal", Result.isFailure(second) && second.failure._tag === "SessionBusy",
         `a turn begun while another was open ended with ${ended}, not the refusal SessionBusy itself`)
       yield* expect("begin-refusal", !(yield* Ref.get(ran)), "the refused turn ran its use")
-      const refused = ofRun(yield* stored(session), "run-2").map((event) => event.kind)
+      const refused = (yield* ofRun(yield* stored(session), "run-2")).map((event) => event.kind)
       yield* expect("begin-refusal", refused.length === 0, `the refused turn stored ${refused.join(", ")}`)
     })),
     check("an interrupted turn ends at once, its reply and end recorded, while a background reaction to its reply never returns", "stuck-reaction", (turns, session) => Effect.gen(function* () {
@@ -282,8 +299,8 @@ export const turnConformance = (
       yield* Deferred.await(started)
       const stopped = yield* Fiber.interrupt(fiber).pipe(Effect.timeoutOption(WAIT))
       yield* expect("stuck-reaction", Option.isSome(stopped), `the interrupted turn did not end within ${WAIT} while a background reaction to its reply was stuck`)
-      const all = yield* stored(session)
-      const recorded = ["turn.reply", "turn.ended"].map((kind) => ofRun(all, "run-1").filter((event) => event.kind === kind).length).join()
+      const own = yield* ofRun(yield* stored(session), "run-1")
+      const recorded = ["turn.reply", "turn.ended"].map((kind) => own.filter((event) => event.kind === kind).length).join()
       yield* expect("stuck-reaction", recorded === "1,1", `the interrupted turn stored ${recorded} of turn.reply and turn.ended, not one each`)
     })),
     check("a background reaction that publishes what it takes, past its queue's size, does not hang the turn", "self-publication", (turns, session) => Effect.gen(function* () {

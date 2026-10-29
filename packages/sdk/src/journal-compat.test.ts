@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
-import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, replayModelRequest, RESERVED_KINDS, SessionHeader, SessionLogEvent } from "@xandreed/core"
+import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, SessionHeader, SessionLogEvent, StoredData } from "@xandreed/core"
+import type { StoredKind } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 
 /*
@@ -62,6 +63,16 @@ fixtures.forEach(({ fixture }) => describe(`a ${fixture.version} session journal
     expect(undecodable).toEqual([])
     // Kinds without a schema are the host's own.
     expect([...kinds].filter((kind) => Option.isNone(journalSchemaOf(kind)) && !taskSchemas.has(kind))).toEqual(["note.prepared"])
+  })
+
+  test("every event of a kind read back by its fields decodes through readStored, and its keys through readStoredKeys", async () => {
+    const kinds = Object.keys(StoredData).filter((kind): kind is StoredKind => kind in StoredData)
+    const read = await Effect.runPromise(Effect.forEach(kinds, (kind) => readStored(kind, events).pipe(Effect.map((stored) => [kind, stored.length] as const)), { concurrency: 1 }))
+    expect(read).toEqual(kinds.map((kind) => [kind, events.filter((event) => event.kind === kind).length] as const))
+    expect(read.filter(([, count]) => count === 0).map(([kind]) => kind)).toEqual([])
+    const starts = await Effect.runPromise(readStoredKeys("turn.started", events))
+    const headers = await Effect.runPromise(readStoredKeys("request.prepared", events))
+    expect([starts.length, headers.length]).toEqual([events.filter((event) => event.kind === "turn.started").length, events.filter((event) => event.kind === "request.prepared").length])
   })
 
   test("the memory log rebuilds from the stored events", async () => {

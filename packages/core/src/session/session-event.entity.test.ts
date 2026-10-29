@@ -8,7 +8,7 @@ import { UserMessage } from "../turn/user-message.entity.js"
 import { TransientTurnEvents, TURN_EVENT_NAMES, TurnEvent } from "../turn/turn-event.entity.js"
 import { zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
-import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
+import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, readStored, readStoredKeys, StoredData, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
 import { JOURNAL_KINDS, MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
 import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 
@@ -275,5 +275,65 @@ describe("a stored turn.started and its user message", () => {
     expect(withImage.data.userMessage).toEqual({ text: "", attachments: [pixel] })
     const [entry] = await Effect.runPromise(entriesOfEvents([startedEvent(JSON.parse(JSON.stringify(withImage.data)))]))
     expect(entry?.body).toEqual({ _tag: "TurnStarted", userMessage: new UserMessage({ text: "", attachments: [pixel] }) })
+  })
+})
+
+describe("stored events read by their kind", () => {
+  const event = (seq: number, kind: string, data: JsonObject): SessionLogEvent => ({ session, seq, turn: Option.some(1), kind, at: 0, data })
+  const started = { runId: "run-1", key: "k", origin: "user", userMessage: { text: "hello" }, command: {}, claimed: [], entry: "run-1:0", at: 7 }
+  const header = (runId: string, step: number, system: string): JsonObject => ({
+    version: 1, runId, step, strategyVersion: "window@1", system,
+    render: { strategy: "window", currentTurn: 1, currentRun: runId, turnContext: "current", replies: true, stepContext: "tail", digests: true, media: { mode: "none", maxImages: 8 } },
+    through: null, contextFingerprint: "f", tools: [], toolChoice: "auto", model: null, cacheKey: null, callPolicy: null,
+  })
+  const failed = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(Effect.result(effect)).then((result) => result._tag === "Failure")
+
+  test("the kinds read back by their fields are the journal's, with the same schemas", () => {
+    expect(Object.keys(StoredData)).toEqual(["turn.started", "turn.ended", "inbox.queued", "inbox.dropped", "step.usage", "request.prepared"])
+    expect(Object.entries(StoredData).every(([kind, schema]) => Option.contains(journalSchemaOf(kind), schema))).toBe(true)
+  })
+
+  test("only the events of the kind are read, in order, each decoded", async () => {
+    const events = [
+      event(1, "inbox.queued", { id: "a", source: { kind: "task" }, content: "first" }),
+      event(2, "inbox.dropped", { id: "a", reason: "attempts" }),
+      event(3, "inbox.queued", { id: "b", source: {}, content: "" }),
+    ]
+    const queued = await Effect.runPromise(readStored("inbox.queued", events))
+    expect(queued.map((stored) => [stored.event.seq, stored.data])).toEqual([
+      [1, { id: "a", source: { kind: "task" }, content: "first" }],
+      [3, { id: "b", source: {}, content: "" }],
+    ])
+    const ended = await Effect.runPromise(readStored("turn.ended", [event(4, "turn.ended", { reason: "failed", failure: { code: "turn.defect", message: "boom" } })]))
+    expect(ended.map((stored) => stored.data.failure)).toEqual([Option.some({ code: "turn.defect", message: "boom" })])
+  })
+
+  test("a row of the kind that does not decode fails the read instead of being skipped or read raw", async () => {
+    expect(await failed(readStored("inbox.queued", [event(1, "inbox.queued", { id: "a", source: "a task", content: "x" })]))).toBe(true)
+    expect(await failed(readStored("turn.ended", [event(1, "turn.ended", { reason: "gone", failure: null })]))).toBe(true)
+    // A row of another kind is not read at all.
+    expect(await Effect.runPromise(readStored("turn.ended", [event(1, "inbox.queued", { id: 5 })]))).toEqual([])
+  })
+
+  test("a lookup decodes a turn's keys and a request's run and step, never the rest", async () => {
+    const broken = { ...started, userMessage: { attachments: "not images" } }
+    const starts = [event(1, "turn.started", broken), event(2, "turn.started", { ...started, runId: "run-2", key: "k2", entry: "run-2:0" })]
+    // The whole record does not decode; its keys do.
+    expect(await failed(readStored("turn.started", starts))).toBe(true)
+    const keys = await Effect.runPromise(readStoredKeys("turn.started", starts))
+    expect(keys.map((found) => [found.event.seq, found.keys])).toEqual([
+      [1, { runId: "run-1", key: "k", entry: EntryId.make("run-1:0") }],
+      [2, { runId: "run-2", key: "k2", entry: EntryId.make("run-2:0") }],
+    ])
+    const headers = await Effect.runPromise(readStoredKeys("request.prepared", [event(3, "request.prepared", { ...header("run-1", 2, "system"), system: 42 })]))
+    expect(headers.map((found) => found.keys)).toEqual([{ runId: "run-1", step: 2 }])
+    expect(await failed(readStored("request.prepared", headers.map((found) => found.event)))).toBe(true)
+    // A key that does not decode fails the lookup.
+    expect(await failed(readStoredKeys("turn.started", [event(4, "turn.started", { ...started, key: 7 })]))).toBe(true)
+  })
+
+  test("a request header decodes whole: one written before 0.14.0 reads the request's media limit", async () => {
+    const [read] = await Effect.runPromise(readStored("request.prepared", [event(1, "request.prepared", header("run-1", 0, "system"))]))
+    expect([read?.data.runId, read?.data.step, read?.data.system, read?.data.render.media.maxChars]).toEqual(["run-1", 0, "system", 20_000_000])
   })
 })

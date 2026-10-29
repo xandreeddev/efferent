@@ -1,5 +1,5 @@
 import { Cause, Clock, Deferred, Effect, Exit, HashSet, Option, Predicate, Queue, Ref, Scope, Semaphore } from "effect"
-import { harnessError, reasonOf, ReservedKind, SessionContended, turnEndedDraft, TurnClosed, unmarkedReservedDraft } from "@xandreed/core"
+import { harnessError, readStored, reasonOf, ReservedKind, SessionContended, turnEndedDraft, TurnClosed, unmarkedReservedDraft } from "@xandreed/core"
 import type {
   AdmittedTurn,
   Decided,
@@ -150,9 +150,12 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   const stamped = (drafts: ReadonlyArray<TurnDraft>): ReadonlyArray<SessionDraft> =>
     drafts.map((draft) => ({ kind: draft.kind, turn: Option.some(admitted.turn), data: draft.data }))
 
-  /** Why a turn someone else closed was closed: its `turn.ended`, if the others wrote one. */
-  const reasonIn = (events: ReadonlyArray<SessionLogEvent>): ClosedBy =>
-    events.some((event) => event.kind === "turn.ended" && Option.contains(event.turn, admitted.turn) && event.data.reason === "cancelled") ? "cancelled" : "interrupted"
+  /** Why a turn someone else closed was closed: its `turn.ended`, if the others wrote one (an end that does not decode tells nothing). */
+  const reasonIn = (events: ReadonlyArray<SessionLogEvent>): Effect.Effect<ClosedBy> =>
+    readStored("turn.ended", events.filter((event) => Option.contains(event.turn, admitted.turn))).pipe(
+      Effect.map((ends): ClosedBy => ends.some((ended) => ended.data.reason === "cancelled") ? "cancelled" : "interrupted"),
+      Effect.catchTag("SchemaError", () => Effect.succeed<ClosedBy>("interrupted")),
+    )
 
   /**
    * After a conflict: take the others' events and go on while the turn is
@@ -168,7 +171,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       Effect.map((events) => events.filter((event) => event.seq <= head.seq)),
     )
     const ours = Option.exists(state.open, (open) => open.turn === admitted.turn && open.holder === input.instance)
-    if (!ours) return yield* closeAndFail(reasonIn(yield* since.pipe(Effect.catchTag("SessionLogError", () => Effect.succeed([])))))
+    if (!ours) return yield* closeAndFail(yield* reasonIn(yield* since.pipe(Effect.catchTag("SessionLogError", () => Effect.succeed([])))))
     const events = yield* since
     yield* Ref.update(foreign, (all) => [...all, ...events])
     yield* Ref.set(position, { revision: head.revision, seq: head.seq, state, storageAt: head.now, localAt: yield* Clock.currentTimeMillis })
