@@ -74,6 +74,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Call `parseEvaluationApp` instead of `validateEvaluationApp`, tell
   refusals apart by `violations[].rule` rather than message text, and put
   only JSON values in `metadata`.
+- `yield*` the result of `catalogOf`; a host `McpClient` gives every
+  `McpToolDescriptor` an `inputSchema` that is JSON; narrow completion
+  `facts` and the `data` of host events you publish directly to JSON, or
+  publish through `defineHostEvent`.
 
 ### Breaking
 
@@ -226,6 +230,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/evals`: `metadata` on `Grade`, `EvaluationResult`,
   `SemanticResult`, `Assessment`, `SemanticLlmOptions` and
   `SemanticJevOptions` is a `Schema.JsonObject`; saved reports still decode.
+- `@xandreed/core`: a `CompletionVerdict`'s `facts` and a `host` event's
+  `data` are `JsonObject`. `defineHostEvent` publishes its encoded payload as
+  JSON, so an `undefined` field is dropped, and a payload JSON cannot hold (a
+  BigInt) fails `make`/`publish` with `events.encode` instead of failing the
+  turn when it is stored.
+- `McpToolDescriptor.inputSchema` and the capability catalogue's
+  `inputSchema`/`outputSchema` are `Schema.JsonObject`, and `catalogOf`
+  returns `Effect<CapabilityCatalog>`.
 
 ### Added
 
@@ -582,6 +594,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `providers.ts`, `router.ts`, `utilityLlm.ts`) sit on `RECORD_CAST_EDGES`
   until those files are typed.
 - `effect/no-unknown-json` covers `@xandreed/evals`.
+- `effect/no-unknown-json` runs in core; four files are exempt for now
+  (`UNKNOWN_JSON_EDGES`: the MCP bridge, plugin entry options, the model
+  request descriptor and the deprecated JSON helpers).
 
 ## 0.14.0 — 2026-10-29
 

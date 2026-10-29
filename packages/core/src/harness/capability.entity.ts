@@ -59,8 +59,8 @@ export const CapabilityTool = Schema.Struct({
   description: Schema.Trimmed.check(Schema.isNonEmpty()),
   returns: Schema.Trimmed.check(Schema.isNonEmpty()),
   permissions: Schema.Array(Schema.String),
-  inputSchema: Schema.Record(Schema.String, Schema.Unknown),
-  outputSchema: Schema.Record(Schema.String, Schema.Unknown),
+  inputSchema: Schema.JsonObject,
+  outputSchema: Schema.JsonObject,
 })
 export type CapabilityTool = typeof CapabilityTool.Type
 export const CapabilityRecipe = Schema.Struct({

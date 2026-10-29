@@ -101,3 +101,15 @@ describe("the MCP bridge — progressive disclosure", () => {
     expect(Object.keys(bridge.toolkit.tools)).toEqual([])
   })
 })
+
+describe("an MCP tool descriptor", () => {
+  test("its inputSchema is JSON: a schema holding a value JSON cannot (undefined, NaN) does not decode", () => {
+    const decode = Schema.decodeUnknownOption(McpToolDescriptor)
+    const listed = { server: "files", name: "search", inputSchema: { type: "object", properties: { query: { type: "string" } } } }
+    expect([
+      decode(listed),
+      decode({ ...listed, inputSchema: { type: "object", description: undefined } }),
+      decode({ ...listed, inputSchema: { type: "object", maximum: Number.NaN } }),
+    ].map(Option.isSome)).toEqual([true, false, false])
+  })
+})

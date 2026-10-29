@@ -21,7 +21,7 @@ export class McpToolDescriptor extends Schema.Class<McpToolDescriptor>("McpToolD
   description: Schema.OptionFromOptional(Schema.String),
   /** The server's inputSchema, verbatim JSON Schema — the provider sees it
    *  unchanged through the bridge's annotation override. */
-  inputSchema: Schema.Record(Schema.String, Schema.Unknown),
+  inputSchema: Schema.JsonObject,
 }) {}
 
 export class McpCallOutcome extends Schema.Class<McpCallOutcome>("McpCallOutcome")({

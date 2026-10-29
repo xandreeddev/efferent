@@ -125,10 +125,11 @@ describe("the turn's bus events as stored", () => {
     expect(["turn.started", "turn.ended", "memory.message", "step.usage", "inbox.queued"].every((kind) => RESERVED_KINDS.includes(kind))).toBe(true)
   })
   test("a stored event's data is JSON: undefined fields are dropped, a value JSON cannot hold fails with the SchemaError", () => {
-    const host = Option.map(storedOf(2, { _tag: "host", name: "answer.published", data: { id: "a", draft: undefined, nested: { at: undefined, n: 1 } } }), (draft) => draft.data)
+    // Host data its type refuses (not JSON), as a host in plain JavaScript can still publish it.
+    const host = Option.map(storedOf(2, { _tag: "host", name: "answer.published", data: { id: "a", draft: undefined, nested: { at: undefined, n: 1 } } as never }), (draft) => draft.data)
     const started = Option.map(storedOf(1, { _tag: "tool.started", step: 0, invocationId: "i", tool: "lookup", input: { q: "x", page: undefined }, labels: {}, stage: Option.none() }), (draft) => draft.data.input)
     expect([Option.getOrNull(host), Option.getOrNull(started)]).toStrictEqual([{ id: "a", nested: { n: 1 } }, { q: "x" }])
-    const big = Effect.runSync(Effect.result(draftOfTurnEvent(1, { _tag: "host", name: "answer.published", data: { big: 1n } })))
+    const big = Effect.runSync(Effect.result(draftOfTurnEvent(1, { _tag: "host", name: "answer.published", data: { big: 1n } as never })))
     expect(big._tag === "Failure" ? big.failure._tag : "stored").toBe("SchemaError")
   })
   test("an event its schema refuses fails with the SchemaError instead of throwing", () => {

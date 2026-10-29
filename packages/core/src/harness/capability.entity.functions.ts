@@ -2,6 +2,7 @@ import type { Tool } from "effect/ai"
 import { Effect, Option } from "effect"
 import { strictJsonSchema, toolParametersSchema } from "../loop/toolSchema.js"
 import type { Capability, RegisteredTool, ToolDefinition, ToolViewInput } from "../ports/capability.port.js"
+import { storedJson } from "../session/session-log.entity.functions.js"
 import type {
   CapabilityCatalog,
   CapabilitySelection,
@@ -80,22 +81,35 @@ export const defineCapability = (capability: {
   promptSections: capability.promptSections ?? [],
 })
 
-/** The resolver's catalogue: skills are recipes, registered tools are capability tools. */
-export const catalogOf = (version: string, capabilities: ReadonlyArray<Capability>): CapabilityCatalog => ({
-  version,
-  recipes: capabilities.flatMap((capability) => capability.skills).map((skill) => ({
-    id: skill.id, version: skill.version, instructions: skill.instructions.length > 0 ? skill.instructions : skill.summary, tools: skill.tools,
-  })),
-  tools: capabilities.flatMap((capability) => capability.tools).map((registered) => ({
-    id: registered.tool.name,
-    version: "1",
-    description: registered.tool.description ?? registered.tool.name,
-    returns: "tool result",
-    permissions: registered.annotations.permissions,
-    inputSchema: { ...toolParametersSchema(registered.tool) },
-    outputSchema: { ...strictJsonSchema(registered.tool.successSchema) },
-  })),
-})
+/**
+ * The resolver's catalogue: skills are recipes, registered tools are
+ * capability tools, each with the JSON Schema of its parameters and of its
+ * result as JSON (`storedJson`). The generator writes JSON only, so a
+ * schema JSON cannot hold is a defect.
+ */
+export const catalogOf = (version: string, capabilities: ReadonlyArray<Capability>): Effect.Effect<CapabilityCatalog> =>
+  Effect.forEach(capabilities.flatMap((capability) => capability.tools), (registered) =>
+    Effect.all({
+      inputSchema: storedJson(toolParametersSchema(registered.tool)),
+      outputSchema: storedJson(strictJsonSchema(registered.tool.successSchema)),
+    }, { concurrency: 1 }).pipe(Effect.map(({ inputSchema, outputSchema }) => ({
+      id: registered.tool.name,
+      version: "1",
+      description: registered.tool.description ?? registered.tool.name,
+      returns: "tool result",
+      permissions: registered.annotations.permissions,
+      inputSchema,
+      outputSchema,
+    }))), { concurrency: 1 }).pipe(
+    Effect.orDie,
+    Effect.map((tools) => ({
+      version,
+      recipes: capabilities.flatMap((capability) => capability.skills).map((skill) => ({
+        id: skill.id, version: skill.version, instructions: skill.instructions.length > 0 ? skill.instructions : skill.summary, tools: skill.tools,
+      })),
+      tools,
+    })),
+  )
 
 /** Probabilistic intent never authorizes a capability. Expansions use this same
  * deterministic resolver against the run-pinned catalog and current grants. */

@@ -209,7 +209,7 @@ Published once when the turn's reply is recorded (`TurnMemory.persistReply`, fro
 
 ### `host`
 
-An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it. Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`.
+An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it, as JSON (`defineHostEvent` writes it through JSON text, so `undefined` fields are dropped and a value JSON cannot hold fails the publish with `events.encode`). Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`.
 
 | Field | Type |
 | --- | --- |
@@ -339,7 +339,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `events.reserved` | publishing a host event; a turn writer's `append` or `transact` and `Sessions.transact` (`ReservedKind`) | The host event's name, or the draft's kind, is one of the reserved kinds; only the framework's turn writes those (`frameworkDraft`). |
 | `events.depth` | publishing an event | Reactions nested deeper than `maxEventDepth` (8 by default). |
 | `events.background` | a background subscription | A background handler was interrupted; the turn fails when the bus drains. One that dies with a defect fails it with that defect (`turn.defect`). |
-| `events.encode` | a host event's `make` / `publish`; the turn storing a bus event | The payload did not encode with the host event's schema, or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step). |
+| `events.encode` | a host event's `make` / `publish`; the turn storing a bus event | The payload did not encode with the host event's schema, or its encoded form held a value JSON cannot (a BigInt), or a bus event did not encode with its own when the turn stored it (a value its type allows but a check refuses, such as a non-integer step). |
 | `service.missing` | `Agent.turn` | A service the turn needs is not provided by the agent's plugins or the turn's services. |
 | `config.graph` | `Agent.define` | The plugin graph cannot be built (a missing provider, a cycle, a misplaced turn-dependent plugin), or the agent's turns would have no `ConversationMemory`, `ToolRegistry` or `StepLoop` (none from a plugin, `services` or `turnServices`). |
 | `config.profile` | `resolveGraph` | The configuration still carries `profile` or `profiles`, which the graph does not resolve: fold the selected profile's plugins, bindings and system into the configuration first. |

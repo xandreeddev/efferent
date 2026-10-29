@@ -360,8 +360,10 @@ export const reportStage = (events: TurnEventsService, stage: string, done: numb
   reads the first `task.result` or `task.cancelled` in a task's child
   session as the task's outcome, so a host event under one of those names
   there would be taken for it. Use your own namespace (`app.*`).
-- A payload that does not encode fails with `events.encode`; one a
-  subscriber cannot decode is skipped by `select` and `on`.
+- The published `data` is the encoded payload as JSON (`undefined` fields
+  are dropped). A payload that does not encode, or whose encoded form JSON
+  cannot hold (a BigInt), fails with `events.encode`; one a subscriber
+  cannot decode is skipped by `select` and `on`.
 - Handlers may publish in turn, depth first, up to `maxEventDepth` (8, set
   on the agent); deeper fails with `events.depth`.
 

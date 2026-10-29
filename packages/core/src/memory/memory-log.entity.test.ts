@@ -15,6 +15,13 @@ import { LogBody, LogEntry } from "./memory-log.entity.js"
 /** A TurnStarted entry exactly as earlier releases stored it: the user's message under `prompt`. */
 const legacyEntry = { id: "run-1:0", runId: "run-1", turn: 1, step: 0, at: 1_700_000_000_000, body: { _tag: "TurnStarted", prompt: "hi" } }
 
+describe("canonicalJson", () => {
+  test("sorts the keys at every depth, keeps array order and leaves undefined fields out", () => {
+    expect(canonicalJson({ b: 1, a: { d: [3, { z: 1, y: undefined }], c: undefined }, e: null })).toBe('{"a":{"d":[3,{"z":1}]},"b":1,"e":null}')
+    expect([canonicalJson(undefined), canonicalJson([undefined]), canonicalJson("x")]).toEqual(["null", "[null]", '"x"'])
+  })
+})
+
 describe("the memory log's TurnStarted entry", () => {
   test("a legacy entry decodes to a UserMessage and re-encodes to the same canonical bytes", async () => {
     const body = Schema.decodeUnknownSync(LogBody)({ _tag: "TurnStarted", prompt: "hi" })

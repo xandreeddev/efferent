@@ -118,10 +118,11 @@ package being converted). A rule entry's
 shrinks: an entry naming a file the rule does not check, or one it no
 longer flags, is itself a finding under the rule's id
 (`architecture/role-suffix-required`'s `ROLELESS_FILES`,
-`effect/no-option-unwrap`'s `NULLABLE_EDGES`, `effect/no-record-cast`'s
-`RECORD_CAST_EDGES`). A new rule that needs a
-per-file exemption uses `exclude`, `allow` for today's exceptions, or a
-boundary when only part of what it flags is the design there. A rule with
+`effect/no-option-unwrap`'s `NULLABLE_EDGES`, `effect/no-unknown-json`'s
+`UNKNOWN_JSON_EDGES`, `effect/no-record-cast`'s `RECORD_CAST_EDGES`). A
+new rule that needs a per-file exemption uses `exclude`, `allow` for
+today's exceptions, or a boundary when only part of what it flags is the
+design there. A rule with
 findings enters through its `include`, one clean package at a time (a
 per-package list in the root `foundry.config.ts`, today `EFFECT_FN_CLEAN`),
 never through the baseline; once its list names every package, the rule
