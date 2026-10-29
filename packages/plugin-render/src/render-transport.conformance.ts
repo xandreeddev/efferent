@@ -30,7 +30,7 @@ export const renderTransportConformance = (transports: {
     const sent = yield* Ref.make<ReadonlyArray<string>>([])
     yield* transports.sse.serve(Stream.fromIterable(sample), { write: (chunk) => Ref.update(written, (all) => [...all, chunk]), closed: Effect.never })
     yield* transports.socket.serve(Stream.fromIterable(sample), { send: (text) => Ref.update(sent, (all) => [...all, text]), closed: Effect.never })
-    const viaSse = decodeSse((yield* Ref.get(written)).join(""))
+    const viaSse = yield* Effect.fromResult(decodeSse((yield* Ref.get(written)).join("")))
     const viaSocket = (yield* Ref.get(sent)).flatMap((text) => Option.toArray(decodeSocketFrame(text)))
     yield* expect(canonicalJson(viaSse) === canonicalJson(sample), `SSE frames differ: ${canonicalJson(viaSse)}`)
     yield* expect(canonicalJson(viaSocket) === canonicalJson(sample), `WebSocket frames differ: ${canonicalJson(viaSocket)}`)

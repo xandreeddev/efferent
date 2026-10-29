@@ -1,6 +1,7 @@
 import { Result, Match, Option, Schema } from "effect"
-import { FeedHeartbeat, FeedReady, FeedRecord, SocketFrame, SocketResume } from "./feed-frame.entity.js"
+import { FeedHeartbeat, FeedReady, FeedRecord, SocketFrame, SocketResume, SseRecordFields } from "./feed-frame.entity.js"
 import type { FeedFrame, FeedOptions } from "./feed-frame.entity.js"
+import { RenderError } from "./render-surface.entity.js"
 
 /**
  * SSE wire format, one block per frame:
@@ -23,24 +24,23 @@ const fieldsOf = (block: string): ReadonlyMap<string, string> => new Map(block.s
   return colon <= 0 ? [] : [[line.slice(0, colon), line.slice(colon + 1).trimStart()] as const]
 }))
 
-const parseObject = (text: string): Option.Option<Record<string, unknown>> =>
-  Result.getSuccess(Schema.decodeUnknownResult(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))(text))
+const decodeRecordFields = Schema.decodeUnknownResult(SseRecordFields)
 
-const decodeSseBlock = (block: string): ReadonlyArray<FeedFrame> => {
-  if (block.startsWith(": heartbeat")) return [FeedHeartbeat.make({})]
+/** A block of comments or of `retry` alone carries no frame; any other block must be a frame `encodeSse` writes. */
+const decodeSseBlock = (block: string): Result.Result<ReadonlyArray<FeedFrame>, RenderError> => {
+  if (block.startsWith(": heartbeat")) return Result.succeed([FeedHeartbeat.make({})])
   const fields = fieldsOf(block)
-  const event = fields.get("event")
-  if (event === "ready") return [FeedReady.make({})]
-  const id = Number(fields.get("id"))
-  const data = parseObject(fields.get("data") ?? "")
-  return event === undefined || !Number.isInteger(id) || Option.isNone(data)
-    ? []
-    : [FeedRecord.make({ sequence: id, event, data: data.value })]
+  if (fields.get("event") === "ready") return Result.succeed([FeedReady.make({})])
+  if (!["id", "event", "data"].some((name) => fields.has(name))) return Result.succeed([])
+  return decodeRecordFields(Object.fromEntries(fields)).pipe(
+    Result.map((record): ReadonlyArray<FeedFrame> => [{ _tag: "FeedRecord", sequence: record.id, event: record.event, data: record.data }]),
+    Result.mapError((error) => new RenderError({ code: "invalid", message: `Invalid SSE record: ${error.message}` })),
+  )
 }
 
-/** The inverse of `encodeSse` over a whole stream, for clients and tests. */
-export const decodeSse = (text: string): ReadonlyArray<FeedFrame> =>
-  text.split("\n\n").filter((block) => block.length > 0).flatMap(decodeSseBlock)
+/** The inverse of `encodeSse` over a whole stream, for clients and tests; a malformed record fails with `invalid`. */
+export const decodeSse = (text: string): Result.Result<ReadonlyArray<FeedFrame>, RenderError> =>
+  Result.all(text.split("\n\n").filter((block) => block.length > 0).map(decodeSseBlock)).pipe(Result.map((blocks) => blocks.flat()))
 
 export const encodeSocketFrame = (frame: FeedFrame): string => JSON.stringify(Match.valueTags(frame, {
   FeedRecord: (record): SocketFrame => ({ type: "record", sequence: record.sequence, event: record.event, data: record.data }),

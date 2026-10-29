@@ -27,16 +27,27 @@ const serveEvents = (response, feedScope, after: number) => Effect.gen(function*
 ```
 
 - `RenderSurface.publish(snapshot)` versions content as `<messageId>:v<generation>`, commits each node
-  once (`<runId>:render:<generation>:<nodeId>`), records completion, and on a surface frozen elsewhere
-  records a frozen, partial completion instead of failing.
-- `fill(placeholder, node)` commits into a declared placeholder, also after freezing.
+  once (`<runId>:render:<surfaceId>:<generation>:<nodeId>`; a `:` or `%` inside a part is
+  percent-encoded), records completion, and on a surface frozen elsewhere records a frozen, partial
+  completion instead of failing. Publishing identical content again opens no generation but commits
+  the nodes an earlier, failed attempt left uncommitted (`changed: true`), then completes.
+- `fill(placeholder, node)` commits into a declared placeholder of the current version
+  (`<runId>:render:<surfaceId>:<generation>:fill:<placeholder>`), also after freezing.
+- `freeze(reason)` holds at the version reached, or before the first publish (a `SurfaceFrozen`
+  whose `versionId` is `None`); each surface of a message freezes on its own.
+- A `RenderStore` keeps a surface's records under the scope's thread and principal: `hydrate` returns
+  that surface's records and nothing from another thread or principal, and `commit` is idempotent
+  by operation id within them. `MemoryRenderStoreLive` does this in process.
 - `RenderFeed.frames` sends records after the cursor, one `ready` frame once caught up, and heartbeats
   while idle; the stream ends after `maxDurationMs` and clients reconnect with their cursor. Idle
   polling backs off. A `JournalTail` may also offer `changes(feed)`, a stream whose every element
   wakes the feed to poll at once (a database notification, an in-process signal). Polling stays the
   fallback: a failed or ended `changes` stream only stops the wake-ups.
 - SSE wire: `retry: 1000`, then `id: <sequence>` / `event: <event>` / `data: <json>` blocks,
-  `event: ready`, and `: heartbeat` comments. WebSocket wire: one JSON object per frame
+  `event: ready`, and `: heartbeat` comments. `decodeSse(text)` reads them back as a `Result`: a
+  malformed record fails with `RenderError` code `invalid`. `sseNodePeer(response, headers, timeout)`
+  drops a client that has not taken a write within `timeout` (2 seconds). A feed that fails ends the
+  connection like a finished one, and the transport logs the failure as a warning. WebSocket wire: one JSON object per frame
   (`{"type":"record","sequence":n,"event":…,"data":{…}}`, `{"type":"ready"}`, `{"type":"heartbeat"}`);
   a client resumes by sending `{"after": n}`.
 - Conformance kits (`renderSurfaceConformance`, `renderFeedConformance`, `renderTransportConformance`)

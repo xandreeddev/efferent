@@ -7,6 +7,7 @@ import {
   describeError,
   fillOperationIdOf,
   fromOutputError,
+  missingNodesOf,
   operationIdOf,
   outputScopeOf,
   progressOf,
@@ -27,7 +28,8 @@ const unique = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new
  * One surface for one message: versions (`<messageId>:v<generation>`),
  * signature dedupe, one idempotent commit per node, completion, freeze and
  * background preparation. Writes are serialized; preparations run one at a
- * time through the host's `fork`.
+ * time through the host's `fork`. Identical content opens no generation but
+ * still commits the nodes an earlier attempt left uncommitted.
  */
 export const openSurface = (
   store: typeof RenderStore.Service,
@@ -54,15 +56,26 @@ export const openSurface = (
     return yield* store.commit(scope, { versionId, proposal })
   })
 
+  /** A node landed in the current version: it is no longer missing, and its component is on the surface. */
+  const recordCommitted = (node: RenderNode) => Ref.update(progress, (value) => ({
+    ...value,
+    committed: [...value.committed, node.nodeId],
+    state: { ...value.state, components: unique([...value.state.components, node.release.component]) },
+  }))
+
+  const commitNodes = (versionId: string, generation: number, nodes: ReadonlyArray<RenderNode>) => Effect.forEach(nodes, (node) =>
+    commitNode(versionId, operationIdOf(scope.runId, scope.surfaceId, generation, node.nodeId), node).pipe(Effect.andThen(recordCommitted(node))),
+  { discard: true })
+
   const snapshotResult = (frozen: boolean) => Ref.get(progress).pipe(Effect.map((current): PublishResult => ({
     version: current.state.version, generation: current.state.generation, changed: false, frozen,
   })))
 
-  /** Recorded once: the version this message reached is final but partial. */
+  /** Recorded once: the version this message reached is final but partial (a completed version stays complete). */
   const recordFrozenCompletion = Effect.gen(function* () {
     const current = yield* Ref.get(progress)
     if (current.frozenRecorded) return
-    yield* Option.match(current.state.version, {
+    yield* Option.match(current.state.completed ? Option.none() : current.state.version, {
       onNone: () => Effect.void,
       onSome: (versionId) => store.complete(scope, SurfaceCompleted.make({
         ...identity, versionId, generation: current.state.generation, phase: "partial", frozen: true,
@@ -83,10 +96,10 @@ export const openSurface = (
     if (current.state.frozen) return yield* recordFrozenCompletion.pipe(Effect.andThen(snapshotResult(true)))
     const signature = signatureOf(snapshot)
     if (Option.contains(current.signature, signature)) {
-      if (snapshot.phase === "complete" && !current.state.completed) {
-        yield* Option.match(current.state.version, { onNone: () => Effect.void, onSome: (versionId) => markComplete(versionId, current.state.generation) })
-      }
-      return yield* snapshotResult(false)
+      return yield* Option.match(current.state.version, {
+        onNone: () => snapshotResult(false),
+        onSome: (versionId) => resume(versionId, current, snapshot),
+      })
     }
     const generation = current.state.generation + 1
     const versionId = versionIdOf(scope.messageId, generation)
@@ -111,12 +124,20 @@ export const openSurface = (
     yield* Ref.update(progress, (value) => ({
       ...value,
       signature: Option.some(signature),
+      committed: [],
       state: { ...value.state, version: Option.some(versionId), generation, completed: false, components: [], placeholders: snapshot.placeholders },
     }))
-    yield* Effect.forEach(snapshot.nodes, (node) => commitNode(versionId, operationIdOf(scope.runId, generation, node.nodeId), node), { discard: true })
-    yield* updateState((state) => ({ ...state, components: unique(snapshot.nodes.map((node) => node.release.component)) }))
+    yield* commitNodes(versionId, generation, snapshot.nodes)
     if (snapshot.phase === "complete") yield* markComplete(versionId, generation)
     return { version: Option.some(versionId), generation, changed: true, frozen: false }
+  })
+
+  /** Identical content keeps its version: commit what is still missing (same operation ids), then complete. */
+  const resume = (versionId: string, current: SurfaceProgress, snapshot: RenderSnapshot): Effect.Effect<PublishResult, RenderError> => Effect.gen(function* () {
+    const missing = missingNodesOf(current, snapshot)
+    yield* commitNodes(versionId, current.state.generation, missing)
+    if (snapshot.phase === "complete" && !current.state.completed) yield* markComplete(versionId, current.state.generation)
+    return { version: Option.some(versionId), generation: current.state.generation, changed: missing.length > 0, frozen: false }
   })
 
   const publish = (input: RenderSnapshotInput) => writer.withPermits(1)(publishNow(input))
@@ -132,9 +153,9 @@ export const openSurface = (
     })
     if (!current.state.placeholders.includes(placeholder)) return yield* Effect.fail(invalid(`The current version declares no placeholder ${placeholder}`))
     if (node.nodeId !== placeholder) return yield* Effect.fail(invalid("A fill must use its placeholder as node id"))
-    const receipt = yield* commitNode(versionId, fillOperationIdOf(scope.runId, placeholder), node)
+    const receipt = yield* commitNode(versionId, fillOperationIdOf(scope.runId, scope.surfaceId, current.state.generation, placeholder), node)
     yield* store.annotate(scope, "render.filled", { versionId, placeholder })
-    yield* updateState((state) => ({ ...state, components: unique([...state.components, node.release.component]) }))
+    yield* recordCommitted(node)
     return receipt
   }))
 
@@ -159,14 +180,11 @@ export const openSurface = (
     return { ...current.state, pending: finished.some((done) => !done) } satisfies SurfaceState
   })
 
+  /** Freezes at the version reached, or before the first one: either way no later generation is planned. */
   const freeze = (reason: FreezeReason) => writer.withPermits(1)(Effect.gen(function* () {
     const current = yield* Ref.get(progress)
-    yield* Option.match(current.state.version, {
-      onNone: () => Effect.void,
-      onSome: (versionId) => store.freeze(scope, SurfaceFrozen.make({ ...identity, versionId, reason })).pipe(
-        Effect.andThen(updateState((value) => ({ ...value, frozen: true }))),
-      ),
-    })
+    yield* store.freeze(scope, SurfaceFrozen.make({ ...identity, versionId: current.state.version, reason }))
+    yield* updateState((value) => ({ ...value, frozen: true }))
   }))
 
   return {

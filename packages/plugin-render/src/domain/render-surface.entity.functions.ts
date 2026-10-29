@@ -8,6 +8,8 @@ import type { RenderNode, RenderSnapshot, SurfaceRecord, SurfaceScope, SurfaceSt
 export type SurfaceProgress = {
   readonly state: Omit<SurfaceState, "pending">
   readonly signature: Option.Option<string>
+  /** Node ids committed into the current version (fills included). */
+  readonly committed: ReadonlyArray<string>
   readonly frozenRecorded: boolean
 }
 
@@ -17,10 +19,20 @@ export const signatureOf = (snapshot: RenderSnapshot): string =>
 
 export const versionIdOf = (messageId: string, generation: number): string => `${messageId}:v${generation}`
 
-/** Stable per generation and node: a retried publish reuses the id, a new generation never collides. */
-export const operationIdOf = (runId: string, generation: number, nodeId: string): string => `${runId}:render:${generation}:${nodeId}`
+/** A `:` or `%` inside an id part is percent-encoded, so different parts never join into the same id. */
+const idPart = (value: string): string => value.replaceAll("%", "%25").replaceAll(":", "%3A")
 
-export const fillOperationIdOf = (runId: string, placeholder: string): string => `${runId}:render:fill:${placeholder}`
+/** Stable per surface, generation and node: a retried publish reuses the id; another surface or generation never collides. */
+export const operationIdOf = (runId: string, surfaceId: string, generation: number, nodeId: string): string =>
+  `${idPart(runId)}:render:${idPart(surfaceId)}:${generation}:${idPart(nodeId)}`
+
+/** A placeholder's fill, per surface and generation: filling it again in a later version is a new operation. */
+export const fillOperationIdOf = (runId: string, surfaceId: string, generation: number, placeholder: string): string =>
+  `${idPart(runId)}:render:${idPart(surfaceId)}:${generation}:fill:${idPart(placeholder)}`
+
+/** The snapshot's nodes the current version has not committed: what a retry of identical content still owes. */
+export const missingNodesOf = (progress: SurfaceProgress, snapshot: RenderSnapshot): ReadonlyArray<RenderNode> =>
+  snapshot.nodes.filter((node) => !progress.committed.includes(node.nodeId))
 
 export const outputScopeOf = (scope: SurfaceScope): UiOutputScope => ({
   threadId: scope.threadId, runId: scope.runId, messageId: scope.messageId, principalId: scope.principalId, fence: scope.fence,
@@ -48,7 +60,7 @@ export const progressOf = (surfaceId: string, messageId: string, records: Readon
   const mine = records.filter((record) => record.surfaceId === surfaceId && record.messageId === messageId)
   const latest = latestPlanned(mine)
   const version = Option.map(latest, (planned) => planned.versionId)
-  const ofVersion = (versionId: string) => mine.filter((record) => record.versionId === versionId)
+  const ofVersion = (versionId: string) => mine.filter((record) => !isFrozen(record) && record.versionId === versionId)
   const current = Option.match(version, { onNone: () => [], onSome: ofVersion })
   return {
     state: {
@@ -61,6 +73,7 @@ export const progressOf = (surfaceId: string, messageId: string, records: Readon
       placeholders: Option.match(latest, { onNone: () => [], onSome: (planned) => planned.placeholders }),
     },
     signature: Option.map(latest, (planned) => planned.signature),
+    committed: current.flatMap((record) => isCommitted(record) ? [record.nodeId] : []),
     frozenRecorded: mine.some((record) => isCompleted(record) && record.frozen),
   }
 }

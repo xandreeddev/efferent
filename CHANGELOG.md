@@ -8,6 +8,27 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Migration
+
+- `@xandreed/plugin-render`: a host `RenderStore` keeps records under thread,
+  principal and surface, scopes `commit` idempotency the same way, accepts a
+  `SurfaceFrozen` without a version (and refuses `plan` after it), and reruns
+  `renderSurfaceConformance`. Code calling `decodeSse` reads its `Result`;
+  code building `SurfaceFrozen` passes `versionId: Option.some(...)`.
+
+### Breaking
+
+- `@xandreed/plugin-render` operation ids name the surface and the
+  generation: `<runId>:render:<surfaceId>:<generation>:<nodeId>`, and fills
+  `...:<generation>:fill:<placeholder>` (a `:` or `%` inside a part is
+  percent-encoded). `operationIdOf` and `fillOperationIdOf` take the surface
+  id, and the fill takes the generation. Stored records still read: a
+  version partly committed under the old ids commits only its missing nodes.
+- `SurfaceFrozen.versionId` is an `Option` (`null` when encoded), so a
+  freeze before the first publish holds. Stored freezes still decode.
+- `decodeSse` returns a `Result`: a malformed record fails with
+  `RenderError` code `invalid` instead of throwing.
+
 ### Added
 
 - `reasonOf(cause)` in `@xandreed/core`: a cause as one line of text that is
@@ -26,6 +47,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   that defect (`turn.defect` in `turn.ended`) instead of `events.background`
   carrying the stack. `events.background` now means a background handler was
   interrupted.
+- A render publish retried after a failed commit commits the nodes the
+  failed attempt left out before it completes, also after reopening; before,
+  it was marked complete with a node missing.
+- Two surfaces of one message no longer collide, filling a placeholder again
+  in a later version no longer fails with `conflict`, a second surface's
+  freeze is no longer dropped, and a frozen republish of a completed version
+  records no partial completion.
+- `MemoryRenderStoreLive` no longer returns other threads' or principals'
+  records or receipts.
+- SSE and WebSocket feed failures are logged. `sseNodePeer` drops a client
+  that has not taken a write within its new `timeout` parameter (2 seconds),
+  and no longer leaks its close listener.
 
 ### Repository
 

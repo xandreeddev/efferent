@@ -18,11 +18,18 @@ import type { FeedFrame, FeedPayload, FeedScope, JournalRecord } from "../domain
 
 /**
  * The host's durable surface storage. Every write is fenced by the scope.
+ * A surface is the scope's thread, principal and `surfaceId`: its records
+ * never mix with another thread's or principal's, even under the same ids.
  * - `plan` MUST fail with code `frozen` inside the same transaction when a
- *   `SurfaceFrozen` exists for the scope's surface and message.
- * - `commit` is idempotent by `proposal.operationId`; reusing an id with a
- *   different proposal fails with `conflict`. It persists a `SurfaceCommitted`.
- * - `hydrate` returns this surface's records, in write order, for every message.
+ *   `SurfaceFrozen` (with or without a version) exists for the surface and
+ *   message.
+ * - `commit` is idempotent by `proposal.operationId` within the thread and
+ *   principal; reusing an id with a different proposal fails with `conflict`.
+ *   It persists a `SurfaceCommitted`.
+ * - `freeze` persists a `SurfaceFrozen`; it may drop one for a surface and
+ *   message already frozen, never one for another surface.
+ * - `hydrate` returns that surface's records, in write order, for every
+ *   message, and nothing else.
  */
 export class RenderStore extends Context.Service<RenderStore, {
   readonly hydrate: (scope: SurfaceScope) => Effect.Effect<ReadonlyArray<SurfaceRecord>, RenderError>
@@ -39,7 +46,11 @@ export interface RenderSurface {
   /** The records hydrated when the surface was opened, for every message (e.g. the page being edited). */
   readonly records: ReadonlyArray<SurfaceRecord>
   readonly state: Effect.Effect<SurfaceState>
-  /** Versioned and deduplicated: identical content opens no new generation. A frozen surface records a frozen, partial completion instead of failing. */
+  /**
+   * Versioned and deduplicated: identical content opens no new generation, but commits the nodes an
+   * earlier attempt left uncommitted (`changed` is then true) before it completes. A frozen surface
+   * records a frozen, partial completion instead of failing (none for a version already complete).
+   */
   readonly publish: (snapshot: RenderSnapshotInput) => Effect.Effect<PublishResult, RenderError>
   /** Commit a node into a declared placeholder of the current version; allowed after freezing. */
   readonly fill: (placeholder: string, node: RenderNode) => Effect.Effect<UiOutputReceipt, RenderError>
@@ -47,6 +58,7 @@ export interface RenderSurface {
   readonly prepare: <E>(work: Stream.Stream<RenderSnapshotInput, E>, recover: (error: E | RenderError) => Effect.Effect<void>) => Effect.Effect<void>
   /** Wait for every preparation started so far. */
   readonly settled: Effect.Effect<void>
+  /** Freeze the surface for this message, at the version it reached or before the first one. */
   readonly freeze: (reason: FreezeReason) => Effect.Effect<void, RenderError>
   readonly annotate: (kind: string, data: Readonly<Record<string, unknown>>) => Effect.Effect<void, RenderError>
 }

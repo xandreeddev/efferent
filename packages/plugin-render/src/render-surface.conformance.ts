@@ -28,8 +28,9 @@ const node = (nodeId: string, component = "card"): RenderNode => ({ nodeId, rele
 const snapshot = (nodes: ReadonlyArray<RenderNode>, phase: "partial" | "complete" = "partial", placeholders: ReadonlyArray<string> = []): RenderSnapshotInput => ({
   phase, spec: { layout: "stack", order: nodes.map((entry) => entry.nodeId) }, nodes, placeholders,
 })
-const scopeOf = (messageId = "message-1"): SurfaceScope => ({
-  threadId: "thread", runId: `run-${messageId}`, messageId, principalId: "guest", fence: 1, surfaceId: "page", baseVersion: Option.none(),
+/** The run id follows the message only: two threads or surfaces of one message share it, as unrelated hosts' runs may. */
+const scopeOf = (messageId = "message-1", threadId = "thread", surfaceId = "page"): SurfaceScope => ({
+  threadId, runId: `run-${messageId}`, messageId, principalId: "guest", fence: 1, surfaceId, baseVersion: Option.none(),
 })
 const detached: RenderOpenOptions = { fork: (_tag, work) => Effect.forkDetach(work).pipe(Effect.asVoid) }
 const allow: typeof UiOutputAdmission.Service = { validate: () => Effect.void }
@@ -46,7 +47,21 @@ const failureOf = (check: string) => <A, E>(effect: Effect.Effect<A, E>) => Effe
 const isPlanned = Schema.is(SurfacePlanned)
 const isCommitted = Schema.is(SurfaceCommitted)
 const isCompleted = Schema.is(SurfaceCompleted)
+const isFrozen = Schema.is(SurfaceFrozen)
 const planned = (records: ReadonlyArray<SurfaceRecord>) => records.filter(isPlanned)
+const committedIn = (records: ReadonlyArray<SurfaceRecord>, versionId: string) =>
+  records.flatMap((record) => isCommitted(record) && record.versionId === versionId ? [record.nodeId] : [])
+
+/** Admission that refuses node `b` once, as a restarting dependency would, and admits it afterwards. */
+const refusingBOnce = Effect.gen(function* () {
+  const refused = yield* Ref.make(false)
+  const admission: typeof UiOutputAdmission.Service = {
+    validate: (_scope, proposal) => proposal.nodeId !== "b" ? Effect.void : Ref.getAndSet(refused, true).pipe(Effect.flatMap((before) => before
+      ? Effect.void
+      : Effect.fail(new UiOutputError({ code: "unavailable", message: "Admission is restarting" })))),
+  }
+  return admission
+})
 
 /** The contract every Render/RenderStore pair must keep, run against any implementation. */
 export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray<ConformanceCheck> => [
@@ -73,8 +88,8 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const second = yield* surface.publish(snapshot([node("a"), node("b")]))
       yield* expect(Option.contains(second.version, "message-1:v2") && second.generation === 2, "the changed content opens message-1:v2")
       const ids = yield* Ref.get(operations)
-      yield* expect(canonicalJson(ids) === canonicalJson(["run-message-1:render:1:a", "run-message-1:render:2:a", "run-message-1:render:2:b"]),
-        `operation ids are per generation and node, got ${canonicalJson(ids)}`)
+      yield* expect(canonicalJson(ids) === canonicalJson(["run-message-1:render:page:1:a", "run-message-1:render:page:2:a", "run-message-1:render:page:2:b"]),
+        `operation ids are per surface, generation and node, got ${canonicalJson(ids)}`)
     }),
   },
   {
@@ -101,13 +116,144 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const scope = scopeOf()
       const surface = yield* render.open(scope, detached)
       yield* surface.publish(snapshot([node("a")]))
-      yield* store.freeze(scope, SurfaceFrozen.make({ surfaceId: "page", messageId: "message-1", versionId: "message-1:v1", reason: "interaction" }))
+      yield* store.freeze(scope, SurfaceFrozen.make({ surfaceId: "page", messageId: "message-1", versionId: Option.some("message-1:v1"), reason: "interaction" }))
       const late = yield* surface.publish(snapshot([node("b")]))
       yield* surface.publish(snapshot([node("c")]))
       const records = yield* store.hydrate(scope)
       yield* expect(late.frozen && !late.changed && Option.contains(late.version, "message-1:v1"), "the publish reports the frozen version")
       yield* expect(planned(records).length === 1, "no generation is planned after the freeze")
       yield* expect(records.filter((record) => isCompleted(record) && record.frozen && record.phase === "partial").length === 1, "one frozen, partial completion")
+    }),
+  },
+  {
+    name: "a freeze before the first publish holds",
+    run: Effect.gen(function* () {
+      const expect = holds("a freeze before the first publish holds")
+      const { render, store } = yield* subject.make(allow)
+      const scope = scopeOf()
+      const surface = yield* render.open(scope, detached)
+      yield* surface.freeze("interaction")
+      const late = yield* surface.publish(snapshot([node("a")]))
+      const reopened = yield* render.open(scope, detached)
+      const again = yield* reopened.publish(snapshot([node("b")]))
+      const records = yield* store.hydrate(scope)
+      yield* expect(late.frozen && !late.changed && Option.isNone(late.version), "the publish reports a frozen surface with no version")
+      yield* expect(again.frozen && (yield* reopened.state).frozen, "a reopened surface is frozen too")
+      yield* expect(planned(records).length === 0 && !records.some(isCommitted), "nothing is planned or committed")
+      yield* expect(records.some((record) => isFrozen(record) && Option.isNone(record.versionId)), "the freeze is recorded without a version")
+    }),
+  },
+  {
+    name: "a frozen republish of a completed version records no partial completion",
+    run: Effect.gen(function* () {
+      const expect = holds("a frozen republish of a completed version records no partial completion")
+      const { render, store } = yield* subject.make(allow)
+      const scope = scopeOf()
+      const surface = yield* render.open(scope, detached)
+      yield* surface.publish(snapshot([node("a")], "complete"))
+      yield* surface.freeze("completion")
+      const again = yield* surface.publish(snapshot([node("a")], "complete"))
+      const completions = (yield* store.hydrate(scope)).filter(isCompleted)
+      yield* expect(again.frozen && !again.changed, "the republish reports the frozen surface")
+      yield* expect(completions.length === 1 && completions.every((record) => record.phase === "complete" && !record.frozen),
+        `one, complete completion, got ${canonicalJson(completions)}`)
+    }),
+  },
+  {
+    name: "two surfaces of one message keep their own operation ids and freezes",
+    run: Effect.gen(function* () {
+      const expect = holds("two surfaces of one message keep their own operation ids and freezes")
+      const operations = yield* Ref.make<ReadonlyArray<string>>([])
+      const { render } = yield* subject.make({ validate: (_scope, proposal: UiOutputProposal) => Ref.update(operations, (all) => [...all, proposal.operationId]) })
+      const page = yield* render.open(scopeOf("message-1", "thread", "page"), detached)
+      const panel = yield* render.open(scopeOf("message-1", "thread", "panel"), detached)
+      yield* page.publish(snapshot([node("a")]))
+      yield* panel.publish(snapshot([node("a", "chart")]))
+      yield* page.freeze("interaction")
+      const unfrozen = yield* panel.publish(snapshot([node("a", "chart")]))
+      yield* panel.freeze("interaction")
+      const pageAgain = yield* (yield* render.open(scopeOf("message-1", "thread", "page"), detached)).state
+      const panelAgain = yield* (yield* render.open(scopeOf("message-1", "thread", "panel"), detached)).state
+      const ids = yield* Ref.get(operations)
+      yield* expect(canonicalJson(ids) === canonicalJson(["run-message-1:render:page:1:a", "run-message-1:render:panel:1:a"]),
+        `each surface has its own operation ids, got ${canonicalJson(ids)}`)
+      yield* expect(!unfrozen.frozen, "freezing one surface leaves the other open")
+      yield* expect(pageAgain.frozen && panelAgain.frozen, "each surface's freeze is recorded")
+      yield* expect(canonicalJson(panelAgain.components) === canonicalJson(["chart"]), `the panel keeps its own component, got ${canonicalJson(panelAgain.components)}`)
+    }),
+  },
+  {
+    name: "two threads with the same surface and message see only their own records",
+    run: Effect.gen(function* () {
+      const expect = holds("two threads with the same surface and message see only their own records")
+      const { render, store } = yield* subject.make(allow)
+      const mine = scopeOf("answer", "thread-a")
+      const theirs = scopeOf("answer", "thread-b")
+      const first = yield* render.open(mine, detached)
+      yield* first.publish(snapshot([node("a")], "complete"))
+      yield* first.freeze("completion")
+      const before = canonicalJson(yield* store.hydrate(mine))
+      const second = yield* render.open(theirs, detached)
+      const fresh = yield* second.state
+      const published = yield* second.publish(snapshot([node("a")], "complete"))
+      const receipts = (yield* store.hydrate(theirs)).flatMap((record) => isCommitted(record) ? [record.receipt.threadId] : [])
+      yield* expect(second.records.length === 0 && fresh.generation === 0 && !fresh.frozen, "another thread's records are not hydrated")
+      yield* expect(published.changed && !published.frozen && Option.contains(published.version, "answer:v1"), "the second thread opens its own answer:v1")
+      yield* expect(canonicalJson(receipts) === canonicalJson(["thread-b"]), `the second thread's commit is its own, got ${canonicalJson(receipts)}`)
+      yield* expect(canonicalJson(yield* store.hydrate(mine)) === before, "the first thread's records are unchanged")
+    }),
+  },
+  {
+    name: "a publish retried after a failed commit commits the missing nodes, then completes",
+    run: Effect.gen(function* () {
+      const expect = holds("a publish retried after a failed commit commits the missing nodes, then completes")
+      const { render, store } = yield* subject.make(yield* refusingBOnce)
+      const scope = scopeOf()
+      const surface = yield* render.open(scope, detached)
+      const content = snapshot([node("a"), node("b", "chart")], "complete")
+      const failure = yield* failureOf("retry")(surface.publish(content))
+      const retry = yield* surface.publish(content)
+      const records = yield* store.hydrate(scope)
+      const state = yield* surface.state
+      yield* expect(failure.code === "unavailable", "the first attempt fails on b")
+      yield* expect(retry.changed && Option.contains(retry.version, "message-1:v1"), "the retry commits into message-1:v1")
+      yield* expect(canonicalJson(committedIn(records, "message-1:v1")) === canonicalJson(["a", "b"]),
+        `every node is committed, got ${canonicalJson(committedIn(records, "message-1:v1"))}`)
+      yield* expect(planned(records).length === 1 && records.filter(isCompleted).length === 1, "one generation, completed once")
+      yield* expect(state.completed && canonicalJson(state.components) === canonicalJson(["card", "chart"]), "the state reports both components, completed")
+    }),
+  },
+  {
+    name: "a publish retried after reopening commits the missing nodes, then completes",
+    run: Effect.gen(function* () {
+      const expect = holds("a publish retried after reopening commits the missing nodes, then completes")
+      const { render, store } = yield* subject.make(yield* refusingBOnce)
+      const scope = scopeOf()
+      const content = snapshot([node("a"), node("b", "chart")], "complete")
+      yield* failureOf("retry after reopening")((yield* render.open(scope, detached)).publish(content))
+      const reopened = yield* render.open(scope, detached)
+      const retry = yield* reopened.publish(content)
+      const records = yield* store.hydrate(scope)
+      yield* expect(retry.changed && retry.generation === 1, "the retry commits into generation 1")
+      yield* expect(canonicalJson(committedIn(records, "message-1:v1")) === canonicalJson(["a", "b"]),
+        `every node is committed, got ${canonicalJson(committedIn(records, "message-1:v1"))}`)
+      yield* expect((yield* reopened.state).completed && records.filter(isCompleted).length === 1, "the version completes once")
+    }),
+  },
+  {
+    name: "a placeholder filled again in a later version commits into that version",
+    run: Effect.gen(function* () {
+      const expect = holds("a placeholder filled again in a later version commits into that version")
+      const { render, store } = yield* subject.make(allow)
+      const scope = scopeOf()
+      const surface = yield* render.open(scope, detached)
+      yield* surface.publish(snapshot([node("a")], "partial", ["media"]))
+      yield* surface.fill("media", node("media", "image"))
+      yield* surface.publish(snapshot([node("a"), node("b")], "partial", ["media"]))
+      const receipt = yield* surface.fill("media", node("media", "video"))
+      const records = yield* store.hydrate(scope)
+      yield* expect(receipt.nodeId === "media" && committedIn(records, "message-1:v2").includes("media"), "the second fill is committed into message-1:v2")
+      yield* expect((yield* surface.state).components.includes("video"), "the version shows the new fill")
     }),
   },
   {
@@ -204,7 +350,7 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const expect = holds("the store refuses to plan a frozen surface")
       const { store } = yield* subject.make(allow)
       const scope = scopeOf()
-      yield* store.freeze(scope, SurfaceFrozen.make({ surfaceId: "page", messageId: "message-1", versionId: "message-1:v1", reason: "interaction" }))
+      yield* store.freeze(scope, SurfaceFrozen.make({ surfaceId: "page", messageId: "message-1", versionId: Option.some("message-1:v1"), reason: "interaction" }))
       const failure = yield* failureOf("frozen plan")(store.plan(scope, SurfacePlanned.make({
         surfaceId: "page", messageId: "message-1", versionId: "message-1:v2", generation: 2, baseVersionId: Option.none(),
         phase: "partial", spec: {}, nodes: [], placeholders: [], signature: "x",

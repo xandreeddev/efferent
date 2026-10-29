@@ -7,7 +7,7 @@
 // through its text deltas to `done`, its retry under the same
 // Idempotency-Key gets the stored answer, the journal route serves the
 // turn's records from cursor 0 until `ready`, and /ping is idle afterwards.
-import { Effect, Stream } from "effect"
+import { Effect, Result, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
 import { SessionLogMemoryLive } from "@xandreed/core"
 import { decodeSse } from "@xandreed/plugin-render"
@@ -65,7 +65,9 @@ if (retried.status !== 200 || answer.reply !== "Hello there." || answer.turn !==
 
 const journal = await following
 controller.abort()
-const kinds = decodeSse(journal).map((frame) => frame._tag === "FeedRecord" ? frame.event : frame._tag).join(" ")
+const decoded = decodeSse(journal)
+if (Result.isFailure(decoded)) fail(`the journal route sent a malformed record: ${decoded.failure.message}`)
+const kinds = decoded.success.map((frame) => frame._tag === "FeedRecord" ? frame.event : frame._tag).join(" ")
 if (kinds !== "FeedReady turn.started memory.message turn.reply turn.ended") fail(`the journal route sent ${kinds}`)
 
 await Promise.all(work)

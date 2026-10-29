@@ -35,7 +35,11 @@ export type RenderSnapshotInput = typeof RenderSnapshot.Encoded
 export const FreezeReason = Schema.Literals(["interaction", "completion"])
 export type FreezeReason = typeof FreezeReason.Type
 
-/** What a store persists and hydrates. Every record names its surface and the message it was rendered for. */
+/**
+ * What a store persists and hydrates. Every record names its surface and the
+ * message it was rendered for; the store keeps it under the scope's thread
+ * and principal.
+ */
 export const SurfacePlanned = Schema.TaggedStruct("SurfacePlanned", {
   surfaceId: Id,
   messageId: Id,
@@ -70,10 +74,11 @@ export const SurfaceCompleted = Schema.TaggedStruct("SurfaceCompleted", {
 })
 export type SurfaceCompleted = typeof SurfaceCompleted.Type
 
+/** The surface is frozen for the message, at the version it reached, or before any version (`null` when encoded). */
 export const SurfaceFrozen = Schema.TaggedStruct("SurfaceFrozen", {
   surfaceId: Id,
   messageId: Id,
-  versionId: Id,
+  versionId: Schema.OptionFromNullOr(Id),
   reason: FreezeReason,
 })
 export type SurfaceFrozen = typeof SurfaceFrozen.Type
