@@ -1,4 +1,5 @@
 export * from "./domain/identity.entity.js"
+export { reasonOf } from "./domain/identity.entity.functions.js"
 export * from "./domain/task.entity.js"
 export * from "./domain/journey.entity.js"
 export * from "./domain/runnable.entity.js"

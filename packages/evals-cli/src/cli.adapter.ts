@@ -135,7 +135,8 @@ export const evaluationCli = (
                 (error) =>
                   new EvaluationError({
                     code: "invalid",
-                    message: String(error)
+                    message: `Run ${run.id} does not encode: ${error.message}`,
+                    cause: error
                   })
               )
             )
@@ -251,7 +252,11 @@ export const evaluationCli = (
       yield* Schema.encodeEffect(ReviewBundle)(bundle).pipe(
         Effect.mapError(
           (error) =>
-            new EvaluationError({ code: "invalid", message: String(error) })
+            new EvaluationError({
+              code: "invalid",
+              message: `Review bundle for ${run.id} does not encode: ${error.message}`,
+              cause: error
+            })
         ),
         Effect.flatMap((encoded) =>
           writeJson(

@@ -11,6 +11,7 @@ The `efferent-eval` command line over `@xandreed/evals`: it loads an app's `eval
 - `inspect` and `compare` never load the app configuration; loading one (all `list`, `validate` and `estimate` do) must open no clients.
 - A count flag (`--repetitions`, `--concurrency`, `--timeout-ms`) goes through `positiveInt`: a bad value is `invalid`, never a silent default; `--flag=value` reads as `--flag value`.
 - Read files through `readJson`: a missing file is `missing`, one that does not decode `invalid`, any other failure `persistence`.
+- An `EvaluationError` that wraps a failure keeps it as `cause` and says what failed (`Cannot read <path>: EISDIR: …`, `Run <id> does not encode: …`), the reason from `reasonOf(Cause.die(error))` or a schema error's `message`, never `String(error)`.
 - App `commands` are dispatched before the built-in commands other than `help`, `inspect` and `compare`.
 - Name test support `*.testing.ts`: the build leaves those files out.
 
@@ -44,7 +45,7 @@ None.
 
 ## Tests
 
-- `src/cli.test.ts`: the commands over `cliFixture` in a temporary directory (export failure, grading revisions, comparison, flags, file errors).
+- `src/cli.test.ts`: the commands over `cliFixture` in a temporary directory (export failure, grading revisions, comparison, flags, file errors, the causes and messages of wrapped failures).
 - `src/run-main.adapter.test.ts`: signals and exit codes over a fake `CliProcess`; `:54` spawns `node` on `src/main.ts` with `hanging-run.testing.ts` and sends SIGINT (needs `node` on `PATH`).
 - `bun run verify:packages` runs `scripts/evaluation-consumer.fixture.mjs` on Node: `evaluationCli` from the packed package loads a TypeScript configuration and runs a suite.
 - Run: `bun test packages/evals-cli`.

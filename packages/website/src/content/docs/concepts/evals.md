@@ -151,7 +151,9 @@ when a declared suite intentionally crosses both. `--task`, `--candidate`, `--re
 integers, and anything else is a usage error (`invalid`), never a silent default. Flags take
 `--flag value` or `--flag=value`. Without `--directory`, results go to
 `.eval-results/runs/<id>`, named after the run or grading revision they hold. A report or
-review file that does not exist fails as `missing`; one that does not decode, as `invalid`.
+review file that does not exist fails as `missing`; one that does not decode, as `invalid`;
+any other file failure, as `persistence`. Each such error says what failed
+(`Cannot read <path>: EISDIR: …`) and keeps the underlying error as its `cause`.
 
 Execution writes `execution.json` before any grader runs. `--execute-only` stops there.
 `grade --from execution.json` projects and grades saved work with the registered graders,
@@ -181,7 +183,7 @@ efferent-eval run function-contract --config eval.config.ts --exporter langsmith
 
 Register `langfuseExporter(options)` or `langsmithExporter(options)` in the app's `exporters`. Clients are constructed only when exporting. Stable remote IDs map back to local trial IDs and metric identities. Both adapters use the provider's official SDK. Langfuse receives traces and numeric scores; LangSmith receives project runs and feedback. Full encoded trial metadata retains unavailable grades, context, usage and provenance; everything sent is the report's encoded form, so an absent value is `null`. Exporting a report to LangSmith again updates the runs and feedback the first export created.
 
-Export after a run is best-effort and produces separate receipts/errors after the local report is durable. The explicit export command can retry a saved report. Live application telemetry is a separate concern and is not reconfigured by evaluation export.
+Export after a run is best-effort and produces separate receipts/errors after the local report is durable. A failed export is a `provider` error whose message carries the service's reason (`LangSmith export: Failed to create project. Received status [401]…`) and whose `cause` is the client's error; a receipt keeps the message only. The explicit export command can retry a saved report. Live application telemetry is a separate concern and is not reconfigured by evaluation export.
 
 ## Retrieval grading
 

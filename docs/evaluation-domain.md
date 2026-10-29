@@ -142,7 +142,7 @@ efferent-eval grade --config eval.config.ts --from .eval-results/run-1/execution
 efferent-eval review --config eval.config.ts --report report.json --directory .eval-results/review
 ```
 
-Flags take `--flag value` or `--flag=value`. Without `--directory`, results go to `.eval-results/runs/<id>`, named after the run or grading revision they hold. `--repetitions`, `--concurrency` and `--timeout-ms` take positive integers; anything else is a usage error (`invalid`), never a silent default. A report or review file that does not exist fails as `missing`; one that does not decode, as `invalid`.
+Flags take `--flag value` or `--flag=value`. Without `--directory`, results go to `.eval-results/runs/<id>`, named after the run or grading revision they hold. `--repetitions`, `--concurrency` and `--timeout-ms` take positive integers; anything else is a usage error (`invalid`), never a silent default. A report or review file that does not exist fails as `missing`; one that does not decode, as `invalid`; any other file failure, as `persistence`. Each such error says what failed (`Cannot read <path>: EISDIR: …`) and keeps the underlying error as its `cause`.
 
 `inspect` and `compare` work without loading app configuration. `list`, `validate` and `estimate` require declarations only; resource acquisition belongs to environment/runnable execution. An async default configuration factory can inspect command arguments without acquiring execution resources. Apps register extensions for domain-specific cost estimation or plan selection.
 
@@ -159,7 +159,7 @@ efferent-eval run function-contract --config eval.config.ts --exporter langsmith
 
 Register `langfuseExporter(options)` or `langsmithExporter(options)` in the app's `exporters`. Clients are constructed only when exporting. Stable remote IDs map back to local trial IDs and metric identities. Both adapters use the provider's official SDK. Langfuse receives traces and numeric scores; LangSmith receives project runs and feedback. Full encoded trial metadata retains unavailable grades, context, usage and provenance; everything sent is the report's encoded form, so an absent value is `null`. Exporting a report to LangSmith again updates the runs and feedback the first export created.
 
-Export after a run is best-effort and produces separate receipts/errors after the local report is durable. The explicit export command can retry a saved report. Live application telemetry is a separate concern and is not reconfigured by evaluation export.
+Export after a run is best-effort and produces separate receipts/errors after the local report is durable. A failed export is a `provider` error whose message carries the service's reason (`LangSmith export: Failed to create project. Received status [401]…`) and whose `cause` is the client's error; a receipt keeps the message only. The explicit export command can retry a saved report. Live application telemetry is a separate concern and is not reconfigured by evaluation export.
 
 ## Retrieval grading
 

@@ -1,11 +1,12 @@
-import { EvaluationExport, EvaluationError, comparisonIssues, positiveInt } from "@xandreed/evals"
+import { EvaluationExport, EvaluationError, EvaluationRunStore, comparisonIssues, positiveInt } from "@xandreed/evals"
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer } from "effect"
 import { evaluationCli } from "./cli.adapter.js"
-import { readRun, writeJson } from "./adapters/evaluation-store.fs.adapter.js"
+import { EvaluationRunStoreFsLive, readRun, readText, writeJson } from "./adapters/evaluation-store.fs.adapter.js"
+import { loadEvaluationApp } from "./config-loader.adapter.js"
 import { cliFixture } from "./cli-fixture.testing.js"
 
 const app = cliFixture()
@@ -203,4 +204,29 @@ test("a missing file is missing, a malformed one invalid, and a failed write lea
   const failed = await Effect.runPromise(writeJson(join(directory, "taken", "report.json"), {}).pipe(Effect.flip))
   expect(failed.code).toBe("persistence")
   expect(await readdir(join(directory, "taken"))).toEqual(["report.json"])
+})
+
+test("a failure the CLI wraps stays its cause, and the message says what failed", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-causes-"))
+  const unreadable = await Effect.runPromise(readText(directory).pipe(Effect.flip))
+  expect(unreadable.code).toBe("persistence")
+  expect(unreadable.message).toStartWith(`Cannot read ${directory}: EISDIR`)
+  expect(unreadable.cause).toMatchObject({ code: "EISDIR" })
+  await mkdir(join(directory, "taken", "report.json", "occupied"), { recursive: true })
+  const unwritten = await Effect.runPromise(writeJson(join(directory, "taken", "report.json"), {}).pipe(Effect.flip))
+  expect(unwritten.message).toStartWith("File operation failed: ")
+  expect(unwritten.cause).toBeInstanceOf(Error)
+  const unencoded = await Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* EvaluationRunStore
+      return yield* store.writeTrial({ id: "unencodable" } as never)
+    }).pipe(Effect.provide(EvaluationRunStoreFsLive(directory)), Effect.flip)
+  )
+  expect(unencoded.code).toBe("persistence")
+  expect(unencoded.message).toStartWith("Trial unencodable does not encode: ")
+  expect(unencoded.cause).toMatchObject({ _tag: "SchemaError" })
+  const unloaded = await Effect.runPromise(loadEvaluationApp(join(directory, "absent.config.ts")).pipe(Effect.flip))
+  expect(unloaded.code).toBe("invalid")
+  expect(unloaded.message).toStartWith(`Cannot load evaluation configuration ${join(directory, "absent.config.ts")}: `)
+  expect(unloaded.cause).toBeDefined()
 })
