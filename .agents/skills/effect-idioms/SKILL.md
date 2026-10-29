@@ -1,6 +1,6 @@
 ---
 name: effect-idioms
-description: Effect 4.0.7 idioms this repo requires beyond what the gates catch — v3 to v4 names, Schema at every edge, Option and Result, errors vs defects (tagged errors, isHarnessError, reasonOf), bounded concurrency, scopes and timeouts, Clock and Random, Config and Redacted, Effect.fn spans at service boundaries, Match over _tag checks. Read before writing Effect code here, or when tsc rejects an Effect 3 name.
+description: Effect 4.0.7 idioms this repo requires beyond what the gates catch — v3 to v4 names, Schema at every edge, Option and Result, errors vs defects (tagged errors with a cause, harnessCodeOf, isHarnessError, TurnError, reasonOf), bounded concurrency, scopes and timeouts, Clock and Random, Config and Redacted, Effect.fn spans at service boundaries, Match over _tag checks. Read before writing Effect code here, or when tsc rejects an Effect 3 name.
 ---
 
 # Effect idioms for this repo
@@ -47,21 +47,45 @@ before using it; do not trust Effect 3 memory.
 
 - An expected failure the caller handles is a typed error: a
   `Schema.TaggedError` with a `reason` literal (`BashError`), or a
-  `HarnessError { code, message }` at framework boundaries (`config.options`,
-  `session.log`).
+  `HarnessError { code, message, cause? }` at framework boundaries
+  (`config.options`, `plugin.activation`). Build a first-party one with
+  `harnessError(code, message, cause)`, which takes only a `HarnessCode`,
+  one of `HARNESS_CODES` (`new HarnessError({ code, plugin, message, cause })`
+  when it names the plugin). That list is published: a new code joins it,
+  with its meaning in `ERROR_CODES` (`scripts/generate-event-reference.ts`;
+  `docs:generate` fails on a raised code the list lacks), and a listed code
+  is never renamed or removed.
+- A case a caller handles on its own is its own tag, raised where it
+  happens; never map a code to a tag at a boundary. `Agent.turn` (any
+  `TurnRunner`) fails with a `TurnBeginError` (`SessionBusy`,
+  `NotResumable`, … `SessionContended`: nothing was opened) or a
+  `TurnError`, the failure of a turn's own writes and of every port on the
+  turn's path (`TurnClosed`, `ReservedKind`, `SessionContended`,
+  `SessionLogError`, else a `HarnessError`). `SessionLogError` is storage
+  only: the store unreachable or busy, its data unreadable or unstorable.
 - A bug or a broken invariant is a defect (`Effect.die`; `Effect.orDie` only
-  where failure is impossible by construction). Turn defects into errors
-  only where something reports them (`definePlugin` maps them to `plugin.defect`).
-- Match errors by tag or shape: `Effect.catchTag`, `Effect.catchIf(isHarnessError, …)`,
-  `Schema.is(X)`. Never `instanceof`: a host may load two copies of core.
-  Compare an error's `code` only in the module that declares the error;
-  elsewhere use a guard it exports (`effect/no-error-code-compare`).
-- A tagged error keeps the failure it wraps as a value and says what
-  failed; not `message: String(e)` (`effect/no-stringified-cause`).
+  where failure is impossible by construction), and so is a failure to
+  encode a value of your own. Turn defects into errors only where something
+  reports them (`definePlugin` maps them to `plugin.defect`).
+- Match errors by tag and fields, whichever copy of core made them:
+  `Effect.catchTag("TurnClosed", …)`, `Effect.catchIf(isHarnessError, …)`,
+  `isTurnError`, `Predicate.isTagged(e, "X")`. Never `instanceof` or
+  `Schema.is(X)` of the error class: both check the class, and a host may
+  load two copies of core.
+- A failure's code is `harnessCodeOf(e)`: a `HarnessError`'s own, the one
+  a tag stands for (`turnBeginCodes`, `TAGGED_CODES`: `SessionBusy` is
+  `session.busy`), or a tagged error's string `code`. A Node or SQLite
+  error's `code` (`ENOENT`) is `errorCodeOf(e)`. Compare a `code` to a
+  literal only in the module that declares the error; elsewhere use a guard
+  it exports (`isStoreBusy`; `effect/no-error-code-compare`).
+- A tagged error keeps the failure it wraps as a value, in a `cause` field
+  (`Schema.optional(Schema.Defect())`), and says what failed; not
+  `message: String(e)` (`effect/no-stringified-cause`).
 - Text from a cause is `reasonOf(cause)` (`@xandreed/core`) for anything
-  stored, reported or shown to the model. `Cause.pretty` only inside a log
-  call, `Effect.logError("what failed", cause)`, never in data: it carries
-  stack frames and host paths.
+  stored, reported or shown to the model; it reads messages only, so a
+  `cause` never puts a stack there. `Cause.pretty` only inside a log call,
+  `Effect.logError("what failed", cause)`, never in data: it carries stack
+  frames and host paths.
 - Never swallow: `Effect.ignore({ log: "Warn", message: "…" })` (`"Debug"`
   for an expected miss), not a bare `Effect.ignore`,
   `Effect.catch(() => Effect.void)` or an `Effect.orElseSucceed` that no

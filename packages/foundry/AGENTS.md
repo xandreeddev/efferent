@@ -121,8 +121,10 @@ longer flags, is itself a finding under the rule's id
 `effect/no-option-unwrap`'s `NULLABLE_EDGES`). A new rule that needs a
 per-file exemption uses `exclude`, `allow` for today's exceptions, or a
 boundary when only part of what it flags is the design there. A rule with
-findings enters through its `include`, one clean package at a time (the
-lists in the root `foundry.config.ts`), never through the baseline.
+findings enters through its `include`, one clean package at a time (a
+per-package list in the root `foundry.config.ts`, today `EFFECT_FN_CLEAN`),
+never through the baseline; once its list names every package, the rule
+takes `CHECKED` and the list is deleted.
 
 The `effect` pack's second wave: `effect/no-silent-ignore` (a dropped
 failure is logged first: `Effect.ignore({ log })` or a logging
@@ -132,7 +134,9 @@ inside a tagged error), `effect/no-error-code-compare` (type-aware: a
 code compared outside the file declaring it and its `.functions.ts`),
 `effect/prefer-effect-fn` and `effect/require-concurrency-option`
 (type-aware about `forEach`'s data-last form); the `effect-architecture`
-pack adds `architecture/role-suffix-required`.
+pack adds `architecture/role-suffix-required`. In the root profile each
+runs over every package (`CHECKED`), less the files its entry excludes,
+but `prefer-effect-fn`, which still enters package by package.
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

@@ -601,7 +601,7 @@ export const noInstanceofTaggedError = {
   defaultSeverity: "error",
   description: "tagged errors are recognized by their tag, never `instanceof`",
   fixHint:
-    "use `Schema.is(X)`, the owning module's guard (`isHarnessError`), `Predicate.isTagged(e, \"X\")`, `Match.tag` or `Effect.catchTag`",
+    "use the owning module's guard (`isHarnessError`), `Predicate.isTagged(e, \"X\")`, `Match.tag` or `Effect.catchTag`; not `Schema.is(X)` of the class, which checks identity too",
   check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
     matchesIn(sourceFile, (node) =>
       ts.isBinaryExpression(node) &&

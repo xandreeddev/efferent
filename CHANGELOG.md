@@ -521,6 +521,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   read a foreign error's code with core's `errorCodeOf`.
 - `plugin-session-sqlite` passes `effect/no-stringified-cause` and
   `effect/no-error-code-compare`.
+- `effect/no-stringified-cause` and `effect/no-error-code-compare` run in
+  every package. The agent guidance (`AGENTS.md`, the `effect-idioms` skill)
+  covers the error model: tagged errors keep a `cause`, first-party codes
+  come from `HARNESS_CODES` through `harnessError`, `Agent.turn` fails with
+  `TurnBeginError` or `TurnError`, codes are read with `harnessCodeOf`
+  (`errorCodeOf` for a Node or SQLite code), and errors are recognised by
+  tag and fields rather than `Schema.is` of a class, which fails for an
+  error from another copy of core.
 
 ## 0.14.0 — 2026-10-29
 
