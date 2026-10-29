@@ -1,10 +1,11 @@
 import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { JsonSchema, Option, Schema, SchemaAST } from "effect"
-import { JOURNAL_KINDS, journalSchemaOf, RECORDED_ELSEWHERE, RESERVED_KINDS, TransientTurnEvents, turnBeginCodes, TurnEvent } from "@xandreed/core"
+import { HARNESS_CODES, JOURNAL_KINDS, journalSchemaOf, RECORDED_ELSEWHERE, RESERVED_KINDS, TransientTurnEvents, turnBeginCodes, TurnEvent } from "@xandreed/core"
 import type { TurnEventName } from "@xandreed/core"
 import { encodeSocketFrame, encodeSse, FeedHeartbeat, FeedReady, FeedRecord, renderFeedDefaults, sseHeaders, ssePreamble } from "@xandreed/plugin-render"
 import { deliveryId, TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
+import { codeListProblems, raisedCodes } from "./error-codes.js"
 
 /*
  * The event reference: what a turn publishes on its bus, what a session's
@@ -74,9 +75,12 @@ const BEGIN_HTTP: Readonly<Record<string, { readonly status: string; readonly me
 interface ErrorCode { readonly code: string; readonly where: string; readonly meaning: string }
 
 /**
- * Common codes a turn fails with or stores, and where they come from. Every
- * code the packages raise in one of `OWNED_PREFIXES` must be listed here (or
- * in `TASK_CODES`); other plugins' own codes may be.
+ * Where each published code (`HARNESS_CODES`) comes from and what it means,
+ * the begin codes and `TASK_CODES` aside: one entry per code. A code a
+ * package raises, in any namespace but the kits' `conformance.*`, must be
+ * published, and a published code must have its entry (`codeListProblems`).
+ * A code no longer raised stays, as stored data may carry it: say so in its
+ * meaning.
  */
 const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "turn.closed", where: "`Agent.turn`, the turn writer", meaning: "Someone else closed the turn (cancelled, reaped, the session removed); its later writes are refused." },
@@ -100,12 +104,17 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "config.options", where: "`Agent.define`, activating a plugin", meaning: "A plugin's options did not decode with its schema." },
   { code: "plugin.activation", where: "activating a plugin (a session plugin's, every turn)", meaning: "The plugin's layer failed to build with an error that is not a `HarnessError` (one that is keeps its own code: `skills.duplicate`, `skills.root`, ...)." },
   { code: "plugin.defect", where: "activating a plugin (a session plugin's, every turn)", meaning: "The plugin's layer died with a defect that is not a `HarnessError` while it was built (one that is keeps its own code)." },
+  { code: "module.closed", where: "`makeLiveLayer` (`@xandreed/runtime`)", meaning: "A replaceable module was used or replaced after its scope closed." },
   { code: "tools.duplicate", where: "building the tool registry", meaning: "Two capabilities define a tool of the same name." },
   { code: "skills.duplicate", where: "building the tool registry", meaning: "Two capabilities define a skill with the same id (a host's and a skills directory's: set the directory's `idPrefix`)." },
   { code: "skills.tools", where: "building the tool registry", meaning: "A skill names a tool no capability registers." },
   { code: "skills.files", where: "`skillsFromFiles`; `@xandreed/plugin-workspace` skills directory (`strict`)", meaning: "A skills tree has an issue: a `SKILL.md` without frontmatter or description, an id already used, a reference over the size limit. The message names each file." },
   { code: "skills.root", where: "`@xandreed/plugin-workspace` skills directory", meaning: "A `required` skills root does not exist, or a root or a file in it cannot be read." },
   { code: "skills.limit", where: "`collectSkillFiles`; `@xandreed/plugin-workspace` skills directory", meaning: "A skills root holds more files (`maxFiles`) or text (`maxBytes`) than allowed, or the roots more skills than `maxSkills`." },
+  { code: "skills.unknown", where: "activating a skill (`@xandreed/plugin-tool-discovery`)", meaning: "No skill of the catalog has that id. `load_skill` returns the refusal to the model as its failure, and the turn goes on." },
+  { code: "capability.forbidden", where: "`resolveCapabilities`; activating a skill", meaning: "A tool of the selection needs a permission the turn was not granted. `load_skill` returns the refusal to the model as its failure, and the turn goes on; a matcher's choice it refuses is not activated." },
+  { code: "capability.catalog", where: "`resolveCapabilities`; activating a skill", meaning: "The selection names a skill or a tool the catalog does not hold, or the catalog holds two with one id." },
+  { code: "matcher.timeout", where: "the skill matcher (`@xandreed/plugin-tool-discovery`)", meaning: "The matcher did not answer within `matcherTimeoutMs`. The turn goes on: its decision is recorded as failed, and only the always-on skills are active." },
   { code: "tools.opened", where: "`openTurnTools`", meaning: "The turn's tools were opened twice." },
   { code: "tools.unavailable", where: "the turn's tools", meaning: "The tools were used before `openTurnTools` opened them." },
   { code: "loop.model", where: "the step loop", meaning: "The turn's services carry no `LanguageModel`." },
@@ -118,12 +127,28 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "request.model", where: "`@xandreed/plugin-models`", meaning: "The selected model could not be resolved or described." },
   { code: "request.memory", where: "`replayModelRequest`", meaning: "The memory events before a stored request did not decode." },
   { code: "memory.log", where: "the turn", meaning: "Stored memory events did not decode, or memory could not be stored." },
+  { code: "memory.digest", where: "`@xandreed/plugin-memory-digest`", meaning: "The digester's model call failed or did not answer within `digestTimeoutMs`. It is logged, and the turn goes on: memory records no digest, and the tool result stays whole." },
+  { code: "memory.summary", where: "`@xandreed/plugin-memory-summary`", meaning: "The turn's services carry no `UtilityLlm`, and the turn fails when its memory opens; or the summarizer failed or did not answer within `summaryTimeoutMs`, which is logged: the turn goes on without a new summary, and its later steps do not ask again." },
   { code: "context.budget", where: "each step of a run; `@xandreed/plugin-memory-window`", meaning: "At a step, the system prompt and the active tools' schemas leave nothing of the context budget (`budgetTokens`); with the window strategy, also when the current turn alone does not fit the budget memory is given: the whole budget at the turn's start, what they leave at each step." },
-  { code: "session.log", where: "the turn writer", meaning: "The session store failed during the turn." },
+  { code: "session.log", where: "the turn writer; a turn failing with a `SessionLogError`", meaning: "The session store failed during the turn. A turn that fails with a `SessionLogError` stores this code; the error's own `code` (`store.io`, ...) says what failed." },
   { code: "session.contended", where: "the turn writer, plugin-sessions", meaning: "Too many conflicting writes to the session in a row." },
-  { code: "session.state", where: "the turn writer", meaning: "The session's state, kept in its head, did not decode." },
-  { code: "session.encode", where: "the turn writer", meaning: "The turn's closing `turn.ended` did not encode." },
+  { code: "session.state", where: "the turn writer; plugin-sessions' `Sessions` (a `SessionLogError`)", meaning: "The session's state, kept in its head, did not decode." },
+  { code: "session.encode", where: "the turn writer; plugin-sessions' `Sessions` (a `SessionLogError`)", meaning: "The writer's closing `turn.ended` did not encode; for `Sessions`, a record it stores (a `turn.started`, a `turn.ended` it writes itself, an inbox record) or the session's state did not." },
+  { code: "session.decode", where: "`Sessions.begin` (a `SessionLogError`)", meaning: "A stored `turn.started` or `turn.ended` did not decode when the begin checked its key or the turn it resumes." },
   { code: "session.defect", where: "the turn writer", meaning: "Storing the turn's appended events died with a defect (a store or an encoder that threw); it is logged with its cause, and the writer refuses every later write and flush with this code." },
+  { code: "session.begin", where: "`Sessions.begin` (a `SessionLogError`)", meaning: "The begin's opening commit came back uncommitted, or without the turn's `turn.started`." },
+  { code: "session.create", where: "`Sessions.create` (a `SessionLogError`)", meaning: "The store answered the creation of a session without a parent with `SessionMissing`." },
+  { code: "session.expired", where: "plugin-sessions' commits (a `SessionLogError`)", meaning: "The store refused a commit made without a lease guard as expired (`LeaseExpired`)." },
+  { code: "store.open", where: "`@xandreed/plugin-session-sqlite` (a `SessionLogError`)", meaning: "The database file, or its directory, could not be created or opened." },
+  { code: "store.io", where: "`@xandreed/plugin-session-sqlite` (a `SessionLogError`)", meaning: "A read or a write failed, or a session just created could not be read back." },
+  { code: "store.busy", where: "`@xandreed/plugin-session-sqlite` (a `SessionLogError`)", meaning: "Another connection held the lock past the busy wait, or a new file could not be switched to WAL. Nothing was written, and a retry may succeed (`isStoreBusy`)." },
+  { code: "store.decode", where: "`@xandreed/plugin-session-sqlite` (a `SessionLogError`)", meaning: "A stored row (a session's head or an event) did not decode." },
+  { code: "store.encode", where: "a `SessionLog` (core's in memory, `@xandreed/plugin-session-sqlite`; a `SessionLogError`)", meaning: "A value to store (an event's data, the session's state or `meta`) is not one JSON can hold (a BigInt, a cycle)." },
+  { code: "tasks.encode", where: "`@xandreed/plugin-tasks` (a `SessionLogError`)", meaning: "A task's `task.started` or `task.result` did not encode." },
+  { code: "tasks.kind", where: "`@xandreed/plugin-tasks` (a `SessionLogError`)", meaning: "The session refused one of the tasks plugin's records as a reserved kind (`ReservedKind`); its kinds are not reserved." },
+  { code: "tasks.lost", where: "`Tasks.start` (a `SessionLogError`)", meaning: "The task was started, but the parent session does not hold it when read back." },
+  { code: "auth.corrupt", where: "an `AuthStore` (an `AuthError`; `@xandreed/plugin-models`' credentials file)", meaning: "The store's data could not be read or decoded. Nothing was read as absent and nothing was written over it: fix or remove it." },
+  { code: "settings.corrupt", where: "a `SettingsStore` (a `SettingsError`; `@xandreed/plugin-models`' config files)", meaning: "The settings' data could not be read or decoded. Nothing was read as defaults and nothing was written over it: fix or remove it." },
 ]
 
 /** The failure codes of a task's result or status (`@xandreed/plugin-tasks`). */
@@ -134,9 +159,6 @@ const TASK_CODES: ReadonlyArray<ErrorCode> = [
   { code: "task.lost", where: "a task's status", meaning: "The task's turn stopped without a result." },
   { code: "task.removed", where: "a task's status", meaning: "The task's session was removed with its parent." },
 ]
-
-/** The namespaces whose every raised code the reference lists. */
-const OWNED_PREFIXES: ReadonlyArray<string> = ["turn.", "events.", "request.", "loop.", "tools.", "task."]
 
 /* ── payload schemas, summarized ── */
 
@@ -222,7 +244,7 @@ const beginCodes = Object.entries(turnBeginCodes).map(([tag, code]) => {
 })
 Object.keys(BEGIN_HTTP).filter((tag) => !(tag in turnBeginCodes)).forEach((tag) => fail(`BEGIN_HTTP names ${tag}, which is not a begin error`))
 
-/** Every listed error code is still in a package's source, and every code raised in an owned namespace is listed. */
+/** Every code the packages raise is published, and every published code has its entry. */
 const sources = async (directory: string): Promise<ReadonlyArray<string>> => {
   const entries = await readdir(directory, { withFileTypes: true, recursive: true })
   return entries.filter((entry) => entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")).map((entry) => join(entry.parentPath, entry.name))
@@ -232,13 +254,12 @@ const sourceText = (await Promise.all(packages.map(async (name) => {
   const files = await sources(join(root, "packages", name, "src")).then((found) => found, () => [])
   return (await Promise.all(files.map((file) => readFile(file, "utf8")))).join("\n")
 }))).join("\n")
-const listedCodes = [...ERROR_CODES, ...TASK_CODES]
-listedCodes.filter((entry) => !sourceText.includes(`"${entry.code}"`)).forEach((entry) => fail(`Error code ${entry.code} is listed but no package source uses it`))
-/** A raised code: `code: "a.b"`, or the packages' error helpers, `failure("a.b"`, `harness("a.b"` and `storage("a.b"`. */
-const raised = new Set(Array.from(sourceText.matchAll(/(?:\bcode:\s*|\b(?:failure|harness|storage)\(\s*)"([a-z]+\.[a-z][a-z-]*)"/g), (match) => match[1] ?? ""))
-const known = new Set([...listedCodes.map((entry) => entry.code), ...Object.values(turnBeginCodes)])
-const unlistedCodes = [...raised].filter((raisedCode) => OWNED_PREFIXES.some((prefix) => raisedCode.startsWith(prefix)) && !known.has(raisedCode)).sort()
-unlistedCodes.forEach((raisedCode) => fail(`Error code ${raisedCode} is raised in a package but not listed in ERROR_CODES or TASK_CODES`))
+codeListProblems({
+  published: HARNESS_CODES,
+  entries: [...ERROR_CODES, ...TASK_CODES].map((entry) => entry.code),
+  begin: Object.values(turnBeginCodes),
+  raised: raisedCodes(sourceText),
+}).forEach(fail)
 
 const sample = FeedRecord.make({ sequence: 42, event: "turn.reply", data: { outcome: "completed", reply: "Done." } })
 const feed = {
@@ -304,8 +325,9 @@ const body = (links: { readonly guide: string }) => [
   "## Begin codes",
   "When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/core`, also exported by `@xandreed/sdk`; `harnessCodeOf` gives the code of the begin error itself). The HTTP status is a suggestion for a host serving turns over HTTP.",
   table(["Begin error", "Code", "Suggested HTTP status", "Meaning"], beginCodes.map((entry) => [code(entry.tag), code(entry.code), entry.http, entry.meaning])),
-  "## Common turn error codes",
-  `Besides the begin codes, these are common \`HarnessError\` codes a turn fails with, or that a stored \`turn.ended\` carries in \`failure.code\`. A failed turn's \`turn.ended\` carries the code of the error it failed with (one of these, a plugin's, or a host's own), else \`turn.failed\`, \`turn.defect\` or \`turn.interrupted\` (\`turnEndingOf\` from \`@xandreed/core\`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: \`task.turn\`, \`task.deadline\`). The list is not exhaustive: it has every code the packages raise under ${OWNED_PREFIXES.filter((prefix) => prefix !== "task.").map((prefix) => code(`${prefix}*`)).join(", ")} (the generator checks), but other plugins raise codes of their own (a memory strategy's, a store's), and a host's own errors keep their own codes.`,
+  "## Error codes",
+  "`HARNESS_CODES` (from `@xandreed/core`; `HarnessCode` is its schema) lists every code the framework's packages raise or store: the begin codes above, the task failure codes below and these. The list is published: a code in it is never renamed or removed, only added, and the generator fails on a code a package raises that the list does not hold. A host's and a third-party plugin's own codes are not in it (`HarnessError.code` is any string).",
+  "A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` gives for the error it failed with (one of these, a plugin's, or a host's own), else `turn.failed`, `turn.defect` or `turn.interrupted` (`turnEndingOf` from `@xandreed/core`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: `task.turn`, `task.deadline`). Most codes are a `HarnessError`'s. A `SessionLogError` carries a store's (`store.*`, and the sessions and tasks plugins' storage codes), and a turn that fails with one stores `session.log`; an `AuthError` or a `SettingsError` carries its own.",
   table(["Code", "Where", "Meaning"], ERROR_CODES.map((entry) => [code(entry.code), entry.where, entry.meaning])),
   "## Feed and socket frames",
   "`@xandreed/plugin-render` turns a journal into client frames (`RenderFeed`); the host's projection names each record's `event` and `data`, and its cursor is the journal's `seq`. Over SSE, each connection starts with the preamble; a record carries its sequence as the event id, so a reconnecting `EventSource` resumes with `Last-Event-ID`. One `ready` frame follows the backlog (the first poll that finds nothing new), then a heartbeat comment while the feed is idle. The feed ends after `maxDurationMs`, and the client reconnects with its cursor.",

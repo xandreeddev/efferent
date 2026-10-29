@@ -18,8 +18,10 @@ a `HarnessError`'s own, the code a begin refusal, `TurnClosed` or
 `ReservedKind` stands for (`TAGGED_CODES`), a tagged error's own `code`,
 never an untagged value's (a Node or SQLite error's `code` is `errorCodeOf`).
 `HARNESS_CODES` is the published list of the codes the packages raise or
-store: add a new one there, never rename or remove one; first-party code
-builds a `HarnessError` of one with `harnessError(code, message, cause)`.
+store: add a new one there, with its meaning in the event reference's
+`ERROR_CODES` (`scripts/generate-event-reference.ts`, which fails on a
+raised code the list lacks), and never rename or remove one; first-party
+code builds a `HarnessError` of one with `harnessError(code, message, cause)`.
 
 The step loop lives in `@xandreed/plugin-agent-loop`, plugin activation in
 `@xandreed/runtime`, sessions in `@xandreed/plugin-sessions`, and the

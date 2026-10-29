@@ -317,9 +317,11 @@ When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.be
 | `SessionContended` | `session.contended` | 503 | Other writers kept committing to the session first, and nothing was opened. Retry later. |
 | `SessionLogError` | `session.log` | 503 | The session store failed. Retry later. |
 
-## Common turn error codes
+## Error codes
 
-Besides the begin codes, these are common `HarnessError` codes a turn fails with, or that a stored `turn.ended` carries in `failure.code`. A failed turn's `turn.ended` carries the code of the error it failed with (one of these, a plugin's, or a host's own), else `turn.failed`, `turn.defect` or `turn.interrupted` (`turnEndingOf` from `@xandreed/core`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: `task.turn`, `task.deadline`). The list is not exhaustive: it has every code the packages raise under `turn.*`, `events.*`, `request.*`, `loop.*`, `tools.*` (the generator checks), but other plugins raise codes of their own (a memory strategy's, a store's), and a host's own errors keep their own codes.
+`HARNESS_CODES` (from `@xandreed/core`; `HarnessCode` is its schema) lists every code the framework's packages raise or store: the begin codes above, the task failure codes below and these. The list is published: a code in it is never renamed or removed, only added, and the generator fails on a code a package raises that the list does not hold. A host's and a third-party plugin's own codes are not in it (`HarnessError.code` is any string).
+
+A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` gives for the error it failed with (one of these, a plugin's, or a host's own), else `turn.failed`, `turn.defect` or `turn.interrupted` (`turnEndingOf` from `@xandreed/core`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: `task.turn`, `task.deadline`). Most codes are a `HarnessError`'s. A `SessionLogError` carries a store's (`store.*`, and the sessions and tasks plugins' storage codes), and a turn that fails with one stores `session.log`; an `AuthError` or a `SettingsError` carries its own.
 
 | Code | Where | Meaning |
 | --- | --- | --- |
@@ -344,12 +346,17 @@ Besides the begin codes, these are common `HarnessError` codes a turn fails with
 | `config.options` | `Agent.define`, activating a plugin | A plugin's options did not decode with its schema. |
 | `plugin.activation` | activating a plugin (a session plugin's, every turn) | The plugin's layer failed to build with an error that is not a `HarnessError` (one that is keeps its own code: `skills.duplicate`, `skills.root`, ...). |
 | `plugin.defect` | activating a plugin (a session plugin's, every turn) | The plugin's layer died with a defect that is not a `HarnessError` while it was built (one that is keeps its own code). |
+| `module.closed` | `makeLiveLayer` (`@xandreed/runtime`) | A replaceable module was used or replaced after its scope closed. |
 | `tools.duplicate` | building the tool registry | Two capabilities define a tool of the same name. |
 | `skills.duplicate` | building the tool registry | Two capabilities define a skill with the same id (a host's and a skills directory's: set the directory's `idPrefix`). |
 | `skills.tools` | building the tool registry | A skill names a tool no capability registers. |
 | `skills.files` | `skillsFromFiles`; `@xandreed/plugin-workspace` skills directory (`strict`) | A skills tree has an issue: a `SKILL.md` without frontmatter or description, an id already used, a reference over the size limit. The message names each file. |
 | `skills.root` | `@xandreed/plugin-workspace` skills directory | A `required` skills root does not exist, or a root or a file in it cannot be read. |
 | `skills.limit` | `collectSkillFiles`; `@xandreed/plugin-workspace` skills directory | A skills root holds more files (`maxFiles`) or text (`maxBytes`) than allowed, or the roots more skills than `maxSkills`. |
+| `skills.unknown` | activating a skill (`@xandreed/plugin-tool-discovery`) | No skill of the catalog has that id. `load_skill` returns the refusal to the model as its failure, and the turn goes on. |
+| `capability.forbidden` | `resolveCapabilities`; activating a skill | A tool of the selection needs a permission the turn was not granted. `load_skill` returns the refusal to the model as its failure, and the turn goes on; a matcher's choice it refuses is not activated. |
+| `capability.catalog` | `resolveCapabilities`; activating a skill | The selection names a skill or a tool the catalog does not hold, or the catalog holds two with one id. |
+| `matcher.timeout` | the skill matcher (`@xandreed/plugin-tool-discovery`) | The matcher did not answer within `matcherTimeoutMs`. The turn goes on: its decision is recorded as failed, and only the always-on skills are active. |
 | `tools.opened` | `openTurnTools` | The turn's tools were opened twice. |
 | `tools.unavailable` | the turn's tools | The tools were used before `openTurnTools` opened them. |
 | `loop.model` | the step loop | The turn's services carry no `LanguageModel`. |
@@ -362,12 +369,28 @@ Besides the begin codes, these are common `HarnessError` codes a turn fails with
 | `request.model` | `@xandreed/plugin-models` | The selected model could not be resolved or described. |
 | `request.memory` | `replayModelRequest` | The memory events before a stored request did not decode. |
 | `memory.log` | the turn | Stored memory events did not decode, or memory could not be stored. |
+| `memory.digest` | `@xandreed/plugin-memory-digest` | The digester's model call failed or did not answer within `digestTimeoutMs`. It is logged, and the turn goes on: memory records no digest, and the tool result stays whole. |
+| `memory.summary` | `@xandreed/plugin-memory-summary` | The turn's services carry no `UtilityLlm`, and the turn fails when its memory opens; or the summarizer failed or did not answer within `summaryTimeoutMs`, which is logged: the turn goes on without a new summary, and its later steps do not ask again. |
 | `context.budget` | each step of a run; `@xandreed/plugin-memory-window` | At a step, the system prompt and the active tools' schemas leave nothing of the context budget (`budgetTokens`); with the window strategy, also when the current turn alone does not fit the budget memory is given: the whole budget at the turn's start, what they leave at each step. |
-| `session.log` | the turn writer | The session store failed during the turn. |
+| `session.log` | the turn writer; a turn failing with a `SessionLogError` | The session store failed during the turn. A turn that fails with a `SessionLogError` stores this code; the error's own `code` (`store.io`, ...) says what failed. |
 | `session.contended` | the turn writer, plugin-sessions | Too many conflicting writes to the session in a row. |
-| `session.state` | the turn writer | The session's state, kept in its head, did not decode. |
-| `session.encode` | the turn writer | The turn's closing `turn.ended` did not encode. |
+| `session.state` | the turn writer; plugin-sessions' `Sessions` (a `SessionLogError`) | The session's state, kept in its head, did not decode. |
+| `session.encode` | the turn writer; plugin-sessions' `Sessions` (a `SessionLogError`) | The writer's closing `turn.ended` did not encode; for `Sessions`, a record it stores (a `turn.started`, a `turn.ended` it writes itself, an inbox record) or the session's state did not. |
+| `session.decode` | `Sessions.begin` (a `SessionLogError`) | A stored `turn.started` or `turn.ended` did not decode when the begin checked its key or the turn it resumes. |
 | `session.defect` | the turn writer | Storing the turn's appended events died with a defect (a store or an encoder that threw); it is logged with its cause, and the writer refuses every later write and flush with this code. |
+| `session.begin` | `Sessions.begin` (a `SessionLogError`) | The begin's opening commit came back uncommitted, or without the turn's `turn.started`. |
+| `session.create` | `Sessions.create` (a `SessionLogError`) | The store answered the creation of a session without a parent with `SessionMissing`. |
+| `session.expired` | plugin-sessions' commits (a `SessionLogError`) | The store refused a commit made without a lease guard as expired (`LeaseExpired`). |
+| `store.open` | `@xandreed/plugin-session-sqlite` (a `SessionLogError`) | The database file, or its directory, could not be created or opened. |
+| `store.io` | `@xandreed/plugin-session-sqlite` (a `SessionLogError`) | A read or a write failed, or a session just created could not be read back. |
+| `store.busy` | `@xandreed/plugin-session-sqlite` (a `SessionLogError`) | Another connection held the lock past the busy wait, or a new file could not be switched to WAL. Nothing was written, and a retry may succeed (`isStoreBusy`). |
+| `store.decode` | `@xandreed/plugin-session-sqlite` (a `SessionLogError`) | A stored row (a session's head or an event) did not decode. |
+| `store.encode` | a `SessionLog` (core's in memory, `@xandreed/plugin-session-sqlite`; a `SessionLogError`) | A value to store (an event's data, the session's state or `meta`) is not one JSON can hold (a BigInt, a cycle). |
+| `tasks.encode` | `@xandreed/plugin-tasks` (a `SessionLogError`) | A task's `task.started` or `task.result` did not encode. |
+| `tasks.kind` | `@xandreed/plugin-tasks` (a `SessionLogError`) | The session refused one of the tasks plugin's records as a reserved kind (`ReservedKind`); its kinds are not reserved. |
+| `tasks.lost` | `Tasks.start` (a `SessionLogError`) | The task was started, but the parent session does not hold it when read back. |
+| `auth.corrupt` | an `AuthStore` (an `AuthError`; `@xandreed/plugin-models`' credentials file) | The store's data could not be read or decoded. Nothing was read as absent and nothing was written over it: fix or remove it. |
+| `settings.corrupt` | a `SettingsStore` (a `SettingsError`; `@xandreed/plugin-models`' config files) | The settings' data could not be read or decoded. Nothing was read as defaults and nothing was written over it: fix or remove it. |
 
 ## Feed and socket frames
 

@@ -6,7 +6,9 @@ import { turnBeginCodes } from "../session/sessions.entity.js"
  * failure, a task's result or its status: a `HarnessError`'s, a
  * `SessionLogError`'s, the codes the tags of `TAGGED_CODES` stand for, and
  * the tagged errors' own (`AuthError`, `SettingsError`). The list is
- * published: a code is never renamed or removed, only added. A host's and a
+ * published: a code is never renamed or removed, only added, with its
+ * meaning in the event reference (`scripts/generate-event-reference.ts`,
+ * which fails on a code a package raises that is not here). A host's and a
  * third-party plugin's own codes are not in it; `HarnessError.code` stays
  * any string.
  */
