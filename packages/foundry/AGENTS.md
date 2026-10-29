@@ -118,7 +118,8 @@ package being converted). A rule entry's
 shrinks: an entry naming a file the rule does not check, or one it no
 longer flags, is itself a finding under the rule's id
 (`architecture/role-suffix-required`'s `ROLELESS_FILES`,
-`effect/no-option-unwrap`'s `NULLABLE_EDGES`). A new rule that needs a
+`effect/no-option-unwrap`'s `NULLABLE_EDGES`, `effect/no-record-cast`'s
+`RECORD_CAST_EDGES`). A new rule that needs a
 per-file exemption uses `exclude`, `allow` for today's exceptions, or a
 boundary when only part of what it flags is the design there. A rule with
 findings enters through its `include`, one clean package at a time (a
@@ -134,9 +135,15 @@ inside a tagged error), `effect/no-error-code-compare` (type-aware: a
 code compared outside the file declaring it and its `.functions.ts`),
 `effect/prefer-effect-fn` and `effect/require-concurrency-option`
 (type-aware about `forEach`'s data-last form); the `effect-architecture`
-pack adds `architecture/role-suffix-required`. In the root profile each
-runs over every package (`CHECKED`), less the files its entry excludes,
-but `prefer-effect-fn`, which still enters package by package.
+pack adds `architecture/role-suffix-required`. Two more decode what
+crosses a boundary instead of trusting it: `effect/no-unknown-json`
+(`Schema.Record(Schema.String, Schema.Unknown)` and
+`Schema.fromJsonString(Schema.Unknown)`, except as the argument of a
+`Schema.encode*` call, which writes a value out) and
+`effect/no-record-cast` (`as Record<string, unknown|any>` and `as { … }`).
+In the root profile each runs over every package (`CHECKED`), less the
+files its entry excludes, but `prefer-effect-fn`, `no-unknown-json` and
+`no-record-cast`, which still enter package by package.
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

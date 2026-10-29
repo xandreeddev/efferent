@@ -111,6 +111,54 @@ const EFFECT_FN_CLEAN = [
   "plugin-memory-digest",
 ].map(src)
 
+const UNKNOWN_JSON_CLEAN = [
+  "sdk",
+  "evals-cli",
+  "evals-langfuse",
+  "evals-langsmith",
+  "plugin-agent-loop",
+  "runtime",
+  "plugin-memory-window",
+  "plugin-memory-summary",
+  "plugin-memory-digest",
+  "plugin-tool-discovery",
+  "plugin-sessions",
+  "plugin-tasks",
+  "plugin-workspace",
+  "plugin-telemetry",
+  "plugin-session-sqlite",
+  "foundry",
+].map(src)
+
+const RECORD_CAST_CLEAN = [
+  "sdk",
+  "evals",
+  "evals-cli",
+  "evals-langfuse",
+  "evals-langsmith",
+  "plugin-agent-loop",
+  "runtime",
+  "plugin-memory-window",
+  "plugin-memory-summary",
+  "plugin-memory-digest",
+  "plugin-tool-discovery",
+  "plugin-tasks",
+  "plugin-render",
+  "plugin-workspace",
+  "plugin-telemetry",
+  "plugin-session-sqlite",
+  "foundry",
+].map(src)
+
+/**
+ * Casts to an object type (`effect/no-record-cast`) where the value was
+ * decoded already: the tool registry hands its two skill tools the
+ * parameters the toolkit decoded, through a handler map typed `unknown`.
+ * The entry goes once that map is typed; like NULLABLE_EDGES the list only
+ * shrinks.
+ */
+const RECORD_CAST_EDGES = ["packages/plugin-tool-discovery/src/registry.adapter.ts"]
+
 /**
  * The files that had no role suffix when `architecture/role-suffix-required`
  * arrived. FROZEN: the list only shrinks. The gate fails on an entry that
@@ -289,6 +337,9 @@ const config: typeof GateSuiteConfig.Encoded = {
       allow: NULLABLE_EDGES,
     },
     { rule: "effect/no-stringified-cause", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    // One package at a time (the lists above).
+    { rule: "effect/no-unknown-json", include: UNKNOWN_JSON_CLEAN, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-record-cast", include: RECORD_CAST_CLEAN, exclude: TEST_SCAFFOLDING, allow: RECORD_CAST_EDGES },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
     // One package at a time (the list above).

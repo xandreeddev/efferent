@@ -81,6 +81,9 @@ const seedViolations = (dir: string): void => {
       "export const load = (id: string) => Effect.gen(function* () { return id })",
       "export const both = Effect.all([Effect.succeed(1), Effect.succeed(2)])",
       "export const unwrapped = Option.getOrNull(Option.some(1))",
+      "export const Open = Schema.Record(Schema.String, Schema.Unknown)",
+      "export const written = Schema.encodeUnknownResult(Schema.fromJsonString(Schema.Unknown))({})",
+      "export const shaped = value as { readonly id: string }",
       "",
     ].join("\n"),
   )
