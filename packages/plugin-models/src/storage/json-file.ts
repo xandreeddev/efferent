@@ -11,7 +11,7 @@ import { errorCodeOf } from "@xandreed/core"
  * processes writing one file can still lose an update.
  */
 
-const JsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown))
+const decodeJsonObject = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.JsonObject))
 
 const isMissing = (cause: unknown): boolean => Option.contains(errorCodeOf(cause), "ENOENT")
 
@@ -20,14 +20,14 @@ const isMissing = (cause: unknown): boolean => Option.contains(errorCodeOf(cause
  * cannot be read (any error but ENOENT: permissions, a directory) or does
  * not hold a JSON object fails with `unusable(reason)`.
  */
-export const readJsonObject = <E>(path: string, unusable: (reason: string) => E): Effect.Effect<Option.Option<Record<string, unknown>>, E> =>
+export const readJsonObject = <E>(path: string, unusable: (reason: string) => E): Effect.Effect<Option.Option<Schema.JsonObject>, E> =>
   Effect.tryPromise({ try: () => readFile(path, "utf-8"), catch: (cause) => cause }).pipe(
     Effect.map(Option.some),
     Effect.catchIf(isMissing, () => Effect.succeed(Option.none<string>())),
     Effect.mapError((cause) => unusable(`could not be read (${Option.getOrElse(errorCodeOf(cause), () => String(cause))})`)),
     Effect.flatMap(Option.match({
-      onNone: () => Effect.succeed(Option.none<Record<string, unknown>>()),
-      onSome: (text) => Schema.decodeUnknownEffect(JsonObject)(text).pipe(
+      onNone: () => Effect.succeed(Option.none<Schema.JsonObject>()),
+      onSome: (text) => decodeJsonObject(text).pipe(
         Effect.map(Option.some),
         Effect.mapError(() => unusable("does not hold a JSON object")),
       ),

@@ -67,6 +67,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   fails the turn with `events.encode` when published. A `SessionLog` backend
   writes data as JSON text (`storedJson`), never through
   `fromJsonString(JsonObject)`.
+- `@xandreed/plugin-models`: an `auth.json` entry with a field of the wrong
+  type (a numeric `accountId`, say) is no longer read with that field
+  dropped: it is not used, and is written back as it is. Fix the field, or
+  log in again.
 
 ### Breaking
 
@@ -205,6 +209,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   unchanged.
 - `sessionLogConformance` checks that data with an `undefined` field commits
   and reads back without it.
+- `@xandreed/plugin-models`: `toOpenAiCodexRequestBody` returns a readonly
+  JSON object (`Schema.JsonObject`), and reads a body that is not a
+  Responses request object as an empty one.
 
 ### Added
 
@@ -556,6 +563,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `effect/no-json-parse` recommends `Schema.Json` for open JSON. Foundry
   decodes a config's plugged rule packs with Schema.
 - `effect/no-unknown-json` runs in plugin-render.
+- `plugin-models` passes `effect/no-unknown-json` and
+  `effect/no-record-cast`; its provider layer's casts (`compat.ts`,
+  `providers.ts`, `router.ts`, `utilityLlm.ts`) sit on `RECORD_CAST_EDGES`
+  until those files are typed.
 
 ## 0.14.0 — 2026-10-29
 

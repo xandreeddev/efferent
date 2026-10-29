@@ -71,13 +71,12 @@ const websocketUrl = (url: URL): string => {
   return next.toString()
 }
 
-/** A Responses request body, as the OpenAI client encodes it. */
-const RequestBody = Schema.Record(Schema.String, Schema.Unknown)
-const decodeRequestBody = Schema.decodeUnknownEffect(Schema.fromJsonString(RequestBody))
+/** A Responses request body, as the OpenAI client encodes it: a JSON object, passed on as it is. */
+const decodeRequestBody = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.JsonObject))
 const decodeCacheKey = Schema.decodeUnknownOption(Schema.NonEmptyString)
 
 /** One frame of the subscription stream: a JSON object naming its event `type`; its other fields are passed on as they are. */
-const CodexFrame = Schema.StructWithRest(Schema.Struct({ type: Schema.String }), [Schema.Record(Schema.String, Schema.Unknown)])
+const CodexFrame = Schema.StructWithRest(Schema.Struct({ type: Schema.String }), [Schema.Record(Schema.String, Schema.Json)])
 type CodexFrame = typeof CodexFrame.Type
 const decodeFrame = Schema.decodeUnknownResult(Schema.fromJsonString(CodexFrame))
 
@@ -333,7 +332,7 @@ const exchange = (
   sessions: Option.Option<OpenAiCodexSessions>,
   scope: Scope.Closeable,
 ): Effect.Effect<HttpClientResponse.HttpClientResponse, HttpClientError.HttpClientError> => Effect.gen(function* () {
-  const encoded: Effect.Effect<typeof RequestBody.Type, Schema.SchemaError> = request.body._tag === "Uint8Array"
+  const encoded: Effect.Effect<Schema.JsonObject, Schema.SchemaError> = request.body._tag === "Uint8Array"
     ? decodeRequestBody(decoder.decode(request.body.body))
     : Effect.succeed({})
   const body = yield* Effect.mapError(encoded, (error) => encodeFailure(request, error))

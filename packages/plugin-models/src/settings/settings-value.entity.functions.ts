@@ -1,6 +1,6 @@
-import { Effect, Match, Option } from "effect"
-import { EngineSettings, parseModelSelection, SETTINGS_KEYS, SettingsError } from "@xandreed/core"
-import type { ModelRole, ReasoningEffortType, SettingsKey } from "@xandreed/core"
+import { Effect, Match, Option, Schema } from "effect"
+import { EngineSettings, parseModelSelection, ReasoningEffort, SETTINGS_KEYS, SettingsError } from "@xandreed/core"
+import type { ModelRole, SettingsKey } from "@xandreed/core"
 import type { RoleField, SettingValue } from "./settings-value.entity.js"
 
 /**
@@ -19,19 +19,11 @@ export const ROLE_FIELDS: Readonly<Record<ModelRole, RoleField>> = {
 
 const FIELDS: ReadonlyArray<RoleField | SettingsKey> = ["model", "codeModel", "fastModel", ...SETTINGS_KEYS]
 
-const asString = (value: unknown): Option.Option<string> =>
-  typeof value === "string" && value.length > 0 ? Option.some(value) : Option.none()
-
-const asBoolean = (value: unknown): Option.Option<boolean> =>
-  typeof value === "boolean" ? Option.some(value) : Option.none()
-
-const asNumber = (value: unknown): Option.Option<number> =>
-  typeof value === "number" && Number.isFinite(value) ? Option.some(value) : Option.none()
-
-const asReasoningEffort = (value: unknown): Option.Option<ReasoningEffortType> =>
-  value === "none" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "max"
-    ? Option.some(value)
-    : Option.none()
+/** One config value, decoded by its key's type: one of another type is none, so it reads as unset. */
+const asString = Schema.decodeUnknownOption(Schema.NonEmptyString)
+const asBoolean = Schema.decodeUnknownOption(Schema.Boolean)
+const asNumber = Schema.decodeUnknownOption(Schema.Finite)
+const asReasoningEffort = Schema.decodeUnknownOption(ReasoningEffort)
 
 /** Settings from a config record: values of the wrong type read as unset; the legacy `openAiReasoningEffort` key backs `reasoningEffort`. */
 export const settingsFromRecord = (record: Readonly<Record<string, unknown>>): EngineSettings =>

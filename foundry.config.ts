@@ -122,6 +122,7 @@ const UNKNOWN_JSON_CLEAN = [
   "plugin-memory-summary",
   "plugin-memory-digest",
   "plugin-tool-discovery",
+  "plugin-models",
   "plugin-sessions",
   "plugin-tasks",
   "plugin-render",
@@ -143,6 +144,7 @@ const RECORD_CAST_CLEAN = [
   "plugin-memory-summary",
   "plugin-memory-digest",
   "plugin-tool-discovery",
+  "plugin-models",
   "plugin-tasks",
   "plugin-render",
   "plugin-workspace",
@@ -152,13 +154,21 @@ const RECORD_CAST_CLEAN = [
 ].map(src)
 
 /**
- * Casts to an object type (`effect/no-record-cast`) where the value was
- * decoded already: the tool registry hands its two skill tools the
+ * Casts to an object type (`effect/no-record-cast`) not yet replaced by a
+ * decode or a type. The tool registry hands its two skill tools the
  * parameters the toolkit decoded, through a handler map typed `unknown`.
- * The entry goes once that map is typed; like NULLABLE_EDGES the list only
- * shrinks.
+ * The models plugin's provider layer reads effect/ai's response parts and
+ * call options through hand-written shapes, until they are typed as
+ * effect/ai's own. Each entry goes once its file is typed; like
+ * NULLABLE_EDGES the list only shrinks.
  */
-const RECORD_CAST_EDGES = ["packages/plugin-tool-discovery/src/registry.adapter.ts"]
+const RECORD_CAST_EDGES = [
+  "packages/plugin-tool-discovery/src/registry.adapter.ts",
+  "packages/plugin-models/src/llm/compat.ts",
+  "packages/plugin-models/src/llm/providers.ts",
+  "packages/plugin-models/src/llm/router.ts",
+  "packages/plugin-models/src/llm/utilityLlm.ts",
+]
 
 /**
  * The files that had no role suffix when `architecture/role-suffix-required`

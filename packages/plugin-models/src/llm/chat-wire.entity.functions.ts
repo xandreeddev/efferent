@@ -7,7 +7,7 @@ const invalidResponse = (moduleName: string, method: string, what: string) => (e
 
 const completion = Schema.decodeUnknownEffect(Schema.fromJsonString(ChatCompletion))
 const chunk = Schema.decodeUnknownEffect(Schema.fromJsonString(StreamChunk))
-const json = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
+const json = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 const errorBody = Schema.decodeUnknownOption(Schema.fromJsonString(GatewayErrorBody))
 const errorObject = Schema.decodeUnknownOption(GatewayError)
 
@@ -20,7 +20,7 @@ export const decodeStreamChunk = (moduleName: string, payload: string): Effect.E
   chunk(payload).pipe(Effect.mapError(invalidResponse(moduleName, "streamText", `a data: line is not a completion chunk (${payload.slice(0, 200)})`)))
 
 /** A tool call's arguments, parsed: the model's own output, so a failure is the caller's to name. */
-export const decodeToolArguments = (text: string): Effect.Effect<unknown, Schema.SchemaError> => json(text)
+export const decodeToolArguments = (text: string): Effect.Effect<Schema.Json, Schema.SchemaError> => json(text)
 
 /** The OpenAI error object of a failed request's body, when it has one. */
 export const gatewayErrorOf = (body: string): Option.Option<GatewayError> => Option.map(errorBody(body), (decoded) => decoded.error)

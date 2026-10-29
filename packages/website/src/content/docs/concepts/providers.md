@@ -68,8 +68,8 @@ The models plugin keeps its credentials (`AuthStore`) and model settings
   load, with a `SettingsError` of code `settings.corrupt`): the plugin never
   takes a damaged file for an empty one and writes over the credentials it
   could not read. Fix or remove the file. An entry it cannot read (from a
-  newer version, say) is not used, and is kept as it is when the file is
-  written.
+  newer version, or with a field of the wrong type) is not used, and is kept
+  as it is when the file is written.
 - The settings are the plugin's options (`model`, `fastModel`,
   `fallbackModel`), over the model settings of `~/.efferent/config.json` and
   `<workspace>/.efferent/config.json` when `inheritPrevious` is on. The files

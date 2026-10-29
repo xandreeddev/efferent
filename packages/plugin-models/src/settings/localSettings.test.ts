@@ -54,6 +54,17 @@ describe("LocalSettingsStoreLive", () => {
     expect(codes).toEqual(["settings.corrupt", true, "settings.corrupt", true])
   })
 
+  test("a key of the wrong type reads as unset, and the others still decode", async () => {
+    const { layer } = setup(
+      { model: "opencode:kimi-k2.6", maxAttempts: "three", sandbox: true, reasoningEffort: "extreme", budgetMillis: 60000 },
+      { fastModel: 7, viMode: "on", codeReasoningEffort: "high" },
+    )
+    const settings = await Effect.runPromise(Effect.flatMap(Effect.service(SettingsStore), (store) => store.load).pipe(Effect.provide(layer)))
+    expect([settings.model, settings.maxAttempts, settings.sandbox, settings.reasoningEffort, settings.budgetMillis, settings.fastModel, settings.viMode, settings.codeReasoningEffort]
+      .map((value: Option.Option<unknown>) => Option.getOrNull(value)))
+      .toEqual(["opencode:kimi-k2.6", null, true, null, 60000, null, null, "high"])
+  })
+
   test("concurrent writes in one process all land", async () => {
     const { layer, cwd } = setup({}, { theme: "efferent" })
     const settings = await Effect.runPromise(Effect.gen(function* () {
