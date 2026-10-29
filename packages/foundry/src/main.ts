@@ -2,6 +2,7 @@ import { Effect, Match, Option } from "effect"
 import { runCheck } from "./cli/check.js"
 import { runDemo } from "./cli/demo.js"
 import type { DemoImplementor } from "./cli/demo.js"
+import { describeError } from "./domain/Errors.js"
 import { TsProjectCachedLive } from "./gates/TsProject.port.js"
 
 /**
@@ -56,7 +57,7 @@ const main = program.pipe(
   Effect.tap((code) => Effect.sync(() => (process.exitCode = code))),
   Effect.catch((error) =>
     Effect.sync(() => {
-      console.error(`foundry: ${error._tag}: ${error.message}`)
+      console.error(`foundry: ${error._tag}: ${describeError(error)}`)
       process.exitCode = 2
     }),
   ),

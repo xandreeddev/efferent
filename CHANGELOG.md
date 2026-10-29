@@ -310,6 +310,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Evals errors that wrap a schema, transport or provider failure keep it as
   `cause` and say what failed (`Dataset case bad does not decode: …`).
   Reasons in reports still carry no stacks or causes.
+- Foundry's errors keep the failure they wrap: `GateCrash`,
+  `ImplementorError`, `WorkspaceError`, `ConfigError` and `ProjectLoadError`
+  gain an optional `cause` (encoded as the error's name and message, never
+  its stack), set by the config loader, the baseline writer, the run sink,
+  the temporary workspace, the claude implementor and the registration and
+  private-text gates. `foundry check`, `foundry demo` and a crashed gate's
+  finding still show the wrapped error's message.
 
 ### Repository
 
@@ -390,6 +397,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `effect/no-error-code-compare`.
 - `@xandreed/evals` passes `effect/no-stringified-cause` and
   `effect/no-error-code-compare`.
+- `effect/no-stringified-cause` runs over `packages/foundry`.
 
 ## 0.14.0 — 2026-10-29
 

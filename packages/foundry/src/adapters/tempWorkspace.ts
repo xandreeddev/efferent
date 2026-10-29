@@ -114,8 +114,7 @@ export const writeWorkspaceFile = (
       await fs.mkdir(path.dirname(absolute), { recursive: true })
       await fs.writeFile(absolute, content)
     },
-    catch: (cause) =>
-      new WorkspaceError({ message: `write of ${relPath} failed: ${String(cause)}` }),
+    catch: (cause) => new WorkspaceError({ message: `write of ${relPath} failed`, cause }),
   })
 
 /** A scoped throwaway workspace under `parentDir`, removed on release. */
@@ -129,13 +128,12 @@ export const withTempWorkspace = <A, E, R>(
         await fs.mkdir(parentDir, { recursive: true })
         return fs.mkdtemp(path.join(parentDir, "ws-"))
       },
-      catch: (cause) =>
-        new WorkspaceError({ message: `temp workspace creation failed: ${String(cause)}` }),
+      catch: (cause) => new WorkspaceError({ message: "temp workspace creation failed", cause }),
     }),
     use,
     (rootDir) =>
       Effect.tryPromise({
         try: () => fs.rm(rootDir, { recursive: true, force: true }),
-        catch: (cause) => new WorkspaceError({ message: String(cause) }),
+        catch: (cause) => new WorkspaceError({ message: "temp workspace removal failed", cause }),
       }).pipe(Effect.ignore({ log: "Warn", message: `the temporary workspace ${rootDir} was not removed` })),
   )

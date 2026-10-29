@@ -108,6 +108,21 @@ describe("runPipeline — staged policy", () => {
     ).toBe("foundry/gate-crashed")
   })
 
+  test("a crash's finding says what failed, then the message of the failure it wraps", async () => {
+    const reading: Gate<never> = {
+      name: GateName.make("registration"),
+      kind: "static",
+      deterministic: true,
+      run: () =>
+        Effect.fail(new GateCrash({ gate: GateName.make("registration"), message: "cannot read scripts/build.ts", cause: new Error("EACCES: permission denied") })),
+    }
+    const report = await Effect.runPromise(runPipeline(pipelineOf([reading]), ws))
+    const verdict = report.verdicts[0]
+    expect(verdict._tag === "fail" && verdict.findings[0].message).toBe(
+      'gate "registration" crashed: cannot read scripts/build.ts: EACCES: permission denied',
+    )
+  })
+
   test("a crashing JUDGE folds to verifier-unavailable with a take-no-action hint, not coder feedback", async () => {
     const report = await Effect.runPromise(
       runPipeline(pipelineOf([crashingGate("verifier", "judge")]), ws),

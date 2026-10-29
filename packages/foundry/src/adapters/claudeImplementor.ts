@@ -50,7 +50,8 @@ export const ClaudeCliImplementorLive: Layer.Layer<Implementor> = Layer.succeed(
       catch: (cause) =>
         new ImplementorError({
           attempt: input.attempt,
-          message: `claude spawn failed: ${String(cause)}`,
+          message: "claude spawn failed",
+          cause,
         }),
     }).pipe(
       Effect.flatMap(({ exitCode, stderr }) =>
