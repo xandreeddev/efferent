@@ -238,7 +238,9 @@ produces a failed reply. Failure or interruption preserves the cause, and
 closing the turn's scope interrupts pending tasks. Subscriptions in those
 closing scopes cannot observe the final outcome: register an outcome observer
 in the caller's outer scope with `Scope.provide(observerScope)` and services
-that remain open there.
+that remain open there. The [events guide](/docs/guides/events/) shows which
+subscription sees what, streams a turn to a client over SSE, and follows a
+session's journal from another request or process.
 
 A background task (`@xandreed/plugin-tasks`) is one turn of a child session,
 a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`.

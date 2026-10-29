@@ -425,6 +425,9 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "@xandreed/core"
             ]
       },
+      // The sdk tests may import the sdk by its package name and plugin-render: the
+      // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
+      // as written, so they import only what a consumer can.
       {
             "name": "sdk-tests",
             "path": "packages/sdk/src/**/*.test.ts",
@@ -440,7 +443,8 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "plugin-tool-discovery",
                   "plugin-sessions",
                   "plugin-tasks",
-                  "plugin-models"
+                  "plugin-models",
+                  "plugin-render"
             ],
             "externals": [
                   "effect",
@@ -451,6 +455,8 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun:",
                   "@xandreed/core",
                   "@xandreed/runtime",
+                  "@xandreed/sdk",
+                  "@xandreed/plugin-render",
                   "@xandreed/plugin-models",
                   "@xandreed/plugin-session-sqlite",
                   "@xandreed/plugin-sessions",

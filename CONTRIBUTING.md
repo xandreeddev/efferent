@@ -48,6 +48,15 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
   `bun scripts/record-journal-fixture.ts`. It refuses to overwrite an
   existing fixture unless `--force` is passed, and `--force` is only for
   re-recording the current, unreleased version.
+- A guide's code is not edited in the guide: `docs/events.md` quotes the
+  regions of `packages/sdk/src/events-guide.test.ts`, a test that runs, and
+  `bun run docs:generate` (`scripts/sync-guides.ts`) copies them in with the
+  imports they use and writes the guide's website page. It fails on a
+  snippet that imports from a relative path, the test runner (`bun:`) or
+  test scaffolding (a `testing` module), a region no guide quotes, a
+  snippet marker not followed by a `ts` fence, a TypeScript or JavaScript
+  fence that is neither a snippet nor marked `<!-- unchecked: why -->`, and
+  a link to a missing file or heading.
 - Add an entry under **Unreleased** in `CHANGELOG.md`: what changes for
   someone using the packages, with a migration note for anything breaking.
   Repository-only changes go under its "Repository" heading.
