@@ -273,6 +273,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `stepLoopConformance` adds a `cache-key` check.
 - The sessions kit adds `run-id` and `cancel-unheld` and extends its
   `transact` checks; the tasks kit adds `task-id` and extends `start-once`.
+- `bun run typecheck` fails when a package under `packages/` is missing
+  from a list the gates or the build read: `CHECKED`, a boundaries layer,
+  the build's `names`, the base tsconfig's `paths`, or, for a plugin, the
+  plugin reference's `firstParty`. The message names the package and the
+  list, and CONTRIBUTING.md lists the steps for adding a package.
+- The foundry baseline must stay empty: `bun run typecheck` fails while
+  `.foundry/baseline.json` holds a fingerprint, and the baseline no longer
+  excuses any finding. `foundry check --update-baseline --allow-grow` warns
+  that CI will refuse the grown file. A foundry config can declare
+  `registration` (the lists every package must appear in) and
+  `baseline: "empty"`.
 
 ## 0.14.0 — 2026-10-29
 

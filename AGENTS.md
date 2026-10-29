@@ -22,7 +22,9 @@ removed on 2026-10-28 and are moving to their own repositories.
 Everything except `plugin-session-sqlite` (`bun:sqlite`) must also load on
 Node; `bun run verify:packages` imports every Node-capable package on Node.
 
-All production packages participate in the zero-baseline architecture gates.
+All production packages participate in the zero-baseline architecture gates:
+`bun run typecheck` fails on a package missing from a list the gates or the
+build read (`quality/package-registered`; the lists are in CONTRIBUTING.md).
 New session data uses `.efferent/runtime`; never delete old local data to reset it.
 Build artifacts go under `.artifacts`. Publishing requires explicit sign-off;
 releases go through `bun run publish:packages`, a dry run unless
@@ -39,7 +41,8 @@ and its website page (`scripts/sync-guides.ts`).
 
 `bun run typecheck` = the canonical repo profile (static architecture + tsc),
 then tsc over `scripts/` (`scripts/tsconfig.json`), and the committed baseline
-is EMPTY — every rule violation anywhere fails:
+is EMPTY and must stay so (a fingerprint in it fails `quality/baseline-empty`;
+never pass `--allow-grow`) — every rule violation anywhere fails:
 
 - **Errors are values**: no `try`/`catch`/`throw`/`.catch()` — typed errors
   are `Schema.TaggedError`; foreign promises via `Effect.tryPromise` (or the

@@ -72,9 +72,50 @@ const ERASURE_BOUNDARY = [
 ]
 const TEST_SCAFFOLDING = ["**/*.test.ts", "**/*.test.tsx", "**/testing.ts"]
 
+/**
+ * A package is gated, built and published only once it is listed by hand:
+ * in CHECKED, in a boundaries layer below, in the build's `names`, in the
+ * base tsconfig's `paths` and, for a plugin, in the plugin reference's
+ * `firstParty`. The registration gate fails on every package one of them
+ * misses, naming the list. The docs site is not a TypeScript package of the
+ * framework, and foundry is development tooling: never built or published.
+ */
+const registration: NonNullable<typeof GateSuiteConfig.Encoded["registration"]> = {
+  roots: ["packages"],
+  exclude: ["packages/website"],
+  registries: [
+    { source: "rules", hint: 'add "{path}/src/**" to CHECKED in foundry.config.ts' },
+    {
+      source: "boundaries",
+      hint: 'add a "{dir}" layer for "{path}/src/**" to boundaries.layers in foundry.config.ts, naming what it may import',
+    },
+    {
+      source: "const",
+      file: "scripts/build-packages.ts",
+      name: "names",
+      entry: "{dir}",
+      exclude: ["packages/foundry"],
+      hint: 'add "{dir}" to `names` in scripts/build-packages.ts; an unlisted package is never built, verified or published',
+    },
+    { source: "json-keys", file: "tsconfig.base.json", keys: ["compilerOptions", "paths"], entry: "{name}" },
+    {
+      source: "const",
+      file: "scripts/generate-plugin-reference.ts",
+      name: "firstParty",
+      entry: "{name}",
+      include: ["packages/plugin-*"],
+      hint: "import {name} in scripts/generate-plugin-reference.ts and add its plugins to `firstParty`",
+    },
+  ],
+}
+
 const config: typeof GateSuiteConfig.Encoded = {
   tsconfig: "tsconfig.json",
   typecheck: true,
+  // `.foundry/baseline.json` is only the ratchet's anchor: it grandfathers
+  // nothing, and `bun run typecheck` fails while it holds a fingerprint.
+  baseline: "empty",
+  registration,
   rules: [
     { rule: "effect/no-try-catch", include: CHECKED },
     { rule: "effect/no-let", include: CHECKED },
