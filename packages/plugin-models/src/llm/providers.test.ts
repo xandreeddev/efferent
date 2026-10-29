@@ -126,6 +126,17 @@ describe("configured endpoints", () => {
     expect(server.seen.map((call) => call.auth).sort()).toEqual(["Bearer config-key", "Bearer env-key", "Bearer stored-key"])
   })
 
+  it("sends no key for an empty own key, and never the stored one", async () => {
+    const server = chatServer()
+    process.env["EFFERENT_TEST_EMPTY_KEY"] = ""
+    const run = Promise.all([
+      ask("gw:m", { gw: { url: server.url, apiKey: "" } }, undefined, "stored-key"),
+      ask("gw:m", { gw: { url: server.url, apiKeyEnv: "EFFERENT_TEST_EMPTY_KEY" } }, undefined, "stored-key"),
+    ])
+    await run.finally(() => { server.stop(); delete process.env["EFFERENT_TEST_EMPTY_KEY"] })
+    expect(server.seen.map((call) => call.auth)).toEqual([null, null])
+  })
+
   it("routes a local credential's base URL without a key", async () => {
     const server = chatServer()
     await ask("ollama:qwen3", {}, { type: "local", baseUrl: server.url }).finally(server.stop)

@@ -5,7 +5,8 @@ import type { Context } from "effect"
 import { AuthStore, CurrentModelCallPolicy, describeModel, extractUsage, formatModelSelection, HarnessError, parseModelSelection, resolvingModel, SettingsStore } from "@xandreed/core"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
-import { buildProvider, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
+import { buildProvider, endpointOwnKey, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
+import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import {
   classifyLlmError,
   rejectEmptyResponse,
@@ -133,7 +134,7 @@ const currentSelection = Effect.gen(function* () {
       Effect.fail(
         configError(
           raw.length === 0
-            ? `no model configured — choose /model in the terminal or set the models plugin's model option in efferent.config.json`
+            ? `no model configured — set the models plugin's model option, or a SettingsStore model, to "<provider>:<modelId>"`
             : `the configured model "${raw}" is not a "<provider>:<modelId>" selection`,
         ),
       ),
@@ -176,6 +177,23 @@ const describeSelection = (primary: ModelSelection, fallback: Option.Option<Mode
     },
   })))
 
+/**
+ * The credential and key one call uses. An endpoint with its own key
+ * (`apiKey`, or a set `apiKeyEnv`) uses it and never reads the AuthStore; an
+ * empty own key sends none. Every other selection reads the AuthStore, which
+ * refreshes a near-expiry OAuth token first.
+ */
+const credentialFor = (selection: ModelSelection) => Effect.gen(function* () {
+  const endpoints = yield* Effect.service(CurrentModelEndpoints)
+  const own = Option.flatMap(Option.fromNullishOr(endpoints[selection.provider]), endpointOwnKey)
+  if (Option.isSome(own)) return { credential: undefined, key: own.value }
+  const auth = yield* AuthStore
+  return {
+    credential: Option.getOrUndefined(yield* auth.get(selection.provider)),
+    key: Option.getOrUndefined(yield* auth.resolveKey(selection.provider)),
+  }
+})
+
 /** Build + call one provider generateText for an explicit selection.
  *  `isFallback` only labels telemetry — the fallback rung must be visible
  *  in Grafana without changing the metric identities. */
@@ -189,10 +207,8 @@ export const generateWith = (
   AuthStore | HttpClient.HttpClient
 > =>
   Effect.gen(function* () {
-    const auth = yield* AuthStore
     const label = formatModelSelection(selection)
-    const credential = Option.getOrUndefined(yield* auth.get(selection.provider))
-    const key = Option.getOrUndefined(yield* auth.resolveKey(selection.provider))
+    const { credential, key } = yield* credentialFor(selection)
     const built = yield* buildProvider(selection, credential, key)
     return yield* (
       built.svc.generateText(
@@ -385,10 +401,8 @@ export const streamWith = (
 ): Stream.Stream<unknown, unknown, AuthStore | HttpClient.HttpClient> =>
   Stream.unwrap(
     Effect.gen(function* () {
-      const auth = yield* AuthStore
       const label = formatModelSelection(selection)
-      const credential = Option.getOrUndefined(yield* auth.get(selection.provider))
-      const key = Option.getOrUndefined(yield* auth.resolveKey(selection.provider))
+      const { credential, key } = yield* credentialFor(selection)
       const built = yield* buildProvider(selection, credential, key)
       return (
         built.svc.streamText(

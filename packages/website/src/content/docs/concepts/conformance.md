@@ -8,9 +8,10 @@ description: The port contracts as runnable checks, to run against your own adap
 A port says what its methods take and return; a conformance kit says what an
 implementation must do. `@xandreed/core` ships each contract as a list of
 checks, so a host that writes its own session store, memory strategy, step
-loop, turn composition, file system or shell can prove it behaves like the
-first-party ones (`@xandreed/plugin-workspace`'s local file system and shell
-pass the file-system and shell kits on Bun and Node).
+loop, turn composition, file system, shell or model credential and settings
+store can prove it behaves like the first-party ones
+(`@xandreed/plugin-workspace`'s local file system and shell pass the
+file-system and shell kits on Bun and Node).
 `@xandreed/plugin-render` does the same for render surfaces, feeds and
 transports (see [render kits](#render-kits)).
 
@@ -25,12 +26,23 @@ transports (see [render kits](#render-kits)).
 | `turnConformance(runner, services)` | the writer first, the message before the matcher's history, the reply and the end exactly once, tasks joined before the reply, a model-driven turn's usage equal to its stored `step.usage` records (`turnUsageOf`), the host layer seeing only earlier turns | a turn composition |
 | `fileSystemConformance(subject)` | round trips, `createParents`, byte ranges, append, rename, `stat` and links, sorted listings, `glob`, `mkdir`, `realPath`, the `remove` rules, the `reason` of every failure | a way to open a `FileSystem` over an empty directory |
 | `bashConformance(subject)` | exit codes as results, separate streams, output before exit, stdin, the inherited-environment allowlist, timeouts and interrupts that kill the process group, `cwd`, signals, UTF-8 | a way to open a `Bash` adapter |
+| `authStoreConformance(store)` | an absent provider, API key, `local` and OAuth credentials read back and resolve as they should (the key `Redacted`), an expired token the store cannot refresh fails with an `AuthError` naming the provider and never returns the stale token, `set` replaces, `remove` deletes everywhere and is a no-op for an absent provider, providers are isolated | an `AuthStore` |
+| `settingsStoreConformance(store, { writable })` | `load` is stable; writable: each role and key reads back typed, `None` clears back to the value before the set, a value that does not parse (through `set` or `setRole`) fails with a `SettingsError` and changes nothing; read-only: every write is refused and changes nothing | a `SettingsStore` |
+| `modelCatalogConformance(catalog, { includes? })` | entries decode, each selection is `"<provider>:<modelId>"` of its own provider, no selection twice, two lists agree, the expected selections are listed | a `ModelCatalog` |
 
 Every core kit returns `ReadonlyArray<ConformanceCheck>`. A check has a `name` and
 a `run` effect that succeeds, or fails with a `ConformanceFailure` whose
 `check` names the broken part of the contract and whose `message` says what
 happened. The session log kits use fresh session ids and owners in every
-check, so they can run against a shared database.
+check, so they can run against a shared database. The AuthStore kit uses fresh
+provider ids (`conformance-<uuid>`) and removes them when a check ends. The
+SettingsStore kit writes the store's own keys, since settings have no ids: it
+puts each key it touches back as it found it, but run it against settings
+nothing else is using. A key holding a value the store must refuse (a
+selection that is not `"<provider>:<modelId>"`, a count below 1, left by an
+older unchecked write) could not be put back, so the check that would touch it
+fails before writing anything. `@xandreed/plugin-models` runs these three kits against
+its file and in-memory stores, on Bun and on Node.
 
 ## Running a kit
 

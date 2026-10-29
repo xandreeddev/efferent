@@ -1,6 +1,7 @@
 import { Effect, Result, Option } from "effect"
 import { AuthError } from "@xandreed/core"
-import { generatePkce } from "./anthropicOAuth.js"
+import { generatePkce, tokenTime } from "./anthropicOAuth.js"
+import type { TokenRequestOptions } from "./anthropicOAuth.js"
 
 /** ChatGPT Plus/Pro OAuth protocol used by the OpenAI Codex subscription. */
 export const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -56,10 +57,11 @@ export const openAiCodexAccountId = (accessToken: string): Option.Option<string>
 const postToken = (
   body: Record<string, string>,
   stage: string,
+  options: TokenRequestOptions,
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
   Effect.tryPromise({
     try: async () => {
-      const response = await fetch(TOKEN_URL, {
+      const response = await (options.fetch ?? fetch)(TOKEN_URL, {
         method: "POST",
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams(body),
@@ -83,12 +85,12 @@ const postToken = (
       (token) => typeof token.access_token === "string" && typeof token.refresh_token === "string" && typeof token.expires_in === "number",
       () => oauthError(stage, "the token response omitted required fields"),
     ),
-    Effect.map((token) => ({
+    Effect.flatMap((token) => Effect.map(tokenTime(options), (now) => ({
       access: token.access_token,
       refresh: token.refresh_token,
-      expires: Date.now() + token.expires_in * 1000,
+      expires: now + token.expires_in * 1000,
       ...Option.match(openAiCodexAccountId(token.access_token), { onNone: () => ({}), onSome: (accountId) => ({ accountId }) }),
-    })),
+    }))),
   )
 
 export const beginOpenAiCodexOAuth: Effect.Effect<OpenAiCodexOAuthBegin> =
@@ -119,10 +121,12 @@ export const beginOpenAiCodexOAuth: Effect.Effect<OpenAiCodexOAuthBegin> =
 export const exchangeOpenAiCodexCode = (
   code: string,
   verifier: string,
+  options: TokenRequestOptions = {},
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
-  postToken({ grant_type: "authorization_code", client_id: OPENAI_CODEX_CLIENT_ID, code, code_verifier: verifier, redirect_uri: OPENAI_CODEX_REDIRECT_URI }, "code exchange")
+  postToken({ grant_type: "authorization_code", client_id: OPENAI_CODEX_CLIENT_ID, code, code_verifier: verifier, redirect_uri: OPENAI_CODEX_REDIRECT_URI }, "code exchange", options)
 
 export const refreshOpenAiCodexToken = (
   refreshToken: string,
+  options: TokenRequestOptions = {},
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
-  postToken({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: OPENAI_CODEX_CLIENT_ID }, "token refresh")
+  postToken({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: OPENAI_CODEX_CLIENT_ID }, "token refresh", options)

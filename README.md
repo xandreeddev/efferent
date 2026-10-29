@@ -75,7 +75,12 @@ a handle whose scope never closed) for a session store,
 `fileSystemConformance` and `bashConformance` for the `FileSystem` and `Bash`
 ports agent tools work through (`FileSystemMemoryLive` is an in-memory file
 system; `FileSystemLive` and `BashLive` from `@xandreed/plugin-workspace`
-are the local disk and shell, and pass both kits on Bun and Node). See
+are the local disk and shell, and pass both kits on Bun and Node), and for the
+models plugin's ports `authStoreConformance` (an `AuthStore`: credentials read
+back, resolve and refresh or fail as they should), `settingsStoreConformance`
+(a `SettingsStore`, writable or read-only: values read back typed, clear, and
+bad ones are refused) and `modelCatalogConformance` (a `ModelCatalog`: valid,
+unique, stable entries). See
 [conformance kits](packages/website/src/content/docs/concepts/conformance.md).
 
 Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)
@@ -113,9 +118,14 @@ The key comes from `apiKey`, the environment variable `apiKeyEnv` names, or a
 stored key; with none, no `Authorization` header is sent. See
 [plugin configuration](packages/website/src/content/docs/concepts/providers.md#model-endpoints).
 
-The models plugin inherits existing model settings and sign-ins by
-default; explicit plugin options take precedence. Set `inheritPrevious: false`
-for an independent setup.
+The models plugin is built once per agent, and a turn's own services win over
+it. By default (`storage: "local"`) it inherits existing model settings and
+sign-ins from `.efferent` files; explicit plugin options take precedence, and
+`inheritPrevious: false` gives an independent setup. `storage: "memory"`
+never touches disk — for a server or a serverless host: credentials come from
+`credentials` (`Redacted` values), the environment variables `credentialEnv`
+names, or the host's `HostCredentials`, and settings edits stay in memory. See
+[credentials and storage](packages/website/src/content/docs/concepts/providers.md#credentials-and-storage).
 
 ## Packages
 

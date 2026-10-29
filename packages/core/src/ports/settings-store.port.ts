@@ -56,20 +56,24 @@ export type SettingsKey = (typeof SETTINGS_KEYS)[number]
 /**
  * Read-through settings port. `load` re-reads the backing store on every call
  * so a value changed mid-session takes effect on the next turn — callers must
- * not cache the result across turns.
+ * not cache the result across turns. A store may be read-only: then
+ * `setRole` and `set` fail with a `SettingsError` and write nothing.
+ * `settingsStoreConformance` checks a store against this contract.
  */
 export class SettingsStore extends Context.Service<SettingsStore, {
     readonly load: Effect.Effect<EngineSettings, SettingsError>
-    /** Persist one role's model selection (the human's `:model` action);
-     *  `None` clears the role so it falls back to its default again. */
+    /** Persist one role's model selection (a role choice); `None` clears
+     *  the role so it falls back to its default again. A selection that is
+     *  not `"<provider>:<modelId>"` fails with a `SettingsError` and writes
+     *  nothing. */
     readonly setRole: (
       role: ModelRole,
       selection: Option.Option<string>,
     ) => Effect.Effect<void, SettingsError>
-    /** Persist one non-role key from its STRING form (the `:settings`
-     *  action): the adapter validates + coerces per key ("true", "3",
-     *  "provider:model") and rejects a value that doesn't parse; `None`
-     *  clears the key. */
+    /** Persist one non-role key from its STRING form (a settings edit): the
+     *  adapter validates + coerces per key ("true", "3", "provider:model")
+     *  and rejects a value that doesn't parse with a `SettingsError`,
+     *  writing nothing; `None` clears the key. */
     readonly set: (
       key: SettingsKey,
       value: Option.Option<string>,

@@ -21,6 +21,8 @@ import { definePlugin, SessionEnvironment } from "@xandreed/sdk"
 export default definePlugin({
   id: "example/workspace",
   version: "1.0.0",
+  // Runtime-scoped, so runtime plugins (the models plugin) may depend on it.
+  scope: "runtime",
   config: Schema.Struct({ workspace: Schema.String }),
   defaults: { workspace: "." },
   provides: [SessionEnvironment],
@@ -33,10 +35,17 @@ A plugin's options are given where the agent is defined, as
 the plugin's defaults and decode through its schema; undeclared keys are refused.
 
 The SQLite session store uses WAL and transactional sequence allocation. The
-models plugin reads existing model settings and credentials as fallbacks by
-default. Explicit plugin options and current credentials win. Set its
-`inheritPrevious` option to `false` to use an independent setup; new logins and
-refreshed inherited credentials are written to the current credential store.
+models plugin is runtime-scoped: built once per `Agent.define`, with a turn's
+own services winning over it. With the default `storage: "local"` it reads
+existing model settings and credentials from `.efferent` files as fallbacks
+(re-reading the settings on every load). Explicit plugin options and current
+credentials win. Set its `inheritPrevious` option to `false` to use an
+independent setup; new logins and refreshed inherited credentials are written
+to the current credential store. With `storage: "memory"` it reads and writes
+no file: credentials come from `credentials` (`Redacted` secrets),
+`credentialEnv` or the host's `HostCredentials`, settings are writable in
+memory, and `inheritPrevious` is ignored. See the website's providers page,
+"Credentials and storage".
 
 ## Evals
 
@@ -575,12 +584,15 @@ is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
 
 `memoryConformance(memory, services)`, `stepLoopConformance(loop)`,
 `turnConformance(runner, services)`, `sessionLogConformance(log)`,
-`sessionLogRecoveryConformance(subject)`, `fileSystemConformance(subject)` and
-`bashConformance(subject)` (from `@xandreed/core`) are the port
-contracts as runnable checks: each returns `ConformanceCheck`s (`name`, and a
-`run` effect that fails with a `ConformanceFailure` naming the broken check)
-that any test runner can run. Run them against a new strategy, loop, turn
-composition, session store, file system or shell.
+`sessionLogRecoveryConformance(subject)`, `fileSystemConformance(subject)`,
+`bashConformance(subject)`, `authStoreConformance(store)`,
+`settingsStoreConformance(store, { writable })` and
+`modelCatalogConformance(catalog, { includes? })` (from `@xandreed/core`) are
+the port contracts as runnable checks: each returns `ConformanceCheck`s
+(`name`, and a `run` effect that fails with a `ConformanceFailure` naming the
+broken check) that any test runner can run. Run them against a new strategy,
+loop, turn composition, session store, file system, shell, or credential,
+settings or catalog store.
 
 **Files and commands.** Agent tools reach the machine through two core ports,
 `FileSystem` and `Bash`. Core ships the ports, the in-memory

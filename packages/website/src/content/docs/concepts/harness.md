@@ -122,9 +122,15 @@ Its result lands in the parent's inbox once, and the parent answers it after
 the turn in flight. See the framework guide's sessions section for the
 contract, the event vocabulary and the inbox protocol.
 
-The models plugin reads existing model settings and credentials as fallbacks by
-default. Explicit plugin options and current credentials win. Set its
-`inheritPrevious` option to `false` to use an independent setup.
+The models plugin is runtime-scoped: `Agent.define` builds it once, and a
+turn's own services (a per-turn `LanguageModel`) win over it. With the default
+`storage: "local"` it reads existing model settings and credentials from
+`.efferent` files as fallbacks; explicit plugin options and current credentials
+win, and `inheritPrevious: false` gives an independent setup. With
+`storage: "memory"` it never touches disk: credentials come from its options,
+environment variables or the host's `HostCredentials`, settings edits stay in
+memory for the agent's lifetime, and `inheritPrevious` is ignored. See
+[credentials and storage](/docs/concepts/providers#credentials-and-storage).
 
 ## Evals
 

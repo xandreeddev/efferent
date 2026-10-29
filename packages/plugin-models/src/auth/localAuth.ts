@@ -1,10 +1,9 @@
 import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
-import { Effect, Layer, Option, Redacted } from "effect"
+import { Clock, Effect, Layer, Option, Redacted } from "effect"
 import { asJsonRecord, AuthError, AuthStore, parseJsonWarn } from "@xandreed/core"
 import type { Credential, ProviderId } from "@xandreed/core"
-import { refreshAnthropicToken } from "./anthropicOAuth.js"
-import { refreshOpenAiCodexToken } from "./openAiCodexOAuth.js"
+import { isUsableAt, refreshCredential } from "./credential-refresh.entity.functions.js"
 
 /**
  * The on-disk credential store — the SAME `auth.json` vocabulary the previous
@@ -92,9 +91,6 @@ const writeAuthFile = (
       new AuthError({ provider: "*", message: `auth.json write failed: ${String(e)}` }),
   })
 
-/** Refresh this many ms before the recorded expiry. */
-const REFRESH_SKEW_MS = 60_000
-
 export const authPaths = (cwd: string, home: string, directory = ".efferent"): ReadonlyArray<string> => [
   join(home, directory, "auth.json"),
   join(cwd, directory, "auth.json"),
@@ -131,22 +127,11 @@ export const LocalAuthStoreLive = (cwd: string, home: string, directory = ".effe
         if (cred.type === "local") return Option.none<Redacted.Redacted<string>>()
         // OAuth: refresh when near expiry, persisting back to the file that
         // held the credential. Each subscription protocol stays in its auth
-        // adapter; the store only dispatches by provider id.
-        if (cred.expires > Date.now() + REFRESH_SKEW_MS) {
+        // module; `refreshCredential` dispatches by provider id.
+        if (isUsableAt(cred, yield* Clock.currentTimeMillis)) {
           return Option.some(Redacted.make(cred.access))
         }
-        if (provider !== "anthropic" && provider !== "openai-codex") {
-          return yield* Effect.fail(
-            new AuthError({
-              provider,
-              message: `the ${provider} OAuth token expired and its refresh flow isn't wired on the new line — re-login or use an API key`,
-            }),
-          )
-        }
-        const fresh = yield* provider === "anthropic"
-          ? refreshAnthropicToken(cred.refresh)
-          : refreshOpenAiCodexToken(cred.refresh)
-        const updated: Credential = { ...cred, ...fresh }
+        const updated = yield* refreshCredential(provider, cred)
         // Refresh inherited credentials into the current store, preserving the
         // previous installation's files until the user explicitly logs out.
         const target = holder !== undefined && authPaths(cwd, home, directory).includes(holder.path)
@@ -155,7 +140,7 @@ export const LocalAuthStoreLive = (cwd: string, home: string, directory = ".effe
           target.path,
           new Map([...target.entries, [provider, updated] as const]),
         )
-        return Option.some(Redacted.make(fresh.access))
+        return Option.some(Redacted.make(updated.access))
       }),
     set: (provider: ProviderId, credential: Credential) =>
       Effect.gen(function* () {

@@ -5,6 +5,7 @@
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
+    "optional": [],
     "provides": [
       "efferent/SessionLog",
       "efferent/TurnAdmission"
@@ -32,6 +33,7 @@
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
+    "optional": [],
     "provides": [
       "efferent/SessionLog"
     ],
@@ -61,6 +63,7 @@
       "efferent/SessionLog",
       "efferent/TurnAdmission"
     ],
+    "optional": [],
     "provides": [
       "efferent/Sessions"
     ],
@@ -218,6 +221,7 @@
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
+    "optional": [],
     "provides": [
       "@xandreed/core/FileSystem",
       "@xandreed/core/Bash"
@@ -256,9 +260,12 @@
     "id": "@xandreed/plugin-models",
     "version": "0.13.0",
     "apiVersion": 2,
-    "scope": "session",
+    "scope": "runtime",
     "requires": [
       "efferent/SessionEnvironment"
+    ],
+    "optional": [
+      "@xandreed/plugin-models/HostCredentials"
     ],
     "provides": [
       "effect/ai/LanguageModel",
@@ -272,7 +279,10 @@
       "fastModel": "",
       "fallbackModel": "",
       "inheritPrevious": true,
-      "endpoints": {}
+      "endpoints": {},
+      "storage": "local",
+      "credentials": {},
+      "credentialEnv": {}
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -299,7 +309,14 @@
                 "type": "string"
               },
               "apiKey": {
-                "type": "string"
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
               },
               "apiKeyEnv": {
                 "type": "string"
@@ -313,6 +330,96 @@
             ],
             "additionalProperties": true
           }
+        },
+        "storage": {
+          "type": "string",
+          "enum": [
+            "local",
+            "memory"
+          ]
+        },
+        "credentials": {
+          "type": "object",
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "api_key"
+                    ]
+                  },
+                  "key": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "key"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "oauth"
+                    ]
+                  },
+                  "access": {
+                    "type": "string"
+                  },
+                  "refresh": {
+                    "type": "string"
+                  },
+                  "expires": {
+                    "type": "number"
+                  },
+                  "accountId": {
+                    "type": "string"
+                  },
+                  "installationId": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type",
+                  "access",
+                  "refresh",
+                  "expires"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "local"
+                    ]
+                  },
+                  "baseUrl": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "credentialEnv": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "required": [
@@ -320,7 +427,10 @@
         "fastModel",
         "fallbackModel",
         "inheritPrevious",
-        "endpoints"
+        "endpoints",
+        "storage",
+        "credentials",
+        "credentialEnv"
       ],
       "additionalProperties": true
     }
@@ -331,6 +441,7 @@
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
+    "optional": [],
     "provides": [
       "efferent/ConversationMemory"
     ],
@@ -420,6 +531,7 @@
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
+    "optional": [],
     "provides": [
       "efferent/ConversationMemory"
     ],
@@ -524,6 +636,7 @@
     "requires": [
       "@xandreed/core/UtilityLlm"
     ],
+    "optional": [],
     "provides": [
       "efferent/ResultDigester"
     ],
@@ -554,6 +667,7 @@
     "requires": [
       "efferent/Capabilities"
     ],
+    "optional": [],
     "provides": [
       "efferent/ToolRegistry"
     ],
@@ -629,6 +743,7 @@
     "apiVersion": 2,
     "scope": "runtime",
     "requires": [],
+    "optional": [],
     "provides": [
       "efferent/StepLoop"
     ],
@@ -650,6 +765,7 @@
       "efferent/TaskRunner",
       "efferent/TaskExecutor"
     ],
+    "optional": [],
     "provides": [
       "efferent/Tasks"
     ],
@@ -700,6 +816,7 @@
       "efferent/render/Store",
       "efferent/ui/OutputAdmission"
     ],
+    "optional": [],
     "provides": [
       "efferent/render/Render"
     ],
@@ -730,6 +847,7 @@
     "requires": [
       "efferent/render/JournalTail"
     ],
+    "optional": [],
     "provides": [
       "efferent/render/Feed"
     ],
@@ -783,6 +901,7 @@
       "efferent/ui/OutputJournal",
       "efferent/ui/OutputContext"
     ],
+    "optional": [],
     "provides": [
       "efferent/ui/Output",
       "efferent/ui/OutputTools"

@@ -189,6 +189,7 @@
         "@xandreed/plugin-memory-digest": "workspace:*",
         "@xandreed/plugin-memory-summary": "workspace:*",
         "@xandreed/plugin-memory-window": "workspace:*",
+        "@xandreed/plugin-models": "workspace:*",
         "@xandreed/plugin-session-sqlite": "workspace:*",
         "@xandreed/plugin-sessions": "workspace:*",
         "@xandreed/plugin-tasks": "workspace:*",
