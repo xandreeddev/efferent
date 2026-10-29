@@ -33,6 +33,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `settings.corrupt`) naming the file, instead of reading as empty and being
   overwritten on the next write. A corrupt `config.json` used to be ignored
   with a warning: fix or remove the file.
+- Skill-selection decisions and seeded `load_skill` calls are numbered per
+  run: `<runId>:skill-selection:<n>` and `<runId>:matcher:<n>`. Older
+  journals still decode.
 
 ### Added
 
@@ -79,6 +82,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   Codex token responses fail with an `AuthError` that never quotes the
   response, and the token request and its commit cannot be interrupted
   apart.
+- Skills loaded by `load_skill` calls running at once (`toolConcurrency`
+  above 1) all keep their tools active. Before, one call could drop the
+  other's tools after the model was told they were available.
+- A store failure while activating skills is no longer reported as a
+  refusal. From `load_skill` it fails the turn; from `apply` it fails the
+  call and records no "rejected" decision. Only an unknown skill or a
+  missing permission rejects an activation.
 
 ### Repository
 
@@ -87,6 +97,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   skill under `.efferent/skills` is removed. The ChatGPT subscription
   adapter keeps its OAuth originator in one constant,
   `OPENAI_CODEX_ORIGINATOR`.
+- `toolRegistryConformance` adds a `concurrent-load` check, and its writer
+  yields before each write, as storage does.
 
 ## 0.14.0 — 2026-10-29
 

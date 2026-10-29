@@ -1,5 +1,5 @@
 import { Tool, Toolkit } from "effect/ai"
-import { Cause, Clock, Context, Effect, Exit, Option, Ref, Schema, Semaphore } from "effect"
+import { Cause, Clock, Context, Effect, Exit, Option, Ref, Schema, Semaphore, SynchronizedRef } from "effect"
 import {
   ActionPolicy,
   activationsOf,
@@ -58,6 +58,10 @@ export interface DiscoveryConfig {
 const failure = (error: string, message: string) => ({ error, message })
 const firstLine = (text: string): string => text.split("\n", 1)[0] ?? ""
 const harness = (code: string, message: string) => new HarnessError({ code, message })
+
+/** The codes an activation is refused with: an unknown skill, a permission not granted. Any other failure (the store's) is not a refusal. */
+const refusalCodes: ReadonlySet<string> = new Set(["skills.unknown", "capability.forbidden"])
+const isRefusal = (error: HarnessError): boolean => refusalCodes.has(error.code)
 
 const LoadSkill = Tool.make("load_skill", {
   description: "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
@@ -217,43 +221,54 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       onNone: () => Effect.succeed<ReadonlySet<string>>(new Set(config.grants)),
       onSome: (service) => service.grants,
     })
-    const initial = activationsOf(yield* session.entries)
-    const active = yield* Ref.make(initial.tools)
-    const loadedSkills = yield* Ref.make(initial.skills)
+    // The skills and tools activated so far, each in activation order: one value, so one activation moves both.
+    const activated = yield* SynchronizedRef.make(activationsOf(yield* session.entries))
     const calls = yield* Ref.make(new Map<string, number>())
     const skillLoads = yield* Ref.make(0)
     const invocation = yield* Ref.make(0)
+    // Each matcher decision, and each load_skill exchange seeded from one, takes the next number of the run.
+    const decisions = yield* Ref.make(0)
+    const seeds = yield* Ref.make(0)
     const readLane = yield* Semaphore.make(config.readConcurrency)
     const writeLane = yield* Semaphore.make(1)
 
-    const activate = (requested: ReadonlyArray<string>, source: ActivationSource) => Effect.gen(function* () {
+    /**
+     * Activate skills in one step: what is new is computed from the held set,
+     * recorded, and only then applied, under the set's lock, so concurrent
+     * activations (the load_skill calls of one step) each start from the
+     * other's tools. Returns the tools this activation added and the active
+     * tools after it.
+     */
+    const activation = (requested: ReadonlyArray<string>, source: ActivationSource) => Effect.gen(function* () {
       const unknown = requested.filter((id) => !skills.some((skill) => skill.id === id))
       if (unknown.length > 0) return yield* Effect.fail(harness("skills.unknown", `Unknown skills: ${unknown.join(", ")}`))
       const resolved = yield* resolveCapabilities(catalog, { recipes: [...requested], tools: [] }, grants)
-      const current = yield* Ref.get(active)
-      const fresh = resolved.tools.map((tool) => tool.id).filter((tool) => !current.includes(tool))
-      const loaded = yield* Ref.get(loadedSkills)
-      const freshSkills = requested.filter((id) => !loaded.includes(id))
-      if (fresh.length > 0 || freshSkills.length > 0) {
-        yield* session.record([{ _tag: "ToolsActivated", skills: freshSkills, tools: fresh, source, decision: Option.none() }], 0)
-        yield* Ref.set(active, [...current, ...fresh])
-        yield* Ref.set(loadedSkills, [...loaded, ...freshSkills])
-        yield* run.events.publish({ _tag: "skills.activated", skills: freshSkills, tools: fresh, source }).pipe(Effect.orDie)
-      }
-      return yield* Ref.get(active)
+      const step = yield* SynchronizedRef.modifyEffect(activated, (held) => {
+        const freshTools = resolved.tools.map((tool) => tool.id).filter((tool) => !held.tools.includes(tool))
+        const freshSkills = [...new Set(requested)].filter((id) => !held.skills.includes(id))
+        const next = { skills: [...held.skills, ...freshSkills], tools: [...held.tools, ...freshTools] }
+        return freshTools.length === 0 && freshSkills.length === 0 ? Effect.succeed([{ skills: freshSkills, tools: freshTools, active: held.tools }, held] as const)
+          : session.record([{ _tag: "ToolsActivated", skills: freshSkills, tools: freshTools, source, decision: Option.none() }], 0).pipe(
+            Effect.as([{ skills: freshSkills, tools: freshTools, active: next.tools }, next] as const))
+      })
+      yield* step.tools.length === 0 && step.skills.length === 0 ? Effect.void
+        : run.events.publish({ _tag: "skills.activated", skills: step.skills, tools: step.tools, source }).pipe(Effect.orDie)
+      return step
     })
+    const activate = (requested: ReadonlyArray<string>, source: ActivationSource) => activation(requested, source).pipe(Effect.map((step) => step.active))
 
     const loadSkill = ({ skills: requested }: { readonly skills: ReadonlyArray<string> }) => Effect.gen(function* () {
       const loads = yield* Ref.getAndUpdate(skillLoads, (value) => value + 1)
       if (loads >= config.maxSkillLoadsPerRun) return yield* Effect.fail(failure("SkillLoadLimit", `At most ${config.maxSkillLoadsPerRun} skill loads per turn`))
-      const before = yield* Ref.get(active)
-      yield* activate(requested, "load_skill").pipe(Effect.mapError((error) => failure(error.code, error.message)))
-      const after = yield* Ref.get(active)
-      return skillInstructions(skills.filter((skill) => requested.includes(skill.id)), after.filter((tool) => !before.includes(tool)))
+      // A refusal is the model's to correct; anything else (the store failing) is the turn's.
+      const step = yield* activation(requested, "load_skill").pipe(
+        Effect.catch((error) => isRefusal(error) ? Effect.fail(failure(error.code, error.message)) : Effect.die(error)),
+      )
+      return skillInstructions(skills.filter((skill) => requested.includes(skill.id)), step.tools)
     })
 
     const readReference = ({ skill, reference }: { readonly skill: string; readonly reference: string }) => Effect.gen(function* () {
-      const loaded = yield* Ref.get(loadedSkills)
+      const loaded = (yield* SynchronizedRef.get(activated)).skills
       const found = skills.find((candidate) => candidate.id === skill)?.references.find((item) => item.id === reference)
       if (!loaded.includes(skill)) return yield* Effect.fail(failure("SkillNotLoaded", `Load ${skill} with load_skill first`))
       if (found === undefined) return yield* Effect.fail(failure("UnknownReference", `${skill} has no reference ${reference}`))
@@ -274,7 +289,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
           Effect.orDie,
           Effect.andThen(Effect.fail(failure(error, message))),
         )
-      if (!isOwn && !(yield* Ref.get(active)).includes(name)) {
+      if (!isOwn && !(yield* SynchronizedRef.get(activated)).tools.includes(name)) {
         const providers = skillsForTool(name)
         return yield* refuse("inactive", "ToolInactive", providers.length === 0 ? `${name} is not available in this conversation`
           : `${name} is not loaded yet; call load_skill with one of: ${providers.join(", ")}`)
@@ -307,8 +322,8 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       const value: unknown = Exit.isSuccess(exit) ? exit.value
         : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${firstLine(reasonOf(exit.cause)).slice(0, 300)}`))
       // A HarnessError the handler died with is the turn's, not the tool's: a subscriber failed on an event the
-      // handler published (`tool.progress`, `skills.activated`). Like a failure on `tool.started`, it fails the turn
-      // once `tool.completed` is out, instead of reaching the model as a ToolDefect.
+      // handler published (`tool.progress`, `skills.activated`), or the store failed load_skill's activation. Like a
+      // failure on `tool.started`, it fails the turn once `tool.completed` is out, instead of reaching the model as a ToolDefect.
       const turnFailure = Exit.isSuccess(exit) ? Option.none<HarnessError>()
         : Option.fromNullishOr(exit.cause.reasons.flatMap((reason) => Cause.isDieReason(reason) && reason.defect instanceof HarnessError ? [reason.defect] : [])[0])
       if (Exit.isFailure(exit) && Option.isNone(Cause.findErrorOption(exit.cause)) && Option.isNone(turnFailure)) {
@@ -336,7 +351,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
 
     /** The tools active once the always-on skills are: what the matcher is told is already there. */
     const activeWithAlways = Effect.gen(function* () {
-      const current = yield* Ref.get(active)
+      const current = (yield* SynchronizedRef.get(activated)).tools
       if (always.length === 0) return current
       const resolved = yield* resolveCapabilities(catalog, { recipes: always, tools: [] }, grants)
       return [...current, ...resolved.tools.map((tool) => tool.id).filter((tool) => !current.includes(tool))]
@@ -347,7 +362,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       if (Option.isNone(matcher)) return { userMessage, skills: [], probabilities: Option.none(), record: Option.none() } satisfies SkillMatch
       const selector = matcher.value
       const history = yield* session.transcript("reference")
-      const loadedBefore = yield* Ref.get(loadedSkills)
+      const loadedBefore = (yield* SynchronizedRef.get(activated)).skills
       const activeNow = yield* activeWithAlways
       const outcome = yield* selector.match({ userMessage, skills: candidates, active: activeNow, history }).pipe(
         Effect.timeoutOrElse({ duration: `${config.matcherTimeoutMs} millis`, orElse: () => Effect.fail(harness("matcher.timeout", "The skill matcher timed out")) }),
@@ -359,9 +374,10 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       // A multi-label decision: `selection` is the chosen skill ids joined by ",".
       const selection = chosen.length === 0 ? Option.none<string>() : Option.some(chosen.join(","))
       const probabilities = outcome._tag === "Success" ? outcome.success.probabilities : Option.none()
+      const decision = yield* Ref.getAndUpdate(decisions, (value) => value + 1)
       const record: DecisionRecord = {
         version: 1,
-        id: DecisionId.make(`${run.runId}:skill-selection`),
+        id: DecisionId.make(`${run.runId}:skill-selection:${decision}`),
         family: "skill-selection",
         // Hashed under its original key, so decision context hashes are unchanged; images join by fingerprint, only when there are some.
         contextHash: fingerprintOf(canonicalJson({
@@ -384,9 +400,13 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
     /** Activate the always-on skills and the match, record the decision, seed the load_skill exchange. */
     const apply = (matched: SkillMatch) => Effect.gen(function* () {
       yield* always.length === 0 ? Effect.void : activate(always, "always").pipe(Effect.asVoid)
-      const loaded = yield* Ref.get(loadedSkills)
+      const loaded = (yield* SynchronizedRef.get(activated)).skills
       const chosen = matched.skills.filter((id) => !loaded.includes(id))
-      const applied = yield* chosen.length === 0 ? Effect.succeed(false) : activate(chosen, "matcher").pipe(Effect.as(true), Effect.orElseSucceed(() => false))
+      // Only a refusal rejects the choice; a failure to record it fails the apply, and is never recorded as a rejection.
+      const applied = yield* chosen.length === 0 ? Effect.succeed(false) : activate(chosen, "matcher").pipe(
+        Effect.as(true),
+        Effect.catchIf(isRefusal, () => Effect.succeed(false)),
+      )
       yield* Option.match(matched.record, {
         onNone: () => Effect.void,
         onSome: (record) => recordDecision({
@@ -397,13 +417,14 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       })
       if (applied && config.loadSkill) {
         const seeded = skills.filter((skill) => chosen.includes(skill.id))
-        const callId = ToolCallId.make(`${run.runId}:matcher`)
+        const seed = yield* Ref.getAndUpdate(seeds, (value) => value + 1)
+        const callId = ToolCallId.make(`${run.runId}:matcher:${seed}`)
         yield* session.recordTail([
           { role: "assistant", content: [{ type: "tool-call", toolCallId: callId, toolName: LoadSkill.name, input: { skills: chosen } }] },
           { role: "tool", content: [{ type: "tool-result", toolCallId: callId, toolName: LoadSkill.name, output: skillInstructions(seeded, []), isError: false }] },
         ], views, 0)
       }
-      return yield* Ref.get(active)
+      return (yield* SynchronizedRef.get(activated)).tools
     })
 
     const select = (userMessage: UserMessage) => match(userMessage).pipe(Effect.flatMap(apply))
@@ -411,7 +432,7 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
     return {
       toolkit: toolkit as never as Toolkit.Toolkit<Record<string, Tool.Any>>,
       handlers: handlers as Context.Context<never>,
-      active: Ref.get(active).pipe(Effect.map((names) => [...own.map((entry) => entry.tool.name), ...names])),
+      active: SynchronizedRef.get(activated).pipe(Effect.map((held) => [...own.map((entry) => entry.tool.name), ...held.tools])),
       activate,
       match,
       apply,

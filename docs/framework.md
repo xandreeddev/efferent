@@ -879,6 +879,18 @@ to the model, with the first line of the defect's message only; the whole
 cause, stack included, is logged at error level with the call's `tool` and
 `invocationId`.
 
+An activation is one step: what is new is worked out from the active set,
+recorded and applied under one lock, so `load_skill` calls running at once
+(a step's calls with `toolConcurrency` above 1) each keep the other's tools,
+and each call's "Now available" names the tools it added. Only a refusal
+(`skills.unknown`, `capability.forbidden`) turns an activation down:
+`load_skill` returns it to the model, and `apply` records the matcher's
+decision as `rejected`. A failure to record the activation is not a
+refusal: it fails the turn from `load_skill`, and fails `apply` without
+recording the decision. Each decision of a run has its own id
+(`<runId>:skill-selection:<n>`), and each `load_skill` exchange seeded
+from one its own call id (`<runId>:matcher:<n>`).
+
 Tools only grow within a conversation and are sent in activation order.
 Restrict a step with a tool choice or a handler failure, never by removing a
 schema: removing one rewrites the cached prefix.
