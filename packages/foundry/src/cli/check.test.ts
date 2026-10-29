@@ -4,10 +4,11 @@ import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { Effect, Option, Schema } from "effect"
 import { BaselineFile, baselineRefusal } from "../domain/baseline.js"
-import { RuleConfig } from "../domain/Rules.js"
+import { PrivateTextConfig, RuleConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
 import { effectPack, vendoredPackFiles } from "../gates/rules/packs.js"
+import { makePrivateTextGate } from "../gates/privateTextGate.js"
 import { makeRegistrationGate } from "../gates/registrationGate.js"
 import { TsProjectCachedLive } from "../gates/TsProject.port.js"
 import { gatesFromConfig, loadConfig, runCheck } from "./check.js"
@@ -35,6 +36,7 @@ const seedViolations = (dir: string): void => {
   writeFileSync(
     path.join(dir, "src", "violations.ts"),
     [
+      'import { Cause, Effect, Schema, Stream } from "effect"',
       "export const f = (): number => {",
       "  let x = 1",
       "  try {",
@@ -43,6 +45,24 @@ const seedViolations = (dir: string): void => {
       "  return x as any",
       "}",
       'export const g = (flag: boolean) => (flag ? "x" : undefined)',
+      'export const parsed = JSON.parse("{}") as unknown',
+      "export const now = Date.now()",
+      "export const sorted = [3, 1, 2].sort()",
+      'export const home = process.env["HOME"]',
+      "export const all = () => Promise.all([])",
+      "const value: unknown = 1",
+      "export const laundered = value as never as string",
+      'class NotFoundError extends Error { readonly _tag = "NotFoundError" }',
+      "export const isMissing = (error: unknown) => error instanceof NotFoundError",
+      "export const decoded = Schema.decodeUnknownSync(Schema.Number)(1)",
+      "export const pretty = { detail: Cause.pretty(Cause.fail(1)) }",
+      "export const unchecked = Effect.promise(() => Promise.resolve(1))",
+      "export const unbounded = Stream.callback<number>(() => Effect.void)",
+      'export const ordered = ["b", "a"].sort((a, b) => a.localeCompare(b))',
+      "export const Item = Schema.Struct({ id: Schema.String })",
+      "export interface Item { readonly id: string }",
+      "export const loop = (xs: ReadonlyArray<number>) => { for (const x of xs) { void x } }",
+      "export const tag = (x: { readonly _tag: string }) => { switch (x._tag) { default: return 0 } }",
       "",
     ].join("\n"),
   )
@@ -250,6 +270,8 @@ describe("vendored packs — plain twins of the library", () => {
     )
 
     expect(normalized(libraryFindings).length).toBeGreaterThan(3)
+    // Every rule of the pack fires on the seeded file, so drift in any one shows.
+    expect(new Set(libraryFindings.map((f) => String(f.rule)))).toEqual(new Set(ruleIds))
     expect(normalized(vendoredFindings)).toEqual(normalized(libraryFindings))
   })
 
@@ -383,6 +405,15 @@ describe("the repository profile", () => {
     expect(registration.registries.length).toBe(5)
     const findings = await Effect.runPromise(makeRegistrationGate(config, registration).run({ rootDir, files: [] }))
     expect(findings.map((f) => f.message)).toEqual([])
+  })
+
+  test("the private-text profile names a denylist that git ignores", async () => {
+    const { config, rootDir } = await Effect.runPromise(loadConfig(path.join(REPO_ROOT, "foundry.config.ts")))
+    const privateText = Option.getOrThrow(config.privateText)
+    expect(Option.isSome(privateText.denylist)).toBe(true)
+    // Scan nothing, so only the denylist's own check runs.
+    const denylistOnly = new PrivateTextConfig({ ...privateText, include: ["no-such-directory/**"] })
+    expect(await Effect.runPromise(makePrivateTextGate(denylistOnly).run({ rootDir, files: [] }))).toEqual([])
   })
 
   test("the committed baseline is empty and the profile refuses one that is not", async () => {

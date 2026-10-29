@@ -5,6 +5,7 @@ import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
 import type { SubscribeOptions, TurnEventsService, TurnTasksService } from "../ports/turn-events.port.js"
 import type { TurnEvent } from "./turn-event.entity.js"
+import { randomUuid } from "../util/random-id.js"
 
 interface Subscriber {
   readonly id: number
@@ -53,7 +54,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
   const subscribers = yield* Ref.make<ReadonlyArray<Subscriber>>([])
   const nextId = yield* Ref.make(0)
   // Each bus counts its own nesting, and knows its own lanes: references keyed by this bus alone.
-  const busId = yield* Effect.sync(() => crypto.randomUUID())
+  const busId = yield* randomUuid
   const depth = Context.Reference<number>(`@xandreed/core/TurnEvents/depth/${busId}`, { defaultValue: () => 0 })
   /** Whether this runs in a background handler of this bus, on its lane's fiber. */
   const inLane = Context.Reference<boolean>(`@xandreed/core/TurnEvents/lane/${busId}`, { defaultValue: () => false })

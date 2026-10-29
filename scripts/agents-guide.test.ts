@@ -18,6 +18,7 @@ test("the gate table lists every rule the repo profile runs, and only those", ()
     ...config.rules.map((entry) => entry.rule),
     ...(config.boundaries === undefined ? [] : ["boundaries/illegal-import", "boundaries/illegal-external"]),
     ...(config.registration === undefined ? [] : ["quality/package-registered"]),
+    ...(config.privateText === undefined ? [] : ["quality/no-private-text"]),
     ...(config.baseline === "empty" ? ["quality/baseline-empty"] : []),
   ]
   expect([...listed].sort()).toEqual([...configured].sort())

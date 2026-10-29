@@ -1,4 +1,4 @@
-import { Array as Arr, Clock, Duration, Effect, Match, Option, Schedule, Schema } from "effect"
+import { Array as Arr, Clock, Duration, Effect, Match, Option, Order, Random, Schedule } from "effect"
 import { AttemptNumber, RunId } from "../domain/Brands.js"
 import type { WorkspacePath } from "../domain/Brands.js"
 import type { ImplementorError, WorkspaceError } from "../domain/Errors.js"
@@ -68,6 +68,17 @@ export interface ForgeResult {
   readonly artifact: string
 }
 
+/** A version-4 UUID drawn from `Random` (a seeded `Random` repeats it): one run's id. */
+const freshRunId: Effect.Effect<RunId> = Effect.map(
+  Effect.forEach(Array.from({ length: 16 }), () => Random.nextIntBetween(0, 255)),
+  (bytes) => {
+    const digits = bytes
+      .map((byte, index) => (index === 6 ? (byte & 0x0f) | 0x40 : index === 8 ? (byte & 0x3f) | 0x80 : byte).toString(16).padStart(2, "0"))
+      .join("")
+    return RunId.make(`${digits.slice(0, 8)}-${digits.slice(8, 12)}-${digits.slice(12, 16)}-${digits.slice(16, 20)}-${digits.slice(20)}`)
+  },
+)
+
 type Phase = "continue" | "accepted" | "attempts-exhausted" | "budget-exhausted" | "stalled"
 
 /** A report's identity for the STALL check: the failing findings, sorted.
@@ -80,20 +91,24 @@ export const diffFingerprints = (
   before: WorkspaceFingerprint,
   after: WorkspaceFingerprint,
 ): ReadonlyArray<WorkspacePath> =>
-  [
-    ...[...after].filter(([path, signature]) => before.get(path) !== signature).map(([path]) => path),
-    ...[...before.keys()].filter((path) => !after.has(path)),
-  ].sort()
+  Arr.sort(
+    [
+      ...[...after].filter(([path, signature]) => before.get(path) !== signature).map(([path]) => path),
+      ...[...before.keys()].filter((path) => !after.has(path)),
+    ],
+    Order.String,
+  )
 
 const reportFingerprint = (report: GateReport): string =>
   JSON.stringify(
-    report.verdicts
-      .flatMap((verdict) =>
+    Arr.sort(
+      report.verdicts.flatMap((verdict) =>
         verdict._tag === "skip"
           ? [`skip:${verdict.gate}`]
           : verdict.findings.map((finding) => `${finding.rule}:${finding.message}`),
-      )
-      .sort(),
+      ),
+      Order.String,
+    ),
   )
 
 interface LoopState {
@@ -125,7 +140,7 @@ export const forge = <R>(
     const startedAt = yield* Clock.currentTimeMillis
     const deadline = startedAt + options.spec.limits.budgetMillis
     // Minted at the START so every mid-run persist upserts the SAME artifact.
-    const runId = Schema.decodeSync(RunId)(crypto.randomUUID())
+    const runId = yield* freshRunId
     const sink = yield* RunSink
     const hooks: Required<ForgeHooks> = {
       onAttemptStart: options.hooks?.onAttemptStart ?? (() => Effect.void),
@@ -178,9 +193,10 @@ export const forge = <R>(
         // (the zig re-forge said "0 files touched" while `main.zig` was being
         // rewritten via heredocs); the claim keeps tool writes inside hidden
         // dirs visible (the fingerprint prunes those).
-        const filesTouched = [
-          ...new Set([...diffFingerprints(before, after), ...receipt.filesTouched]),
-        ].sort()
+        const filesTouched = Arr.sort(
+          [...new Set([...diffFingerprints(before, after), ...receipt.filesTouched])],
+          Order.String,
+        )
         yield* hooks.onImplemented(state.attempt, receipt, filesTouched)
         const workspace = yield* options.snapshot
         const report = yield* runPipeline(options.pipeline, workspace)

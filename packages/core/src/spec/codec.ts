@@ -1,4 +1,4 @@
-import { Array as Arr, Data, Effect, Option, Schema } from "effect"
+import { Data, Effect, Option, Schema } from "effect"
 import { SpecDoc } from "./SpecDoc.js"
 import type { SpecSlug } from "./SpecDoc.js"
 import { SpecSlug as SpecSlugSchema } from "./SpecDoc.js"
@@ -223,16 +223,10 @@ export const specSlug = (goal: string): SpecSlug => {
   return SpecSlugSchema.make(kebab.length === 0 ? "spec" : kebab)
 }
 
-/** First-wins collision suffixing over an existing-name predicate. */
+/** The first `<base>-<n>`, counting from `n`, that is not taken. */
+const firstFree = (base: SpecSlug, taken: (slug: string) => boolean, n: number): string =>
+  taken(`${base}-${n}`) ? firstFree(base, taken, n + 1) : `${base}-${n}`
+
+/** First-wins collision suffixing over an existing-name predicate: `<base>`, then `<base>-2`, `<base>-3`… */
 export const uniqueSlug = (base: SpecSlug, taken: (slug: string) => boolean): SpecSlug =>
-  taken(base)
-    ? SpecSlugSchema.make(
-        Option.getOrElse(
-          Arr.findFirst(
-            Arr.range(2, 99),
-            (n) => !taken(`${base}-${n}`),
-          ).pipe(Option.map((n) => `${base}-${n}`)),
-          () => `${base}-${Date.now()}`,
-        ),
-      )
-    : base
+  taken(base) ? SpecSlugSchema.make(firstFree(base, taken, 2)) : base

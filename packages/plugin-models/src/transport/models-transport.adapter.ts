@@ -135,11 +135,17 @@ const loadUndici: Effect.Effect<Undici, ProxyUnsupported> = Effect.tryPromise({
  * `NODE_USE_ENV_PROXY` points at the environment's proxy. They close with
  * the layer's scope.
  */
+/** Close a dispatcher as its scope closes: one that fails to is logged, and the rest still close. */
+const destroyDispatcher = (dispatcher: { readonly destroy: () => Promise<void> }): Effect.Effect<void> =>
+  Effect.tryPromise({ try: () => dispatcher.destroy(), catch: (cause) => cause }).pipe(
+    Effect.catch((cause) => Effect.logDebug("models transport: a connection pool did not close", cause)),
+  )
+
 const nodeDirect = (undici: Undici) => Effect.gen(function* () {
   const dispatcher: Agent = new undici.Agent()
   const sockets = { https: new HttpsAgent(), http: new HttpAgent() }
   yield* Effect.addFinalizer(() => Effect.all([
-    Effect.promise(() => dispatcher.destroy().then(() => undefined, () => undefined)),
+    destroyDispatcher(dispatcher),
     Effect.sync(() => [sockets.https, sockets.http].forEach((agent) => agent.destroy())),
   ], { discard: true }))
   return {
@@ -189,7 +195,7 @@ const nodeTransport = (config: ProxyConfig, version: string) => Effect.gen(funct
   }
   const dispatchers: ReadonlyArray<Dispatcher> = [...Option.toArray(Option.map(httpsRoute, (route) => route.dispatcher)), ...(sameUrl ? [] : Option.toArray(Option.map(httpRoute, (route) => route.dispatcher)))]
   yield* Effect.addFinalizer(() => Effect.all([
-    Effect.forEach(dispatchers, (dispatcher) => Effect.promise(() => dispatcher.destroy().then(() => undefined, () => undefined)), { discard: true }),
+    Effect.forEach(dispatchers, destroyDispatcher, { discard: true }),
     Effect.sync(() => [...Option.toArray(socketAgents.https), ...Option.toArray(socketAgents.http)].forEach((agent) => agent.destroy())),
   ], { discard: true }))
   const routeFor = (target: URL) => Option.flatMap(proxyFor(target, config), () => isSecure(target) ? httpsRoute : httpRoute)

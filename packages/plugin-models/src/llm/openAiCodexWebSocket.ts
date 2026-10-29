@@ -19,8 +19,9 @@ export const OPENAI_CODEX_SESSION_CAPACITY = 1024
 
 /** ChatGPT's Luna router currently keys its internal route on a
  * time-ordered UUIDv7 session id; UUIDv4 reaches a nonexistent rollout
- * alias. Keep one v7 id per Efferent conversation/cache key. */
-export const openAiCodexUuidV7 = (now = Date.now()): string => {
+ * alias. Keep one v7 id per Efferent conversation/cache key. `now` is the
+ * id's time in epoch milliseconds (`Clock.currentTimeMillis`). */
+export const openAiCodexUuidV7 = (now: number): string => {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16))
   const timestamp = BigInt(now)
   bytes[0] = Number((timestamp >> 40n) & 0xffn)

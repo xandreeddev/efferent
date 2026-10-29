@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Effect } from "effect"
+import { Cause, Effect, Option } from "effect"
+import { ConversationId } from "../domain/message.entity.js"
 import { SessionLog } from "../ports/session-log.port.js"
 import { sessionLogConformance } from "./session-log.conformance.js"
 import { SessionLogMemoryLive } from "./session-log.memory.adapter.js"
@@ -23,5 +24,34 @@ describe("the kit catches a backend that breaks the contract", () => {
     const failed = await Effect.runPromise(Effect.forEach(sessionLogConformance(careless), (check) =>
       Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : []))))
     expect(failed.flat().toSorted()).toEqual(["conflict", "race"])
+  })
+})
+
+describe("what the in-memory log keeps is JSON, as a store on disk keeps it", () => {
+  const log = Effect.runSync(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
+  const header = (id: ConversationId) => ({ id, owner: "test", origin: "test", createdAt: 0, meta: {}, parent: Option.none() })
+
+  test("a commit returns the JSON a later read gives, undefined fields dropped and copied apart from the caller's", async () => {
+    const id = ConversationId.make("00000000-0000-4000-8000-000000000001")
+    const data = { kept: 1, dropped: undefined, nested: { list: [1, 2] } }
+    const result = await Effect.runPromise(Effect.gen(function* () {
+      yield* log.create(header(id))
+      const committed = yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data }], state: Option.none() })
+      data.nested.list.push(3)
+      const read = yield* log.read(id, { after: 0, limit: Option.none(), kinds: [] })
+      return { committed: committed.events.map((event) => event.data), read: read.map((event) => event.data) }
+    }))
+    expect(result.committed).toEqual([{ kept: 1, nested: { list: [1, 2] } }])
+    expect(result.read).toEqual(result.committed)
+    expect(Object.keys(result.read[0] ?? {})).toEqual(["kept", "nested"])
+  })
+
+  test("data JSON cannot hold fails the commit with store.encode instead of dying", async () => {
+    const id = ConversationId.make("00000000-0000-4000-8000-000000000002")
+    const exit = await Effect.runPromiseExit(Effect.gen(function* () {
+      yield* log.create(header(id))
+      return yield* log.commit(id, { expect: 0, notAfter: Option.none(), events: [{ kind: "note", turn: Option.none(), data: { big: 1n } }], state: Option.none() })
+    }))
+    expect(exit._tag === "Failure" && exit.cause.reasons.some((reason) => Cause.isFailReason(reason) && reason.error._tag === "SessionLogError" && reason.error.code === "store.encode")).toBe(true)
   })
 })

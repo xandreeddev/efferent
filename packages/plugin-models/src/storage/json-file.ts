@@ -56,7 +56,9 @@ export const writeJsonObject = <E>(
         await rename(tmp, path)
       },
       catch: (cause) => failed(String(cause)),
-    }).pipe(Effect.tapError(() => Effect.promise(() => rm(tmp, { force: true }).then(() => undefined, () => undefined))))
+    }).pipe(Effect.tapError(() => Effect.tryPromise({ try: () => rm(tmp, { force: true }), catch: (cause) => cause }).pipe(
+      Effect.catch((cause) => Effect.logWarning(`could not remove the temporary file ${tmp}`, cause)),
+    )))
   }))
 
 /** One lock per key (a file's resolved path), for every store in the process. */

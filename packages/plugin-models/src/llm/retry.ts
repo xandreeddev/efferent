@@ -1,5 +1,5 @@
 import { AiError } from "effect/ai"
-import { Duration, Effect, Ref, Schedule, Stream } from "effect"
+import { Clock, Duration, Effect, Ref, Schedule, Stream } from "effect"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 
 /**
@@ -37,23 +37,25 @@ export const MAX_HONORED_RETRY_AFTER_MS = 60_000
 
 export type ErrorClass = "transient" | "permanent"
 
-/** `Retry-After` millis — the integer-seconds form or the HTTP-date form. */
+/** `Retry-After` millis — the integer-seconds form, or the HTTP-date form measured from `now`. */
 const retryAfterMillis = (
   headers: Record<string, string> | undefined,
+  now: number,
 ): number | undefined => {
   const raw = headers?.["retry-after"]
   if (raw === undefined) return undefined
   const seconds = Number(raw)
   if (Number.isFinite(seconds)) return seconds * 1000
   const at = Date.parse(raw)
-  return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now())
+  return Number.isNaN(at) ? undefined : Math.max(0, at - now)
 }
 
 /** A 429 whose wait exceeds the honored cap is a daily quota, not an outage. */
 const rateLimited = (waitMs: number | undefined): ErrorClass =>
   waitMs !== undefined && waitMs > MAX_HONORED_RETRY_AFTER_MS ? "permanent" : "transient"
 
-export const classifyLlmError = (error: unknown): ErrorClass => {
+/** Whether `error` is worth a retry or a fallback; `now` (epoch millis) measures an HTTP-date `Retry-After`. */
+export const classifyLlmError = (error: unknown, now: number): ErrorClass => {
   if (!AiError.isAiError(error)) {
     // A raw HTTP client's transport failure (the codex socket path).
     const e = error as { readonly _tag?: string; readonly reason?: { readonly _tag?: string } } | null
@@ -68,7 +70,7 @@ export const classifyLlmError = (error: unknown): ErrorClass => {
     if (response.status === 429) {
       // Beyond the honored cap this is a daily quota — retrying in seconds
       // hits the same wall; fail fast and let the caller change model.
-      return rateLimited(retryAfterMillis(response.headers as Record<string, string>))
+      return rateLimited(retryAfterMillis(response.headers as Record<string, string>, now))
     }
     return response.status >= 500 ? "transient" : "permanent"
   }
@@ -81,6 +83,10 @@ export const classifyLlmError = (error: unknown): ErrorClass => {
     ? "transient"
     : "permanent"
 }
+
+/** {@link classifyLlmError} at the `Clock`'s time: `true` for a transient failure. */
+export const isTransientLlmError = (error: unknown): Effect.Effect<boolean> =>
+  Effect.map(Clock.currentTimeMillis, (now) => classifyLlmError(error, now) === "transient")
 
 /** 3 fast retries: exponential 1s → 2s → 4s with ±25% jitter. */
 const fastRetries = Schedule.max([
@@ -139,12 +145,14 @@ export const retryableLlm =
       }),
       Effect.retry({
         schedule: fastRetries,
-        while: (error) => classifyLlmError(error) === "transient",
+        while: isTransientLlmError,
       }),
       Effect.tapError((error) =>
-        classifyLlmError(error) === "transient"
-          ? Effect.logWarning(`${label}: transient failure exhausted retries: ${String(error)}`)
-          : Effect.void,
+        Effect.flatMap(isTransientLlmError(error), (transient) =>
+          transient
+            ? Effect.logWarning(`${label}: transient failure exhausted retries: ${String(error)}`)
+            : Effect.void,
+        ),
       ),
     )
 
@@ -207,15 +215,17 @@ export const retryableLlmStream =
             fastRetries.pipe(
               Schedule.while(({ input }: { readonly input: E | AiError.AiError }) =>
                 Ref.get(contentSeen).pipe(
-                  Effect.map((seen) => !seen && classifyLlmError(input) === "transient"),
+                  Effect.flatMap((seen) => seen ? Effect.succeed(false) : isTransientLlmError(input)),
                 ),
               ),
             ),
           ),
           Stream.tapError((error) =>
-            classifyLlmError(error) === "transient"
-              ? Effect.logWarning(`${label}: transient stream failure was final: ${String(error)}`)
-              : Effect.void,
+            Effect.flatMap(isTransientLlmError(error), (transient) =>
+              transient
+                ? Effect.logWarning(`${label}: transient stream failure was final: ${String(error)}`)
+                : Effect.void,
+            ),
           ),
         )
       }),

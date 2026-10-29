@@ -1,4 +1,4 @@
-import { Effect, Layer, Option, Ref, Schema } from "effect"
+import { Array as Arr, Effect, Layer, Option, Ref, Schema } from "effect"
 import type { DatasetCase } from "../assessment.usecase.js"
 import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
 import { CalibrationObservation, CalibrationReference } from "../domain/grader-calibration.entity.js"
@@ -16,8 +16,7 @@ import type { Calibration } from "../domain/calibration.entity.js"
 import type { Candidate } from "../domain/candidate.entity.js"
 import type { GraderRegistration, ProjectionRegistration } from "../contracts/evaluation-app.contract.js"
 
-/** Runs the registered grader as the subject; labels enter only the subsequent agreement grade. */
-export const defineGraderCalibration = <I>(options: {
+interface GraderCalibrationOptions<I> {
   readonly id: string
   readonly version: string
   readonly description: string
@@ -25,7 +24,22 @@ export const defineGraderCalibration = <I>(options: {
   readonly cases: ReadonlyArray<DatasetCase<NoInfer<I>, CalibrationReference>>
   readonly grader: GraderRegistration
   readonly candidate?: Candidate
-}) => {
+}
+
+/**
+ * Runs the registered grader as the subject; labels enter only the
+ * subsequent agreement grade. Fails with `invalid` when a case's input does
+ * not encode as JSON with `input`.
+ */
+export const defineGraderCalibration = <I>(options: GraderCalibrationOptions<I>) => {
+  const encode = Schema.encodeEffect(Schema.toCodecJson(options.input))
+  return Effect.forEach(options.cases, (item) => encode(item.input).pipe(
+    Effect.mapError((error) => new EvaluationError({ code: "invalid", message: `calibration ${options.id}, case ${item.id}: the input does not encode: ${error.message}` })),
+  )).pipe(Effect.map((inputs) => calibrationOf(options, inputs)))
+}
+
+/** The calibration over cases whose inputs are already encoded (`inputs`, in case order). */
+const calibrationOf = <I>(options: GraderCalibrationOptions<I>, inputs: ReadonlyArray<Schema.Json>) => {
   const id = options.id
   const subjectId = `${id}.subject`
   const agreementId = `${id}.agreement`
@@ -98,8 +112,8 @@ export const defineGraderCalibration = <I>(options: {
     id: EvalId.make(id), version: options.version, grader: options.grader.definition,
     suite: {
       id: EvalId.make(id), version: options.version, purpose: "regression", description: options.description,
-      tasks: options.cases.map((item) => ({ ...item, id: EvalId.make(item.id), version: options.version,
-        input: Schema.encodeSync(Schema.toCodecJson(options.input))(item.input),
+      tasks: Arr.zip(options.cases, inputs).map(([item, input]) => ({ ...item, id: EvalId.make(item.id), version: options.version,
+        input,
         dataset: id, datasetVersion: options.version, runnable: subjectId,
         graders: [{ grader: `${agreementId}@${options.version}`, projection: agreementId, scope: "trial" }] })),
       candidates: [candidate],

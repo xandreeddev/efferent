@@ -69,6 +69,13 @@ interface Guarded<A> {
 
 const storage = (code: string) => (error: { readonly message: string }) => new SessionLogError({ code, message: error.message })
 
+/** The `inbox.dropped` drafts of turn `turn` for the items its close dropped. */
+const droppedDrafts = (ids: ReadonlyArray<string>, turn: number): Effect.Effect<ReadonlyArray<SessionDraft>, SessionLogError> =>
+  Effect.forEach(ids, (id) => droppedData(id).pipe(
+    Effect.map((data): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data })),
+    Effect.mapError(storage("session.encode")),
+  ))
+
 const standalone = (drafts: ReadonlyArray<TurnDraft>): ReadonlyArray<SessionDraft> =>
   drafts.map((draft) => ({ kind: draft.kind, turn: Option.none(), data: draft.data }))
 
@@ -144,8 +151,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const head = yield* owned(address)
       const planned = yield* plan(head, yield* stateFrom(head))
       if (planned.drafts.length === 0 && Option.isNone(planned.next)) return { result: planned.result, head, committed: Option.none() }
+      const state = yield* Option.match(planned.next, {
+        onNone: () => Effect.succeedNone,
+        onSome: (next) => stateJson(next).pipe(Effect.map(Option.some), Effect.mapError(storage("session.encode"))),
+      })
       const outcome = yield* Effect.uninterruptible(Effect.result(log.commit(address.id, {
-        expect: head.revision, notAfter: Option.none(), events: planned.drafts, state: Option.map(planned.next, stateJson),
+        expect: head.revision, notAfter: Option.none(), events: planned.drafts, state,
       })).pipe(Effect.tap((result) => result._tag === "Success" ? stored(planned.result) : Effect.void)))
       if (outcome._tag === "Success") {
         yield* Option.match(planned.next, { onNone: () => Effect.void, onSome: (next) => forgetClosed(address.id, next) })
@@ -175,7 +186,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const after = closedState(state, "interrupted", config.inbox.attempts, true)
     const closing = yield* turnEndedDraft(turn, { reason: "interrupted", failure: Option.some({ code: "turn.lease", message: "the turn's holder stopped writing" }) })
       .pipe(Effect.mapError(storage("session.encode")))
-    const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: droppedData(id) }))
+    const dropped = yield* droppedDrafts(after.dropped, turn)
     return { drafts: [closing, ...dropped], state: after.state, closed: Option.some(turn) }
   })
 
@@ -253,7 +264,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         ? { code: "turn.interrupted", message: "the turn's begin was interrupted before its writer was handed over" }
         : { code: "turn.unended", message: "the turn's scope closed before it ended" }),
     }).pipe(Effect.mapError(storage("session.encode")))
-    const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: droppedData(id) }))
+    const dropped = yield* droppedDrafts(after.dropped, turn)
     return { drafts: [closing, ...dropped], next: Option.some(after.state), result: undefined }
   })).pipe(
     Effect.timeout("10 seconds"),
@@ -539,8 +550,9 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       if (earlier.some((event) => event.data.id === item.id)) return { ...reapedOnly, result: { delivered: false, pending: pendingOf(state).length } }
       if (pendingOf(state).length >= config.inbox.maxPending) return yield* Effect.fail(new InboxFull({ session: address.id, pending: pendingOf(state).length }))
       const next: SessionsState = { ...state, inbox: [...state.inbox, { id: item.id, attempts: 0, claimedBy: Option.none() }] }
+      const queued = yield* queuedData(item).pipe(Effect.mapError(storage("session.encode")))
       return {
-        drafts: [...reap.drafts, { kind: "inbox.queued", turn: Option.none(), data: queuedData(item) }],
+        drafts: [...reap.drafts, { kind: "inbox.queued", turn: Option.none(), data: queued }],
         next: Option.some(next),
         result: { delivered: true, pending: pendingOf(next).length },
       }

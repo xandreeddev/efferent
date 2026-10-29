@@ -102,13 +102,25 @@ would judge attempt N against attempt N-1's source).
    AND inferred return types, which is why the engine is compiler-API, not
    pattern-matching — `effect/match-over-tag-switch` (switch on `._tag` +
    else-if ladders; single guards are fine), `effect/no-as-any` (incl.
-   `as unknown as T` laundering), `effect/no-as-never`,
+   `as unknown as T` laundering), `effect/no-as-never` (`as never` outside
+   the rule's `boundary` files, `as never as T` everywhere),
    `effect/no-loop-statements`, `effect/branded-id-fields`,
-   `effect/no-parallel-interface`), the paradigm-neutral `quality` pack
-   (`quality/no-skipped-tests` — a skipped test is the coder gaming the
-   test gate; `quality/no-empty-catch`) and the `effect-architecture` pack
-   (the `architecture/*` file-role rules for entity, use-case, port and
-   adapter files).
+   `effect/no-parallel-interface`, and the rules for what crosses a
+   boundary: `effect/no-json-parse`, `effect/no-sync-codec`,
+   `effect/no-cause-pretty-data` (`Cause.pretty` outside an `Effect.log*`
+   argument), `effect/no-effect-promise`, `effect/no-promise-all`,
+   `effect/callback-buffer-size`, `effect/no-process-env`,
+   `effect/no-ambient-time-random` (`Date.now`, argless `new Date()`,
+   `Math.random`, `randomUUID`), `effect/no-locale-compare`,
+   `effect/require-sort-comparator` and `effect/no-instanceof-tagged-error`
+   — type-aware, plain `instanceof Error` passes), the paradigm-neutral
+   `quality` pack (`quality/no-skipped-tests` — a skipped test is the coder
+   gaming the test gate; `quality/no-empty-catch`) and the
+   `effect-architecture` pack (the `architecture/*` file-role rules for
+   entity, use-case, port and adapter files). A rule's `boundary` globs
+   name the files where the matches it marks as tolerated (an `as never`
+   where type erasure is the design) are dropped; its other matches still
+   report there.
 2. **`boundaries`** — each layer declares `canImport` (internal, by name)
    and `externals` (by prefix); everything else is a finding. Foundry's own
    6-layer config is the dogfood; pointing globs at package dirs makes the
@@ -123,6 +135,17 @@ would judge attempt N against attempt N-1's source).
    `quality/package-registered` findings naming the package and the list.
    A package nobody registered is otherwise skipped in silence: ungated,
    unbuilt, unpublished.
+5. **`private-text`** (`privateTextGate.ts`, armed by the config's
+   `privateText`) — the files git tracks, or would track (`git ls-files
+   --cached --others --exclude-standard`, filtered by `include`/`exclude`),
+   hold no absolute home path (`/home/<name>/`, `/Users/<name>/`,
+   `C:\Users\<name>\`) unless `<name>` is one of the `placeholders`, and
+   no term of the optional local `denylist` → `quality/no-private-text`
+   findings that never repeat what matched. The denylist is a text file
+   the config names and git ignores: one term per line, blank and `#`
+   lines skipped, matched case-insensitively as a whole word. Without it
+   only paths are checked; a denylist git would not ignore is itself a
+   finding.
 
 (The `eval-shape` gate was retired 2026-09-05: its rules targeted the deleted
 evals-v2 API and nothing armed it; the v3 scenario runner enforces non-empty

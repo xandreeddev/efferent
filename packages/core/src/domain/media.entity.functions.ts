@@ -1,4 +1,5 @@
-import { Effect, Option, Schema } from "effect"
+import { Array as Arr, Effect, Option, Order, Schema } from "effect"
+import { Base64 } from "effect/encoding"
 import { AttachmentRejected, ImageMediaType, MEDIA_LIMITS, MediaFingerprint } from "./media.entity.js"
 import type { AttachmentRejectedReason, Media, MediaSlot } from "./media.entity.js"
 
@@ -99,7 +100,6 @@ const described = (description: MediaDescription) => ({
   ...(description.alt === undefined ? {} : { alt: description.alt }),
 })
 
-const encodeBase64 = Schema.encodeSync(Schema.Uint8ArrayFromBase64)
 const decodeBase64 = Schema.decodeUnknownOption(Schema.Uint8ArrayFromBase64)
 
 /**
@@ -117,7 +117,7 @@ export const mediaFromBytes = (bytes: Uint8Array, description: MediaDescription 
       onSome: (size) => size.width > MEDIA_LIMITS.maxPixels || size.height > MEDIA_LIMITS.maxPixels
         ? Effect.fail(rejected("TooManyPixels", `the image is ${size.width}x${size.height} pixels, more than ${MEDIA_LIMITS.maxPixels} a side`))
         : Effect.succeed<Media>({
-          type: "media", mediaType, data: encodeBase64(bytes), fingerprint: mediaFingerprintOf(bytes), bytes: bytes.length, ...described(description),
+          type: "media", mediaType, data: Base64.encode(bytes), fingerprint: mediaFingerprintOf(bytes), bytes: bytes.length, ...described(description),
         }),
     }),
   })
@@ -166,7 +166,7 @@ export const isMediaValue = (value: unknown): value is Media =>
 const slotsAt = (value: unknown, path: ReadonlyArray<string | number>): ReadonlyArray<MediaSlot> =>
   isMediaValue(value) ? [{ path, fingerprint: value.fingerprint, mediaType: value.mediaType, bytes: value.bytes }]
     : Array.isArray(value) ? value.flatMap((item, index) => slotsAt(item, [...path, index]))
-      : isRecord(value) ? Object.keys(value).sort().flatMap((key) => slotsAt(value[key], [...path, key]))
+      : isRecord(value) ? Arr.sort(Object.keys(value), Order.String).flatMap((key) => slotsAt(value[key], [...path, key]))
         : []
 
 /** Every image inside a JSON value, in key-sorted order, with its path. */

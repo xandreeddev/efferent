@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto"
 import { Clock, Effect, Option } from "effect"
 import { AuthError } from "@xandreed/core"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
@@ -124,13 +125,10 @@ const base64url = (bytes: Uint8Array): string =>
     .replace(/\//g, "_")
     .replace(/=/g, "")
 
-/** Generate a PKCE verifier + S256 challenge (Web Crypto; Bun-global). */
-export const generatePkce: Effect.Effect<Pkce> = Effect.promise(async () => {
-  const verifierBytes = new Uint8Array(32)
-  crypto.getRandomValues(verifierBytes)
-  const verifier = base64url(verifierBytes)
-  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))
-  return { verifier, challenge: base64url(new Uint8Array(digest)) }
+/** Generate a PKCE verifier (32 bytes of the platform's cryptographic generator) + its S256 challenge. */
+export const generatePkce: Effect.Effect<Pkce> = Effect.sync(() => {
+  const verifier = base64url(crypto.getRandomValues(new Uint8Array(32)))
+  return { verifier, challenge: base64url(new Uint8Array(createHash("sha256").update(verifier).digest())) }
 })
 
 export interface OAuthBegin {

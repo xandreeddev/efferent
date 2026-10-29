@@ -14,43 +14,52 @@ const httpError = (status: number, headers: Record<string, string> = {}) =>
     reason: AiError.reasonFromHttpStatus({ status, http: { request, response: { status, headers } } }),
   })
 const reasonError = (reason: AiError.AiErrorReason) => AiError.make({ module: "Test", method: "generateText", reason })
+/** Classified now, on the wall clock. */
+const classify = (error: unknown) => classifyLlmError(error, Date.now())
 
 describe("classifyLlmError", () => {
   test("429 and 5xx are transient; other 4xx permanent", () => {
     const http = (status: number) => httpError(status)
-    expect(classifyLlmError(http(429))).toBe("transient")
-    expect(classifyLlmError(http(500))).toBe("transient")
-    expect(classifyLlmError(http(503))).toBe("transient")
-    expect(classifyLlmError(http(400))).toBe("permanent")
-    expect(classifyLlmError(http(401))).toBe("permanent")
-    expect(classifyLlmError(http(404))).toBe("permanent")
+    expect(classify(http(429))).toBe("transient")
+    expect(classify(http(500))).toBe("transient")
+    expect(classify(http(503))).toBe("transient")
+    expect(classify(http(400))).toBe("permanent")
+    expect(classify(http(401))).toBe("permanent")
+    expect(classify(http(404))).toBe("permanent")
   })
 
   test("transport/timeout (UnknownError) is transient; decode failures permanent", () => {
-    expect(classifyLlmError(reasonError(new AiError.UnknownError({ description: "socket hang up" })))).toBe("transient")
+    expect(classify(reasonError(new AiError.UnknownError({ description: "socket hang up" })))).toBe("transient")
     // Effect's own providers report transport failures as NetworkError.
-    expect(classifyLlmError(reasonError(new AiError.NetworkError({ reason: "TransportError", request, description: "reset" })))).toBe("transient")
-    expect(classifyLlmError(reasonError(new AiError.InvalidOutputError({ description: "not JSON" })))).toBe("permanent")
-    expect(classifyLlmError("boom")).toBe("permanent")
+    expect(classify(reasonError(new AiError.NetworkError({ reason: "TransportError", request, description: "reset" })))).toBe("transient")
+    expect(classify(reasonError(new AiError.InvalidOutputError({ description: "not JSON" })))).toBe("permanent")
+    expect(classify("boom")).toBe("permanent")
   })
 
   test("429 with a Retry-After beyond the honored cap is a DAILY QUOTA — permanent", () => {
     const quota429 = (retryAfter: string) => httpError(429, { "retry-after": retryAfter })
     // Seconds form: 1h is a quota, 5s is an outage blip.
-    expect(classifyLlmError(quota429("3600"))).toBe("permanent")
-    expect(classifyLlmError(quota429("5"))).toBe("transient")
+    expect(classify(quota429("3600"))).toBe("permanent")
+    expect(classify(quota429("5"))).toBe("transient")
     // HTTP-date form: far future = quota.
-    expect(classifyLlmError(quota429(new Date(Date.now() + 7_200_000).toUTCString()))).toBe(
+    expect(classify(quota429(new Date(Date.now() + 7_200_000).toUTCString()))).toBe(
       "permanent",
     )
     // No header / garbage header: plain transient 429.
-    expect(classifyLlmError(httpError(429))).toBe("transient")
-    expect(classifyLlmError(quota429("soon-ish"))).toBe("transient")
+    expect(classify(httpError(429))).toBe("transient")
+    expect(classify(quota429("soon-ish"))).toBe("transient")
+  })
+
+  test("an HTTP-date Retry-After is measured from the time it is classified at", () => {
+    const at = Date.UTC(2026, 0, 1)
+    const quota = httpError(429, { "retry-after": new Date(at + 7_200_000).toUTCString() })
+    expect(classifyLlmError(quota, at)).toBe("permanent")
+    expect(classifyLlmError(quota, at + 7_190_000)).toBe("transient")
   })
 
   test("an exhausted quota is permanent whatever status carried it", () => {
-    expect(classifyLlmError(reasonError(new AiError.QuotaExhaustedError({})))).toBe("permanent")
-    expect(classifyLlmError(reasonError(new AiError.QuotaExhaustedError({ http: { request, response: { status: 429, headers: {} } } })))).toBe("permanent")
+    expect(classify(reasonError(new AiError.QuotaExhaustedError({})))).toBe("permanent")
+    expect(classify(reasonError(new AiError.QuotaExhaustedError({ http: { request, response: { status: 429, headers: {} } } })))).toBe("permanent")
   })
 })
 
@@ -78,7 +87,7 @@ describe("rejectEmptyResponse", () => {
     )
     expect(empty._tag).toBe("Failure")
     const error = Exit.isFailure(empty) ? Cause.findErrorOption(empty.cause) : Option.none()
-    expect(classifyLlmError(Option.getOrUndefined(error))).toBe("transient")
+    expect(classify(Option.getOrUndefined(error))).toBe("transient")
 
     const full = await Effect.runPromise(
       rejectEmptyResponse("test")(

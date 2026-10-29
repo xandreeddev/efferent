@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite"
 import { mkdir } from "node:fs/promises"
 import { chmodSync } from "node:fs"
 import { dirname } from "node:path"
-import { Clock, Duration, Effect, Layer, Match, Option, Predicate, Schedule, Schema } from "effect"
+import { Array as Arr, Clock, Duration, Effect, Layer, Match, Option, Predicate, Schedule, Schema } from "effect"
 import type { Scope } from "effect"
 import {
   ConversationId,
@@ -14,6 +14,7 @@ import {
   SessionLog,
   SessionLogError,
   SessionMissing,
+  storedJson,
 } from "@xandreed/core"
 import type { SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "@xandreed/core"
 
@@ -52,8 +53,9 @@ const decodeRow = <S extends Schema.Decoder<unknown>>(schema: S, table: string) 
 }
 const decodeHead = decodeRow(HeadRow, "session_heads")
 const decodeEvent = decodeRow(EventRow, "session_log_events")
-/** The value as it is stored and read back (JSON), so a commit returns the events a later read does. */
-const asStored = (data: JsonObject): JsonObject => JSON.parse(JSON.stringify(data))
+/** The value as it is stored and read back (JSON), so a commit returns the events a later read does; a value JSON cannot hold fails with `store.encode`. */
+const asStored = (data: JsonObject): Effect.Effect<JsonObject, SessionLogError> =>
+  storedJson(data).pipe(Effect.mapError((error) => new SessionLogError({ code: "store.encode", message: `the data is not JSON: ${error.message}` })))
 
 /**
  * How long a call waits in all for a lock another connection holds before
@@ -201,15 +203,15 @@ export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Se
         .all(id, query.after, ...query.kinds, limit))
       return yield* Effect.forEach(rows, (row) => decodeEvent(row).pipe(Effect.map(eventOf(id))))
     }),
-    commit: (id, commit) => Clock.clockWith((clock) => operation(() => db.transaction((): Outcome => {
+    commit: (id, commit) => Effect.forEach(commit.events, (draft) => asStored(draft.data)).pipe(Effect.flatMap((data) => Clock.clockWith((clock) => operation(() => db.transaction((): Outcome => {
       // The time is read under the write lock: a commit that waited for it is judged, and stamped, when it writes.
       const at = clock.currentTimeMillisUnsafe()
       const head = db.query<{ readonly seq: number; readonly revision: number }, [string]>("SELECT seq, revision FROM session_heads WHERE id = ?").get(id)
       if (head === null) return { _tag: "Missing" }
       if (head.revision !== commit.expect) return { _tag: "Conflict", actual: head.revision }
       if (Option.isSome(commit.notAfter) && at > commit.notAfter.value) return { _tag: "Expired", at }
-      const events = commit.events.map((draft, index): SessionLogEvent => ({
-        session: id, seq: head.seq + index + 1, turn: draft.turn, kind: draft.kind, at, data: asStored(draft.data),
+      const events = Arr.zip(commit.events, data).map(([draft, stored], index): SessionLogEvent => ({
+        session: id, seq: head.seq + index + 1, turn: draft.turn, kind: draft.kind, at, data: stored,
       }))
       const insert = db.query("INSERT INTO session_log_events (session_id, seq, turn, kind, at, data) VALUES (?, ?, ?, ?, ?, ?)")
       events.forEach((event) => insert.run(id, event.seq, Option.getOrNull(event.turn), event.kind, at, JSON.stringify(event.data)))
@@ -221,7 +223,7 @@ export const makeSessionLogSqlite = (path: string): Effect.Effect<SessionLog["Se
       Missing: () => Effect.fail(new SessionMissing({ session: id })),
       Conflict: (outcome) => Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: outcome.actual })),
       Expired: (outcome) => Effect.fail(new LeaseExpired({ session: id, notAfter: Option.getOrElse(commit.notAfter, () => outcome.at), now: outcome.at })),
-    }))),
+    }))))),
     remove: (id) => operation(() => db.transaction(() => { removeTree(id) }).immediate()),
   })
   return log

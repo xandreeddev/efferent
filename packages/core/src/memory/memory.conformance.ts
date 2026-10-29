@@ -1,4 +1,4 @@
-import { Context, Effect, Option, Ref, Schema } from "effect"
+import { Array as Arr, Context, Effect, Option, Ref, Schema } from "effect"
 import type { Scope } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
@@ -11,6 +11,7 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import type { ConversationMemory, LogHandle, MemorySession, ToolViews } from "../ports/memory.port.js"
 import { draftOfEntry, entriesOfEvents, turnStartedDraft } from "../session/session-event.entity.functions.js"
 import type { SessionDraft, SessionLogEvent } from "../session/session-log.entity.js"
+import { storedJson } from "../session/session-log.entity.functions.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { canonicalJson } from "./memory-log.entity.functions.js"
 import { LogEntry } from "./memory-log.entity.js"
@@ -32,9 +33,12 @@ export const inMemoryLog = Effect.gen(function* () {
         runId: entry.runId, key: entry.runId, origin: "user", userMessage: entry.body.userMessage, command: {}, claimed: [], entry: entry.id, at: entry.at,
       }).pipe(Effect.map(Option.some))
       : draftOfEntry(entry)).pipe(Effect.mapError(codec))).pipe(
-      Effect.flatMap((drafts) => Ref.update(stored, (all) => [...all, ...drafts.flatMap(Option.toArray).map((draft, index): SessionLogEvent => ({
-        session: conversation, seq: all.length + index + 1, turn: draft.turn, kind: draft.kind, at: 0, data: JSON.parse(JSON.stringify(draft.data)),
-      }))])),
+      Effect.map((drafts) => drafts.flatMap(Option.toArray)),
+      Effect.flatMap((drafts) => Effect.forEach(drafts, (draft) => storedJson(draft.data).pipe(Effect.mapError(codec))).pipe(
+        Effect.flatMap((data) => Ref.update(stored, (all) => [...all, ...Arr.zip(drafts, data).map(([draft, json], index): SessionLogEvent => ({
+          session: conversation, seq: all.length + index + 1, turn: draft.turn, kind: draft.kind, at: 0, data: json,
+        }))])),
+      )),
     ),
   }
   return { stored, log }
@@ -51,7 +55,10 @@ const toolTail: ReadonlyArray<AgentMessage> = [
   { role: "assistant", content: [{ type: "tool-call", toolCallId: callId, toolName: "lookup", input: { query: "alpha" } }] },
   { role: "tool", content: [{ type: "tool-result", toolCallId: callId, toolName: "lookup", output: { id: "record-alpha" }, isError: false }] },
 ]
-const encodeEntries = (entries: ReadonlyArray<LogEntry>) => canonicalJson(Schema.encodeSync(Schema.Array(LogEntry))(entries))
+const encodeLog = Schema.encodeEffect(Schema.Array(LogEntry))
+/** The entries as canonical JSON, the form two logs are compared in; entries that do not encode fail `check`. */
+const encodeEntries = (check: string, entries: ReadonlyArray<LogEntry>): Effect.Effect<string, ConformanceFailure> =>
+  encodeLog(entries).pipe(Effect.map(canonicalJson), Effect.mapError((error) => new ConformanceFailure({ check, message: `the entries do not encode: ${error.message}` })))
 
 type Memory = Context.Service.Shape<typeof ConversationMemory>
 
@@ -106,7 +113,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       const session = yield* open(log, "run-1")
       yield* recordTurn(session, "find alpha", "found record-alpha")
       const reopened = yield* open(log, "run-1")
-      yield* expect("reopen", encodeEntries(yield* reopened.entries) === encodeEntries(yield* session.entries), "the reopened log differs")
+      yield* expect("reopen", (yield* encodeEntries("reopen", yield* reopened.entries)) === (yield* encodeEntries("reopen", yield* session.entries)), "the reopened log differs")
       const [left, right] = [yield* session.build({ stepContext: "tail" }), yield* reopened.build({ stepContext: "tail" })]
       yield* expect("reopen", left.fingerprint === right.fingerprint, "the reopened session builds a different context")
     })),
@@ -140,7 +147,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       yield* session.maintain({ phase: "turn-start", lastUsage: Option.none(), budgetTokens: 100_000, views })
       yield* session.maintain({ phase: "step", lastUsage: Option.none(), budgetTokens: 100_000, views })
       const after = yield* session.entries
-      yield* expect("append-only", encodeEntries(after.slice(0, before.length)) === encodeEntries(before), "maintenance rewrote earlier entries")
+      yield* expect("append-only", (yield* encodeEntries("append-only", after.slice(0, before.length))) === (yield* encodeEntries("append-only", before)), "maintenance rewrote earlier entries")
     })),
     check("a message's images survive a reopen; the current turn's are built as image parts, an earlier turn's as image parts or label lines", "attachments", (open, log) => Effect.gen(function* () {
       const image: Media = yield* mediaFromBase64(pixelPng, { name: "pixel.png" }).pipe(
@@ -152,7 +159,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       const other = yield* open(log, "run-2")
       yield* other.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "", attachments: [image] }) }], 0)
       const reopened = yield* open(log, "run-2")
-      yield* expect("attachments", encodeEntries(yield* reopened.entries) === encodeEntries(yield* other.entries), "the reopened log lost or changed an image")
+      yield* expect("attachments", (yield* encodeEntries("attachments", yield* reopened.entries)) === (yield* encodeEntries("attachments", yield* other.entries)), "the reopened log lost or changed an image")
       const users = (yield* reopened.build({ stepContext: "tail" })).messages.filter((message) => message.role === "user")
       const shown = users.map((message) => typeof message.content === "string"
         ? message.content.includes(mediaLabel(image)) ? "label" : "missing"
@@ -180,8 +187,9 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       ], imaging, 0)
       const reopened = yield* open(log, "run-1")
       const entries = yield* reopened.entries
-      yield* expect("tool-media", encodeEntries(entries) === encodeEntries(yield* session.entries), "the reopened log lost or changed the result's image")
-      yield* expect("tool-media", encodeEntries(entries).split(image.data).length - 1 === 1, "the result's image is not stored exactly once")
+      const encoded = yield* encodeEntries("tool-media", entries)
+      yield* expect("tool-media", encoded === (yield* encodeEntries("tool-media", yield* session.entries)), "the reopened log lost or changed the result's image")
+      yield* expect("tool-media", encoded.split(image.data).length - 1 === 1, "the result's image is not stored exactly once")
       const parts = (yield* reopened.build({ stepContext: "tail" })).messages.flatMap((message) => message.role === "tool" ? message.content : [])
       yield* expect("tool-media", parts.some((part) => (part.media ?? []).some((media) => media.fingerprint === image.fingerprint && media.data === image.data)),
         "the current turn's tool result was built without its image")

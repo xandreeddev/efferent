@@ -15,6 +15,8 @@ export interface LangfuseExportOptions {
   readonly secretKey: string
   readonly project?: string
 }
+/** Ingestion batches in flight at once. */
+const EXPORT_CONCURRENCY = 4
 const remoteId = (id: string) =>
   createHash("sha256").update(id).digest("hex").slice(0, 32)
 const exportService = (options: LangfuseExportOptions) => ({
@@ -31,89 +33,81 @@ const exportService = (options: LangfuseExportOptions) => ({
       const mappings = Object.fromEntries(
         run.trials.map((trial) => [trial.id, remoteId(trial.id)])
       )
-      yield* Effect.tryPromise({
-        try: async () => {
-          const client = new LangfuseClient({
-            baseUrl: options.baseUrl,
-            publicKey: options.publicKey,
-            secretKey: options.secretKey
-          })
-          const traces = encoded.trials.map((trial) => ({
-            id: remoteId(`${trial.id}/trace`),
-            timestamp: new Date(trial.endedAt).toISOString(),
-            type: "trace-create" as const,
-            body: {
-              id: mappings[trial.id]!,
-              name: `${trial.suiteId}/${trial.task.id}`,
-              sessionId: run.id,
-              input: trial.task.input,
-              output: { output: trial.output, outcome: trial.outcome },
-              metadata: { evaluation: trial, fingerprints: run.fingerprints },
-              tags: ["evaluation", trial.status]
-            }
-          }))
-          const scores = run.trials.flatMap((trial) =>
-            trial.grades
-              .filter((grade) => grade.status === "scored")
-              .flatMap((grade) =>
-                grade.metrics
-                  .filter(
-                    (metric) =>
-                      metric.kind === "boolean" ||
-                      metric.kind === "score" ||
-                      metric.kind === "probability"
-                  )
-                  .map((metric) => ({
-                    id: remoteId(
-                      `${trial.id}/${grade.grader}/${grade.version}/${grade.scope}/${metric.name}`
-                    ),
-                    timestamp: new Date(grade.endedAt).toISOString(),
-                    type: "score-create" as const,
-                    body: {
-                      id: remoteId(
-                        `${trial.id}/${grade.grader}/${grade.version}/${grade.scope}/${metric.name}`
-                      ),
-                      traceId: mappings[trial.id]!,
-                      name: `${grade.grader}@${grade.version}/${grade.scope}/${metric.name}`,
-                      dataType: "NUMERIC" as const,
-                      value:
-                        metric.kind === "boolean"
-                          ? Number(metric.value)
-                          : metric.value,
-                      comment: grade.reason
-                    }
-                  }))
+      const failed = (error: unknown) => new EvaluationError({ code: "provider", message: `Langfuse export: ${String(error)}` })
+      const client = yield* Effect.try({
+        try: () => new LangfuseClient({
+          baseUrl: options.baseUrl,
+          publicKey: options.publicKey,
+          secretKey: options.secretKey
+        }),
+        catch: failed
+      })
+      const traces = encoded.trials.map((trial) => ({
+        id: remoteId(`${trial.id}/trace`),
+        timestamp: new Date(trial.endedAt).toISOString(),
+        type: "trace-create" as const,
+        body: {
+          id: mappings[trial.id]!,
+          name: `${trial.suiteId}/${trial.task.id}`,
+          sessionId: run.id,
+          input: trial.task.input,
+          output: { output: trial.output, outcome: trial.outcome },
+          metadata: { evaluation: trial, fingerprints: run.fingerprints },
+          tags: ["evaluation", trial.status]
+        }
+      }))
+      const scores = run.trials.flatMap((trial) =>
+        trial.grades
+          .filter((grade) => grade.status === "scored")
+          .flatMap((grade) =>
+            grade.metrics
+              .filter(
+                (metric) =>
+                  metric.kind === "boolean" ||
+                  metric.kind === "score" ||
+                  metric.kind === "probability"
               )
+              .map((metric) => ({
+                id: remoteId(
+                  `${trial.id}/${grade.grader}/${grade.version}/${grade.scope}/${metric.name}`
+                ),
+                timestamp: new Date(grade.endedAt).toISOString(),
+                type: "score-create" as const,
+                body: {
+                  id: remoteId(
+                    `${trial.id}/${grade.grader}/${grade.version}/${grade.scope}/${metric.name}`
+                  ),
+                  traceId: mappings[trial.id]!,
+                  name: `${grade.grader}@${grade.version}/${grade.scope}/${metric.name}`,
+                  dataType: "NUMERIC" as const,
+                  value:
+                    metric.kind === "boolean"
+                      ? Number(metric.value)
+                      : metric.value,
+                  comment: grade.reason
+                }
+              }))
           )
-          const batches = Array.from(
-            { length: Math.ceil((traces.length + scores.length) / 50) },
-            (_, index) =>
-              [...traces, ...scores].slice(index * 50, (index + 1) * 50)
-          )
-          const responses = await Promise.all(
-            batches.map((batch) => client.api.ingestion.batch({ batch }))
-          )
-          const errors = responses.flatMap((response) => response.errors)
-          if (errors.length) return { errors }
-          return { errors: [] }
-        },
-        catch: (error) =>
+      )
+      const batches = Array.from(
+        { length: Math.ceil((traces.length + scores.length) / 50) },
+        (_, index) =>
+          [...traces, ...scores].slice(index * 50, (index + 1) * 50)
+      )
+      const responses = yield* Effect.forEach(
+        batches,
+        (batch) => Effect.tryPromise({ try: () => client.api.ingestion.batch({ batch }), catch: failed }),
+        { concurrency: EXPORT_CONCURRENCY }
+      )
+      const errors = responses.flatMap((response) => response.errors)
+      if (errors.length > 0) {
+        return yield* Effect.fail(
           new EvaluationError({
             code: "provider",
-            message: `Langfuse export: ${String(error)}`
+            message: `Langfuse rejected ${errors.length} events`
           })
-      }).pipe(
-        Effect.flatMap((response) =>
-          response.errors.length
-            ? Effect.fail(
-                new EvaluationError({
-                  code: "provider",
-                  message: `Langfuse rejected ${response.errors.length} events`
-                })
-              )
-            : Effect.void
         )
-      )
+      }
       return {
         provider: "langfuse",
         runId: run.id,

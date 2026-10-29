@@ -15,6 +15,11 @@ export class RuleConfig extends Schema.Class<RuleConfig>("RuleConfig")({
   /** Globs relative to the workspace root. */
   include: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => ["**/*.ts"])), Schema.withConstructorDefault(Effect.sync(() => ["**/*.ts"]))),
   exclude: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
+  /** Globs of the files the profile declares a boundary for this rule
+   *  (`effect/no-as-never`'s type-erasure files): a match the rule marks as
+   *  tolerated at a boundary is dropped there; every other match still
+   *  reports. */
+  boundary: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
 }) {}
 
 export class LayerSpec extends Schema.Class<LayerSpec>("LayerSpec")({
@@ -112,6 +117,30 @@ export class RegistrationConfig extends Schema.Class<RegistrationConfig>("Regist
   registries: Schema.NonEmptyArray(RegistrySpec),
 }) {}
 
+/**
+ * Private text: no file git tracks (or would track: untracked files that
+ * are not ignored count) may hold an absolute home path —
+ * `/home/<name>/`, `/Users/<name>/`, `C:\Users\<name>\` — unless `<name>`
+ * is one of the `placeholders`, nor a term from the optional local
+ * `denylist`. Armed as the `private-text` gate (findings
+ * `quality/no-private-text`).
+ *
+ * The denylist is a text file the profile names but never commits: one
+ * term per line, blank lines and lines starting with `#` skipped, matched
+ * case-insensitively as a whole word (not inside a longer word). An absent
+ * file checks the paths only; a denylist git does not ignore is itself a
+ * finding, since committing it would publish what it lists.
+ */
+export class PrivateTextConfig extends Schema.Class<PrivateTextConfig>("PrivateTextConfig")({
+  /** Globs (workspace-relative) of the files to read. */
+  include: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => ["**"])), Schema.withConstructorDefault(Effect.sync(() => ["**"]))),
+  exclude: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
+  /** Home-directory names that stand for nobody (`user`, `runner`), compared case-insensitively. */
+  placeholders: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
+  /** Workspace-relative path of the local denylist. */
+  denylist: Schema.OptionFromOptional(Schema.NonEmptyString),
+}) {}
+
 /** What `foundry check --baseline <f>` may do with the baseline file.
  *  `ratchet`: its fingerprints are grandfathered. `empty`: the file is only
  *  the ratchet's anchor; it grandfathers nothing, and a file that holds any
@@ -129,6 +158,9 @@ export class GateSuiteConfig extends Schema.Class<GateSuiteConfig>("GateSuiteCon
   /** Every package must be listed in each registry; armed as the
    *  `registration` gate. */
   registration: Schema.OptionFromOptional(RegistrationConfig),
+  /** No home path or denylisted term in the files git tracks; armed as
+   *  the `private-text` gate. */
+  privateText: Schema.OptionFromOptional(PrivateTextConfig),
   /** The baseline policy; `ratchet` unless the profile says otherwise. */
   baseline: BaselinePolicy.pipe(Schema.withDecodingDefaultType(Effect.sync(() => "ratchet" as const)), Schema.withConstructorDefault(Effect.sync(() => "ratchet" as const))),
   checks: Schema.Array(CheckConfig).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),

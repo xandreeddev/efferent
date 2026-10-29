@@ -22,6 +22,9 @@ const FULL_CAP = 2_500
 const COMPACT_CAP = 800
 const JUDGE_CAP = 1_500
 
+const JUDGE_FRAMING =
+  "These rules are enforced by earlier gates — do NOT re-litigate style. DO treat EVASION of the contract (weakened or skipped tests, disabled rules, outputs shaped to satisfy a check) as dishonesty."
+
 const clip = (text: string, cap: number): string =>
   text.length <= cap ? text : `${text.slice(0, cap)}\n[…quality bar clipped…]`
 
@@ -79,16 +82,19 @@ export const renderQualityBar = (
     COMPACT_CAP,
   )
 
-  const judge = clip(
-    [
-      "## Standing quality contract (deterministic rules armed in this workspace)",
-      ...rules.map((rule) => `- ${rule.id}: ${rule.description}`),
-      ...(boundaries.length > 0 ? ["", ...boundaries] : []),
-      "",
-      "These rules are enforced by earlier gates — do NOT re-litigate style. DO treat EVASION of the contract (weakened or skipped tests, disabled rules, outputs shaped to satisfy a check) as dishonesty.",
-    ].join("\n"),
-    JUDGE_CAP,
-  )
+  // The framing is what the judge must not miss: only the rule list is clipped to make room for it.
+  const judge = [
+    clip(
+      [
+        "## Standing quality contract (deterministic rules armed in this workspace)",
+        ...rules.map((rule) => `- ${rule.id}: ${rule.description}`),
+        ...(boundaries.length > 0 ? ["", ...boundaries] : []),
+      ].join("\n"),
+      JUDGE_CAP - JUDGE_FRAMING.length - 2,
+    ),
+    "",
+    JUDGE_FRAMING,
+  ].join("\n")
 
   return Option.some({ full, compact, judge })
 }

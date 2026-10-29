@@ -6,6 +6,7 @@ import { parseModelSelection } from "../domain/model-selection.entity.functions.
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { SETTINGS_KEYS } from "../ports/settings-store.port.js"
 import type { EngineSettings, ModelRole, SettingsKey, SettingsStore } from "../ports/settings-store.port.js"
+import { randomUuid } from "../util/random-id.js"
 
 type Store = Context.Service.Shape<typeof SettingsStore>
 type Field = keyof Pick<EngineSettings, "model" | "codeModel" | "fastModel" | SettingsKey>
@@ -23,7 +24,8 @@ const snapshot = (settings: EngineSettings): string => canonicalJson(Object.from
 /** Every field but `except`, as one comparable string. */
 const others = (settings: EngineSettings, except: Field): string =>
   canonicalJson(Object.fromEntries(FIELDS.filter((field) => field !== except).map((field) => [field, Option.getOrNull(valueOf(settings, field))])))
-const selection = (label: string) => `conformance:${label}-${crypto.randomUUID()}`
+/** A selection no real store holds, so the kit can run against a shared store. */
+const selection = (label: string): Effect.Effect<string> => Effect.map(randomUuid, (id) => `conformance:${label}-${id}`)
 
 const SELECTIONS: ReadonlySet<Field> = new Set(["model", "codeModel", "fastModel", "fallbackModel"])
 const COUNTS: ReadonlySet<Field> = new Set(["maxAttempts"])
@@ -121,7 +123,7 @@ const corruptCheck = (store: Store, writable: boolean, corrupt: Effect.Effect<vo
         yield* corrupt
         yield* corrupted("load", store.load)
         yield* writable ? Effect.all([
-          corrupted("setRole", store.setRole("general", Option.some(selection("corrupt")))),
+          selection("corrupt").pipe(Effect.flatMap((value) => corrupted("setRole", store.setRole("general", Option.some(value))))),
           corrupted("set", store.set("maxAttempts", Option.some("3"))),
         ], { discard: true }) : Effect.void
       }))
@@ -167,7 +169,7 @@ const writableChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
     const field = ROLE_FIELDS[role]
     yield* store.setRole(role, Option.none())
     const base = yield* store.load
-    const value = selection(role)
+    const value = yield* selection(role)
     yield* store.setRole(role, Option.some(value))
     const set = yield* store.load
     yield* expect("role", Option.getOrUndefined(valueOf(set, field)) === value, `the ${role} role reads ${Option.getOrElse(valueOf(set, field), () => "nothing")}, not what was set`)
@@ -175,9 +177,9 @@ const writableChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
     yield* store.setRole(role, Option.none())
     yield* expect("role", snapshot(yield* store.load) === snapshot(base), `clearing the ${role} role did not return the value before the set`)
   }).pipe(restoringRole(store, "role", role)), { discard: true })),
-  check("set accepts each key's canonical string form and load reads it back typed", "values", () => Effect.forEach([
+  check("set accepts each key's canonical string form and load reads it back typed", "values", () => selection("fallback").pipe(Effect.flatMap((fallback) => Effect.forEach([
     ...CANONICAL,
-    { key: "fallbackModel" as const, text: selection("fallback"), reads: undefined },
+    { key: "fallbackModel" as const, text: fallback, reads: undefined },
   ], ({ key, text, reads }) => Effect.gen(function* () {
     const before = yield* store.load
     yield* store.set(key, Option.some(text))
@@ -186,7 +188,7 @@ const writableChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
     const read = Option.getOrNull(fieldOf(after, key))
     yield* expect("values", read === expected, `${key} "${text}" reads back as ${JSON.stringify(read)}`)
     yield* expect("values", others(after, key) === others(before, key), `setting ${key} changed another value`)
-  }).pipe(restoringKey(store, "values", key)), { discard: true })),
+  }).pipe(restoringKey(store, "values", key)), { discard: true })))),
   check("None clears a key back to the value before the set", "clear", () => Effect.forEach(CLEARED, ({ key, texts }) => Effect.gen(function* () {
     yield* store.set(key, Option.none())
     const base = yield* store.load
@@ -206,7 +208,7 @@ const writableChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
 const readOnlyChecks = (store: Store): ReadonlyArray<ConformanceCheck> => [
   check("a read-only store refuses every write with a SettingsError and changes nothing", "read-only", () => Effect.gen(function* () {
     yield* Effect.forEach(ROLES, (role) => Effect.all([
-      refused(store, "read-only", `setRole ${role}`, store.setRole(role, Option.some(selection(role)))),
+      selection(role).pipe(Effect.flatMap((value) => refused(store, "read-only", `setRole ${role}`, store.setRole(role, Option.some(value))))),
       refused(store, "read-only", `clearing the ${role} role`, store.setRole(role, Option.none())),
     ]), { discard: true })
     yield* Effect.forEach(CANONICAL, ({ key, text }) => Effect.all([

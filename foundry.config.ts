@@ -70,7 +70,46 @@ const ERASURE_BOUNDARY = [
   "packages/core/src/mcp/bridge.ts",
   "packages/plugin-tool-discovery/src/registry.adapter.ts",
 ]
-const TEST_SCAFFOLDING = ["**/*.test.ts", "**/*.test.tsx", "**/testing.ts"]
+/**
+ * Test code as the build leaves it out (scripts/build-check.ts): test and
+ * bench files, `testing` modules and `testing/` folders. It is never built
+ * or published, so the rules that guard what crosses a boundary (casts, the
+ * environment, time, randomness, decoding) do not apply to it.
+ */
+const TEST_SCAFFOLDING = [
+  "**/*.test.ts",
+  "**/*.test.tsx",
+  "**/*.bench.ts",
+  "**/testing.ts",
+  "**/*.testing.ts",
+  "**/testing.port.ts",
+  "**/testing/**",
+]
+
+/**
+ * The process edges that read `process.env` themselves: an entry point's
+ * `main.ts`, and the local bash adapter, which hands each command a
+ * filtered copy of the host's whole environment (a map `Config` cannot
+ * enumerate). Everything else reads a variable through `Config`, so a
+ * ConfigProvider can supply it.
+ */
+const ENVIRONMENT_EDGES = ["**/main.ts", "packages/plugin-workspace/src/bash.adapter.ts"]
+
+/**
+ * No file git tracks may name a person's home directory, or a term from
+ * the local denylist (`quality/no-private-text`). Tests and fixtures that
+ * need a home write one of the placeholder names below, never a real one;
+ * no file is exempt. The denylist is optional and never committed: one
+ * term per line (blank lines and `#` lines skipped), matched
+ * case-insensitively as a whole word; without the file only paths are
+ * checked, and the gate fails if git would not ignore it.
+ */
+const privateText: NonNullable<typeof GateSuiteConfig.Encoded["privateText"]> = {
+  include: ["**"],
+  exclude: ["**/*.png"],
+  placeholders: ["user", "username", "me", "you", "someone", "example", "runner", "Shared"],
+  denylist: ".foundry/private-terms.txt",
+}
 
 /**
  * A package is gated, built and published only once it is listed by hand:
@@ -116,6 +155,7 @@ const config: typeof GateSuiteConfig.Encoded = {
   // nothing, and `bun run typecheck` fails while it holds a fingerprint.
   baseline: "empty",
   registration,
+  privateText,
   rules: [
     { rule: "effect/no-try-catch", include: CHECKED },
     { rule: "effect/no-let", include: CHECKED },
@@ -126,9 +166,23 @@ const config: typeof GateSuiteConfig.Encoded = {
     {
       rule: "effect/no-as-never",
       include: CHECKED,
-      exclude: [...ERASURE_BOUNDARY, ...TEST_SCAFFOLDING],
+      exclude: TEST_SCAFFOLDING,
+      // `as never` is the design there; `as never as T` still fails.
+      boundary: ERASURE_BOUNDARY,
     },
     { rule: "effect/no-parallel-interface", include: CHECKED },
+    // What crosses a boundary is decoded, or comes from a service.
+    { rule: "effect/no-json-parse", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-sync-codec", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-cause-pretty-data", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-effect-promise", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-promise-all", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/callback-buffer-size", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-process-env", include: CHECKED, exclude: [...ENVIRONMENT_EDGES, ...TEST_SCAFFOLDING] },
+    { rule: "effect/no-ambient-time-random", include: CHECKED, exclude: ["**/*.adapter.ts", ...TEST_SCAFFOLDING] },
+    { rule: "effect/no-locale-compare", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/require-sort-comparator", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-instanceof-tagged-error", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "quality/no-skipped-tests", include: CHECKED },
     { rule: "quality/no-empty-catch", include: CHECKED },
     { rule: "architecture/no-raw-promise-core", include: CHECKED },

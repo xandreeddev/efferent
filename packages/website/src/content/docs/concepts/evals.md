@@ -83,7 +83,8 @@ or `gradeEvaluation`.
 ## Typed runnable boundary
 
 `defineGraderCalibration` reuses an app's registered grader as its subject. The app supplies
-the typed input codec and controlled labelled cases. Execution saves the original grading
+the typed input codec and controlled labelled cases; it is an `Effect` that fails with
+`invalid` when a case's input does not encode. Execution saves the original grading
 context and verdict; a separate agreement grade checks the expected status and metrics,
 including unavailable evidence, false passes and false failures. Regrading those observations
 does not call the subject. Rerun the calibration to test a changed target grader implementation.

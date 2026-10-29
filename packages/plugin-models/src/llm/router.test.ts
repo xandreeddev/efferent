@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
-import { Effect, Layer, Metric, Option, Redacted, Ref, Schema, Stream, Tracer } from "effect"
+import { ConfigProvider, Effect, Layer, Metric, Option, Redacted, Ref, Schema, Stream, Tracer } from "effect"
 import { AuthStore, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, SettingsStore } from "@xandreed/core"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { generateWith, LanguageModelLive, LanguageModelSelectionLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
@@ -350,6 +350,16 @@ describe("trace content and span parents", () => {
       traced("captured").pipe(Effect.provideService(CurrentTraceContent, true)),
     ]).pipe(Effect.withTracer(capturingTracer(spans))))
     expect(["redacted", "captured"].map((name) => spans.find((span) => span.name === name)?.attributes.get("llm.reasoning"))).toEqual(["[redacted]", "because…"])
+  })
+
+  test("EFFERENT_TRACE_CONTENT=1 is read from the ConfigProvider, and turns the content on for every call", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const traced = (name: string, value: string) => Stream.runDrain(tapStreamTelemetry("test:stream-content")(Stream.fromIterable(streamedParts))).pipe(
+      Effect.withSpan(name),
+      Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnvRecord({ EFFERENT_TRACE_CONTENT: value })),
+    )
+    await Effect.runPromise(Effect.all([traced("on", "1"), traced("other", "yes")]).pipe(Effect.withTracer(capturingTracer(spans))))
+    expect(["on", "other"].map((name) => spans.find((span) => span.name === name)?.attributes.get("llm.reasoning"))).toEqual(["because…", "[redacted]"])
   })
 
   test("a routed call's spans nest where it is called, not where its layer was built; its content switch is the caller's", async () => {
