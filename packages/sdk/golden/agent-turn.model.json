@@ -190,9 +190,9 @@
           "turn": 4,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "1496b479b05",
+          "fingerprint": "69e6bd65b09",
           "systemFingerprint": "eb326f7eed",
-          "estimatedTokens": 939,
+          "estimatedTokens": 941,
           "reservedTokens": 387,
           "budgetTokens": 64000,
           "compactions": 1,
@@ -210,9 +210,9 @@
           "turn": 4,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "8166b06ec9a",
+          "fingerprint": "fe6f6322c9e",
           "systemFingerprint": "eb326f7eed",
-          "estimatedTokens": 1074,
+          "estimatedTokens": 1076,
           "reservedTokens": 387,
           "budgetTokens": 64000,
           "compactions": 1,
@@ -757,7 +757,7 @@
               {
                 "options": {},
                 "type": "tool-call",
-                "id": "run-4:matcher",
+                "id": "run-4:matcher:0",
                 "name": "load_skill",
                 "params": {
                   "skills": [
@@ -775,7 +775,7 @@
               {
                 "options": {},
                 "type": "tool-result",
-                "id": "run-4:matcher",
+                "id": "run-4:matcher:0",
                 "name": "load_skill",
                 "isFailure": false,
                 "result": "## notes\nNote what the user asks to keep.\nTools: note",
@@ -1057,7 +1057,7 @@
               {
                 "options": {},
                 "type": "tool-call",
-                "id": "run-4:matcher",
+                "id": "run-4:matcher:0",
                 "name": "load_skill",
                 "params": {
                   "skills": [
@@ -1075,7 +1075,7 @@
               {
                 "options": {},
                 "type": "tool-result",
-                "id": "run-4:matcher",
+                "id": "run-4:matcher:0",
                 "name": "load_skill",
                 "isFailure": false,
                 "result": "## notes\nNote what the user asks to keep.\nTools: note",
@@ -1753,7 +1753,7 @@
           "content": [
             {
               "type": "tool-call",
-              "toolCallId": "run-4:matcher",
+              "toolCallId": "run-4:matcher:0",
               "toolName": "load_skill",
               "input": {
                 "skills": [
@@ -1773,7 +1773,7 @@
       "at": 1767225600000,
       "body": {
         "_tag": "ToolResult",
-        "toolCallId": "run-4:matcher",
+        "toolCallId": "run-4:matcher:0",
         "toolName": "load_skill",
         "isError": false,
         "encoded": "## notes\nNote what the user asks to keep.\nTools: note",

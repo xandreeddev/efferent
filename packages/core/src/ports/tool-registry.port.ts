@@ -30,6 +30,12 @@ export interface RunTools {
   readonly handlers: Context.Context<never>
   /** Active tool names in activation order. */
   readonly active: Effect.Effect<ReadonlyArray<string>>
+  /**
+   * Activate skills in one step, so activations running at once each keep the
+   * other's tools; returns the active tools after it. A refusal fails with
+   * `skills.unknown` or `capability.forbidden`; any other failure is the
+   * store's, and activates nothing.
+   */
   readonly activate: (skills: ReadonlyArray<string>, source: ActivationSource) => Effect.Effect<ReadonlyArray<string>, HarnessError>
   /** Ask the matcher, without writing anything. */
   readonly match: (userMessage: UserMessage) => Effect.Effect<SkillMatch, HarnessError>

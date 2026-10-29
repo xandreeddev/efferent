@@ -111,8 +111,9 @@ const policy: MemoryPolicy = {
 
 /**
  * The writer of the kit's turn (turn 1 of a session of its own): it keeps
- * what the turn stores in memory, writes at once, and is never closed from
- * outside.
+ * what the turn stores in memory, writes at once but yields first, as
+ * storage does (so concurrent calls interleave at their writes), and is
+ * never closed from outside.
  */
 const memoryWriter = Effect.gen(function* () {
   const session = yield* freshId
@@ -122,9 +123,9 @@ const memoryWriter = Effect.gen(function* () {
   }).pipe(Effect.orDie)
   const started: SessionLogEvent = { session, seq: 1, turn: draft.turn, kind: draft.kind, at: 0, data: draft.data }
   const stored = yield* Ref.make<ReadonlyArray<SessionLogEvent>>([started])
-  const append = (drafts: ReadonlyArray<TurnDraft>) => Ref.update(stored, (all) => [...all, ...drafts.map((next, index): SessionLogEvent => ({
+  const append = (drafts: ReadonlyArray<TurnDraft>) => Effect.yieldNow.pipe(Effect.andThen(Ref.update(stored, (all) => [...all, ...drafts.map((next, index): SessionLogEvent => ({
     session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: JSON.parse(JSON.stringify(next.data)),
-  }))])
+  }))])))
   const writer: TurnWriter = {
     admitted: { session: { id: session, owner: "conformance" }, turn: 1, runId: RUN, key: RUN, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
@@ -173,13 +174,23 @@ interface TurnSetup {
 const messageOf = (result: unknown): string =>
   typeof result === "object" && result !== null && "message" in result && typeof result.message === "string" ? result.message : "none"
 
+/** The tool the model loads skills with. */
+const LOAD_SKILL = "load_skill"
+
+/** The tools a stored `memory.skills` record activates. */
+const toolsOf = (data: unknown): ReadonlyArray<string> =>
+  typeof data === "object" && data !== null && "body" in data && typeof data.body === "object" && data.body !== null
+    && "tools" in data.body && Array.isArray(data.body.tools) ? data.body.tools.filter((tool): tool is string => typeof tool === "string") : []
+
 /**
  * The ToolRegistry contract, as checks: the catalog and the run's tools
  * hold every tool and skill the capabilities define; always-on skills are
  * active once the matcher's choice is applied, other skills only once
  * activated, an unknown skill is refused (`skills.unknown`), a skill whose
  * permission is not granted is not activated, and the active set only grows,
- * publishing `skills.activated` for what is new; a handled call publishes
+ * publishing `skills.activated` for what is new; `load_skill` calls running
+ * at once (tool concurrency above 1) leave every loaded tool active and
+ * listed, each published and recorded once; a handled call publishes
  * `tool.started`, its handler's `tool.progress` and `tool.completed` under
  * one invocation id (`<runId>:call:<n>`), and the handler sees that call
  * as `CurrentToolInvocation` and the services where the tools were opened;
@@ -311,6 +322,26 @@ export const toolRegistryConformance = (
       yield* Effect.result(turn.tools.activate(["kit.vault"], "host"))
       const after = yield* turn.tools.active
       yield* expect("activation", !after.includes(Vault.name) && grown.every((tool) => after.includes(tool)), `after asking for a skill whose permission is not granted the active tools are ${after.join()}`)
+    }))),
+
+    check("skills loaded by concurrent load_skill calls (tool concurrency above 1) all leave their tools active and listed, each activated and recorded once", "concurrent-load", () => inTurn({ grants: ["kit.vault"] }, (turn) => Effect.gen(function* () {
+      const toolkit = Object.keys(turn.tools.toolkit.tools)
+      yield* expect("concurrent-load", toolkit.includes(LOAD_SKILL), `the run's toolkit holds no ${LOAD_SKILL} (${toolkit.join()})`)
+      // The same skill twice: the one that comes second finds it loaded, and adds nothing.
+      const requests = [["kit.archiving"], ["kit.vault"], ["kit.archiving"]]
+      const loads = yield* Effect.forEach(requests, (skills) => turn.call(LOAD_SKILL, { skills }), { concurrency: requests.length })
+      yield* expect("concurrent-load", loads.every((load) => !load.isFailure), `the concurrent loads returned ${JSON.stringify(loads.map((load) => load.result))}`)
+      const active = yield* turn.tools.active
+      yield* expect("concurrent-load", active.includes(Archive.name) && active.includes(Vault.name),
+        `after loading kit.archiving and kit.vault concurrently the active tools are ${active.join()}`)
+      const used = yield* Effect.all([turn.call(Archive.name, { id: "r1" }), turn.call(Vault.name, { key: "k" })])
+      yield* expect("concurrent-load", used.every((call) => !call.isFailure), `the loaded tools returned ${JSON.stringify(used.map((call) => call.result))}`)
+      const loaded = [Archive.name, Vault.name]
+      const once = (tools: ReadonlyArray<string>) => loaded.every((tool) => tools.filter((other) => other === tool).length === 1)
+      const published = (yield* turn.published).flatMap((event) => event._tag === "skills.activated" ? event.tools : [])
+      yield* expect("concurrent-load", once(published), `the loads published skills.activated for ${published.join()}, not each loaded tool once`)
+      const recorded = (yield* turn.stored).flatMap((event) => event.kind === "memory.skills" ? toolsOf(event.data) : [])
+      yield* expect("concurrent-load", once(recorded), `memory recorded the activations of ${recorded.join()}, not each loaded tool once`)
     }))),
 
     check("a handled call publishes tool.started, its progress and tool.completed under one invocation id, minted after a refused call's, which its handler sees, on the run's bus only", "invocation", () => inTurn({}, (turn) => Effect.gen(function* () {

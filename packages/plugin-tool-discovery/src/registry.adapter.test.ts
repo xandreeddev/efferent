@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
 import { Cause, Effect, Layer, Logger, Option, Ref, References, Schema, Stream } from "effect"
-import type { Context } from "effect"
+import type { Context, Result } from "effect"
 import {
   ActionPolicy,
   ConversationId,
@@ -15,6 +15,7 @@ import {
   Failure,
   HarnessError,
   harnessDefectsAsFailures,
+  IntentMatcher,
   journalSchemaOf,
   Media,
   mediaFromBase64,
@@ -28,7 +29,7 @@ import {
   turnStartedDraft,
   UserMessage,
 } from "@xandreed/core"
-import type { Capability, MemoryPolicy, SessionLogEvent, ToolInvocation, ToolRefusalReason, TurnDraft, TurnEvent, TurnWriter } from "@xandreed/core"
+import type { Capability, MemoryPolicy, RunTools, SessionLogEvent, ToolInvocation, ToolRefusalReason, TurnDraft, TurnEvent, TurnWriter } from "@xandreed/core"
 import { makeRegistry } from "./registry.adapter.js"
 import type { DiscoveryConfig } from "./registry.adapter.js"
 
@@ -67,8 +68,8 @@ const policy: MemoryPolicy = {
   maintain: () => Effect.succeed({ actions: [], digest: [] }),
 }
 
-/** A writer that stores the turn's events in memory: what the session would journal. */
-const recordingWriter = Effect.gen(function* () {
+/** A writer that stores the turn's events in memory: what the session would journal. With `refuses`, it fails to store that kind. */
+const recordingWriter = (refuses: Option.Option<string> = Option.none()) => Effect.gen(function* () {
   const session = ConversationId.make("00000000-0000-4000-8000-0000000000aa")
   const userMessage = new UserMessage({ text: "build it" })
   const draft = yield* turnStartedDraft(1, {
@@ -76,9 +77,11 @@ const recordingWriter = Effect.gen(function* () {
   }).pipe(Effect.orDie)
   const started: SessionLogEvent = { session, seq: 1, turn: draft.turn, kind: draft.kind, at: 0, data: draft.data }
   const stored = yield* Ref.make<ReadonlyArray<SessionLogEvent>>([started])
-  const append = (drafts: ReadonlyArray<TurnDraft>) => Ref.update(stored, (all) => [...all, ...drafts.map((next, index): SessionLogEvent => ({
-    session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: next.data,
-  }))])
+  const append = (drafts: ReadonlyArray<TurnDraft>) => drafts.some((next) => Option.contains(refuses, next.kind))
+    ? Effect.fail(new HarnessError({ code: "store.unavailable", message: "the store is unavailable" }))
+    : Ref.update(stored, (all) => [...all, ...drafts.map((next, index): SessionLogEvent => ({
+      session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: next.data,
+    }))])
   const writer: TurnWriter = {
     admitted: { session: { id: session, owner: "test" }, turn: 1, runId: "run-1", key: "run-1", origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
@@ -102,7 +105,7 @@ const recordingWriter = Effect.gen(function* () {
  * stored. With `failOn`, an inline subscriber fails on that event.
  */
 const callInTurn = (outer: Option.Option<ToolInvocation>, failOn: Option.Option<TurnEvent["_tag"]> = Option.none()) => Effect.scoped(Effect.gen(function* () {
-  const recorded = yield* recordingWriter
+  const recorded = yield* recordingWriter()
   const registry = yield* makeRegistry(config, [reporting])
   const services = Layer.merge(
     Layer.succeed(ConversationMemory, ConversationMemory.of({ strategy: policy.strategy, open: ({ runId, log }) => openLogSession(log, policy, { runId }) })),
@@ -239,7 +242,7 @@ const refusalTurn = (calls: ReadonlyArray<readonly [string, unknown]>, options: 
   readonly vaultActive?: boolean
   readonly capabilities?: ReadonlyArray<Capability>
 } = {}): Effect.Effect<Refusals> => Effect.scoped(Effect.gen(function* () {
-  const recorded = yield* recordingWriter
+  const recorded = yield* recordingWriter()
   const registry = yield* makeRegistry({ ...config, ...options.config }, options.capabilities ?? [guarded])
   const services = Layer.merge(
     Layer.succeed(ConversationMemory, ConversationMemory.of({ strategy: policy.strategy, open: ({ runId, log }) => openLogSession(log, policy, { runId }) })),
@@ -359,6 +362,106 @@ describe("a handler that dies", () => {
     expect(logged).toHaveLength(1)
     expect(logged[0]).toMatchObject({ message: "crash failed unexpectedly", annotations: { tool: "crash", invocationId: "run-1:call:0" } })
     expect(Cause.squash(logged[0]!.cause)).toBe(defect)
+  })
+})
+
+/* ── activations that fail: a refusal is the request's, a store failure the turn's ── */
+
+/** `archiving` and `pinging` load freely, `vault` needs a grant the turn lacks; no skill is always on. */
+const selectable = defineCapability({
+  id: "selectable",
+  version: "1",
+  tools: [
+    defineTool({ tool: Ping, handler: ({ n }) => Effect.succeed(`pong ${n}`) }),
+    defineTool({ tool: Vault, handler: ({ key }) => Effect.succeed(`secret ${key}`), annotations: { permissions: ["vault.read"] } }),
+    defineTool({ tool: Archive, handler: ({ id }) => Effect.succeed(`archived ${id}`) }),
+  ],
+  skills: [
+    defineSkill({ id: "archiving", summary: "Archive records.", tools: [Archive.name] }),
+    defineSkill({ id: "pinging", summary: "Ping.", tools: [Ping.name] }),
+    defineSkill({ id: "vault", summary: "Read the vault.", tools: [Vault.name], permissions: ["vault.read"] }),
+  ],
+})
+
+const message = new UserMessage({ text: "file the records" })
+
+/**
+ * One turn over the real registry, its tools opened with a matcher that picks
+ * `picks` (one list per match), running `body` over them; a turn failure is
+ * restored as at the turn boundary. With `refuses`, the store fails to write
+ * that kind. Returns how `body` ended, the decisions published and what memory holds.
+ */
+const matchedTurn = <A>(picks: ReadonlyArray<ReadonlyArray<string>>, body: (tools: RunTools) => Effect.Effect<A, HarnessError>, refuses: Option.Option<string> = Option.none()) =>
+  Effect.scoped(Effect.gen(function* () {
+    const recorded = yield* recordingWriter(refuses)
+    const registry = yield* makeRegistry(config, [selectable])
+    const left = yield* Ref.make(picks)
+    const matcher = IntentMatcher.of({
+      id: "picking", version: "1",
+      match: () => Ref.modify(left, (all) => [{ skills: all[0] ?? [], probabilities: Option.none(), abstained: false }, all.slice(1)]),
+    })
+    const services = Layer.merge(
+      Layer.succeed(ConversationMemory, ConversationMemory.of({ strategy: policy.strategy, open: ({ runId, log }) => openLogSession(log, policy, { runId }) })),
+      Layer.succeed(ToolRegistry, ToolRegistry.of({ catalog: registry.catalog, open: registry.open })),
+    )
+    return yield* Effect.gen(function* () {
+      const run = yield* RunContext
+      const published = yield* Ref.make<ReadonlyArray<TurnEvent>>([])
+      yield* run.events.subscribe(Option.some, (event) => Ref.update(published, (all) => [...all, event]))
+      const memory = yield* TurnMemory
+      yield* memory.persistMessage
+      const tools = yield* (yield* TurnToolbox).open.pipe(Effect.provideService(IntentMatcher, matcher))
+      const outcome = yield* Effect.result(harnessDefectsAsFailures(body(tools)))
+      yield* run.flush
+      return {
+        outcome,
+        decisions: (yield* Ref.get(published)).flatMap((event) => event._tag === "decision.recorded" ? [event.record] : []),
+        entries: yield* memory.session.entries,
+      }
+    }).pipe(Effect.provide(TurnLive({ turn: recorded.writer })), Effect.provide(services))
+  }).pipe(Effect.orDie))
+
+/** Call a tool through the open toolkit's handlers at step 1, as the loop does; the call's result, failed or not. */
+const callTool = (tools: RunTools, name: string, params: unknown): Effect.Effect<unknown, HarnessError> => Effect.gen(function* () {
+  const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>))
+  const results = yield* Stream.runCollect(yield* kit.handle(name, params))
+  return results.at(-1)?.result
+}).pipe(Effect.provideService(CurrentAgentStep, Option.some(1))) as never
+
+const codeOf = <A>(outcome: Result.Result<A, HarnessError>): string => outcome._tag === "Failure" ? outcome.failure.code : `succeeded with ${JSON.stringify(outcome.success)}`
+
+describe("the matcher's choice, applied", () => {
+  test("a skill the turn may not use is refused, and the decision recorded as rejected", async () => {
+    const turn = await Effect.runPromise(matchedTurn([["vault"]], (tools) => tools.select(message)))
+    expect(turn.outcome._tag).toBe("Success")
+    expect(turn.decisions.map((record) => [record.validation, Option.getOrNull(record.applied)])).toEqual([["rejected", null]])
+  })
+
+  test("a store failure while activating it fails the apply, and is never recorded as a rejection", async () => {
+    const turn = await Effect.runPromise(matchedTurn([["archiving"]], (tools) => tools.select(message), Option.some("memory.skills")))
+    expect(codeOf(turn.outcome)).toBe("store.unavailable")
+    expect(turn.decisions).toEqual([])
+  })
+
+  test("each decision of a run, and each load_skill exchange seeded from one, takes an id of its own", async () => {
+    const turn = await Effect.runPromise(matchedTurn([["archiving"], ["pinging"]], (tools) => tools.select(message).pipe(Effect.andThen(tools.select(message)))))
+    expect(turn.decisions.map((record) => [String(record.id), record.validation])).toEqual([
+      ["run-1:skill-selection:0", "accepted"], ["run-1:skill-selection:1", "accepted"],
+    ])
+    const seeded = turn.entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [String(entry.body.toolCallId)] : [])
+    expect(seeded).toEqual(["run-1:matcher:0", "run-1:matcher:1"])
+  })
+})
+
+describe("load_skill", () => {
+  test("a skill the turn may not use is refused as the call's result, for the model to correct", async () => {
+    const turn = await Effect.runPromise(matchedTurn([], (tools) => callTool(tools, "load_skill", { skills: ["vault"] })))
+    expect(turn.outcome).toMatchObject({ _tag: "Success", success: { error: "capability.forbidden" } })
+  })
+
+  test("a store failure while activating fails the turn, and never reaches the model as the call's result", async () => {
+    const turn = await Effect.runPromise(matchedTurn([], (tools) => callTool(tools, "load_skill", { skills: ["archiving"] }), Option.some("memory.skills")))
+    expect(codeOf(turn.outcome)).toBe("store.unavailable")
   })
 })
 
