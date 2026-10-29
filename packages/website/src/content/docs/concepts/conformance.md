@@ -630,6 +630,6 @@ the same shape, `name` and `run`, and fail with that package's own
 
 | Kit | Checks | Run against |
 | --- | --- | --- |
-| `renderSurfaceConformance(subject)` | generations opened only by changed content, completion once per version, freezing and placeholder fills, preparations one at a time, reopening, rejected components never committed, an idempotent store | a `SurfaceSubject`, whose `make(admission)` builds a fresh `Render` and `RenderStore` for each check |
+| `renderSurfaceConformance(subject)` | generations opened only by changed content, operation ids per surface and generation, completion once per version, a retried publish committing what a failed one left out (also after reopening), freezing (before the first publish too, and per surface) and placeholder fills in each version, threads that never see each other's records, preparations one at a time, reopening, rejected components never committed, an idempotent store | a `SurfaceSubject`, whose `make(admission)` builds a fresh `Render` and `RenderStore` for each check |
 | `renderFeedConformance(makeFeed)` | resuming after the cursor with one ready frame, heartbeats while idle, records in order, polling at once on a change signal | a function that builds a `RenderFeed` over a `JournalTail` (`makeMemoryJournal` gives one to append to) |
 | `renderTransportConformance({ sse, socket })` | SSE and WebSocket carry identical frames | the two `RenderTransport`s |

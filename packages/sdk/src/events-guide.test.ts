@@ -636,7 +636,7 @@ describe("the journal", () => {
     const text = yield* Effect.promise(() => following)
     controller.abort()
     yield* settled
-    expect(decodeSse(text).map((frame) => frame._tag === "FeedRecord" ? frame.event : frame._tag)).toEqual(["FeedReady", "turn.started", "memory.message", "turn.reply", "turn.ended"])
+    expect((yield* Effect.fromResult(decodeSse(text))).map((frame) => frame._tag === "FeedRecord" ? frame.event : frame._tag)).toEqual(["FeedReady", "turn.started", "memory.message", "turn.reply", "turn.ended"])
     const page = yield* readAfter(readerHost.sessions, address, 0)
     expect(page.events.map((event) => event.seq)).toEqual(page.events.map((_, index) => index + 1))
     expect((yield* readAfter(readerHost.sessions, address, page.cursor)).events).toEqual([])
@@ -728,7 +728,7 @@ describe("serving turns over HTTP", () => {
       const response = yield* Effect.promise(() => eventsRoute(host, owner, sessionId, new Request(url(events), { headers, signal: controller.signal }), waitUntil))
       const text = yield* Effect.promise(() => readUntil(response.body!.getReader(), (seen) => seen.includes("event: ready")))
       controller.abort()
-      return decodeSse(text).flatMap((frame) => frame._tag === "FeedRecord" ? [frame] : [])
+      return (yield* Effect.fromResult(decodeSse(text))).flatMap((frame) => frame._tag === "FeedRecord" ? [frame] : [])
     })
     const all = yield* follow({})
     expect(all.map((frame) => frame.event)).toEqual(["turn.started", "tool.completed", "memory.message", "turn.reply", "turn.ended"])

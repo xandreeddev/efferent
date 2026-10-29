@@ -33,6 +33,13 @@ export const FeedHeartbeat = Schema.TaggedStruct("FeedHeartbeat", {})
 export const FeedFrame = Schema.Union([FeedRecord, FeedReady, FeedHeartbeat])
 export type FeedFrame = typeof FeedFrame.Type
 
+/** The fields of one SSE record block, as text: `id` is the record's sequence, `data` its JSON. */
+export const SseRecordFields = Schema.Struct({
+  id: Schema.NumberFromString.pipe(Schema.decodeTo(FeedRecord.fields.sequence)),
+  event: FeedRecord.fields.event,
+  data: Schema.fromJsonString(FeedRecord.fields.data),
+})
+
 export const FeedOptions = Schema.Struct({
   /** Poll interval after new records. */
   pollMs: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
