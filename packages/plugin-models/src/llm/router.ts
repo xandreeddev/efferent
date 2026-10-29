@@ -1,7 +1,7 @@
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
-import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, HarnessError, parseModelSelection, replayableContext, resolvingModel, SettingsStore } from "@xandreed/core"
+import { Cause, Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
+import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, harnessError, parseModelSelection, reasonOf, replayableContext, resolvingModel, SettingsStore } from "@xandreed/core"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, endpointOwnKey, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
@@ -599,7 +599,7 @@ export const LanguageModelLive = Layer.effect(
       streamText: ((options: unknown) =>
         Stream.unwrap(selected.pipe(Effect.map((model) => model.streamText(options as never))))) as never,
     }
-    const asHarness = (error: AiError.AiError) => new HarnessError({ code: "request.model", message: String(error) })
+    const asHarness = (error: AiError.AiError) => harnessError("request.model", reasonOf(Cause.fail(error)), error)
     return resolvingModel(
       describeModel(service, currentSelection.pipe(
         Effect.flatMap(({ primary, fallback, effort }) => describeSelection(primary, fallback, effort)),

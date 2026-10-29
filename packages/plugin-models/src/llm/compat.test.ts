@@ -158,6 +158,18 @@ describe("makeCompatLanguageModel", () => {
     expect(rendered).toContain("overloaded")
   })
 
+  test("a request that fails before any response is described by its failure's code and message, proxy credentials redacted, never [object Object]", async () => {
+    const failed = await Effect.runPromise(Effect.flip(Effect.gen(function* () {
+      const svc = yield* makeCompatLanguageModel({
+        moduleName: "Test", chatUrl: "https://gw.example/chat", model: "m",
+        fetchImpl: () => Promise.reject({ code: "ECONNREFUSED", message: "connect refused by http://user:secret@proxy.invalid:8080" }),
+      })
+      return yield* svc.generateText({ prompt: "hi" })
+    })))
+    expect(failed.reason._tag).toBe("UnknownError")
+    expect(failed.reason.message).toBe("ECONNREFUSED: connect refused by http://<redacted>@proxy.invalid:8080")
+  })
+
   /** The reason a request answered with this status and body fails with. */
   const failureOf = (body: unknown, status: number) => Effect.runPromise(Effect.flip(Effect.gen(function* () {
     const svc = yield* makeCompatLanguageModel({ moduleName: "OpenCode", chatUrl: "https://gw.example/chat", apiKey: "k", model: "m", fetchImpl: completion(body, status) })

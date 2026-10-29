@@ -1,6 +1,7 @@
 import { chmod, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, resolve } from "node:path"
-import { Effect, Option, Predicate, Random, Schema, Semaphore } from "effect"
+import { Effect, Option, Random, Schema, Semaphore } from "effect"
+import { errorCodeOf } from "@xandreed/core"
 
 /**
  * The JSON object files the local stores keep (`auth.json`, `config.json`):
@@ -12,8 +13,7 @@ import { Effect, Option, Predicate, Random, Schema, Semaphore } from "effect"
 
 const JsonObject = Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown))
 
-const isMissing = (cause: unknown): boolean => Predicate.hasProperty(cause, "code") && cause.code === "ENOENT"
-const codeOf = (cause: unknown): string => Predicate.hasProperty(cause, "code") ? String(cause.code) : String(cause)
+const isMissing = (cause: unknown): boolean => Option.contains(errorCodeOf(cause), "ENOENT")
 
 /**
  * Read the JSON object in `path`: `None` when no file is there. A file that
@@ -24,7 +24,7 @@ export const readJsonObject = <E>(path: string, unusable: (reason: string) => E)
   Effect.tryPromise({ try: () => readFile(path, "utf-8"), catch: (cause) => cause }).pipe(
     Effect.map(Option.some),
     Effect.catchIf(isMissing, () => Effect.succeed(Option.none<string>())),
-    Effect.mapError((cause) => unusable(`could not be read (${codeOf(cause)})`)),
+    Effect.mapError((cause) => unusable(`could not be read (${Option.getOrElse(errorCodeOf(cause), () => String(cause))})`)),
     Effect.flatMap(Option.match({
       onNone: () => Effect.succeed(Option.none<Record<string, unknown>>()),
       onSome: (text) => Schema.decodeUnknownEffect(JsonObject)(text).pipe(

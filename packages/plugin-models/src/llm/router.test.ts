@@ -339,6 +339,20 @@ describe("LanguageModelLive's step resolution", () => {
     // The call asks for the step's provider (it has no credential here), not the newly selected one.
     expect(result.called).toContain("no credential for opencode")
   })
+
+  test("a step without a selection fails with request.model, the selection's AiError kept as its cause", async () => {
+    const settings = Layer.succeed(SettingsStore, SettingsStore.of({ load: Effect.succeed(new EngineSettings({})), setRole: () => Effect.void, set: () => Effect.void }))
+    const auth = Layer.succeed(AuthStore, AuthStore.of({
+      all: Effect.succeed(new Map()), get: () => Effect.succeed(Option.none()), resolveKey: () => Effect.succeed(Option.none()), set: () => Effect.void, remove: () => Effect.void,
+    }))
+    const failed = await Effect.runPromise(Effect.flip(LanguageModel.LanguageModel.pipe(
+      Effect.flatMap(resolveModelRequest),
+      Effect.provide(LanguageModelLive.pipe(Layer.provide(Layer.merge(settings, auth)))),
+    )))
+    expect(failed.code).toBe("request.model")
+    expect(failed.message).toStartWith("AiError: Router.selection: no model configured")
+    expect(failed.cause).toMatchObject({ _tag: "AiError", module: "Router", method: "selection", reason: { _tag: "UnknownError" } })
+  })
 })
 
 describe("trace content and span parents", () => {

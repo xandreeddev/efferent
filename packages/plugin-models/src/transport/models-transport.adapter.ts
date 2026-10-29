@@ -2,6 +2,7 @@ import { Agent as HttpAgent } from "node:http"
 import { Agent as HttpsAgent } from "node:https"
 import { Config, Effect, Layer, Match, Option, Redacted } from "effect"
 import type { Context, Scope } from "effect"
+import { errorCodeOf } from "@xandreed/core"
 import type { Agent, Dispatcher, ProxyAgent, buildConnector } from "undici"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import type { ModelsFetch, WebSocketProxy } from "../ports/models-transport.port.js"
@@ -103,9 +104,6 @@ const bunTransport = (config: ProxyConfig, version: string) => ModelsTransport.o
 /** A Client option `connect` that is a connector function. */
 const isConnector = (value: unknown): value is buildConnector.connector => typeof value === "function"
 
-/** The `code` an error carries, if any. */
-const codeOf = (error: Error): unknown => "code" in error ? error.code : undefined
-
 /**
  * A tunnel connector that fails once when the proxy closes the connection
  * while the tunnel is opened. undici takes that as a recoverable socket error
@@ -115,7 +113,7 @@ const codeOf = (error: Error): unknown => "code" in error ? error.code : undefin
 const tunnelOnce = (connect: buildConnector.connector, proxy: Redacted.Redacted<string>): buildConnector.connector =>
   (options, callback) => connect(options, (...result) => {
     const [error] = result
-    return error !== null && codeOf(error) === "UND_ERR_SOCKET"
+    return error !== null && Option.contains(errorCodeOf(error), "UND_ERR_SOCKET")
       ? callback(new Error(`the proxy ${displayProxy(proxy)} closed the connection while opening a tunnel to ${options.hostname}:${options.port.length > 0 ? options.port : options.protocol === "https:" ? "443" : "80"} (${error.message})`, { cause: error }), null)
       : callback(...result)
   })

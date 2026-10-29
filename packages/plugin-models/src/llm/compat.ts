@@ -1,7 +1,7 @@
 import { AiError, LanguageModel, Prompt, Tool } from "effect/ai"
-import { Effect, Option, Schema, Stream } from "effect"
+import { Cause, Effect, Option, Schema, Stream } from "effect"
 import { Base64 } from "effect/encoding"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, reasonOf, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
 import type { ModelCallPolicy } from "@xandreed/core"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
 import type { UsageReading } from "./sse.js"
@@ -84,9 +84,9 @@ export interface CompatConfig {
   readonly aroundRequest?: (body: Readonly<Record<string, unknown>>, request: Effect.Effect<Response, AiError.AiError>) => Effect.Effect<Response, AiError.AiError>
 }
 
-/** A request that failed before any response, described with proxy credentials redacted (the description can reach a session log). */
+/** A request that failed before any response, described by the failure's text as `reasonOf` reads it (never a stack: an `AiError` reason has no slot for the failure itself), proxy credentials redacted (the description can reach a session log). */
 const aiUnknown = (moduleName: string, method: string, e: unknown): AiError.AiError =>
-  AiError.make({ module: moduleName, method, reason: new AiError.UnknownError({ description: redactCredentials(String(e)) }) })
+  AiError.make({ module: moduleName, method, reason: new AiError.UnknownError({ description: redactCredentials(reasonOf(Cause.die(e))) }) })
 
 const invalidOutput = (moduleName: string, method: string, description: string): AiError.AiError =>
   AiError.make({ module: moduleName, method, reason: new AiError.InvalidOutputError({ description }) })

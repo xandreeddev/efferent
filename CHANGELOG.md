@@ -352,6 +352,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   messages are the schema's message without the `SchemaError(...)` wrapper.
 - `SpecDocParseError` keeps the schema's failure as `cause`; its message is
   the schema's message.
+- A provider failure that ends a run (`loop.failed`), a model that cannot
+  be resolved (`request.model`) and a failed utility call (`UtilityError`)
+  keep the provider's `AiError` as their `cause`, and their message is its
+  text (`AiError: <module>.<method>: …`).
+- Plugin options that do not decode in the plugin graph (`config.options`)
+  keep the schema error as their `cause`, and the message is the schema
+  error's own text.
+- `@xandreed/plugin-models` describes a request or response stream that
+  fails with a value that is not an `Error` by its code and message instead
+  of `[object Object]`, with proxy credentials redacted.
 
 ### Repository
 
@@ -444,6 +454,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `bun run docs:generate` fails when a package raises a code that is not
   published (in any namespace but the kits' `conformance.*`), or when a
   published code has no entry.
+- `runtime`, `plugin-agent-loop` and `plugin-models` pass
+  `effect/no-stringified-cause`, and `plugin-models` and `plugin-workspace`
+  read a foreign error's code with core's `errorCodeOf`.
 
 ## 0.14.0 — 2026-10-29
 

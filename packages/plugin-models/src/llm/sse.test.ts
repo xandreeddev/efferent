@@ -225,6 +225,15 @@ describe("sseStreamParts", () => {
     expect(other.reason._tag).toBe("UnknownError")
   })
 
+  test("a body stream that fails is described by its failure's code and message, proxy credentials redacted, never [object Object]", async () => {
+    const failed = await Effect.runPromise(Effect.flip(Stream.runCollect(sseStreamParts({
+      moduleName: "Test",
+      body: new ReadableStream({ start: (controller) => controller.error({ code: "ECONNRESET", message: "reset by http://user:secret@proxy.invalid:8080" }) }),
+    }))))
+    expect(failed.reason._tag).toBe("UnknownError")
+    expect(failed.reason.message).toBe("the response body stream failed: ECONNRESET: reset by http://<redacted>@proxy.invalid:8080")
+  })
+
   test("an error chunk mid-stream fails the stream", async () => {
     const exit = await Effect.runPromiseExit(
       Stream.runCollect(

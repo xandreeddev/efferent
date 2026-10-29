@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
-import { bashExitOf, errorCodeOf, executableCandidates, fsReasonOf, isClosedInput, pathIn, removalPlace } from "./local-system.entity.functions.js"
+import { bashExitOf, executableCandidates, fsReasonOf, isClosedInput, pathIn, removalPlace } from "./local-system.entity.functions.js"
 
 const coded = (code: string) => Object.assign(new Error(`${code}: something`), { code })
 
@@ -15,10 +15,6 @@ describe("node error codes as file-system reasons", () => {
   test("any other code, an error without one, and a thrown non-error are Io", () => {
     expect([coded("EIO"), coded("EMFILE"), coded("toString"), new Error("no code"), "a string", null, { code: 5 }].map(fsReasonOf))
       .toEqual(["Io", "Io", "Io", "Io", "Io", "Io", "Io"])
-  })
-
-  test("errorCodeOf reads a string code only", () => {
-    expect([coded("ENOENT"), { code: "EPIPE" }, { code: 32 }, undefined].map(errorCodeOf)).toEqual([Option.some("ENOENT"), Option.some("EPIPE"), Option.none(), Option.none()])
   })
 })
 

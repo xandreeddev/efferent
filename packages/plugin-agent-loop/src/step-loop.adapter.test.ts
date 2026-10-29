@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
-import { Context, Effect, Option, Ref, Stream } from "effect"
-import { addUsage, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, HarnessError, isHarnessError, makeTurnEvents, makeTurnTasks, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, zeroUsage } from "@xandreed/core"
+import { Cause, Context, Effect, Option, Ref, Stream } from "effect"
+import { addUsage, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isHarnessError, makeTurnEvents, makeTurnTasks, reasonOf, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, zeroUsage } from "@xandreed/core"
 import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, TokenUsage, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
@@ -58,7 +58,7 @@ const minimalLoop = StepLoop.of({
         Effect.catch((error) => !Option.isSome(planned) && AiError.isAiError(error) && error.reason._tag === "InvalidRequestError" && /image/i.test(error.reason.message)
           ? request.onMediaRejected(error.reason.message).pipe(Effect.flatMap((retry) => retry ? attempt : Effect.fail(error)))
           : Effect.fail(error)),
-        Effect.mapError((error) => isHarnessError(error) ? error : new HarnessError({ code: "loop.failed", message: String(error) })),
+        Effect.mapError((error) => isHarnessError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
       )
       const content: ReadonlyArray<unknown> = response.content
       const entries = yield* request.record(index, responseToAgentMessages(content))
@@ -162,6 +162,17 @@ describe("runSteps streaming", () => {
       return yield* runWith(yield* unstreamable(reads), { streaming: false, captureTraceContent: false })
     }))
     expect(events.some((event) => event._tag === "stream.fallback")).toBe(false)
+  })
+})
+
+describe("runSteps failures", () => {
+  test("a provider failure fails the run with loop.failed, the AiError kept as its cause and its text as the message", async () => {
+    const down = AiError.make({ module: "Test", method: "generateText", reason: new AiError.UnknownError({ description: "the provider was down" }) })
+    const failed = await Effect.runPromise(Effect.flip(Effect.gen(function* () {
+      return yield* runWith(yield* LanguageModel.make({ generateText: () => Effect.fail(down), streamText: () => Stream.fail(down) }), { streaming: false, captureTraceContent: false })
+    })))
+    expect([failed._tag, failed.code, failed.message]).toEqual(["HarnessError", "loop.failed", "AiError: Test.generateText: the provider was down"])
+    expect(failed.cause).toBe(down)
   })
 })
 

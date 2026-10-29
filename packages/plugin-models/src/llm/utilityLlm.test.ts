@@ -47,7 +47,39 @@ const completeUnder = async (settings: {
   return bodies[0] ?? {}
 }
 
+/** One utility completion against an endpoint that answers every request with this status and body: the failure. */
+const failureUnder = async (status: number, body: unknown) => {
+  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json(body, { status }) })
+  const store = Layer.succeed(SettingsStore, SettingsStore.of({
+    load: Effect.succeed(new EngineSettings({ model: Option.some("gw:general") })),
+    setRole: () => Effect.void,
+    set: () => Effect.void,
+  }))
+  const auth = Layer.succeed(AuthStore, AuthStore.of({
+    all: Effect.succeed(new Map()),
+    get: () => Effect.succeed(Option.none()),
+    resolveKey: () => Effect.succeed(Option.none()),
+    set: () => Effect.void,
+    remove: () => Effect.void,
+  }))
+  return await Effect.runPromise(Effect.flip(Effect.gen(function* () {
+    const utility = yield* UtilityLlm
+    return yield* utility.complete("Name this conversation")
+  })).pipe(
+    Effect.provide(UtilityLlmLive.pipe(Layer.provide(Layer.merge(store, auth)))),
+    Effect.provideService(CurrentModelEndpoints, { gw: { url: `http://127.0.0.1:${server.port}/v1`, standardOnly: false } }),
+  )).finally(() => server.stop(true))
+}
+
 describe("UtilityLlmLive", () => {
+  test("a refused call fails with the provider's AiError as the cause and its text as the message", async () => {
+    const failed = await failureUnder(400, { error: { message: "the request is malformed" } })
+    expect(failed._tag).toBe("UtilityError")
+    expect(failed.message).toStartWith("AiError: ")
+    expect(failed.message).toContain("the request is malformed")
+    expect(failed.cause).toMatchObject({ _tag: "AiError", method: "generateText" })
+  })
+
   test("completes on the fast model at the fast role's effort, else the general one; a policy the caller pinned wins", async () => {
     expect(await completeUnder({ reasoningEffort: "low", fastReasoningEffort: "medium" })).toMatchObject({ model: "fast", reasoning_effort: "medium" })
     expect(await completeUnder({ reasoningEffort: "low" })).toMatchObject({ reasoning_effort: "low" })
