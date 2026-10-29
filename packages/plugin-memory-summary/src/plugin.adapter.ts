@@ -120,6 +120,8 @@ const decide = (
         duration: `${config.summaryTimeoutMs} millis`,
         orElse: () => Effect.fail(new HarnessError({ code: "memory.summary", message: `the summarizer did not answer within ${config.summaryTimeoutMs} ms` })),
       }),
+      // Each ask is a `memory.summarize` span, failed when the summarizer fails or runs out of time.
+      Effect.withSpan("memory.summarize"),
       Effect.map((text) => Option.some(text.trim())),
       Effect.catch((error) => Effect.logWarning(`summary left out: ${error.message}`).pipe(Effect.as(Option.none<string>()))),
     )
@@ -138,7 +140,7 @@ export const memorySummaryPlugin = definePlugin({
   provides: [ConversationMemory],
   layer: (config) => Layer.succeed(ConversationMemory, ConversationMemory.of({
       strategy: SUMMARY_STRATEGY,
-      open: ({ runId, log }) => Effect.gen(function* () {
+      open: Effect.fn("memory.open")(function* ({ runId, log }) {
         const utility = yield* Effect.serviceOption(UtilityLlm).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.fail(missingUtility), onSome: Effect.succeed })))
         // Once a call failed or ran out of time, this turn's later steps do not wait on the summarizer again.
         const failed = yield* Ref.make(false)

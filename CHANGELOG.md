@@ -101,6 +101,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   stream), not under a key of its own.
 - Build `describeModel` settings as JSON; pass settings with optional
   fields through `storedJson` first.
+- Read `efferent.task.id`/`efferent.session.id` on `task.run`, and read
+  those log annotations instead of grepping the tasks plugin's log text for
+  ids.
 
 ### Breaking
 
@@ -295,6 +298,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/plugin-models`: the router stamps the resolved model on the
   finish part as `metadata.engine.model`, not `metadata.router.model` (the
   stamp was never stored).
+- `@xandreed/plugin-tasks`: the `task.run` span carries `efferent.task.id`
+  and `efferent.session.id` in place of `task.id` and `session.id`, and the
+  plugin's log lines no longer name the task or the parent session in their
+  text; the ids are log annotations under those keys.
 
 ### Added
 
@@ -377,6 +384,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `eval.pairwise`; the judges' spans keep their names.
 - `@xandreed/evals-langfuse` and `@xandreed/evals-langsmith`: an export is
   one `eval.export` span carrying `eval.exporter` and `eval.run.id`.
+- Traces show memory and background tasks: `memory.open` for each memory
+  session a turn opens (window and summary), `memory.summarize` and
+  `memory.digest` for each summarizer and digester call (failed when the
+  call fails or times out), and `tasks.start`, `tasks.status`, `tasks.list`,
+  `tasks.cancel` and `tasks.reconcile` with `efferent.session.id` and, for
+  one task, `efferent.task.id`.
 
 ### Changed
 
@@ -726,6 +739,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   shape.
 - `effect/prefer-effect-fn` runs in `evals`, `evals-langfuse` and
   `evals-langsmith`.
+- `effect/prefer-effect-fn` runs in `plugin-memory-summary` and
+  `plugin-tasks`.
 
 ## 0.14.0 — 2026-10-29
 

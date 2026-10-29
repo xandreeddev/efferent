@@ -27,6 +27,16 @@ const resultJson = (result: Result) => Schema.encodeEffect(TaskResult)(result).p
 /** Only the framework's kinds are reserved and the tasks plugin records its own: a refusal of one is a defect. */
 const reservedIsDefect = (error: ReservedKind) => Effect.die(error)
 
+/** The ids a session's task spans and logs carry: the parent session's. */
+const sessionIds = (parent: SessionAddress): Record<string, unknown> => ({ "efferent.session.id": parent.id })
+
+/** The ids one task's spans and logs carry: its parent session's and its own. */
+const taskIds = (parent: SessionAddress, taskId: string): Record<string, unknown> => ({ ...sessionIds(parent), "efferent.task.id": taskId })
+
+/** `effect` with `ids` on the current span and on its logs: in a `Tasks` method's `Effect.fn` pipeable, the current span is the method's. */
+const carrying = <A, E, R>(effect: Effect.Effect<A, E, R>, ids: Record<string, unknown>): Effect.Effect<A, E, R> =>
+  Effect.annotateCurrentSpan(ids).pipe(Effect.andThen(effect), Effect.annotateLogs(ids))
+
 /**
  * Background tasks over Sessions. A task is one turn of a child session
  * whose id is the task's. Everything that decides reads the log (the
@@ -34,7 +44,10 @@ const reservedIsDefect = (error: ReservedKind) => Effect.die(error)
  * inbox), so any instance, or a later request, can finish what another
  * left: run a task that never ran, deliver a result that was never
  * delivered. Delivery is once per task (the inbox id), and whoever delivers
- * drains the parent, so it reacts after the answer in flight.
+ * drains the parent, so it reacts after the answer in flight. Each method is
+ * a `tasks.<op>` span and a task's work a `task.run` span; they and their
+ * logs carry `efferent.session.id` (the parent's) and, for one task,
+ * `efferent.task.id`.
  */
 export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessions | TaskRunner | TaskExecutor> => Layer.effect(Tasks, Effect.gen(function* () {
   const sessions = yield* Sessions
@@ -122,8 +135,8 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
         return yield* writer.end({ reason: result.outcome, failure: result.failure })
       })
       return yield* turn.pipe(
-        Effect.catchTag("TurnClosed", (closed) => Effect.logInfo(`background task ${task.taskId} stopped: its turn was ${closed.reason}`)),
-        Effect.catch((error) => Effect.logWarning(`background task ${task.taskId} could not store its turn: ${reasonOf(Cause.fail(error))}`)),
+        Effect.catchTag("TurnClosed", (closed) => Effect.logInfo(`the background task stopped: its turn was ${closed.reason}`).pipe(Effect.annotateLogs(taskIds(parent, task.taskId)))),
+        Effect.catch((error) => Effect.logWarning(`the background task could not store its turn: ${reasonOf(Cause.fail(error))}`).pipe(Effect.annotateLogs(taskIds(parent, task.taskId)))),
       )
     })).pipe(
       Effect.catchTags({
@@ -150,7 +163,10 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     source: { kind: "task", taskId: task.taskId, child: task.child, status: task.status },
     content: noticeOf(task, config.replyChars),
   }).pipe(Effect.catchTag("InboxFull", (full) =>
-    Effect.logWarning(`the inbox of ${parent.id} is full; task ${task.taskId} is delivered later`).pipe(Effect.as({ delivered: false, pending: full.pending }))))
+    Effect.logWarning("the parent's inbox is full; the task's notice is delivered later").pipe(
+      Effect.annotateLogs(taskIds(parent, task.taskId)),
+      Effect.as({ delivered: false, pending: full.pending }),
+    )))
 
   /** The writer, noting when the reaction records its answer (the turn's `turn.reply`, as memory writes it). */
   const noting = (writer: TurnWriter, answered: Ref.Ref<boolean>): TurnWriter => {
@@ -212,12 +228,12 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
       onSome: (at) => execution.pipe(Effect.timeoutOption(Math.max(0, at - started)), Effect.flatMap(Option.match({
         onSome: () => Effect.void,
         onNone: () => Clock.currentTimeMillis.pipe(Effect.flatMap((now) =>
-          Effect.logWarning(`background task ${taskId} of ${parent.id} was cut by the runner's deadline after ${now - started} ms`))),
+          Effect.logWarning(`the background task was cut by the runner's deadline after ${now - started} ms`).pipe(Effect.annotateLogs(taskIds(parent, taskId))))),
       }))),
     })
   }).pipe(
-    Effect.catchCause((cause) => Effect.logWarning(`background task ${taskId} of ${parent.id} stopped`, cause)),
-    Effect.withSpan("task.run", { attributes: { "task.id": taskId, "session.id": parent.id } }),
+    Effect.catchCause((cause) => Effect.logWarning("the background task stopped", cause).pipe(Effect.annotateLogs(taskIds(parent, taskId)))),
+    Effect.withSpan("task.run", { attributes: taskIds(parent, taskId) }),
   )
 
   /**
@@ -241,6 +257,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
       return yield* Effect.fail(new TaskRefused({ session: parent.id, reason: "depth", message: "a background task cannot start another task" }))
     }
     const taskId = input.taskId ?? ConversationId.make(yield* Effect.sync(() => crypto.randomUUID()))
+    yield* Effect.annotateCurrentSpan("efferent.task.id", taskId)
     const started: Started = { taskId, instructions: input.instructions, mode: input.mode, meta: input.meta ?? {} }
     // Checked against the tasks as stored, and decided again after a conflict, so the decision only reads: the
     // child is created after the record is stored, and the two are not cut apart by an interruption.
@@ -296,5 +313,12 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     return { delivered: delivered.filter((done) => done.delivered).length, started: waiting.length }
   })
 
-  return Tasks.of({ start, status: taskOf, list: listOf, cancel, reconcile })
+  // The helpers the methods share stay untraced: a span is one call of the service.
+  return Tasks.of({
+    start: Effect.fn("tasks.start")(start, (effect, parent) => carrying(effect, sessionIds(parent))),
+    status: Effect.fn("tasks.status")(taskOf, (effect, parent, taskId) => carrying(effect, taskIds(parent, taskId))),
+    list: Effect.fn("tasks.list")(listOf, (effect, parent) => carrying(effect, sessionIds(parent))),
+    cancel: Effect.fn("tasks.cancel")(cancel, (effect, parent, taskId) => carrying(effect, taskIds(parent, taskId))),
+    reconcile: Effect.fn("tasks.reconcile")(reconcile, (effect, parent) => carrying(effect, sessionIds(parent))),
+  })
 }))

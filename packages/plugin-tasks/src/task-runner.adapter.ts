@@ -19,7 +19,7 @@ export const InProcessTaskRunnerLive = (options?: { readonly maxMs?: number }): 
   const fibers = yield* FiberSet.make<void>()
   const context = yield* Effect.context<never>()
   const runner = TaskRunner.of({
-    run: (work) => Effect.gen(function* () {
+    run: Effect.fnUntraced(function* (work) {
       const now = yield* Clock.currentTimeMillis
       const deadline = Option.map(Option.fromNullishOr(options?.maxMs), (ms) => now + ms)
       yield* Effect.sync(() => FiberSet.addUnsafe(fibers, Effect.runForkWith(context)(work(deadline))))

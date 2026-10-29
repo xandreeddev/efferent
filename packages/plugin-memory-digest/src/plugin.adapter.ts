@@ -84,7 +84,7 @@ export const memoryDigestPlugin = definePlugin({
     const utility = yield* UtilityLlm
     return ResultDigester.of({
       ...UTILITY_DIGESTER,
-      digest: (task) => utility.complete(digestPrompt(task, config.maxSourceChars)).pipe(
+      digest: Effect.fn("memory.digest")((task) => utility.complete(digestPrompt(task, config.maxSourceChars)).pipe(
         Effect.mapError((error) => new HarnessError({ code: "memory.digest", message: `${task.tool}: ${error.message}` })),
         Effect.timeoutOrElse({
           duration: `${config.digestTimeoutMs} millis`,
@@ -92,7 +92,7 @@ export const memoryDigestPlugin = definePlugin({
         }),
         Effect.map((completion) => outcomeOf(task, completion.text)),
         Effect.tapError((error) => Effect.logWarning(`digest left out: ${error.message}`)),
-      ),
+      )),
     })
   })),
 })

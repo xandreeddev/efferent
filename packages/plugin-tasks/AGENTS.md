@@ -11,6 +11,7 @@ Background tasks: core's `Tasks` port over `Sessions`, where a task is one turn 
 - A task never starts another (`TaskRefused`, reason `depth`), and a session runs at most `maxRunning` (`limit`).
 - Show a task's words to the model only through `noticeOf`: inside core's `framed("task-output", …)`, cut at `replyChars` with a marker.
 - Leave `closingReserveMs` of a runner's finite budget (at most half of it) for the result, the delivery and the parent's closing commits.
+- Each `Tasks` method is a `tasks.<op>` span (`Effect.fn`, the helpers they share untraced) and a task's work a `task.run` span; they carry `efferent.session.id` (the parent's) and, for one task, `efferent.task.id`, and so do the plugin's logs: no id goes in a log message. `InProcessTaskRunnerLive`'s `run` opens no span (`Effect.fnUntraced`): the work's spans nest where the runner was built.
 - `tasks.background` is an always-on skill, so its summary never reaches the model: guidance goes in the tool descriptions.
 - Change behaviour by adding the check to core's `tasksConformance` or `taskRunnerConformance` first, with a careless instance in `src/tasks.conformance.test.ts` that it catches.
 
@@ -28,10 +29,10 @@ Background tasks: core's `Tasks` port over `Sessions`, where a task is one turn 
 | Text | Source | Pinned by |
 |---|---|---|
 | `start_task` and `task_status` descriptions | `src/tasks-capability.adapter.ts:6`, `:14` | exact, `src/tasks-capability.adapter.test.ts:10` |
-| Failures: `TaskRefused` (a nested task; `maxRunning` reached), `UnknownTask`, `TasksUnavailable` | `src/tasks.adapter.ts:241`, `:257`; `src/tasks-capability.adapter.ts:45`, `:21` | `TaskRefused` reasons only, `src/tasks.adapter.test.ts:336`; every message unpinned |
-| The notice: `[Background task <id> <status>]` and the reply in `<task-output>` | `src/task.entity.functions.ts:99` | exact, `src/tasks.adapter.test.ts:97`, `:260`, `:349` |
-| A reply cut at `replyChars` (`(cut at N characters)`) that cannot close the frame | `src/task.entity.functions.ts:97` | contains and exact, `src/tasks.adapter.test.ts:511` |
-| `(no reply: <failure message>)` with `task.lost`, `task.deadline` or `task.turn`'s message, or a failed turn's (a `HarnessError`'s own message; `reasonOf` for a tag such as `SessionContended`); `(no reply)` | `src/task.entity.functions.ts:96`, `:52`, `:71`, `:74`, `:82`, `:83` | exact for `task.lost` and a host's reason, `src/tasks.adapter.test.ts:260`, `:349`, `:378`; `(no reply)`, `task.deadline`, `task.turn` and a tag's message unpinned |
+| Failures: `TaskRefused` (a nested task; `maxRunning` reached), `UnknownTask`, `TasksUnavailable` | `src/tasks.adapter.ts:257`, `:274`; `src/tasks-capability.adapter.ts:45`, `:21` | `TaskRefused` reasons only, `src/tasks.adapter.test.ts:344`; every message unpinned |
+| The notice: `[Background task <id> <status>]` and the reply in `<task-output>` | `src/task.entity.functions.ts:99` | exact, `src/tasks.adapter.test.ts:107`, `:269`, `:357` |
+| A reply cut at `replyChars` (`(cut at N characters)`) that cannot close the frame | `src/task.entity.functions.ts:97` | contains and exact, `src/tasks.adapter.test.ts:518` |
+| `(no reply: <failure message>)` with `task.lost`, `task.deadline` or `task.turn`'s message, or a failed turn's (a `HarnessError`'s own message; `reasonOf` for a tag such as `SessionContended`); `(no reply)` | `src/task.entity.functions.ts:96`, `:52`, `:71`, `:74`, `:82`, `:83` | exact for `task.lost` and a host's reason, `src/tasks.adapter.test.ts:269`, `:357`, `:386`; `(no reply)`, `task.deadline`, `task.turn` and a tag's message unpinned |
 
 ## Erasure files
 
@@ -51,7 +52,7 @@ None.
 
 ## Tests
 
-- `src/tasks.adapter.test.ts`: delivery after the turn in flight, starting and storing, recovery, cancel and removal, limits, failures and budgets, the notice, over `SessionsLive` and the in-memory log; `src/tasks-capability.adapter.test.ts` (the tools), `src/task-runner.adapter.test.ts` (`TaskActivity`) and `src/task.entity.functions.test.ts` (the delivered ids, an undecodable `inbox.queued` failing with `session.decode`).
+- `src/tasks.adapter.test.ts`: delivery after the turn in flight, starting and storing, recovery, cancel and removal, limits, failures and budgets, the notice, the spans and the logs' ids, over `SessionsLive` and the in-memory log; `src/tasks-capability.adapter.test.ts` (the tools), `src/task-runner.adapter.test.ts` (`TaskActivity`) and `src/task.entity.functions.test.ts` (the delivered ids, an undecodable `inbox.queued` failing with `session.decode`).
 - `src/tasks.conformance.test.ts`: core's `taskRunnerConformance` over `InProcessTaskRunnerLive` (with and without `maxMs`), `tasksConformance` over `TasksLive`, and the Tasks kit's self-tests.
 - Elsewhere: `packages/sdk/src/agent.adapter.test.ts` runs a background task under `Agent.turn`; `activity.test.ts` counts the runner's work in `awaitIdle`; `journal-compat.test.ts` decodes the task records of every release's fixture; `verify:packages` runs the kits on Node and a task over SQLite on Bun.
 - Run: `bun test packages/plugin-tasks packages/sdk/src/activity.test.ts packages/sdk/src/journal-compat.test.ts`.

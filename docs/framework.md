@@ -185,6 +185,14 @@ on a new fiber with the services it was built with, so the work nests under
 the span current where the runner was built. Host code that captures a
 context to provide it later passes it through `replayableContext` too.
 
+The memory and tasks plugins add spans where their work runs: `memory.open`
+(each memory session a turn opens), `memory.summarize` and `memory.digest`
+(each call to the summarizer or the digester, failed when it fails or runs
+out of time), `tasks.<op>` (each `Tasks` method) and `task.run` (a task's
+work). The task spans and the tasks plugin's logs carry `efferent.session.id`
+(the parent session's) and `efferent.task.id`; the ids stay out of the log
+messages.
+
 **Metrics** (Effect `Metric`s, exported with the spans' exporter):
 
 | Metric | Attributes | Counts |
