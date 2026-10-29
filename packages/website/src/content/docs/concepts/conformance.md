@@ -7,11 +7,13 @@ description: The port contracts as runnable checks, to run against your own adap
 
 A port says what its methods take and return; a conformance kit says what an
 implementation must do. `@xandreed/core` ships each contract as a list of
-checks, so a host that writes its own session store, memory strategy, step
-loop, turn composition, file system, shell or model credential and settings
-store can prove it behaves like the first-party ones
-(`@xandreed/plugin-workspace`'s local file system and shell pass the
-file-system and shell kits on Bun and Node).
+checks, so a host that writes its own session store, sessions backend, task
+runner, tasks backend, tool registry, memory strategy, step loop, turn
+composition, file system, shell or model credential and settings store can
+prove it behaves like the first-party ones (`@xandreed/plugin-workspace`'s
+local file system and shell pass the file-system and shell kits on Bun and
+Node; `@xandreed/plugin-sessions`, `@xandreed/plugin-tasks` and
+`@xandreed/plugin-tool-discovery` pass the sessions, task and registry kits).
 `@xandreed/plugin-render` does the same for render surfaces, feeds and
 transports (see [render kits](#render-kits)).
 
@@ -21,6 +23,10 @@ transports (see [render kits](#render-kits)).
 | --- | --- | --- |
 | `sessionLogConformance(log)` | dense sequence numbers, one revision per commit, compare-and-swap, the `notAfter` clock check, JSON kept by value, an event as large as a message's images at their limit (`MEDIA_LIMITS.requestChars` base64 characters), reads by position and kind, listing order, children and their removal | a `SessionLog` |
 | `sessionLogRecoveryConformance(subject)` | reopening, several open handles, interrupted commits, a handle whose scope never closed, the exact `notAfter` boundary | a way to open a `SessionLog` |
+| `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; `meta` stored and admitted; every `NotResumable` reason; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds; cancel and removal; the inbox; a write renewing a lease, a lease that ran out and a dead process holder reaped; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
+| `taskRunnerConformance(make, { interruptsOnClose? })` | `run` hands the work over and returns, the work runs once, outlives its caller, is told a deadline not in the past and runs without the caller's services; `TaskActivity` counts it from the hand-over; closing the runner's scope interrupts it | a way to make a `TaskRunner` (and its `TaskActivity`) |
+| `tasksConformance(make)` | a task runs as one turn of a child session (spawn empty, fork with the parent's closed turns), its result reaches the parent's inbox once and the parent reacts once, after the turn in flight; `task.started` once per task, a second start runs nothing; a failed task says why; cancel; no task starts tasks; `reconcile` starting a task that never ran and delivering a result whose delivery was lost | a way to build `Sessions` and `Tasks` over the kit's runner and executor |
+| `toolRegistryConformance(make)` | the catalog, activation (always-on, on demand, unknown, ungranted, only growing), one invocation id per call minted before the checks, `CurrentToolInvocation` and the opener's services in the handler, events published on the run's bus only (never written to the journal by the registry), `PermissionGrants`, a `tool.refused` for each reason (`inactive`, `forbidden`, `denied`, `call-limit`, `tool-call-limit`) | a way to build a `ToolRegistry` over the kit's capabilities |
 | `memoryConformance(memory, services)` | own entry ids, a log that reads back exactly after a reopen, views and artifacts kept, a pure build, append-only maintenance, a message's images through a reopen (the current turn's built as image parts, an earlier turn's as image parts or label lines) | a memory strategy |
 | `stepLoopConformance(loop)` | per-step event order, validation before dispatch, planned batches, forced tool choices, no call after completion, the run's usage (the sum of its `assistant.message` usage), the step cap, the request's `captureTraceContent` reaching its model calls as `CurrentTraceContent` | a `StepLoop` |
 | `turnConformance(runner, services)` | the writer first, the message before the matcher's history, the reply and the end exactly once, tasks joined before the reply, a model-driven turn's usage equal to its stored `step.usage` records (`turnUsageOf`), the user's attachments stored with the turn and reaching the first request as image parts, the host layer seeing only earlier turns | a turn composition |
@@ -33,8 +39,10 @@ transports (see [render kits](#render-kits)).
 Every core kit returns `ReadonlyArray<ConformanceCheck>`. A check has a `name` and
 a `run` effect that succeeds, or fails with a `ConformanceFailure` whose
 `check` names the broken part of the contract and whose `message` says what
-happened. The session log kits use fresh session ids and owners in every
-check, so they can run against a shared database. The AuthStore kit uses fresh
+happened. The session log, Sessions and Tasks kits use fresh session ids and
+owners in every check, so they can run against a shared database; the
+TaskRunner and ToolRegistry kits build what they check afresh for each
+check. The AuthStore kit uses fresh
 provider ids (`conformance-<uuid>`) and removes them when a check ends. The
 SettingsStore kit writes the store's own keys, since settings have no ids: it
 puts each key it touches back as it found it, but run it against settings
@@ -156,6 +164,285 @@ commits, two processes making 200 compare-and-swap increments each end at
 process and lease ownership.
 
 See [SDK and sessions](/docs/concepts/harness) for how sessions use the log.
+
+## The Sessions kit
+
+`sessionsConformance` checks a `Sessions` backend the way hosts and turns
+use it: over one store, opened by several instances at once (one per
+server), with leases that run out and processes that stop. It takes a
+subject that opens instances and moves the clock:
+
+```ts
+interface SessionsSubject {
+  /** Another instance over the same store each time, its turns leased for ttlMs, renewed only by their writes. */
+  readonly leased: (options: { ttlMs: number; admission: TurnAdmission["Service"] }) => Effect.Effect<SessionsInstance, unknown, Scope.Scope>
+  /** The same, its turns held by the process `self`; of its host's pids only `running` run. Optional. */
+  readonly processOwned?: (options: { self: SessionsProcess; running: ReadonlyArray<number>; admission: TurnAdmission["Service"] }) => Effect.Effect<SessionsInstance, unknown, Scope.Scope>
+  /** Move the clock the store and the instances read: TestClock.adjust, or a sleep. */
+  readonly advance: (millis: number) => Effect.Effect<void>
+}
+interface SessionsInstance {
+  readonly sessions: Sessions["Service"]
+  /** Its TurnActivity, when it has one; without one, the activity check passes unchecked. */
+  readonly activity: Option.Option<TurnActivity["Service"]>
+}
+interface SessionsProcess { readonly host: string; readonly pid: number; readonly startedAt: number }
+```
+
+The kit passes its own `TurnAdmission` to every instance (it admits all,
+records what it is shown, holds a begin, or refuses one), so an instance
+must use the admission it is given. `@xandreed/plugin-sessions` runs the kit
+over `SessionsLive` and the in-memory log, each check under a `TestClock` of
+its own; `@xandreed/plugin-session-sqlite` runs it over the SQLite log the
+same way, and `verify:packages` on Node:
+
+```ts
+import { Context, Effect, Layer, Option } from "effect"
+import { TestClock } from "effect/testing"
+import { SessionLog, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
+import type { SessionsSubject } from "@xandreed/core"
+import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
+import type { ProcessLiveness, SessionsConfig } from "@xandreed/plugin-sessions"
+
+declare const log: SessionLog["Service"] // one store for every instance and check
+
+const instance = (config: SessionsConfig, admission: TurnAdmission["Service"], liveness?: ProcessLiveness) =>
+  Layer.build(SessionsLive(config, liveness === undefined ? undefined : { liveness }).pipe(
+    Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), Layer.succeed(TurnAdmission, admission))))).pipe(
+    Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity) })))
+
+const subject: SessionsSubject = {
+  leased: ({ ttlMs, admission }) => instance({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs, renew: "on-commit" } }, admission),
+  processOwned: ({ self, running, admission }) => instance({ ...sessionsDefaults, ownership: { mode: "process" } }, admission,
+    { current: Effect.succeed(Option.some(self)), alive: (pid) => Effect.succeed(running.includes(pid)) }),
+  advance: (millis) => TestClock.adjust(millis),
+}
+// Run each check under the clock `advance` moves.
+const checks = sessionsConformance(subject).map((check) => ({ ...check, run: check.run.pipe(Effect.provide(TestClock.layer())) }))
+```
+
+The checks:
+
+- **create**: a new session is empty and read back by its owner; another
+  owner's address and an unknown id are `SessionMissing`; an id is created
+  once (`SessionExists`).
+- **list**: an owner's sessions newest first, in pages that continue from
+  `next`; a session's children only under `parent`.
+- **fork**: a fork's lineage and history are its parent's up to the last
+  closed turn (a turn still open is left out) and its turns count on from
+  there; a spawn starts empty; forking a missing session is `SessionMissing`.
+- **busy**: the admitted turn is what was asked for; every instance shows it
+  open and answers a second begin with `SessionBusy`; the next turn opens
+  after the end.
+- **race**: of begins racing on one session from three instances, exactly one
+  opens a turn.
+- **duplicate**: a key's retry is `TurnDuplicate` (open, then not) whatever
+  its `meta`; another message or command under the key is `KeyConflict`;
+  `lookup` finds the key's turn.
+- **meta**: `meta` is stored in `turn.started`, admitted and shown to the
+  host's admission; `{}` when none is given; the inbox's from `drain`.
+- **resume**: a cancelled turn is resumed (`resumes` admitted and stored), a
+  retried resume is `TurnDuplicate`, and every other case is `NotResumable`
+  with its reason (`finished`, `missing`, `superseded`, `inbox`), or
+  `SessionBusy` while a turn is open.
+- **attachments**: an image its bytes do not support is
+  `AttachmentRejected` and opens nothing; a good one is admitted and stored.
+- **nothing-pending**: an inbox turn with nothing waiting is `NothingPending`
+  and a drain runs none.
+- **writer**: writes are stored in order, stamped with the turn; the end
+  stores `completed`, a failure's code, `turn.unended` for a scope closed
+  without an end and `turn.interrupted` for an interrupted one; a write after
+  the end is `turn.closed`.
+- **transact**: records outside a turn; `turn.*` kinds are `ReservedKind`.
+- **cancel**: ends exactly the open turn as cancelled; the holder's writer
+  is closed at once on its own instance, and at its next write when the
+  cancel came from another.
+- **remove**: removing a session closes its open turn (`removed`) and
+  removes its children.
+- **inbox**: an item is stored once per id (even after it was taken), taken
+  by one inbox turn whose message frames it, waits for an open turn (whose
+  end reports it), comes back when its turn is interrupted from outside, and
+  is done when its turn is cancelled (a later drain takes nothing).
+- **lease**: a turn within its lease is open and busy; past it, it is shown
+  closed, a drain with nothing waiting stores nothing (only a turn that
+  opens reaps), the next begin reaps it (`interrupted`, `turn.lease`) and the
+  old holder's writes are refused.
+- **lease-renewal**: a write renews the lease from that write: a turn
+  written to within its lease is still open and busy past its first lease,
+  and reaped once a lease has passed since the write.
+- **process**, only with `processOwned`: a turn whose process stopped, or
+  whose pid now belongs to a process that started later, is reaped by the
+  next begin; one whose process runs is held.
+- **activity**, for an instance with a `TurnActivity` (one without passes
+  it unchecked): it counts a begin from the moment it is asked
+  for (while the host's admission holds it), then its turn per session and
+  turn, oldest first, until its writer's scope closes, an ended turn
+  included; another instance's turns and a refused begin do not count;
+  `idle` completes only when nothing is open or beginning.
+
+The kit's own tests run it against careless wrappers of `SessionsLive`: a
+`begin` that cancels the open turn instead of refusing it fails `busy`,
+`duplicate`, `lease`, `lease-renewal`, `process`, `race` and `resume`; a
+`TurnActivity` that always reads idle fails `activity`; a `begin` that drops
+`meta` fails `meta`; leases that writes do not renew (`renew: "none"`) fail
+`lease-renewal`.
+
+## The task kits
+
+`taskRunnerConformance(make, options?)` checks a `TaskRunner`, the place
+background work runs. `make` builds one for each check, with its
+`TaskActivity` when it has one:
+
+```ts
+interface TaskRunnerFixture {
+  readonly runner: TaskRunner["Service"]
+  readonly activity: Option.Option<TaskActivity["Service"]>
+}
+```
+
+- **hand-over**: `run` returns once the work is handed over, before it ends,
+  and the work runs once.
+- **outlives-caller**: the work goes on when the caller that handed it over
+  is interrupted and its scope closed.
+- **deadline**: the work is told a deadline that is none or not in the past.
+- **isolation**: the work runs without the caller's services (the turn that
+  starts a task ends before it).
+- **activity**: with a `TaskActivity`, the work counts from the moment `run`
+  returns until it ends, and `idle` waits for all of it.
+- **scope-close**: closing the scope the runner was made in interrupts the
+  work still running, so a task's turn ends interrupted rather than lost. A
+  runner that hands work to the platform (a serverless `waitUntil`) cannot,
+  and passes `{ interruptsOnClose: false }` to leave it out.
+
+The checks wait up to two seconds on the live clock for work they expect,
+so run the kit without a `TestClock`. `InProcessTaskRunnerLive` passes them
+all, with and without a deadline (`maxMs`); core's tests show a runner that
+runs the work in the caller failing `hand-over`, `outlives-caller`,
+`isolation` and `scope-close`, and one that forks it loose failing
+`isolation` and `scope-close`.
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import { TaskActivity, TaskRunner, taskRunnerConformance } from "@xandreed/core"
+import { InProcessTaskRunnerLive } from "@xandreed/plugin-tasks"
+
+const checks = taskRunnerConformance(Layer.build(InProcessTaskRunnerLive()).pipe(Effect.map((context) => ({
+  runner: Context.get(context, TaskRunner),
+  activity: Context.getOption(context, TaskActivity),
+}))))
+```
+
+`tasksConformance(make)` checks a `Tasks` backend. `make` builds it, and the
+`Sessions` it runs over, with the kit's own runner (each piece of work on a
+fiber the kit waits for, with the services there were when the check built
+the runner and none of its caller's, or dropped, as by a runner that died)
+and executor (a child turn answers `found: <instructions>` unless the check
+says otherwise; a reaction records the turn it ran on). Like the runner
+kit, it waits up to two seconds on the live clock for background work, so
+run it without a `TestClock`:
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import { SessionLog, Sessions, TaskExecutor, TaskRunner, Tasks, tasksConformance, TurnAdmissionOpen } from "@xandreed/core"
+import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
+import { TasksLive, tasksDefaults } from "@xandreed/plugin-tasks"
+
+declare const log: SessionLog["Service"]
+
+const checks = tasksConformance(({ runner, executor }) => Layer.build(TasksLive(tasksDefaults).pipe(Layer.provideMerge(Layer.mergeAll(
+  SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))),
+  Layer.succeed(TaskRunner, runner),
+  Layer.succeed(TaskExecutor, executor),
+)))).pipe(Effect.map((context) => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks) }))))
+```
+
+- **run**: a task runs as one turn of a child session of the parent (a
+  spawn's history is empty); its result reaches the parent's inbox once, and
+  the parent reacts once, to an inbox turn whose item carries the reply; the
+  parent records one `task.started`, and lists the task.
+- **start-once**: three starts of one task id, while it runs and after, run
+  it once.
+- **after-turn**: a result that arrives while the parent's turn is open
+  waits for that turn, whose end reports it; a fork's history is the
+  parent's up to its last closed turn.
+- **failed**: a failed child turn is a `failed` task whose failure carries
+  the error's code, and the parent still hears of it.
+- **cancel**: cancelling a running task ends its child's turn cancelled and
+  delivers nothing; a cancelled task is not cancelled again, and an unknown
+  one is `TaskMissing`.
+- **depth**: a task's session cannot start tasks (`TaskRefused`, `depth`).
+- **reconcile**: a task whose runner dropped it stays `pending` until
+  `reconcile` starts it, and then delivers; a second `reconcile` finds
+  nothing.
+- **reconcile-delivery**: a task that finished while the parent's inbox was
+  full (`InboxFull`) reads `completed` and not delivered; once the inbox is
+  drained, `reconcile` delivers it (once), the parent reacts to it after
+  the caller drains, and a second `reconcile` finds nothing. The kit fills
+  the inbox itself, so this check relies on the backend keeping a result the
+  full inbox refused for a later `reconcile`, and runs only over a
+  `Sessions` whose inbox refuses an item within 256 deliveries; over one
+  that takes them all it passes unchecked.
+
+`TasksLive` passes them; a `cancel` that stops nothing fails `cancel`, a
+`start` that ignores the task id fails `start-once`, a `list` that returns
+nothing fails `run` and `start-once`, a `reconcile` that does nothing fails
+`reconcile` and `reconcile-delivery`, and one that leaves a result whose
+delivery was lost undelivered fails `reconcile-delivery`.
+
+## The ToolRegistry kit
+
+`toolRegistryConformance(make)` checks a `ToolRegistry`. `make` builds one
+over the kit's capabilities (four tools and three skills: an always-on one,
+one needing the `kit.vault` permission, one loaded on demand) with at most
+`maxCallsPerRun` calls per turn and no permission granted by default. Each
+check runs a turn over core's `TurnLive`, with a writer that keeps the
+turn's events in memory, and calls the tools through the open toolkit's
+handlers:
+
+```ts
+import { Context, Effect, Layer } from "effect"
+import { Capabilities, ToolRegistry, toolRegistryConformance } from "@xandreed/core"
+import { toolDiscoveryDefaults, ToolDiscoveryLive } from "@xandreed/plugin-tool-discovery"
+
+const checks = toolRegistryConformance((capabilities, limits) =>
+  Layer.build(ToolDiscoveryLive({ ...toolDiscoveryDefaults, ...limits }).pipe(Layer.provide(Layer.succeed(Capabilities, capabilities)))).pipe(
+    Effect.map((context) => Context.get(context, ToolRegistry))))
+```
+
+- **catalog**: the catalog and the run's tools hold every skill and tool,
+  with the permissions a tool needs.
+- **activation**: always-on skills are active once the matcher's choice is
+  applied, others only once activated (publishing `skills.activated` once);
+  an unknown skill fails with `skills.unknown`; a skill whose permission is
+  not granted stays inactive; the active set only grows.
+- **invocation**: a handled call publishes `tool.started`, its handler's
+  `tool.progress` and `tool.completed` under one invocation id, taken after
+  the refused call before it (`<runId>:call:<n>`); the handler sees that call
+  as `CurrentToolInvocation` and the services where the tools were opened,
+  not the caller's; the events are published on the run's bus only, so
+  `tool.progress` never reaches the journal.
+- **grants**: the turn's `PermissionGrants` let a skill that needs them be
+  activated and its tools run.
+- **refused-inactive**, **refused-forbidden**, **refused-denied**,
+  **refused-call-limit**, **refused-tool-call-limit**: a call refused before
+  its handler runs (a tool not loaded, a permission the turn lacks, an
+  `ActionPolicy` denial, the turn's call limit, the tool's own) takes its
+  invocation id first, publishes one `tool.refused` with its input and no
+  `tool.started` on the run's bus only, never runs the handler, and returns
+  the refusal's message as its failed result.
+
+A registry publishes on the run's bus (`RunContext.events`) and never
+writes the journal itself: the turn journals what it publishes, and core's
+`TurnLive` is what keeps `tool.progress` out of the journal and stores a
+`tool.refused` without its input. The kit reads the journal to catch a
+registry that writes it directly, so those checks guard the registry, not
+the turn's own journaling.
+
+The plugin's registry passes them; its tests show a registry that ignores
+the turn's call limit failing `refused-call-limit`, one that activates every
+skill when the tools open failing `activation`, `invocation` and
+`refused-inactive`, and one whose catalog drops the permissions failing
+`catalog`.
 
 ## The FileSystem kit
 

@@ -154,6 +154,11 @@ export * from "./ports/tasks.port.js"
 export { ActiveTurn, ProcessActivity, TurnsInFlight } from "./session/activity.entity.js"
 export { awaitIdle, processActivity } from "./session/activity.entity.functions.js"
 export { TaskActivity, TurnActivity } from "./ports/activity.port.js"
+// the Sessions, TaskRunner and Tasks contracts as conformance kits
+export { sessionsConformance } from "./session/sessions.conformance.js"
+export type { SessionsInstance, SessionsProcess, SessionsSubject } from "./session/sessions.conformance.js"
+export { taskRunnerConformance, tasksConformance } from "./session/tasks.conformance.js"
+export type { TaskRunnerFixture, TasksDependencies, TasksFixture } from "./session/tasks.conformance.js"
 
 // spec (the spec-driven pipeline's shared vocabulary — re-homed from the old line)
 export {
@@ -233,6 +238,8 @@ export type { ConformanceCheck } from "./conformance.entity.js"
 export { probeCall, stepLoopConformance, textReply } from "./turn/step-loop.conformance.js"
 export { inMemoryLog, memoryConformance } from "./memory/memory.conformance.js"
 export { turnConformance } from "./turn/turn.conformance.js"
+export { toolRegistryConformance } from "./turn/tool-registry.conformance.js"
+export type { ToolRegistryLimits } from "./turn/tool-registry.conformance.js"
 export { authStoreConformance } from "./models/auth-store.conformance.js"
 export { settingsStoreConformance } from "./models/settings-store.conformance.js"
 export { modelCatalogConformance } from "./models/model-catalog.conformance.js"

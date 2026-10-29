@@ -724,15 +724,33 @@ is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
 
 `memoryConformance(memory, services)`, `stepLoopConformance(loop)`,
 `turnConformance(runner, services)`, `sessionLogConformance(log)`,
-`sessionLogRecoveryConformance(subject)`, `fileSystemConformance(subject)`,
+`sessionLogRecoveryConformance(subject)`, `sessionsConformance(subject)`,
+`taskRunnerConformance(make, { interruptsOnClose? })`,
+`tasksConformance(make)`, `toolRegistryConformance(make)`,
+`fileSystemConformance(subject)`,
 `bashConformance(subject)`, `authStoreConformance(store)`,
 `settingsStoreConformance(store, { writable })` and
 `modelCatalogConformance(catalog, { includes? })` (from `@xandreed/core`) are
 the port contracts as runnable checks: each returns `ConformanceCheck`s
 (`name`, and a `run` effect that fails with a `ConformanceFailure` naming the
 broken check) that any test runner can run. Run them against a new strategy,
-loop, turn composition, session store, file system, shell, or credential,
-settings or catalog store.
+loop, turn composition, session store, `Sessions` backend, task runner,
+tasks backend, tool registry, file system, shell, or credential, settings or
+catalog store. The `Sessions` kit opens several instances over one store
+(leased, and held by a process when the backend has process ownership) and
+moves their clock with `advance` (`TestClock.adjust`); it checks the busy,
+key, resume, image and inbox rules, the writer's endings, cancel and
+removal, a write renewing a lease, a lease that ran out and a dead process
+holder reaped, and, for an instance with a `TurnActivity`, that it counts
+each begin from the moment it is asked for and each turn per session and
+turn until its scope closes. The Tasks kit gives the backend its own runner
+and executor; the TaskRunner kit checks a runner the host makes. Both wait
+up to two seconds on the live clock for background work, so run them
+without a `TestClock`. The registry kit runs each turn over `TurnLive` and
+checks every `tool.refused` reason. `@xandreed/plugin-sessions`
+(over the memory log), `@xandreed/plugin-session-sqlite` (over SQLite),
+`@xandreed/plugin-tasks` and `@xandreed/plugin-tool-discovery` run them, and
+`verify:packages` runs all four on Node.
 
 **Files and commands.** Agent tools reach the machine through two core ports,
 `FileSystem` and `Bash`. Core ships the ports, the in-memory
