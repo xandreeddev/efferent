@@ -46,11 +46,10 @@ tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
 `require-concurrency-option`, but `no-instanceof-tagged-error`, skip test
 code (`*.test.ts`, `*.bench.ts`, `testing.ts`, `*.testing.ts`,
 `testing.port.ts`, `testing/`); `no-error-code-compare` and
-`no-provider-namespace` also skip kits (`*.conformance.ts`). A rule marked
-"per package" runs only in the packages its list in `foundry.config.ts`
-names (`EFFECT_FN_CLEAN`): to add a package, fix its findings and add its
-line, never the baseline; once the list names every package, the rule takes
-`CHECKED` and the list is deleted. An `allow` list
+`no-provider-namespace` also skip kits (`*.conformance.ts`). A new rule with
+findings enters through its `include`, one clean package at a time, never
+through the baseline; once it covers every package, it takes `CHECKED`. An
+`allow` list
 (`ROLELESS_FILES`, `NULLABLE_EDGES`, `RECORD_CAST_EDGES`, `PROVIDER_NAMESPACE_EDGES`) only shrinks: an entry that excuses
 nothing fails.
 
@@ -82,7 +81,7 @@ nothing fails.
 | `effect/no-option-unwrap` | `Option.getOrNull`, `Option.getOrUndefined` outside `*.adapter.ts` files and kits | `Option.match`, `Option.getOrElse` with a real default, an optional field spread from `Option.match`; unwrap in the adapter that writes the wire |
 | `effect/no-stringified-cause` | `String(e)`, `${e}` or `"…" + e` of a failure inside a tagged error's fields | keep the failure as a value (a `cause` field: `harnessError(code, message, cause)`) and say what failed; text from `reasonOf(cause)` |
 | `effect/no-error-code-compare` | `x.code === "<literal>"` outside the file that declares the error and its `.functions.ts` (kits may compare) | a guard the owning module exports (`isStoreBusy`, `isUnavailable`), `harnessCodeOf(e)` for the framework's code of any failure, or a tagged error matched with `Effect.catchTag` |
-| `effect/prefer-effect-fn` | per package: an exported function or a service method that only returns `Effect.gen(…)` | `Effect.fn("area.op")(function* (…) { … })`; `Effect.fnUntraced` for a hot helper |
+| `effect/prefer-effect-fn` | an exported function or a service method that only returns `Effect.gen(…)` | `Effect.fn("area.op")(function* (…) { … })`; `Effect.fnUntraced` for a hot helper |
 | `effect/require-concurrency-option` | `Effect.forEach` or `Effect.all` over more than one effect without `concurrency` | state it: `1` when order, a shared resource or the first failure matters; a number or a config value for independent I/O |
 | `effect/branded-id-fields` | an unbranded id field, in core's `src/domain` and `src/spec` | a brand; elsewhere reuse the sibling fields' brand |
 | `quality/no-skipped-tests` | `.skip`, `.todo`, `.only`, `xit`, `xdescribe`, `xtest` | fix or delete the test; one that needs an environment uses `test.skipIf` |
@@ -136,7 +135,7 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
   field; `reasonOf` turns a cause into text; no stack reaches a report or
   the model.
 
-Naming for new code (existing code is not converted in passing):
+Naming (skill `effect-idioms` §7 has the span policy and names):
 
 - Service methods and exported effectful functions at a service boundary are
   `Effect.fn("area.op")`, named like the spans `agent.turn` and `engine.run`;

@@ -121,15 +121,48 @@ before using it; do not trust Effect 3 memory.
 
 ## 7. Spans and functions
 
-- A service method or an exported effectful function at a service boundary
-  is `Effect.fn("area.op")(function* (…) { … })`, named like the existing
-  spans (`agent.turn`, `engine.run`): `bash.exec`, `sessions.begin`
-  (`effect/prefer-effect-fn`).
-- A hot helper called per item, chunk or event is `Effect.fnUntraced`.
-- Older code uses plain `Effect.gen` closures; convert a service when you
-  change it, not in passing.
-- Context for logs: `Effect.annotateLogs`; spans: `Effect.withSpan` where
-  `Effect.fn` does not fit.
+`effect/prefer-effect-fn` runs in every package: an exported function or a
+service method that only returns `Effect.gen(…)` is one of the two below.
+
+- **`Effect.fn("area.op")(function* (…) { … })`**: a port adapter's method,
+  or an exported function that does work through a port (a store, a model,
+  a process, a file tree, the network), run at most once per command, turn,
+  step, tool call, commit or trial.
+- **`Effect.fnUntraced`**: everything else. Pure functions in
+  `*.entity.functions.ts` and decoders; constructors that run when a layer
+  is built (`make*`); helpers run once per event, part, chunk or path;
+  conformance kits and their fakes; runtime activation; and everything on
+  the path between `traceTurn` and `guardTurn` (no span may sit between
+  them).
+- **Names**: dotted lowercase with snake_case words. `agent.turn`,
+  `engine.`, `tool.`, `providers.` and `LanguageModel.` belong to the spans
+  that use them today (the sdk tests select `tool.*` spans by prefix): no
+  new name starts with them.
+- **Ids**: span attributes and log annotations share their keys:
+  `efferent.session.id`, `efferent.run.id`, `efferent.turn` (core's
+  `sessionAttributes` and `turnAttributes`), `efferent.task.id`,
+  `llm.model`, `eval.run.id`, `eval.trial.id`. A log message names no id.
+- **Annotations go in pipeables**:
+  `Effect.fn("sessions.begin")(function* (address, input) { … }, (effect, address) => Effect.annotateLogs(effect, sessionAttributes(address.id)))`.
+  The pipeables run inside the new span, so `annotateCurrentSpan` there
+  annotates it. Converting a function that annotates its caller's span
+  moves those attributes onto the new span: check what reads them.
+- `Effect.withSpan` where `Effect.fn` does not fit: an Effect value (a
+  writer's `flush`), or a generic internal helper.
+
+| Area | Spans |
+|---|---|
+| sdk, core | `agent.turn.begin`, `agent.turn`, `turn.persist_reply`, `skills.collect`, `plugin.activate`, the in-memory log's `session_log.<op>` |
+| plugin-sessions | `sessions.<op>` (each `Sessions` call but `changes`), `turn_writer.commit`, `turn_writer.flush`, `turn_writer.end` |
+| plugin-session-sqlite | `session_log.open`, `session_log.<create\|head\|list\|read\|commit\|remove>` |
+| plugin-models | `providers.generate` (around `models.credentials`, the build and the request), `models.utility` |
+| memory plugins | `memory.open`, `memory.summarize`, `memory.digest` |
+| plugin-tasks | `tasks.<op>`, `task.run` |
+| plugin-workspace | `bash.exec`, `skills.settle` |
+| plugin-render | `render.emit` |
+| evals | `eval.run`, `eval.trial`, `eval.grade`, `eval.regrade`, `eval.calibrate`, `eval.calibration.execute`, `eval.calibration.project`, `eval.pairwise`, `eval.retrieval.assess`, `eval.semantic.run`, `eval.semantic.llm`, `eval.semantic.jev`, `eval.evaluator` |
+| evals exporters, evals-cli | `eval.export`, `eval.cli` |
+| foundry | `foundry.check`, `foundry.run`, `foundry.attempt`, `foundry.pipeline`, `foundry.gate` |
 
 ## 8. Branching
 
