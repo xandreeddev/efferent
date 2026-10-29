@@ -182,7 +182,12 @@ its `tool.<name>`); the session logs' `session_log.*` (`create`, `head`,
 `list`, `read`, `commit`, `remove`, and the SQLite store's `open`), in
 memory (`SessionLogMemoryLive`) as in SQLite, each with
 `efferent.session.id` when it names a session, wherever the log is called;
-the render plugin's `render.emit`; and the evals' `eval.*` spans
+the sessions plugin's `sessions.*` (each `Sessions` call but `changes`, with
+`efferent.session.id`; `sessions.begin` under `agent.turn.begin` when
+`Agent.turn` begins the turn) and its turn writer's `turn_writer.commit`
+(one per commit, under the span of the call that asked for it),
+`turn_writer.flush` and `turn_writer.end`, each with the turn's ids; the
+render plugin's `render.emit`; and the evals' `eval.*` spans
 ([evals](/docs/concepts/evals/)).
 
 ## The telemetry plugin

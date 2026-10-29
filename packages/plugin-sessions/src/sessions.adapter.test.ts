@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { awaitIdle, frameworkDraft, HarnessError, harnessCodeOf, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import { awaitIdle, frameworkDraft, HarnessError, harnessCodeOf, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, traceTurnBegin, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsPluginLive } from "./plugin.adapter.js"
 import { processLiveness } from "./process-liveness.adapter.js"
@@ -289,11 +289,11 @@ describe("one turn at a time", () => {
     expect(stored.flat()).toEqual([])
   }).pipe(Effect.provideService(Scheduler.MaxOpsBeforeYield, 3))), 30_000)
 
-  test("an append whose commit dies with a defect fails the writer's later writes with session.defect, logged with its cause, instead of leaving them waiting", () => {
-    const logged: Array<readonly [string, string, unknown]> = []
+  test("an append whose commit dies with a defect fails the writer's later writes with session.defect, logged with its cause and the turn's ids, instead of leaving them waiting", () => {
+    const logged: Array<readonly [string, string, unknown, unknown, unknown]> = []
     const capture = Logger.layer([Logger.make((options) => {
       const annotations = options.fiber.getRef(References.CurrentLogAnnotations)
-      logged.push([options.logLevel, [options.message].flat().join(" "), annotations["efferent.turn"]])
+      logged.push([options.logLevel, [options.message].flat().join(" "), annotations["efferent.session.id"], annotations["efferent.run.id"], annotations["efferent.turn"]])
     })])
     return withLog((inner) => Effect.gen(function* () {
       const log = SessionLog.of({
@@ -314,7 +314,8 @@ describe("one turn at a time", () => {
         yield* Effect.flip(writer.end({ reason: "completed", failure: Option.none() })),
       ]
       expect(later.map(codeOf)).toEqual(["session.defect", "session.defect", "session.defect", "session.defect"])
-      expect(logged).toContainEqual(["Error", "turn 1's writer stopped storing: a write died with a defect", 1])
+      // The ids are the line's annotations, not its text.
+      expect(logged).toContainEqual(["Error", "the turn's writer stopped storing: a write died with a defect", address.id, "run-broken store", 1])
       yield* Scope.close(scope, Exit.void)
       // The writer let the turn go unended: the next begin reaps it.
       expect((yield* Effect.scoped(sessions!.begin(address, say("next")))).admitted.turn).toBe(2)
@@ -516,10 +517,10 @@ describe("leases", () => {
   })))
 
   test("under process ownership, a turn whose end the store refuses, at its scope's close too, is logged and let go of by its instance: the next begin reaps it", () => {
-    const logged: Array<readonly [string, unknown, unknown]> = []
+    const logged: Array<readonly [string, unknown, unknown, unknown]> = []
     const capture = Logger.layer([Logger.make((options) => {
       const annotations = options.fiber.getRef(References.CurrentLogAnnotations)
-      logged.push([[options.message].flat().join(" "), annotations["efferent.session.id"], annotations["efferent.turn"]])
+      logged.push([[options.message].flat().join(" "), annotations["efferent.session.id"], annotations["efferent.run.id"], annotations["efferent.turn"]])
     })])
     return withLog((inner) => Effect.gen(function* () {
       const refusing = yield* Ref.make(false)
@@ -542,7 +543,7 @@ describe("leases", () => {
       expect((yield* Effect.scoped(sessions.begin(address, say("next")))).admitted.turn).toBe(2)
       const ended = (yield* sessions.read(address, { kinds: ["turn.ended"] })).map((event) => [Option.getOrNull(event.turn), event.data.reason, (event.data.failure as JsonObject | null)?.code ?? null])
       expect(ended).toEqual([[1, "interrupted", "turn.lease"], [2, "failed", "turn.unended"]])
-      expect(logged).toContainEqual(["turn 1's end was not stored when its scope closed: store.busy: the store is busy", address.id, 1])
+      expect(logged).toContainEqual(["the turn's end was not stored when its scope closed: store.busy: the store is busy", address.id, "run-never stored", 1])
     }).pipe(Effect.provide(capture)))
   })
 
@@ -1457,4 +1458,124 @@ describe("admission", () => {
     yield* Ref.set(stalling, false)
     expect((yield* Effect.scoped(sessions.begin(address, say("next")))).admitted.turn).toBe(2)
   })))
+})
+
+describe("traces and logs", () => {
+  /** A tracer keeping every span it starts, in the order they start. */
+  const capturing = (spans: Array<Tracer.NativeSpan>) => Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options)
+      spans.push(span)
+      return span
+    },
+  })
+  /** A span's ancestors among the kept spans, nearest first. */
+  const ancestors = (spans: ReadonlyArray<Tracer.NativeSpan>, span: Tracer.NativeSpan): ReadonlyArray<string> => Option.match(
+    Option.flatMap(span.parent, (parent) => Option.fromNullishOr(spans.find((candidate) => candidate.spanId === parent.spanId))),
+    { onNone: () => [], onSome: (parent) => [parent.name, ...ancestors(spans, parent)] },
+  )
+  const ids = ["efferent.session.id", "efferent.run.id", "efferent.turn"]
+  const read = (span: Tracer.NativeSpan, keys: ReadonlyArray<string>) => keys.map((key) => span.attributes.get(key))
+  type Line = readonly [string, Readonly<Record<string, unknown>>]
+  const capturingLogger = (lines: Array<Line>) => Logger.layer([Logger.make((options) => {
+    lines.push([[options.message].flat().join(" "), options.fiber.getRef(References.CurrentLogAnnotations)])
+  })])
+
+  test("each Sessions call but changes is a sessions.<op> span under the caller's, with the session's id", () => withLog((log) => Effect.gen(function* () {
+    const spans: Array<Tracer.NativeSpan> = []
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const { address, child } = yield* Effect.gen(function* () {
+      const address = yield* created(sessions!)
+      const child = yield* sessions!.fork(address, { origin: "task", inherit: false })
+      yield* sessions!.get(address)
+      yield* sessions!.list({ owner })
+      yield* sessions!.read(address)
+      yield* sessions!.lookup(address, "k1")
+      yield* sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: undefined }))
+      yield* sessions!.deliver(address, { id: "i1", source: {}, content: "a notice" })
+      yield* sessions!.drain(address, () => Effect.void, { maxTurns: 1 })
+      const scope = yield* Scope.make()
+      const writer = yield* sessions!.begin(address, say("hello")).pipe(Scope.provide(scope))
+      yield* sessions!.cancel(address, writer.admitted.turn)
+      yield* Scope.close(scope, Exit.void)
+      yield* sessions!.remove({ id: child.header.id, owner })
+      return { address, child: child.header.id }
+    }).pipe(Effect.withSpan("host.request"), Effect.withTracer(capturing(spans)))
+    expect(spans.filter((span) => span.name.startsWith("sessions.")).map((span) => [span.name, span.attributes.get("efferent.session.id"), ancestors(spans, span)[0]])).toEqual([
+      ["sessions.create", address.id, "host.request"],
+      ["sessions.fork", address.id, "host.request"],
+      ["sessions.get", address.id, "host.request"],
+      ["sessions.list", undefined, "host.request"],
+      ["sessions.read", address.id, "host.request"],
+      ["sessions.lookup", address.id, "host.request"],
+      ["sessions.transact", address.id, "host.request"],
+      ["sessions.deliver", address.id, "host.request"],
+      ["sessions.drain", address.id, "host.request"],
+      ["sessions.begin", address.id, "host.request"],
+      ["sessions.cancel", address.id, "host.request"],
+      ["sessions.remove", child, "host.request"],
+    ])
+  })))
+
+  test("the writer's commits are turn_writer.commit spans under the call that asked for them, not under the begin; they, flush and end carry the turn's ids, as do the log's spans under a commit", () => withLog((inner) => Effect.gen(function* () {
+    const spans: Array<Tracer.NativeSpan> = []
+    // A log whose commit opens a span of its own, as a store's would.
+    const log = SessionLog.of({ ...inner, commit: (id, commit) => inner.commit(id, commit).pipe(Effect.withSpan("store.commit")) })
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* Effect.scoped(Effect.gen(function* () {
+      const writer = yield* sessions!.begin(address, say("hello")).pipe(traceTurnBegin({ session: address.id, runId: "run-hello", origin: "user" }))
+      yield* Effect.gen(function* () {
+        yield* writer.append([{ kind: "note", data: { n: 1 } }]).pipe(Effect.withSpan("host.step"))
+        yield* writer.flush
+        yield* writer.end({ reason: "completed", failure: Option.none() })
+      }).pipe(Effect.withSpan("host.turn"))
+    })).pipe(Effect.withSpan("host.request"), Effect.withTracer(capturing(spans)))
+    const begin = spans.filter((span) => ancestors(spans, span).includes("agent.turn.begin"))
+    // The begin holds only its own work: its reads of the log and the opening commit.
+    expect(begin.map((span) => [span.name, ancestors(spans, span)[0]])).toEqual([
+      ["sessions.begin", "agent.turn.begin"],
+      ["session_log.head", "sessions.begin"],
+      ["session_log.read", "sessions.begin"],
+      ["session_log.read", "sessions.begin"],
+      ["store.commit", "sessions.begin"],
+      ["session_log.commit", "store.commit"],
+    ])
+    // By name and parent: the writer's fiber runs a commit after the call that queued it may have moved on.
+    const writes = spans.filter((span) => span.name.startsWith("turn_writer.") || (span.name === "store.commit" && !begin.includes(span)))
+      .map((span) => [span.name, ancestors(spans, span).slice(0, 2).join(" < "), ...read(span, ids)])
+    expect(writes.toSorted((left, right) => JSON.stringify(left) < JSON.stringify(right) ? -1 : 1)).toEqual([
+      ["store.commit", "turn_writer.commit < host.step", address.id, "run-hello", 1],
+      ["store.commit", "turn_writer.commit < turn_writer.end", address.id, "run-hello", 1],
+      ["turn_writer.commit", "host.step < host.turn", address.id, "run-hello", 1],
+      ["turn_writer.commit", "turn_writer.end < host.turn", address.id, "run-hello", 1],
+      ["turn_writer.end", "host.turn < host.request", address.id, "run-hello", 1],
+      ["turn_writer.flush", "host.turn < host.request", address.id, "run-hello", 1],
+    ])
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "note@1", "turn.ended@1"])
+  })))
+
+  test("the drain's lines name no ids: the session's, its turn's and run's are their annotations", () => {
+    const lines: Array<Line> = []
+    return withLog((log) => Effect.gen(function* () {
+      const refusing = yield* Ref.make(false)
+      const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
+        admit: (turn, open) => Ref.get(refusing).pipe(
+          Effect.flatMap((refuse) => refuse ? Effect.fail(new TurnRefused({ session: turn.session.id, reason: "draining", message: "the host is draining" })) : Effect.void),
+          Effect.andThen(open),
+        ),
+      }))
+      const { sessions } = yield* withActivity(log, sessionsDefaults, admission)
+      const address = yield* created(sessions)
+      yield* sessions.deliver(address, { id: "i1", source: {}, content: "a notice" })
+      yield* sessions.drain(address, () => Effect.fail(new HarnessError({ code: "host.failed", message: "the reaction gave up" })), { maxTurns: 1 })
+      const runId = (yield* sessions.read(address, { kinds: ["turn.started"] }))[0]?.data.runId
+      yield* Ref.set(refusing, true)
+      yield* sessions.drain(address, () => Effect.void, { maxTurns: 1 })
+      expect(lines.filter(([message]) => message.startsWith("an inbox turn"))).toEqual([
+        ["an inbox turn ended failed: host.failed", { "efferent.session.id": address.id, "efferent.run.id": runId, "efferent.turn": 1 }],
+        ["an inbox turn was refused: the host is draining", { "efferent.session.id": address.id }],
+      ])
+    }).pipe(Effect.provide(capturingLogger(lines))))
+  })
 })

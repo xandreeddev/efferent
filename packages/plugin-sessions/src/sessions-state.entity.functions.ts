@@ -139,8 +139,5 @@ export const viewOf = (head: SessionHead, state: State, holder: Holder): Effect.
     pending: pendingOf(state).length,
   })))
 
-/** The ids a log line about a turn carries, under the names its spans give them. */
-export const turnLogIds = (session: string, turn: number): Record<string, unknown> => ({ "efferent.session.id": session, "efferent.turn": turn })
-
 /** The title a session takes from its first user message: its first `chars` characters. */
 export const titleOf = (text: string, chars: number): string => Array.from(text).slice(0, chars).join("")

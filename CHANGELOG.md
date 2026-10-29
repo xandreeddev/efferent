@@ -109,6 +109,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   to sit under `agent.turn` excludes the begin's subtree.
 - A trace query that expects an inline `turn.ended` subscriber's spans
   directly under `agent.turn` finds them under `turn.persist_reply`.
+- Read `efferent.session.id`, `efferent.run.id` and `efferent.turn` from the
+  sessions plugin's log annotations instead of its log text.
 
 ### Breaking
 
@@ -307,6 +309,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and `efferent.session.id` in place of `task.id` and `session.id`, and the
   plugin's log lines no longer name the task or the parent session in their
   text; the ids are log annotations under those keys.
+- `@xandreed/plugin-sessions`: the plugin's log messages no longer contain
+  session, run or turn ids (for example "the turn's end was not stored when
+  its scope closed" and "an inbox turn ended failed"); the ids are log
+  annotations.
 
 ### Added
 
@@ -417,6 +423,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `collectSkillFiles` runs as `skills.collect`, and each
   `SessionLogMemoryLive` operation is a `session_log.<op>` span with
   `efferent.session.id` when it names a session.
+- Traces show sessions: every `Sessions` call but `changes` is a
+  `sessions.<op>` span with `efferent.session.id`, and `sessions.begin`
+  sits under `agent.turn.begin` when `Agent.turn` begins the turn.
+- Traces show a turn's writer: each commit is a `turn_writer.commit` span
+  under the span of the call that asked for it, plus `turn_writer.flush` and
+  `turn_writer.end`, all with the turn's ids; the store's own spans under a
+  commit carry them too.
 
 ### Changed
 
@@ -776,6 +789,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   exported effectful functions are `Effect.fn` spans, or
   `Effect.fnUntraced` for entity functions, constructors, per-event helpers
   and kits.
+- `effect/prefer-effect-fn` runs in `plugin-sessions`.
 
 ## 0.14.0 — 2026-10-29
 

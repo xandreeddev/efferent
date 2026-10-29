@@ -14,6 +14,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 - Count an inbox attempt only for a turn that wrote something; drop an item once `inbox.attempts` turns took it and failed.
 - Keep `TurnActivity` exact: a begin counts from the request until its writer is handed over, then the turn until the writer's scope closes (`awaitIdle` relies on it).
 - A keep-alive is queued in order with the turn's writes: keep one `write` or `transact` shorter than the lease.
+- Trace each `Sessions` call but `changes` as `sessions.<op>` (`Effect.fn`; the `onSession` pipeable puts `sessionAttributes` on its span and its logs), each writer commit as `turn_writer.commit` under the span of the call that queued it (`underCaller`: the writer's fiber was forked under the begin), and the writer's `flush` and `end` as `turn_writer.flush` and `turn_writer.end`, all with `turnAttributes`; the writer's fibers carry the turn's ids on their spans and logs. A log line names no id: the ids are its annotations. Trace nothing per append or per `write`.
 - Import no `node:` module: `processLiveness` reaches `node:os` through `process.getBuiltinModule` and works without a process.
 - Change behaviour by adding the check to core's `sessionsConformance` first, with a careless instance in `src/sessions.conformance.test.ts` that it catches.
 
@@ -30,8 +31,8 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:355` | exact for one item, `src/sessions.adapter.test.ts:1034`; the join unpinned |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:269` | exact, `src/sessions.adapter.test.ts:1186` |
+| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:371` | exact for one item, `src/sessions.adapter.test.ts:1035`; the join unpinned |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:283` | exact, `src/sessions.adapter.test.ts:1187` |
 
 ## Erasure files
 
@@ -51,7 +52,7 @@ None.
 
 ## Tests
 
-- `src/sessions.adapter.test.ts`: one turn at a time, leases, activity, cancel and removal, check then append, contention and a broken log, the inbox, resuming, forks, admission, over the in-memory log.
+- `src/sessions.adapter.test.ts`: one turn at a time, leases, activity, cancel and removal, check then append, contention and a broken log, the inbox, resuming, forks, admission, and the spans and log annotations, over the in-memory log.
 - `src/sessions.conformance.test.ts`: core's `sessionsConformance` over the in-memory log, and the kit's self-tests (careless instances that must fail the named checks, a writer raising its refusals as `HarnessError` codes among them).
 - Elsewhere: plugin-session-sqlite runs the same kit and its crash tests over SQLite; the sdk journeys and golden (`packages/sdk/src/resume.journey.test.ts`, `agent.golden.test.ts`) compose `SessionsLive`; `verify:packages` runs the kit on Node over the packed package.
 - Run: `bun test packages/plugin-sessions packages/plugin-session-sqlite`.

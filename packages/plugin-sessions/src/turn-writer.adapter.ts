@@ -1,5 +1,5 @@
-import { Cause, Clock, Deferred, Effect, Exit, HashSet, Option, Predicate, Queue, Ref, Scope, Semaphore } from "effect"
-import { harnessError, readStored, reasonOf, ReservedKind, SessionContended, turnEndedDraft, TurnClosed, unmarkedReservedDraft } from "@xandreed/core"
+import { Cause, Clock, Deferred, Effect, Exit, HashSet, Option, Predicate, Queue, Ref, Scope, Semaphore, Tracer } from "effect"
+import { harnessError, readStored, reasonOf, ReservedKind, SessionContended, turnAttributes, turnEndedDraft, TurnClosed, unmarkedReservedDraft } from "@xandreed/core"
 import type {
   AdmittedTurn,
   Decided,
@@ -16,7 +16,7 @@ import type {
   TurnWriter,
 } from "@xandreed/core"
 import type { Context } from "effect"
-import { closedState, droppedData, pendingOf, stateJson, stateOf, turnLogIds } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, pendingOf, stateJson, stateOf } from "./sessions-state.entity.functions.js"
 import type { SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
@@ -40,19 +40,33 @@ interface Plan<A> {
   readonly result: A
 }
 
+/** The span current where the writer was asked for something (an append, a write, a commit), if any. */
+type Caller = Option.Option<Tracer.AnySpan>
+
 type Item =
-  | { readonly _tag: "Append"; readonly drafts: ReadonlyArray<TurnDraft> }
+  | { readonly _tag: "Append"; readonly drafts: ReadonlyArray<TurnDraft>; readonly caller: Caller }
   | { readonly _tag: "Run"; readonly run: Effect.Effect<void> }
   | { readonly _tag: "Marker"; readonly done: Deferred.Deferred<void, TurnError> }
   | { readonly _tag: "Commit"; readonly commit: Effect.Effect<void> }
   | { readonly _tag: "Tracked"; readonly item: Item; readonly settled: Effect.Effect<void> }
 
+/** Consecutive appends as one, under the first one's caller. */
 const groupsOf = (items: ReadonlyArray<Item>): ReadonlyArray<Item> => items.reduce((groups: ReadonlyArray<Item>, item): ReadonlyArray<Item> => {
   const last = groups.at(-1)
   return last?._tag === "Append" && item._tag === "Append"
-    ? [...groups.slice(0, -1), { _tag: "Append", drafts: [...last.drafts, ...item.drafts] }]
+    ? [...groups.slice(0, -1), { _tag: "Append", drafts: [...last.drafts, ...item.drafts], caller: last.caller }]
     : [...groups, item]
 }, [])
+
+const callerSpan: Effect.Effect<Caller> = Effect.serviceOption(Tracer.ParentSpan)
+
+/**
+ * Run the writer's work for a caller under the caller's span: the writer's
+ * fiber was forked where the turn began, so its spans would otherwise sit
+ * under the begin's, outside the turn's.
+ */
+const underCaller = (caller: Caller) => <A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> =>
+  Option.match(caller, { onNone: () => effect, onSome: (span) => Effect.provideService(effect, Tracer.ParentSpan, span) })
 
 export interface TurnWriterInput {
   readonly log: Log
@@ -90,10 +104,17 @@ export interface OpenWriter {
  * store's `SessionLogError`; a `HarnessError` only for its own state that
  * does not encode or decode (`session.encode`, `session.state`) and a write
  * that died (`session.defect`), with what failed as its `cause`.
+ *
+ * Each commit is a `turn_writer.commit` span, under the span of the call
+ * that asked for it (the first append of a batch, a `transact`, an end, the
+ * keep-alive); `flush` and `end` are `turn_writer.flush` and
+ * `turn_writer.end`. All three carry the turn's ids (`turnAttributes`), as
+ * do every span and log line of the writer's own fibers.
  */
-export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effect.Effect<OpenWriter> => Effect.gen(function* () {
+export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInput, scope: Scope.Scope): Effect.fn.Return<OpenWriter> {
   const { log, config, admitted } = input
   const id = admitted.session.id
+  const ids = turnAttributes(admitted)
   const ownership = config.ownership
   const queue = yield* Queue.bounded<Item>(config.writer.capacity)
   const failed = yield* Ref.make(Option.none<TurnError>())
@@ -210,7 +231,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       if (error._tag === "SessionMissing") return yield* closeAndFail("removed")
       return yield* Effect.fail(error)
     })
-    return attempt(0)
+    return attempt(0).pipe(Effect.withSpan("turn_writer.commit", { attributes: ids }))
   }
 
   /** A failed store write latches: the turn fails at its next touch of the writer. */
@@ -224,7 +245,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   const process = (item: Item): Effect.Effect<void> => item._tag === "Tracked" ? process(item.item).pipe(Effect.ensuring(item.settled)) : Ref.get(failed).pipe(Effect.flatMap((failure) => {
     if (item._tag === "Marker") return Option.match(failure, { onNone: () => Deferred.succeed(item.done, undefined), onSome: (error) => Deferred.fail(item.done, error) }).pipe(Effect.asVoid)
     if (item._tag === "Run" || item._tag === "Commit") return item._tag === "Run" ? item.run : item.commit
-    return Option.isSome(failure) ? Effect.void : latch(commitPlan(unchanged(undefined, item.drafts), { renew: true })).pipe(Effect.asVoid)
+    return Option.isSome(failure) ? Effect.void : latch(commitPlan(unchanged(undefined, item.drafts), { renew: true })).pipe(Effect.asVoid, underCaller(item.caller))
   }))
 
   /**
@@ -236,13 +257,16 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   const died = (defect: unknown) => Effect.gen(function* () {
     const reason = reasonOf(Cause.die(defect))
     yield* Ref.update(failed, Option.orElse(() => Option.some(harnessError("session.defect", `a write of turn ${admitted.turn} died: ${reason}`, defect))))
-    yield* Effect.logError(`turn ${admitted.turn}'s writer stopped storing: a write died with a defect`, Cause.die(defect)).pipe(
-      Effect.annotateLogs(turnLogIds(id, admitted.turn)))
+    yield* Effect.logError("the turn's writer stopped storing: a write died with a defect", Cause.die(defect))
   })
+
+  // The writer's own fibers carry the turn's ids on their spans (the log's under each commit) and logs.
+  const asTheTurn = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.annotateSpans(ids), Effect.annotateLogs(ids))
 
   yield* Effect.forkIn(Queue.takeBetween(queue, 1, config.writer.batch).pipe(
     Effect.flatMap((chunk) => Effect.forEach(groupsOf(chunk), (item) => process(item).pipe(Effect.catchDefect(died)), { concurrency: 1, discard: true })),
     Effect.forever,
+    asTheTurn,
   ), scope)
 
   const offer = (item: Item): Effect.Effect<void, TurnError> => (item._tag === "Append" ? Ref.set(tried, true) : Effect.void).pipe(
@@ -274,7 +298,8 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   /** Queue `commit` and wait for its result, in queue order. */
   const inOrder = <A, E>(commit: Effect.Effect<A, E | TurnError>, tries: boolean): Effect.Effect<A, E | TurnError> => Effect.gen(function* () {
     const result = yield* Deferred.make<A, E | TurnError>()
-    yield* admit(result, { _tag: "Commit", commit: Effect.exit(commit).pipe(Effect.flatMap((exit) => Deferred.done(result, exit)), Effect.asVoid) }, tries)
+    const caller = yield* callerSpan
+    yield* admit(result, { _tag: "Commit", commit: Effect.exit(commit).pipe(Effect.flatMap((exit) => Deferred.done(result, exit)), Effect.asVoid, underCaller(caller)) }, tries)
     return yield* Deferred.await(result)
   })
 
@@ -314,14 +339,15 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       Effect.andThen(Deferred.done(done, exit)), Effect.asVoid)
 
   /** The first end seals admission before it is offered; every end while it runs awaits that same commit. */
-  const end = (value: TurnEnding): Effect.Effect<{ readonly pending: number }, TurnError> => Effect.gen(function* () {
+  const end = Effect.fn("turn_writer.end", { attributes: ids })(function* (value: TurnEnding): Effect.fn.Return<{ readonly pending: number }, TurnError> {
+    const caller = yield* callerSpan
     const result = yield* admission.withPermits(1)(Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
       const current = yield* Ref.get(ending)
       if (Option.isSome(current)) return current.value
       yield* refuseIfFailed
       const done = yield* Deferred.make<{ readonly pending: number }, TurnError>()
       yield* Ref.set(ending, Option.some(done))
-      yield* restore(enqueue(done, { _tag: "Commit", commit: Effect.exit(endNow(value)).pipe(Effect.flatMap((exit) => settleEnd(done, exit))) })).pipe(
+      yield* restore(enqueue(done, { _tag: "Commit", commit: Effect.exit(endNow(value)).pipe(Effect.flatMap((exit) => settleEnd(done, exit)), underCaller(caller)) })).pipe(
         Effect.onInterrupt(() => reopen(done)),
       )
       return done
@@ -339,11 +365,10 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       return { drafts: [], next: renewed(at.state, yield* storageNow, true), result: undefined }
     }), { renew: false }), false).pipe(
       // Refused as closed (the turn ended, or was closed elsewhere), there is nothing left to renew; anything else is logged.
-      Effect.catchTag("TurnClosed", (refused) => Effect.logDebug(`turn ${admitted.turn}'s keep-alive did not renew its lease: the turn was ${refused.reason}`)),
-      Effect.catch((error) => Effect.logWarning(`turn ${admitted.turn}'s keep-alive did not renew its lease: ${reasonOf(Cause.fail(error))}`)),
-      Effect.annotateLogs(turnLogIds(id, admitted.turn)),
+      Effect.catchTag("TurnClosed", (refused) => Effect.logDebug(`the turn's keep-alive did not renew its lease: the turn was ${refused.reason}`)),
+      Effect.catch((error) => Effect.logWarning(`the turn's keep-alive did not renew its lease: ${reasonOf(Cause.fail(error))}`)),
     )
-    yield* Effect.forkIn(Effect.sleep(every).pipe(Effect.andThen(renew), Effect.forever, Effect.asVoid), scope)
+    yield* Effect.forkIn(Effect.sleep(every).pipe(Effect.andThen(renew), Effect.forever, Effect.asVoid, asTheTurn), scope)
   }
 
   // Runs first when the scope closes (finalizers run last-added first). A turn whose end could not be
@@ -359,12 +384,12 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       Effect.timeoutOption("10 seconds"),
       Effect.flatMap(Option.match({
         onSome: () => Effect.void,
-        onNone: () => Effect.logWarning(`turn ${admitted.turn}'s end was not stored within 10 seconds of its scope closing`),
+        onNone: () => Effect.logWarning("the turn's end was not stored within 10 seconds of its scope closing"),
       })),
       // Refused as closed, the turn was closed elsewhere: nothing was left to store.
-      Effect.catchTag("TurnClosed", (refused) => Effect.logDebug(`turn ${admitted.turn}'s end was not stored when its scope closed: the turn was ${refused.reason}`)),
-      Effect.catch((error) => Effect.logWarning(`turn ${admitted.turn}'s end was not stored when its scope closed: ${reasonOf(Cause.fail(error))}`)),
-      Effect.annotateLogs(turnLogIds(id, admitted.turn)),
+      Effect.catchTag("TurnClosed", (refused) => Effect.logDebug(`the turn's end was not stored when its scope closed: the turn was ${refused.reason}`)),
+      Effect.catch((error) => Effect.logWarning(`the turn's end was not stored when its scope closed: ${reasonOf(Cause.fail(error))}`)),
+      Effect.annotateLogs(ids),
     )), Effect.ensuring(Effect.gen(function* () {
       yield* Ref.update(failed, Option.orElse((): Option.Option<TurnError> => Option.some(sealed)))
       yield* Queue.shutdown(queue)
@@ -379,13 +404,14 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
       ? historyOf(log, input.header, input.started, kinds, true)
       : log.read(id, { after, limit: Option.none(), kinds })), Effect.catchTag("SessionMissing", removed)),
     append: (drafts) => refuseIfReserved(drafts).pipe(Effect.andThen(admission.withPermits(1)(
-      refuseIfFailed.pipe(Effect.andThen(refuseIfSealed), Effect.andThen(drafts.length === 0 ? Effect.void : offer({ _tag: "Append", drafts })))))),
-    write: <A, E>(op: Effect.Effect<A, E>) => Effect.gen(function* () {
+      refuseIfFailed.pipe(Effect.andThen(refuseIfSealed), Effect.andThen(drafts.length === 0 ? Effect.void : callerSpan.pipe(Effect.flatMap((caller) => offer({ _tag: "Append", drafts, caller })))))))),
+    write: Effect.fnUntraced(function* <A, E>(op: Effect.Effect<A, E>): Effect.fn.Return<A, E | TurnError> {
       const result = yield* Deferred.make<A, E | TurnError>()
+      const caller = yield* callerSpan
       const run = Effect.exit(Effect.raceFirst(
         refuseIfFailed.pipe(Effect.andThen(op)),
         Deferred.await(closed).pipe(Effect.flatMap((note) => Effect.fail(note))),
-      )).pipe(Effect.flatMap((exit) => Deferred.done(result, exit)), Effect.asVoid)
+      )).pipe(Effect.flatMap((exit) => Deferred.done(result, exit)), Effect.asVoid, underCaller(caller))
       yield* admit(result, { _tag: "Run", run }, true)
       return yield* Deferred.await(result)
     }),
@@ -394,7 +420,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
         Effect.tap((decision) => refuseIfReserved(decision.drafts)),
         Effect.map((decision): Plan<A> => ({ drafts: decision.drafts, next: at.state, result: decision.result })),
       ), { renew: true }), true),
-    flush,
+    flush: flush.pipe(Effect.withSpan("turn_writer.flush", { attributes: ids })),
     end,
     closed: Deferred.await(closed),
   }
