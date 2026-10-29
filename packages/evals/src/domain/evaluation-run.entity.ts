@@ -1,8 +1,10 @@
 import { Schema } from "effect"
 import { EvalId, Fingerprints } from "./identity.entity.js"
 import { Trial } from "./trial.entity.js"
+import { Gate } from "./suite.entity.js"
 
-export const GateFinding = Schema.Struct({ candidate: Schema.String, grader: Schema.String, metric: Schema.String, mode: Schema.String, passed: Schema.Boolean, measured: Schema.Int, value: Schema.OptionFromNullOr(Schema.Number), reason: Schema.String })
+/** A gate's verdict for one candidate; its grader, metric and mode are the gate's own. */
+export const GateFinding = Schema.Struct({ candidate: EvalId, grader: Gate.fields.grader, metric: Gate.fields.metric, mode: Gate.fields.mode, passed: Schema.Boolean, measured: Schema.Int, value: Schema.OptionFromNullOr(Schema.Number), reason: Schema.String })
 export const EvaluationRun = Schema.Struct({
   version: Schema.Literal(1), id: EvalId, application: Schema.NonEmptyString,
   phase: Schema.Literals(["executed", "graded"]),

@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, Option, Ref, Semaphore } from "effect"
+import { Cause, Clock, Effect, Exit, Option, Ref, Schema, Semaphore } from "effect"
 import { reasonOf } from "../domain/identity.entity.functions.js"
 import type {
   EvaluationApp,
@@ -6,7 +6,7 @@ import type {
   GradingSelection
 } from "../contracts/evaluation-app.contract.js"
 import { validateEvaluationApp } from "../contracts/evaluation-app.contract.functions.js"
-import { EvaluationError, EvalId } from "../domain/identity.entity.js"
+import { EvaluationError, EvalId, EvalPath } from "../domain/identity.entity.js"
 import type { Trial } from "../domain/trial.entity.js"
 import type { Grade } from "../domain/grader.entity.js"
 import type { Suite } from "../domain/suite.entity.js"
@@ -159,9 +159,21 @@ export const gradeTrial = (
     )
   })
 
+/** A run id becomes the first segment of every trial id, so it must be an `EvalId`. */
+const decodeRunId = (runId: string) =>
+  Schema.decodeUnknownEffect(EvalId)(runId).pipe(
+    Effect.mapError(
+      (error) =>
+        new EvaluationError({
+          code: "invalid",
+          message: `Run id ${JSON.stringify(runId)}: ${error.message}`
+        })
+    )
+  )
+
 const runTrial = (
   app: EvaluationApp,
-  runId: string,
+  runId: EvalId,
   suite: Suite,
   task: Task,
   candidate: Candidate,
@@ -174,10 +186,10 @@ const runTrial = (
       const startedAt = yield* Clock.currentTimeMillis
       const initial: Trial = {
         version: 1,
-        id: EvalId.make(
+        id: EvalPath.make(
           `${runId}/${suite.id}/${candidate.id}/${task.id}/${sample}`
         ),
-        runId: EvalId.make(runId),
+        runId,
         suiteId: suite.id,
         task,
         candidate,
@@ -208,7 +220,7 @@ const runTrial = (
                   transcript: [
                     ...trial.transcript,
                     {
-                      id: EvalId.make(
+                      id: EvalPath.make(
                         `${trial.id}/event/${trial.transcript.length}`
                       ),
                       sequence: trial.transcript.length,
@@ -341,6 +353,7 @@ export const gradeEvaluation = (
 > =>
   Effect.gen(function* () {
     yield* validateEvaluationApp(app)
+    const id = yield* decodeRunId(runId)
     if (source.application !== app.id)
       return yield* Effect.fail(
         new EvaluationError({
@@ -366,21 +379,25 @@ export const gradeEvaluation = (
           )
       }))
     const requested = selection.graders ?? []
+    // A grader key is `<id>@<version>`; a selection names a key or a registered id.
+    const selects = (key: string, selected: string) =>
+      key === selected ||
+      app.graders.some(
+        ({ definition }) =>
+          definition.id === selected &&
+          `${definition.id}@${definition.version}` === key
+      )
     const matches = (grader: string) =>
-      !requested.length ||
-      requested.some((id) => grader === id || grader.split("@")[0] === id)
+      !requested.length || requested.some((selected) => selects(grader, selected))
     if (
       source.trials.some(
         (trial) => !suites.some((suite) => suite.id === trial.suiteId)
       ) ||
       requested.some(
-        (id) =>
+        (selected) =>
           !allSuites.some((suite) =>
             suite.tasks.some((task) =>
-              task.graders.some(
-                (binding) =>
-                  binding.grader === id || binding.grader.split("@")[0] === id
-              )
+              task.graders.some((binding) => selects(binding.grader, selected))
             )
           )
       )
@@ -407,10 +424,10 @@ export const gradeEvaluation = (
           )
         const revised: Trial = {
           ...trial,
-          id: EvalId.make(
-            `${runId}/${trial.suiteId}/${trial.candidate.id}/${trial.task.id}/${trial.sample}`
+          id: EvalPath.make(
+            `${id}/${trial.suiteId}/${trial.candidate.id}/${trial.task.id}/${trial.sample}`
           ),
-          runId: EvalId.make(runId),
+          runId: id,
           task: {
             ...trial.task,
             graders: configured.graders.filter((binding) =>
@@ -429,7 +446,7 @@ export const gradeEvaluation = (
     )
     const run: EvaluationRun = {
       ...source,
-      id: EvalId.make(runId),
+      id,
       phase: "graded",
       startedAt,
       endedAt: yield* Clock.currentTimeMillis,
@@ -479,6 +496,7 @@ export const runEvaluation = (
 > =>
   Effect.gen(function* () {
     yield* validateEvaluationApp(app)
+    const id = yield* decodeRunId(runId)
     if (
       (selection.concurrency !== undefined &&
         (!Number.isInteger(selection.concurrency) ||
@@ -578,14 +596,14 @@ export const runEvaluation = (
             )
           ),
         ({ task, candidate, sample }) =>
-          runTrial(app, runId, suite, task, candidate, sample, selection),
+          runTrial(app, id, suite, task, candidate, sample, selection),
         { concurrency: suite.concurrency }
       )
     })
     const settled = trials.flat()
     const run: EvaluationRun = {
       version: 1,
-      id: EvalId.make(runId),
+      id,
       application: app.id,
       phase: "executed",
       startedAt,
@@ -599,7 +617,7 @@ export const runEvaluation = (
     }
     const store = yield* EvaluationRunStore
     yield* store.writeRun(run)
-    return selection.executeOnly ? run : yield* gradeEvaluation(app, run, runId)
+    return selection.executeOnly ? run : yield* gradeEvaluation(app, run, id)
   })
 
 export const calibrateGrader = (

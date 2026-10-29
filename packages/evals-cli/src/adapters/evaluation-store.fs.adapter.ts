@@ -1,17 +1,34 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { randomUUID } from "node:crypto"
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer, Predicate, Schema } from "effect"
 import { EvaluationRunStore, EvaluationError, EvaluationRun, Trial } from "@xandreed/evals"
 
 export const fileIo = <A>(action: () => Promise<A>) => Effect.tryPromise({ try: action, catch: (error) => new EvaluationError({ code: "persistence", message: String(error) }) })
+/** Write to a temporary file, then rename it into place; a failed write removes the temporary file. */
 export const writeJson = (path: string, value: unknown) => Effect.gen(function* () {
   yield* fileIo(() => mkdir(dirname(path), { recursive: true }))
   const temporary = `${path}.${randomUUID()}.tmp`
-  yield* fileIo(() => writeFile(temporary, JSON.stringify(value, null, 2), { mode: 0o600 }))
-  yield* fileIo(() => rename(temporary, path))
+  yield* fileIo(() => writeFile(temporary, JSON.stringify(value, null, 2), { mode: 0o600 })).pipe(
+    Effect.andThen(fileIo(() => rename(temporary, path))),
+    Effect.onError(() => fileIo(() => rm(temporary, { force: true })).pipe(Effect.ignore({ log: true }))),
+    Effect.uninterruptible,
+  )
 })
-export const readRun = (path: string) => fileIo(() => readFile(path, "utf8")).pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(EvaluationRun))), Effect.mapError((error) => new EvaluationError({ code: "invalid", message: String(error) })))
+/** A file's text: `missing` when there is no such file, `persistence` when it cannot be read. */
+export const readText = (path: string) => Effect.tryPromise({
+  try: () => readFile(path, "utf8"),
+  catch: (error) => Predicate.hasProperty(error, "code") && error.code === "ENOENT"
+    ? new EvaluationError({ code: "missing", message: `No file at ${path}` })
+    : new EvaluationError({ code: "persistence", message: String(error) }),
+})
+/** A JSON file decoded with `schema`: `missing`, `persistence`, or `invalid` when its content does not decode. */
+export const readJson = <A, I>(path: string, schema: Schema.Codec<A, I>) => readText(path).pipe(
+  Effect.flatMap((text) => Schema.decodeUnknownEffect(Schema.fromJsonString(schema))(text).pipe(
+    Effect.mapError((error) => new EvaluationError({ code: "invalid", message: `${path}: ${error.message}` })),
+  )),
+)
+export const readRun = (path: string) => readJson(path, EvaluationRun)
 export const EvaluationRunStoreFsLive = (directory: string) => Layer.succeed(EvaluationRunStore, {
   writeTrial: (trial) => Schema.encodeEffect(Trial)(trial).pipe(Effect.mapError((error) => new EvaluationError({ code: "persistence", message: String(error) })), Effect.flatMap((encoded) => writeJson(join(directory, "trials", `${encodeURIComponent(trial.id)}.json`), encoded))),
   writeRun: (run) => Schema.encodeEffect(EvaluationRun)(run).pipe(Effect.mapError((error) => new EvaluationError({ code: "persistence", message: String(error) })), Effect.flatMap((encoded) => writeJson(join(directory, run.phase === "executed" ? "execution.json" : "report.json"), encoded))),

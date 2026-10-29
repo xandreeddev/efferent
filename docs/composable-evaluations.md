@@ -123,8 +123,8 @@ sensitivity instead of converting it to a tie.
 Evaluator failure, unavailable evidence and skipped execution contain no metrics.
 Unknown usage/cost encodes as null through Effect Option. Gates are separate
 from assessment: a suite's `Gate` names a grader's metric, aggregates it over
-each candidate's trials (`mean` or `passRate`) and checks it against a minimum
-or maximum, `blocking` or `diagnostic`, so a new semantic metric can stay
+each candidate's trials (`mean` or `passRate`) and checks it against a minimum,
+a maximum or both (a gate needs at least one), `blocking` or `diagnostic`, so a new semantic metric can stay
 diagnostic. The run records each one as a `GateFinding` in `EvaluationRun`'s
 `gates`. A gate with `requiresReviewedReference` does not pass while any of its
 trials' reference labels is provisional.

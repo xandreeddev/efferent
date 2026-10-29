@@ -1,6 +1,6 @@
-import { mkdir, readFile, readdir } from "node:fs/promises"
+import { mkdir, readdir } from "node:fs/promises"
 import { randomUUID } from "node:crypto"
-import { resolve } from "node:path"
+import { join, resolve } from "node:path"
 import { Effect, Layer, Option, Schema } from "effect"
 import {
   EvaluationError,
@@ -14,6 +14,7 @@ import {
   ReviewBundle,
   reviewBundle,
   approveReviews,
+  positiveInt,
   type EvaluationApp,
   type EvaluationSelection,
   EvaluationServicesLive,
@@ -23,6 +24,7 @@ import {
 import {
   EvaluationRunStoreFsLive,
   fileIo,
+  readJson,
   readRun,
   writeJson
 } from "./adapters/evaluation-store.fs.adapter.js"
@@ -33,21 +35,48 @@ export interface CliOptions {
   readonly exporters?: ReadonlyArray<ExporterRegistration>
   readonly output?: (value: unknown) => void
 }
-export const cliArguments = (args: ReadonlyArray<string>) => ({
-  command: args[0] ?? "help",
-  args: args.slice(1),
-  value: (flag: string, fallback: string) => {
-    const at = args.indexOf(flag)
-    return at < 0 ? fallback : (args[at + 1] ?? fallback)
-  },
-  has: (flag: string) => args.includes(flag),
-  ids: args.slice(
-    1,
-    args.findIndex((item, index) => index > 0 && item.startsWith("--")) < 0
-      ? args.length
-      : args.findIndex((item, index) => index > 0 && item.startsWith("--"))
+/** `--flag=value` reads as `--flag value`. */
+const tokensOf = (args: ReadonlyArray<string>) =>
+  args.flatMap((arg) =>
+    arg.startsWith("--") && arg.indexOf("=") > 2
+      ? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)]
+      : [arg]
   )
-})
+export const cliArguments = (raw: ReadonlyArray<string>) => {
+  const args = tokensOf(raw)
+  const command = args[0] ?? "help"
+  const flagValue = (flag: string) => {
+    const at = args.indexOf(flag)
+    return Option.fromNullishOr(at < 0 ? undefined : args[at + 1])
+  }
+  return {
+    command,
+    /** Every argument, `--flag=value` split in two. */
+    tokens: args,
+    args: args.slice(1),
+    value: (flag: string, fallback: string) =>
+      Option.getOrElse(flagValue(flag), () => fallback),
+    /** A flag's non-empty value, else `fallback`'s, else a usage error. */
+    required: (flag: string, fallback: Option.Option<string> = Option.none()) =>
+      Option.match(
+        Option.orElse(Option.filter(flagValue(flag), (value) => value.length > 0), () => fallback),
+        {
+          onNone: () =>
+            Effect.fail(
+              new EvaluationError({ code: "invalid", message: `${command} needs ${flag} <path>` })
+            ),
+          onSome: (value) => Effect.succeed(value)
+        }
+      ),
+    has: (flag: string) => args.includes(flag),
+    ids: args.slice(
+      1,
+      args.findIndex((item, index) => index > 0 && item.startsWith("--")) < 0
+        ? args.length
+        : args.findIndex((item, index) => index > 0 && item.startsWith("--"))
+    )
+  }
+}
 const help =
   "efferent-eval <list|validate|estimate|run|calibrate|grade|inspect|compare|review|export> [ids] --config eval.config.ts [--directory dir] [--split calibration|validation] [--repetitions n] [--environment id] [--task id] [--execute-only] [--exporter langfuse,langsmith]\nGrade captured work: grade --from execution.json [--grader id] --directory revision\nLocal reports are authoritative. Remote export is opt-in. App configurations may register additional commands."
 const requireFreshDirectory = (directory: string) =>
@@ -82,7 +111,9 @@ export const evaluationCli = (
       return 0
     }
     if (line.command === "inspect") {
-      const run = yield* readRun(line.value("--report", line.ids[0] ?? ""))
+      const run = yield* readRun(
+        yield* line.required("--report", Option.fromNullishOr(line.ids[0]))
+      )
       output(
         line.has("--summary")
           ? {
@@ -112,8 +143,10 @@ export const evaluationCli = (
       return 0
     }
     if (line.command === "compare") {
-      const baseline = yield* readRun(line.value("--baseline", ""))
-      const candidate = yield* readRun(line.value("--candidate-report", ""))
+      const baseline = yield* readRun(yield* line.required("--baseline"))
+      const candidate = yield* readRun(
+        yield* line.required("--candidate-report")
+      )
       const issues = comparisonIssues(baseline, candidate)
       output({
         issues,
@@ -130,7 +163,7 @@ export const evaluationCli = (
     }
     const app =
       options.config ??
-      (yield* loadEvaluationApp(line.value("--config", "eval.config.ts"), args))
+      (yield* loadEvaluationApp(line.value("--config", "eval.config.ts"), line.tokens))
     const extension = app.commands[line.command]
     if (extension) {
       const result = yield* extension(line.args)
@@ -173,11 +206,13 @@ export const evaluationCli = (
       })
       return 0
     }
+    // One id names both the run (or grading revision) and its default directory.
+    const runId = randomUUID()
     const directory = resolve(
-      line.value("--directory", `.eval-results/runs/${randomUUID()}`)
+      line.value("--directory", join(".eval-results", "runs", runId))
     )
     if (line.command === "export") {
-      const run = yield* readRun(line.value("--report", ""))
+      const run = yield* readRun(yield* line.required("--report"))
       const selected = line.value("--exporter", "").split(",").filter(Boolean)
       if (!selected.length)
         return yield* Effect.fail(
@@ -207,20 +242,9 @@ export const evaluationCli = (
       return 0
     }
     if (line.command === "review") {
-      const run = yield* readRun(line.value("--report", ""))
+      const run = yield* readRun(yield* line.required("--report"))
       const bundle = line.has("--import")
-        ? yield* fileIo(() =>
-            readFile(line.value("--import", ""), "utf8")
-          ).pipe(
-            Effect.flatMap((text) =>
-              Schema.decodeUnknownEffect(Schema.fromJsonString(ReviewBundle))(
-                text
-              )
-            ),
-            Effect.mapError(
-              (error) =>
-                new EvaluationError({ code: "invalid", message: String(error) })
-            ),
+        ? yield* readJson(yield* line.required("--import"), ReviewBundle).pipe(
             Effect.flatMap((review) => approveReviews(run, review))
           )
         : reviewBundle(run)
@@ -246,9 +270,9 @@ export const evaluationCli = (
       return 0
     }
     if (line.command === "grade") {
-      const saved = yield* readRun(line.value("--from", ""))
+      const saved = yield* readRun(yield* line.required("--from"))
       yield* requireFreshDirectory(directory)
-      const run = yield* gradeEvaluation(app, saved, randomUUID(), {
+      const run = yield* gradeEvaluation(app, saved, runId, {
         graders: line.value("--grader", "").split(",").filter(Boolean)
       }).pipe(
         Effect.provide(
@@ -284,13 +308,13 @@ export const evaluationCli = (
         line.command === "calibrate" ? "calibration" : "validation"
       ),
       ...(line.has("--repetitions")
-        ? { repetitions: Number(line.value("--repetitions", "1")) }
+        ? { repetitions: yield* positiveInt("--repetitions", 1, line.args) }
         : {}),
       ...(line.has("--concurrency")
-        ? { concurrency: Number(line.value("--concurrency", "1")) }
+        ? { concurrency: yield* positiveInt("--concurrency", 1, line.args) }
         : {}),
       ...(line.has("--timeout-ms")
-        ? { timeoutMs: Number(line.value("--timeout-ms", "60000")) }
+        ? { timeoutMs: yield* positiveInt("--timeout-ms", 60_000, line.args) }
         : {}),
       ...(line.has("--environment")
         ? { environment: line.value("--environment", "") }
@@ -306,8 +330,8 @@ export const evaluationCli = (
     yield* requireFreshDirectory(directory)
     const run = yield* (
       line.command === "calibrate"
-        ? calibrateGrader(app, line.ids[0] ?? "", randomUUID(), selection)
-        : runEvaluation(app, randomUUID(), selection)
+        ? calibrateGrader(app, line.ids[0] ?? "", runId, selection)
+        : runEvaluation(app, runId, selection)
     ).pipe(
       Effect.provide(
         Layer.merge(

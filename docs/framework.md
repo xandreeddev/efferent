@@ -913,8 +913,9 @@ schema: removing one rewrites the cached prefix.
 contributor's array in graph order. A capability carries tools, skills and
 prompt sections; per-turn host state comes from the turn's `layer`. The
 system prompt is the configured prefix, then the `static`
-sections, then the `session` sections, each tier by `order`. `turn` sections
-are recorded as turn context when the first run starts.
+sections, then the `session` sections, each tier by `order`, then by `id` in
+code-unit order, so the prompt's bytes are the same on every machine. `turn`
+sections are recorded as turn context when the first run starts.
 
 ### Skills from a directory
 

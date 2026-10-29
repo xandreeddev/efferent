@@ -1,140 +1,14 @@
-import {
-  runnableExecutionPort,
-  evaluationEnvironmentPort,
-  defineRunnable,
-  TrialRecorder,
-  EvaluationExport,
-  EvidenceProjector,
-  GraderAssessment
-} from "@xandreed/evals"
+import { EvaluationExport, EvaluationError, comparisonIssues, positiveInt } from "@xandreed/evals"
 import { expect, test } from "bun:test"
-import { mkdtemp, readFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Option, Layer } from "effect"
-import {
-  EvalId,
-  EvaluationError,
-  unknownEvaluationUsage,
-  gradingContext,
-  comparisonIssues,
-  type EvaluationApp
-} from "@xandreed/evals"
-import { Schema } from "effect"
+import { Effect, Layer } from "effect"
 import { evaluationCli } from "./cli.adapter.js"
+import { readRun, writeJson } from "./adapters/evaluation-store.fs.adapter.js"
+import { cliFixture } from "./cli-fixture.testing.js"
 
-const FunctionRunnable = runnableExecutionPort<string, string, Schema.Json, Record<string, never>>("cli-fixture")
-const FunctionEnvironment = evaluationEnvironmentPort<string, Record<string, never>>("cli-fixture")
-const app: EvaluationApp = {
-  id: "cli-fixture",
-  fingerprints: {},
-  commands: {},
-  calibrations: [],
-  suites: [
-    {
-      id: EvalId.make("suite"),
-      version: "1",
-      purpose: "regression",
-      description: "fixture",
-      repetitions: 1,
-      concurrency: 1,
-      timeoutMs: 1000,
-      tasks: [
-        {
-          id: EvalId.make("case"),
-          version: "1",
-          runnable: "function",
-          dataset: "fixture",
-          datasetVersion: "1",
-          family: "fixture",
-          split: "validation",
-          review: "known",
-          input: "hello",
-          reference: "hello",
-          provenance: "fixture",
-          graders: [
-            { grader: "contract@1", projection: "output", scope: "trial" }
-          ]
-        }
-      ],
-      candidates: [
-        { id: EvalId.make("code"), configuration: {}, fingerprints: {} }
-      ],
-      gates: [
-        {
-          grader: "contract@1",
-          metric: "correct",
-          aggregate: "mean",
-          mode: "blocking",
-          minimum: Option.some(1),
-          maximum: Option.none(),
-          requiresReviewedReference: true
-        }
-      ]
-    }
-  ],
-  runnables: [defineRunnable({
-    definition: { id: EvalId.make("function"), version: "1", description: "identity", fingerprints: {} },
-    input: Schema.String, output: Schema.String, evidence: Schema.Json,
-    runnable: FunctionRunnable, environment: FunctionEnvironment,
-    layer: Layer.succeed(FunctionRunnable, {
-      execute: (input) => Effect.succeed({ output: input, evidence: {} })
-    }),
-    environments: [{ id: "memory", layer: Layer.succeed(FunctionEnvironment, {
-      open: () => Effect.succeed({}),
-      inspect: () => Effect.succeed({ state: {}, references: [] })
-    }) }]
-  })],
-  environmentFor: { function: "memory" },
-  projections: [
-    {
-      definition: {
-        id: EvalId.make("output"),
-        version: "1",
-        budget: { maxBytes: 100, reservedBytes: 0 }
-      },
-      layer: Layer.succeed(EvidenceProjector, {
-        project: (trial) =>
-          gradingContext({
-            projection: "output",
-            version: "1",
-            input: Option.getOrNull(trial.output),
-            schema: Schema.Unknown,
-            budget: { maxBytes: 100, reservedBytes: 0 },
-            references: [trial.id],
-            omissions: []
-          })
-      })
-    }
-  ],
-  graders: [
-    {
-      definition: {
-        id: EvalId.make("contract"),
-        version: "1",
-        kind: "code",
-        metrics: ["correct"],
-        fingerprints: {}
-      },
-      layer: Layer.succeed(GraderAssessment, {
-        assess: (context) =>
-          Effect.succeed({
-            status: "scored",
-            metrics: [
-              {
-                kind: "boolean",
-                name: "correct",
-                value: context.input === "hello"
-              }
-            ],
-            reason: "fixture",
-            usage: unknownEvaluationUsage,
-            metadata: {}
-          })
-      })
-    }
-  ]
-}
+const app = cliFixture()
 const output = () => undefined
 
 test("failed export preserves the local result; inspect works without app configuration", async () => {
@@ -264,7 +138,6 @@ test("comparisons require the same grading policy and all bound grades", async (
       output
     })
   )
-  const { readRun } = await import("./adapters/evaluation-store.fs.adapter.js")
   const saved = await Effect.runPromise(readRun(join(directory, "report.json")))
   expect(
     comparisonIssues(saved, {
@@ -281,4 +154,53 @@ test("comparisons require the same grading policy and all bound grades", async (
       trials: saved.trials.map((trial) => ({ ...trial, grades: [] }))
     })
   ).toContain("Incomplete trials or grade coverage")
+})
+
+test("--flag=value reads as --flag value, and a default directory is named after its run", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-equals-"))
+  expect(
+    await Effect.runPromise(
+      evaluationCli(["run", "suite", `--directory=${directory}`, "--split=validation"], { config: app, output })
+    )
+  ).toBe(0)
+  expect((await Effect.runPromise(readRun(join(directory, "report.json")))).trials).toHaveLength(1)
+  const workspace = await mkdtemp(join(tmpdir(), "evaluation-default-directory-"))
+  const previous = process.cwd()
+  await Effect.runPromise(
+    Effect.acquireUseRelease(
+      Effect.sync(() => process.chdir(workspace)),
+      () => evaluationCli(["run", "suite"], { config: app, output }),
+      () => Effect.sync(() => process.chdir(previous))
+    )
+  )
+  const runs = await readdir(join(workspace, ".eval-results", "runs"))
+  const report = await Effect.runPromise(readRun(join(workspace, ".eval-results", "runs", runs[0]!, "report.json")))
+  expect(runs).toEqual([report.id])
+  expect(report.trials[0]?.id.startsWith(`${report.id}/`)).toBe(true)
+})
+
+test("a bad count flag is a usage error naming the flag, never a silent default", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-flags-"))
+  const refused = await Effect.runPromise(
+    evaluationCli(["run", "suite", "--directory", directory, "--concurrency", "abc"], { config: app, output }).pipe(Effect.flip)
+  )
+  expect([refused.code, refused.message]).toEqual(["invalid", "--concurrency needs a positive integer, not \"abc\""])
+  expect(await readdir(directory)).toEqual([])
+  expect((await Effect.runPromise(positiveInt("--repetitions", 4, ["--repetitions", "0"]).pipe(Effect.flip))).code).toBe("invalid")
+  expect((await Effect.runPromise(positiveInt("--repetitions", 4, ["--repetitions"]).pipe(Effect.flip))).code).toBe("invalid")
+  expect(await Effect.runPromise(positiveInt("--repetitions", 4, ["--repetitions", "8"]))).toBe(8)
+  expect(await Effect.runPromise(positiveInt("--repetitions", 4, []))).toBe(4)
+})
+
+test("a missing file is missing, a malformed one invalid, and a failed write leaves no temporary file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-files-"))
+  const inspect = (args: ReadonlyArray<string>) => Effect.runPromise(evaluationCli(["inspect", ...args], { output }).pipe(Effect.flip))
+  expect((await inspect(["--report", join(directory, "absent.json")])).code).toBe("missing")
+  await writeFile(join(directory, "malformed.json"), "{}")
+  expect((await inspect(["--report", join(directory, "malformed.json")])).code).toBe("invalid")
+  expect((await inspect([])).message).toBe("inspect needs --report <path>")
+  await mkdir(join(directory, "taken", "report.json", "occupied"), { recursive: true })
+  const failed = await Effect.runPromise(writeJson(join(directory, "taken", "report.json"), {}).pipe(Effect.flip))
+  expect(failed.code).toBe("persistence")
+  expect(await readdir(join(directory, "taken"))).toEqual(["report.json"])
 })

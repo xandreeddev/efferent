@@ -47,6 +47,8 @@ The core has no agent SDK, Docker, browser, database or provider client dependen
 | EvaluationRun | Trial evidence, gate findings, failures and run provenance |
 | ReviewBundle | Explicit labelled approvals bound to fingerprints of captured evidence |
 
+Suite, task, candidate, runnable, grader, projection, calibration and run ids are `EvalId`s: one segment, without "/" or "@". A trial's id joins them as `run/suite/candidate/task/sample` (an `EvalPath`, as are transcript event ids) and a grader key is `<id>@<version>`, so two trials never share a trial file and a key always splits back into its grader and version. A run id that is not an `EvalId` fails the run as `invalid`.
+
 Inputs and references travel on different paths. `RunnableExecution.execute` receives the task input, candidate and environment; it reads the trial-scoped `TrialRecorder` port. It never receives the reference or task declaration. The app projection receives the captured trial and reference afterwards. This prevents the harness from leaking labels; an app must also keep them out of its fixtures and closures.
 
 ## Eval ports and app layers
@@ -86,7 +88,8 @@ context and verdict; a separate agreement grade checks the expected status and m
 including unavailable evidence, false passes and false failures. Regrading those observations
 does not call the subject. Rerun the calibration to test a changed target grader implementation.
 Native gates require exactly one measurement per bound scope, and validation rejects duplicate
-scopes, unbound gates and families leaking across dataset splits.
+scopes, unbound gates, gates without a minimum or maximum and families leaking across dataset
+splits.
 
 ```ts
 const TextRunnable = runnableExecutionPort<
@@ -117,7 +120,7 @@ const registration = defineRunnable({
 
 `EvaluationEnvironment.open` acquires a fresh scoped world. `inspect` observes its resulting state. Acquire resources with `Effect.acquireRelease`; the scope closes after success, failure or timeout. A function evaluation may use a small in-process world; a stateful agent may inspect database records or filesystem changes. Docker is one possible app-owned environment.
 
-`TrialRecorder.record` persists each transcript event during execution. If a target fails, the earlier events remain. The runner persists the terminal execution before grading and each completed grade independently. A grading failure does not erase the target's evidence. A failed trial, grade or assessment records its reason as text: `code: message` for a coded error, `interrupted`, or a defect's message, never a stack trace or the local paths in one, so reports and exports can be shared.
+`TrialRecorder.record` persists each transcript event during execution. If a target fails, the earlier events remain. The runner persists the terminal execution before grading and each completed grade independently. A grading failure does not erase the target's evidence. A failed trial, grade or assessment records its reason as text: `code: message` for a coded error, `interrupted`, or a defect's message, never a stack trace or the local paths in one, so reports and exports can be shared. A trial that times out or is cancelled still has its world inspected, within the inspection's own deadline, so its outcome is kept.
 
 ## Evidence projection
 
@@ -143,7 +146,11 @@ efferent-eval review --config eval.config.ts --report report.json --directory .e
 
 `run` defaults to the validation split; `calibrate` defaults to calibration. Use `--split all`
 when a declared suite intentionally crosses both. `--task`, `--candidate`, `--repetitions`,
-`--concurrency` and `--timeout-ms` select and bound execution.
+`--concurrency` and `--timeout-ms` select and bound execution; the last three take positive
+integers, and anything else is a usage error (`invalid`), never a silent default. Flags take
+`--flag value` or `--flag=value`. Without `--directory`, results go to
+`.eval-results/runs/<id>`, named after the run or grading revision they hold. A report or
+review file that does not exist fails as `missing`; one that does not decode, as `invalid`.
 
 Execution writes `execution.json` before any grader runs. `--execute-only` stops there.
 `grade --from execution.json` projects and grades saved work with the registered graders,
@@ -156,8 +163,12 @@ Reviews start unapproved; `review --import review.json` requires unchanged evide
 fingerprints and named approvals with rationales, and writes approved records separately.
 Applying labels to an app's dataset remains an app-owned, versioned operation.
 
-Writes use a temporary file followed by atomic rename; each trial and grade is durable as
-it completes. Blocking gate failure exits with status 2. Missing measurements are unavailable.
+Writes use a temporary file followed by atomic rename, and a failed write removes its temporary
+file; each trial and grade is durable as it completes. Blocking gate failure exits with status 2.
+Missing measurements are unavailable. Ctrl-C or SIGTERM interrupts the command: running trials
+settle as `cancelled`, their scoped worlds close, and the command exits with status 130 (a
+second signal ends it at once). `runCliMain` runs a command this way for an app's own
+entrypoint.
 Remote export does not change the local execution or grade revision.
 
 ## Export
@@ -167,7 +178,7 @@ efferent-eval export --config eval.config.ts --report report.json --exporter lan
 efferent-eval run function-contract --config eval.config.ts --exporter langsmith
 ```
 
-Register `langfuseExporter(options)` or `langsmithExporter(options)` in the app's `exporters`. Clients are constructed only when exporting. Stable remote IDs map back to local trial IDs and metric identities. Both adapters use the provider's official SDK. Langfuse receives traces and numeric scores; LangSmith receives project runs and feedback. Full encoded trial metadata retains unavailable grades, context, usage and provenance.
+Register `langfuseExporter(options)` or `langsmithExporter(options)` in the app's `exporters`. Clients are constructed only when exporting. Stable remote IDs map back to local trial IDs and metric identities. Both adapters use the provider's official SDK. Langfuse receives traces and numeric scores; LangSmith receives project runs and feedback. Full encoded trial metadata retains unavailable grades, context, usage and provenance; everything sent is the report's encoded form, so an absent value is `null`. Exporting a report to LangSmith again updates the runs and feedback the first export created.
 
 Export after a run is best-effort and produces separate receipts/errors after the local report is durable. The explicit export command can retry a saved report. Live application telemetry is a separate concern and is not reconfigured by evaluation export.
 

@@ -1,7 +1,13 @@
 import { expect, test } from "bun:test"
-import { Effect, Layer, Option, Ref, Schema } from "effect"
+import { createHash } from "node:crypto"
+import { Deferred, Effect, Fiber, Layer, Option, Ref, Result, Schema } from "effect"
 import {
   EvalId,
+  EvalPath,
+  EvaluationRun,
+  Gate,
+  comparisonIssues,
+  runGates,
   EvaluationError,
   EvaluationRunStore,
   gradingContext,
@@ -16,8 +22,7 @@ import {
   contextualPrecision,
   contextualRecall,
   type EvaluationApp,
-  type Trial,
-  type EvaluationRun
+  type Trial
 } from "../index.js"
 import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
 
@@ -379,4 +384,113 @@ test("changed grader versions score the saved execution without a runnable or en
   )
   expect(report.trials[0]?.grades[0]?.version).toBe("2")
   expect(report.gates[0]?.passed).toBe(true)
+})
+
+test("a timed-out or cancelled execution keeps the outcome its environment showed", async () => {
+  const observed = Layer.succeed(FixtureEnvironment, {
+    open: () => Effect.succeed({ state: "half-written" }),
+    inspect: (world) => Effect.succeed({ state: world, references: [] })
+  })
+  const hanging = fixture(() => Effect.never, observed)
+  const timedOut = await Effect.runPromise(run({
+    ...hanging,
+    suites: hanging.suites.map((suite) => ({ ...suite, timeoutMs: 20 }))
+  }))
+  expect([timedOut.trials[0]?.status, timedOut.trials[0]?.reason]).toEqual(["error", "timeout: Trial deadline exceeded"])
+  expect(Option.getOrNull(timedOut.trials[0]!.outcome)?.state).toEqual({ state: "half-written" })
+  const saved: Trial[] = []
+  await Effect.runPromise(Effect.gen(function* () {
+    const started = yield* Deferred.make<void>()
+    const app = fixture(() => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never)), observed)
+    const running = yield* runEvaluation(app, "run", { ids: [], split: "validation" }).pipe(
+      Effect.provide(EvaluationServicesLive(app)),
+      Effect.provide(Layer.succeed(EvaluationRunStore, {
+        writeTrial: (trial) => Effect.sync(() => {
+          saved.push(trial)
+        }),
+        writeRun: () => Effect.void
+      })),
+      Effect.forkChild
+    )
+    yield* Deferred.await(started)
+    yield* Fiber.interrupt(running)
+  }))
+  expect([saved.at(-1)?.status, saved.at(-1)?.reason]).toEqual(["cancelled", "interrupted"])
+  expect(Option.getOrNull(saved.at(-1)!.outcome)?.state).toEqual({ state: "half-written" })
+})
+
+test("comparisons ignore the order trials ran in and still see changed grader coverage", async () => {
+  const report = await Effect.runPromise(run(fixture()))
+  const first = report.trials[0]!
+  const second: Trial = {
+    ...first,
+    id: EvalPath.make("run/suite/candidate/other/1"),
+    task: { ...first.task, id: EvalId.make("other"), graders: first.task.graders.map((binding) => ({ ...binding, scope: "answer" })) },
+    grades: first.grades.map((grade) => ({ ...grade, scope: "answer" }))
+  }
+  const baseline = { ...report, trials: [first, second] }
+  expect(comparisonIssues(baseline, { ...report, trials: [second, first] })).toEqual([])
+  const reprojected: Trial = {
+    ...second,
+    task: { ...second.task, graders: second.task.graders.map((binding) => ({ ...binding, projection: "other" })) }
+  }
+  expect(comparisonIssues(baseline, { ...report, trials: [reprojected, first] })).toEqual(["Grader or projection coverage differs"])
+})
+
+test("fingerprints order object keys by code unit, so every locale hashes alike", () => {
+  const canonical = JSON.stringify({ B: 1, a: { C: 3, d: 2 } })
+  expect(fingerprint({ a: { d: 2, C: 3 }, B: 1 })).toBe(createHash("sha256").update(canonical).digest("hex"))
+})
+
+test("ids are single segments, so trial files and grader keys cannot collide", async () => {
+  expect(() => EvalId.make("suite/one")).toThrow()
+  expect(() => EvalId.make("@acme/judge")).toThrow()
+  expect(Schema.is(EvalPath)("run/suite/candidate/task/1")).toBe(true)
+  expect(Schema.is(EvalPath)("run//task")).toBe(false)
+  const report = await Effect.runPromise(run(fixture()))
+  const encoded = Schema.encodeSync(EvaluationRun)(report)
+  const decode = Schema.decodeUnknownResult(EvaluationRun)
+  expect(Result.isSuccess(decode(encoded))).toBe(true)
+  expect(Result.isFailure(decode({ ...encoded, trials: encoded.trials.map((trial) => ({ ...trial, suiteId: "a/b" })) }))).toBe(true)
+  const app = fixture()
+  const refused = await Effect.runPromise(
+    runEvaluation(app, "nightly/1", { ids: [], split: "validation" }).pipe(
+      Effect.provide(EvaluationServicesLive(app)),
+      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void })),
+      Effect.flip
+    )
+  )
+  expect(refused.code).toBe("invalid")
+  expect(refused.message).toContain("nightly/1")
+})
+
+test("a grader is selected by its key or its id, and an unknown one is refused", async () => {
+  const app = fixture()
+  const store = Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void })
+  const executed = await Effect.runPromise(
+    runEvaluation(app, "source", { ids: [], split: "validation", executeOnly: true }).pipe(
+      Effect.provide(EvaluationServicesLive(app)), Effect.provide(store))
+  )
+  const regrade = (graders: ReadonlyArray<string>) => gradeEvaluation(app, executed, "revision", { graders }).pipe(
+    Effect.provide(EvaluationServicesLive(app)), Effect.provide(store))
+  expect((await Effect.runPromise(regrade(["grader"]))).trials[0]?.grades).toHaveLength(1)
+  expect((await Effect.runPromise(regrade(["grader@1"]))).trials[0]?.grades).toHaveLength(1)
+  expect((await Effect.runPromise(regrade(["judge"]).pipe(Effect.flip))).code).toBe("invalid")
+})
+
+test("a gate needs a bound, and a finding keeps its gate's mode", async () => {
+  const app = fixture()
+  const unbounded = {
+    ...app,
+    suites: app.suites.map((suite) => ({ ...suite, gates: suite.gates.map((gate) => ({ ...gate, minimum: Option.none<number>() })) }))
+  }
+  expect((await Effect.runPromise(validateEvaluationApp(unbounded).pipe(Effect.flip))).message).toContain("a minimum or maximum on every gate")
+  const gate = { grader: "grader@1", metric: "correct", aggregate: "mean", mode: "blocking", requiresReviewedReference: true }
+  expect(Result.isSuccess(Schema.decodeUnknownResult(Gate)({ ...gate, minimum: 1, maximum: null }))).toBe(true)
+  expect(Result.isFailure(Schema.decodeUnknownResult(Gate)({ ...gate, minimum: null, maximum: null }))).toBe(true)
+  const report = await Effect.runPromise(run(app))
+  expect(runGates(unbounded.suites, report.trials).map((gate) => [gate.passed, gate.reason])).toEqual([[false, "Gate has no minimum or maximum"]])
+  const encoded = Schema.encodeSync(EvaluationRun)(report)
+  const decode = Schema.decodeUnknownResult(EvaluationRun)
+  expect(Result.isFailure(decode({ ...encoded, gates: encoded.gates.map((gate) => ({ ...gate, mode: "Blocking" })) }))).toBe(true)
 })
