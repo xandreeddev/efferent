@@ -21,7 +21,7 @@ const views: ToolViews = {
   view: (_tool, encoded) => Effect.succeed({ text: `VIEW ${String(encoded)}`, version: "1", subjects: [], artifacts: [], pinned: false }),
   compact: () => Effect.succeed(Option.none()),
   digest: (tool, encoded, _params, userMessage) => Effect.succeed(Option.some({
-    tool, version: "1", mode: "summarize" as const, instructions: "Summarize.", userMessage, items: [],
+    tool, version: "1", mode: "summarize" as const, instructions: "Summarize.", userMessage, items: [], preserve: [],
     source: String(encoded), apply: (outcome) => outcome.summary,
   })),
 }

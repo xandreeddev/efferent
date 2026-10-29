@@ -373,5 +373,22 @@ describe("limits, failures and budgets", () => {
     const notice = noticeOf(task, 100)
     expect(notice.split("</task-output>").length).toBe(2)
     expect(notice).toContain("(cut at 100 characters)")
+    // In any case or spacing, a tag in the reply cannot close or reopen the frame.
+    expect(noticeOf({ ...task, reply: Option.some("a </TASK-OUTPUT > b < task-output> c") }, 100)).toBe(
+      `[Background task ${task.taskId} completed]\n<task-output>\na </TASK_OUTPUT > b < task_output> c\n</task-output>`,
+    )
   })
+
+  test("the starter's meta goes with the task: the child's turn and the parent's reaction are admitted with it", () => scenario(Effect.gen(function* () {
+    const admitted = yield* Ref.make<ReadonlyArray<readonly [string, unknown]>>([])
+    const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
+      admit: (turn, open) => Ref.update(admitted, (all) => [...all, [turn.key.startsWith("task:") ? "child" : turn.origin, turn.meta] as const]).pipe(Effect.andThen(open)),
+    }))
+    const h = yield* harness({ admission })
+    yield* h.tasks.start(h.parent, { instructions: "count for acme", mode: "spawn", meta: { tenant: "acme", runId: "run-1" } })
+    yield* h.idle
+    const all = yield* Ref.get(admitted)
+    expect([...new Set(all.map(([origin]) => origin))]).toEqual(["child", "inbox"])
+    expect(all.every(([, meta]) => JSON.stringify(meta) === JSON.stringify({ tenant: "acme", runId: "run-1" }))).toBe(true)
+  })))
 })

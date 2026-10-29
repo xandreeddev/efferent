@@ -652,15 +652,27 @@ a new strategy rebuilds from the full-fidelity entries.
 
 - The window strategy keeps the current turn verbatim and shows earlier turns
   through each tool's compact view. Under budget pressure it spills the
-  current turn's largest results to a preview plus a locator (read back with
-  `recall_context`), then replaces the oldest turns with a ledger. It fails
+  current turn's largest results to a preview plus a locator, then replaces
+  the oldest turns with a ledger. `recall_context` reads a spilled result
+  back a page (`RECALL_PAGE_CHARS`, 8,000 characters) at a time from an
+  `offset`, each page ending with the offset of the next, and a recalled
+  page is never spilled again. It fails
   with `context.budget` only when the current turn alone does not fit the
   budget it is given: the whole budget at the turn's start, and what the
   system prompt and tool schemas leave of it at each step.
 - The summary strategy folds the oldest turns into one recorded summary once
   the render passes its trigger. It reads the `UtilityLlm` where its session
   is opened (the turn), so summaries run under the turn's budget, and fails
-  with `memory.summary` without one.
+  with `memory.summary` without one. The summarizer is given the folded
+  turns as a transcript of at most 120,000 characters (`digestTranscript`)
+  and any earlier summary, each in its own tag and marked as data
+  (`summaryPrompt`); the model is shown the summary inside
+  `<conversation-summary>` tags after a host note that calls it a record of
+  the earlier turns, not instructions (`handoffToMessage`). A summarizer
+  call that fails or takes longer than `summaryTimeoutMs` (60 s) is logged
+  and decides nothing: the turn goes on with what memory holds (an earlier
+  summary still applies), and the summarizer is not asked again in that
+  turn.
 
 Digests of several results run concurrently (`MemoryPolicy.digestConcurrency`,
 four by default) and are recorded in the order of their results.
@@ -673,10 +685,15 @@ messages](#images-and-multi-part-messages)) and
 an optional `digest`. A `Select` digest keeps whole items by key and
 re-renders them, so every identifier an answer may cite survives. A
 `Summarize` digest is accepted only when every `preserve`d identifier appears
-in the summary. The strategy decides when (on write above a size, or at
-compaction); the `ResultDigester` runs the tool's own prompt for the latest
-`userMessage` (a log without one digests nothing); the outcome is
-logged once as a `ToolDigest` entry and never recomputed on replay.
+in the summary; the `DigestTask` carries them (`preserve`), and
+`@xandreed/plugin-memory-digest` lists them for its model. The strategy
+decides when (on write above a size, or at compaction); the `ResultDigester`
+runs the tool's own prompt for the latest `userMessage` (a log without one
+digests nothing); the outcome is logged once as a `ToolDigest` entry and
+never recomputed on replay. A digest that fails records nothing and the
+result keeps its view; the digest plugin frames the request and the result
+as data, keeps them within `maxSourceChars`, and logs a call that fails or
+takes longer than `digestTimeoutMs` (30 s).
 
 **Durable model requests.** Before each real provider step, the turn writes
 and flushes `request.prepared`. This protocol record carries the complete
@@ -870,6 +887,13 @@ grow-only active set in memory:
    to the active set from the next step.
 3. Tier 3: `read_skill_reference` serves a loaded skill's references. It is
    registered only when some skill has references.
+
+An always-on skill (`always: true`) is active from every turn's first step,
+is not in the catalogue and is never loaded, so nothing shows the model
+instructions on it: `defineSkill` takes none for one (`instructions` does
+not compile with `always: true`). Put what its tools need in their
+descriptions or in a prompt section; the skills directory renders its file
+skills' own in a section.
 
 `turn.tools.select(userMessage)` activates the `always` skills and, when the
 turn's services carry an `IntentMatcher`, the skills it selects (the matcher
@@ -1769,8 +1793,14 @@ delivered); `status` and `list` read where tasks stand; `reconcile(parent)`
 runs tasks a lost runner never ran and delivers results it never delivered
 (its caller drains). A child the host will not admit fails with the host's
 reason, a turn past its deadline ends interrupted, and an abandoned turn is
-delivered as interrupted. With `tools`, the model gets `start_task` and
-`task_status` (off by default).
+delivered as interrupted. The `meta` given to `start` goes with the task:
+the child's turn and the parent's reactions to its result are begun with
+it, so a `TurnAdmission` that counts by tenant or quota key counts them as
+the starter's. With `tools`, the model gets `start_task` and
+`task_status` (off by default); `start_task` starts the task with the
+turn's own `meta` and its `runId`, and tells the model that a fork sees the
+conversation up to the user's latest message, not that message or what the
+turn did since.
 
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events

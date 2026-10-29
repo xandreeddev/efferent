@@ -503,3 +503,29 @@ describe("the views of a result holding images", () => {
     expect(Effect.runSync(views.view("raw_shots", encoded, {}, true)).media).toBeUndefined()
   })
 })
+
+describe("a tool's digest task", () => {
+  const Search = Tool.make("search", {
+    description: "Search records.",
+    parameters: Schema.Struct({ query: Schema.String }),
+    success: Schema.Struct({ ids: Schema.Array(Schema.String), text: Schema.String }),
+    failure: Failure,
+    failureMode: "return",
+  })
+  const capability = defineCapability({
+    id: "search", version: "1",
+    tools: [defineTool({
+      tool: Search, handler: () => Effect.die("unused"),
+      view: { version: "1", render: (result) => result.text, digest: { _tag: "Summarize", version: "1", instructions: "Summarize the matches.", preserve: (result) => result.ids } },
+    })],
+  })
+  const views = Effect.runSync(makeRegistry(config, [capability]).pipe(Effect.map((registry) => registry.views)))
+
+  test("a summarize task carries the identifiers its summary must keep, which the digester shows its model", () => {
+    const found = Effect.runSync(views.digest("search", { ids: ["r-1", "r-2"], text: "r-1 and r-2 matched" }, { query: "r" }, new UserMessage({ text: "find r" })))
+    expect(Option.map(found, (task) => [task.mode, task.preserve, task.source])).toEqual(Option.some(["summarize", ["r-1", "r-2"], "r-1 and r-2 matched"]))
+    const task = Option.getOrThrow(found)
+    expect(task.apply({ keep: [], summary: Option.some("r-1 matched") })).toEqual(Option.none())
+    expect(task.apply({ keep: [], summary: Option.some("r-1 and r-2 matched") })).toEqual(Option.some("r-1 and r-2 matched"))
+  })
+})

@@ -18,6 +18,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/evals`: rename ids containing "/" or "@" and re-run reports
   that hold them; give every gate a `minimum` or a `maximum`; `yield*` the
   result of `positiveInt`.
+- Replaying a model request built from a summary recorded before this
+  release fails with `request.diverged` (`context`), and a summarized
+  session's cached prompt prefix changes once, because the summary handoff
+  renders with new wording.
 
 ### Breaking
 
@@ -58,6 +62,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `makeOpenAiCodexSessions()` to keep a conversation's session id (without
   one, each request gets a fresh id). The routed models keep one cache per
   layer, up to 1024 conversations.
+- `defineSkill` rejects `instructions` with `always: true` (an always-on
+  skill's instructions never reached the model).
+- `DigestTask` has `preserve`; `MemorySummaryConfig` has `summaryTimeoutMs`
+  and `MemoryDigestConfig` has `digestTimeoutMs` (add them if you build
+  these configs without the defaults).
 
 ### Added
 
@@ -78,6 +87,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The routed model's `generateObject`; `makeOpenAiCodexSessions`,
   `OpenAiCodexSessions`, `OPENAI_CODEX_SESSION_CAPACITY` and
   `OpenAiErrorBody` in `@xandreed/plugin-models`.
+- `hostNote`, `framed`, `escapeFrame`, `clipTo` and `clippedMarker` in
+  `@xandreed/core` for model-facing text; `recall_context` takes an
+  `offset`; `summaryTimeoutMs` (60 s) and `digestTimeoutMs` (30 s).
 
 ### Fixed
 
@@ -160,6 +172,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `openai` sends the configured reasoning effort and output cap to models
   that take an effort; OpenCode chat models get `xhigh`/`max` as `high` and
   `none` as `low`; utility calls use `fastReasoningEffort`.
+- The model sees an earlier summary as a `[Host note: …]` with the summary
+  inside `<conversation-summary>` tags, as a record, not instructions. The
+  summarizer and the digester get their input tagged as data and capped,
+  with counted clips, so text planted in a tool result no longer comes back
+  as authority.
+- The summary transcript cap always holds. A summarizer or digester that
+  fails or times out is logged and the turn goes on without the new summary
+  (before, a stalled utility model hung every turn).
+- Digest replies keep keys that start with digits, and summarize digests
+  list the ids they must keep.
+- `recall_context` returns 8,000-character pages and a recalled page is
+  never spilled again; the spill preview gives the offset to read on from.
+- The `start_task` description says what a fork sees, task notices cannot
+  be closed by a tag in any case, and task turns are admitted with the
+  starter's `meta`.
 
 ### Repository
 

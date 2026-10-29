@@ -1,5 +1,5 @@
 import { Cause, Exit, Option, Schema } from "effect"
-import { HarnessError } from "@xandreed/core"
+import { framed, HarnessError } from "@xandreed/core"
 import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnOutcome } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started } from "./task-records.entity.js"
@@ -75,12 +75,13 @@ export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option
 
 /**
  * What the parent's inbox turn shows the model: a trusted frame around the
- * task's own words, which may not close the frame early.
+ * task's own words, which may not close or reopen the frame (in any case or
+ * spacing).
  */
 export const noticeOf = (task: TaskView, replyChars: number): string => {
   const output = Option.match(task.reply, {
     onNone: () => Option.match(task.failure, { onNone: () => "(no reply)", onSome: (failure) => `(no reply: ${failure.message})` }),
     onSome: (reply) => reply.length > replyChars ? `${reply.slice(0, replyChars)}\n(cut at ${replyChars} characters)` : reply,
   })
-  return [`[Background task ${task.taskId} ${task.status}]`, "<task-output>", output.replaceAll("</task-output>", "</task_output>"), "</task-output>"].join("\n")
+  return [`[Background task ${task.taskId} ${task.status}]`, framed("task-output", output)].join("\n")
 }

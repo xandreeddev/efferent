@@ -189,7 +189,10 @@ const agent = yield* Agent.define({
   registered by the host or a plugin, or `Agent.define` fails with
   `skills.tools`.
 - **Always-on skills** (`always: true`) are active from the first step; the
-  plugin puts their instructions in a static system-prompt section.
+  plugin puts their instructions in a static system-prompt section. In
+  code, an always-on skill takes no instructions (`defineSkill` does not
+  compile with both): tool discovery never loads it, so give its tools'
+  guidance in their descriptions or a prompt section.
 - **Failures.** A skill id the host or another plugin also defines fails
   `Agent.define` with `skills.duplicate`: set `idPrefix`. A bad `SKILL.md`
   (no frontmatter, no description, an id already used) is logged and left
