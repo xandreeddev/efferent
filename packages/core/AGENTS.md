@@ -109,15 +109,24 @@ callbacks run with (the registry, `stepRequestOf`, `turnOf`, `runLoop`),
 a model layer's dependencies (the models plugin), the services of
 `Agent.turn`'s input, bus subscribers (`turn-bus.ts`), a live layer's
 dependencies (`makeLiveLayer`) and the session chassis's (`makeSession`).
-It drops the trace state of the place it was captured: the parent span, so
-spans nest where the replayed work runs; the span annotations and links,
-which would replace those of that fiber (the turn's ids); and
+It drops the trace and log state of the place it was captured: the parent
+span, so spans nest where the replayed work runs; the span annotations and
+links, and the log annotations and log spans, which would replace those of
+that fiber (the turn's ids); the captured span's stack frame; and
 `CurrentTraceContent`, which is read per call. The one deliberate
 exception is `InProcessTaskRunnerLive` (`plugin-tasks`): it starts each
 piece of work on a new fiber with the services it was built with, the
 only ones that work has, so the work nests under the span current where the
 runner was built and reads the trace content set there. The sdk tracer
 tests (`packages/sdk/src/agent.trace.test.ts`) fail when a replay
-re-parents `tool.*`, handler or `engine.run` spans or drops the turn's ids.
+re-parents `tool.*`, handler or `engine.run` spans or drops the turn's ids
+from its spans or a tool handler's logs.
+
+Span attributes and log annotations share their keys: `turnAttributes`
+(`efferent.session.id`, `efferent.run.id`, `efferent.turn`) and
+`sessionAttributes` (`src/turn/turn-lifecycle.ts`). `traceTurn` opens
+`agent.turn`; `traceTurnBegin` opens `agent.turn.begin`, its sibling, around
+a begin. Put no span between `traceTurn` and `guardTurn`: a failed turn's
+usage goes on the span current where `guardTurn` runs.
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

@@ -1,21 +1,41 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Option, References, Tracer } from "effect"
+import { Context, Effect, Logger, Option, References, Tracer } from "effect"
 import { SessionEnvironment } from "../ports/harness.port.js"
 import { CurrentTraceContent, replayableContext } from "./traceContent.js"
 
 describe("replayableContext", () => {
-  test("keeps the services and drops the trace state of where it was captured", async () => {
+  test("keeps the services and drops the trace and log state of where it was captured", async () => {
     const captured = await Effect.runPromise(Effect.context<SessionEnvironment>().pipe(
       Effect.provideService(CurrentTraceContent, true),
       Effect.annotateSpans({ "captured.here": true }),
+      Effect.annotateLogs({ "captured.here": true }),
+      Effect.withLogSpan("captured.log"),
       Effect.linkSpans(Tracer.externalSpan({ traceId: "t".repeat(32), spanId: "s".repeat(16) })),
       Effect.withSpan("captured"),
       Effect.provideService(SessionEnvironment, { workspace: "kept" }),
     ))
     const replayable = replayableContext(captured)
     expect(Context.get(replayable, SessionEnvironment).workspace).toBe("kept")
-    expect([Tracer.ParentSpan.key, References.TracerSpanAnnotations.key, References.TracerSpanLinks.key, CurrentTraceContent.key].map((key) => [captured.mapUnsafe.has(key), replayable.mapUnsafe.has(key)]))
-      .toEqual([[true, false], [true, false], [true, false], [true, false]])
+    const dropped = [
+      Tracer.ParentSpan, References.TracerSpanAnnotations, References.TracerSpanLinks,
+      References.CurrentLogAnnotations, References.CurrentLogSpans, References.CurrentStackFrame, CurrentTraceContent,
+    ]
+    expect(dropped.map((tag) => [captured.mapUnsafe.has(tag.key), replayable.mapUnsafe.has(tag.key)])).toEqual(dropped.map(() => [true, false]))
+  })
+
+  test("work it runs logs with the annotations of where it runs, not of where it was captured", async () => {
+    const annotations: Array<Readonly<Record<string, unknown>>> = []
+    const logger = Logger.make((options) => {
+      annotations.push(options.fiber.getRef(References.CurrentLogAnnotations))
+    })
+    await Effect.runPromise(Effect.gen(function* () {
+      const captured = yield* Effect.context<never>().pipe(Effect.annotateLogs({ "captured.here": true, "efferent.turn": 0 }))
+      yield* Effect.logInfo("replayed").pipe(
+        Effect.provide(replayableContext(captured)),
+        Effect.annotateLogs({ "efferent.turn": 1 }),
+      )
+    }).pipe(Effect.provide(Logger.layer([logger]))))
+    expect(annotations).toEqual([{ "efferent.turn": 1 }])
   })
 
   test("work it runs is traced where it runs: under that span, with its annotations, links and trace content", async () => {

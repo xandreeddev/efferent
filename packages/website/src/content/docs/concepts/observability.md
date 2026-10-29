@@ -6,7 +6,8 @@ description: Export each turn's trace and the framework's metrics over OTLP, and
 # Observability
 
 Every turn `Agent.turn` runs is one trace subtree under its `agent.turn`
-span (a child of the caller's span, if any), and the packages update Effect
+span (a child of the caller's span, if any), its begin a span beside it,
+its logs annotated with its ids, and the packages update Effect
 metrics as they work (turns, steps, model
 calls, tool calls). All of it goes through Effect's own `Tracer` and metric
 registry, and none of it leaves the process until the host provides an
@@ -120,6 +121,7 @@ parent-linked.
 ## The span tree
 
 ```text
+agent.turn.begin                 Agent.turn beginning the turn: session plugins activated, Sessions.begin
 agent.turn                       Agent.turn, or a host's composition with traceTurn(writer)
 └─ engine.run                    one run of the step loop (turn.run)
    └─ engine.turn                one step
@@ -138,6 +140,39 @@ Prompts and responses stay out of spans unless a run captures trace content
 (`captureTraceContent`). [SDK & sessions](/docs/concepts/harness/) shows
 how a turn is composed; the repository's `docs/framework.md` ("Traces and
 metrics") lists every attribute and where captured contexts nest.
+
+`agent.turn.begin` is the turn's sibling under the caller's span. `Agent.turn`
+opens it when it begins the turn itself (a turn the host began, its
+`TurnWriter` passed in, has none), around the session-scoped plugins'
+activation and `Sessions.begin`. It carries `efferent.session.id`,
+`efferent.run.id` and `efferent.origin`, and ends with `efferent.turn` once
+the turn begins, or with `efferent.failure.code` when it cannot: the
+refusal's code (`session.busy`, `turn.duplicate`, `session.missing`…), the
+same code `agent.turn` would give; a turn that could not begin has no
+`agent.turn`. A host composing its own turn wraps its begin in
+`traceTurnBegin({ session, runId, origin })` and the rest in
+`traceTurn(writer)`.
+
+**Ids in logs.** Logs carry the ids as annotations, under the span
+attributes' names. A line logged inside a turn `Agent.turn` runs (the
+host's `use`, a tool handler, a plugin) carries `efferent.session.id`,
+`efferent.run.id` and `efferent.turn`; one logged while the turn begins,
+the first two. Effect's loggers print annotations (`Logger.consolePretty`,
+`Logger.consoleJson`, `Logger.consoleLogFmt`); a host's own logger reads
+them from `References.CurrentLogAnnotations`. A host annotating its own
+logs or spans uses the same keys: `turnAttributes(admitted)` and
+`sessionAttributes(session)` from `@xandreed/core`. Annotations the host set
+where it captured the turn's services do not replace the turn's, as for
+spans.
+
+**Other spans.** Beside the tree above: the workspace plugin's
+`skills.settle` (its skills directory read, at `Agent.define`, outside any
+turn) and `bash.exec` (a host calling `Bash.exec` itself; the bash tool
+streams, under its `tool.<name>`); the SQLite session store's `session_log.*`
+(`open`, `create`, `head`, `list`, `read`, `commit`, `remove`), each with
+`efferent.session.id`, wherever the store is called; the render plugin's
+`render.emit`; and the evals' `eval.*` spans
+([evals](/docs/concepts/evals/)).
 
 ## The telemetry plugin
 

@@ -127,9 +127,16 @@ turn's usage, and the metrics `efferent.turns` and `efferent.turn.duration`
 count it by outcome. The turn's metadata reaches the span only for the keys
 the agent names in `spanMeta`, and prompts and responses only when a run
 captures trace content (`captureTraceContent` on the agent or the policy;
-off by default). A host composing its own turn gets the same span with
-`traceTurn(writer)`. Spans and metrics are exported by whatever exporter the
-host provides around its program, such as `OtlpTelemetryLive` from
+off by default). A turn `Agent.turn` begins itself begins under an
+`agent.turn.begin` span beside it, around the session-scoped plugins'
+activation and `Sessions.begin`: it ends with `efferent.turn` once the turn
+begins, or with the refusal's code (`efferent.failure.code`) when it cannot
+(such a turn has no `agent.turn`). The turn's logs carry the same ids as
+annotations (a log written while it begins, the session and run ids). A
+host composing its own turn gets the same spans with
+`traceTurnBegin({ session, runId, origin })` around its begin and
+`traceTurn(writer)` around the rest. Spans and metrics are exported by
+whatever exporter the host provides around its program, such as `OtlpTelemetryLive` from
 `@xandreed/plugin-telemetry`, whose `telemetryPlugin` also records each
 turn's usage, cost and tool metrics (see [observability](/docs/concepts/observability/)).
 

@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Option, Tracer } from "effect"
+import { Effect, Logger, Option, References, Tracer } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
 import { tokenUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { TurnWriter } from "../ports/sessions.port.js"
 import type { TurnResult } from "../ports/turn.port.js"
 import type { JsonObject } from "../session/session-log.entity.js"
-import { traceTurn } from "./turn-lifecycle.js"
+import { SessionBusy } from "../session/sessions.entity.js"
+import { sessionAttributes, traceTurn, traceTurnBegin, turnAttributes } from "./turn-lifecycle.js"
 import { UserMessage } from "./user-message.entity.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000c1")
@@ -96,5 +97,69 @@ describe("traceTurn", () => {
     expect(read(turn, ["efferent.meta.requestId", "efferent.meta.attempt", "efferent.meta.beta", "efferent.meta.client"])).toEqual(["req-7", 2, true, "{\"name\":\"web\"}"])
     const none = await Effect.runPromise(traced(result, meta))
     expect([...(none.spans.find((span) => span.name === "agent.turn")?.attributes.keys() ?? [])].some((key) => key.startsWith("efferent.meta."))).toBe(false)
+  })
+})
+
+describe("traceTurnBegin", () => {
+  const begin = { session, runId: "run-3", origin: "user" } as const
+  const keeping = (spans: Array<Tracer.NativeSpan>) => Tracer.make({
+    span: (options) => {
+      const span = new Tracer.NativeSpan(options)
+      spans.push(span)
+      return span
+    },
+  })
+  const parentOf = (spans: ReadonlyArray<Tracer.NativeSpan>, span: Tracer.NativeSpan | undefined) =>
+    Option.map(Option.flatMap(Option.fromNullishOr(span), (child) => child.parent), (parent) => spans.find((candidate) => candidate.spanId === parent.spanId)?.name)
+
+  test("opens agent.turn.begin beside agent.turn under the caller's span, with the begin's ids and origin, and ends with the turn it began", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    await Effect.runPromise(Effect.gen(function* () {
+      const writer = yield* Effect.succeed(writerWith({})).pipe(Effect.tap(() => Effect.void.pipe(Effect.withSpan("store.begin"))), traceTurnBegin(begin))
+      return yield* Effect.succeed<TurnResult>({ outcome: "completed", reply: Option.none(), usage: zeroUsage }).pipe(traceTurn(writer))
+    }).pipe(Effect.withSpan("caller"), Effect.withTracer(keeping(spans))))
+    const begun = spans.find((span) => span.name === "agent.turn.begin")
+    expect(["agent.turn.begin", "agent.turn", "store.begin"].map((name) => parentOf(spans, spans.find((span) => span.name === name))))
+      .toEqual([Option.some("caller"), Option.some("caller"), Option.some("agent.turn.begin")])
+    expect(read(begun, [...ids, "efferent.origin"])).toEqual([session, "run-3", 3, "user"])
+    expect(begun?.attributes.has("efferent.failure.code")).toBe(false)
+    expect(begun?.status._tag === "Ended" && begun.status.exit._tag).toBe("Success")
+  })
+
+  test("a begin that fails ends with the refusal's code, as agent.turn gives it, and names no turn", async () => {
+    const codeOf = (effect: Effect.Effect<TurnWriter, unknown>) => Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = []
+      yield* effect.pipe(traceTurnBegin(begin), Effect.withTracer(keeping(spans)), Effect.exit)
+      const begun = spans.find((span) => span.name === "agent.turn.begin")
+      return read(begun, ["efferent.failure.code", "efferent.turn", "efferent.session.id"])
+    })
+    const codes = await Effect.runPromise(Effect.all([
+      codeOf(Effect.fail(new SessionBusy({ session, turn: 2 }))),
+      codeOf(Effect.fail(new HarnessError({ code: "host.refused", message: "the host would not begin it" }))),
+      codeOf(Effect.die("the store broke")),
+      codeOf(Effect.interrupt),
+    ], { concurrency: 1 }))
+    expect(codes).toEqual([
+      ["session.busy", undefined, session],
+      ["host.refused", undefined, session],
+      ["turn.defect", undefined, session],
+      ["turn.interrupted", undefined, session],
+    ])
+  })
+
+  test("the begin's logs carry the session and run ids as annotations", async () => {
+    const annotations: Array<Readonly<Record<string, unknown>>> = []
+    const logger = Logger.make((options) => {
+      annotations.push(options.fiber.getRef(References.CurrentLogAnnotations))
+    })
+    await Effect.runPromise(Effect.logInfo("beginning").pipe(Effect.as(writerWith({})), traceTurnBegin(begin), Effect.provide(Logger.layer([logger]))))
+    expect(annotations).toEqual([{ "efferent.session.id": session, "efferent.run.id": "run-3" }])
+  })
+})
+
+describe("turnAttributes and sessionAttributes", () => {
+  test("name a turn's ids and a session's id under the keys spans and logs share", () => {
+    expect(turnAttributes(writerWith({}).admitted)).toEqual({ "efferent.session.id": session, "efferent.run.id": "run-3", "efferent.turn": 3 })
+    expect(sessionAttributes(session)).toEqual({ "efferent.session.id": session })
   })
 })

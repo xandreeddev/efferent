@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { LanguageModel, Tool } from "effect/ai"
-import { Context, Effect, Exit, Layer, Metric, Option, Ref, Schema, Stream, Tracer } from "effect"
+import { Context, Effect, Exit, Layer, Logger, Metric, Option, Ref, References, Schema, Stream, Tracer } from "effect"
 import {
   ConversationId,
   CurrentTraceContent,
   defineCapability,
+  definePlugin,
   defineSkill,
   defineTool,
   Failure,
@@ -41,7 +42,7 @@ const Archive = Tool.make("archive", {
 const host = defineCapability({
   id: "trace-host", version: "1",
   tools: [
-    defineTool({ tool: Lookup, handler: ({ query }) => Effect.succeed(`found ${query}`).pipe(Effect.withSpan("lookup.query")) }),
+    defineTool({ tool: Lookup, handler: ({ query }) => Effect.logDebug("looking a record up").pipe(Effect.as(`found ${query}`), Effect.withSpan("lookup.query")) }),
     defineTool({ tool: Archive, handler: ({ id }) => Effect.succeed(`archived ${id}`), annotations: { maxCallsPerRun: Option.some(1) } }),
   ],
   skills: [defineSkill({ id: "records", summary: "Look records up and archive them.", tools: [Lookup.name, Archive.name], always: true })],
@@ -134,6 +135,26 @@ const traced = (options: {
   return { exit, spans, stored, reads: yield* Ref.get(reads) }
 }).pipe(Effect.orDie))
 
+/** The turn's services with a Sessions whose begin opens a span of its own and logs, as a store's would. */
+const beginTraced = (services: Context.Context<never>): Effect.Effect<Context.Context<never>> => Effect.sync(() => Context.getUnsafe(services, Sessions)).pipe(
+  Effect.map((sessions) => Context.add(services, Sessions, {
+    ...sessions,
+    begin: (address, input) => Effect.logDebug("beginning a turn").pipe(Effect.andThen(sessions.begin(address, input)), Effect.withSpan("store.begin")),
+  })),
+)
+
+/** A session-scoped plugin whose activation opens a span. */
+const activated = definePlugin({
+  id: "trace-session-plugin", version: "1", scope: "session",
+  config: Schema.Struct({}), defaults: {}, provides: [],
+  layer: () => Layer.effectDiscard(Effect.void.pipe(Effect.withSpan("plugin.activate"))),
+})
+
+/** A logger keeping each line's message and annotations (the lines above are debug lines). */
+const capturingLogger = (lines: Array<{ readonly message: string; readonly annotations: Readonly<Record<string, unknown>> }>) => Logger.layer([Logger.make((options) => {
+  lines.push({ message: [options.message].flat().join(" "), annotations: options.fiber.getRef(References.CurrentLogAnnotations) })
+})])
+
 const named = (spans: ReadonlyArray<Tracer.NativeSpan>, name: string) => spans.filter((span) => span.name === name)
 const one = (spans: ReadonlyArray<Tracer.NativeSpan>, name: string): Tracer.NativeSpan => {
   const found = named(spans, name)
@@ -161,7 +182,9 @@ describe("a turn's trace", () => {
     expect(Exit.isSuccess(exit)).toBe(true)
     const turn = one(spans, "agent.turn")
     expect(parentName(spans, turn)).toBe("host.request")
-    const inTurn = spans.filter((span) => span !== turn && span.name !== "host.request")
+    // The begin is the turn's sibling: its subtree is not the turn's.
+    const begin = one(spans, "agent.turn.begin")
+    const inTurn = spans.filter((span) => span !== turn && span.name !== "host.request" && span !== begin && !ancestors(spans, span).includes(begin))
     expect(inTurn.length).toBeGreaterThan(5)
     expect(inTurn.filter((span) => !ancestors(spans, span).includes(turn)).map((span) => span.name)).toEqual([])
     expect(inTurn.filter((span) => JSON.stringify(read(span, ids)) !== JSON.stringify([conversation, "run-1", 1])).map((span) => span.name)).toEqual([])
@@ -215,7 +238,38 @@ describe("a turn's trace", () => {
     expect(spans.filter((span) => parentName(spans, span) === "host.capture").map((span) => span.name)).toEqual([])
   })
 
-  test("a failed turn's span ends with its failure code; a turn that could not begin has no span", async () => {
+  test("agent.turn.begin is the turn's sibling under the caller's span, encloses the session plugins' activation and Sessions.begin, and names the turn", async () => {
+    const { exit, spans } = await Effect.runPromise(traced({
+      config: { plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, activated] },
+      services: beginTraced,
+    }))
+    expect(Exit.isSuccess(exit)).toBe(true)
+    const begin = one(spans, "agent.turn.begin")
+    expect([parentName(spans, begin), parentName(spans, one(spans, "agent.turn"))]).toEqual(["host.request", "host.request"])
+    expect([parentName(spans, one(spans, "plugin.activate")), parentName(spans, one(spans, "store.begin"))]).toEqual(["agent.turn.begin", "agent.turn.begin"])
+    expect(read(begin, [...ids, "efferent.origin"])).toEqual([conversation, "run-1", 1, "user"])
+    expect(begin.attributes.has("efferent.failure.code")).toBe(false)
+  })
+
+  test("a turn the host began has no begin span", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const exit = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* Agent.define({ plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel], limits: { streaming: false } })
+      const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+      const address = { id: conversation, owner: "test" }
+      yield* sessions.create({ owner: address.owner, id: conversation })
+      const model = yield* scripted(yield* Ref.make<ReadonlyArray<boolean>>([]))
+      return yield* Effect.gen(function* () {
+        const writer = yield* sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "hi" }), runId: "run-1", key: "run-1", command: {}, meta: {} })
+        return yield* agent.turn({ turn: writer, services: Context.make(LanguageModel.LanguageModel, model) }, (turn) => turn.reply("hello"))
+      }).pipe(Effect.withSpan("host.request"), Effect.withTracer(capturingTracer(spans)), Effect.exit)
+    })).pipe(Effect.orDie))
+    expect(Exit.isSuccess(exit)).toBe(true)
+    expect(parentName(spans, one(spans, "agent.turn"))).toBe("host.request")
+    expect(named(spans, "agent.turn.begin")).toEqual([])
+  })
+
+  test("a failed turn's span ends with its failure code; a turn that could not begin has only its begin span, with the refusal's code", async () => {
     const failed = await Effect.runPromise(traced({ use: () => Effect.fail(new HarnessError({ code: "host.failed", message: "the host gave up" })) }))
     const turn = one(failed.spans, "agent.turn")
     expect(read(turn, ["efferent.outcome", "efferent.failure.code"])).toEqual(["failed", "host.failed"])
@@ -223,6 +277,27 @@ describe("a turn's trace", () => {
     const unbegun = await Effect.runPromise(traced({ createSession: false }))
     expect(Exit.isFailure(unbegun.exit)).toBe(true)
     expect(named(unbegun.spans, "agent.turn")).toEqual([])
+    expect(unbegun.spans.filter((span) => parentName(unbegun.spans, span) === "host.request").map((span) => span.name)).toEqual(["agent.turn.begin"])
+    const begin = one(unbegun.spans, "agent.turn.begin")
+    expect(read(begin, ["efferent.failure.code", ...ids])).toEqual(["session.missing", conversation, "run-1", undefined])
+    expect(begin.status._tag === "Ended" && Exit.isFailure(begin.status.exit)).toBe(true)
+  })
+
+  test("logs carry the ids as annotations: the begin's the session and run, the turn's (a tool handler's included) all three, whatever the host's services were captured under", async () => {
+    const lines: Array<{ readonly message: string; readonly annotations: Readonly<Record<string, unknown>> }> = []
+    const { exit } = await Effect.runPromise(traced({
+      // The host's services captured inside its own log-annotated region.
+      services: (services) => Effect.context<never>().pipe(
+        Effect.map((captured) => Context.merge(captured, services)),
+        Effect.flatMap(beginTraced),
+        Effect.annotateLogs({ "host.capture": true }),
+      ),
+      around: (effect) => effect.pipe(Effect.annotateLogs({ "host.tenant": "t-1" }), Effect.provide(capturingLogger(lines)), Effect.provideService(References.MinimumLogLevel, "Debug")),
+    }))
+    expect(Exit.isSuccess(exit)).toBe(true)
+    const annotationsOf = (message: string) => lines.filter((line) => line.message === message).map((line) => line.annotations)
+    expect(annotationsOf("beginning a turn")).toEqual([{ "host.tenant": "t-1", "efferent.session.id": conversation, "efferent.run.id": "run-1" }])
+    expect(annotationsOf("looking a record up")).toEqual([{ "host.tenant": "t-1", "efferent.session.id": conversation, "efferent.run.id": "run-1", "efferent.turn": 1 }])
   })
 
   test("a turn that fails after its provider calls ends with the usage they spent", async () => {
