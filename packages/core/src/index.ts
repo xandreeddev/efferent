@@ -18,10 +18,11 @@ export { toFailure } from "./domain/failure.entity.functions.js"
 export { AgentFailure, AgentFailureCategory } from "./domain/agent-failure.entity.js"
 export type { AgentFailure as AgentFailureType, AgentFailureCategory as AgentFailureCategoryType } from "./domain/agent-failure.entity.js"
 export { toAgentFailure, toolResultFailure } from "./domain/agent-failure.entity.functions.js"
-export { ModelPrice, TokenUsage, UsageBreakdown } from "./domain/token-usage.entity.js"
+export { BudgetTokens, ModelPrice, TokenUsage, UsageBreakdown } from "./domain/token-usage.entity.js"
 export {
   addUsage,
   costOf,
+  isBudgetTokens,
   sumUsage,
   tokenUsage,
   uncachedInputTokens,
@@ -114,6 +115,7 @@ export * from "./session/session-event.entity.js"
 export * from "./session/session-event.entity.functions.js"
 export { turnUsageOf } from "./session/session-event.entity.functions.js"
 export * from "./session/sessions.entity.js"
+export { turnEndingOf } from "./session/sessions.entity.functions.js"
 export * from "./ports/sessions.port.js"
 export * from "./ports/turn-admission.port.js"
 export { TurnAdmissionOpen } from "./session/turn-admission.open.adapter.js"

@@ -68,6 +68,8 @@ export interface OpenWriter {
   readonly writer: TurnWriter
   readonly close: (reason: TurnClosed["reason"]) => Effect.Effect<void>
   readonly ended: Effect.Effect<boolean>
+  /** Count the inbox items the turn took as tried, though it wrote nothing (a drain `run` that interrupted itself). */
+  readonly markTried: Effect.Effect<void>
 }
 
 /**
@@ -92,6 +94,8 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
   const tried = yield* Ref.make(false)
   const admission = yield* Semaphore.make(1)
   const ending = yield* Ref.make(Option.none<Deferred.Deferred<{ readonly pending: number }, HarnessError>>())
+  /** The last ending whose commit ran: the scope's own end retries it when it was not stored. */
+  const attempted = yield* Ref.make(Option.none<TurnEnding>())
   /** Every queued caller's refusal, until its item settles: what a close fails. */
   const waiting = yield* Ref.make(HashSet.empty<(error: HarnessError) => Effect.Effect<void>>())
   const closed = yield* Deferred.make<TurnClosed>()
@@ -250,6 +254,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     admission.withPermits(1)(refuseIfFailed.pipe(Effect.andThen(enqueue(done, { _tag: "Marker", done })))).pipe(Effect.andThen(Deferred.await(done)))))
 
   const endNow = (ending: TurnEnding): Effect.Effect<{ readonly pending: number }, HarnessError> => Effect.gen(function* () {
+    yield* Ref.set(attempted, Option.some(ending))
     const done = yield* commitPlan((at) => Effect.gen(function* () {
       const after = closedState(at.state, ending.reason, config.inbox.attempts, yield* Ref.get(tried))
       const closing = yield* turnEndedDraft(admitted.turn, ending).pipe(Effect.mapError((error) => harness("session.encode", error.message)))
@@ -297,12 +302,18 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     yield* Effect.forkIn(renew.pipe(Effect.repeat(Schedule.spaced(`${ownership.renew.everyMs} millis`)), Effect.asVoid), scope)
   }
 
-  // Runs first when the scope closes (finalizers run last-added first): a turn never ended ends as failed or interrupted.
+  // Runs first when the scope closes (finalizers run last-added first). A turn whose end could not be
+  // stored is ended again with that same ending; a turn never ended ends as interrupted
+  // (`turn.interrupted`) when its scope was interrupted, as failed (`turn.unended`) otherwise.
+  const unended = (exit: Exit.Exit<unknown, unknown>): TurnEnding => Exit.hasInterrupts(exit)
+    ? { reason: "interrupted", failure: Option.some({ code: "turn.interrupted", message: "the turn's scope was interrupted before it ended" }) }
+    : { reason: "failed", failure: Option.some({ code: "turn.unended", message: "the turn's scope closed before it ended" }) }
   yield* Scope.addFinalizerExit(scope, (exit) => Ref.get(ended).pipe(Effect.flatMap((done) => done ? Effect.void
-    : end({
-      reason: Exit.hasInterrupts(exit) ? "interrupted" : "failed",
-      failure: Option.some({ code: "turn.unended", message: "the turn's scope closed before it ended" }),
-    }).pipe(Effect.timeout("10 seconds"), Effect.ignore)), Effect.ensuring(Effect.gen(function* () {
+    : Ref.get(attempted).pipe(
+      Effect.flatMap((last) => end(Option.getOrElse(last, () => unended(exit)))),
+      Effect.timeout("10 seconds"),
+      Effect.ignore,
+    )), Effect.ensuring(Effect.gen(function* () {
       const error = harness("turn.closed", `turn ${admitted.turn}'s scope closed`)
       yield* Ref.update(failed, Option.orElse(() => Option.some(error)))
       yield* Queue.shutdown(queue)
@@ -332,7 +343,7 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     end,
     closed: Deferred.await(closed),
   }
-  return { writer, close, ended: Ref.get(ended) }
+  return { writer, close, ended: Ref.get(ended), markTried: Ref.set(tried, true) }
 })
 
 /** A session's events before `started`, its fork's parent (up to the fork point) first. */

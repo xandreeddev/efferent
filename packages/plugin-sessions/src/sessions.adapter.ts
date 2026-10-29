@@ -3,6 +3,7 @@ import {
   canonicalJson,
   ConversationId,
   EntryId,
+  harnessDefectsAsFailures,
   InboxFull,
   KeyConflict,
   NothingPending,
@@ -16,6 +17,7 @@ import {
   TurnAdmission,
   TurnDuplicate,
   turnEndedDraft,
+  turnEndingOf,
   turnStartedDraft,
   turnStartedOf,
   UserMessage,
@@ -24,6 +26,7 @@ import type {
   AdmittedTurn,
   BeginTurn,
   InboxItem,
+  JsonObject,
   SessionAddress,
   SessionCommitted,
   SessionDraft,
@@ -144,10 +147,15 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   /** Close a turn this instance opened whose begin never handed it to a writer (interrupted after its commit). */
   const unhanded = (address: SessionAddress, turn: number, exit: Exit.Exit<unknown, unknown>) => guarded(address, (_head, state) => Effect.gen(function* () {
     if (!Option.exists(state.open, (open) => open.turn === turn && open.holder === instance)) return { drafts: [], next: Option.none<SessionsState>(), result: undefined }
-    const reason = Exit.hasInterrupts(exit) ? "interrupted" as const : "failed" as const
+    const interrupted = Exit.hasInterrupts(exit)
+    const reason = interrupted ? "interrupted" as const : "failed" as const
     const after = closedState(state, reason, config.inbox.attempts, false)
-    const closing = yield* turnEndedDraft(turn, { reason, failure: Option.some({ code: "turn.unended", message: "the turn's scope closed before it ended" }) })
-      .pipe(Effect.mapError(storage("session.encode")))
+    const closing = yield* turnEndedDraft(turn, {
+      reason,
+      failure: Option.some(interrupted
+        ? { code: "turn.interrupted", message: "the turn's begin was interrupted before its writer was handed over" }
+        : { code: "turn.unended", message: "the turn's scope closed before it ended" }),
+    }).pipe(Effect.mapError(storage("session.encode")))
     const dropped = after.dropped.map((id): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data: droppedData(id) }))
     return { drafts: [closing, ...dropped], next: Option.some(after.state), result: undefined }
   })).pipe(Effect.timeout("10 seconds"), Effect.ignore)
@@ -158,10 +166,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * admission, the reads — stays interruptible, and a turn committed under
    * an admission that is then interrupted is closed by the scope.
    */
-  const begin = (address: SessionAddress, input: BeginTurn) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+  const openTurn = (address: SessionAddress, input: BeginTurn) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
     const scope = yield* Effect.scope
     const at = yield* Clock.currentTimeMillis
-    const toAdmit = { session: address, origin: input._tag === "User" ? "user" as const : "inbox" as const, runId: input.runId, key: input._tag === "User" ? input.key : input.runId }
+    const meta = input.meta ?? {}
+    const toAdmit = { session: address, origin: input._tag === "User" ? "user" as const : "inbox" as const, runId: input.runId, key: input._tag === "User" ? input.key : input.runId, meta }
     const unowned = yield* Ref.make(Option.none<number>())
     yield* Scope.addFinalizerExit(scope, (exit) => Ref.get(unowned).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (turn) => unhanded(address, turn, exit) }))))
     // Only the opening commit is admitted: the writer's later commits run outside the host's admission.
@@ -172,6 +181,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         const previous = yield* keyed(address.id, input.key)
         if (Option.isSome(previous)) {
           const started = yield* turnStartedOf(previous.value.event).pipe(Effect.mapError(storage("session.decode")))
+          // The key's fingerprint is the message and the command, never `meta`: a retry with other metadata is the same turn.
           const same = started.userMessage.text === input.userMessage.text && canonicalJson(started.command) === canonicalJson(input.command)
           return yield* Effect.fail(same
             ? new TurnDuplicate({ session: address.id, turn: previous.value.turn, open: Option.exists(state.open, (open) => open.turn === previous.value.turn) })
@@ -200,10 +210,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const starting = yield* turnStartedDraft(turn, {
         runId: input.runId, key, origin: open.origin, userMessage, command: input._tag === "User" ? input.command : {},
         claimed: waiting, entry: EntryId.make(`${input.runId}:0`), at,
+        // Written only when given: a turn begun without metadata is stored as before.
+        ...(input.meta === undefined ? {} : { meta: input.meta }),
       }).pipe(Effect.mapError(storage("session.encode")))
       const admitted: AdmittedTurn = {
         session: address, turn, runId: input.runId, key, origin: open.origin, userMessage,
-        command: input._tag === "User" ? input.command : {}, claimed,
+        command: input._tag === "User" ? input.command : {}, claimed, meta,
       }
       return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next } }
     }), (opened) => Ref.set(unowned, Option.some(opened.admitted.turn)))))
@@ -223,8 +235,10 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     }, scope)
     yield* Ref.set(unowned, Option.none())
     yield* Ref.update(writers, (all) => new Map([...all, [address.id, { ...open, turn: begun.result.admitted.turn }]]))
-    return open.writer
+    return open
   }))
+
+  const begin = (address: SessionAddress, input: BeginTurn) => openTurn(address, input).pipe(Effect.map((open) => open.writer))
 
   /** Close this instance's writer of a session, if it holds `turn` (or any turn). */
   const closeLocal = (id: string, reason: "cancelled" | "removed", turn: Option.Option<number>) => Ref.get(writers).pipe(Effect.flatMap((all) =>
@@ -233,16 +247,24 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       onSome: (open) => Option.match(turn, { onNone: () => true, onSome: (wanted) => wanted === open.turn }) ? open.close(reason) : Effect.void,
     })))
 
-  const drain = <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number }) => {
+  const drain = <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject }) => {
     const maxTurns = options?.maxTurns ?? 3
+    const meta = options?.meta
     const once: Effect.Effect<boolean, SessionMissing | SessionLogError, R> = Effect.scoped(Effect.gen(function* () {
-      const writer = yield* begin(address, { _tag: "Inbox", runId: yield* Effect.sync(() => crypto.randomUUID()) })
-      const exit = yield* Effect.exit(run(writer))
-      if (exit._tag === "Failure") yield* Effect.logWarning(`inbox turn ${writer.admitted.turn} of ${address.id} failed`)
-      yield* writer.end({
-        reason: exit._tag === "Success" ? "completed" : "failed",
-        failure: exit._tag === "Success" ? Option.none() : Option.some({ code: "inbox.turn", message: "the inbox turn failed" }),
-      }).pipe(Effect.ignore)
+      const runId = yield* Effect.sync(() => crypto.randomUUID())
+      const open = yield* openTurn(address, meta === undefined ? { _tag: "Inbox", runId } : { _tag: "Inbox", runId, meta })
+      // A HarnessError carried as a defect keeps its own code, as in `Agent.turn`.
+      const exit = yield* Effect.exit(harnessDefectsAsFailures(run(open.writer)))
+      // The turn ends with what ended `run`: its error's code, `turn.defect` or `turn.interrupted`.
+      const ending = turnEndingOf(Exit.map(exit, () => ({ outcome: "completed" as const })))
+      // A drain interrupted from outside stops before this line, so an interruption here is `run`'s own: it counts
+      // an attempt even when `run` wrote nothing, so an item whose run keeps interrupting itself is still dropped.
+      if (ending.reason === "interrupted") yield* open.markTried
+      yield* Option.match(ending.failure, {
+        onNone: () => Effect.void,
+        onSome: (failure) => Effect.logWarning(`inbox turn ${open.writer.admitted.turn} of ${address.id} ended ${ending.reason}: ${failure.code}`),
+      })
+      yield* open.writer.end(ending).pipe(Effect.ignore)
       return true
     })).pipe(
       Effect.catchTags({

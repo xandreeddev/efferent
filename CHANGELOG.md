@@ -102,6 +102,52 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `tool.completed` and then fails the turn with that error, as a subscriber
   failure on `tool.started` always did. A handler that wants the model to
   see a failure returns it on its failure channel.
+- **`@xandreed/core`: `AdmittedTurn`, `TurnToAdmit`, `RunContext` and `Turn`
+  have new required fields** for the host's turn metadata:
+  `AdmittedTurn.meta` and `TurnToAdmit.meta` (`{}` when the turn was begun
+  without any), and `RunContext.admitted` and `Turn.admitted` (the admitted
+  turn). Hand-built values (a fake `TurnWriter`'s `admitted`, a `RunContext`
+  or `Turn` stub) add them: `meta: {}`, and `admitted` as the writer's.
+- **`@xandreed/core`: the bus `turn.started` event requires `meta`, and
+  `context.built` requires `budgetTokens`.** Code constructing these events
+  adds them. The stored `context.built` record gains `budgetTokens` (its
+  journal schema keeps it optional, so records written before still decode);
+  the stored `turn.started` gains `meta` only when the turn was given one,
+  so turns without it are stored as before.
+- **`@xandreed/sdk`, `@xandreed/plugin-sessions`: stored `turn.ended`
+  records carry the real failure code.** A turn `Agent.turn` began and that
+  fails is ended with `turnEndingOf` its exit: the error's own code and
+  message (`host.failed`, `reaction.failed`, a `SessionLogError`'s code, a
+  `HarnessError` carried as a defect), `turn.failed` for an error without a
+  code, `turn.defect` for a defect; it was always `turn.unended`. A
+  writer's scope, or a begin, interrupted before the turn ended stores
+  `turn.interrupted`; `turn.unended` is left for a scope that closed
+  without an interruption before anyone tried to end the turn. A turn
+  whose `use` interrupted itself (an `Effect.interrupt` inside it) still
+  ends `interrupted`; only its code changes, from `turn.unended` to
+  `turn.interrupted`. An end the store refuses is tried again by the
+  writer's scope with that same ending, where it used to store
+  `turn.unended`. `Sessions.drain` ends a failed inbox turn with its
+  error's code the same way (a `HarnessError` carried as a defect keeps
+  its code): `inbox.turn` is no longer written. A drain `run` that
+  interrupted itself ends `interrupted` with `turn.interrupted`, where it
+  ended `failed`; it still counts an attempt for the items it took, even
+  when it wrote nothing, so such an item is still dropped after
+  `inbox.attempts`. Migration: a host that matched `turn.unended` or
+  `inbox.turn` in stored `turn.ended` records matches the failing error's
+  code, `turn.failed`, `turn.defect` or `turn.interrupted` instead (the
+  event reference lists them), and a host that read a drain turn's
+  `reason: "failed"` as any non-success reads `interrupted` as well.
+- **`@xandreed/sdk`, `@xandreed/core`: token budgets are checked.**
+  `Agent.define` fails with `config.budget` when `budgetTokens` is not an
+  integer of at least 1, and a run fails with `turn.budget` when its
+  policy's (or `TurnRunOptions`') is not; both were used as given. A step whose system prompt and tool schemas take the whole
+  budget fails with `context.budget`: memory used to get a 1-token budget
+  for the messages, so the window strategy failed with `context.budget`
+  later and the summary strategy summarized at every step. Migration: pass
+  a positive integer, at least the system prompt and tool schemas plus room
+  for the messages (`context.built` records the run's `budgetTokens` beside
+  `reservedTokens`).
 
 ### Added
 
@@ -208,6 +254,34 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   appear, what they leave out, the span attributes, what each provider
   reports) and the same table on the website's providers page; the
   conformance page lists the usage checks.
+- `@xandreed/core`, `@xandreed/plugin-sessions`, `@xandreed/sdk`: the
+  host's metadata on each turn. `meta` (a JSON object: a request id, a
+  client, a tenant) on `BeginTurn.User`, `BeginTurn.Inbox` and `NewTurn`
+  (`Agent.turn`'s `turn` input), and `Sessions.drain(address, run, {
+  maxTurns, meta })` for inbox turns. It is stored in `turn.started` when
+  given (`TurnStartedData.meta`), given to `TurnAdmission` (`TurnToAdmit.meta`),
+  and shown on `AdmittedTurn.meta`, `RunContext.admitted`, `Turn.admitted`
+  and the bus `turn.started` event. It is never shown to the model, and is
+  not part of the idempotency key's fingerprint: a retry with other
+  metadata is still `TurnDuplicate`.
+- `@xandreed/core`: `turnEndingOf(exit)`, the `TurnEnding` a turn's exit
+  stores: its outcome on success; failed with the error's own `code` and
+  message (cut to 500 characters), `turn.failed` or `turn.defect`; or
+  interrupted with `turn.interrupted`. An error wins over an interruption.
+  `Agent.turn` and `Sessions.drain` end their turns with it; a host-composed
+  runner ends its writer with `writer.end(turnEndingOf(exit))`. On success a
+  failed end still fails the turn.
+- `@xandreed/core`: `BudgetTokens` (an integer of at least 1) and
+  `isBudgetTokens`; `context.built` records the run's `budgetTokens`. The
+  doc comments of `TurnPolicy.budgetTokens`, `TurnRunOptions.budgetTokens`,
+  `AgentConfig.budgetTokens` and `MaintainSignal.budgetTokens` say what the
+  budget is (the target memory compaction keeps each request under, not a
+  provider limit) and what each memory strategy does with it.
+- Docs: `docs/framework.md` (the host's metadata, how a turn ends and its
+  stored codes, the token budget) and the website's SDK and sessions page;
+  the event reference lists `turn.started.meta`, `context.built.budgetTokens`
+  and the stored codes `turn.failed`, `turn.defect`, `turn.interrupted`,
+  `turn.budget`, `config.budget` and `context.budget`.
 
 ### Fixed
 
@@ -245,6 +319,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the removed journey driver.
 - `bun run verify:packages` runs `stepLoopConformance` over the packed step
   loop (`runSteps`) and `turnConformance` over a packed `Agent` on Node.
+- The sdk golden journal and model files are regenerated: `context.built`
+  records carry `budgetTokens`, and the failed turn's `turn.ended` carries
+  its error's code (`host.failed`).
 
 ## 0.13.0
 

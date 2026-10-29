@@ -10,7 +10,7 @@ import type { MemoryReader } from "./memory.port.js"
 import type { RunContext } from "./run-context.port.js"
 import type { TurnWriter } from "./sessions.port.js"
 import type { JsonObject } from "../session/session-log.entity.js"
-import type { SessionAddress } from "../session/sessions.entity.js"
+import type { AdmittedTurn, SessionAddress } from "../session/sessions.entity.js"
 import type { Correctives, LoopLimits, RunResult } from "./step-loop.port.js"
 import type { SkillMatch } from "./tool-registry.port.js"
 import type { TurnEvents, TurnEventsService, TurnTasks, TurnTasksService } from "./turn-events.port.js"
@@ -27,7 +27,19 @@ export interface TurnPolicy<R = never> {
   /** Read-only by contract: react to events, decide here. */
   readonly completion?: (step: StepInfo) => Effect.Effect<CompletionVerdict, HarnessError, R>
   readonly limits?: Partial<LoopLimits>
-  /** Input tokens one request may use (system, tool schemas and messages). */
+  /**
+   * This run's token budget (an integer of at least 1, else the run fails
+   * with `turn.budget`): the target memory compaction keeps each request
+   * under, the system prompt, tool schemas and messages estimated together,
+   * not a provider limit. The memory strategy is given the whole budget at
+   * the turn's start, and at each step what the system prompt and tool
+   * schemas leave of it (`context.budget` when they leave nothing): the
+   * window strategy compacts, spills and drops older turns to fit the budget
+   * it is given (and fails with `context.budget` when the current turn alone
+   * does not), the summary strategy summarizes once the messages pass its
+   * `triggerRatio` of it and keeps its `keepRatio`, and the digester ignores
+   * it. Overrides the agent's `budgetTokens` (64 000 by default).
+   */
   readonly budgetTokens?: number
   /** Where the step context goes: closing the messages, or appended to the system prompt. */
   readonly stepContext?: "tail" | "system"
@@ -69,6 +81,8 @@ export interface Turn {
   readonly runId: string
   readonly turn: number
   readonly userMessage: UserMessage
+  /** The admitted turn as the session began it, the host's `meta` included (`RunContext.admitted`). */
+  readonly admitted: AdmittedTurn
   readonly memory: MemoryReader
   readonly events: TurnEventsService
   readonly tasks: TurnTasksService
@@ -98,6 +112,13 @@ export interface NewTurn {
   readonly key?: string
   /** The host's input beside the message, part of the key's fingerprint. */
   readonly command?: JsonObject
+  /**
+   * The host's metadata for the turn (a request id, a tenant…): stored in
+   * `turn.started`, shown on `RunContext.admitted`, `Turn.admitted` and the
+   * bus `turn.started`, and given to `TurnAdmission`. Not part of the key's
+   * fingerprint, and never shown to the model.
+   */
+  readonly meta?: JsonObject
 }
 
 /**

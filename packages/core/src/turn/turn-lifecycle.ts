@@ -91,6 +91,7 @@ export const turnOf = (options: TurnRunOptions = {}): Effect.Effect<Turn, Harnes
       runId: run.runId,
       turn: yield* memory.number,
       userMessage: run.userMessage,
+      admitted: run.admitted,
       memory: run.memory,
       events: run.events,
       tasks: run.tasks,

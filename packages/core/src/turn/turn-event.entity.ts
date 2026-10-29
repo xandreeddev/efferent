@@ -3,6 +3,7 @@ import { DecisionRecord } from "../decision-record.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { ActivationSource, EntryId } from "../memory/memory-log.entity.js"
+import { JsonObject } from "../session/session-log.entity.js"
 import { UserMessage } from "./user-message.entity.js"
 
 /**
@@ -28,8 +29,10 @@ export const TurnStartedEvent = Schema.TaggedStruct("turn.started", {
   runId: Schema.String,
   turn: Schema.Int,
   userMessage: UserMessage,
+  /** The host's metadata the turn was begun with (`{}` when none was given). */
+  meta: JsonObject,
 }).annotate({
-  description: "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said. Not journaled from the bus: the session stored its own `turn.started` when the turn began. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
+  description: "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model). Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` only when it was given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
 })
 
 export const StepStartedEvent = Schema.TaggedStruct("step.started", {
@@ -127,10 +130,12 @@ export const ContextBuiltEvent = Schema.TaggedStruct("context.built", {
   systemFingerprint: Schema.String,
   estimatedTokens: Schema.Int,
   reservedTokens: Schema.Int,
+  /** The run's token budget for the whole request; memory was given `budgetTokens - reservedTokens` for the messages. */
+  budgetTokens: Schema.Int,
   compactions: Schema.Int,
   activeTools: Schema.Array(Schema.String),
 }).annotate({
-  description: "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate and reservation, how many compactions the build applied, and the active tools. Journaled as `context.built`; the full request is journaled beside it as `request.prepared`.",
+  description: "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate of the messages, the tokens reserved for the system prompt and tool schemas, the run's `budgetTokens` (the whole request's; memory compacted the messages toward `budgetTokens - reservedTokens`), how many compactions the build applied, and the active tools. Journaled as `context.built` (records written before 0.14.0 have no `budgetTokens`); the full request is journaled beside it as `request.prepared`.",
 })
 
 export const DecisionRecordedEvent = Schema.TaggedStruct("decision.recorded", {

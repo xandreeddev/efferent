@@ -56,6 +56,7 @@
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 68,
           "reservedTokens": 303,
+          "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
             "load_skill",
@@ -73,6 +74,7 @@
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 242,
           "reservedTokens": 303,
+          "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
             "load_skill",
@@ -90,6 +92,7 @@
           "systemFingerprint": "3f61f4eeed",
           "estimatedTokens": 412,
           "reservedTokens": 347,
+          "budgetTokens": 64000,
           "compactions": 0,
           "activeTools": [
             "load_skill",
@@ -191,6 +194,7 @@
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 939,
           "reservedTokens": 387,
+          "budgetTokens": 64000,
           "compactions": 1,
           "activeTools": [
             "load_skill",
@@ -210,6 +214,7 @@
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 1074,
           "reservedTokens": 387,
+          "budgetTokens": 64000,
           "compactions": 1,
           "activeTools": [
             "load_skill",

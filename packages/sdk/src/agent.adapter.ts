@@ -1,4 +1,4 @@
-import { Context, Effect, Option, Schema } from "effect"
+import { Context, Effect, Exit, Option, Schema } from "effect"
 import type { Layer, Scope } from "effect"
 import {
   cacheKeyOf,
@@ -9,6 +9,7 @@ import {
   guardTurn,
   harnessDefectsAsFailures,
   HarnessError,
+  isBudgetTokens,
   openTurnTools,
   SessionEnvironment,
   Sessions,
@@ -22,6 +23,7 @@ import {
   TurnMemory,
   TurnPrompt,
   TurnToolbox,
+  turnEndingOf,
   turnOf,
 } from "@xandreed/core"
 import type {
@@ -69,7 +71,19 @@ export interface AgentConfig {
   readonly workspace?: string
   /** Defaults for every run; a turn's policy overrides them. */
   readonly limits?: Partial<LoopLimits>
-  /** Input tokens one request may use (system, tool schemas and messages). */
+  /**
+   * Every run's token budget unless its policy gives one; 64 000 by default.
+   * An integer of at least 1, checked here (`config.budget`). It is the
+   * target memory compaction keeps each request under (system prompt, tool
+   * schemas and messages, estimated), not a provider limit. Memory is given
+   * the whole budget at the turn's start, and at each step what the system
+   * prompt and tool schemas leave of it (`context.budget` when they leave
+   * nothing). The window strategy compacts, spills and drops older turns to
+   * fit the budget it is given, and fails with `context.budget` when the
+   * current turn alone does not; the summary strategy summarizes once the
+   * messages pass its `triggerRatio` of it; the digester ignores it. Each
+   * step's `context.built` records it.
+   */
   readonly budgetTokens?: number
   /** How deep event reactions may nest before the bus fails the publisher. */
   readonly maxEventDepth?: number
@@ -85,7 +99,11 @@ export interface Agent {
    * On success, tasks and background subscriptions settle as the scopes
    * close in dependency order, before the reply is recorded exactly once.
    * Failures and interruptions record a failed reply and cancel remaining
-   * scoped work; recorded events are stored before the turn returns. A turn closed
+   * scoped work; recorded events are stored before the turn returns. A turn
+   * begun here ends with `turnEndingOf` its exit: its outcome, or failed
+   * with the error's code (`turn.failed` for an error without one,
+   * `turn.defect`), or interrupted (`turn.interrupted`); on success, a
+   * failure to store that end fails the turn. A turn closed
    * elsewhere (cancelled, reaped) fails with `turn.closed`. `use` runs in
    * the turn's scope with the turn's services (RunContext, TurnEvents,
    * TurnTasks and the input's `layer`) provided: the same instances the
@@ -123,6 +141,7 @@ export const turnBeginCodes = {
 const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effect<TurnWriter, HarnessError, Scope.Scope> =>
   required(context, Sessions).pipe(Effect.flatMap((sessions) => sessions.begin(turn.session, {
     _tag: "User", userMessage: turn.userMessage, runId: turn.runId, key: turn.key ?? turn.runId, command: turn.command ?? {},
+    ...(turn.meta === undefined ? {} : { meta: turn.meta }),
   })), Effect.mapError((error) => error instanceof HarnessError ? error : failure(turnBeginCodes[error._tag], `the turn could not begin (${error._tag}) in session ${turn.session.id}`)))
 
 /** The turn's body, until someone else closes the turn: then the body is interrupted and the turn fails. */
@@ -166,6 +185,9 @@ const turnDependentNodes = (graph: PluginGraph): ReadonlyArray<PluginNode> => gr
  * contributor.
  */
 const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scope.Scope> => Effect.gen(function* () {
+  if (config.budgetTokens !== undefined && !isBudgetTokens(config.budgetTokens)) {
+    return yield* Effect.fail(failure("config.budget", `budgetTokens must be an integer of at least 1, not ${config.budgetTokens}`))
+  }
   const parent = yield* Effect.scope
   const entries = config.plugins.map(entryOf)
   const hosted = config.capabilities ?? []
@@ -219,7 +241,10 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    * 8. on success finalizer work settled, then the final reply recorded (failed when
    *    the body or its finalizer work failed) and the turn's usage read,
    *    before TurnLive closes;
-   * 9. a turn begun here is ended here, with the outcome.
+   * 9. a turn begun here is ended here, with `turnEndingOf` the turn's exit:
+   *    on success its outcome (a failed end fails the turn), on failure the
+   *    error's code (the end's own failure is ignored, the turn's cause kept);
+   *    an end not stored is tried again, the same, when the turn's scope closes.
    */
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -264,7 +289,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
         return yield* effect.pipe(Effect.provide(activated))
       }))
     })
-    const outcome = yield* body.pipe(
+    const exit = yield* body.pipe(
       // Work using the body's scoped services finishes before those services are finalized.
       Effect.tap(() => settleTurn),
       Effect.scoped,
@@ -283,9 +308,14 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       Effect.provideService(StepLoop, loop),
       Effect.provide(context),
       untilClosed(writer),
+      // A HarnessError carried as a defect is stored with its own code, not as `turn.defect`.
+      harnessDefectsAsFailures,
+      Effect.exit,
     )
-    if (own) yield* writer.end({ reason: outcome.outcome, failure: Option.none() })
-    return outcome
+    // On success a failed end fails the turn; on failure the turn's own cause wins.
+    if (own && Exit.isSuccess(exit)) yield* writer.end(turnEndingOf(exit))
+    if (own && Exit.isFailure(exit)) yield* writer.end(turnEndingOf(exit)).pipe(Effect.ignore)
+    return yield* exit
   }))) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
   return { fingerprint: graphFingerprint(graph), turn }

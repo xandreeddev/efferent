@@ -97,7 +97,19 @@ export interface TurnLiveInput {
 /** The agent-level defaults of one run; a policy overrides limits and budget. */
 export interface TurnRunOptions {
   readonly limits?: Partial<LoopLimits>
-  /** Input tokens one request may use (system, tool schemas and messages); 64 000 by default. */
+  /**
+   * The run's token budget when the policy gives none; 64 000 by default. An
+   * integer of at least 1 (else the run fails with `turn.budget`): the target
+   * memory compaction keeps each request under (system prompt, tool schemas
+   * and messages, estimated), not a provider limit. The memory strategy is
+   * given the whole budget at the turn's start, and at each step what the
+   * system prompt and the active tools' schemas leave of it
+   * (`context.budget` when they leave nothing): the window strategy
+   * compacts, spills and drops older turns to fit the budget it is given
+   * (and fails with `context.budget` when the current turn alone does not),
+   * the summary strategy summarizes past its `triggerRatio` of it, and the
+   * digester ignores it. Each step's `context.built` records it.
+   */
   readonly budgetTokens?: number
   /** The provider prompt-cache key (see `cacheKeyOf`); none by default. */
   readonly cacheKey?: Option.Option<string>

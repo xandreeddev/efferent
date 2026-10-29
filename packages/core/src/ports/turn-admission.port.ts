@@ -1,5 +1,6 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
+import type { JsonObject } from "../session/session-log.entity.js"
 import type { SessionAddress, TurnRefused } from "../session/sessions.entity.js"
 
 /** The turn a host is asked to admit. */
@@ -8,6 +9,8 @@ export interface TurnToAdmit {
   readonly origin: "user" | "inbox"
   readonly runId: string
   readonly key: string
+  /** The host's metadata the turn is begun with (`{}` when none was given): a tenant or a quota key to count by. */
+  readonly meta: JsonObject
 }
 
 /**

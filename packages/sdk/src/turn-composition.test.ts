@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Option, Stream } from "effect"
+import { Context, Effect, Exit, Layer, Stream } from "effect"
 import type { Scope } from "effect"
 import { LanguageModel } from "effect/ai"
 import {
   cacheKeyOf,
   CapabilitiesLive,
   guardTurn,
+  harnessDefectsAsFailures,
   HarnessError,
   Sessions,
   openTurnTools,
@@ -16,6 +17,7 @@ import {
   turnOf,
   SessionLogMemoryLive,
   TurnAdmissionOpen,
+  turnEndingOf,
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
@@ -33,7 +35,9 @@ import { expectGolden, goldenConfig, goldenHost, goldenTexts, runGolden } from "
  * turn's public pieces, with no plugin graph: the runtime plugins are one
  * stack built once; per turn, the turn is begun with the Sessions of the
  * turn's services, the digester is built over them, then TurnLive, the
- * host's layer and the body; the turn is ended with the outcome.
+ * host's layer and the body; the turn is ended with `turnEndingOf` its exit
+ * (the outcome, or the failure's code), taken after `harnessDefectsAsFailures`,
+ * as `Agent.turn` ends it.
  */
 const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = Effect.gen(function* () {
   const runtime = yield* Layer.build(CapabilitiesLive(goldenHost).pipe(
@@ -53,14 +57,18 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
     })
     const scoped = body.pipe(guardTurn, Effect.scoped)
     const hosted = input.layer === undefined ? scoped : scoped.pipe(Effect.provide(input.layer as Layer.Layer<A, E>))
-    const outcome = yield* hosted.pipe(
+    const exit = yield* hosted.pipe(
       Effect.provide(TurnLive({ turn: writer, system: "GOLDEN system prefix." })),
       Effect.provide(MemoryDigestLive()),
       Effect.provide(input.services),
       Effect.provide(runtime),
+      // A HarnessError carried as a defect is stored with its own code, as `Agent.turn` stores it.
+      harnessDefectsAsFailures,
+      Effect.exit,
     )
-    yield* writer.end({ reason: outcome.outcome, failure: Option.none() })
-    return outcome
+    if (Exit.isSuccess(exit)) yield* writer.end(turnEndingOf(exit))
+    if (Exit.isFailure(exit)) yield* writer.end(turnEndingOf(exit)).pipe(Effect.ignore)
+    return yield* exit
   })) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
   return { turn }
 })

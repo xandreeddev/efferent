@@ -301,7 +301,8 @@ const agent = yield* Agent.define({
 ```
 
 **One turn.** `agent.turn(input, use)` opens memory and tools for one admitted
-turn and hands `use` a `Turn`: `userMessage`, `memory` (read-only), `events`,
+turn and hands `use` a `Turn`: `userMessage`, `admitted` (the turn as the
+session admitted it, the host's `meta` included), `memory` (read-only), `events`,
 `tasks`, `tools` (`match`, `apply`, `select`, `activate`, `active`),
 `context(entry)`, `reply(text)`, `run(policy)`, `usage`, `flush` and
 `write(op)`. The turn is scoped: subscriptions and tasks end with it. On
@@ -316,14 +317,52 @@ turn's `usage`, every run's provider calls summed (see
 
 `input.turn` is either a turn the host already began (the `TurnWriter` from
 `Sessions.begin`: the host ends it, after its own closing records) or a
-`NewTurn` (`{ session, userMessage, runId, key?, command? }`) that the agent
-begins through the `Sessions` in its services and ends with the outcome. A
+`NewTurn` (`{ session, userMessage, runId, key?, command?, meta? }`) that the agent
+begins through the `Sessions` in its services and ends. A
 turn that cannot begin fails with the reason as its code (`session.busy`,
 `turn.duplicate`, `turn.key-conflict`, `turn.refused`; all of them are
 `turnBeginCodes` from `@xandreed/sdk`, with suggested HTTP statuses in the
 [event reference](event-reference.md#begin-codes)); a turn someone else
 closes (a cancel, a reaped lease, a removed session) fails with
 `turn.closed`.
+
+**The host's metadata.** `meta` is a JSON object the host attaches to a
+turn: a request id, a client, a tenant. It is stored in the session's
+`turn.started` (only when given, so turns without it are stored as before),
+given to `TurnAdmission` (`TurnToAdmit.meta`), and shown on the writer's
+`admitted`, on `RunContext.admitted` and `Turn.admitted` (with the turn's
+number, key, origin, command and claimed inbox items) and on the bus
+`turn.started` event; it is `{}` when none was given. The model never sees
+it, and it is not part of the idempotency key's fingerprint (the message
+and the command are): a retry with the same key and other metadata is
+still `turn.duplicate`. `Sessions.drain(address, run, { meta })` begins its
+inbox turns with it.
+
+**How a turn ends.** A turn the agent began is ended with
+`turnEndingOf(exit)` (from `@xandreed/core`), the turn's exit as the stored
+`turn.ended`:
+
+| The turn | `reason` | `failure.code` |
+| --- | --- | --- |
+| returned an outcome | `completed`, `partial` or `failed`, as `use` returned | none |
+| failed with an error that has a string `code` (a `HarnessError`, a `SessionLogError`) | `failed` | the error's own code, with its message |
+| failed with an error without one | `failed` | `turn.failed`, message `<_tag>: <message>` (or the error as text) |
+| died with a defect | `failed` | `turn.defect` (`Agent.turn` first turns a `HarnessError` carried as a defect back into a failure, which keeps its own code) |
+| was interrupted, and nothing failed | `interrupted` | `turn.interrupted` |
+
+An error wins over an interruption in the same cause, and messages are cut
+to 500 characters. On success, a store failure while ending fails the turn,
+so the caller never reports a turn completed that is not stored as ended;
+on failure the end is tried once, its own failure ignored, and the turn
+fails with its own cause. Either way, an end that could not be stored is
+tried again by the writer's scope when it closes, with the same ending (so
+the stored code stays the turn's own, not `turn.unended`). A turn whose
+fiber is interrupted is ended by its writer's scope instead, as
+`interrupted` with `turn.interrupted`. A host ending its own writer, or
+composing a runner by hand, uses the same function:
+`writer.end(turnEndingOf(exit))`, with `harnessDefectsAsFailures` applied
+before taking the exit so a `HarnessError` carried as a defect keeps its
+code.
 
 A prompt is text sent to a model; the user's message is a `UserMessage` value
 (`new UserMessage({ text })`, never blank), and every field or parameter holding
@@ -367,6 +406,25 @@ without a provider call), `model` (a model and prompt variant per step),
 `system`) and `correctives`. A verdict whose `awaiting` names task tags joins
 those tasks and is evaluated once more. No provider call follows a complete
 verdict.
+
+**The token budget.** `budgetTokens` is the target memory keeps each request
+under: the system prompt, the active tools' schemas and the messages,
+estimated together. It is not a provider limit, and nothing is cut to fit a
+model's context window. The agent's `budgetTokens` (64 000 by default) is
+checked by `Agent.define` and fails with `config.budget` unless it is an
+integer of at least 1 (`BudgetTokens`, `isBudgetTokens`); a policy's
+overrides it for one run, checked when the run starts (`turn.budget`). At
+the turn's start the memory strategy is given the whole budget. At each
+step the system prompt and the tool schemas are reserved first, and the
+memory strategy gets the rest for the messages; when they leave nothing,
+the step fails with `context.budget`. What the strategy does with the
+budget it is given is its own: the window strategy compacts older turns,
+spills the current turn's largest results and drops the oldest turns to
+fit, and fails with `context.budget` when the current turn alone does not;
+the summary strategy summarizes once the messages pass its `triggerRatio`
+of it and keeps its `keepRatio`; the digester ignores it. Every step's
+`context.built` records the run's `budgetTokens` beside `reservedTokens`
+and the messages' `estimatedTokens`.
 
 **Events and tasks.** `TurnEvent` is one typed union: `turn.started`,
 `step.started`, `tool.started`, `tool.progress` (transient), `tool.completed`
@@ -427,7 +485,9 @@ a new strategy rebuilds from the full-fidelity entries.
   through each tool's compact view. Under budget pressure it spills the
   current turn's largest results to a preview plus a locator (read back with
   `recall_context`), then replaces the oldest turns with a ledger. It fails
-  with `context.budget` only when the current turn alone does not fit.
+  with `context.budget` only when the current turn alone does not fit the
+  budget it is given: the whole budget at the turn's start, and what the
+  system prompt and tool schemas leave of it at each step.
 - The summary strategy folds the oldest turns into one recorded summary once
   the render passes its trigger. It reads the `UtilityLlm` where its session
   is opened (the turn), so summaries run under the turn's budget, and fails
@@ -664,8 +724,9 @@ and `RunContext` (which carries the turn's `session`). It provides:
   and `tools` (fails with `tools.unavailable` before `open`);
 - `TurnPrompt`: `system(variant)` and `turnSections`;
 - `RunContext` (its `usage` is the turn's running total: a second bus
-  subscriber, after the writer, sums every `assistant.message`), `TurnEvents`
-  and `TurnTasks`.
+  subscriber, after the writer, sums every `assistant.message`; its
+  `admitted` is the writer's admitted turn, the host's `meta` included),
+  `TurnEvents` and `TurnTasks`.
 
 The lifecycle is functions over them: `openTurnTools`, `turnTools` (the
 host's view), `settleTurn` (join the tasks, drain the reactions, until quiet),
@@ -718,8 +779,11 @@ already closed when the final `turn.ended` event is published. An observer that
 needs the final outcome subscribes in the caller's outer scope, using
 `Scope.provide(observerScope)`, and uses services that remain open there.
 A host composing by hand uses the same pieces over a
-`stackPlugins` stack instead of a graph, and builds session plugins such as
-`MemoryDigestLive()` per turn over the turn's services. `turnConformance`
+`stackPlugins` stack instead of a graph, builds session plugins such as
+`MemoryDigestLive()` per turn over the turn's services, and ends a turn it
+began with `writer.end(turnEndingOf(exit))`, taking the exit after
+`harnessDefectsAsFailures` (failing the turn when that end fails on
+success, as `Agent.turn` does). `turnConformance`
 checks a composition: the writer first, the message before the matcher's
 history, the reply and the turn's end exactly once on success, failure and
 interrupt, tasks joined before the reply, a model-driven turn's
@@ -784,7 +848,8 @@ yield* Effect.scoped(Effect.gen(function* () {
 ```
 
 **One turn at a time.** `begin` opens a turn with its `turn.started` (the
-user's message, the host's `command`, the idempotency `key`) in one commit;
+user's message, the host's `command`, the idempotency `key`, and the host's
+`meta` when given) in one commit;
 a second begin while a turn is open is `SessionBusy` (a host answers 409).
 The same key again is `TurnDuplicate` with that turn, and the same key with
 another message or command is `KeyConflict`: keys are found in the log, so
@@ -794,8 +859,10 @@ way to write: `append`, `write(op)` in queue order, `transact(decide)`
 someone commits first), `flush` (committed to storage), `end` (the closing
 commit; it returns how many inbox items wait, and after a store failure a
 later end tries again) and `closed` (completes when someone else closed the
-turn). A writer whose scope closes unended ends the turn as failed, or
-interrupted, and so does a begin interrupted after its opening commit. Outside a turn, `Sessions.transact(address,
+turn). A writer whose scope closes unended ends the turn as failed
+(`turn.unended`), or as interrupted (`turn.interrupted`) when the scope was
+interrupted; a begin interrupted after its opening commit ends it as
+interrupted (`turn.interrupted`) too. Outside a turn, `Sessions.transact(address,
 decide)` is the same check-then-append (a page action, a setting); kinds only
 the framework writes are refused there (`RESERVED_KINDS`; among them
 `request.prepared` holds each request's full system text and tool
@@ -851,9 +918,9 @@ sensitive content, the exact `RESERVED_KINDS` and the begin codes;
 
 | Kind | Written by |
 | --- | --- |
-| `turn.started` (`runId`, `key`, `origin`, `userMessage`, `command`, `claimed`) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
+| `turn.started` (`runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, and `meta` when given) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
 | `turn.reply` | memory (`persistReply`) |
-| `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`) | the writer's `end`, a cancel or a reap |
+| `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`: the failing error's code; otherwise one of the framework's codes, `turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`, or a code the closer passes to `end` itself, such as plugin-tasks' `task.turn` and `task.deadline`) | the writer's `end` (`turnEndingOf` the turn's exit), its scope, a cancel or a reap |
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
 | `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded` | the turn's bus |
 | `request.prepared` (the request's header: system text, tool declarations, model, cache key) | the turn, before each provider call (`TurnMemory.prepareRequest`) |
@@ -876,9 +943,18 @@ returns it, up to `inbox.attempts` (2), and then it is dropped
 (`inbox.dropped`). A turn interrupted before it wrote anything through its
 writer (no `append`, `write` or `transact`) never tried its items: they wait
 again and no attempt is counted. A turn reaped because its holder stopped
-counts. User messages never queue. `drain(address, run)` runs
+counts. User messages never queue. `drain(address, run, { maxTurns, meta })` runs
 inbox turns while items wait, the session is free and the host admits them,
-at most three. Whoever closes a turn and whoever delivers drains: the
+at most `maxTurns` (three), each begun with `meta`. Each ends completed
+when `run` succeeds, and otherwise as `turnEndingOf` gives for its failure:
+the error's own code (a `HarnessError` carried as a defect included),
+`turn.failed`, `turn.defect` or `turn.interrupted`. A `run` that interrupts
+itself (an `Effect.interrupt`, or joining an interrupted fiber) ends
+`interrupted` but counts an attempt even when it wrote nothing, so an item
+whose run keeps interrupting itself is still dropped after
+`inbox.attempts`; a drain interrupted from outside ends its turn through
+the writer's scope, and counts one only if the turn wrote something.
+Whoever closes a turn and whoever delivers drains: the
 delivery either commits before the turn's closing commit (whose `pending`
 counts it) or after it (and finds the session free), so nothing waits
 unnoticed.

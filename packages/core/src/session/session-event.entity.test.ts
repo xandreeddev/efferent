@@ -160,7 +160,7 @@ describe("the journal's schemas", () => {
   test("the events recorded elsewhere are not stored from the bus", () => {
     expect([...RECORDED_ELSEWHERE]).toEqual(["turn.started", "turn.ended", "skills.activated"])
     const recordedElsewhere: ReadonlyArray<TurnEvent> = [
-      { _tag: "turn.started", runId: "r", turn: 1, userMessage: new UserMessage({ text: "hello" }) },
+      { _tag: "turn.started", runId: "r", turn: 1, userMessage: new UserMessage({ text: "hello" }), meta: {} },
       { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.some("hi"), usage: zeroUsage },
       { _tag: "skills.activated", skills: ["s"], tools: ["t"], source: "host" },
     ]

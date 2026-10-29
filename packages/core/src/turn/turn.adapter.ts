@@ -116,6 +116,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     session: admitted.session,
     runId: admitted.runId,
     userMessage: admitted.userMessage,
+    admitted,
     memory: reader,
     events,
     tasks,
@@ -172,7 +173,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       const early = yield* Ref.modify(message, (state): [ReadonlyArray<TurnContextEntry>, MessageState] =>
         [state._tag === "Waiting" ? state.early : [], { _tag: "Taken", number }])
       yield* early.length === 0 ? Effect.void : session.record(early.map(contextBody), 0)
-      yield* events.publish({ _tag: "turn.started", runId: admitted.runId, turn: number, userMessage: admitted.userMessage })
+      yield* events.publish({ _tag: "turn.started", runId: admitted.runId, turn: number, userMessage: admitted.userMessage, meta: admitted.meta })
       return number
     }),
     context: (entry) => Ref.modify(message, (state): [boolean, MessageState] =>

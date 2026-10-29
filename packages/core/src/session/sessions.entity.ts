@@ -58,6 +58,15 @@ export const SessionPage = Schema.Struct({
 })
 export type SessionPage = typeof SessionPage.Type
 
+/**
+ * The host's metadata for one turn (a request id, a client, a tenant…): stored
+ * in the turn's `turn.started` and shown to the host on `AdmittedTurn`,
+ * `TurnToAdmit`, `RunContext.admitted` and the bus `turn.started`. Never shown
+ * to the model, and never part of the idempotency key's fingerprint: a retry
+ * with other metadata is still the same turn.
+ */
+const TurnMeta = Schema.optionalKey(JsonObject)
+
 /** How a turn begins: a user's message, or the inbox's pending items. */
 export const BeginTurn = Schema.Union([
   Schema.TaggedStruct("User", {
@@ -66,8 +75,9 @@ export const BeginTurn = Schema.Union([
     /** The host's idempotency key (e.g. the client's command id). */
     key: Schema.String,
     command: JsonObject,
+    meta: TurnMeta,
   }),
-  Schema.TaggedStruct("Inbox", { runId: Schema.String }),
+  Schema.TaggedStruct("Inbox", { runId: Schema.String, meta: TurnMeta }),
 ])
 export type BeginTurn = typeof BeginTurn.Type
 
@@ -81,10 +91,19 @@ export const AdmittedTurn = Schema.Struct({
   userMessage: UserMessage,
   command: JsonObject,
   claimed: Schema.Array(InboxItem),
+  /** The host's metadata the turn was begun with (`{}` when none was given). */
+  meta: JsonObject,
 })
 export type AdmittedTurn = typeof AdmittedTurn.Type
 
-/** How a turn ended, as its closer records it. */
+/**
+ * How a turn ended, as its closer records it (`turnEndingOf` gives the
+ * ending of a turn's exit). A failure's `code` is the error's own code when
+ * it has one; otherwise one of the framework's codes (`turn.failed`,
+ * `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`), or a
+ * code the closer passes to `writer.end` itself (plugin-tasks: `task.turn`,
+ * `task.deadline`; a host's own).
+ */
 export const TurnEnding = Schema.Struct({
   reason: TurnEndReason,
   failure: Schema.OptionFromNullOr(Schema.Struct({ code: Schema.String, message: Schema.String })),

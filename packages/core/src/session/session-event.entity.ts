@@ -35,13 +35,27 @@ export const TurnStartedData = Schema.Struct({
   /** The memory entry the message is to the model, and when memory took it. */
   entry: EntryId,
   at: Schema.Number,
+  /**
+   * The host's metadata for the turn (`BeginTurn.meta`), written only when
+   * given: not part of the key's fingerprint and never shown to the model.
+   */
+  meta: Schema.optionalKey(JsonObject),
 })
 export type TurnStartedData = typeof TurnStartedData.Type
 
 export const TurnEndReason = Schema.Literals(["completed", "partial", "failed", "cancelled", "interrupted"])
 export type TurnEndReason = typeof TurnEndReason.Type
 
-/** Closes a turn. Not model-visible: what later turns remember is `turn.reply`. */
+/**
+ * Closes a turn. Not model-visible: what later turns remember is `turn.reply`.
+ * `failure.code` is the failing error's own code when it has one (a
+ * `HarnessError`'s); otherwise one of the framework's codes, `turn.failed`
+ * (a typed error without a code), `turn.defect`, `turn.interrupted` (an
+ * interrupted turn or scope), `turn.unended` (a scope closed before its turn
+ * ended) or `turn.lease` (a reaped turn), or a code the closer passes to
+ * `writer.end` itself (plugin-tasks: `task.turn`, `task.deadline`; a host's
+ * own). A cancel stores none.
+ */
 export const TurnEndedData = Schema.Struct({
   reason: TurnEndReason,
   failure: Schema.OptionFromNullOr(Schema.Struct({ code: Schema.String, message: Schema.String })),

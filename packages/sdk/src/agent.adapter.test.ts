@@ -271,7 +271,59 @@ describe("Agent.turn", () => {
     })))
     expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("host.failed")
     expect(named(events, "turn.reply").map((event) => body(event)?.outcome)).toEqual(["failed"])
-    expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual(["failed"])
+    // The stored end carries the error's own code and message.
+    expect(named(events, "turn.ended").map((event) => [event.data.reason, event.data.failure])).toEqual([["failed", { code: "host.failed", message: "no" }]])
+  })
+
+  test("a failing subscriber's code is the one the stored turn.ended carries", async () => {
+    const events = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted(lookupThenDeliver)
+      yield* Effect.result(agent.turn(inputFor(journal, "run-1", "find alpha", model), (turn) => Effect.gen(function* () {
+        yield* turn.events.subscribe(Option.liftPredicate((event) => event._tag === "tool.completed"), () => Effect.fail(new HarnessError({ code: "reaction.failed", message: "broken" })))
+        return yield* answer()(turn)
+      })))
+      return yield* journal.stored
+    })))
+    expect(named(events, "turn.ended").map((event) => event.data.failure)).toEqual([{ code: "reaction.failed", message: "broken" }])
+  })
+
+  test("a successful turn whose end the store refuses fails, and is not reported completed", async () => {
+    const { exit, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* sessionOver(slowLog(Option.some("turn.ended")))
+      const { model } = yield* scripted([])
+      const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "hello", model), (turn) => turn.reply("Hello there.")))
+      return { exit, events: yield* journal.stored }
+    })))
+    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("session.log")
+    expect(named(events, "turn.reply").map((event) => body(event)?.outcome)).toEqual(["completed"])
+    expect(named(events, "turn.ended")).toHaveLength(0)
+  })
+
+  test("a turn whose end the store refuses once is ended again by its scope with the same ending, not turn.unended", async () => {
+    const refusingOnce = Layer.effect(SessionLog, Effect.gen(function* () {
+      const inner = yield* SessionLog
+      const refused = yield* Ref.make(false)
+      return SessionLog.of({
+        ...inner,
+        commit: (id, commit) => (commit.events.some((event) => event.kind === "turn.ended") ? Ref.getAndSet(refused, true) : Effect.succeed(true)).pipe(
+          Effect.flatMap((before) => before ? inner.commit(id, commit) : Effect.fail(new SessionLogError({ code: "store.busy", message: "try again" })))),
+      })
+    })).pipe(Layer.provide(SessionLogMemoryLive))
+    const ended = (use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError>) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* sessionOver(refusingOnce)
+      const { model } = yield* scripted([])
+      const exit = yield* Effect.result(agent.turn(inputFor(journal, "run-1", "hello", model), use))
+      const stored = named(yield* journal.stored, "turn.ended").map((event) => [event.data.reason, event.data.failure ?? null])
+      return { code: exit._tag === "Failure" ? exit.failure.code : "none", stored }
+    })))
+    expect(await ended(() => Effect.fail(new HarnessError({ code: "host.failed", message: "no" }))))
+      .toEqual({ code: "host.failed", stored: [["failed", { code: "host.failed", message: "no" }]] })
+    // The turn fails (its end was refused), and the record its scope stores says how its body ended.
+    expect(await ended((turn) => turn.reply("Hello there."))).toEqual({ code: "session.log", stored: [["completed", null]] })
   })
 
   test("a failing subscriber fails the turn, not the tool call", async () => {
@@ -306,7 +358,7 @@ describe("Agent.turn", () => {
     })))
     expect(interrupted).toBe(true)
     expect(named(events, "turn.reply").map((event) => body(event)?.outcome)).toEqual(["failed"])
-    expect(named(events, "turn.ended").map((event) => event.data.reason)).toEqual(["interrupted"])
+    expect(named(events, "turn.ended").map((event) => [event.data.reason, (event.data.failure as Record<string, unknown> | null)?.code])).toEqual([["interrupted", "turn.interrupted"]])
   })
 
   test("tasks are joined before the reply", async () => {
@@ -895,6 +947,90 @@ describe("Agent.turn", () => {
     })))
     expect(result._tag === "Failure" ? result.failure.code : "success").toBe("session.log")
     expect({ checks, calls }).toEqual({ checks: 1, calls: 0 })
+  })
+})
+
+describe("a turn's metadata", () => {
+  test("meta given to Agent.turn is stored in turn.started, published on the bus and shown on RunContext.admitted and Turn.admitted", async () => {
+    const { seen, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      const seen = yield* Ref.make<ReadonlyArray<unknown>>([])
+      const note = (label: string, value: unknown) => Ref.update(seen, (all) => [...all, [label, value]])
+      // turn.started is published once the host's layer is built: a subscription made there sees it.
+      const observer = Layer.effectDiscard(TurnEvents.pipe(Effect.flatMap((events) =>
+        events.subscribe((event) => event._tag === "turn.started" ? Option.some(event.meta) : Option.none(), (meta) => note("bus", meta)))))
+      const input = inputFor(journal, "run-1", "hello", model)
+      yield* agent.turn({ ...input, turn: { ...input.turn, meta: { request: "req-1", tenant: "acme" } }, layer: observer }, (turn) => Effect.gen(function* () {
+        yield* note("run", (yield* RunContext).admitted.meta)
+        yield* note("turn", turn.admitted.meta)
+        return yield* turn.reply("Hello there.")
+      }))
+      yield* agent.turn(inputFor(journal, "run-2", "again", model), (turn) => note("none", turn.admitted.meta).pipe(Effect.andThen(turn.reply("Again."))))
+      return { seen: yield* Ref.get(seen), events: yield* journal.stored }
+    })))
+    const meta = { request: "req-1", tenant: "acme" }
+    expect(seen).toEqual([["bus", meta], ["run", meta], ["turn", meta], ["none", {}]])
+    expect(named(events, "turn.started").map((event) => event.data.meta ?? null)).toEqual([meta, null])
+  })
+
+  test("a retry with other meta is the same turn: it fails with turn.duplicate", async () => {
+    const exit = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { model } = yield* scripted([])
+      const input = inputFor(journal, "run-1", "hello", model)
+      yield* agent.turn({ ...input, turn: { ...input.turn, key: "client-1", meta: { attempt: 1 } } }, (turn) => turn.reply("Hello there."))
+      return yield* Effect.result(agent.turn({ ...input, turn: { ...input.turn, runId: "run-2", key: "client-1", meta: { attempt: 2 } } }, (turn) => turn.reply("Hello again.")))
+    })))
+    expect(exit._tag === "Failure" ? exit.failure.code : "none").toBe("turn.duplicate")
+  })
+})
+
+describe("the token budget", () => {
+  test("Agent.define refuses a budget that is not an integer of at least 1 (config.budget)", async () => {
+    const codes = await Effect.runPromise(Effect.forEach([0, -1, 1.5], (budgetTokens) =>
+      Effect.scoped(Effect.flip(define(memoryWindowPlugin, { budgetTokens }))).pipe(Effect.map((error) => error.code))))
+    expect(codes).toEqual(["config.budget", "config.budget", "config.budget"])
+  })
+
+  test("a run refuses a policy budget that is not an integer of at least 1 (turn.budget), before any provider call", async () => {
+    const { codes, seen } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { seen, model } = yield* scripted([])
+      const codes = yield* Effect.forEach([0, -1, 1.5], (budgetTokens, index) =>
+        Effect.flip(agent.turn(inputFor(journal, `run-${index}`, "hello", model), (turn) =>
+          turn.run({ budgetTokens }).pipe(Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) }))))).pipe(
+          Effect.map((error) => error.code)))
+      return { codes, seen: yield* Ref.get(seen) }
+    })))
+    expect(codes).toEqual(["turn.budget", "turn.budget", "turn.budget"])
+    expect(seen).toHaveLength(0)
+  })
+
+  test("a budget the system prompt and tool schemas use up fails with context.budget before any provider call; context.built records the run's budget", async () => {
+    const { tight, calls, built } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin, { budgetTokens: 20_000 })
+      const journal = yield* inMemorySession
+      const run = (runId: string, policy: TurnPolicy) => Effect.gen(function* () {
+        const { model, seen } = yield* scripted(lookupThenDeliver)
+        const result = yield* Effect.result(agent.turn(inputFor(journal, runId, "find alpha", model), answer(policy)))
+        return { result, calls: (yield* Ref.get(seen)).length }
+      })
+      // 150 tokens hold the turn's message (memory's turn-start check passes) but not the system prompt and tool schemas.
+      const tight = yield* run("run-1", { budgetTokens: 150 })
+      yield* run("run-2", {})
+      yield* run("run-3", { budgetTokens: 30_000 })
+      const built = named(yield* journal.stored, "context.built").map((event) => [Option.getOrNull(event.turn), event.data.budgetTokens, event.data.reservedTokens])
+      return { tight: tight.result, calls: tight.calls, built }
+    })))
+    expect(tight._tag === "Failure" ? [tight.failure.code, tight.failure.message] : "none")
+      .toEqual(["context.budget", expect.stringMatching(/^The system prompt and tool schemas take \d+ tokens, all of the 150-token context budget/)])
+    expect(calls).toBe(0)
+    expect(built.map(([turn, budget]) => [turn, budget])).toEqual([[2, 20_000], [2, 20_000], [2, 20_000], [3, 30_000], [3, 30_000], [3, 30_000]])
+    expect(built.every(([, , reserved]) => typeof reserved === "number" && reserved > 150)).toBe(true)
   })
 })
 

@@ -47,6 +47,31 @@ const reply = Effect.scoped(Effect.gen(function* () {
 reads and writes and reasoning included). [Token usage](/docs/concepts/providers/#token-usage)
 lists what it leaves out (utility calls, failed or retried attempts).
 
+A new turn may carry the host's metadata, `meta` (a request id, a tenant):
+`turn: { session, userMessage, runId, key, meta }`. It is stored with the
+turn's start, given to the host's `TurnAdmission`, and shown on
+`turn.admitted`, `RunContext.admitted` and the `turn.started` event. The
+model never sees it, and a retry with the same key and other metadata is
+still the same turn (`turn.duplicate`).
+
+The turn's stored end says how it ended: completed, partial or failed as
+`use` returned it; failed with the error's own code (a `HarnessError`'s),
+`turn.failed` (an error without a code) or `turn.defect`; or interrupted,
+with `turn.interrupted`. `turnEndingOf(exit)` from `@xandreed/core` gives
+that ending, for a host that ends turns itself. If storing the end of a
+successful turn fails, the turn fails; an end that could not be stored is
+tried again, with the same ending, when the writer's scope closes.
+
+`budgetTokens` (on the agent, or per run in the policy; 64 000 by default)
+is the target memory keeps each request under: the system prompt, the tool
+schemas and the messages, estimated. It must be an integer of at least 1
+(`config.budget`, `turn.budget`). At each step, what the system prompt and
+tool schemas leave of it is what the memory strategy fits the messages
+into; when they leave nothing, the step fails with `context.budget`. Every
+step's `context.built` event records it. The [event reference](/docs/concepts/event-reference/)
+lists the framework's stored failure codes; a turn that fails with a
+host's or a plugin's error stores that error's code.
+
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere.
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores
 them in a SQLite file on Bun; any other store can implement the `SessionLog`

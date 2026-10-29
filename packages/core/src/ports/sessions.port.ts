@@ -80,8 +80,9 @@ export interface TurnWriter {
    * refused, and `flush` still waits for what is queued. Calls while it runs
    * share its result. A stored end, or a turn closed elsewhere, is final;
    * after any other failure (a store error) writes are admitted again and a
-   * later end, the scope's own at the latest, tries again. Returns how many
-   * inbox items wait.
+   * later end, the scope's own at the latest, tries again: the scope's with
+   * the last ending whose commit was tried. Returns how many inbox items
+   * wait.
    */
   readonly end: (ending: TurnEnding) => Effect.Effect<{ readonly pending: number }, HarnessError>
   /** Completes when someone else closed the turn; never when it ends by `end`. */
@@ -139,14 +140,26 @@ export class Sessions extends Context.Service<Sessions, {
     Effect.Effect<{ readonly cancelled: boolean; readonly pending: number }, SessionMissing | SessionLogError>
   /**
    * Open a turn, through the host's TurnAdmission. Its writer lives in the
-   * scope; a writer the scope closes unended ends as failed (or interrupted).
+   * scope; a writer the scope closes unended ends with the last ending it
+   * tried to store, or, when none was tried, as failed (`turn.unended`), or
+   * as interrupted (`turn.interrupted`) when the scope was interrupted.
+   * The input's `meta` is stored in `turn.started` and shown on the writer's
+   * `admitted`; it is not part of the key's fingerprint.
    */
   readonly begin: (address: SessionAddress, input: BeginTurn) =>
     Effect.Effect<TurnWriter, SessionBusy | TurnDuplicate | KeyConflict | NothingPending | TurnRefused | SessionMissing | SessionLogError, Scope.Scope>
   /** Put an item in the inbox (once per id); `pending` counts what waits after it. */
   readonly deliver: (address: SessionAddress, item: InboxItem) =>
     Effect.Effect<{ readonly delivered: boolean; readonly pending: number }, InboxFull | SessionMissing | SessionLogError>
-  /** Run inbox turns while items wait, the session is free and the host admits them, at most `maxTurns` (3). */
-  readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number }) =>
+  /**
+   * Run inbox turns while items wait, the session is free and the host
+   * admits them, at most `maxTurns` (3), each begun with `meta`. A turn whose
+   * `run` succeeds ends completed; one whose `run` fails ends with its
+   * error's code (`turnEndingOf`, a `HarnessError` carried as a defect
+   * included): `turn.failed`, `turn.defect` or `turn.interrupted` when it has
+   * none. A `run` that interrupts itself counts an attempt for the items it
+   * took, even when it wrote nothing.
+   */
+  readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject }) =>
     Effect.Effect<{ readonly turns: number }, SessionMissing | SessionLogError, R>
 }>()("efferent/Sessions") {}

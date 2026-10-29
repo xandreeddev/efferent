@@ -32,7 +32,7 @@ export const recordingTurnWriter = (input: {
     session, seq: all.length + index + 1, turn: Option.some(turn), kind: next.kind, at: 0, data: JSON.parse(JSON.stringify(next.data)),
   }))])
   const writer: TurnWriter = {
-    admitted: { session: { id: session, owner: "test" }, turn, runId: input.runId, key: input.runId, origin: "user", userMessage, command: {}, claimed: [] },
+    admitted: { session: { id: session, owner: "test" }, turn, runId: input.runId, key: input.runId, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
     history: (kinds) => Effect.succeed(history.filter((event) => kinds.length === 0 || kinds.includes(event.kind))),
     snapshot: (kinds, after) => Ref.get(stored).pipe(Effect.map((events) => (after === undefined ? events : events.slice(history.length).filter((event) => event.seq > after))
@@ -41,7 +41,7 @@ export const recordingTurnWriter = (input: {
     write: (op) => op,
     transact: (decide) => decide([]).pipe(Effect.flatMap((decision) => append(decision.drafts).pipe(Effect.as({ result: decision.result, events: [] })))),
     flush: Effect.void,
-    end: (ending) => append([{ kind: "turn.ended", data: { reason: ending.reason, failure: null } }]).pipe(Effect.as({ pending: 0 })),
+    end: (ending) => append([{ kind: "turn.ended", data: { reason: ending.reason, failure: Option.getOrNull(ending.failure) } }]).pipe(Effect.as({ pending: 0 })),
     closed: Effect.never,
   }
   return { writer, stored, kinds: Ref.get(stored).pipe(Effect.map((all) => all.map((event) => event.kind))) }

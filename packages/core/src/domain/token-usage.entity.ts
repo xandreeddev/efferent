@@ -37,6 +37,14 @@ export const UsageBreakdown = Schema.Struct({
 })
 export type UsageBreakdown = typeof UsageBreakdown.Type
 
+/**
+ * A request's token budget (`budgetTokens`): an integer of at least 1. It is
+ * the target memory compaction keeps each request under (system prompt,
+ * tool schemas and messages, estimated), not a provider limit.
+ */
+export const BudgetTokens = Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(1)))
+export type BudgetTokens = typeof BudgetTokens.Type
+
 const Price = Schema.Finite.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))
 
 /**
