@@ -3,7 +3,7 @@ import { Effect, Option, Redacted } from "effect"
 import { Prompt } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, parseModelSelection, ToolCallId, toPromptMessages } from "@xandreed/core"
-import type { AgentMessage } from "@xandreed/core"
+import type { AgentMessage, ModelCallPolicy } from "@xandreed/core"
 import type { Credential } from "@xandreed/core"
 import { buildProvider, chatCompletionsUrl, OPENCODE_RESPONSES_API_URL, usesOpenCodeResponses } from "./providers.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
@@ -218,5 +218,50 @@ describe("images on the wire", () => {
     expect((vision.bodies[0]?.["messages"] as ReadonlyArray<Record<string, unknown>>).at(-1)).toEqual({ role: "user", content: [
       { type: "text", text: "Images returned by screenshot (call call_1):" }, { type: "image_url", image_url: { url: `data:image/png;base64,${pixel}` } },
     ] })
+  })
+})
+
+describe("reasoning effort on the wire", () => {
+  /** The request body a selection's model sends under a call policy, through a recording fetch that refuses it. */
+  const sentUnder = (model: string, policy: ModelCallPolicy) => {
+    const bodies: Array<Record<string, unknown>> = []
+    const fetch = ((_url: unknown, init?: { readonly body?: unknown }) => {
+      bodies.push(JSON.parse(typeof init?.body === "string" ? init.body : new TextDecoder().decode(init?.body as Uint8Array)) as Record<string, unknown>)
+      return Promise.resolve(Response.json({ error: { type: "invalid_request_error", message: "recorded" } }, { status: 400 }))
+    }) as typeof globalThis.fetch
+    return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection(model))
+      const built = yield* buildProvider(selection, undefined, Redacted.make("test-key"))
+      yield* Effect.exit(built.svc.generateText({ prompt: "hi" }))
+      return bodies[0] ?? {}
+    })).pipe(
+      Effect.provideService(CurrentModelCallPolicy, Option.some(policy)),
+      Effect.provideService(ModelsTransport, ModelsTransport.of({ fetch })),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    ))
+  }
+
+  it("each route sends the call policy's effort in its own vocabulary; a model that takes none is sent none", async () => {
+    const openai = await sentUnder("openai:gpt-5.5", { effort: "max", maxOutputTokens: 64 })
+    expect(openai["reasoning"]).toEqual({ effort: "high" })
+    expect(openai["max_output_tokens"]).toBe(64)
+    expect(await sentUnder("openai:gpt-5.5", { effort: "none" })).toMatchObject({ reasoning: { effort: "low" } })
+    expect(await sentUnder("openai:gpt-4.1", { effort: "high" })).not.toHaveProperty("reasoning")
+    expect(await sentUnder("opencode:gpt-5.6-luna", { effort: "xhigh" })).toMatchObject({ reasoning: { effort: "high" } })
+    expect(await sentUnder("opencode:glm-5.2", { effort: "max" })).toMatchObject({ reasoning_effort: "high" })
+    expect(await sentUnder("opencode:glm-5.2", { effort: "medium" })).toMatchObject({ reasoning_effort: "medium" })
+  })
+
+  it("the openai route's descriptor records the effort it sends", async () => {
+    const descriptor = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection("openai:gpt-5.5"))
+      const built = yield* buildProvider(selection, undefined, Redacted.make("test-key"))
+      return yield* modelRequestDescriptorOf(built.svc)
+    })).pipe(
+      Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "xhigh" })),
+      Effect.provide(FetchHttpClient.layer),
+    ))
+    expect(Option.map(descriptor, (value) => value.settings)).toEqual(Option.some({ prompt_cache_key: "efferent", reasoning: { effort: "high" } }))
   })
 })

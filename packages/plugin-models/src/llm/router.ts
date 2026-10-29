@@ -1,11 +1,11 @@
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Clock, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
-import type { Context } from "effect"
+import { Clock, Context, Duration, Effect, Layer, Metric, Option, Ref, Stream } from "effect"
 import { AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, HarnessError, parseModelSelection, replayableContext, resolvingModel, SettingsStore } from "@xandreed/core"
-import type { ModelSelection, TokenUsage } from "@xandreed/core"
+import type { AuthError, ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
 import { buildProvider, endpointOwnKey, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
+import { CurrentOpenAiCodexSessions, makeOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import { transportFetch } from "../transport/models-transport.adapter.js"
@@ -157,7 +157,7 @@ const currentSelection = Effect.gen(function* () {
 
 /** Apply the persisted model effort only when a dedicated agent has not
  * already pinned a complete call policy in its own execution profile. */
-const withConfiguredEffort = <A, E, R>(
+export const withConfiguredEffort = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   effort: EngineSettings["reasoningEffort"],
 ): Effect.Effect<A, E, R> =>
@@ -202,6 +202,42 @@ const credentialFor = (selection: ModelSelection) => Effect.gen(function* () {
   }
 })
 
+/**
+ * A credential the call cannot have (none stored, a refresh that failed, a
+ * route the transport refuses), as the `AiError` the `LanguageModel` port
+ * fails with: an `AuthenticationError`, which is not retried and does not
+ * fall back.
+ */
+const authenticationFailure = (error: AuthError): AiError.AiError =>
+  AiError.make({
+    module: "Router",
+    method: "credentials",
+    reason: new AiError.AuthenticationError({ kind: "Unknown", description: error.message, metadata: { router: { provider: error.provider } } }),
+  })
+
+/** The provider one call goes to, built over its credential. */
+const providerFor = (selection: ModelSelection) =>
+  credentialFor(selection).pipe(
+    Effect.flatMap(({ credential, key }) => buildProvider(selection, credential, key)),
+    Effect.mapError(authenticationFailure),
+  )
+
+/** A settled call's counters, duration and span, as every routed call records them. */
+const recorded = (label: string, isFallback: boolean) =>
+  <A extends { readonly usage: unknown }, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    call.pipe(
+      Effect.tap((res) => countUsage(label, usageOf(res.usage))),
+      Effect.tap(() => countRequest(label, "ok", isFallback)),
+      Effect.tapError(() => countRequest(label, "error", isFallback)),
+      // Duration of successful calls only, as before.
+      Effect.timed,
+      Effect.tap(([duration]) => Metric.update(byModel(llmDuration, label), duration)),
+      Effect.map(([, res]) => res),
+      Effect.withSpan("providers.generate", {
+        attributes: { "llm.model": label },
+      }),
+    )
+
 /** Build + call one provider generateText for an explicit selection.
  *  `isFallback` only labels telemetry — the fallback rung must be visible
  *  in Grafana without changing the metric identities. */
@@ -211,21 +247,20 @@ export const generateWith = (
   isFallback = false,
 ): Effect.Effect<
   { readonly content: ReadonlyArray<unknown>; readonly usage: unknown },
-  unknown,
+  AiError.AiError,
   AuthStore | HttpClient.HttpClient
 > =>
   Effect.gen(function* () {
     const label = formatModelSelection(selection)
     const traced = yield* tracedContent
-    const { credential, key } = yield* credentialFor(selection)
-    const built = yield* buildProvider(selection, credential, key)
+    const built = yield* providerFor(selection)
     return yield* (
       built.svc.generateText(
         shapeOptions(selection, built.prependClaudeCode, options) as never,
       ) as Effect.Effect<{
         readonly content: ReadonlyArray<unknown>
         readonly usage: unknown
-      }, unknown>
+      }, AiError.AiError>
     ).pipe(
       rejectEmptyResponse(label),
       retryableLlm(label),
@@ -248,16 +283,35 @@ export const generateWith = (
           "llm.fallback": isFallback,
         }),
       ),
-      Effect.tap((res) => countUsage(label, usageOf(res.usage))),
-      Effect.tap(() => countRequest(label, "ok", isFallback)),
-      Effect.tapError(() => countRequest(label, "error", isFallback)),
-      // Duration of successful calls only, as before.
-      Effect.timed,
-      Effect.tap(([duration]) => Metric.update(byModel(llmDuration, label), duration)),
-      Effect.map(([, res]) => res),
-      Effect.withSpan("providers.generate", {
-        attributes: { "llm.model": label },
-      }),
+      recorded(label, isFallback),
+    )
+  }).pipe(Effect.scoped)
+
+/** Build + call one provider generateObject for an explicit selection: the
+ *  resolution, option shaping, retries and telemetry of {@link generateWith}
+ *  (an object has no empty response to reject and no message to stamp). */
+export const objectWith = (
+  selection: ModelSelection,
+  options: unknown,
+  isFallback = false,
+): Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
+  Effect.gen(function* () {
+    const label = formatModelSelection(selection)
+    const built = yield* providerFor(selection)
+    // The schema's decoding services are the caller's, erased with its options.
+    const call: Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError> = built.svc.generateObject(
+      shapeOptions(selection, built.prependClaudeCode, options) as never,
+    ) as never
+    return yield* call.pipe(
+      retryableLlm(label),
+      Effect.tap((res) =>
+        Effect.annotateCurrentSpan({
+          "llm.finish_reason": String(res.finishReason),
+          ...usageAttributes(usageOf(res.usage)),
+          "llm.fallback": isFallback,
+        }),
+      ),
+      recorded(label, isFallback),
     )
   }).pipe(Effect.scoped)
 
@@ -269,11 +323,11 @@ export const generateWith = (
  * no-op. Exported pure-in-shape so the rung's decision table is testable
  * without building providers.
  */
-export const withFallbackRung = <A, R>(
+export const withFallbackRung = <A, E, R>(
   primary: ModelSelection,
   fallback: Option.Option<ModelSelection>,
-  call: (selection: ModelSelection, isFallback: boolean) => Effect.Effect<A, unknown, R>,
-): Effect.Effect<A, unknown, R> =>
+  call: (selection: ModelSelection, isFallback: boolean) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
   call(primary, false).pipe(
     Effect.catch((error) =>
       Option.match(
@@ -408,16 +462,15 @@ export const tapStreamTelemetry =
 export const streamWith = (
   selection: ModelSelection,
   options: unknown,
-): Stream.Stream<unknown, unknown, AuthStore | HttpClient.HttpClient> =>
+): Stream.Stream<unknown, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Stream.unwrap(
     Effect.gen(function* () {
       const label = formatModelSelection(selection)
-      const { credential, key } = yield* credentialFor(selection)
-      const built = yield* buildProvider(selection, credential, key)
+      const built = yield* providerFor(selection)
       return (
         built.svc.streamText(
           shapeOptions(selection, built.prependClaudeCode, options) as never,
-        ) as Stream.Stream<unknown, unknown>
+        ) as Stream.Stream<unknown, AiError.AiError>
       ).pipe(
         retryableLlmStream(label),
         Stream.map((part) => stampModel(part, label)),
@@ -456,6 +509,15 @@ const withFetch = (fetch: Option.Option<typeof globalThis.fetch>) => <A, E, R>(e
 const withFetchStream = (fetch: Option.Option<typeof globalThis.fetch>) => <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
   Option.match(fetch, { onNone: () => stream, onSome: (value) => Stream.provideService(stream, FetchHttpClient.Fetch, value) })
 
+/**
+ * A layer's calls' context with the layer's own OpenAI subscription session
+ * cache (`CurrentOpenAiCodexSessions`): each conversation keeps its session
+ * id while the layer lives, bounded to the conversations used last, and two
+ * layers (two agents in one process) never share one.
+ */
+export const withCodexSessions = <R>(context: Context.Context<R>): Effect.Effect<Context.Context<R>> =>
+  Effect.map(makeOpenAiCodexSessions(), (sessions) => Context.add(context, CurrentOpenAiCodexSessions, Option.some(sessions)))
+
 /** The routed model of one selection: its fallback rung, the persisted effort, described as requested. */
 const selectionModel = (
   primary: ModelSelection,
@@ -476,7 +538,15 @@ const selectionModel = (
         Effect.provide(context),
         Effect.provideService(HttpClient.HttpClient, http),
       ) as never,
-    generateObject: (() => Effect.fail(configError("generateObject is not wired on the new line yet"))) as never,
+    generateObject: ((options: unknown) =>
+      withConfiguredEffort(
+        withFallbackRung(primary, fallback, (selection, isFallback) => objectWith(selection, options, isFallback)),
+        effort,
+      ).pipe(
+        withFetch(fetch),
+        Effect.provide(context),
+        Effect.provideService(HttpClient.HttpClient, http),
+      )) as never,
     // No stream-level fallback rung: a pre-first-part stream failure
     // already falls back to generateText in the engine loop, and THAT
     // call rides this router's fallback — one rung, no double-hop.
@@ -500,7 +570,8 @@ export const LanguageModelLive = Layer.effect(
   LanguageModel.LanguageModel,
   Effect.gen(function* () {
     // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
-    const context = replayableContext(yield* Effect.context<AuthStore | SettingsStore>())
+    // The subscription's session ids are the layer's own (`withCodexSessions`).
+    const context = yield* withCodexSessions(replayableContext(yield* Effect.context<AuthStore | SettingsStore>()))
     const http = yield* HttpClient.HttpClient
     const fetch = yield* transportFetchOf
     // One settings read: the model of the selection it finds.
@@ -512,10 +583,8 @@ export const LanguageModelLive = Layer.effect(
       [LanguageModel.TypeId]: LanguageModel.TypeId,
       generateText: (options: unknown) =>
         selected.pipe(Effect.flatMap((model) => model.generateText(options as never))) as never,
-      generateObject: (() =>
-        Effect.fail(
-          configError("generateObject is not wired on the new line yet"),
-        )) as never,
+      generateObject: ((options: unknown) =>
+        selected.pipe(Effect.flatMap((model) => model.generateObject(options as never)))) as never,
       streamText: ((options: unknown) =>
         Stream.unwrap(selected.pipe(Effect.map((model) => model.streamText(options as never))))) as never,
     }
@@ -541,7 +610,7 @@ export const LanguageModelSelectionLive = (
   LanguageModel.LanguageModel,
   Effect.gen(function* () {
     // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
-    const context = replayableContext(yield* Effect.context<AuthStore>())
+    const context = yield* withCodexSessions(replayableContext(yield* Effect.context<AuthStore>()))
     const http = yield* HttpClient.HttpClient
     return selectionModel(primary, fallback, Option.none(), context, http, yield* transportFetchOf)
   }),

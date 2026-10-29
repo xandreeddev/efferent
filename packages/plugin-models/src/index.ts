@@ -44,7 +44,8 @@ export {
 export type { ChatMessageOptions, CompatConfig } from "./llm/compat.js"
 export type { UsageReading } from "./llm/sse.js"
 export { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL, toOpenAiCodexRequestBody } from "./llm/openAiCodex.js"
-export { makeOpenAiCodexWebSocketHttpClient, normalizeOpenAiCodexWebSocketEvent, openAiCodexRefusal, openAiCodexUuidV7, OpenAiCodexWebSocketHttpClient } from "./llm/openAiCodexWebSocket.js"
+export { makeOpenAiCodexSessions, makeOpenAiCodexWebSocketHttpClient, normalizeOpenAiCodexWebSocketEvent, OPENAI_CODEX_SESSION_CAPACITY, openAiCodexRefusal, openAiCodexUuidV7, OpenAiCodexWebSocketHttpClient } from "./llm/openAiCodexWebSocket.js"
+export type { OpenAiCodexSessions, OpenAiErrorBody } from "./llm/openAiCodexWebSocket.js"
 export {
   buildProvider,
   chatCompletionsUrl,

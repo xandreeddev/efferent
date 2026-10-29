@@ -114,6 +114,18 @@ export const reasoningEffortsFor = (selection: string): ReadonlyArray<ReasoningE
   return []
 }
 
+/** The efforts of the public OpenAI API's vocabulary, which the OpenAI Responses routes and the chat-completions gateways take. */
+export type PublicReasoningEffort = "low" | "medium" | "high"
+
+/**
+ * An effort in the public vocabulary: `xhigh` and `max` are `high`, `none`
+ * is `low`, the others themselves. Only the subscription dialect takes the
+ * whole vocabulary (and only it is probe-verified for `none`); every other
+ * route clamps.
+ */
+export const publicReasoningEffort = (effort: ReasoningEffort): PublicReasoningEffort =>
+  effort === "xhigh" || effort === "max" ? "high" : effort === "none" ? "low" : effort
+
 /** The catalog over the AuthStore's credentials and the configured endpoints (`CurrentModelEndpoints`). */
 export const ConfiguredModelCatalogLive = Layer.effect(
   ModelCatalog,

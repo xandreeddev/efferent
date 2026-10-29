@@ -158,6 +158,36 @@ describe("makeCompatLanguageModel", () => {
     expect(rendered).toContain("overloaded")
   })
 
+  /** The reason a request answered with this status and body fails with. */
+  const failureOf = (body: unknown, status: number) => Effect.runPromise(Effect.flip(Effect.gen(function* () {
+    const svc = yield* makeCompatLanguageModel({ moduleName: "OpenCode", chatUrl: "https://gw.example/chat", apiKey: "k", model: "m", fetchImpl: completion(body, status) })
+    return yield* svc.generateText({ prompt: "hi" })
+  })))
+
+  test("an exhausted balance or quota is a QuotaExhaustedError by status or structured error; a plain 429 stays a rate limit", async () => {
+    const credits = await failureOf({ type: "error", error: { type: "CreditsError", message: "Insufficient balance" } }, 401)
+    expect(credits.reason._tag).toBe("QuotaExhaustedError")
+    expect(credits.reason.isRetryable).toBe(false)
+    expect((await failureOf({ error: { message: "Insufficient Balance" } }, 402)).reason._tag).toBe("QuotaExhaustedError")
+    expect((await failureOf({ error: { type: "requests", code: "insufficient_quota", message: "You exceeded your current quota" } }, 429)).reason._tag).toBe("QuotaExhaustedError")
+    // The word "quota" in a rate limit's message is no exhausted quota.
+    const limited = await failureOf({ error: { type: "rate_limit", message: "Rate limit quota exceeded, retry shortly" } }, 429)
+    expect(limited.reason._tag).toBe("RateLimitError")
+  })
+
+  test("a completion body that is no chat completion is the provider's invalid response, never the model's invalid output", async () => {
+    const reasons = await Promise.all([
+      Effect.runPromise(Effect.flip(Effect.gen(function* () {
+        const svc = yield* makeCompatLanguageModel({ moduleName: "Test", chatUrl: "https://gw.example/chat", model: "m", fetchImpl: () => Promise.resolve(new Response("<html>bad gateway</html>")) })
+        return yield* svc.generateText({ prompt: "hi" })
+      }))),
+      failureOf(null, 200),
+      failureOf({ choices: [{ message: { content: ["a", "part"] } }] }, 200),
+      failureOf({ choices: [] }, 200),
+    ])
+    expect(reasons.map((error) => error.reason._tag)).toEqual(["InvalidResponseError", "InvalidResponseError", "InvalidResponseError", "InvalidResponseError"])
+  })
+
   test("a gateway ModelError is semantic validation, not fake authentication", async () => {
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {

@@ -213,8 +213,11 @@ const runUsageAttributes = (usage: TokenUsage): Record<string, number> => ({
 })
 
 /**
- * A response the loop can correct: it does not decode (an unknown tool, a
- * part that does not parse) or a tool call's parameters do not.
+ * A response the loop can correct: the model's own output does not decode
+ * (an unknown tool, a part that does not parse) or a tool call's parameters
+ * do not. A provider's protocol failure (`InvalidResponseError`: a body or
+ * stream chunk of the wrong shape) is not the model's to correct, so it
+ * fails the step like any other provider error.
  */
 type MalformedResponse = AiError.AiError & {
   readonly reason: AiError.InvalidOutputError | AiError.ToolParameterValidationError | AiError.ToolNotFoundError

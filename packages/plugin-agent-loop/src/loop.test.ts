@@ -638,6 +638,32 @@ describe("runLoop streaming", () => {
     )
     expect(corrective).toBeDefined()
   })
+
+  test("a provider's invalid response (its wire, not the model's output) fails the run: no corrective turn, settled or streamed", async () => {
+    const invalid = AiError.make({ module: "Test", method: "generateText", reason: new AiError.InvalidResponseError({ description: "the completion body is not a chat completion" }) })
+    const outcome = (streaming: boolean) => Effect.runPromise(Effect.gen(function* () {
+      const calls = yield* Ref.make(0)
+      const model = yield* LanguageModel.make({
+        generateText: () => Ref.update(calls, (n) => n + 1).pipe(Effect.andThen(Effect.fail(invalid))) as never,
+        streamText: () => Stream.unwrap(Ref.update(calls, (n) => n + 1).pipe(Effect.as(
+          Stream.fromIterable([{ type: "text-start", id: "t1" }, { type: "text-delta", id: "t1", delta: "partial…" }]).pipe(Stream.concat(Stream.fail(invalid))),
+        ))) as never,
+      })
+      const tails: Array<ReadonlyArray<unknown>> = []
+      const onTail = (tail: ReadonlyArray<unknown>) =>
+        Effect.sync(() => {
+          tails.push(tail)
+          return [] as ReadonlyArray<number>
+        })
+      const exit = yield* Effect.exit(runLoop({ system: "sys", messages: [user("go")], toolkit: kit, streaming, onTail }).pipe(
+        Effect.provide(handlers),
+        Effect.provideService(LanguageModel.LanguageModel, model),
+      ))
+      return { failed: exit._tag === "Failure", calls: yield* Ref.get(calls), correctives: tails.flat().length }
+    }))
+    expect(await outcome(false)).toEqual({ failed: true, calls: 1, correctives: 0 })
+    expect(await outcome(true)).toEqual({ failed: true, calls: 1, correctives: 0 })
+  })
 })
 
 describe("runLoop — the decisions, pure", () => {

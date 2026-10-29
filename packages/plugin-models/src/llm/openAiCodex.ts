@@ -1,9 +1,9 @@
 import { AiError, LanguageModel } from "effect/ai"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
-import { Effect, Result, Option, Redacted, Stream } from "effect"
+import { Effect, Option, Redacted, Schema, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, foldStreamParts } from "@xandreed/core"
-import { makeOpenAiCodexWebSocketHttpClient } from "./openAiCodexWebSocket.js"
+import { CurrentOpenAiCodexSessions, makeOpenAiCodexSessions, makeOpenAiCodexWebSocketHttpClient } from "./openAiCodexWebSocket.js"
 import type { WebSocketProxy } from "../ports/models-transport.port.js"
 import { OPENAI_CODEX_ORIGINATOR } from "../auth/openAiCodexOAuth.js"
 
@@ -60,6 +60,8 @@ export const toOpenAiCodexRequestBody = (
   }
 }
 
+const decodeJson = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+
 const transformRequest = (
   accountId: string,
   reasoningEffort?: "none" | "low" | "medium" | "high" | "xhigh" | "max",
@@ -75,9 +77,8 @@ const transformRequest = (
     }),
   )
   if (request.body._tag !== "Uint8Array") return withHeaders
-  const encodedBody = request.body.body
   return Option.match(
-    Result.getSuccess(Result.try(() => JSON.parse(new TextDecoder().decode(encodedBody)) as unknown)),
+    decodeJson(new TextDecoder().decode(request.body.body)),
     {
       onNone: () => withHeaders,
       onSome: (decoded) => HttpClientRequest.bodyJsonUnsafe(
@@ -92,6 +93,13 @@ const transformRequest = (
 const responseStatus = (error: unknown): number | undefined =>
   AiError.isAiError(error) && "http" in error.reason ? error.reason.http?.response?.status : undefined
 
+/**
+ * A subscription failure in the router's vocabulary: a 404 is a model the
+ * account cannot use. A stream the OpenAI client could not decode (its
+ * `InvalidOutputError`, or any error on a 200 response) is the subscription's
+ * protocol failing, an `InvalidResponseError`: the model's own malformed
+ * output is the only invalid output the loop answers with a corrective turn.
+ */
 export const mapOpenAiCodexError = (model: string, error: unknown): unknown =>
   responseStatus(error) === 404
     ? AiError.make({
@@ -101,11 +109,11 @@ export const mapOpenAiCodexError = (model: string, error: unknown): unknown =>
           description: `model ${model} is not available to the configured ChatGPT subscription account`,
         }),
       })
-    : responseStatus(error) === 200
+    : responseStatus(error) === 200 || (AiError.isAiError(error) && error.module === "OpenAiClient" && error.reason._tag === "InvalidOutputError")
       ? AiError.make({
           module: "OpenAiCodex",
           method: "responses",
-          reason: new AiError.InvalidOutputError({
+          reason: new AiError.InvalidResponseError({
             description: `the ${model} subscription stream returned a rejected or incompatible event`,
           }),
         })
@@ -121,12 +129,16 @@ export const makeOpenAiCodexLanguageModel = (args: {
   Effect.all({
     cacheKey: Effect.service(CurrentPromptCacheKey),
     policy: Effect.service(CurrentModelCallPolicy),
+    sessions: Effect.flatMap(Effect.service(CurrentOpenAiCodexSessions), Option.match({
+      onSome: Effect.succeed,
+      onNone: () => makeOpenAiCodexSessions(),
+    })),
   }).pipe(
-    Effect.flatMap(({ cacheKey, policy }) =>
+    Effect.flatMap(({ cacheKey, policy, sessions }) =>
       OpenAiClient.make({
         apiKey: args.accessToken,
         apiUrl: OPENAI_CODEX_API_URL,
-        transformClient: () => makeOpenAiCodexWebSocketHttpClient(args.webSocketProxy ?? Option.none()).pipe(
+        transformClient: () => makeOpenAiCodexWebSocketHttpClient(args.webSocketProxy ?? Option.none(), Option.some(sessions)).pipe(
           // Replacing the transport also replaces OpenAiClient's underlying
           // request pipeline, so reproduce its base URL + bearer steps here.
           HttpClient.mapRequest((request) =>

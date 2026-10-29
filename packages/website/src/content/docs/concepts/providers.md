@@ -168,7 +168,8 @@ commit, then applies. A provider that does not rotate the refresh token
 leaves it out of its answer, and the stored one is kept; an answer without an
 access token or a lifetime fails the refresh with an `AuthError`, which never
 quotes the answer. An expired token of any other provider fails the call with
-an `AuthError`.
+an `AuthError`, which the routed model reports as an `AiError` with an
+`AuthenticationError` reason (not retried, no fallback).
 
 The file stores lock each file within one process: every agent the process
 defines shares the locks, and each write replaces the file through a temp
@@ -287,8 +288,8 @@ proxy applies to `chatgpt.com`, the socket tunnels through it: on Node with an
 `https.Agent` and its `proxyEnv` option (Node 24.5 and later, which the
 package requires), on Bun with Bun's own `WebSocket` and its `proxy` option
 (Bun 1.3.6 and later). Bun 1.3.0 to 1.3.5 cannot tunnel a WebSocket, so there
-the call fails with an `AuthError` (not retried, no fallback) instead of
-connecting directly past the proxy.
+the call fails with an `AuthenticationError` (not retried, no fallback) instead
+of connecting directly past the proxy.
 
 Not covered: the Langfuse and LangSmith exporters make their own requests
 (`@xandreed/evals-langfuse`, `@xandreed/evals-langsmith`).
@@ -370,6 +371,42 @@ a request over an image anyway, the turn omits the images that request sent
 (their label lines from then on) and sends the step once more; on
 `openai-codex` too, where an `error` event refusing the request before any
 other event is the same `InvalidRequestError` an HTTP 400 is.
+
+## Provider errors and reasoning effort
+
+The routed model fails with effect/ai's `AiError`, its reason saying what
+went wrong. A rate limit (a 429), a server error, a transport failure or a
+timeout is retried three times with backoff, then sent once to the
+`fallbackModel` when one is set; anything else fails at once. A 429 whose
+`Retry-After` is over a minute counts as a daily quota and fails at once too.
+
+- An exhausted balance or quota is a `QuotaExhaustedError`: a 402, or an
+  error whose type or code names one (OpenCode's `CreditsError`, OpenAI's
+  `insufficient_quota`), at any status. It is not retried and does not fall
+  back. A plain 429 stays a `RateLimitError`, whatever its message says.
+- A credential the call cannot have (none stored, a refresh that failed) is
+  an `AuthenticationError`: not retried, no fallback.
+- A response the provider got wrong (a body or stream chunk that is not
+  JSON, `null`, or of the wrong shape, a subscription stream that broke off)
+  is an `InvalidResponseError`. The step loop does not answer it with a
+  corrective turn: those are for the model's own invalid output (an unknown
+  tool, tool arguments that do not parse).
+- On `openai-codex`, an `error` event before any other is answered as the
+  HTTP endpoint answers it, with its status and error body: a server error
+  is a retried `InternalProviderError`, `insufficient_quota` a
+  `QuotaExhaustedError`. The server closing the socket normally ends the
+  stream; a close before any event fails the call as a transport error. A
+  conversation keeps its session id while the agent lives, for up to 1024
+  conversations (past that, the one used least recently gets a new id).
+
+The settings' `reasoningEffort` (unless the call pinned a policy of its own)
+reaches each route in the vocabulary it takes: `openai-codex` as it is;
+`openai`, `opencode` and endpoints with `standardOnly: false` with `xhigh`
+and `max` as `high` and `none` as `low`; `anthropic`, `google` and
+standard-only endpoints not at all. On `openai` it is sent only to the
+models `reasoningEffortsFor` lists, since the others refuse it. Utility calls
+(titles, digests, summaries) run on `fastModel` at `fastReasoningEffort`,
+else `reasoningEffort`. `generateObject` is routed like `generateText`.
 
 ## Token usage
 
