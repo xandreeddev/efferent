@@ -38,28 +38,22 @@ export interface OpenAiCodexOAuthBegin {
 const oauthError = (stage: string, detail: string): AuthError =>
   new AuthError({ provider: "openai-codex", message: `OAuth ${stage} failed: ${detail}` })
 
-const decodeJsonRecord = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.Record(Schema.String, Schema.Unknown)))
+/** The access token's claims this client reads: the subscription's account id, under OpenAI's auth claim. */
+const AccessTokenClaims = Schema.Struct({
+  [ACCOUNT_CLAIM]: Schema.optionalKey(Schema.Struct({ chatgpt_account_id: Schema.optionalKey(Schema.NonEmptyString) })),
+})
+const decodeClaims = Schema.decodeUnknownOption(Schema.fromJsonString(AccessTokenClaims))
 
-/** A JWT segment's JSON object: base64url text holding one; none for anything else. */
-const base64UrlJson = (segment: string): Option.Option<Record<string, unknown>> =>
-  Option.flatMap(Result.getSuccess(Base64Url.decodeString(segment)), decodeJsonRecord)
+/** A JWT payload segment's claims: base64url text holding them; none for anything else. */
+const claimsOf = (segment: string): Option.Option<typeof AccessTokenClaims.Type> =>
+  Option.flatMap(Result.getSuccess(Base64Url.decodeString(segment)), decodeClaims)
 
 /** Extract the subscription account lane without exposing the token. */
-export const openAiCodexAccountId = (accessToken: string): Option.Option<string> => {
-  const segment = accessToken.split(".")[1]
-  return Option.flatMap(
-    Option.fromNullishOr(segment),
-    (encoded) => Option.flatMap(
-      base64UrlJson(encoded),
-      (payload) => {
-        const claim = payload[ACCOUNT_CLAIM]
-        if (typeof claim !== "object" || claim === null) return Option.none<string>()
-        const accountId = (claim as Record<string, unknown>)["chatgpt_account_id"]
-        return Option.filter(Option.fromNullishOr(typeof accountId === "string" ? accountId : undefined), (value) => value.length > 0)
-      },
-    ),
+export const openAiCodexAccountId = (accessToken: string): Option.Option<string> =>
+  Option.flatMap(
+    Option.flatMap(Option.fromNullishOr(accessToken.split(".")[1]), claimsOf),
+    (claims) => Option.fromNullishOr(claims[ACCOUNT_CLAIM]?.chatgpt_account_id),
   )
-}
 
 /** One token-endpoint POST; `previous` is the refresh token a refresh sends, kept when the response does not rotate it. */
 const postToken = (

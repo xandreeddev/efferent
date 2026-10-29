@@ -28,7 +28,7 @@ The models plugin: the routed `LanguageModel` (opencode, google, anthropic, open
 | Text | Source | Pinned by |
 |---|---|---|
 | Anthropic subscription system block `CLAUDE_CODE_SYSTEM` | `src/auth/anthropicOAuth.ts:28`, prepended by `prependClaudeCode` (`src/llm/providers.ts:81`, called at `src/llm/router.ts:128`) | unpinned |
-| Codex default `instructions` (`You are a helpful assistant.`) when a request has no system text | `src/llm/openAiCodex.ts:49` | exact, `src/llm/providers.test.ts:60` |
+| Codex default `instructions` (`You are a helpful assistant.`) when a request has no system text | `src/llm/openAiCodex.ts:58` | exact, `src/llm/providers.test.ts:60`, `src/llm/openAiCodex.test.ts:40` |
 | Label lines in place of unsent files: the message's text, then one line per file part | `src/llm/compat.ts:147-158`, `:268-286` | exact, `src/llm/compat.test.ts:434`, `:500`, `:504`; `src/llm/providers.test.ts:209` |
 | Non-image file label (`[file omitted: <type>, <name>]`); images use core's `mediaLabel` | `src/llm/compat.ts:123` | unpinned |
 | Image captions: `Images returned by <tool> (call <id>):`, `[the images this call returned follow]`, `The user's message:` | `src/llm/compat.ts:224`, `:229`, `:178` | exact, `src/llm/compat.test.ts:462` (first two), `:492` (the third); `src/llm/providers.test.ts:209` |
@@ -36,7 +36,7 @@ The models plugin: the routed `LanguageModel` (opencode, google, anthropic, open
 ## Erasure files
 
 - `src/llm/router.ts`, `src/llm/providers.ts`: one routed `LanguageModel` over arbitrary provider services, with reshaped options and the generic `generateText`/`generateObject`/`streamText` signatures (for example `router.ts:259`, `:585-589`); `withImageLabels` re-wraps those three methods (`providers.ts:56-58`) and a cache-control message is rebuilt with `Prompt.makeMessage` (`providers.ts:122`).
-- `src/llm/compat.ts`, `src/llm/openAiCodex.ts`: effect/ai's generic `LanguageModel` surface over hand-built clients (`compat.ts:511`, `:530`; `openAiCodex.ts:191-200`), and `Tool.Any`'s description and schema (`compat.ts:298-299`).
+- `src/llm/compat.ts`, `src/llm/openAiCodex.ts`: effect/ai's generic `LanguageModel` surface over hand-built clients (`compat.ts:511`, `:530`; `openAiCodex.ts:207-218`), and `Tool.Any`'s description and schema (`compat.ts:298-299`).
 - `src/transport/undici-fetch.adapter.ts`: npm undici's fetch typed as the global one; its classes differ, so nothing downstream may rely on `instanceof Response` or `Headers`.
 
 ## Layout

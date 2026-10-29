@@ -1,8 +1,8 @@
 import { join } from "node:path"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Option, Schema } from "effect"
 import type { Context } from "effect"
-import { AuthError, AuthStore } from "@xandreed/core"
-import type { Credential, ProviderId } from "@xandreed/core"
+import { AuthError, AuthStore, Credential } from "@xandreed/core"
+import type { ProviderId } from "@xandreed/core"
 import { isSameToken, resolveSlotKey } from "./credential-refresh.entity.functions.js"
 import type { CredentialSlot } from "./credential-refresh.entity.functions.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
@@ -22,43 +22,16 @@ interface AuthFile {
   readonly path: string
   readonly entries: ReadonlyMap<string, Credential>
   /** The entries this version cannot read: never listed, and written back as they are. */
-  readonly unread: ReadonlyMap<string, unknown>
+  readonly unread: ReadonlyMap<string, Schema.Json>
 }
 
-const decodeCredential = (value: unknown): Option.Option<Credential> => {
-  if (typeof value === "string") {
-    return Option.some({ type: "api_key", key: value })
-  }
-  if (typeof value !== "object" || value === null) return Option.none()
-  const v = value as Record<string, unknown>
-  if (v["type"] === "api_key" && typeof v["key"] === "string") {
-    return Option.some({ type: "api_key", key: v["key"] })
-  }
-  if (
-    v["type"] === "oauth" &&
-    typeof v["access"] === "string" &&
-    typeof v["refresh"] === "string" &&
-    typeof v["expires"] === "number"
-  ) {
-    return Option.some({
-      type: "oauth",
-      access: v["access"],
-      refresh: v["refresh"],
-      expires: v["expires"],
-      ...(typeof v["accountId"] === "string" ? { accountId: v["accountId"] } : {}),
-      ...(typeof v["installationId"] === "string"
-        ? { installationId: v["installationId"] }
-        : {}),
-    })
-  }
-  if (v["type"] === "local") {
-    return Option.some({
-      type: "local",
-      ...(typeof v["baseUrl"] === "string" ? { baseUrl: v["baseUrl"] } : {}),
-    })
-  }
-  return Option.none()
-}
+const decodeStored = Schema.decodeUnknownOption(Credential)
+/** A flat string is a legacy api key. */
+const decodeLegacyKey = Schema.decodeUnknownOption(Schema.String)
+
+/** An entry as a `Credential`, or a legacy flat string as an api key; none for anything else (a field of the wrong type included). */
+const decodeCredential = (raw: Schema.Json): Option.Option<Credential> =>
+  Option.orElse(decodeStored(raw), () => Option.map(decodeLegacyKey(raw), (key) => ({ type: "api_key" as const, key })))
 
 const corrupt = (path: string) => (reason: string) => new AuthError({
   provider: "*",

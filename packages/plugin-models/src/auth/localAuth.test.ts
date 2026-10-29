@@ -219,6 +219,34 @@ describe("LocalAuthStore — the write surface (:login / :logout)", () => {
     const written = JSON.parse(readFileSync(join(home, ".efferent", "auth.json"), "utf-8")) as Record<string, unknown>
     expect(written["acme"]).toEqual(future)
   })
+
+  test("each kind reads with its optional fields, fields it does not know left out", async () => {
+    const layer = setup({
+      "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 1, accountId: "acct", installationId: "inst", scope: "openid" },
+      ollama: { type: "local", baseUrl: "http://localhost:11434" },
+      opencode: { type: "api_key", key: "sk-opencode", label: "work" },
+    })
+    const all = await Effect.runPromise(Effect.flatMap(Effect.service(AuthStore), (store) => store.all).pipe(Effect.provide(layer)))
+    expect(Object.fromEntries(all)).toEqual({
+      "openai-codex": { type: "oauth", access: "a", refresh: "r", expires: 1, accountId: "acct", installationId: "inst" },
+      ollama: { type: "local", baseUrl: "http://localhost:11434" },
+      opencode: { type: "api_key", key: "sk-opencode" },
+    })
+  })
+
+  test("an entry with a field of the wrong type is not read without that field: it is not listed, and a write keeps it as it is", async () => {
+    const mistyped = { type: "oauth", access: "a", refresh: "r", expires: Date.now() + 3_600_000, accountId: 42 }
+    const { layer, home } = setupWithPaths({ "openai-codex": mistyped, opencode: "sk-opencode" })
+    const read = await Effect.runPromise(Effect.gen(function* () {
+      const store = yield* AuthStore
+      const codex = yield* store.get(ProviderId.make("openai-codex"))
+      yield* store.set(ProviderId.make("openai"), { type: "api_key", key: "sk-openai" })
+      return { codex, providers: [...(yield* store.all).keys()].toSorted() }
+    }).pipe(Effect.provide(layer)))
+    expect(read).toEqual({ codex: Option.none(), providers: ["openai", "opencode"] })
+    const written = JSON.parse(readFileSync(join(home, ".efferent", "auth.json"), "utf-8")) as Record<string, unknown>
+    expect(written["openai-codex"]).toEqual(mistyped)
+  })
 })
 
 describe("LocalAuthStore — a file it cannot use", () => {
