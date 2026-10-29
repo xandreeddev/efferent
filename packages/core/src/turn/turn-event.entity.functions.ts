@@ -1,5 +1,7 @@
 import { Effect, Option, Schema } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { CurrentToolInvocation } from "../loop/stepContext.js"
+import { RunContext } from "../ports/run-context.port.js"
 import type { SubscribeOptions, Subscription, TurnEventsService } from "../ports/turn-events.port.js"
 
 import type { TurnEvent, TurnEventName, TurnEventOf } from "./turn-event.entity.js"
@@ -66,3 +68,21 @@ export const defineHostEvent = <A, I extends Readonly<Record<string, unknown>>>(
       (events) => events.subscribe(select, handle, options),
   }
 }
+
+/**
+ * Report progress from inside a tool handler: publishes a transient
+ * `tool.progress` with the call's step, invocation id and tool name (from
+ * `CurrentToolInvocation`) on the run's bus. `channel` is `stdout` or
+ * `stderr` for a command's output as it arrives, `status` for anything else.
+ * Outside a tool call, or without a `RunContext`, it does nothing. As for
+ * `tool.started`, a subscriber failure fails the turn: the handler stops
+ * there, and the tool registry fails the turn after `tool.completed`
+ * instead of handing the failure to the model as the tool's result.
+ */
+export const publishToolProgress = (channel: TurnEventOf<"tool.progress">["channel"], text: string): Effect.Effect<void> => Effect.gen(function* () {
+  const invocation = yield* Effect.service(CurrentToolInvocation)
+  const run = yield* Effect.serviceOption(RunContext)
+  if (Option.isNone(invocation) || Option.isNone(run)) return
+  const { step, invocationId, tool } = invocation.value
+  yield* run.value.events.publish({ _tag: "tool.progress", step, invocationId, tool, channel, text }).pipe(Effect.orDie)
+})

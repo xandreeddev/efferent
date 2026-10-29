@@ -107,6 +107,8 @@ describe("the turn's bus events as stored", () => {
     expect(Object.keys(stored.data).sort()).toEqual(["durationMs", "invocationId", "labels", "ok", "stage", "step", "tool"])
     const skipped: ReadonlyArray<TurnEvent> = [
       { _tag: "assistant.delta", step: 0, channel: "text", id: "d", delta: "x" },
+      { _tag: "tool.progress", step: 0, invocationId: "i", tool: "build", channel: "stdout", text: "compiling" },
+      { _tag: "tool.progress", step: 0, invocationId: "i", tool: "build", channel: "status", text: "3 of 7" },
       { _tag: "skills.activated", skills: [], tools: [], source: "always" },
       { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.none(), usage: zeroUsage },
     ]

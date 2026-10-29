@@ -7,6 +7,7 @@ import {
   PermissionGrants,
   catalogOf,
   CurrentAgentStep,
+  CurrentToolInvocation,
   DecisionId,
   defineCapability,
   defineTool,
@@ -249,13 +250,21 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
       yield* run.events.publish({ _tag: "tool.started", step, invocationId, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
       const started = yield* Clock.currentTimeMillis
       const lane = entry.annotations.readOnly ? readLane : writeLane
-      const exit = yield* lane.withPermits(1)(Effect.exit(handler(params).pipe(Effect.provide(runServices))))
+      // The invocation innermost: a handler sees its own call even when the run's services carry an outer one.
+      const call = handler(params).pipe(Effect.provideService(CurrentToolInvocation, Option.some({ invocationId, tool: name, step })))
+      const exit = yield* lane.withPermits(1)(Effect.exit(call.pipe(Effect.provide(runServices))))
       const durationMs = (yield* Clock.currentTimeMillis) - started
       const ok = Exit.isSuccess(exit)
       const value: unknown = Exit.isSuccess(exit) ? exit.value
         : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${Cause.pretty(exit.cause).slice(0, 300)}`))
+      // A HarnessError the handler died with is the turn's, not the tool's: a subscriber failed on an event the
+      // handler published (`tool.progress`, `skills.activated`). Like a failure on `tool.started`, it fails the turn
+      // once `tool.completed` is out, instead of reaching the model as a ToolDefect.
+      const turnFailure = Exit.isSuccess(exit) ? Option.none<HarnessError>()
+        : Option.fromNullishOr(exit.cause.reasons.flatMap((reason) => Cause.isDieReason(reason) && reason.defect instanceof HarnessError ? [reason.defect] : [])[0])
       const encoded = yield* Schema.encodeUnknownEffect(contextFree(ok ? entry.tool.successSchema : entry.tool.failureSchema))(value).pipe(Effect.orElseSucceed(() => value))
       yield* run.events.publish({ _tag: "tool.completed", step, invocationId, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
+      if (Option.isSome(turnFailure)) return yield* Effect.die(turnFailure.value)
       return yield* ok ? Effect.succeed(value) : Effect.fail(value)
     }).pipe(Effect.withSpan(`tool.${entry.tool.name}`), Effect.provide(runServices))
 

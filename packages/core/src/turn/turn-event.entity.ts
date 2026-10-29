@@ -70,6 +70,22 @@ export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
   description: "Published by the tool registry when a handler returned or failed (`ok`). `result` is the decoded value, `encoded` its wire form as the model receives it. `durationMs` runs from just after `tool.started` to the handler's exit, so it includes any wait for the tool's read or write lane. Journaled as `tool.completed` without `input`, `result` and `encoded`: memory keeps the call and its result (`memory.message`, `memory.tool-result`).",
 })
 
+/**
+ * What a running tool reports before it completes: a command's output as it
+ * arrives (`stdout`, `stderr`), or a step of a long job (`status`).
+ * Transient: shown live, never journaled; `tool.completed` carries the
+ * result. A handler publishes it with `publishToolProgress`.
+ */
+export const ToolProgressEvent = Schema.TaggedStruct("tool.progress", {
+  step: Schema.Int,
+  invocationId: Schema.String,
+  tool: Schema.String,
+  channel: Schema.Literals(["stdout", "stderr", "status"]),
+  text: Schema.String,
+}).annotate({
+  description: "Published by `publishToolProgress` from inside a tool handler, between that call's `tool.started` and `tool.completed` (same `step`, `invocationId` and `tool`). `channel` is stdout or stderr for a command's output as it arrives, status for anything else the tool reports; `text` is that output or message. Transient: never journaled; `tool.completed` carries the result.",
+})
+
 export const StepResult = Schema.Struct({
   entry: EntryId,
   toolCallId: ToolCallId,
@@ -167,6 +183,7 @@ export const TurnEvent = Schema.Union(
   [TurnStartedEvent,
   StepStartedEvent,
   ToolStartedEvent,
+  ToolProgressEvent,
   ToolCompletedEvent,
   StepEndedEvent,
   CompletionEvaluatedEvent,
@@ -183,4 +200,4 @@ export type TurnEventName = TurnEvent["_tag"]
 export type TurnEventOf<Name extends TurnEventName> = Extract<TurnEvent, { readonly _tag: Name }>
 
 /** Events that exist only for live rendering and are never journaled. */
-export const TransientTurnEvents: ReadonlyArray<TurnEventName> = ["assistant.delta"]
+export const TransientTurnEvents: ReadonlyArray<TurnEventName> = ["assistant.delta", "tool.progress"]

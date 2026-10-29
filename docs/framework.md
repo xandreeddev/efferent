@@ -369,16 +369,24 @@ those tasks and is evaluated once more. No provider call follows a complete
 verdict.
 
 **Events and tasks.** `TurnEvent` is one typed union: `turn.started`,
-`step.started`, `tool.started`, `tool.completed` (decoded result and encoded
-form), `step.ended` (the recorded results by entry id),
-`completion.evaluated`, `skills.activated`, `context.built`,
+`step.started`, `tool.started`, `tool.progress` (transient), `tool.completed`
+(decoded result and encoded form), `step.ended` (the recorded results by entry
+id), `completion.evaluated`, `skills.activated`, `context.built`,
 `decision.recorded`, `assistant.message`, `assistant.delta` (transient),
 `turn.ended`, and host events from `defineHostEvent`; the
 [event reference](event-reference.md) lists each one's payload, who
-publishes it and how it is stored. Publication is inline
+publishes it and how it is stored. A tool handler reports progress with
+`publishToolProgress(channel, text)` (`stdout` or `stderr` for a command's
+output as it arrives, `status` for anything else): it reads
+`CurrentToolInvocation`, which the tool registry sets around each call, so
+the event carries the call's `step`, `invocationId` and `tool`, the ids of
+its `tool.started` and `tool.completed`; outside a tool call it does nothing.
+Publication is inline
 and ordered, depth-first up to a cap: every subscriber runs before `publish`
 returns, so state a subscriber changes is visible to the next step, and a
-subscriber failure fails the turn. Within a step the order is `step.started`
+subscriber failure fails the turn (one during a tool call, on `tool.progress`
+or an event the handler publishes, also stops the handler; the model never
+sees it as the tool's result). Within a step the order is `step.started`
 < `tool.*` < `step.ended` < `completion.evaluated`. Background work goes to
 `turn.tasks.fork(tag, effect)`.
 
@@ -391,7 +399,8 @@ delivery to it fails, and so does the drain before `turn.ended`, which fails
 the turn. Use it for reactions whose effects the next step does not need.
 
 **Where it is stored.** The turn's `TurnWriter` is the bus's first
-subscriber: every event except transient deltas is stored in the session's
+subscriber: every event except the transient ones (`assistant.delta`,
+`tool.progress`) is stored in the session's
 log under its own kind (see the vocabulary below), and `tool.completed` keeps
 neither the input nor the result, which memory holds. Events and memory
 entries go through the writer's one ordered write-behind queue. Producers
@@ -502,12 +511,51 @@ is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
 `PermissionGrants` there are used when present.
 
 `memoryConformance(memory, services)`, `stepLoopConformance(loop)`,
-`turnConformance(runner, services)`, `sessionLogConformance(log)` and
-`sessionLogRecoveryConformance(subject)` (from `@xandreed/core`) are the port
+`turnConformance(runner, services)`, `sessionLogConformance(log)`,
+`sessionLogRecoveryConformance(subject)`, `fileSystemConformance(subject)` and
+`bashConformance(subject)` (from `@xandreed/core`) are the port
 contracts as runnable checks: each returns `ConformanceCheck`s (`name`, and a
 `run` effect that fails with a `ConformanceFailure` naming the broken check)
 that any test runner can run. Run them against a new strategy, loop, turn
-composition or session store.
+composition, session store, file system or shell.
+
+**Files and commands.** Agent tools reach the machine through two core ports,
+`FileSystem` and `Bash`. This release ships the ports, the in-memory
+`FileSystemMemoryLive` and their conformance kits; no disk-backed
+`FileSystem` and no `Bash` adapter ships yet, so a host that needs them
+implements the ports and runs the kits against its adapters.
+`FileSystem` works on absolute POSIX paths: `read` (UTF-8) and `readBytes`
+(a range), `write` and `append` (`createParents`), `rename` (over an existing
+file; a link is moved, not its target), `stat` (kind, size, time; links followed unless
+`followSymlinks: false`), `exists`, `list` (entries with their kind, sorted by
+name), `glob`, `mkdir` (`recursive`), `realPath` and `remove` (a missing path
+is a no-op; a directory with entries needs `recursive`). Every failure is an
+`FsError` with a `reason` that means the same on every backend (`NotFound`,
+`Exists`, `IsDirectory`, `NotDirectory`, `NotEmpty`, `Permission`, `Invalid`,
+`Io`). `glob(pattern, { cwd, exclude, dot, onlyFiles, limit })` is `walkGlob`
+over the backend's own `list`: a depth-first walk with each directory's
+entries by name, so results and a `limit` cut are the same everywhere; it
+never enters a linked directory, prunes `exclude`d names before entering
+them, skips dot entries unless `dot` (or the pattern spells the dot), and
+reports `truncated`; a pattern whose braces stand for more than 1024
+patterns fails with `Invalid`. `FileSystemMemoryLive` (or `makeMemoryFileSystem(seed)`)
+keeps a tree in memory, for tests and for agents whose workspace never
+touches disk.
+
+`Bash` runs `bash -c` commands in a process group of their own:
+`stream(command, options)` emits output chunks as they arrive (stdout and
+stderr apart, UTF-8 decoded per stream) and then exactly one `BashExit`;
+`exec` is `collectBashResult` over it, which keeps the whole output (no cap
+or truncation yet). `stdin` is text or bytes. A non-zero exit, a signal and a
+timeout are results (`exitCode` and `signal` are Options, `termination` is
+`exit`, `signal`, `timeout` or `interrupted`); `BashError` means the command
+could not run (`SpawnFailed`, `CwdMissing`, `ShellMissing`). A timeout or an
+interrupted caller kills the whole group. The parent environment is not
+passed through: `resolveBashEnv` keeps `BASH_ENV_ALLOWLIST` (`PATH`, `HOME`,
+`USER`, `LOGNAME`, `LANG`, `LC_*`, `TERM`, `SHELL`, `TMPDIR`, `TZ`) unless
+`inheritEnv` says `true`, `false` or another allowlist (a trailing `*`
+matches a prefix), then sets `env` over it, so provider keys never reach a
+command by default.
 
 **Tool discovery.** Hosts contribute tools (`defineTool`: handler, view,
 annotations) and skills (`defineSkill`, or `skillsFromFiles` over
