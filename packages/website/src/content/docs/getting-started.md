@@ -19,8 +19,8 @@ Install the SDK and the plugins your application uses:
 npm install @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
 ```
 
-All framework packages are published at `0.13.0` under npm's `latest` tag.
-From the next release `@xandreed/plugin-models` needs Node 24.5 or newer.
+All framework packages are published at `0.14.0` under npm's `latest` tag.
+`@xandreed/plugin-models` needs Node 24.5 or newer.
 
 ## Compose
 

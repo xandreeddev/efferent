@@ -11,7 +11,7 @@ import { SessionsLive } from "./sessions.adapter.js"
  * by a keep-alive every 20 s.
  */
 export const sessionsPlugin = definePlugin({
-  id: "@xandreed/plugin-sessions", version: "0.13.0", scope: "runtime",
+  id: "@xandreed/plugin-sessions", version: "0.14.0", scope: "runtime",
   config: SessionsConfig, defaults: sessionsDefaults,
   requires: [SessionLog, TurnAdmission],
   provides: [Sessions, TurnActivity],

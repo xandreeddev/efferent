@@ -16,11 +16,9 @@ this repository's history.
 npm install @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
 ```
 
-Every package below except the new `@xandreed/plugin-workspace` and
-`@xandreed/plugin-telemetry` is published at `0.13.0` under npm's `latest`
-tag; those two ship with the next release (npm's older
-`@xandreed/plugin-telemetry` versions are an earlier, unrelated plugin).
-From the next release `@xandreed/plugin-models` needs Node 24.5 or newer.
+Every package below is published at `0.14.0` under npm's `latest` tag (npm's
+older `@xandreed/plugin-telemetry` versions, 0.3.0 and 0.4.0, are an earlier,
+unrelated plugin). `@xandreed/plugin-models` needs Node 24.5 or newer.
 The historical `efferent` npm package is a different release line.
 
 ## Compose

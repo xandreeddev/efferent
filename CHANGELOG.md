@@ -8,6 +8,56 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.14.0 — 2026-10-29
+
+Agents that work on files and commands, images to and from the model, token
+usage with cache writes and reasoning, telemetry outside evals, an HTTP
+proxy, credential and settings stores that never touch disk, and a turn
+lifecycle a service can run on: host metadata, real failure codes, resume,
+a busy signal and lease keep-alive. 19 packages: `@xandreed/plugin-workspace`
+is new, and `@xandreed/plugin-telemetry` is a new plugin under an old name.
+
+### Migration
+
+- Run `@xandreed/plugin-models` on Node 24.5 or newer (or Bun 1.3.0 or
+  newer). It now depends on `undici`, and honours `HTTPS_PROXY`,
+  `HTTP_PROXY` and `NO_PROXY` on Node too.
+- `Agent.turn` returns a `TurnResult`: the outcome plus the turn's `usage`.
+  Code that reads the outcome keeps working; code that builds one (a
+  host-composed runner, a fake) adds `usage`.
+- Build `TokenUsage` with `tokenUsage(...)` or spread `zeroUsage`: it has
+  `cacheWriteTokens` and `reasoningTokens`. A custom `StepLoop` returns the
+  run's `usage`, provides `captureTraceContent` and honours
+  `onMediaRejected`; run `stepLoopConformance` against it.
+- `Shell` is now `Bash`: `bash.exec(command, { cwd, timeoutMs, env, stdin })`,
+  with `exitCode` an `Option` and `termination` saying how it ended. A
+  `FileSystem` implementation adds the new methods (`walkGlob` gives it
+  `glob`) and runs `fileSystemConformance`. `FileSystemLive` and `BashLive`
+  for the local machine are in `@xandreed/plugin-workspace`, with the
+  workspace tools (`workspaceToolsPlugin`).
+- Hand-written `AdmittedTurn`, `TurnToAdmit`, `RunContext` and `Turn` values
+  add `meta` (and `usage`). Exhaustive matches on `TurnEvent` handle
+  `tool.progress`, `tool.refused` and `stream.fallback`; matches on
+  `Sessions.begin`'s errors handle `AttachmentRejected` and `NotResumable`
+  (`turnBeginCodes` maps both). A host event may not use any bus event's
+  name.
+- `UserMessageFromString` is removed: build `new UserMessage({ text })`.
+  The memory plugins now send earlier turns' images too (`media: "inline"`);
+  set `media: "none"` for label lines instead, or `maxMediaChars: 0` for
+  text only. A tool view declares `media` (`defineTool` fills it).
+- `modelsPlugin` is runtime-scoped: built once per `Agent.define`, and a
+  per-turn `LanguageModel` now wins over it. `storage: "memory"` keeps
+  credentials and settings off disk; `ModelEndpoint.apiKey` may be
+  `Redacted`.
+- Lease ownership renews every 20 seconds by default; set
+  `renew: "on-commit"` for the old behaviour. A keep-alive must renew at
+  least twice per lease (`everyMs * 2 <= ttlMs`).
+- A plugin that fails to build with a `HarnessError` fails with that error's
+  own code (`skills.duplicate`, `config.options`), not `plugin.activation`.
+- The old `@xandreed/plugin-telemetry` options (`enabled`, `serviceName`)
+  are refused: configure `telemetryPlugin` and export with an
+  `OtlpTelemetry*` layer.
+
 ### Breaking
 
 - **`@xandreed/plugin-session-sqlite`: a commit that waited past its lease is

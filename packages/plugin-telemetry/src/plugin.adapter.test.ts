@@ -19,7 +19,7 @@ const codeOf = (exit: Exit.Exit<unknown, unknown>): string => Exit.match(exit, {
 describe("telemetryPlugin", () => {
   test("is session-scoped, keeps the earlier plugin's id, and requires the turn's RunContext and TurnEvents", () => {
     expect({ id: telemetryPlugin.id, version: telemetryPlugin.version, scope: telemetryPlugin.scope, requires: telemetryPlugin.requires, provides: telemetryPlugin.provides })
-      .toEqual({ id: "@xandreed/plugin-telemetry", version: "0.13.0", scope: "session", requires: [RunContext.key, TurnEvents.key], provides: [] })
+      .toEqual({ id: "@xandreed/plugin-telemetry", version: "0.14.0", scope: "session", requires: [RunContext.key, TurnEvents.key], provides: [] })
     expect(telemetryPlugin.defaults).toEqual({ prices: {}, metricAttributes: {}, spanEvents: true })
   })
 

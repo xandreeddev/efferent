@@ -124,7 +124,7 @@ const transportLayer = (config: Config): Effect.Effect<Layer.Layer<never, Harnes
  * so do they through a host's own transport.
  */
 export const modelsPlugin = definePlugin({
-  id: "@xandreed/plugin-models", version: "0.13.0", scope: "runtime", config: Config,
+  id: "@xandreed/plugin-models", version: "0.14.0", scope: "runtime", config: Config,
   defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {}, storage: "local", credentials: {}, credentialEnv: {}, proxy: "", noProxy: "" },
   requires: [SessionEnvironment],
   optional: [HostCredentials, ModelsTransport],

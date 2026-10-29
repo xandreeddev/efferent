@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/plugin-workspace",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "engines": { "node": ">=24", "bun": ">=1.3.0" },
   "type": "module",
   "description": "The local machine as the FileSystem and Bash ports (node:fs and node:child_process adapters and the plugin that provides them), the workspace tools an agent works with (read, write, edit, ls, find, grep and bash) and skills from directories of SKILL.md files (Node 24 and Bun, on Linux and macOS).",

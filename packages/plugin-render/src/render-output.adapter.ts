@@ -32,7 +32,7 @@ export const UiOutputHandlersLive = uiOutputToolkit.toLayer(Effect.gen(function*
 
 /** Transport-independent: WebSocket/SSE hosts consume the committed journal. */
 export const uiOutputPlugin = definePlugin({
-  id: "@xandreed/plugin-render/output", version: "0.13.0",
+  id: "@xandreed/plugin-render/output", version: "0.14.0",
   requires: [UiOutputAdmission, UiOutputJournal, UiOutputContext],
   provides: [UiOutput, UiOutputTools],
   config: Schema.Struct({ maxBytes: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1024, maximum: 131_072 }))) }),
