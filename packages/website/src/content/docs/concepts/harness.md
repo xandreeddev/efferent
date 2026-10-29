@@ -79,12 +79,15 @@ image built with `mediaFromBytes(bytes)` or `mediaFromBase64(data)` from
 `@xandreed/core` (PNG, JPEG, GIF or WebP, within `MEDIA_LIMITS`). The session
 checks each image again from its bytes when the turn begins and stores it
 inline, once, in the turn's start; an image it refuses fails the turn with
-`turn.attachment-rejected` before anything is stored. The current turn's
-images are sent to the model first, within the memory plugins' `maxImages`
+`turn.attachment-rejected` before anything is stored. A tool returns images the
+same way, as `Media` values in its result (its view's `media` picks which
+are sent; every one by default); memory stores each once, where the tool put
+it. The current turn's images (its message's, then its tool results', newest
+first) are sent to the model first, within the memory plugins' `maxImages`
 and `maxMediaChars` (with the defaults a message's own images always fit;
 `maxMediaChars: 0` sends none); their `media` option says whether earlier
-turns' images are sent too (`inline`) or shown as a label line (`none`, the
-default). [Images](/docs/concepts/providers/#images) lists the routes that
+turns' images are sent too (`inline`, the default) or shown as a label line
+(`none`). [Images](/docs/concepts/providers/#images) lists the routes that
 take them: the others get a label line in place of each image.
 
 The turn's stored end says how it ended: completed, partial or failed as

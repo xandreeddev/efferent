@@ -1,13 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
-import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaFromBase64, mediaLabel } from "../domain/media.entity.functions.js"
+import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaFromBase64, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
-import type { AgentMessage } from "../domain/message.entity.js"
+import { ToolCallId } from "../domain/message.entity.js"
+import type { AgentMessage, ToolResultPart } from "../domain/message.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
-  buildContext, canonicalJson, digestTranscript, emptyQuery, entryId, estimateMessageTokens, fingerprintOf, queryLog, rawTranscript, referenceTranscript, renderLog,
+  buildContext, canonicalJson, digestTranscript, emptyQuery, entriesSendingMedia, entryId, estimateMessageTokens, fingerprintOf, queryLog, rawTranscript, referenceTranscript, renderLog,
 } from "./memory-log.entity.functions.js"
 import { LogBody, LogEntry } from "./memory-log.entity.js"
 
@@ -114,5 +115,105 @@ describe("a user message with images in the memory log", () => {
     expect(users(referenceTranscript(log))).toEqual([`first\n${mediaLabel(png)}`, `second\n${mediaLabel(gif)}`, `${mediaLabel(png)}\n${mediaLabel(gif)}`])
     expect(canonicalJson(rawTranscript(log))).not.toContain(pixelGif.slice(0, 30))
     expect(digestTranscript(log, { result: 100, total: 10_000 })).toContain(`User: first\n${mediaLabel(png)}`)
+  })
+})
+
+/** A tool result entry holding images, with slots for them (as memory records a checked result). */
+const shot = (turn: number, index: number, images: ReadonlyArray<Media>, view = `shot ${turn}.${index}`): LogEntry => {
+  const encoded = { images }
+  const slots = mediaSlotsOf(encoded)
+  return {
+    id: entryId(`run-${turn}`, 10 + index), runId: `run-${turn}`, turn, step: 1, at: 0,
+    body: {
+      _tag: "ToolResult", toolCallId: ToolCallId.make(`c${turn}.${index}`), toolName: "screenshot", isError: false, encoded,
+      view, viewVersion: "1", subjects: [], artifacts: [], pinned: false, ...(slots.length === 0 ? {} : { media: slots }),
+    },
+  }
+}
+const results = (messages: ReadonlyArray<AgentMessage>): ReadonlyArray<ToolResultPart> =>
+  messages.flatMap((message) => message.role === "tool" ? message.content : [])
+const sentOf = (part: ToolResultPart | undefined) => part?.media ?? []
+
+describe("a tool result with images in the memory log", () => {
+  test("is stored with slots into its encoded value (each image once); a result without images exactly as before", () => {
+    const encoded = Schema.encodeSync(LogEntry)(shot(1, 0, [png]))
+    expect(encoded.body).toMatchObject({ _tag: "ToolResult", media: [{ path: ["images", 0], fingerprint: png.fingerprint, mediaType: "image/png", bytes: png.bytes }] })
+    expect(canonicalJson(encoded).split(pixelPng).length - 1).toBe(1)
+    const plain = Schema.encodeSync(LogEntry)(shot(1, 0, []))
+    expect(Object.keys(plain.body)).not.toContain("media")
+  })
+
+  test("its images ride with its text part; a result without images renders as before", () => {
+    const parts = results(renderLog([started(1, "look", []), shot(1, 0, [png, gif])], options(1, { mode: "none", maxImages: 8, maxChars: 20_000_000 })))
+    expect(parts[0]?.output).toBe("shot 1.0")
+    expect(sentOf(parts[0])).toEqual([png, gif])
+    const plain = results(renderLog([started(1, "look", []), shot(1, 0, [])], options(1, { mode: "none", maxImages: 8, maxChars: 20_000_000 })))
+    expect(plain[0]).toEqual({ type: "tool-result", toolCallId: ToolCallId.make("c1.0"), toolName: "screenshot", output: "shot 1.0", isError: false })
+  })
+
+  test("the current turn's results are sent newest first, a whole result at a time, after its attachments; a result left out shows label lines", () => {
+    const current = [started(2, "look", [png]), shot(2, 0, [png, gif]), shot(2, 1, [gif])]
+    const parts = results(renderLog(current, options(2, { mode: "none", maxImages: 2, maxChars: 20_000_000 })))
+    expect(sentOf(parts[1])).toEqual([gif])
+    expect(sentOf(parts[0])).toEqual([])
+    expect(parts[0]?.output).toBe(`shot 2.0\n${mediaLabel(png)}\n${mediaLabel(gif)}`)
+  })
+
+  test("none: an earlier turn's tool images are label lines; inline: sent while they fit, the turn's attachments and results together", () => {
+    const twoTurns = [started(1, "first", []), shot(1, 0, [png]), replied(1), started(2, "second", []), shot(2, 0, [gif])]
+    const none = results(renderLog(twoTurns, options(2, { mode: "none", maxImages: 8, maxChars: 20_000_000 })))
+    expect([sentOf(none[0]), none[0]?.output, sentOf(none[1])]).toEqual([[], `shot 1.0\n${mediaLabel(png)}`, [gif]])
+    const inline = results(renderLog(twoTurns, options(2, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })))
+    expect([sentOf(inline[0]), sentOf(inline[1])]).toEqual([[png], [gif]])
+    const tight = results(renderLog(twoTurns, options(2, { mode: "inline", maxImages: 1, maxChars: 20_000_000 })))
+    expect([sentOf(tight[0]), sentOf(tight[1])]).toEqual([[], [gif]])
+    expect(results(renderLog(twoTurns, options(2, { mode: "inline", maxImages: 8, maxChars: 0 }))).flatMap(sentOf)).toEqual([])
+  })
+
+  test("a result shown through a compaction or a digest shows its images as label lines", () => {
+    const entries = [started(1, "look", []), shot(1, 0, [png])]
+    const compacted: LogEntry = { id: entryId("run-1", 20), runId: "run-1", turn: 1, step: 2, at: 0, body: { _tag: "Compaction", strategy: "test", version: "1", action: { _tag: "CompactViews", entries: [entries[1]!.id], texts: ["(a shot)"] } } }
+    const parts = results(renderLog([...entries, compacted], options(1, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })))
+    expect([parts[0]?.output, sentOf(parts[0])]).toEqual([`(a shot)\n${mediaLabel(png)}`, []])
+  })
+
+  test("the write-time lines of images never sent (mediaNotes) end the view, and follow any other text the result is shown through", () => {
+    const note = "[image unavailable: the result holds no such image]"
+    const base = shot(1, 0, [png], `shot 1.0\n${note}`)
+    const noted: LogEntry = base.body._tag === "ToolResult" ? { ...base, body: { ...base.body, mediaNotes: [note] } } : base
+    const entries = [started(1, "look", []), noted]
+    const viewed = results(renderLog(entries, options(1, { mode: "none", maxImages: 8, maxChars: 20_000_000 })))
+    expect(viewed[0]?.output).toBe(`shot 1.0\n${note}`)
+    const compacted: LogEntry = { id: entryId("run-1", 20), runId: "run-1", turn: 1, step: 2, at: 0, body: { _tag: "Compaction", strategy: "test", version: "1", action: { _tag: "CompactViews", entries: [noted.id], texts: ["(a shot)"] } } }
+    const parts = results(renderLog([...entries, compacted], options(1, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })))
+    expect(parts[0]?.output).toBe(`(a shot)\n${note}\n${mediaLabel(png)}`)
+  })
+
+  test("OmitMedia: the entries it names show label lines from then on, whatever strategy recorded it; entriesSendingMedia names what a render sends", () => {
+    const entries = [started(1, "look", [gif]), shot(1, 0, [png])]
+    const render = options(1, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })
+    expect(entriesSendingMedia(entries, render)).toEqual([entries[0]!.id, entries[1]!.id])
+    const omit: LogEntry = {
+      id: entryId("run-1", 30), runId: "run-1", turn: 1, step: 1, at: 0,
+      body: { _tag: "Compaction", strategy: "another", version: "1", action: { _tag: "OmitMedia", entries: [entries[1]!.id], reason: "image exceeds 5 MB maximum" } },
+    }
+    const after = [...entries, omit]
+    const built = buildContext(after, render)
+    expect(results(built.messages)[0]?.output).toBe(`shot 1.0\n${mediaLabel(png)}`)
+    expect(sentOf(results(built.messages)[0])).toEqual([])
+    expect(users(built.messages)[0]).toEqual([gif, { type: "text", text: "look" }])
+    expect(built.compactions).toEqual([omit.id])
+    expect(entriesSendingMedia(after, render)).toEqual([entries[0]!.id])
+    expect(entriesSendingMedia(after, options(1, { mode: "inline", maxImages: 8, maxChars: 0 }))).toEqual([])
+  })
+
+  test("the estimate counts a result's images, not their base64; search and the raw transcript never see the base64", () => {
+    const entries = [started(1, "look", []), shot(1, 0, [png])]
+    const built = buildContext(entries, options(1, { mode: "inline", maxImages: 8, maxChars: 20_000_000 }))
+    expect(built.estimatedTokens).toBe(estimateMessageTokens(built.messages))
+    expect(estimateMessageTokens(built.messages)).toBeGreaterThanOrEqual(IMAGE_TOKEN_ESTIMATE)
+    expect(built.fingerprint).toBe(fingerprintOf(canonicalJson(built.messages.map(elideMediaData))))
+    expect(queryLog(entries, { ...emptyQuery, text: Option.some(pixelPng.slice(20, 40)) })).toEqual([])
+    expect(canonicalJson(rawTranscript(entries))).not.toContain(pixelPng.slice(0, 30))
   })
 })

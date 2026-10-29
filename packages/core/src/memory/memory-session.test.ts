@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Ref } from "effect"
+import { mediaFromBase64, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
@@ -81,5 +82,29 @@ describe("the log session", () => {
     expect(served.before).toEqual(["ToolResult"])
     expect(served.after).toEqual(["ToolResult", "ToolDigest"])
     expect(served.seen).toEqual(["second"])
+  })
+})
+
+describe("a tool result's images, as the session records them", () => {
+  const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
+  test("checked once: good images keep their slots, a bad one is a label line in the stored view; a failed call sends none", async () => {
+    const recorded = await Effect.runPromise(Effect.gen(function* () {
+      const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+      const log: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) }
+      const session = yield* openLogSession(log, { ...policy, digestOnWrite: Option.none() }, { runId: "run-1" })
+      const image = yield* mediaFromBase64(pixelPng, { name: "shot.png" })
+      const output = { shot: image, forged: { ...image, bytes: 9 } }
+      const imaging: ToolViews = { ...views, view: (_tool, encoded) => Effect.succeed({ text: "two shots", version: "1", subjects: [], artifacts: [], pinned: false, media: mediaSlotsOf(encoded) }) }
+      const call = (id: string, isError: boolean): AgentMessage => ({ role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make(id), toolName: "shot", output, isError }] })
+      return { entries: yield* session.recordTail([call("ok", false), call("failed", true)], imaging, 1), image }
+    }))
+    const [ok, failed] = recorded.entries.map((entry) => entry.body)
+    const unavailable = "[image unavailable: its type, size or fingerprint is not what its data gives; build it with mediaFromBytes]"
+    expect(ok?._tag === "ToolResult" ? [ok.view, ok.media?.map((slot) => slot.path), ok.mediaNotes] : []).toEqual([
+      `two shots\n${unavailable}`, [["shot"]], [unavailable],
+    ])
+    expect(failed?._tag === "ToolResult" ? [failed.view, "media" in failed, "mediaNotes" in failed] : []).toEqual(["two shots", false, false])
+    expect(mediaLabel(recorded.image)).toContain("shot.png")
   })
 })

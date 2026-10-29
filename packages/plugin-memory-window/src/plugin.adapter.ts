@@ -35,11 +35,12 @@ export const MemoryWindowConfig = Schema.Struct({
   /** Show recorded digests in place of the results they digest. */
   digests: Schema.Boolean,
   /**
-   * How images reach the model: the current turn's attachments are sent as
-   * images first, within `maxImages` and `maxMediaChars` (with the defaults a
-   * message's own images always fit); `none` shows earlier images as label
-   * lines, `inline` sends earlier turns' images too, newest turn first, while
-   * they fit.
+   * How images reach the model (a user's attachments, the images tool
+   * results return): the current turn's are sent as images first, within
+   * `maxImages` and `maxMediaChars` (with the defaults a message's own images
+   * always fit); `inline` (the default) sends earlier turns' images too,
+   * newest turn first, while they fit, `none` shows them as label lines.
+   * Text only: `maxMediaChars: 0`.
    */
   media: Schema.Literals(["none", "inline"]),
   /** Images one request sends as images, never more than `MEDIA_LIMITS.requestImages` (and artifact reference lines one result shows). */
@@ -51,7 +52,7 @@ export type MemoryWindowConfig = typeof MemoryWindowConfig.Type
 export const memoryWindowDefaults: MemoryWindowConfig = {
   compactPreviousTurn: true, turnContext: "current", replies: true,
   spillMinChars: 2_000, previewChars: 600, ledgerTurnChars: 240,
-  digestOnWriteChars: 0, digests: true, media: "none", maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
+  digestOnWriteChars: 0, digests: true, media: "inline", maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
 }
 
 export const WINDOW_STRATEGY = { id: "window", version: "1" } as const

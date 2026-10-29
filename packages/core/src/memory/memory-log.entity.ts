@@ -1,5 +1,5 @@
 import { Schema, SchemaTransformation } from "effect"
-import { Media } from "../domain/media.entity.js"
+import { Media, MediaSlot } from "../domain/media.entity.js"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
 import { DecisionId } from "../decision-record.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -47,7 +47,14 @@ export const CompactionAction = Schema.Union(
   /** Whole turns up to `throughTurn` replaced by a ledger. */
   Schema.TaggedStruct("DropTurns", { throughTurn: Schema.Int, ledger: Schema.String }),
   /** Everything before `keepFromTurn` replaced by a summary. */
-  Schema.TaggedStruct("Summarize", { keepFromTurn: Schema.Int, summary: Schema.String })],
+  Schema.TaggedStruct("Summarize", { keepFromTurn: Schema.Int, summary: Schema.String }),
+  /**
+   * The images of these entries (a user's attachments, a tool result's
+   * images) shown as label lines from now on, because a provider refused a
+   * request that sent them; `reason` is what it said. Recorded by the turn
+   * (`StepRequest.onMediaRejected`), it applies whatever strategy renders.
+   */
+  Schema.TaggedStruct("OmitMedia", { entries: Schema.Array(EntryId), reason: Schema.String })],
 )
 export type CompactionAction = typeof CompactionAction.Type
 
@@ -98,6 +105,21 @@ export const LogBody = Schema.Union(
     artifacts: Schema.Array(ArtifactRef),
     /** Pinned results survive every compaction verbatim. */
     pinned: Schema.Boolean,
+    /**
+     * The images the model is sent with the result, where they are in
+     * `encoded` (each stored once, there), checked when the result was
+     * written; only when there are some, so a result without images is
+     * stored as before.
+     */
+    media: Schema.optionalKey(Schema.Array(MediaSlot)),
+    /**
+     * The lines `view` ends with for the images the result does not send (an
+     * `[image unavailable: …]` line, or the label line of one past the
+     * per-result caps); only when there are some. A result shown through
+     * other text (a compaction's, a digest's, a spill's preview) shows them
+     * after that text.
+     */
+    mediaNotes: Schema.optionalKey(Schema.Array(Schema.String)),
   }),
   /**
    * A tool-specific digest of one result (see `DigestDefinition`), recorded

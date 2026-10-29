@@ -3,7 +3,7 @@ import type { Scope } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { pixelPng } from "../conformance.functions.js"
-import { mediaFromBase64, mediaLabel } from "../domain/media.entity.functions.js"
+import { mediaFromBase64, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import type { Media } from "../domain/media.entity.js"
 import { ConversationId, ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
@@ -75,10 +75,11 @@ const recordTurn = (session: MemorySession, userMessage: string, reply: string) 
  * append-only maintenance, a reference transcript without tool traffic, and
  * a message's images kept through a reopen and built (never with an empty
  * text part): the current turn's as image parts, an earlier turn's as image
- * parts or label lines. That check needs a media budget that admits one
- * small image, as the memory plugins' defaults do: a strategy set to send
- * none (`maxImages: 0` or `maxChars: 0`) fails it, as it fails
- * `turnConformance`'s.
+ * parts or label lines; a tool result's images stored once, kept through a
+ * reopen, and the current turn's built as the result's images. Those checks
+ * need a media budget that admits one small image, as the memory plugins'
+ * defaults do: a strategy set to send none (`maxImages: 0` or
+ * `maxChars: 0`) fails them, as it fails `turnConformance`'s.
  * `services` are the turn services the strategy needs (a summarizer…); each
  * session is opened with them provided.
  */
@@ -165,6 +166,25 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
         onSome: (message) => typeof message.content === "string" ? message.content : message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"),
       })
       yield* expect("attachments", firstText.includes("what is this?"), "the first message lost its text")
+    })),
+    check("a tool result's images survive a reopen, stored once, and the current turn's reach the build as the result's images", "tool-media", (open, log) => Effect.gen(function* () {
+      const image: Media = yield* mediaFromBase64(pixelPng, { name: "shot.png" }).pipe(
+        Effect.mapError((error) => new ConformanceFailure({ check: "tool-media", message: error.message })),
+      )
+      const imaging: ToolViews = { ...views, view: (_tool, encoded) => Effect.succeed({ text: "a screenshot", version: "1", subjects: [], artifacts: [], pinned: false, media: mediaSlotsOf(encoded) }) }
+      const session = yield* open(log, "run-1")
+      yield* session.record([said("how does it look?")], 0)
+      yield* session.recordTail([
+        { role: "assistant", content: [{ type: "tool-call", toolCallId: callId, toolName: "screenshot", input: {} }] },
+        { role: "tool", content: [{ type: "tool-result", toolCallId: callId, toolName: "screenshot", output: { shot: image }, isError: false }] },
+      ], imaging, 0)
+      const reopened = yield* open(log, "run-1")
+      const entries = yield* reopened.entries
+      yield* expect("tool-media", encodeEntries(entries) === encodeEntries(yield* session.entries), "the reopened log lost or changed the result's image")
+      yield* expect("tool-media", encodeEntries(entries).split(image.data).length - 1 === 1, "the result's image is not stored exactly once")
+      const parts = (yield* reopened.build({ stepContext: "tail" })).messages.flatMap((message) => message.role === "tool" ? message.content : [])
+      yield* expect("tool-media", parts.some((part) => (part.media ?? []).some((media) => media.fingerprint === image.fingerprint && media.data === image.data)),
+        "the current turn's tool result was built without its image")
     })),
     check("the reference transcript holds user messages and replies, never tool traffic", "reference", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")

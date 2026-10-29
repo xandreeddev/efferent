@@ -1,4 +1,5 @@
 import { Clock, Effect, Option, Ref, Semaphore } from "effect"
+import { toolResultMedia } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
@@ -128,11 +129,18 @@ export const openLogSession = (
         ? Effect.succeed([{ _tag: "Message", message }])
         : Effect.forEach(message.content, (part) => {
           const params = inputs.get(String(part.toolCallId)) ?? {}
-          return views.view(part.toolName, part.output, params, part.isError ?? false).pipe(Effect.map((view): LogBody => ({
-            _tag: "ToolResult", toolCallId: part.toolCallId, toolName: part.toolName, isError: part.isError ?? false,
-            encoded: part.output, view: view.text, viewVersion: view.version, subjects: view.subjects,
-            artifacts: view.artifacts, pinned: view.pinned,
-          })))
+          const isError = part.isError ?? false
+          return views.view(part.toolName, part.output, params, isError).pipe(
+            // A failed call sends no image; a result's images are checked once, here (`toolResultMedia`).
+            Effect.flatMap((view) => toolResultMedia(part.output, isError ? [] : view.media ?? []).pipe(Effect.map((media): LogBody => ({
+              _tag: "ToolResult", toolCallId: part.toolCallId, toolName: part.toolName, isError,
+              encoded: part.output,
+              view: media.labels.length === 0 ? view.text : [view.text, ...media.labels].filter((line) => line.length > 0).join("\n"),
+              viewVersion: view.version, subjects: view.subjects, artifacts: view.artifacts, pinned: view.pinned,
+              ...(media.slots.length === 0 ? {} : { media: media.slots }),
+              ...(media.labels.length === 0 ? {} : { mediaNotes: media.labels }),
+            })))),
+          )
         }))
       const recorded = yield* record(bodies.flat(), step)
       const onWrite = policy.digestOnWrite

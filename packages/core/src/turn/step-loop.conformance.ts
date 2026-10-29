@@ -1,4 +1,4 @@
-import { LanguageModel, Tool, Toolkit } from "effect/ai"
+import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Context, Effect, Option, Ref, Schema, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
@@ -62,7 +62,19 @@ interface Scenario {
   readonly captureTraceContent?: boolean
   /** `CurrentTraceContent` where the loop runs (off by default). */
   readonly ambientTraceContent?: boolean
+  /** The provider refuses its first request over an image (an `InvalidRequestError` naming one). */
+  readonly refuseFirst?: boolean
+  /** The request's `onMediaRejected` (answers false by default). */
+  readonly onMediaRejected?: (reason: string) => Effect.Effect<boolean>
+  /** Runs on every `plan` call, with the step it plans. */
+  readonly planned?: (step: number) => Effect.Effect<void>
 }
+
+/** A provider's refusal of a request over an image. */
+const imageRefusal = AiError.make({
+  module: "Conformance", method: "generateText",
+  reason: new AiError.InvalidRequestError({ description: "messages.0.content.0.image: the image could not be processed" }),
+})
 
 interface Observed {
   readonly result: RunResult
@@ -90,7 +102,9 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     generateText: (options) => Ref.modify(calls, (all): [number, ReadonlyArray<unknown>] => [all.length, [...all, options.toolChoice]]).pipe(
       Effect.tap(() => scenario.providerCall ?? Effect.void),
       Effect.tap(() => Effect.service(CurrentTraceContent).pipe(Effect.flatMap((capture) => Ref.update(traceContent, (all) => [...all, capture])))),
-      Effect.map((index) => [...(scenario.script[index] ?? textReply("done"))]),
+      Effect.flatMap((index) => scenario.refuseFirst === true && index === 0
+        ? Effect.fail(imageRefusal)
+        : Effect.succeed([...(scenario.script[index] ?? textReply("done"))])),
     ),
     streamText: () => Stream.die("the conformance provider does not stream"),
   })
@@ -137,9 +151,12 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     handlers: Context.merge(handlers, Context.make(LanguageModel.LanguageModel, model)) as Context.Context<never>,
     limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: false, requireCompletion: false },
     initial: Option.fromNullishOr(scenario.initial),
-    plan: () => Effect.succeed({ model: Option.none(), system: "conformance", messages: [{ role: "user", content: "go" }], toolChoice: Option.fromNullishOr(scenario.toolChoice) }),
+    plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(Effect.as({
+      model: Option.none(), system: "conformance", messages: [{ role: "user" as const, content: "go" }], toolChoice: Option.fromNullishOr(scenario.toolChoice),
+    })),
     dispatch: (step) => Ref.update(dispatches, (all) => [...all, step]).pipe(Effect.andThen(scenario.dispatch?.(step) ?? Effect.void)),
     record,
+    onMediaRejected: scenario.onMediaRejected ?? (() => Effect.succeed(false)),
     completion: (info) => scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete),
     steering: Effect.succeed(Option.none()),
     correctives: Option.none(),
@@ -166,8 +183,10 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * The `StepLoop` contract, as checks any implementation must pass:
  * per-step event order, recorded results on `step.ended`, planned batches
  * without a provider call, forced tool choices, awaiting verdicts, no call
- * after completion, the run's usage, the step cap, and the request's
- * `captureTraceContent` provided to its model calls as `CurrentTraceContent`.
+ * after completion, the run's usage, the step cap, the request's
+ * `captureTraceContent` provided to its model calls as `CurrentTraceContent`,
+ * and a request refused over an image planned again and sent once more
+ * when `onMediaRejected` answers true, failing the step when it answers false.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
   {
@@ -278,6 +297,38 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
         `with captureTraceContent on under a caller's off, the model calls read ${JSON.stringify(on.traceContent)}`)
       yield* expect("trace-content", off.traceContent.length === 2 && off.traceContent.every((capture) => !capture),
         `with captureTraceContent off under a caller's on, the model calls read ${JSON.stringify(off.traceContent)}`)
+    }),
+  },
+  {
+    name: "a request refused over an image is planned again and sent once more when onMediaRejected answers true",
+    run: Effect.gen(function* () {
+      const reasons = yield* Ref.make<ReadonlyArray<string>>([])
+      const plans = yield* Ref.make<ReadonlyArray<number>>([])
+      const { dispatches, providerCalls, result } = yield* observe(loop, {
+        script: [], refuseFirst: true,
+        onMediaRejected: (reason) => Ref.update(reasons, (all) => [...all, reason]).pipe(Effect.as(true)),
+        planned: (step) => Ref.update(plans, (all) => [...all, step]),
+      })
+      const asked = yield* Ref.get(reasons)
+      const planned = (yield* Ref.get(plans)).filter((step) => step === 0).length
+      yield* expect("media-rejected", asked.length === 1 && asked.every((reason) => /image/i.test(reason)), `onMediaRejected was asked ${JSON.stringify(asked)}`)
+      yield* expect("media-rejected", planned === 2, `step 0 was planned ${planned} times, not twice`)
+      yield* expect("media-rejected", dispatches.join() === "0,0" && providerCalls.length === 2 && result.outcome === "completed",
+        `dispatches ${dispatches.join()}, ${providerCalls.length} provider calls, ${result.outcome}`)
+    }),
+  },
+  {
+    name: "a request refused over an image fails the step when onMediaRejected answers false",
+    run: Effect.gen(function* () {
+      const asked = yield* Ref.make(0)
+      const calls = yield* Ref.make(0)
+      const result = yield* Effect.result(observe(loop, {
+        script: [], refuseFirst: true, providerCall: Ref.update(calls, (count) => count + 1),
+        onMediaRejected: () => Ref.update(asked, (count) => count + 1).pipe(Effect.as(false)),
+      }))
+      const [rejections, sent] = [yield* Ref.get(asked), yield* Ref.get(calls)]
+      yield* expect("media-rejected", result._tag === "Failure" && rejections === 1 && sent === 1,
+        `${result._tag} after ${sent} provider calls, onMediaRejected asked ${rejections} times`)
     }),
   },
   {

@@ -14,6 +14,7 @@ import {
   mediaSlotsOf,
   normalizeMedia,
   sniffImageType,
+  toolResultMedia,
 } from "./media.entity.functions.js"
 import { MEDIA_LIMITS, Media } from "./media.entity.js"
 import type { AttachmentRejected } from "./media.entity.js"
@@ -170,5 +171,33 @@ describe("images inside JSON values", () => {
     expect(elided).toEqual({ text: "see", parts: [{ ...image, data: image.fingerprint }, { type: "text", text: pixelPng }] })
     const plain = { a: [1, { b: "c" }], d: null }
     expect(elideMediaData(plain)).toBe(plain)
+  })
+})
+
+describe("a tool result's images, checked when memory writes it", () => {
+  test("a good image keeps its slot; one whose data or stated fields are wrong is an [image unavailable] line", async () => {
+    const [a, b] = [await run(mediaFromBase64(pixelPng, { name: "a.png" })), await run(mediaFromBase64(pixelGif))]
+    const lying = { ...b, mediaType: "image/png" as const }
+    const value = { good: a, lying, broken: { ...a, data: "aGVsbG8gd29ybGQ=" } }
+    const slots = mediaSlotsOf(value)
+    const checked = await run(toolResultMedia(value, slots))
+    expect(checked.slots.map((slot) => slot.path)).toEqual([["good"]])
+    expect(checked.labels).toEqual([
+      expect.stringMatching(/^\[image unavailable: the bytes are not a PNG, JPEG, GIF or WebP image\]$/),
+      "[image unavailable: its type, size or fingerprint is not what its data gives; build it with mediaFromBytes]",
+    ])
+    const nowhere = await run(toolResultMedia({}, [slots[0]!]))
+    expect(nowhere).toEqual({ slots: [], labels: ["[image unavailable: the result holds no such image]"] })
+  })
+
+  test("an image named twice is sent once; past MEDIA_LIMITS.toolResultImages an image is its label line", async () => {
+    const a = await run(mediaFromBase64(pixelPng, { name: "a.png" }))
+    const twice = { first: a, again: a }
+    expect(await run(toolResultMedia(twice, mediaSlotsOf(twice)))).toEqual({ slots: [mediaSlotsOf(twice)[0]!], labels: [] })
+    const distinct = await Promise.all(Array.from({ length: MEDIA_LIMITS.toolResultImages + 2 }, (_, index) => run(mediaFromBytes(png(1, index + 1), { name: `${index}.png` }))))
+    const many = { images: distinct }
+    const checked = await run(toolResultMedia(many, mediaSlotsOf(many)))
+    expect(checked.slots.map((slot) => slot.path)).toEqual(distinct.slice(0, MEDIA_LIMITS.toolResultImages).map((_, index) => ["images", index]))
+    expect(checked.labels).toEqual(distinct.slice(MEDIA_LIMITS.toolResultImages).map(mediaLabel))
   })
 })

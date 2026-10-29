@@ -4,10 +4,11 @@ import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import { Effect, Option, Redacted } from "effect"
 import type { Context, Scope } from "effect"
-import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, modelRequestDescriptorOf } from "@xandreed/core"
+import { AuthError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, formatModelSelection, modelRequestDescriptorOf } from "@xandreed/core"
 import type { Credential, ModelCallPolicy, ModelSelection } from "@xandreed/core"
 import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
-import { makeCompatLanguageModel } from "./compat.js"
+import { makeCompatLanguageModel, promptWithImageLabels } from "./compat.js"
+import { imageInputFor, usesOpenCodeResponses } from "./modelCatalog.js"
 import { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL } from "./openAiCodex.js"
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
@@ -34,13 +35,28 @@ export const OPENCODE_RESPONSES_API_URL = "https://opencode.ai/zen/v1"
 /** Gemini through its OpenAI-compatible chat completions (Bearer API key). */
 export const GOOGLE_CHAT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
 
-/** Pure protocol routing decision; provider details stay inside this adapter. */
-export const usesOpenCodeResponses = (modelId: string): boolean => /^gpt-/i.test(modelId)
+export { usesOpenCodeResponses }
 
 export interface BuiltProvider {
   readonly svc: LanguageModel.LanguageModel
   /** Anthropic subscription auth requires the Claude Code system block first. */
   readonly prependClaudeCode: boolean
+  /** The route sends images; when it does not, `buildProvider` has the model send them as label lines. */
+  readonly images: boolean
+}
+
+/** Every call of the model sent with its prompt's file parts as label lines (`promptWithImageLabels`). */
+const withImageLabels = (model: LanguageModel.LanguageModel): LanguageModel.LanguageModel => {
+  const relabeled = (options: unknown): unknown => ({
+    ...(options as Record<string, unknown>),
+    prompt: promptWithImageLabels(Prompt.make((options as { readonly prompt: Prompt.RawInput }).prompt)),
+  })
+  return {
+    ...model,
+    generateText: ((options: unknown) => model.generateText(relabeled(options) as never)) as never,
+    generateObject: ((options: unknown) => model.generateObject(relabeled(options) as never)) as never,
+    streamText: ((options: unknown) => model.streamText(relabeled(options) as never)) as never,
+  }
 }
 
 // Anthropic OAuth authenticates as a subscription: Bearer + Claude Code beta
@@ -192,6 +208,7 @@ const endpointModel = (
   url: string,
   key: Option.Option<string>,
   standardOnly: boolean,
+  images: boolean,
   transport: Transport,
 ): Effect.Effect<BuiltProvider> =>
   makeCompatLanguageModel({
@@ -199,9 +216,10 @@ const endpointModel = (
     chatUrl: chatCompletionsUrl(url),
     model: selection.modelId,
     standardOnly,
+    images,
     ...compatFetch(transport),
     ...Option.match(key, { onNone: () => ({}), onSome: (apiKey) => ({ apiKey }) }),
-  }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
+  }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false, images })))
 
 /** A configured endpoint first, then a `local` credential's URL, then the built-in providers. */
 const buildProviderService = (
@@ -212,10 +230,10 @@ const buildProviderService = (
   Effect.flatMap(Effect.all({ endpoints: Effect.service(CurrentModelEndpoints), transport: Effect.serviceOption(ModelsTransport) }), ({ endpoints, transport }) => {
     const endpoint = Option.fromNullishOr(endpoints[selection.provider])
     if (Option.isSome(endpoint)) {
-      return endpointModel(selection, endpoint.value.url, endpointKey(endpoint.value, key), endpoint.value.standardOnly ?? true, transport)
+      return endpointModel(selection, endpoint.value.url, endpointKey(endpoint.value, key), endpoint.value.standardOnly ?? true, endpoint.value.images ?? false, transport)
     }
     if (credential?.type === "local" && credential.baseUrl !== undefined) {
-      return endpointModel(selection, credential.baseUrl, Option.none(), true, transport)
+      return endpointModel(selection, credential.baseUrl, Option.none(), true, false, transport)
     }
     return buildBuiltInProvider(selection, credential, key, transport)
   })
@@ -227,6 +245,7 @@ const buildBuiltInProvider = (
   transport: Transport,
 ): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => {
   const oauth = credential?.type === "oauth"
+  const images = imageInputFor(formatModelSelection(selection))
   if (selection.provider === "opencode") {
     if (key === undefined) return Effect.fail(missingKey(selection))
     if (usesOpenCodeResponses(selection.modelId)) {
@@ -242,7 +261,7 @@ const buildBuiltInProvider = (
                 config: openCodeResponsesConfig(cacheKey, policy),
               }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
             ),
-            Effect.map((svc) => ({ svc, prependClaudeCode: false })),
+            Effect.map((svc) => ({ svc, prependClaudeCode: false, images })),
           ),
         ),
       )
@@ -252,8 +271,9 @@ const buildBuiltInProvider = (
       chatUrl: OPENCODE_CHAT_URL,
       apiKey: Redacted.value(key),
       model: selection.modelId,
+      images,
       ...compatFetch(transport),
-    }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
+    }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false, images })))
   }
   if (selection.provider === "google") {
     return key === undefined
@@ -267,8 +287,9 @@ const buildBuiltInProvider = (
           standardOnly: true,
           // Gemini's completion_tokens may leave its thoughts out: its reasoning reads 0.
           usage: { reasoning: false },
+          images,
           ...compatFetch(transport),
-        }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false })))
+        }).pipe(Effect.map((svc) => ({ svc, prependClaudeCode: false, images })))
   }
   if (selection.provider === "anthropic") {
     if (key === undefined) return Effect.fail(missingKey(selection))
@@ -285,7 +306,7 @@ const buildBuiltInProvider = (
           Effect.provideService(AnthropicClient.AnthropicClient, client),
         ),
       ),
-      Effect.map((svc) => ({ svc, prependClaudeCode: oauth })),
+      Effect.map((svc) => ({ svc, prependClaudeCode: oauth, images })),
     )
   }
   if (selection.provider === "openai-codex") {
@@ -296,7 +317,7 @@ const buildBuiltInProvider = (
     }
     return codexWebSocketProxy(transport).pipe(
       Effect.flatMap((webSocketProxy) => makeOpenAiCodexLanguageModel({ model: selection.modelId, accessToken: key, accountId: accountId.value, webSocketProxy })),
-      Effect.map((svc) => ({ svc, prependClaudeCode: false })),
+      Effect.map((svc) => ({ svc, prependClaudeCode: false, images })),
     )
   }
   if (selection.provider === "openai") {
@@ -316,7 +337,7 @@ const buildBuiltInProvider = (
                 },
               }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, client)),
             ),
-            Effect.map((svc) => ({ svc, prependClaudeCode: false })),
+            Effect.map((svc) => ({ svc, prependClaudeCode: false, images })),
           ),
         )
   }
@@ -328,7 +349,12 @@ const buildBuiltInProvider = (
   )
 }
 
-/** Preserve adapter descriptors and describe the public configuration of SDK-backed models. */
+/**
+ * Preserve adapter descriptors and describe the public configuration of
+ * SDK-backed models. On a route that reads no images (`imageInputFor`, a
+ * configured endpoint's `images`), every request is sent with its images as
+ * label lines (`promptWithImageLabels`) instead of a provider error.
+ */
 export const buildProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
@@ -347,7 +373,7 @@ export const buildProvider = (
       const descriptor = { provider: selection.provider, model: selection.modelId, settings }
       return {
         ...built,
-        svc: describeModel(built.svc, modelRequestDescriptorOf(built.svc).pipe(Effect.map((existing) =>
+        svc: describeModel(built.images ? built.svc : withImageLabels(built.svc), modelRequestDescriptorOf(built.svc).pipe(Effect.map((existing) =>
           Option.match(existing, { onNone: () => descriptor, onSome: (value) => ({ ...value, provider: selection.provider }) }),
         ))),
       }

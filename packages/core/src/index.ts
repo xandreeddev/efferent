@@ -37,8 +37,9 @@ export {
   mediaSlotsOf,
   normalizeMedia,
   sniffImageType,
+  toolResultMedia,
 } from "./domain/media.entity.functions.js"
-export type { ImageSize, MediaDescription } from "./domain/media.entity.functions.js"
+export type { ImageSize, MediaDescription, ToolResultMedia } from "./domain/media.entity.functions.js"
 export { Failure } from "./domain/failure.entity.js"
 export { toFailure } from "./domain/failure.entity.functions.js"
 export { AgentFailure, AgentFailureCategory } from "./domain/agent-failure.entity.js"

@@ -1466,7 +1466,7 @@
     },
     {
       "name": "stream.fallback",
-      "description": "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). Journaled as `stream.fallback`.",
+      "description": "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). A refusal over an image (an `InvalidRequestError` that names one) is no stream failure: it has no fallback; the turn omits the images and sends the step again (`StepRequest.onMediaRejected`), or the step fails. Journaled as `stream.fallback`.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -1510,7 +1510,7 @@
           "message"
         ],
         "additionalProperties": true,
-        "description": "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). Journaled as `stream.fallback`."
+        "description": "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). A refusal over an image (an `InvalidRequestError` that names one) is no stream failure: it has no fallback; the turn omits the images and sends the step again (`StepRequest.onMediaRejected`), or the step fails. Journaled as `stream.fallback`."
       }
     },
     {
@@ -2649,6 +2649,57 @@
                                   "type": "null"
                                 }
                               ]
+                            },
+                            "media": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "type": {
+                                    "type": "string",
+                                    "enum": [
+                                      "media"
+                                    ]
+                                  },
+                                  "mediaType": {
+                                    "type": "string",
+                                    "enum": [
+                                      "image/png",
+                                      "image/jpeg",
+                                      "image/gif",
+                                      "image/webp"
+                                    ]
+                                  },
+                                  "data": {
+                                    "type": "string",
+                                    "minLength": 1,
+                                    "maxLength": 5242880,
+                                    "pattern": "^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$"
+                                  },
+                                  "fingerprint": {
+                                    "type": "string"
+                                  },
+                                  "bytes": {
+                                    "type": "integer",
+                                    "maximum": 3932160,
+                                    "exclusiveMinimum": 0
+                                  },
+                                  "name": {
+                                    "type": "string"
+                                  },
+                                  "alt": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "type",
+                                  "mediaType",
+                                  "data",
+                                  "fingerprint",
+                                  "bytes"
+                                ],
+                                "additionalProperties": true
+                              }
                             }
                           },
                           "required": [
@@ -2697,7 +2748,7 @@
     {
       "kind": "memory.tool-result",
       "writer": "Memory: the step loop's recorded tool results",
-      "sensitive": "Tool output, encoded and as the model saw it.",
+      "sensitive": "Tool output, encoded (a tool's images, inline as base64, included) and as the model saw it.",
       "fields": [
         {
           "name": "entry",
@@ -2721,7 +2772,7 @@
         },
         {
           "name": "body",
-          "type": "{ toolCallId, toolName, isError, encoded, view, viewVersion, subjects, artifacts, pinned }",
+          "type": "{ toolCallId, toolName, isError, encoded, view, viewVersion, subjects, artifacts, pinned, media, mediaNotes }",
           "required": true
         }
       ],
@@ -2770,6 +2821,16 @@
           "name": "pinned",
           "type": "boolean",
           "required": true
+        },
+        {
+          "name": "media",
+          "type": "Array<{ path, fingerprint, mediaType, bytes }>",
+          "required": false
+        },
+        {
+          "name": "mediaNotes",
+          "type": "Array<string>",
+          "required": false
         }
       ],
       "schema": {
@@ -2914,6 +2975,59 @@
               },
               "pinned": {
                 "type": "boolean"
+              },
+              "media": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          }
+                        ]
+                      }
+                    },
+                    "fingerprint": {
+                      "type": "string"
+                    },
+                    "mediaType": {
+                      "type": "string",
+                      "enum": [
+                        "image/png",
+                        "image/jpeg",
+                        "image/gif",
+                        "image/webp"
+                      ]
+                    },
+                    "bytes": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "fingerprint",
+                    "mediaType",
+                    "bytes"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "mediaNotes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             },
             "required": [
@@ -3243,8 +3357,8 @@
     },
     {
       "kind": "memory.compaction",
-      "writer": "Memory: the memory strategy's compactions (window, summary)",
-      "sensitive": "Conversation text: summaries and compact views.",
+      "writer": "Memory: the memory strategy's compactions (window, summary); the turn, when a provider refuses an image (`OmitMedia`)",
+      "sensitive": "Conversation text: summaries and compact views; an `OmitMedia`'s `reason` quotes the provider's error (up to 500 characters).",
       "fields": [
         {
           "name": "entry",
@@ -3285,7 +3399,7 @@
         },
         {
           "name": "action",
-          "type": "{ _tag, entries, texts } | { _tag, entry, preview } | { _tag, throughTurn, ledger } | { _tag, keepFromTurn, summary }",
+          "type": "{ _tag, entries, texts } | { _tag, entry, preview } | { _tag, throughTurn, ledger } | { _tag, keepFromTurn, summary } | { _tag, entries, reason }",
           "required": true
         }
       ],
@@ -3435,6 +3549,34 @@
                       "_tag",
                       "keepFromTurn",
                       "summary"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "object",
+                    "properties": {
+                      "_tag": {
+                        "type": "string",
+                        "enum": [
+                          "OmitMedia"
+                        ]
+                      },
+                      "entries": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "minLength": 1
+                        }
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "_tag",
+                      "entries",
+                      "reason"
                     ],
                     "additionalProperties": true
                   }

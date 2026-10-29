@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { LanguageModel, Prompt, Toolkit } from "effect/ai"
+import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Context, Effect, Option, Ref, Stream } from "effect"
 import { addUsage, CurrentAgentStep, CurrentTraceContent, extractUsage, HarnessError, makeTurnEvents, makeTurnTasks, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, zeroUsage } from "@xandreed/core"
@@ -24,32 +24,41 @@ const minimalLoop = StepLoop.of({
       const info: StepInfo = { stepIndex: index, activeTools, lastUsage: Option.none() }
       const planned = index === 0 ? request.initial : Option.none()
       yield* request.events.publish({ _tag: "step.started", step: index, planned: Option.isSome(planned), activeTools })
-      const plan = Option.isSome(planned) ? Option.none() : Option.some(yield* request.plan(info))
-      const provider = Option.isSome(planned)
-        ? yield* LanguageModel.make({
-          generateText: () => Effect.succeed([
-            ...planned.value.calls.map((call, position) => ({ type: "tool-call" as const, id: `planned:${position}`, name: call.name, params: call.params, providerExecuted: false })),
-            { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } } },
-          ]),
-          streamText: () => Stream.empty,
+      // One attempt: plan, check the dispatch, call. A refusal over an image is attempted once more after
+      // onMediaRejected answers true.
+      const attempt = Effect.gen(function* () {
+        const plan = Option.isSome(planned) ? Option.none() : Option.some(yield* request.plan(info))
+        const provider = Option.isSome(planned)
+          ? yield* LanguageModel.make({
+            generateText: () => Effect.succeed([
+              ...planned.value.calls.map((call, position) => ({ type: "tool-call" as const, id: `planned:${position}`, name: call.name, params: call.params, providerExecuted: false })),
+              { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } } },
+            ]),
+            streamText: () => Stream.empty,
+          })
+          : Option.getOrElse(Option.flatMap(plan, (value) => value.model), () => model)
+        const prompt = Option.match(plan, {
+          onNone: () => Prompt.empty,
+          onSome: (value) => Prompt.concat(Prompt.make([{ role: "system", content: value.system }]), Prompt.make(toPromptMessages(value.messages) as Prompt.RawInput)),
         })
-        : Option.getOrElse(Option.flatMap(plan, (value) => value.model), () => model)
-      const prompt = Option.match(plan, {
-        onNone: () => Prompt.empty,
-        onSome: (value) => Prompt.concat(Prompt.make([{ role: "system", content: value.system }]), Prompt.make(toPromptMessages(value.messages) as Prompt.RawInput)),
+        const toolChoice = Option.flatMap(plan, (value) => value.toolChoice)
+        if (Option.isSome(plan)) yield* request.dispatch(index, {
+          prompt, tools: Object.values(toolkit.tools), toolChoice: Option.getOrElse(toolChoice, () => "auto"), model: provider,
+        })
+        // The tools declare no dependencies: the call needs no services (`Tool.Any` widens them to `any`).
+        const generated: Effect.Effect<{ readonly content: ReadonlyArray<unknown> }, unknown> = provider.generateText({ prompt, toolkit, ...Option.match(toolChoice, { onNone: () => ({}), onSome: (choice) => ({ toolChoice: choice }) }) }) as never
+        return yield* generated.pipe(
+          // The run's trace content switch, for the model call to read.
+          Effect.provideService(CurrentTraceContent, request.captureTraceContent),
+          Effect.provide(handlers),
+          Effect.provideService(CurrentAgentStep, Option.some(index)),
+        )
       })
-      const toolChoice = Option.flatMap(plan, (value) => value.toolChoice)
-      if (Option.isSome(plan)) yield* request.dispatch(index, {
-        prompt, tools: Object.values(toolkit.tools), toolChoice: Option.getOrElse(toolChoice, () => "auto"), model: provider,
-      })
-      // The tools declare no dependencies: the call needs no services (`Tool.Any` widens them to `any`).
-      const generated: Effect.Effect<{ readonly content: ReadonlyArray<unknown> }, unknown> = provider.generateText({ prompt, toolkit, ...Option.match(toolChoice, { onNone: () => ({}), onSome: (choice) => ({ toolChoice: choice }) }) }) as never
-      const response = yield* generated.pipe(
-        // The run's trace content switch, for the model call to read.
-        Effect.provideService(CurrentTraceContent, request.captureTraceContent),
-        Effect.provide(handlers),
-        Effect.provideService(CurrentAgentStep, Option.some(index)),
-        Effect.mapError((error) => new HarnessError({ code: "loop.failed", message: String(error) })),
+      const response = yield* attempt.pipe(
+        Effect.catch((error) => !Option.isSome(planned) && AiError.isAiError(error) && error.reason._tag === "InvalidRequestError" && /image/i.test(error.reason.message)
+          ? request.onMediaRejected(error.reason.message).pipe(Effect.flatMap((retry) => retry ? attempt : Effect.fail(error)))
+          : Effect.fail(error)),
+        Effect.mapError((error) => error instanceof HarnessError ? error : new HarnessError({ code: "loop.failed", message: String(error) })),
       )
       const content: ReadonlyArray<unknown> = response.content
       const entries = yield* request.record(index, responseToAgentMessages(content))
@@ -107,6 +116,7 @@ const runWith = (model: LanguageModel.LanguageModel, options: { readonly streami
     plan: () => Effect.succeed({ model: Option.none(), system: "sys", messages: [{ role: "user", content: "go" }], toolChoice: Option.none() }),
     dispatch: () => Effect.void,
     record: () => Effect.succeed([]),
+    onMediaRejected: () => Effect.succeed(false),
     // Complete after `steps` steps; a model stop ends the run earlier.
     completion: (info) => Effect.succeed({ complete: info.stepIndex + 1 >= steps, awaiting: [], facts: {} }),
     steering: Effect.succeed(Option.none()),

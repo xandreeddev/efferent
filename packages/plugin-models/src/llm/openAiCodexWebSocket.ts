@@ -70,6 +70,38 @@ export const normalizeOpenAiCodexWebSocketEvent = (value: unknown): unknown => {
     : event
 }
 
+/** `value` as a record, when it is one. */
+const recordOf = (value: unknown): Option.Option<Json> =>
+  typeof value === "object" && value !== null && !Array.isArray(value) ? Option.some(value as Json) : Option.none()
+const stringOf = (value: unknown): Option.Option<string> => typeof value === "string" ? Option.some(value) : Option.none()
+
+/**
+ * The OpenAI error body of an `error` frame that refuses the request, which
+ * the HTTP Responses endpoint would answer with a 400: the frame's status is
+ * 400, its error's type or code is `invalid_request_error`, or its message
+ * names an image. The error is the frame's `error` object, or the frame
+ * itself (the Responses stream's own `error` event). Any other frame: none.
+ */
+export const openAiCodexRefusal = (event: unknown): Option.Option<Json> => Option.flatMap(
+  Option.filter(recordOf(event), (frame) => frame["type"] === "error"),
+  (frame) => {
+    const error = Option.getOrElse(recordOf(frame["error"]), () => frame)
+    const message = Option.getOrElse(stringOf(error["message"]), () => "")
+    const type = stringOf(error["type"])
+    const code = stringOf(error["code"])
+    const refused = frame["status"] === 400 || /image/i.test(message)
+      || Option.contains(type, "invalid_request_error") || Option.contains(code, "invalid_request_error")
+    return refused
+      ? Option.some({ error: {
+        message: message.length > 0 ? message : "the request was refused",
+        type: Option.getOrElse(Option.filter(type, (value) => value !== "error"), () => "invalid_request_error"),
+        code: Option.getOrNull(code),
+        param: Option.getOrNull(stringOf(error["param"])),
+      } })
+      : Option.none()
+  },
+)
+
 export const isOpenAiCodexControlEvent = (type: unknown): boolean =>
   typeof type === "string" && (type.startsWith("codex.") || type === "responsesapi.websocket_timing")
 
@@ -158,7 +190,11 @@ const transportFailure = (request: HttpClientRequest.HttpClientRequest, cause: u
  * reasoning, tool calls, tool results, usage, and errors keep their standard
  * Effect representations instead of being reimplemented here. `proxy` is how
  * the socket reaches ChatGPT (`ModelsTransport.webSocketAgent`); `None`
- * connects directly. A route this runtime cannot use fails every request. */
+ * connects directly. A route this runtime cannot use fails every request.
+ * The response is the stream once the first event arrives, unless that
+ * event is an `error` refusing the request (`openAiCodexRefusal`): the
+ * request then fails with a 400 status and the OpenAI error body, as the
+ * HTTP endpoint answers it, so a refused image is an `InvalidRequestError`. */
 export const makeOpenAiCodexWebSocketHttpClient = (proxy: Option.Option<WebSocketProxy>) => HttpClient.make(
   (request, url, signal) => Option.match(Option.flatMap(proxy, routeMismatch), {
     onSome: (why) => Effect.fail(transportFailure(request, new Error(why))),
@@ -186,22 +222,33 @@ export const makeOpenAiCodexWebSocketHttpClient = (proxy: Option.Option<WebSocke
         headers["x-client-request-id"] = requestId
 
         const socket = openSocket(websocketUrl(url), headers, proxy)
+        // `connecting` until the request is sent, `sent` until its first event
+        // decides the response, then `settled`.
         const state: {
-          settled: boolean
+          phase: "connecting" | "sent" | "settled"
           controller?: ReadableStreamDefaultController<Uint8Array>
-        } = { settled: false }
+        } = { phase: "connecting" }
         const stream = new ReadableStream<Uint8Array>({
           start: (value) => {
             state.controller = value
           },
           cancel: () => socket.close(1000, "cancelled"),
         })
+        const respond = (response: Response) => {
+          state.phase = "settled"
+          resolve(HttpClientResponse.fromWeb(safeRequest, response))
+        }
+        // The response is the event stream, from the first event on.
+        const streaming = () => {
+          if (state.phase === "sent") respond(new Response(stream, { status: 200, headers: { "content-type": "text/event-stream" } }))
+        }
 
         const fail = (cause: unknown) => {
-          if (!state.settled) {
-            state.settled = true
+          if (state.phase === "connecting") {
+            state.phase = "settled"
             reject(cause)
           } else {
+            streaming()
             state.controller?.error(cause)
           }
           socket.close(1011, "transport error")
@@ -212,17 +259,8 @@ export const makeOpenAiCodexWebSocketHttpClient = (proxy: Option.Option<WebSocke
         socket.onOpen(() => {
           Result.match(Result.try(() => {
             socket.send(JSON.stringify({ type: "response.create", ...body }))
-            state.settled = true
-            return (
-              HttpClientResponse.fromWeb(
-                safeRequest,
-                new Response(stream, {
-                  status: 200,
-                  headers: { "content-type": "text/event-stream" },
-                }),
-              )
-            )
-          }), { onFailure: fail, onSuccess: resolve })
+            state.phase = "sent"
+          }), { onFailure: fail, onSuccess: () => undefined })
         })
         socket.onMessage((data) => {
           Result.match(Result.try(() => {
@@ -234,6 +272,15 @@ export const makeOpenAiCodexWebSocketHttpClient = (proxy: Option.Option<WebSocke
             // Pi consumes these out-of-band; the Effect model decoder should
             // see only the standard response stream vocabulary.
             if (isOpenAiCodexControlEvent(type)) return
+            // A request refused before any event is a 400, as over HTTP.
+            const refused = state.phase === "sent" ? openAiCodexRefusal(parsed) : Option.none()
+            if (Option.isSome(refused)) {
+              respond(new Response(JSON.stringify(refused.value), { status: 400, headers: { "content-type": "application/json" } }))
+              signal.removeEventListener("abort", abort)
+              socket.close(1000, "refused")
+              return
+            }
+            streaming()
             if (type === "error") {
               fail(new Error(JSON.stringify(parsed)))
               return
@@ -254,7 +301,7 @@ export const makeOpenAiCodexWebSocketHttpClient = (proxy: Option.Option<WebSocke
       catch: (cause) => transportFailure(request, cause),
     }),
   }),
-)
+).pipe(HttpClient.filterStatusOk)
 
 /** The subscription client connecting directly, with no proxy. */
 export const OpenAiCodexWebSocketHttpClient = makeOpenAiCodexWebSocketHttpClient(Option.none())

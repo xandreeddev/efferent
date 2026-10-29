@@ -12,6 +12,9 @@ import { Context, Schema } from "effect"
  * prints as `<redacted>` in errors and graph fingerprints; JSON
  * configuration names an environment variable in `apiKeyEnv` instead.
  * `standardOnly` (default true) sends only standard chat-completions fields.
+ * `images` (default false) says its models read images: a user's images are
+ * then sent as `image_url` parts, and a tool result's in one user message
+ * after the tool results; without it they are label lines.
  * The endpoint's usage is read in full: cache reads and writes from
  * `prompt_tokens_details`, reasoning from `completion_tokens_details`.
  */
@@ -23,6 +26,7 @@ export const ModelEndpoint = Schema.Struct({
   ]).annotate({ message: "apiKey is a string or a Redacted string" })),
   apiKeyEnv: Schema.optionalKey(Schema.String),
   standardOnly: Schema.optionalKey(Schema.Boolean),
+  images: Schema.optionalKey(Schema.Boolean),
   // An unknown key is named, never its value: a misspelt `apiKey` holds a secret.
 }).annotate({ messageUnexpectedKey: "not an option of a model endpoint" })
 export type ModelEndpoint = typeof ModelEndpoint.Type

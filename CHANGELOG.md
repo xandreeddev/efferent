@@ -267,6 +267,52 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   0.13 reader drops a message's images and fails on a message without text;
   a replay of a request with images diverges there (`request.diverged`).
   Logs written before 0.14.0 decode unchanged in 0.14.0.
+- **`@xandreed/plugin-memory-window`, `@xandreed/plugin-memory-summary`:
+  `media` defaults to `"inline"`** (it was `"none"`). Earlier turns' images,
+  a user's and those tools return, are now sent while they fit `maxImages`
+  and `maxMediaChars`, newest turn first; the current turn's are sent in both
+  modes, as before. Stored `request.prepared` headers record
+  `"mode":"inline"` (a golden of them sees it). Migration: set
+  `media: "none"` to show earlier turns' images as label lines, or
+  `maxMediaChars: 0` for models that read text only.
+- **`@xandreed/core`: `ToolViewDefinition.media` is required**, an
+  `Option` of the selector of the images the model is sent with a result.
+  Views built with `defineTool` get it (`None`: every image the result
+  holds). Migration: a `ToolViewDefinition` written by hand adds
+  `media: Option.none()`.
+- **`@xandreed/core`: `StepRequest.onMediaRejected` is required**:
+  `(reason) => Effect<boolean, HarnessError>`, called by the step loop when
+  a provider refuses a request over an image. `stepRequestOf` provides it.
+  Migration: a `StepRequest` built by hand (a fake in a test, a host's own
+  turn) adds `onMediaRejected: () => Effect.succeed(false)`; a custom
+  `StepLoop` calls it on an `InvalidRequestError` that names an image and,
+  when it answers true, plans the step again and sends it once more.
+  `stepLoopConformance` has two new checks for it, so a `StepLoop` that
+  ignores the hook fails the kit. The next `plan` of that step, that one
+  only, keeps the refused request's model choice, system prompt and
+  directive; any other `plan` of a step asks the policy again.
+- **`@xandreed/core`: `CompactionAction` gains `OmitMedia`.** Code that
+  matches every action exhaustively adds the case. A step that is sent again
+  after an image refusal publishes `context.built` and stores
+  `request.prepared` a second time for that step; the dispatch check reads
+  the latest header, as `replayModelRequest` does. A 0.13 reader fails on a
+  log holding an `OmitMedia` compaction, and drops a tool result's `media`
+  slots.
+- **`@xandreed/plugin-agent-loop`: a streamed step refused over an image no
+  longer falls back** to a settled call (`stream.fallback`): an
+  `InvalidRequestError` that names an image, before the first part, goes to
+  `onMediaRejected` (the step is sent again without the images, or fails).
+  A refusal after the first part fails the step, as any failure there did.
+- **`@xandreed/core`: `memoryConformance` has a new `tool-media` check**: a
+  tool result's images (`ToolView.media` slots) are stored once, survive a
+  reopen, and the current turn's are built as the result's images. A host's
+  strategy that renders tool results from their view text alone, or one set
+  to send no images, fails it.
+- **`@xandreed/plugin-tool-discovery`: the raw view of a result holding
+  images elides their data.** A tool without a view whose result holds
+  `Media` values shows each with its `data` replaced by its fingerprint in
+  the result's text, and sends the images as images; the text no longer
+  carries the base64.
 - **`@xandreed/core`: `skillsFromFiles` reads a whole tree, and names
   references by path.** It is now `readSkillFiles` made strict (below):
   - A reference's id is its path below the skill's directory
@@ -808,14 +854,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   images are stored inline in `turn.started` (the event reference lists
   `turn.started.userMessage.attachments`) and sent to the model as effect/ai
   `file` parts (an empty text part is left out): image blocks on Anthropic,
-  `input_image` on the Responses routes; chat-completions routes
-  (`toChatMessages` in `@xandreed/plugin-models`) send the text and a label
-  line per image for now, so a message of images alone is never empty. The
+  `input_image` on the Responses routes, `image_url` parts on a
+  chat-completions route that reads images (below); a route that does not
+  sends the text and a label line per image, so a message of images alone is
+  never empty. The
   current turn's images are sent first, within `maxImages` and the new
   `maxChars` (with the defaults a message's own images always fit;
   `maxMediaChars: 0` sends none, for models that read text only); memory's
   `media: "inline"` sends earlier turns' too, newest turn first and a whole
-  turn at a time, and `none` (still the default) shows them as label lines.
+  turn at a time (the default, below), and `none` shows them as label lines.
   A request sends at most `MEDIA_LIMITS.requestImages` images. Token
   estimates count an image as 1 600 tokens; context fingerprints,
   `queryLog`, transcripts, digests, ledgers and the loop's captured trace
@@ -832,6 +879,69 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Docs: `docs/framework.md` "Images and multi-part messages", the website's
   SDK and sessions page, a provider table of the routes that take images,
   and the new kit checks on the conformance page.
+- `@xandreed/core`: images in tool results. A tool returns `Media` values
+  in its success value; its view's new `media` selector
+  (`ToolViewInput.media`, filled by `defineTool`) picks the ones the model is
+  sent with the result, every one by default (`Tool.toModelOutput` is not
+  used). `ToolView.media` carries them as `MediaSlot`s into the encoded
+  result, and the memory log's `ToolResult` stores them as `media`, only
+  when there are some, so each image is stored once, in the result.
+  `toolResultMedia` (with `ToolResultMedia`) checks them when the result is
+  written: an image whose data is not what it states is an `[image
+  unavailable: …]` line in the stored view, one past
+  `MEDIA_LIMITS.toolResultImages` (4) or `requestChars` its label line (both
+  kept as the result's `mediaNotes` too), and a failed call sends none.
+  `renderLog` sends the current turn's tool images after its attachments,
+  newest result first and a whole result at a time, and earlier turns' (in
+  `inline` mode) with their turn's attachments; a result shown through a
+  compaction, a digest or a spill's preview shows its `mediaNotes`, then its
+  images as label lines.
+  `ToolResultPart.media` holds a rendered result's images, and
+  `toPromptMessages` turns them into the result's effect/ai `modelOutput`
+  (its text, left out when empty, then a `file` part per image): an image
+  block inside Anthropic's `tool_result`, `input_image` inside the Responses
+  routes' `function_call_output`.
+- `@xandreed/core`, `@xandreed/plugin-agent-loop`: recovery from a refused
+  image. `CompactionAction.OmitMedia { entries, reason }` shows the named
+  entries' images as label lines, whatever strategy renders the log;
+  `entriesSendingMedia(entries, options)` names the entries whose images a
+  render sends. When a request fails with an `InvalidRequestError` that
+  names an image, the loop calls `StepRequest.onMediaRejected(reason)`
+  (`RunLoopOptions.onMediaRejected` for `runLoop`): `stepRequestOf` records
+  an `OmitMedia` of the images that request sent, and the step is planned
+  again (that plan keeps its model choice, system prompt and directive) and
+  sent once more. A streamed step does not fall back to a settled call over
+  such a refusal, and one that arrives after the first part is not sent
+  again. The loop counts the retry as
+  `engine.corrections{engine.kind="media-rejected"}`.
+- `@xandreed/plugin-models`: images per route. `ModelEndpoint.images`
+  (default false) says a configured endpoint's models read images;
+  `imageInputFor(selection)` says it for the built-in routes (Anthropic, the
+  Responses routes but `openai-codex:gpt-5.3-codex-spark`, Gemini; not
+  OpenCode's chat models); `ModelCatalogEntry.input` (`@xandreed/core`)
+  states it per catalog model, for the route the model is sent through
+  (`configuredModelCatalog(credentials, endpoints)`: a configured endpoint of
+  a built-in provider's name by its `images`, a `local` credential's URL as
+  text only). On `openai-codex`, an `error` event that refuses the request
+  before any other event fails it with a 400 and the OpenAI error body
+  (`openAiCodexRefusal`), as the HTTP endpoint does, so a refused image is an
+  `InvalidRequestError` there and not a malformed response. On a route that
+  reads none, `buildProvider` sends every image as its label line
+  (`promptWithImageLabels`, exported from `@xandreed/plugin-models/compat`;
+  `BuiltProvider.images` says which).
+  The chat-completions client (`CompatConfig.images`,
+  `toChatMessages(prompt, { images })`, `ChatMessageOptions`) sends a user's
+  images as `image_url` parts with `data:` URLs, and a tool result's in one
+  user message after the batch's tool messages, each result's captioned
+  `Images returned by <tool> (call <id>):`, merged with a user message that
+  follows (captioned `The user's message:` when it has images of its own);
+  without `images`, a tool result's images are label lines in its text.
+- Docs: `docs/framework.md` "Images and multi-part messages" covers tool
+  results, the per-route table for both kinds of image, the refused-image
+  recovery and the limits; the website's providers page ("Images", with an
+  endpoint's `images`), SDK page and conformance page; the roadmap (MCP
+  images, resizing, PDFs, a `MediaStore`). `verify:packages` sends a tool's
+  image through `toChatMessages` and `promptWithImageLabels` on Node.
 - `@xandreed/core`: skills from a tree of files.
   `readSkillFiles(files, { tools, maxReferenceBytes, rootName })` returns a
   `SkillTree`: every skill that loaded, with the directory of its

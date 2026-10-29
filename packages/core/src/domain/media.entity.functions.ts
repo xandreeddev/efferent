@@ -186,6 +186,51 @@ export const mediaAt = (value: unknown, slot: MediaSlot): Option.Option<Media> =
     Option.filter((media) => media.fingerprint === slot.fingerprint && media.mediaType === slot.mediaType && media.bytes === slot.bytes),
   )
 
+/** A tool result's images as memory records them: the slots it sends, and a label line for each image it does not. */
+export interface ToolResultMedia {
+  readonly slots: ReadonlyArray<MediaSlot>
+  readonly labels: ReadonlyArray<string>
+}
+
+interface MediaTally extends ToolResultMedia {
+  readonly fingerprints: ReadonlySet<string>
+  readonly chars: number
+}
+
+const unavailable = (reason: string): string => `[image unavailable: ${reason}]`
+
+const noTally: MediaTally = { slots: [], labels: [], fingerprints: new Set<string>(), chars: 0 }
+
+/**
+ * A tool result's images checked once, when memory writes the result (a
+ * provider refuses a request with a bad image, and every later request
+ * would carry it). In slot order, each slot must name an image of the
+ * encoded value, its data base64 of an image whose type, size and
+ * fingerprint are the ones it states (`normalizeMedia` gives them back
+ * unchanged); an image that fails is an `[image unavailable: <why>]` line.
+ * An image a slot already named is sent once. At most
+ * `MEDIA_LIMITS.toolResultImages` images are sent, within
+ * `MEDIA_LIMITS.requestChars` base64 characters together; one over that is
+ * its `mediaLabel` line.
+ */
+export const toolResultMedia = (encoded: unknown, slots: ReadonlyArray<MediaSlot>): Effect.Effect<ToolResultMedia> =>
+  Effect.reduce(slots, () => noTally, (tally, slot): Effect.Effect<MediaTally> =>
+    Option.match(mediaAt(encoded, slot), {
+      onNone: () => Effect.succeed({ ...tally, labels: [...tally.labels, unavailable("the result holds no such image")] }),
+      onSome: (media) => tally.fingerprints.has(media.fingerprint) ? Effect.succeed(tally) : normalizeMedia(media).pipe(Effect.match({
+        onFailure: (error): MediaTally => ({ ...tally, labels: [...tally.labels, unavailable(error.message)] }),
+        onSuccess: (checked): MediaTally => {
+          if (checked.data !== media.data || checked.fingerprint !== media.fingerprint || checked.mediaType !== media.mediaType || checked.bytes !== media.bytes) {
+            return { ...tally, labels: [...tally.labels, unavailable("its type, size or fingerprint is not what its data gives; build it with mediaFromBytes")] }
+          }
+          const fingerprints = new Set([...tally.fingerprints, media.fingerprint])
+          return tally.slots.length >= MEDIA_LIMITS.toolResultImages || tally.chars + media.data.length > MEDIA_LIMITS.requestChars
+            ? { ...tally, fingerprints, labels: [...tally.labels, mediaLabel(media)] }
+            : { ...tally, fingerprints, slots: [...tally.slots, slot], chars: tally.chars + media.data.length }
+        },
+      })),
+    })).pipe(Effect.map(({ slots: sent, labels }) => ({ slots: sent, labels })))
+
 /**
  * A JSON value with every image's `data` replaced by its fingerprint: what
  * text search, fingerprints, estimates and traces see of an image. Parts

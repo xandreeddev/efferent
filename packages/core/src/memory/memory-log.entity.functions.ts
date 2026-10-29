@@ -1,5 +1,5 @@
 import { Effect, Option, Schema } from "effect"
-import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
+import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaAt, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage, ToolResultPart, UserContentPart } from "../domain/message.entity.js"
@@ -44,19 +44,27 @@ export const entryId = (runId: string, index: number): EntryId => EntryIdSchema.
 const digestsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyMap<string, string> =>
   new Map(entries.flatMap((entry) => entry.body._tag === "ToolDigest" ? [[String(entry.body.entry), entry.body.text] as const] : []))
 
-/** What a strategy decided for one render: only its own compactions apply. */
+/**
+ * What a strategy decided for one render: only its own compactions apply,
+ * except `OmitMedia`, which applies whatever strategy recorded it (an image
+ * a provider refused stays refused).
+ */
 interface Applied {
   readonly views: ReadonlyMap<string, string>
   readonly cutTurn: number
   readonly preamble: Option.Option<AgentMessage>
   readonly ids: ReadonlyArray<EntryId>
+  /** Entries whose images are label lines. */
+  readonly omitted: ReadonlySet<string>
 }
 
 const appliedCompactions = (entries: ReadonlyArray<LogEntry>, strategy: string): Applied =>
   entries.reduce((applied: Applied, entry): Applied => {
-    if (entry.body._tag !== "Compaction" || entry.body.strategy !== strategy) return applied
+    if (entry.body._tag !== "Compaction") return applied
     const action: CompactionAction = entry.body.action
     const ids = [...applied.ids, entry.id]
+    if (action._tag === "OmitMedia") return { ...applied, ids, omitted: new Set([...applied.omitted, ...action.entries.map(String)]) }
+    if (entry.body.strategy !== strategy) return applied
     if (action._tag === "CompactViews") {
       return { ...applied, ids, views: new Map([...applied.views, ...action.entries.map((id, index) => [id, action.texts[index] ?? ""] as const)]) }
     }
@@ -70,7 +78,7 @@ const appliedCompactions = (entries: ReadonlyArray<LogEntry>, strategy: string):
     return action.keepFromTurn - 1 < applied.cutTurn ? { ...applied, ids } : {
       ...applied, ids, cutTurn: action.keepFromTurn - 1, preamble: Option.some(handoffToMessage(action.summary)),
     }
-  }, { views: new Map(), cutTurn: 0, preamble: Option.none(), ids: [] })
+  }, { views: new Map(), cutTurn: 0, preamble: Option.none(), ids: [], omitted: new Set<string>() })
 
 const toolCallIds = (message: AgentMessage): ReadonlyArray<string> =>
   message.role === "assistant" ? message.content.flatMap((part) => part.type === "tool-call" ? [part.toolCallId] : []) : []
@@ -103,16 +111,19 @@ export interface RenderOptions {
   /** Show recorded tool digests in place of the results they digest. */
   readonly digests: boolean
   /**
-   * How images reach the model. The current turn's attachments are sent as
-   * images first, in order, while they fit; `none` shows every earlier image
-   * as a `mediaLabel` line, `inline` sends earlier turns' images too, newest
-   * turn first and a whole turn at a time, while they fit. Together they stay
-   * within `maxImages` images (and never more than
-   * `MEDIA_LIMITS.requestImages`) and `maxChars` base64 characters; an image
-   * left out is a label line. With the memory plugins' defaults a message's
-   * own images always fit; `maxChars: 0` sends none (text only). An
-   * `ArtifactRef` is a reference line after its result's text in both modes,
-   * at most `maxImages` of them.
+   * How images reach the model: a user's attachments and the images tool
+   * results return (each result's slots, while it shows the view it was
+   * written with). The current turn's are sent as images first: its
+   * attachments in order, then its tool results' images, newest result
+   * first and a whole result at a time, while they fit. `none` shows every
+   * earlier turn's image as a `mediaLabel` line; `inline` sends earlier
+   * turns' images too, newest turn first and a whole turn at a time, while
+   * they fit. Together they stay within `maxImages` images (and never more
+   * than `MEDIA_LIMITS.requestImages`) and `maxChars` base64 characters; an
+   * image left out is a label line. With the memory plugins' defaults a
+   * message's own images always fit; `maxChars: 0` sends none (text only).
+   * An `ArtifactRef` is a reference line after its result's text in both
+   * modes, at most `maxImages` of them.
    */
   readonly media: { readonly mode: "none" | "inline"; readonly maxImages: number; readonly maxChars: number }
 }
@@ -143,49 +154,73 @@ interface RenderState {
 const userRoleMessage = (content: string): AgentMessage => ({ role: "user", content })
 const assistantMessage = (text: string): AgentMessage => ({ role: "assistant", content: [{ type: "text", text }] })
 
-/** An image of the log: the entry whose message holds it and its position there. */
+/** An image of the log: the entry whose message or result holds it and its position there. */
 const imageKey = (entry: LogEntry, index: number): string => `${entry.id}#${index}`
+
+/** One image a render may send, by its key. */
+interface LogImage {
+  readonly key: string
+  readonly media: Media
+}
 
 interface InlineChoice {
   readonly chosen: ReadonlySet<string>
   readonly images: number
   readonly chars: number
-  /** A turn did not fit: no older turn is sent inline. */
+  /** A group did not fit: nothing after it is sent inline. */
   readonly full: boolean
 }
 
 const noneChosen: InlineChoice = { chosen: new Set<string>(), images: 0, chars: 0, full: false }
 
+const charsOf = (images: ReadonlyArray<LogImage>): number => images.reduce((sum, image) => sum + image.media.data.length, 0)
+
+/** What one render decided before it folds: the compactions and digests that apply, the turns it keeps, the images it sends. */
+interface MediaPlan {
+  readonly applied: Applied
+  readonly digests: ReadonlyMap<string, string>
+  readonly kept: (entry: LogEntry) => boolean
+  /** The images an entry may send: none once its turn is dropped, its images omitted, or (a result) its view rewritten. */
+  readonly imagesOf: (entry: LogEntry) => ReadonlyArray<LogImage>
+  readonly inline: ReadonlySet<string>
+}
+
 /**
  * The images a render sends as images: the current turn's attachments, in
- * order, while they fit; then, in `inline` mode, each earlier kept turn's,
- * newest first, a whole turn at a time, until one does not fit. At most
- * `maxImages` of them, never more than `MEDIA_LIMITS.requestImages` (a
- * provider shrinks or refuses the images of a request that carries many),
- * within `maxChars`. Which images are sent changes only when a turn starts.
+ * order, each while it fits; its tool results' images, newest result first,
+ * a whole result at a time; then, in `inline` mode, each earlier kept
+ * turn's, newest first, a whole turn at a time. The first that does not fit
+ * ends the choice. At most `maxImages` of them, never more than
+ * `MEDIA_LIMITS.requestImages` (a provider shrinks or refuses the images of a
+ * request that carries many), within `maxChars`. Earlier turns' images
+ * change only when a turn starts or the current turn's no longer leave room.
  */
-const inlineImages = (entries: ReadonlyArray<LogEntry>, options: RenderOptions, kept: (entry: LogEntry) => boolean): ReadonlySet<string> => {
-  const turns = entries.flatMap((entry) => entry.body._tag === "TurnStarted" && kept(entry) && attachmentsOf(entry.body.userMessage).length > 0
-    ? [{ entry, images: attachmentsOf(entry.body.userMessage) }] : [])
-    .filter(({ entry }) => entry.turn === options.currentTurn || options.media.mode === "inline")
-    .sort((left, right) => right.entry.turn - left.entry.turn)
+const mediaPlan = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): MediaPlan => {
+  const applied = appliedCompactions(entries, options.strategy)
+  const digests = options.digests ? digestsOf(entries) : new Map<string, string>()
+  const kept = (entry: LogEntry): boolean => entry.turn > applied.cutTurn
+  const imagesOf = (entry: LogEntry): ReadonlyArray<LogImage> => {
+    const body = entry.body
+    if (!kept(entry) || applied.omitted.has(entry.id)) return []
+    if (body._tag === "TurnStarted") return attachmentsOf(body.userMessage).map((media, index) => ({ key: imageKey(entry, index), media }))
+    if (body._tag !== "ToolResult" || body.isError || applied.views.has(entry.id) || digests.has(entry.id)) return []
+    return (body.media ?? []).flatMap((slot, index) => Option.toArray(Option.map(mediaAt(body.encoded, slot), (media) => ({ key: imageKey(entry, index), media }))))
+  }
   const maxImages = Math.min(options.media.maxImages, MEDIA_LIMITS.requestImages)
-  const fits = (choice: InlineChoice, images: ReadonlyArray<Media>): boolean =>
-    choice.images + images.length <= maxImages && choice.chars + images.reduce((sum, media) => sum + media.data.length, 0) <= options.media.maxChars
-  return turns.reduce((choice: InlineChoice, { entry, images }): InlineChoice => {
-    if (choice.full) return choice
-    if (entry.turn === options.currentTurn) {
-      return images.reduce((current: InlineChoice, media, index): InlineChoice => current.full || !fits(current, [media]) ? { ...current, full: true } : {
-        ...current, chosen: new Set([...current.chosen, imageKey(entry, index)]), images: current.images + 1, chars: current.chars + media.data.length,
-      }, choice)
-    }
-    return fits(choice, images) ? {
-      ...choice,
-      chosen: new Set([...choice.chosen, ...images.map((_, index) => imageKey(entry, index))]),
-      images: choice.images + images.length,
-      chars: choice.chars + images.reduce((sum, media) => sum + media.data.length, 0),
-    } : { ...choice, full: true }
-  }, noneChosen).chosen
+  const take = (choice: InlineChoice, group: ReadonlyArray<LogImage>): InlineChoice =>
+    choice.full ? choice
+      : choice.images + group.length <= maxImages && choice.chars + charsOf(group) <= options.media.maxChars ? {
+        ...choice, chosen: new Set([...choice.chosen, ...group.map((image) => image.key)]), images: choice.images + group.length, chars: choice.chars + charsOf(group),
+      }
+        : { ...choice, full: true }
+  const current = entries.filter((entry) => entry.turn === options.currentTurn)
+  const attachments = current.flatMap((entry) => entry.body._tag === "TurnStarted" ? imagesOf(entry).map((image) => [image]) : [])
+  const results = current.flatMap((entry) => entry.body._tag === "ToolResult" ? [imagesOf(entry)] : []).filter((group) => group.length > 0).reverse()
+  const older = options.media.mode === "none" ? [] : entries.flatMap((entry) => entry.turn < options.currentTurn ? imagesOf(entry).map((image) => ({ turn: entry.turn, image })) : [])
+  const earlier = [...new Set(older.map((item) => item.turn))].sort((left, right) => right - left)
+    .map((turn) => older.filter((item) => item.turn === turn).map((item) => item.image))
+  const inline = [...attachments, ...results, ...earlier].reduce(take, noneChosen).chosen
+  return { applied, digests, kept, imagesOf, inline }
 }
 
 /**
@@ -204,13 +239,31 @@ const userMessageContent = (entry: LogEntry, message: UserMessage, inline: Reado
   return { role: "user", content: parts }
 }
 
+/**
+ * A tool result as the model is sent it: the text it shows (its write-time
+ * view, a compaction's, a digest's or a spill's preview), the write-time
+ * lines of the images it never sends (`mediaNotes`, unless that text holds
+ * them already, as the view does), a label line for each of its images not
+ * sent this time, then its artifacts' reference lines; the images sent ride
+ * as `media`. A result without images renders exactly as before.
+ */
+const toolResultPart = (entry: LogEntry, body: Extract<LogBody, { readonly _tag: "ToolResult" }>, text: string, options: RenderOptions, inline: ReadonlySet<string>): ToolResultPart => {
+  const images = (body.media ?? []).map((slot, index) => ({ key: imageKey(entry, index), slot, media: mediaAt(body.encoded, slot) }))
+  const sent = images.flatMap((image) => inline.has(image.key) ? Option.toArray(image.media) : [])
+  const notes = (body.mediaNotes ?? []).filter((line) => !text.includes(line))
+  const labels = [...notes, ...images.flatMap((image) => inline.has(image.key) ? [] : [mediaLabel(Option.getOrElse(image.media, () => image.slot))])]
+  const shown = labels.length === 0 ? text : [text, ...labels].filter((line) => line.length > 0).join("\n")
+  return {
+    type: "tool-result", toolCallId: body.toolCallId, toolName: body.toolName,
+    output: `${shown}${artifactLines(body.artifacts, options.media.maxImages)}`, isError: body.isError,
+    ...(sent.length === 0 ? {} : { media: sent }),
+  }
+}
+
 export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<AgentMessage> => {
-  const applied = appliedCompactions(entries, options.strategy)
-  const digests = options.digests ? digestsOf(entries) : new Map<string, string>()
+  const { applied, digests, kept, inline } = mediaPlan(entries, options)
   const pinned: ReadonlySet<string> = new Set(entries.flatMap((entry) => entry.body._tag === "ToolResult" && entry.body.pinned ? [String(entry.body.toolCallId)] : []))
-  const kept = (entry: LogEntry): boolean => entry.turn > applied.cutTurn
   const stepContext = options.stepContext === "none" ? [] : entries.filter((entry) => entry.body._tag === "StepContext" && entry.runId === options.currentRun).slice(-1)
-  const inline = inlineImages(entries, options, kept)
   const initial: RenderState = { out: [], lastText: new Map() }
   const body = entries.reduce((state: RenderState, entry): RenderState => {
     const b: LogBody = entry.body
@@ -232,11 +285,7 @@ export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptio
     if (b._tag === "ToolResult") {
       if (!kept(entry) && !b.pinned) return state
       const text = applied.views.get(entry.id) ?? digests.get(entry.id) ?? b.view
-      const part: ToolResultPart = {
-        type: "tool-result", toolCallId: b.toolCallId, toolName: b.toolName,
-        output: `${text}${artifactLines(b.artifacts, options.media.maxImages)}`, isError: b.isError,
-      }
-      const message: AgentMessage = { role: "tool", content: [part] }
+      const message: AgentMessage = { role: "tool", content: [toolResultPart(entry, b, text, options, inline)] }
       return { ...state, out: [...state.out, message] }
     }
     if (b._tag === "TurnEnded" && options.replies && kept(entry)) {
@@ -250,6 +299,16 @@ export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptio
   }, initial).out
   const tail: ReadonlyArray<AgentMessage> = stepContext.flatMap((entry) => entry.body._tag === "StepContext" ? [userRoleMessage(entry.body.text)] : [])
   return mergeToolMessages([...Option.toArray(applied.preamble), ...body, ...tail])
+}
+
+/**
+ * The entries whose images a render sends as images (a user's attachments,
+ * a tool result's): what an `OmitMedia` compaction names after a provider
+ * refused that request. Empty when the render sends no image.
+ */
+export const entriesSendingMedia = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<EntryId> => {
+  const { imagesOf, inline } = mediaPlan(entries, options)
+  return entries.flatMap((entry) => imagesOf(entry).some((image) => inline.has(image.key)) ? [entry.id] : [])
 }
 
 /**

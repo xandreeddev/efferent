@@ -49,9 +49,15 @@ Images are `Media` values (`src/domain/media.entity.ts`): base64 inline,
 checked from their bytes by `mediaFromBytes` / `mediaFromBase64` (the only
 image sniffing and header parsing in the repository), within `MEDIA_LIMITS`.
 A user's message carries them as `attachments`; `normalizeUserMessage` is
-what `Sessions.begin` stores. Anything that turns a log into text (search,
-transcripts, traces, fingerprints, estimates) goes through `elideMediaData`
-or `userMessageText`, never the base64.
+what `Sessions.begin` stores. A tool returns them inside its result: the
+`ToolResult` entry keeps the encoded result whole and `MediaSlot`s into it
+(an image is stored once), checked once by `toolResultMedia` when
+`recordTail` writes it, and `renderLog` alone decides which images a request
+sends (`RenderOptions.media`; an `OmitMedia` compaction, recorded by the
+turn when a provider refuses an image, applies whatever the strategy).
+Anything that turns a log into text (search, transcripts, traces,
+fingerprints, estimates) goes through `elideMediaData` or
+`userMessageText`, never the base64.
 
 Skills as files: `harness/skill-files.entity.ts` and its functions read a
 tree of `SKILL.md` files without IO (`readSkillFiles`, which never fails and

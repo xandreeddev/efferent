@@ -1,5 +1,4 @@
-import { AiError, LanguageModel, Tool } from "effect/ai"
-import type { Prompt } from "effect/ai"
+import { AiError, LanguageModel, Prompt, Tool } from "effect/ai"
 import { Effect, Result, Option, Schema, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
 import type { ModelCallPolicy } from "@xandreed/core"
@@ -80,6 +79,8 @@ export interface CompatConfig {
   /** How the endpoint's usage is read (default: every count, reasoning
    *  included; see `UsageReading`). */
   readonly usage?: UsageReading
+  /** The model reads images: send them as `image_url` parts (default false: label lines; see `toChatMessages`). */
+  readonly images?: boolean
   /** The fetch requests go through (the models plugin passes its `ModelsTransport`'s, which knows the proxy); defaults to the global fetch. */
   readonly fetchImpl?: ModelsFetch
   /** Host-owned admission (e.g. reserve a worst-case cost) before every call. */
@@ -114,10 +115,9 @@ const decodedBytes = (data: string | Uint8Array): number => {
 }
 
 /**
- * The line a chat-completions request carries in place of a user's file
- * part, which these routes do not send yet: an inline image's `mediaLabel`
- * (`[image omitted: image/png, 70 B, pixel.png]`, as memory labels it),
- * anything else `[file omitted: <type>, <name>]`.
+ * The line a request carries in place of a file part it does not send: an
+ * inline image's `mediaLabel` (`[image omitted: image/png, 70 B, pixel.png]`,
+ * as memory labels it), anything else `[file omitted: <type>, <name>]`.
  */
 const filePartLabel = (part: Prompt.FilePart): string => {
   const data = part.data
@@ -126,61 +126,167 @@ const filePartLabel = (part: Prompt.FilePart): string => {
     : `[file omitted: ${[part.mediaType, ...(part.fileName === undefined ? [] : [part.fileName])].join(", ")}]`
 }
 
+const encodeBase64 = Schema.encodeSync(Schema.Uint8ArrayFromBase64)
+
+/** An image a chat-completions request can carry: one of the image types, inline or by URL. */
+const isSendableImage = (part: Prompt.FilePart): boolean => isImageType(part.mediaType)
+
+/** An image file part → a chat-completions `image_url` part: its URL, or a `data:` URL of its base64. */
+const imageUrlPart = (part: Prompt.FilePart): Json => {
+  const data = part.data
+  const url = data instanceof URL ? data.toString()
+    : data instanceof Uint8Array ? `data:${part.mediaType};base64,${encodeBase64(data)}`
+      : /^(data:|https?:\/\/)/i.test(data) ? data : `data:${part.mediaType};base64,${data}`
+  return { type: "image_url", image_url: { url } }
+}
+
+const nonEmpty = (line: string): boolean => line.length > 0
+
 /**
- * Decoded `Prompt` messages → chat-completions message objects. A user
- * message is one string: its text, then a label line per file part (images
- * are not sent on these routes yet), so a message of images alone is never
- * empty. A text-only message is its text, as before.
+ * A tool result's text: its model output's text parts, each image not sent
+ * as its label line (`images: false`); a result without model output is its
+ * result, as before.
  */
-export const toChatMessages = (prompt: Prompt.Prompt): ReadonlyArray<Json> =>
-  prompt.content.flatMap((message): ReadonlyArray<Json> => {
-    if (message.role === "system") {
-      return [{ role: "system", content: message.content }]
+const toolResultText = (part: Prompt.ToolResultPart, images: boolean): string =>
+  part.modelOutput === undefined
+    ? typeof part.result === "string" ? part.result : JSON.stringify(part.result ?? null)
+    : part.modelOutput.flatMap((output) => output.type === "text" ? [output.text]
+      : images && isSendableImage(output) ? [] : [filePartLabel(output)]).filter(nonEmpty).join("\n")
+
+/** A user message's text when its images are not sent: its text, then a label line per file part, so a message of images alone is never empty. */
+const userText = (message: Prompt.UserMessage): string => {
+  const text = message.content.flatMap((p) => (p.type === "text" ? [p.text] : [])).join("")
+  const labels = message.content.flatMap((p) => (p.type === "file" ? [filePartLabel(p)] : []))
+  return [text, ...labels].filter(nonEmpty).join("\n")
+}
+
+/** How `toChatMessages` writes a request. */
+export interface ChatMessageOptions {
+  /** Send images as `image_url` parts (default false: label lines). */
+  readonly images?: boolean
+}
+
+/** What the conversion holds between messages: the messages so far, and the tool images waiting for a user message. */
+interface ChatFold {
+  readonly out: ReadonlyArray<Json>
+  readonly pending: ReadonlyArray<Json>
+}
+
+/** A user message's content as parts (a string is one text part; an empty one, none). */
+const contentParts = (content: unknown): ReadonlyArray<unknown> =>
+  typeof content === "string" ? content.length === 0 ? [] : [{ type: "text", text: content }]
+    : Array.isArray(content) ? content : []
+
+/** What precedes a user message's parts merged after tool images, when it has images of its own. */
+const USER_CAPTION = "The user's message:"
+
+/** The waiting tool images as one user message, after the tool results. */
+const flush = (fold: ChatFold): ReadonlyArray<Json> =>
+  fold.pending.length === 0 ? fold.out : [...fold.out, { role: "user", content: fold.pending }]
+
+/**
+ * Decoded `Prompt` messages → chat-completions message objects. A
+ * text-only user message is its text, as before. Without `images`, a user
+ * message is one string: its text, then a label line per file part, and a
+ * tool result is its text with a label line per image. With `images`, a
+ * user message with images is a content array of its parts in order (an
+ * image as an `image_url` part with a `data:` URL), and a tool result is its
+ * text in the tool message, while its images, which a tool message cannot
+ * carry, follow all the batch's tool messages in one user message, each
+ * result's captioned `Images returned by <tool> (call <id>):`; a user
+ * message right after the batch is merged into it, so no two user messages
+ * follow each other, captioned `The user's message:` when it has images of
+ * its own.
+ */
+export const toChatMessages = (prompt: Prompt.Prompt, options: ChatMessageOptions = {}): ReadonlyArray<Json> => {
+  const images = options.images ?? false
+  const userMessage = (message: Prompt.UserMessage): Json => {
+    const sendsImages = images && message.content.some((p) => p.type === "file" && isSendableImage(p))
+    if (!sendsImages) return { role: "user", content: userText(message) }
+    return {
+      role: "user",
+      content: message.content.flatMap((p): ReadonlyArray<Json> => p.type === "text"
+        ? p.text.length === 0 ? [] : [{ type: "text", text: p.text }]
+        : isSendableImage(p) ? [imageUrlPart(p)] : [{ type: "text", text: filePartLabel(p) }]),
     }
+  }
+  const folded = prompt.content.reduce((fold: ChatFold, message): ChatFold => {
     if (message.role === "user") {
-      const text = message.content
-        .flatMap((p) => (p.type === "text" ? [p.text] : []))
-        .join("")
-      const labels = message.content.flatMap((p) => (p.type === "file" ? [filePartLabel(p)] : []))
-      return [{ role: "user", content: [text, ...labels].filter((line) => line.length > 0).join("\n") }]
+      const user = userMessage(message)
+      if (fold.pending.length === 0) return { out: [...fold.out, user], pending: [] }
+      // The user's own images, after the tool's: a caption tells them apart.
+      const parts = contentParts(user["content"])
+      const own = parts.some((part) => typeof part === "object" && part !== null && "type" in part && part.type === "image_url")
+      return { out: [...fold.out, { role: "user", content: [...fold.pending, ...(own ? [{ type: "text", text: USER_CAPTION }] : []), ...parts] }], pending: [] }
     }
-    if (message.role === "assistant") {
-      const text = message.content
-        .flatMap((p) => (p.type === "text" ? [p.text] : []))
-        .join("")
-      const toolCalls = message.content.flatMap((p) =>
-        p.type === "tool-call"
-          ? [
-              {
-                id: p.id,
-                type: "function" as const,
-                function: { name: p.name, arguments: JSON.stringify(p.params ?? {}) },
-              },
-            ]
-          : [],
-      )
-      return [
-        {
-          role: "assistant",
-          content: text.length > 0 ? text : null,
-          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-        },
-      ]
+    if (message.role === "tool") {
+      // One chat message per result part, keyed by the originating call id.
+      const results = message.content.flatMap((p) => p.type === "tool-result" ? [p] : [])
+      const sent = results.flatMap((p) => {
+        const parts = images ? (p.modelOutput ?? []).flatMap((output) => output.type === "file" && isSendableImage(output) ? [output] : []) : []
+        return parts.length === 0 ? [] : [{ type: "text", text: `Images returned by ${p.name} (call ${p.id}):` }, ...parts.map(imageUrlPart)]
+      })
+      const toolMessages = results.map((p): Json => {
+        const text = toolResultText(p, images)
+        const hasImages = images && (p.modelOutput ?? []).some((output) => output.type === "file" && isSendableImage(output))
+        return { role: "tool", tool_call_id: p.id, content: text.length === 0 && hasImages ? "[the images this call returned follow]" : text }
+      })
+      return { out: [...fold.out, ...toolMessages], pending: [...fold.pending, ...sent] }
     }
-    // tool: one chat message per result part, keyed by the originating call id.
-    return message.content.flatMap((p) =>
-      p.type === "tool-result"
+    const out = flush(fold)
+    if (message.role === "system") return { out: [...out, { role: "system", content: message.content }], pending: [] }
+    const text = message.content
+      .flatMap((p) => (p.type === "text" ? [p.text] : []))
+      .join("")
+    const toolCalls = message.content.flatMap((p) =>
+      p.type === "tool-call"
         ? [
             {
-              role: "tool",
-              tool_call_id: p.id,
-              content:
-                typeof p.result === "string" ? p.result : JSON.stringify(p.result ?? null),
+              id: p.id,
+              type: "function" as const,
+              function: { name: p.name, arguments: JSON.stringify(p.params ?? {}) },
             },
           ]
         : [],
     )
-  })
+    return {
+      out: [...out, {
+        role: "assistant",
+        content: text.length > 0 ? text : null,
+        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+      }],
+      pending: [],
+    }
+  }, { out: [], pending: [] })
+  return flush(folded)
+}
+
+/**
+ * A prompt with every file part a label line: what a route that reads no
+ * images is sent (the models plugin rewrites a request so on such routes).
+ * A user message with file parts becomes one text part (its text, then a
+ * label line each); a tool result with model output becomes its text with a
+ * label line per file part, as its result. Messages without files are kept.
+ */
+export const promptWithImageLabels = (prompt: Prompt.Prompt): Prompt.Prompt =>
+  Prompt.fromMessages(prompt.content.map((message): Prompt.Message => {
+    if (message.role === "user") {
+      return message.content.some((p) => p.type === "file")
+        ? Prompt.makeMessage("user", { content: [Prompt.makePart("text", { text: userText(message) })], options: message.options })
+        : message
+    }
+    if (message.role === "tool") {
+      return message.content.some((p) => p.type === "tool-result" && p.modelOutput !== undefined)
+        ? Prompt.makeMessage("tool", {
+          content: message.content.map((p) => p.type !== "tool-result" || p.modelOutput === undefined ? p : Prompt.makePart("tool-result", {
+            id: p.id, name: p.name, isFailure: p.isFailure, result: toolResultText(p, false), providerExecuted: p.providerExecuted, options: p.options,
+          })),
+          options: message.options,
+        })
+        : message
+    }
+    return message
+  }))
 
 /** User-defined tools → chat-completions function declarations (empty when
  *  the request carries none — the caller omits the `tools` key entirely). */
@@ -334,7 +440,7 @@ const chatRequestBody = (
       return {
         model: config.model,
         ...settings.sampling,
-        messages: toChatMessages(options.prompt),
+        messages: toChatMessages(options.prompt, { images: config.images ?? false }),
         stream: streaming,
         ...(options.responseFormat.type === "json" ? { response_format: {
           type: "json_schema", json_schema: { name: options.responseFormat.objectName, strict: true, schema: strictJsonSchema(options.responseFormat.schema) },

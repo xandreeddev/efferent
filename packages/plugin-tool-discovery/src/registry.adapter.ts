@@ -12,10 +12,12 @@ import {
   DecisionId,
   defineCapability,
   defineTool,
+  elideMediaData,
   Failure,
   fingerprintOf,
   HarnessError,
   IntentMatcher,
+  mediaSlotsOf,
   recordDecision,
   replayableContext,
   resolveCapabilities,
@@ -28,6 +30,8 @@ import type {
   Capability,
   DecisionRecord,
   DigestTask,
+  Media,
+  MediaSlot,
   MemorySession,
   RegisteredTool,
   RunTools,
@@ -70,6 +74,22 @@ const ReadSkillReference = Tool.make("read_skill_reference", {
 })
 
 const rawText = (encoded: unknown): string => typeof encoded === "string" ? encoded : canonicalJson(encoded)
+
+/**
+ * The images a result sends: the ones the view's selector picks, among
+ * those the encoded result holds (`mediaSlotsOf`); every one without a
+ * selector. Memory checks them when it records the result.
+ */
+const selectedSlots = (encoded: unknown, selected: Option.Option<ReadonlyArray<Media>>): ReadonlyArray<MediaSlot> => {
+  const slots = mediaSlotsOf(encoded)
+  return Option.match(selected, {
+    onNone: () => slots,
+    onSome: (media) => {
+      const wanted = new Set(media.map((image) => String(image.fingerprint)))
+      return slots.filter((slot) => wanted.has(String(slot.fingerprint)))
+    },
+  })
+}
 
 /** Tool result schemas are context-free by contract (they cross the wire). */
 const contextFree = (schema: Schema.Top): Schema.Codec<unknown, unknown> => schema as Schema.Codec<unknown, unknown>
@@ -132,14 +152,23 @@ export const makeRegistry = (config: DiscoveryConfig, capabilities: ReadonlyArra
     view: (name, encoded, params, isError) => {
       const entry = byName.get(name)
       const pinned = entry?.annotations.pinned ?? false
-      const raw: ToolView = { text: rawText(encoded), version: "raw", subjects: [], artifacts: [], pinned }
+      // The raw view never carries an image's base64 as text: the images go as images (a failed call's as none).
+      const slots = isError ? [] : selectedSlots(encoded, Option.none())
+      const raw: ToolView = {
+        text: rawText(elideMediaData(encoded)), version: "raw", subjects: [], artifacts: [], pinned,
+        ...(slots.length === 0 ? {} : { media: slots }),
+      }
       if (entry === undefined || isError || Option.isNone(entry.view)) return Effect.succeed(raw)
       const view = entry.view.value
       return Schema.decodeUnknownEffect(contextFree(entry.tool.successSchema))(encoded).pipe(
-        Effect.map((result): ToolView => ({
-          text: view.render(result, params), version: view.version, subjects: view.subjects(result, params),
-          artifacts: view.artifacts(result, params), pinned,
-        })),
+        Effect.map((result): ToolView => {
+          const media = selectedSlots(encoded, Option.map(view.media, (select) => select(result, params)))
+          return {
+            text: view.render(result, params), version: view.version, subjects: view.subjects(result, params),
+            artifacts: view.artifacts(result, params), pinned,
+            ...(media.length === 0 ? {} : { media }),
+          }
+        }),
         Effect.orElseSucceed(() => raw),
       )
     },
