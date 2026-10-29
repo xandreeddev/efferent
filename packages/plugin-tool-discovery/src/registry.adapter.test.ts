@@ -3,6 +3,7 @@ import { Tool } from "effect/ai"
 import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Context } from "effect"
 import {
+  ActionPolicy,
   ConversationId,
   ConversationMemory,
   CurrentAgentStep,
@@ -14,6 +15,7 @@ import {
   Failure,
   HarnessError,
   harnessDefectsAsFailures,
+  journalSchemaOf,
   openLogSession,
   publishToolProgress,
   RunContext,
@@ -24,7 +26,7 @@ import {
   turnStartedDraft,
   UserMessage,
 } from "@xandreed/core"
-import type { MemoryPolicy, SessionLogEvent, ToolInvocation, TurnDraft, TurnEvent, TurnWriter } from "@xandreed/core"
+import type { Capability, MemoryPolicy, SessionLogEvent, ToolInvocation, ToolRefusalReason, TurnDraft, TurnEvent, TurnWriter } from "@xandreed/core"
 import { makeRegistry } from "./registry.adapter.js"
 import type { DiscoveryConfig } from "./registry.adapter.js"
 
@@ -87,7 +89,7 @@ const recordingWriter = Effect.gen(function* () {
     end: () => Effect.succeed({ pending: 0 }),
     closed: Effect.never,
   }
-  return { writer, kinds: Ref.get(stored).pipe(Effect.map((all) => all.map((event) => event.kind))) }
+  return { writer, stored: Ref.get(stored), kinds: Ref.get(stored).pipe(Effect.map((all) => all.map((event) => event.kind))) }
 })
 
 /**
@@ -172,5 +174,159 @@ describe("a subscriber failure during a tool call", () => {
     const turn = await Effect.runPromise(callInTurn(Option.none(), Option.some("tool.started")))
     expect(turn.failure).toBe("test.renderer: the renderer broke on tool.started")
     expect(turn.events.map((event) => event._tag)).toEqual(["tool.started"])
+  })
+})
+
+/* ── refusals: calls the registry refuses before the handler runs ── */
+
+const Vault = Tool.make("read_vault", {
+  description: "Read the vault.",
+  parameters: Schema.Struct({ key: Schema.String }),
+  success: Schema.String,
+  failure: Failure,
+  failureMode: "return",
+})
+const Ping = Tool.make("ping", {
+  description: "Answer pong.",
+  parameters: Schema.Struct({ n: Schema.Int }),
+  success: Schema.String,
+  failure: Failure,
+  failureMode: "return",
+})
+const Archive = Tool.make("archive", {
+  description: "Archive a record.",
+  parameters: Schema.Struct({ id: Schema.String }),
+  success: Schema.String,
+  failure: Failure,
+  failureMode: "return",
+})
+
+/** `ping` is always on, at most twice per turn; `read_vault` needs a grant; `archive` comes with a skill nobody loads. */
+const guarded = defineCapability({
+  id: "guarded",
+  version: "1",
+  tools: [
+    defineTool({ tool: Ping, handler: ({ n }) => Effect.succeed(`pong ${n}`), annotations: { maxCallsPerRun: Option.some(2) } }),
+    defineTool({ tool: Vault, handler: ({ key }) => Effect.succeed(`secret ${key}`), annotations: { permissions: ["vault.read"] } }),
+    defineTool({ tool: Archive, handler: ({ id }) => Effect.succeed(`archived ${id}`) }),
+  ],
+  skills: [
+    defineSkill({ id: "basics", summary: "Ping.", tools: [Ping.name], always: true }),
+    defineSkill({ id: "vault", summary: "Read the vault.", tools: [Vault.name], permissions: ["vault.read"] }),
+    defineSkill({ id: "archiving", summary: "Archive records.", tools: [Archive.name] }),
+  ],
+})
+
+interface Refusals {
+  /** What each call returned to the model: its result, or its failure. */
+  readonly results: ReadonlyArray<unknown>
+  readonly events: ReadonlyArray<TurnEvent>
+  readonly stored: ReadonlyArray<SessionLogEvent>
+}
+
+/**
+ * One turn over the real registry, calling tools through the open toolkit's
+ * handlers directly (at step 1), as a host or another tool would: the model
+ * is only ever offered the active tools. `vaultActive` records `read_vault`
+ * as activated by an earlier turn, as a turn whose grants have since changed
+ * would find it.
+ */
+const refusalTurn = (calls: ReadonlyArray<readonly [string, unknown]>, options: {
+  readonly config?: Partial<DiscoveryConfig>
+  readonly policy?: typeof ActionPolicy.Service
+  readonly vaultActive?: boolean
+  readonly capabilities?: ReadonlyArray<Capability>
+} = {}): Effect.Effect<Refusals> => Effect.scoped(Effect.gen(function* () {
+  const recorded = yield* recordingWriter
+  const registry = yield* makeRegistry({ ...config, ...options.config }, options.capabilities ?? [guarded])
+  const services = Layer.merge(
+    Layer.succeed(ConversationMemory, ConversationMemory.of({ strategy: policy.strategy, open: ({ runId, log }) => openLogSession(log, policy, { runId }) })),
+    Layer.succeed(ToolRegistry, ToolRegistry.of({ catalog: registry.catalog, open: registry.open })),
+  )
+  return yield* Effect.gen(function* () {
+    const run = yield* RunContext
+    const published = yield* Ref.make<ReadonlyArray<TurnEvent>>([])
+    yield* run.events.subscribe(Option.some, (event) => Ref.update(published, (all) => [...all, event]))
+    const memory = yield* TurnMemory
+    yield* memory.persistMessage
+    if (options.vaultActive === true) {
+      yield* memory.session.record([{ _tag: "ToolsActivated", skills: ["vault"], tools: [Vault.name], source: "host", decision: Option.none() }], 0)
+    }
+    const opening = (yield* TurnToolbox).open
+    const tools = yield* (options.policy === undefined ? opening : opening.pipe(Effect.provideService(ActionPolicy, options.policy)))
+    yield* tools.select(run.userMessage)
+    const handled = (name: string, params: unknown): Effect.Effect<unknown> => Effect.gen(function* () {
+      const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>))
+      const results = yield* Stream.runCollect(yield* kit.handle(name, params))
+      return results.at(-1)?.result
+    }).pipe(Effect.provideService(CurrentAgentStep, Option.some(1)), Effect.orDie) as never
+    const results = yield* Effect.forEach(calls, ([name, params]) => handled(name, params))
+    yield* run.flush
+    return {
+      results,
+      events: (yield* Ref.get(published)).filter((event) => event._tag.startsWith("tool.")),
+      stored: (yield* recorded.stored).filter((event) => event.kind.startsWith("tool.")),
+    } satisfies Refusals
+  }).pipe(Effect.provide(TurnLive({ turn: recorded.writer })), Effect.provide(services))
+}).pipe(Effect.orDie))
+
+const refusedEvents = (turn: Refusals) => turn.events.flatMap((event) => event._tag === "tool.refused" ? [event] : [])
+
+describe("the registry refuses a call before its handler runs", () => {
+  const cases: Array<{
+    readonly reason: ToolRefusalReason
+    readonly error: string
+    readonly calls: ReadonlyArray<readonly [string, unknown]>
+    readonly options?: Parameters<typeof refusalTurn>[1]
+    /** The refused call's position: earlier calls ran. */
+    readonly refusedAt: number
+  }> = [
+    { reason: "inactive", error: "ToolInactive", calls: [[Archive.name, { id: "r1" }]], refusedAt: 0 },
+    { reason: "forbidden", error: "Forbidden", calls: [[Vault.name, { key: "k" }]], options: { vaultActive: true }, refusedAt: 0 },
+    {
+      reason: "denied", error: "Denied", calls: [[Ping.name, { n: 1 }]], refusedAt: 0,
+      options: { policy: { authorize: (tool) => tool === Ping.name ? Effect.fail(new HarnessError({ code: "policy.closed", message: "pings are closed today" })) : Effect.void } },
+    },
+    { reason: "call-limit", error: "CallLimit", calls: [[Ping.name, { n: 1 }], [Ping.name, { n: 2 }]], options: { config: { maxCallsPerRun: 1 } }, refusedAt: 1 },
+    { reason: "tool-call-limit", error: "ToolCallLimit", calls: [[Ping.name, { n: 1 }], [Ping.name, { n: 2 }], [Ping.name, { n: 3 }]], refusedAt: 2 },
+  ]
+
+  test.each(cases)("$reason: one tool.refused with the call's id and input, no tool.started, the refusal as the call's failed result", async ({ reason, error, calls, options, refusedAt }) => {
+    const turn = await Effect.runPromise(refusalTurn(calls, options))
+    const refused = refusedEvents(turn)
+    expect(refused).toHaveLength(1)
+    const event = refused[0]!
+    const [tool, input] = calls[refusedAt]!
+    // The call's id is minted before the checks: earlier calls took 0…refusedAt-1.
+    expect(event).toMatchObject({ _tag: "tool.refused", step: 1, invocationId: `run-1:call:${refusedAt}`, tool, input, reason })
+    expect(turn.results[refusedAt]).toEqual({ error, message: event.message })
+    // Earlier calls ran (started, completed); the refused one has only its refusal.
+    expect(turn.events.filter((other) => other._tag === "tool.started" || other._tag === "tool.completed").map((other) => other._tag === "tool.started" || other._tag === "tool.completed" ? other.invocationId : ""))
+      .toEqual(Array.from({ length: refusedAt }, (_, index) => [`run-1:call:${index}`, `run-1:call:${index}`]).flat())
+    expect(turn.events.some((other) => other._tag !== "tool.refused" && "invocationId" in other && other.invocationId === event.invocationId)).toBe(false)
+  })
+
+  test.each(cases)("$reason: journaled as tool.refused without its input", async ({ calls, options }) => {
+    const turn = await Effect.runPromise(refusalTurn(calls, options))
+    const stored = turn.stored.filter((event) => event.kind === "tool.refused")
+    expect(stored).toHaveLength(1)
+    expect(Object.keys(stored[0]!.data).sort()).toEqual(["invocationId", "message", "reason", "step", "tool"])
+    const schema = Option.getOrThrow(journalSchemaOf("tool.refused"))
+    expect(Option.isSome(Schema.decodeUnknownOption(schema)(stored[0]!.data))).toBe(true)
+  })
+
+  test("the denial's message is the host's", async () => {
+    const turn = await Effect.runPromise(refusalTurn([[Ping.name, { n: 1 }]], {
+      policy: { authorize: () => Effect.fail(new HarnessError({ code: "policy.closed", message: "pings are closed today" })) },
+    }))
+    expect(refusedEvents(turn).map((event) => event.message)).toEqual(["pings are closed today"])
+  })
+
+  test("an allowed call publishes no tool.refused, and its id follows the refused ones", async () => {
+    const turn = await Effect.runPromise(refusalTurn([[Archive.name, { id: "r1" }], [Ping.name, { n: 1 }]]))
+    expect(turn.results).toEqual([expect.objectContaining({ error: "ToolInactive" }), "pong 1"])
+    expect(turn.events.map((event) => `${event._tag}:${"invocationId" in event ? event.invocationId : ""}`)).toEqual([
+      "tool.refused:run-1:call:0", "tool.started:run-1:call:1", "tool.completed:run-1:call:1",
+    ])
   })
 })

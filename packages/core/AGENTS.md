@@ -49,4 +49,22 @@ returns the issues; `skillsFromFiles`, strict) and collect one through the
 there is the skills' own YAML subset; `spec/frontmatter.ts` stays the flat
 one the spec codec uses.
 
+A context captured with `Effect.context()` to be provided again later,
+around work that runs somewhere else, goes through `replayableContext`
+(`src/loop/traceContent.ts`): the services tool handlers, policy and loop
+callbacks run with (the registry, `stepRequestOf`, `turnOf`, `runLoop`),
+a model layer's dependencies (the models plugin), the services of
+`Agent.turn`'s input, bus subscribers (`turn-bus.ts`), a live layer's
+dependencies (`makeLiveLayer`) and the session chassis's (`makeSession`).
+It drops the trace state of the place it was captured: the parent span, so
+spans nest where the replayed work runs; the span annotations and links,
+which would replace those of that fiber (the turn's ids); and
+`CurrentTraceContent`, which is read per call. The one deliberate
+exception is `InProcessTaskRunnerLive` (`plugin-tasks`): it starts each
+piece of work on a new fiber with the services it was built with, the
+only ones that work has, so the work nests under the span current where the
+runner was built and reads the trace content set there. The sdk tracer
+tests (`packages/sdk/src/agent.trace.test.ts`) fail when a replay
+re-parents `tool.*`, handler or `engine.run` spans or drops the turn's ids.
+
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

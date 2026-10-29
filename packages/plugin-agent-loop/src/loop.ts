@@ -1,7 +1,7 @@
 import { AiError, LanguageModel, Prompt } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
-import { Cause, Effect, Exit, Match, Metric, Option, Ref, Stream } from "effect"
-import { foldStreamParts, freezeModelRequest } from "@xandreed/core"
+import { Cause, Effect, Exit, Formatter, Match, Metric, Option, Ref, Result, Stream } from "effect"
+import { CurrentTraceContent, foldStreamParts, freezeModelRequest, replayableContext } from "@xandreed/core"
 import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
@@ -63,8 +63,11 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
     readonly malformed?: (tools: ReadonlyArray<string>, description: string) => string
     readonly incomplete?: string
   }
-  /** Explicit opt-in: export prompt and result content on step spans.
-   * Hosts own consent, redaction and exporter retention. Disabled by default. */
+  /** Explicit opt-in: export prompt and result content on step spans
+   * (`engine.step.input`, `engine.step.output`), and to the model calls
+   * through `CurrentTraceContent`, which the loop provides for the run.
+   * Hosts own consent, redaction and exporter retention. Defaults to
+   * `CurrentTraceContent` where the run starts: off unless provided. */
   readonly captureTraceContent?: boolean
   readonly messages: ReadonlyArray<AgentMessage>
   readonly toolkit: Toolkit.Toolkit<Tools>
@@ -116,7 +119,8 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
    * settled turn shape while fanning `assistant_delta` events as tokens
    * flow. Default FALSE. A stream that fails before its first part
    * (scripted providers' `Stream.die` included) falls back to
-   * `generateText` transparently — for the REST of the run, not per turn.
+   * `generateText` — for the REST of the run, not per turn — and emits one
+   * `stream_fallback` event with the stream's error.
    */
   readonly streaming?: boolean
   /**
@@ -160,7 +164,7 @@ const engineToolCalls = Metric.counter("engine.tool_calls", {
   incremental: true,
 })
 const engineCorrections = Metric.counter("engine.corrections", {
-  description: "self-corrections by kind (malformed recovery, degenerate nudge)",
+  description: "self-corrections by kind (malformed recovery, degenerate nudge, stream fallback)",
   incremental: true,
 })
 const tagged = <Input, State>(
@@ -228,6 +232,12 @@ export const DEGENERATE_LOOP_STOP =
   "[stopped: repeated the same tool call with no progress — the run was looping]"
 
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max)}…`)
+
+/** The longest stream error a `stream_fallback` event carries. */
+const FALLBACK_MESSAGE_CHARS = 300
+
+/** A stream's error or defect as text: a string as it is, anything else formatted (an object as JSON, not `[object Object]`). */
+const failureText = (failure: unknown): string => typeof failure === "string" ? failure : Formatter.format(failure)
 
 /**
  * A stable signature of one turn's PROGRESS — the sorted multiset of each
@@ -332,14 +342,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
     yield* Effect.annotateCurrentSpan({ "engine.input.messages": options.messages.length })
     const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
     const pollable: ReadonlySet<string> = new Set(options.pollableTools ?? [])
-    const eventContext = yield* Effect.context<R>()
-    const onEvent = (event: LoopEvent) => Effect.gen(function* () {
-      const parent = yield* Effect.currentSpan.pipe(Effect.orDie)
-      yield* (options.onEvent?.(event) ?? Effect.void).pipe(
-        Effect.withParentSpan(parent),
-        Effect.provide(eventContext),
-      )
-    })
+    const captureTraceContent = options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent))
+    // The callbacks run with the caller's services, under the span current where they are called.
+    const eventContext = replayableContext(yield* Effect.context<R>())
+    const onEvent = (event: LoopEvent) => (options.onEvent?.(event) ?? Effect.void).pipe(Effect.provide(eventContext))
     // Resolve the toolkit's handlers once — they're stable across turns.
     const toolkit = yield* options.toolkit
 
@@ -368,7 +374,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const prompt = freezeModelRequest(Prompt.concat(instructions, Prompt.make(toPromptMessages(visible) as never)))
         const directive = options.stepDirective === undefined ? Option.none<LoopToolChoice>() : (yield* options.stepDirective(stepView).pipe(Effect.provide(eventContext))).toolChoice
 
-        if (options.captureTraceContent === true)
+        if (captureTraceContent)
           yield* Effect.annotateCurrentSpan({
             "engine.step.input": tracedJson({ messages: prompt.content, activeTools: toolNames }),
           })
@@ -427,9 +433,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         // The streamed twin: fold parts into the settled shape, fanning
         // assistant_delta events while tokens flow. A failure or defect
         // BEFORE the first part (a scripted provider's Stream.die, a broken
-        // gateway) falls back to generateText for the rest of the run;
-        // after the first part, failures ride the existing turn handling
-        // (tool handlers may already have run — a replay would duplicate).
+        // gateway) falls back to generateText for the rest of the run, with
+        // one stream_fallback event; after the first part, failures ride the
+        // existing turn handling (tool handlers may already have run — a
+        // replay would duplicate).
         // The dispatch check runs first, outside that fallback: a failed
         // check fails the step, it is no stream failure (the fallback's own
         // call is checked again).
@@ -451,7 +458,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
               }),
           ).pipe(
             Effect.map((turn) =>
-              Option.some({
+              Result.succeed({
                 _tag: "ok" as const,
                 content: turn.content,
                 finishReason: turn.finishReason,
@@ -462,24 +469,28 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
             Effect.catch((err) =>
               Ref.get(partSeen).pipe(
                 Effect.flatMap((armed) =>
-                  armed ? Effect.fail(err) : Effect.succeed(Option.none<never>()),
+                  armed ? Effect.fail(err) : Effect.succeed(Result.fail(failureText(err))),
                 ),
               ),
             ),
             Effect.catchDefect((defect) =>
               Ref.get(partSeen).pipe(
                 Effect.flatMap((armed) =>
-                  armed ? Effect.die(defect) : Effect.succeed(Option.none<never>()),
+                  armed ? Effect.die(defect) : Effect.succeed(Result.fail(failureText(defect))),
                 ),
               ),
             ),
           )
-          return yield* Option.match(folded, {
-            onSome: Effect.succeed,
-            onNone: () =>
+          return yield* Result.match(folded, {
+            onSuccess: Effect.succeed,
+            onFailure: (failure) =>
               Effect.logWarning(
                 "streaming failed before any part arrived — falling back to generateText for this run",
-              ).pipe(Effect.andThen(settled(false))),
+              ).pipe(
+                Effect.andThen(onEvent({ type: "stream_fallback", turnIndex: state.turnIndex, message: failure.slice(0, FALLBACK_MESSAGE_CHARS) })),
+                Effect.andThen(Metric.update(tagged(engineCorrections, { "engine.kind": "stream-fallback" }), 1)),
+                Effect.andThen(settled(false)),
+              ),
           })
         })
 
@@ -554,7 +565,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           "engine.step.finish_reason": outcome.finishReason,
           "engine.step.usage_available": !planned,
           ...(!planned ? { "engine.step.usage": JSON.stringify(usage), ...stepUsageAttributes(usage) } : {}),
-          ...(options.captureTraceContent === true
+          ...(captureTraceContent
             ? { "engine.step.output": tracedJson({ content, usage, finishReason: outcome.finishReason }) }
             : {}),
         })
@@ -707,7 +718,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         corrections: 0,
         streamingHealthy: true,
       }
-    const final = yield* runSteps(initial)
+    // The run's model calls read the switch too (the models plugin's `llm.reasoning`).
+    const final = yield* runSteps(initial).pipe(Effect.provideService(CurrentTraceContent, captureTraceContent))
 
     const { outcome, reason } = Match.value(final.phase).pipe(
       Match.when("completed", () => ({ outcome: "ok" as const, reason: "completed" as const })),

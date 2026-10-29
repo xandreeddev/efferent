@@ -1,7 +1,7 @@
 import { Context, Effect, Exit, Ref, Scope, Semaphore } from "effect"
 import type { Layer } from "effect"
 import * as Layers from "effect/Layer"
-import { HarnessError } from "@xandreed/core"
+import { HarnessError, replayableContext } from "@xandreed/core"
 
 type Generation<A> = {
   readonly id: number
@@ -15,7 +15,8 @@ type Generation<A> = {
  * generation; retiring a generation does not close its resources until its
  * last user completes. Failed staging never replaces the working services. */
 export const makeLiveLayer = <A, E, R>(initial: Layer.Layer<A, E, R>) => Effect.gen(function* () {
-  const dependencies = yield* Effect.context<R>()
+  // Each stage builds with these, traced where it is staged (a replacement under its caller's span).
+  const dependencies = replayableContext(yield* Effect.context<R>())
   const gate = yield* Semaphore.make(1)
   const generations = yield* Ref.make<ReadonlyMap<number, Generation<A>>>(new Map())
   const current = yield* Ref.make(0)

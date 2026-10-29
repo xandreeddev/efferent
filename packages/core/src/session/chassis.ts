@@ -1,5 +1,6 @@
 import { Effect, Exit, Fiber, Option, PubSub, Ref, Stream, Semaphore } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
+import { replayableContext } from "../loop/traceContent.js"
 
 /**
  * The session chassis — the one runtime shape every agent driver needs, over
@@ -65,7 +66,8 @@ export const makeSession = <E, RS = never>(args: {
   readonly isTransient?: (event: E) => boolean
 }): Effect.Effect<Session<E>, never, RS> =>
   Effect.gen(function* () {
-    const context = yield* Effect.context<RS>()
+    // Each turn runs with these, traced where it runs: under the span of `send`'s caller.
+    const context = replayableContext(yield* Effect.context<RS>())
     const log = yield* Ref.make<ReadonlyArray<SeqEvent<E>>>([])
     const hub = yield* PubSub.sliding<SeqEvent<E>>(512)
     const transientHub = yield* PubSub.sliding<E>(128)

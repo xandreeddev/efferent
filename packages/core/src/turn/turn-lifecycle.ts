@@ -1,12 +1,17 @@
 import { Effect, Exit, Option } from "effect"
+import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
+import { replayableContext } from "../loop/traceContent.js"
 import { RunContext } from "../ports/run-context.port.js"
+import type { TurnWriter } from "../ports/sessions.port.js"
 import type { StepLoop } from "../ports/step-loop.port.js"
 import type { RunTools } from "../ports/tool-registry.port.js"
 import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
 import { TurnMemory, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
 import type { Turn, TurnOutcome, TurnResult, TurnTools } from "../ports/turn.port.js"
+import type { AdmittedTurn } from "../session/sessions.entity.js"
+import { turnEndingOf } from "../session/sessions.entity.functions.js"
 import { harnessDefectsAsFailures } from "./turn-bus.js"
 import { runTurnLoop } from "./turn-run.js"
 import type { TurnRunServices } from "./turn-run.js"
@@ -56,8 +61,12 @@ export const finishTurn = (outcome: TurnOutcome): Effect.Effect<void, HarnessErr
  * and background reactions) and finishes with its outcome, returned with
  * the turn's usage (`RunContext.usage`, the same total `turn.ended`
  * carries). When it fails or is interrupted, the turn finishes as failed
- * and keeps the body's cause. A HarnessError carried as a defect (a
- * subscriber's failure behind a `never` error channel) fails the turn, typed.
+ * and keeps the body's cause, and the usage its provider calls spent so far
+ * goes on the current span as `efferent.usage.*_tokens` (the turn's
+ * `agent.turn` when `guardTurn` runs under `traceTurn` with no span between,
+ * as in `Agent.turn`; `traceTurn` records it itself when the turn returns).
+ * A HarnessError carried as a defect (a subscriber's failure behind a
+ * `never` error channel) fails the turn, typed.
  */
 export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.Effect<
   TurnResult,
@@ -67,7 +76,10 @@ export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.
   Effect.onExit(Exit.match({
     onSuccess: () => Effect.void,
     // The turn already failed; recording that must not replace its cause.
-    onFailure: () => finishTurn(failed).pipe(Effect.catchCause(() => Effect.void)),
+    onFailure: () => finishTurn(failed).pipe(
+      Effect.catchCause(() => Effect.void),
+      Effect.andThen(RunContext.pipe(Effect.flatMap((run) => run.usage), Effect.flatMap((usage) => Effect.annotateCurrentSpan(turnUsageAttributes(usage))))),
+    ),
   })),
   Effect.tap(finishTurn),
   Effect.flatMap((outcome) => RunContext.pipe(
@@ -78,12 +90,13 @@ export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.
 
 /**
  * The `Turn` a host's code works with, over the turn's services (the one
- * `Agent.turn` hands to `use`): its `run` is `runTurnLoop` with `options`.
- * The message must be persisted and the tools open.
+ * `Agent.turn` hands to `use`): its `run` is `runTurnLoop` with `options`,
+ * its spans under the span current where `run` is called. The message must
+ * be persisted and the tools open.
  */
 export const turnOf = (options: TurnRunOptions = {}): Effect.Effect<Turn, HarnessError, TurnRunServices | RunContext | StepLoop> =>
   Effect.gen(function* () {
-    const services = yield* Effect.context<TurnRunServices | StepLoop>()
+    const services = replayableContext(yield* Effect.context<TurnRunServices | StepLoop>())
     const run = yield* RunContext
     const memory = yield* TurnMemory
     return {
@@ -104,3 +117,81 @@ export const turnOf = (options: TurnRunOptions = {}): Effect.Effect<Turn, Harnes
       write: run.write,
     } satisfies Turn
   })
+
+/** What a turn's span (`traceTurn`) shows besides the turn's ids. */
+export interface TurnTraceOptions {
+  /**
+   * The keys of the turn's metadata (`AdmittedTurn.meta`) whose values the
+   * span carries, as `efferent.meta.<key>`: none by default, since metadata
+   * may hold what a trace backend should not (a user, a tenant). A string,
+   * number or boolean is kept as it is, anything else as its JSON; a key the
+   * turn's metadata lacks is left out.
+   */
+  readonly spanMeta?: ReadonlyArray<string>
+}
+
+/** The ids every span of a turn carries, the turn's own included. */
+const turnIds = (admitted: AdmittedTurn): Record<string, unknown> => ({
+  "efferent.session.id": admitted.session.id,
+  "efferent.run.id": admitted.runId,
+  "efferent.turn": admitted.turn,
+})
+
+const metaAttribute = (value: unknown): unknown =>
+  typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? value : JSON.stringify(value)
+
+/** The turn's span attributes as it starts: its ids, the conversation, its origin, the turn it resumes and the allowed metadata. */
+const turnSpanAttributes = (admitted: AdmittedTurn, spanMeta: ReadonlyArray<string>): Record<string, unknown> => ({
+  ...turnIds(admitted),
+  "gen_ai.conversation.id": admitted.session.id,
+  "efferent.origin": admitted.origin,
+  ...(admitted.resumes === undefined ? {} : { "efferent.resumes": admitted.resumes }),
+  ...Object.fromEntries(spanMeta.filter((key) => Object.hasOwn(admitted.meta, key)).map((key) => [`efferent.meta.${key}`, metaAttribute(admitted.meta[key])])),
+})
+
+/** A turn's usage as span attributes, under efferent's names (the GenAI names belong to the calls). */
+const turnUsageAttributes = (usage: TokenUsage): Record<string, number> => ({
+  "efferent.usage.input_tokens": usage.inputTokens,
+  "efferent.usage.output_tokens": usage.outputTokens,
+  "efferent.usage.cache_read_tokens": usage.cacheReadTokens,
+  "efferent.usage.cache_write_tokens": usage.cacheWriteTokens,
+  "efferent.usage.reasoning_tokens": usage.reasoningTokens,
+  "efferent.usage.total_tokens": usage.totalTokens,
+})
+
+/** How the turn ended, as span attributes: `turnEndingOf` its exit, and the usage of a turn that returned (`guardTurn` records a failed turn's). */
+const turnEndAttributes = (exit: Exit.Exit<TurnResult, unknown>): Record<string, unknown> => {
+  const ending = turnEndingOf(exit)
+  return {
+    "efferent.outcome": ending.reason,
+    ...Option.match(ending.failure, { onNone: () => ({}), onSome: (failure) => ({ "efferent.failure.code": failure.code }) }),
+    ...Exit.match(exit, { onSuccess: (result) => turnUsageAttributes(result.usage), onFailure: () => ({}) }),
+  }
+}
+
+/**
+ * Run a turn under its span, `agent.turn`, the root of everything the turn
+ * does (under the caller's span, if any). It starts once the turn is
+ * admitted (`writer`), with `efferent.session.id`, `efferent.run.id`,
+ * `efferent.turn`, `gen_ai.conversation.id` (the session), `efferent.origin`,
+ * `efferent.resumes` (on a resume) and `options.spanMeta`'s
+ * `efferent.meta.<key>`; every span under it
+ * carries the first three too. It ends with `efferent.outcome` (the
+ * `TurnEnding` reason of the turn's exit: completed, partial, failed or
+ * interrupted; a turn cancelled or reaped while it ran shows as failed with
+ * `turn.closed`), `efferent.failure.code` when the turn failed or was
+ * interrupted, and the turn's usage
+ * (`efferent.usage.{input,output,cache_read,cache_write,reasoning,total}_tokens`):
+ * when it returned, from its result; when it failed, what `guardTurn`
+ * records, so `guardTurn` runs under this span with no span between.
+ * `Agent.turn` encloses everything after `Sessions.begin`
+ * in it: the turn-dependent plugins, the host's layer, the tools opened, `use`,
+ * the reply and the end; a host composing its own turn wraps the same.
+ */
+export const traceTurn = (writer: TurnWriter, options: TurnTraceOptions = {}) =>
+  <E, R>(effect: Effect.Effect<TurnResult, E, R>): Effect.Effect<TurnResult, E, R> =>
+    effect.pipe(
+      Effect.onExit((exit) => Effect.annotateCurrentSpan(turnEndAttributes(exit))),
+      Effect.annotateSpans(turnIds(writer.admitted)),
+      Effect.withSpan("agent.turn", { attributes: turnSpanAttributes(writer.admitted, options.spanMeta ?? []) }),
+    )

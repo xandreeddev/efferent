@@ -55,6 +55,14 @@ export interface StepRequest {
   readonly events: TurnEventsService
   readonly tasks: TurnTasksService
   readonly cacheKey: Option.Option<string>
+  /**
+   * Whether the run's spans may carry prompt and response content: the loop
+   * must provide it as `CurrentTraceContent` to the model calls it makes,
+   * whatever the caller's (`stepLoopConformance` checks it), so they read it
+   * too. The policy's `captureTraceContent`, else the agent's, else
+   * `CurrentTraceContent` where the run starts (off by default).
+   */
+  readonly captureTraceContent: boolean
 }
 
 export interface ModelDispatch {
@@ -81,7 +89,10 @@ export interface RunResult {
  * makes no provider call; a forced tool choice is honoured; a verdict
  * awaiting tasks joins them and is evaluated once more; no provider call
  * follows a complete verdict; `RunResult.usage` is the sum of the usage
- * the run's `assistant.message` events carried.
+ * the run's `assistant.message` events carried; the model calls read the
+ * request's `captureTraceContent` as `CurrentTraceContent`. A loop that streams and
+ * falls back to a non-streamed call publishes `stream.fallback`; the kit
+ * does not stream, so it does not check that.
  * Every real provider attempt runs `request.dispatch` immediately before
  * invoking the model; a failed durable check prevents the call. Planned
  * batches skip that hook because they make no provider request.

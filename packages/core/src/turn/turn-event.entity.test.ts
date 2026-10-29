@@ -13,10 +13,10 @@ describe("the turn's event vocabulary", () => {
     expect(described.filter((member) => member.description.trim().length < 40).map((member) => member.tag)).toEqual([])
   })
 
-  test("the fourteen members, each with its own description", () => {
+  test("the sixteen members, each with its own description", () => {
     expect(described.map((member) => member.tag)).toEqual([
-      "turn.started", "step.started", "tool.started", "tool.progress", "tool.completed", "step.ended", "completion.evaluated",
-      "skills.activated", "context.built", "decision.recorded", "assistant.message", "assistant.delta", "turn.ended", "host",
+      "turn.started", "step.started", "tool.started", "tool.refused", "tool.progress", "tool.completed", "step.ended", "completion.evaluated",
+      "skills.activated", "context.built", "decision.recorded", "assistant.message", "assistant.delta", "stream.fallback", "turn.ended", "host",
     ])
     expect(new Set(described.map((member) => member.description)).size).toBe(described.length)
   })

@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
-import { Deferred, Effect, Option, Ref, Schema } from "effect"
+import { Deferred, Effect, Option, Ref, Schema, Tracer } from "effect"
 import { Failure } from "../domain/failure.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { CurrentTraceContent } from "../loop/traceContent.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
 import { defineHostEvent, onEvent, onTool, subscribeAll } from "./turn-event.entity.functions.js"
 import type { TurnEvent } from "./turn-event.entity.js"
@@ -171,5 +172,40 @@ describe("turn tasks", () => {
       return { interrupted: yield* Deferred.isDone(interrupted), failed: failed._tag === "Failure" ? failed.failure.code : "none" }
     }))
     expect(outcome).toEqual({ interrupted: true, failed: "task.failed" })
+  })
+})
+
+describe("a subscriber's trace", () => {
+  test("a handler is traced where it is delivered: an inline one under the publisher's span and annotations, both with the publisher's trace content", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({
+      span: (options) => {
+        const span = new Tracer.NativeSpan(options)
+        spans.push(span)
+        return span
+      },
+    })
+    const reads = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const note = (mode: string) => () => Effect.service(CurrentTraceContent).pipe(
+        Effect.flatMap((capture) => Ref.update(seen, (all) => [...all, `${mode}:${capture}`])),
+        Effect.withSpan(`${mode}.handler`),
+      )
+      // Subscribed under a span of its own, annotated, with the switch on.
+      yield* Effect.all([
+        events.subscribe(Option.some, note("inline")),
+        events.subscribe(Option.some, note("background"), { mode: "background" }),
+      ]).pipe(Effect.provideService(CurrentTraceContent, true), Effect.annotateSpans({ "subscribed": true }), Effect.withSpan("subscribed.here"))
+      yield* events.publish(started(0)).pipe(Effect.annotateSpans({ "efferent.turn": 1 }), Effect.withSpan("published.here"))
+      yield* events.drain
+      return yield* Ref.get(seen)
+    })).pipe(Effect.withTracer(tracer)))
+    expect([...reads].sort()).toEqual(["background:false", "inline:false"])
+    const byId = new Map(spans.map((span) => [span.spanId, span] as const))
+    const named = (name: string) => spans.find((span) => span.name === name)
+    const parentOf = (name: string) => Option.getOrUndefined(Option.flatMap(Option.fromNullishOr(named(name)), (span) => Option.flatMap(span.parent, (parent) => Option.fromNullishOr(byId.get(parent.spanId)?.name))))
+    expect([parentOf("inline.handler"), parentOf("background.handler")]).toEqual(["published.here", "subscribed.here"])
+    expect(["efferent.turn", "subscribed"].map((key) => named("inline.handler")?.attributes.get(key))).toEqual([1, undefined])
   })
 })

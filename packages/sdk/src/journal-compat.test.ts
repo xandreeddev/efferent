@@ -2,15 +2,15 @@ import { describe, expect, test } from "bun:test"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
-import { entriesOfEvents, journalSchemaOf, MEMORY_KINDS, replayModelRequest, RESERVED_KINDS, SessionHeader, SessionLogEvent } from "@xandreed/core"
+import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, replayModelRequest, RESERVED_KINDS, SessionHeader, SessionLogEvent } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 
 /*
  * What a release stored must stay readable. Each `fixtures/journal-<version>.json`
  * holds session journals recorded from that release's code by
  * `scripts/record-journal-fixture.ts`: every kind the framework reserved
- * then (listed in the fixture), the tasks plugin's records, the inbox and a
- * host event. This code decodes every event of every fixture with its kind's
+ * then (listed in the fixture) and stores, the tasks plugin's records, the
+ * inbox and a host event. This code decodes every event of every fixture with its kind's
  * schema, rebuilds the memory log from them, and rebuilds every model
  * request from its stored header. A change that breaks one of these breaks
  * every session that release wrote.
@@ -45,9 +45,10 @@ fixtures.forEach(({ fixture }) => describe(`a ${fixture.version} session journal
   const events = fixture.sessions.flatMap((session) => session.events)
   const kinds = new Set(events.map((event) => event.kind))
 
-  test("holds every kind its version reserved, task records, the inbox and a host event; each is still reserved", () => {
+  test("holds every journal kind its version reserved, task records, the inbox and a host event; each is still reserved", () => {
     expect(fixture.reserved.length).toBeGreaterThan(0)
-    expect(fixture.reserved.filter((kind) => !kinds.has(kind))).toEqual([])
+    // A reserved bus name the journal never stores as itself (`assistant.message`, from 0.14.0) is not in it.
+    expect(fixture.reserved.filter((kind) => JOURNAL_KINDS.includes(kind) && !kinds.has(kind))).toEqual([])
     expect(fixture.reserved.filter((kind) => !RESERVED_KINDS.includes(kind))).toEqual([])
     expect([TASK_STARTED, TASK_RESULT, TASK_CANCELLED, "note.prepared"].filter((kind) => !kinds.has(kind))).toEqual([])
   })

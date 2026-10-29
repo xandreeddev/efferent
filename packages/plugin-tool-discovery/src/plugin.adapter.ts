@@ -27,8 +27,10 @@ export const toolDiscoveryDefaults: ToolDiscoveryConfig = {
  * set in memory, runs the optional pre-turn matcher, serves load_skill
  * (tier 2) and references (tier 3), checks every call centrally (active set,
  * grants, action policy, budgets and concurrency lanes) and publishes
- * `tool.started`, `tool.completed`, `skills.activated` and
- * `decision.recorded` on the turn's bus. The matcher, grants and action
+ * `tool.started`, `tool.completed`, `tool.refused` (a call refused before
+ * its handler ran), `skills.activated` and `decision.recorded` on the
+ * turn's bus; a handler's `publishToolProgress` (`tool.progress`) reads the
+ * call's `CurrentToolInvocation`, which it sets. The matcher, grants and action
  * policy are read from each turn's services.
  */
 export const toolDiscoveryPlugin = definePlugin({

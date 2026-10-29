@@ -1,6 +1,7 @@
 import { Cause, Context, Deferred, Effect, Fiber, Option, Queue, Ref } from "effect"
 import type { Scope } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
 import type { SubscribeOptions, TurnEventsService, TurnTasksService } from "../ports/turn-events.port.js"
 import type { TurnEvent } from "./turn-event.entity.js"
 
@@ -13,7 +14,7 @@ interface Subscriber {
 
 /** One queued delivery, or a marker the drain waits on. */
 type Queued<E> =
-  | { readonly _tag: "Event"; readonly event: E; readonly depth: number }
+  | { readonly _tag: "Event"; readonly event: E; readonly depth: number; readonly traceContent: boolean }
   | { readonly _tag: "Marker"; readonly done: Deferred.Deferred<void, HarnessError> }
 
 /** A background handler's failure as the typed error the turn fails with. */
@@ -48,7 +49,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
     yield* Effect.forEach(all, (subscriber) => subscriber.deliver(event), { discard: true }).pipe(Effect.provideService(depth, current + 1))
   })
 
-  /** A queue and a fiber: handled in order, off the publisher's path; its depth travels with each event. */
+  /** A queue and a fiber: handled in order, off the publisher's path; its depth and trace content switch travel with each event. */
   const background = <E>(handle: (event: E) => Effect.Effect<void, HarnessError>, capacity: number) => Effect.gen(function* () {
     const queue = yield* Queue.bounded<Queued<E>>(capacity)
     const failed = yield* Ref.make(Option.none<HarnessError>())
@@ -61,6 +62,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
       if (Option.isSome(failure)) return
       yield* handle(item.event).pipe(
         Effect.provideService(depth, item.depth),
+        Effect.provideService(CurrentTraceContent, item.traceContent),
         Effect.catchCause((cause) => Ref.set(failed, Option.some(failureOf(cause)))),
       )
     })))
@@ -69,7 +71,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
       const failure = yield* Ref.get(failed)
       if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
       yield* Ref.update(queued, (value) => value + 1)
-      yield* Queue.offer(queue, { _tag: "Event", event, depth: yield* Effect.service(depth) })
+      yield* Queue.offer(queue, { _tag: "Event", event, depth: yield* Effect.service(depth), traceContent: yield* Effect.service(CurrentTraceContent) })
     })
     const drain = Deferred.make<void, HarnessError>().pipe(Effect.flatMap((done) =>
       Queue.offer(queue, { _tag: "Marker", done }).pipe(Effect.andThen(Deferred.await(done)))))
@@ -78,7 +80,8 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
 
   const subscribe = <E, R>(select: (event: TurnEvent) => Option.Option<E>, handle: (event: E) => Effect.Effect<void, HarnessError, R>, subscribeOptions?: SubscribeOptions) =>
     Effect.gen(function* () {
-      const context = yield* Effect.context<R>()
+      // Traced where it runs: an inline handler under the publisher's span, with the publisher's trace content.
+      const context = replayableContext(yield* Effect.context<R>())
       const id = yield* Ref.getAndUpdate(nextId, (value) => value + 1)
       const handled = (selected: E) => handle(selected).pipe(Effect.provide(context))
       const mode = subscribeOptions?.mode ?? "inline"

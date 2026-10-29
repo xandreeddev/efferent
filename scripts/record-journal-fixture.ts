@@ -53,8 +53,9 @@ import { Agent } from "@xandreed/sdk"
  * for re-recording the current, unreleased version.
  *
  * Coverage: four agent turns (a digested tool result, a loaded skill, step
- * context and a system variant; a quick reply with a host event; a failure;
- * a matcher-seeded skill, a planned batch and a compaction), an inbox item
+ * context, a system variant and a stream that falls back; a quick reply with
+ * a host event; a failure; a matcher-seeded skill, a planned batch, a call
+ * the registry refuses and a compaction), an inbox item
  * whose turns fail until it is dropped, a background task that completes and
  * is delivered to the inbox, and one that is cancelled before it runs.
  */
@@ -136,7 +137,8 @@ const host = defineCapability({
       annotations: { readOnly: true },
     }),
     defineTool({ tool: Deliver, handler: () => Effect.succeed(true) }),
-    defineTool({ tool: Note, handler: () => Effect.succeed(true) }),
+    // Once per turn: a second call is refused (`tool.refused`).
+    defineTool({ tool: Note, handler: () => Effect.succeed(true), annotations: { maxCallsPerRun: Option.some(1) } }),
   ],
   skills: [
     defineSkill({ id: "core", summary: "Look records up.", tools: ["lookup"], always: true }),
@@ -232,13 +234,15 @@ const record = Effect.gen(function* () {
     return { outcome: result.outcome, reply: Option.orElse(yield* Ref.get(delivered), () => Option.some(result.text)) } satisfies TurnOutcome
   })
 
-  // 1. A digested tool result, a skill the model loads, step context, and a system variant from step 2.
+  // 1. A digested tool result, a skill the model loads, step context, and a system variant from step 2;
+  // the model does not stream, so the first step falls back (`stream.fallback`).
   const first = yield* scripted([call("c1", "lookup", { query: "alpha" }), call("c2", "load_skill", { skills: ["delivery"] }), call("c3", "deliver", { text: "record-alpha-b" })])
   yield* turnOf(input("run-1", "find alpha", first, { key: "client-command-1", command: { source: "fixture" } }), (turn) => Effect.gen(function* () {
     yield* turn.context({ id: "intent", version: "1", text: "INTENT: look a record up" })
     return yield* answer({
       model: (step) => Effect.succeed(step.stepIndex >= 2 ? Option.some({ model: first, variant: Option.some("brief") }) : Option.none()),
       step: (step) => Effect.succeed({ context: Option.some(`STEP ${step.stepIndex}`), toolChoice: Option.none() }),
+      limits: { requireCompletion: true, streaming: true },
     })(turn)
   }))
 
@@ -255,8 +259,14 @@ const record = Effect.gen(function* () {
     return yield* Effect.fail(new HarnessError({ code: "host.failed", message: "the host gave up" }))
   }))
 
-  // 4. The matcher seeds a skill (a decision), a planned first batch, a forced tool choice; the earlier lookup is compacted.
-  const fourth = yield* scripted([call("e1", "note", { text: "gamma" }), call("e2", "deliver", { text: "record-gamma-a" })])
+  // 4. The matcher seeds a skill (a decision), a planned first batch, a forced tool choice and a second note the
+  // registry refuses; the earlier lookup is compacted.
+  const twoNotes: Part = [
+    { type: "tool-call", id: "e1", name: "note", params: { text: "gamma" } },
+    { type: "tool-call", id: "e1b", name: "note", params: { text: "gamma again" } },
+    { type: "finish", reason: "tool-calls", usage },
+  ]
+  const fourth = yield* scripted([twoNotes, call("e2", "deliver", { text: "record-gamma-a" })])
   yield* turnOf(input("run-4", "note gamma, then deliver it", fourth), answer({
     initial: { calls: [{ name: "lookup", params: { query: "gamma" } }], skills: [] },
     step: (step) => Effect.succeed({ context: Option.none(), toolChoice: step.stepIndex === 1 ? Option.some({ tool: "note" }) : Option.none() }),

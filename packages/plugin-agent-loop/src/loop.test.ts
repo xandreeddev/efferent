@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Effect, Layer, Option, Ref, Schema, Stream, Tracer } from "effect"
-import { Failure, mediaFromBase64 } from "@xandreed/core"
+import { CurrentTraceContent, Failure, mediaFromBase64 } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import { DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
 
@@ -547,6 +547,53 @@ describe("runLoop streaming", () => {
     // Turn 0 probed the stream once; turn 1 went straight to generateText.
     expect(streamProbes.count).toBe(1)
     expect(events.some((e) => e.type === "assistant_delta")).toBe(false)
+    // One stream_fallback for the run, in the step that fell back, before its message.
+    expect(events.filter((e) => e.type === "stream_fallback")).toEqual([
+      { type: "stream_fallback", turnIndex: 0, message: expect.stringContaining("scripted providers do not stream") },
+    ])
+    const order = events.map((e) => e.type)
+    expect(order.indexOf("stream_fallback")).toBeLessThan(order.indexOf("assistant_message"))
+  })
+
+  test("FALLBACK: the stream_fallback message is the stream's error, cut to 300 characters", async () => {
+    const { events, onEvent } = collect()
+    await Effect.runPromise(Effect.gen(function* () {
+      const model = yield* LanguageModel.make({
+        generateText: () => Effect.succeed([{ type: "text" as const, text: "done" }, finish("stop")]),
+        streamText: () => Stream.die("x".repeat(1_000)),
+      })
+      yield* runLoop({ system: "sys", messages: [user("go")], toolkit: Toolkit.empty, streaming: true, onEvent })
+        .pipe(Effect.provideService(LanguageModel.LanguageModel, model))
+    }))
+    const fallbacks = events.flatMap((e) => e.type === "stream_fallback" ? [e.message] : [])
+    expect(fallbacks.map((message) => message.length)).toEqual([300])
+  })
+
+  test("FALLBACK: a stream that dies with an object reports it as JSON, not [object Object]", async () => {
+    const { events, onEvent } = collect()
+    await Effect.runPromise(Effect.gen(function* () {
+      const model = yield* LanguageModel.make({
+        generateText: () => Effect.succeed([{ type: "text" as const, text: "done" }, finish("stop")]),
+        streamText: () => Stream.die({ status: 502, reason: "bad gateway" }),
+      })
+      yield* runLoop({ system: "sys", messages: [user("go")], toolkit: Toolkit.empty, streaming: true, onEvent })
+        .pipe(Effect.provideService(LanguageModel.LanguageModel, model))
+    }))
+    expect(events.flatMap((e) => e.type === "stream_fallback" ? [e.message] : [])).toEqual(["{\"status\":502,\"reason\":\"bad gateway\"}"])
+  })
+
+  test("a stream that fails after its first part fails the step: no stream_fallback", async () => {
+    const { events, onEvent } = collect()
+    const exit = await Effect.runPromiseExit(Effect.gen(function* () {
+      const model = yield* LanguageModel.make({
+        generateText: () => Effect.die("settled path must not run"),
+        streamText: () => Stream.concat(Stream.fromIterable(toStreamParts([{ type: "text", text: "partial" }])), Stream.die("cut off")) as never,
+      })
+      yield* runLoop({ system: "sys", messages: [user("go")], toolkit: Toolkit.empty, streaming: true, onEvent })
+        .pipe(Effect.provideService(LanguageModel.LanguageModel, model))
+    }))
+    expect(exit._tag).toBe("Failure")
+    expect(events.some((e) => e.type === "stream_fallback")).toBe(false)
   })
 
   test("a MID-stream malformed failure (after content) rides the corrective path", async () => {
@@ -716,6 +763,55 @@ test("step trace content is explicit, includes replay context and is off by defa
     () => [{ type: "text", text: "private answer" }, finish("stop")])
   expect(snapshots[1]?.has("engine.step.input")).toBe(false)
   expect(snapshots[1]?.has("engine.step.output")).toBe(false)
+  // Unset, the option is CurrentTraceContent where the run starts.
+  await run(runLoop({ system: "ambient system", messages: [user("ambient")], toolkit: kit, onEvent: capture }).pipe(Effect.provideService(CurrentTraceContent, true)),
+    () => [{ type: "text", text: "ambient answer" }, finish("stop")])
+  expect(String(snapshots[2]?.get("engine.step.input"))).toContain("ambient")
+  // The option wins over the reference.
+  await run(runLoop({ system: "explicit system", messages: [user("explicit")], toolkit: kit, captureTraceContent: false, onEvent: capture }).pipe(Effect.provideService(CurrentTraceContent, true)),
+    () => [{ type: "text", text: "explicit answer" }, finish("stop")])
+  expect(snapshots[3]?.has("engine.step.input")).toBe(false)
+})
+
+test("the run's model calls and callbacks read the run's trace content switch", async () => {
+  const seen = await Effect.runPromise(Effect.gen(function* () {
+    const reads = yield* Ref.make<ReadonlyArray<string>>([])
+    const read = (where: string) => Effect.service(CurrentTraceContent).pipe(Effect.flatMap((on) => Ref.update(reads, (all) => [...all, `${where}:${on}`])))
+    const model = yield* LanguageModel.make({
+      generateText: () => read("model").pipe(Effect.as([{ type: "text" as const, text: "done" }, finish("stop")])),
+      streamText: () => Stream.die("unused"),
+    })
+    yield* runLoop({ system: "sys", messages: [user("go")], toolkit: Toolkit.empty, captureTraceContent: true, onEvent: (event) => event.type === "turn_start" ? read("event") : Effect.void })
+      .pipe(Effect.provideService(LanguageModel.LanguageModel, model))
+    return yield* Ref.get(reads)
+  }))
+  expect(seen).toEqual(["event:true", "model:true"])
+})
+
+test("a caller's span does not capture the loop's callbacks: they run under the step that calls them", async () => {
+  const spans: Array<Tracer.NativeSpan> = []
+  const parents = await Effect.runPromise(Effect.gen(function* () {
+    const observed = yield* Ref.make<ReadonlyArray<string>>([])
+    const parentName = (where: string) => Effect.currentSpan.pipe(Effect.orDie, Effect.flatMap((span) => Ref.update(observed, (all) => [...all, `${where}:${span.name}`])))
+    yield* runLoop({
+      system: "sys", messages: [user("go")], toolkit: kit,
+      activeTools: () => parentName("activeTools").pipe(Effect.as(["echo" as const])),
+      render: () => parentName("render").pipe(Effect.as([user("go")])),
+    }).pipe(
+      Effect.provide(kit.toLayer({ echo: ({ value }) => Effect.succeed({ echoed: value }).pipe(Effect.withSpan("echo.handler")) })),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((call) => call === 0
+        ? [{ type: "tool-call", id: "c1", name: "echo", params: { value: "ping" } }, finish("tool-calls")]
+        : [{ type: "text", text: "done" }, finish("stop")])),
+      Effect.withSpan("caller"),
+      Effect.withTracer(capturingTracer(spans)),
+    )
+    return yield* Ref.get(observed)
+  }))
+  expect(parents).toEqual(["activeTools:engine.turn", "render:engine.turn", "activeTools:engine.turn", "render:engine.turn"])
+  const byId = new Map(spans.map((span) => [span.spanId, span]))
+  const parentOf = (span: Tracer.NativeSpan | undefined) => Option.flatMap(Option.flatMap(Option.fromNullishOr(span), (child) => child.parent), (parent) => Option.fromNullishOr(byId.get(parent.spanId)))
+  expect(Option.map(parentOf(spans.find((span) => span.name === "engine.run")), (span) => span.name)).toEqual(Option.some("caller"))
+  expect(Option.map(parentOf(spans.find((span) => span.name === "engine.turn")), (span) => span.name)).toEqual(Option.some("engine.run"))
 })
 
 test("traced step content names an image by its size, never its bytes", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Exit, Layer, Stream } from "effect"
+import { Context, Effect, Exit, Layer, Option, Stream, Tracer } from "effect"
 import type { Scope } from "effect"
 import { LanguageModel } from "effect/ai"
 import {
@@ -17,6 +17,7 @@ import {
   turnOf,
   SessionLogMemoryLive,
   TurnAdmissionOpen,
+  traceTurn,
   turnEndingOf,
   UtilityCompletion,
   UtilityLlm,
@@ -37,7 +38,8 @@ import { expectGolden, goldenConfig, goldenHost, goldenTexts, runGolden } from "
  * turn's services, the digester is built over them, then TurnLive, the
  * host's layer and the body; the turn is ended with `turnEndingOf` its exit
  * (the outcome, or the failure's code), taken after `harnessDefectsAsFailures`,
- * as `Agent.turn` ends it.
+ * as `Agent.turn` ends it. Everything after the begin runs under the turn's
+ * span (`traceTurn`), as in `Agent.turn`.
  */
 const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = Effect.gen(function* () {
   const runtime = yield* Layer.build(CapabilitiesLive(goldenHost).pipe(
@@ -57,18 +59,20 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
     })
     const scoped = body.pipe(guardTurn, Effect.scoped)
     const hosted = input.layer === undefined ? scoped : scoped.pipe(Effect.provide(input.layer as Layer.Layer<A, E>))
-    const exit = yield* hosted.pipe(
-      Effect.provide(TurnLive({ turn: writer, system: "GOLDEN system prefix." })),
-      Effect.provide(MemoryDigestLive()),
-      Effect.provide(input.services),
-      Effect.provide(runtime),
-      // A HarnessError carried as a defect is stored with its own code, as `Agent.turn` stores it.
-      harnessDefectsAsFailures,
-      Effect.exit,
-    )
-    if (Exit.isSuccess(exit)) yield* writer.end(turnEndingOf(exit))
-    if (Exit.isFailure(exit)) yield* writer.end(turnEndingOf(exit)).pipe(Effect.ignore)
-    return yield* exit
+    return yield* Effect.gen(function* () {
+      const exit = yield* hosted.pipe(
+        Effect.provide(TurnLive({ turn: writer, system: "GOLDEN system prefix." })),
+        Effect.provide(MemoryDigestLive()),
+        Effect.provide(input.services),
+        Effect.provide(runtime),
+        // A HarnessError carried as a defect is stored with its own code, as `Agent.turn` stores it.
+        harnessDefectsAsFailures,
+        Effect.exit,
+      )
+      if (Exit.isSuccess(exit)) yield* writer.end(turnEndingOf(exit))
+      if (Exit.isFailure(exit)) yield* writer.end(turnEndingOf(exit)).pipe(Effect.ignore)
+      return yield* exit
+    }).pipe(traceTurn(writer))
   })) as Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
   return { turn }
 })
@@ -78,6 +82,33 @@ describe("a turn composed by hand", () => {
     const [byHand, byAgent] = await Effect.runPromise(Effect.all([runGolden(composed), runGolden(Agent.define(goldenConfig))]))
     await expectGolden(byHand)
     expect(goldenTexts(byHand)).toEqual(goldenTexts(byAgent))
+  })
+
+  test("with traceTurn, each turn's spans are under its agent.turn span and carry its ids, as under Agent.turn", async () => {
+    const traces = await Effect.runPromise(Effect.forEach([composed, Agent.define(goldenConfig)], (runner) => Effect.gen(function* () {
+      const spans: Array<Tracer.NativeSpan> = []
+      const tracer = Tracer.make({ span: (options) => { const span = new Tracer.NativeSpan(options); spans.push(span); return span } })
+      yield* runGolden(runner).pipe(Effect.withTracer(tracer))
+      return spans
+    })))
+    const shape = (spans: ReadonlyArray<Tracer.NativeSpan>) => {
+      const byId = new Map(spans.map((span) => [span.spanId, span] as const))
+      const turnOf = (span: Tracer.NativeSpan): Option.Option<Tracer.NativeSpan> => span.name === "agent.turn" ? Option.some(span)
+        : Option.flatMap(Option.flatMap(span.parent, (parent) => Option.fromNullishOr(byId.get(parent.spanId))), turnOf)
+      const turns = spans.filter((span) => span.name === "agent.turn")
+      // Every engine span is in a turn, and carries that turn's ids.
+      const engine = spans.filter((span) => span.name.startsWith("engine.") || span.name.startsWith("tool."))
+      const misplaced = engine.filter((span) => Option.match(turnOf(span), {
+        onNone: () => true,
+        onSome: (turn) => ["efferent.session.id", "efferent.run.id", "efferent.turn"].some((key) => span.attributes.get(key) !== turn.attributes.get(key)),
+      }))
+      return { turns: turns.map((turn) => [turn.attributes.get("efferent.run.id"), turn.attributes.get("efferent.turn"), turn.attributes.get("efferent.outcome")]), engine: engine.length, misplaced: misplaced.map((span) => span.name) }
+    }
+    const [byHand, byAgent] = traces.map(shape)
+    expect(byHand?.misplaced).toEqual([])
+    expect(byHand?.engine).toBeGreaterThan(0)
+    expect(byHand?.turns.length).toBeGreaterThan(1)
+    expect(byHand).toEqual(byAgent)
   })
 })
 

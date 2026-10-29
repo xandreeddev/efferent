@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { JsonSchema, Option, Schema, SchemaAST } from "effect"
-import { journalSchemaOf, RECORDED_ELSEWHERE, RESERVED_KINDS, TransientTurnEvents, TurnEvent } from "@xandreed/core"
+import { JOURNAL_KINDS, journalSchemaOf, RECORDED_ELSEWHERE, RESERVED_KINDS, TransientTurnEvents, TurnEvent } from "@xandreed/core"
 import type { TurnEventName } from "@xandreed/core"
 import { encodeSocketFrame, encodeSse, FeedHeartbeat, FeedReady, FeedRecord, renderFeedDefaults, sseHeaders, ssePreamble } from "@xandreed/plugin-render"
 import { deliveryId, TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
@@ -22,7 +22,7 @@ const fail = (message: string) => failures.push(message)
 
 /* ── hand-kept facts, checked against the code ── */
 
-/** Who writes each reserved kind, and what a host must treat as sensitive in it. */
+/** Who writes each journal kind, and what a host must treat as sensitive in it. */
 const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensitive: string }>> = {
   "turn.started": { writer: "plugin-sessions, when `Sessions.begin` opens the turn", sensitive: "The user's message (its images, inline as base64, included), the host's command and the host's metadata (`meta`), when given." },
   "memory.system": { writer: "Memory, when the turn's system prompt (or a variant) changes", sensitive: "The full system prompt text." },
@@ -38,10 +38,12 @@ const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensi
   "step.ended": { writer: "The turn's bus (stored from `step.ended`)", sensitive: "None: entry ids and tool names." },
   "step.usage": { writer: "The turn's bus (stored from `assistant.message`)", sensitive: "None: model name and token counts." },
   "tool.started": { writer: "The turn's bus (stored from `tool.started`)", sensitive: "Tool input." },
+  "tool.refused": { writer: "The turn's bus (stored from `tool.refused`)", sensitive: "The refusal message, which may name missing permissions or quote the host's denial; the input is left out." },
   "tool.completed": { writer: "The turn's bus (stored from `tool.completed`)", sensitive: "None: input and result are left out." },
   "completion.evaluated": { writer: "The turn's bus (stored from `completion.evaluated`)", sensitive: "The host's facts behind the verdict." },
   "context.built": { writer: "The turn's bus (stored from `context.built`)", sensitive: "None: fingerprints, counts and tool names." },
   "decision.recorded": { writer: "The turn's bus (stored from `decision.recorded`)", sensitive: "Candidate descriptions; the context itself only as a hash." },
+  "stream.fallback": { writer: "The turn's bus (stored from `stream.fallback`)", sensitive: "The stream's error text, which may quote the provider's error." },
   "request.prepared": { writer: "The turn, before each provider call (`TurnMemory.prepareRequest`)", sensitive: "The full system prompt text and every active tool declaration (and step context in `system` mode)." },
   "turn.ended": { writer: "plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap", sensitive: "Failure messages, which may quote errors." },
   "inbox.queued": { writer: "plugin-sessions: `Sessions.deliver` (a task's result, a host's item)", sensitive: "The item's content and source." },
@@ -197,15 +199,18 @@ const bus = TurnEvent.members.map((member) => {
   return { name, description, transient, stored, fields: fieldsOf(schema), schema }
 })
 
-const journal = RESERVED_KINDS.map((kind) => {
+const journal = JOURNAL_KINDS.map((kind) => {
   const facts = JOURNAL[kind]
-  if (facts === undefined) fail(`Reserved kind ${kind} has no writer and sensitivity entry in scripts/generate-event-reference.ts`)
-  const schema: Json = Option.match(journalSchemaOf(kind), { onNone: (): Json => { fail(`Reserved kind ${kind} has no journal schema (journalSchemaOf)`); return {} }, onSome: jsonSchemaOf })
+  if (facts === undefined) fail(`Journal kind ${kind} has no writer and sensitivity entry in scripts/generate-event-reference.ts`)
+  if (!RESERVED_KINDS.includes(kind)) fail(`Journal kind ${kind} is not reserved`)
+  const schema: Json = Option.match(journalSchemaOf(kind), { onNone: (): Json => { fail(`Journal kind ${kind} has no journal schema (journalSchemaOf)`); return {} }, onSome: jsonSchemaOf })
   const properties = isJson(schema.properties) ? schema.properties : {}
   const body = isJson(properties.body) ? fieldsOf({ ...properties.body, definitions: isJson(schema.definitions) ? schema.definitions : {} }) : []
   return { kind, writer: facts?.writer ?? "", sensitive: facts?.sensitive ?? "", fields: fieldsOf(schema), body, schema }
 })
-Object.keys(JOURNAL).filter((kind) => !RESERVED_KINDS.includes(kind)).forEach((kind) => fail(`${kind} has a writer entry but is not a reserved kind`))
+Object.keys(JOURNAL).filter((kind) => !JOURNAL_KINDS.includes(kind)).forEach((kind) => fail(`${kind} has a writer entry but is not a journal kind`))
+const busNames = new Set<string>(bus.map((event) => event.name))
+RESERVED_KINDS.filter((kind) => !JOURNAL_KINDS.includes(kind) && !busNames.has(kind)).forEach((kind) => fail(`Reserved kind ${kind} is neither a journal kind nor a bus event's name`))
 
 const beginCodes = Object.entries(turnBeginCodes).map(([tag, code]) => {
   const http = BEGIN_HTTP[tag]
@@ -291,7 +296,7 @@ const body = (links: { readonly framework: string }) => [
   table(["Kind", "Body fields"], journal.filter((entry) => entry.body.length > 0).map((entry) => [code(entry.kind), entry.body.map((field) => `${code(field.name)}: ${code(field.type)}`).join(", ")])),
   "Any other kind is a host's or a plugin's own record (`defineHostEvent`, `Sessions.transact`, the tasks plugin's `task.*`).",
   "## Reserved kinds",
-  "A host event, or a `Sessions.transact` draft, may not use these names: the publish fails with `events.reserved`, the transact with `ReservedKind`. The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.",
+  "A host event, or a `Sessions.transact` draft, may not use these names: the publish fails with `events.reserved`, the transact with `ReservedKind`. They are the journal kinds above and every bus event's name (`TURN_EVENT_NAMES`), the ones the journal never stores under their own name included (`assistant.message`, `assistant.delta`, `tool.progress`, `skills.activated`, `host`). The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.",
   fence("text", RESERVED_KINDS.join("\n")),
   "## Begin codes",
   "When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/sdk`). The HTTP status is a suggestion for a host serving turns over HTTP.",

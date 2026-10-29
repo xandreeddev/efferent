@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { LanguageModel, Prompt } from "effect/ai"
+import { LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
-import { Context, Effect, Option, Stream } from "effect"
-import { addUsage, CurrentAgentStep, extractUsage, HarnessError, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, zeroUsage } from "@xandreed/core"
-import type { CompletionVerdict, RunResult, StepInfo, StepRequest, TokenUsage } from "@xandreed/core"
+import { Context, Effect, Option, Ref, Stream } from "effect"
+import { addUsage, CurrentAgentStep, CurrentTraceContent, extractUsage, HarnessError, makeTurnEvents, makeTurnTasks, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, zeroUsage } from "@xandreed/core"
+import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, TokenUsage, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
 /**
@@ -45,6 +45,8 @@ const minimalLoop = StepLoop.of({
       // The tools declare no dependencies: the call needs no services (`Tool.Any` widens them to `any`).
       const generated: Effect.Effect<{ readonly content: ReadonlyArray<unknown> }, unknown> = provider.generateText({ prompt, toolkit, ...Option.match(toolChoice, { onNone: () => ({}), onSome: (choice) => ({ toolChoice: choice }) }) }) as never
       const response = yield* generated.pipe(
+        // The run's trace content switch, for the model call to read.
+        Effect.provideService(CurrentTraceContent, request.captureTraceContent),
         Effect.provide(handlers),
         Effect.provideService(CurrentAgentStep, Option.some(index)),
         Effect.mapError((error) => new HarnessError({ code: "loop.failed", message: String(error) })),
@@ -78,3 +80,88 @@ const conform = (name: string, loop: Context.Service.Shape<typeof StepLoop>) => 
 
 conform("StepLoopLive", StepLoop.of({ ...STEP_LOOP, run: runSteps }))
 conform("a minimal loop", minimalLoop)
+
+/** One run of `runSteps` over a model, no tools, a record that keeps nothing: the bus events and the trace content switch the model saw. */
+const runWith = (model: LanguageModel.LanguageModel, options: { readonly streaming: boolean; readonly captureTraceContent: boolean; readonly steps?: number }) => Effect.scoped(Effect.gen(function* () {
+  const events = yield* makeTurnEvents({ maxDepth: 8 })
+  const tasks = yield* makeTurnTasks(yield* Effect.scope)
+  const seen = yield* Ref.make<ReadonlyArray<TurnEvent>>([])
+  yield* events.subscribe(Option.some, (event: TurnEvent) => Ref.update(seen, (all) => [...all, event]))
+  const tools: RunTools = {
+    toolkit: Toolkit.empty, handlers: Context.empty(), active: Effect.succeed([]), activate: () => Effect.succeed([]),
+    match: (userMessage) => Effect.succeed({ userMessage, skills: [], probabilities: Option.none(), record: Option.none() }),
+    apply: () => Effect.succeed([]), select: () => Effect.succeed([]),
+    views: {
+      view: (_tool, encoded) => Effect.succeed({ text: String(encoded), version: "1", subjects: [], artifacts: [], pinned: false }),
+      compact: () => Effect.succeed(Option.none()),
+      digest: () => Effect.succeed(Option.none()),
+    },
+    pollable: [], skills: [],
+  }
+  const steps = options.steps ?? 1
+  const result = yield* runSteps({
+    tools,
+    handlers: Context.make(LanguageModel.LanguageModel, model) as Context.Context<never>,
+    limits: { maxSteps: 6, toolConcurrency: 1, streaming: options.streaming, requireCompletion: false },
+    initial: Option.none(),
+    plan: () => Effect.succeed({ model: Option.none(), system: "sys", messages: [{ role: "user", content: "go" }], toolChoice: Option.none() }),
+    dispatch: () => Effect.void,
+    record: () => Effect.succeed([]),
+    // Complete after `steps` steps; a model stop ends the run earlier.
+    completion: (info) => Effect.succeed({ complete: info.stepIndex + 1 >= steps, awaiting: [], facts: {} }),
+    steering: Effect.succeed(Option.none()),
+    correctives: Option.none(),
+    events,
+    tasks,
+    cacheKey: Option.none(),
+    captureTraceContent: options.captureTraceContent,
+  })
+  return { result, events: yield* Ref.get(seen) }
+}))
+
+/** A model whose stream dies at once, and whose `generateText` answers and records the trace content switch it saw. */
+const unstreamable = (reads: Ref.Ref<ReadonlyArray<boolean>>) => LanguageModel.make({
+  generateText: () => Effect.service(CurrentTraceContent).pipe(
+    Effect.tap((capture) => Ref.update(reads, (all) => [...all, capture])),
+    Effect.as([{ type: "text" as const, text: "answer" }, { type: "finish" as const, reason: "stop" as const, usage: { inputTokens: { total: 4 }, outputTokens: { total: 2 } } }]),
+  ),
+  streamText: () => Stream.die("the gateway closed the stream"),
+})
+
+describe("runSteps streaming", () => {
+  test("a stream that fails before its first part publishes stream.fallback once, and the run completes without streaming", async () => {
+    const { result, events } = await Effect.runPromise(Effect.gen(function* () {
+      const reads = yield* Ref.make<ReadonlyArray<boolean>>([])
+      return yield* runWith(yield* unstreamable(reads), { streaming: true, captureTraceContent: false })
+    }))
+    expect(result.outcome).toBe("completed")
+    expect(result.text).toBe("answer")
+    const fallbacks = events.filter((event) => event._tag === "stream.fallback")
+    expect(fallbacks).toEqual([{ _tag: "stream.fallback", step: 0, message: expect.stringContaining("the gateway closed the stream") }])
+    // Inside its step: after step.started, before the step's assistant.message.
+    const tags = events.map((event) => event._tag)
+    expect(tags.indexOf("step.started")).toBeLessThan(tags.indexOf("stream.fallback"))
+    expect(tags.indexOf("stream.fallback")).toBeLessThan(tags.indexOf("assistant.message"))
+    expect(events.some((event) => event._tag === "assistant.delta")).toBe(false)
+  })
+
+  test("without streaming there is no fallback to report", async () => {
+    const { events } = await Effect.runPromise(Effect.gen(function* () {
+      const reads = yield* Ref.make<ReadonlyArray<boolean>>([])
+      return yield* runWith(yield* unstreamable(reads), { streaming: false, captureTraceContent: false })
+    }))
+    expect(events.some((event) => event._tag === "stream.fallback")).toBe(false)
+  })
+})
+
+describe("runSteps trace content", () => {
+  test.each([false, true])("the request's captureTraceContent (%p) is CurrentTraceContent for the run's model calls", async (capture) => {
+    const reads = await Effect.runPromise(Effect.gen(function* () {
+      const reads = yield* Ref.make<ReadonlyArray<boolean>>([])
+      // The switch where the run starts is the opposite: the request's wins.
+      yield* runWith(yield* unstreamable(reads), { streaming: false, captureTraceContent: capture }).pipe(Effect.provideService(CurrentTraceContent, !capture))
+      return yield* Ref.get(reads)
+    }))
+    expect(reads).toEqual([capture])
+  })
+})

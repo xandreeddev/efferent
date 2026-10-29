@@ -5,11 +5,11 @@ import { ConversationId } from "../domain/message.entity.js"
 import { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
-import { TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
+import { TransientTurnEvents, TURN_EVENT_NAMES, TurnEvent } from "../turn/turn-event.entity.js"
 import { zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
-import { MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
+import { JOURNAL_KINDS, MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
 import type { SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-00000000e3e3")
@@ -121,6 +121,36 @@ describe("the turn's bus events as stored", () => {
     expect(RESERVED_KINDS.includes("answer.published")).toBe(false)
     expect(["turn.started", "turn.ended", "memory.message", "step.usage", "inbox.queued"].every((kind) => RESERVED_KINDS.includes(kind))).toBe(true)
   })
+  test("a refused tool call is stored without its input; a stream fallback whole", () => {
+    const refused: TurnEvent = { _tag: "tool.refused", step: 1, invocationId: "run-1:call:3", tool: "archive", input: { id: "secret" }, reason: "forbidden", message: "archive requires records.write" }
+    const fallback: TurnEvent = { _tag: "stream.fallback", step: 0, message: "the gateway closed the stream" }
+    expect([refused, fallback].map((event) => Option.map(draftOfTurnEvent(4, event), (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data]))).toEqual([
+      Option.some(["tool.refused", 4, { step: 1, invocationId: "run-1:call:3", tool: "archive", reason: "forbidden", message: "archive requires records.write" }]),
+      Option.some(["stream.fallback", 4, { step: 0, message: "the gateway closed the stream" }]),
+    ])
+  })
+})
+
+describe("the reserved names", () => {
+  const tags = TurnEvent.members.map((member) => member.fields._tag.schema.literal)
+  test("TURN_EVENT_NAMES is every bus event's name", () => {
+    expect([...TURN_EVENT_NAMES].sort()).toEqual([...tags].sort())
+    expect(new Set(TURN_EVENT_NAMES).size).toBe(TURN_EVENT_NAMES.length)
+  })
+  test("are the journal's kinds and every bus event's name, each once", () => {
+    expect(new Set(RESERVED_KINDS)).toEqual(new Set([...JOURNAL_KINDS, ...TURN_EVENT_NAMES]))
+    expect(new Set(RESERVED_KINDS).size).toBe(RESERVED_KINDS.length)
+    // Names the journal never stores under their own name are reserved too.
+    expect(["assistant.message", "assistant.delta", "tool.progress", "skills.activated", "host", "tool.refused", "stream.fallback"].every((name) => RESERVED_KINDS.includes(name))).toBe(true)
+  })
+  test("every kind an earlier release reserved is still reserved, in the same order", () => {
+    const reserved013 = [
+      "turn.started", "memory.system", "memory.section", "memory.step", "memory.message", "memory.tool-result", "memory.digest", "memory.skills",
+      "memory.compaction", "turn.reply", "step.started", "step.ended", "step.usage", "tool.started", "tool.completed", "completion.evaluated",
+      "context.built", "decision.recorded", "request.prepared", "turn.ended", "inbox.queued", "inbox.dropped",
+    ]
+    expect(RESERVED_KINDS.filter((kind) => reserved013.includes(kind))).toEqual(reserved013)
+  })
 })
 
 describe("the journal's schemas", () => {
@@ -128,9 +158,11 @@ describe("the journal's schemas", () => {
     onNone: () => false,
     onSome: (schema) => Option.isSome(Schema.decodeUnknownOption(schema)(data)),
   })
-  test("every reserved kind has one; a host's or a plugin's own kind has none", () => {
-    expect(RESERVED_KINDS.filter((kind) => Option.isNone(journalSchemaOf(kind)))).toEqual([])
-    expect(["answer.published", "task.started", "tool.progress"].map(journalSchemaOf).every(Option.isNone)).toBe(true)
+  test("every journal kind has one; a host's or a plugin's own kind, and a bus name never stored as itself, has none", () => {
+    expect(JOURNAL_KINDS.filter((kind) => Option.isNone(journalSchemaOf(kind)))).toEqual([])
+    expect(["answer.published", "task.started", "tool.progress", "assistant.message", "assistant.delta", "skills.activated", "host"].map(journalSchemaOf).every(Option.isNone)).toBe(true)
+    // A reserved name without a schema is a bus event's name the journal does not store as itself.
+    expect(RESERVED_KINDS.filter((kind) => Option.isNone(journalSchemaOf(kind))).every((kind) => TURN_EVENT_NAMES.some((name) => name === kind))).toBe(true)
   })
   test("every bus event the journal stores under a kind of its own is stored under a reserved kind, and only those have a schema", () => {
     const tags = TurnEvent.members.map((member) => member.fields._tag.schema.literal)
@@ -146,9 +178,13 @@ describe("the journal's schemas", () => {
       { _tag: "assistant.message", step: 1, text: "hello", reasoning: "", model: Option.none(), toolCalls: [], usage },
       { _tag: "tool.completed", step: 0, invocationId: "i", tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 }, durationMs: 5, labels: {}, stage: Option.none() },
       { _tag: "step.started", step: 0, planned: false, activeTools: ["lookup"] },
+      { _tag: "tool.refused", step: 0, invocationId: "i", tool: "lookup", input: { q: 1 }, reason: "call-limit", message: "limit" },
+      { _tag: "stream.fallback", step: 0, message: "no stream" },
     ]
     const stored = events.flatMap((event) => Option.toArray(draftOfTurnEvent(1, event)))
-    expect(stored.map((draft) => [draft.kind, decodes(draft.kind, draft.data)])).toEqual([["step.usage", true], ["tool.completed", true], ["step.started", true]])
+    expect(stored.map((draft) => [draft.kind, decodes(draft.kind, draft.data)])).toEqual([
+      ["step.usage", true], ["tool.completed", true], ["step.started", true], ["tool.refused", true], ["stream.fallback", true],
+    ])
   })
   test("a memory entry decodes as its kind's envelope; the inbox records decode as written", async () => {
     const entry: LogEntry = { id: EntryId.make("r:1"), runId: "r", turn: 1, step: 0, at: 5, body: { _tag: "StepContext", step: 0, text: "STEP 0" } }

@@ -14,14 +14,21 @@
     "step.ended",
     "step.usage",
     "tool.started",
+    "tool.refused",
     "tool.completed",
     "completion.evaluated",
     "context.built",
     "decision.recorded",
+    "stream.fallback",
     "request.prepared",
     "turn.ended",
     "inbox.queued",
-    "inbox.dropped"
+    "inbox.dropped",
+    "tool.progress",
+    "skills.activated",
+    "assistant.message",
+    "assistant.delta",
+    "host"
   ],
   "bus": [
     {
@@ -230,7 +237,7 @@
     },
     {
       "name": "tool.started",
-      "description": "Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes no `tool.*` event; `step.ended.results` lists every recorded result. Journaled as `tool.started`, input included.",
+      "description": "Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress` and `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes `tool.refused` instead, and no other `tool.*` event; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -318,7 +325,99 @@
           "stage"
         ],
         "additionalProperties": true,
-        "description": "Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes no `tool.*` event; `step.ended.results` lists every recorded result. Journaled as `tool.started`, input included."
+        "description": "Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress` and `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes `tool.refused` instead, and no other `tool.*` event; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included."
+      }
+    },
+    {
+      "name": "tool.refused",
+      "description": "Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`.",
+      "transient": false,
+      "stored": {
+        "as": "kind",
+        "kind": "tool.refused",
+        "omitted": [
+          "input"
+        ]
+      },
+      "fields": [
+        {
+          "name": "step",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "invocationId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "tool",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "input",
+          "type": "unknown",
+          "required": true
+        },
+        {
+          "name": "reason",
+          "type": "\"inactive\" | \"forbidden\" | \"denied\" | \"call-limit\" | \"tool-call-limit\"",
+          "required": true
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "tool.refused"
+            ]
+          },
+          "step": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "invocationId": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "input": {},
+          "reason": {
+            "type": "string",
+            "enum": [
+              "inactive",
+              "forbidden",
+              "denied",
+              "call-limit",
+              "tool-call-limit"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "_tag",
+          "step",
+          "invocationId",
+          "tool",
+          "input",
+          "reason",
+          "message"
+        ],
+        "additionalProperties": true,
+        "description": "Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`."
       }
     },
     {
@@ -1297,7 +1396,7 @@
     },
     {
       "name": "assistant.delta",
-      "description": "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call publishes none.",
+      "description": "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none.",
       "transient": true,
       "stored": {
         "as": "transient"
@@ -1362,7 +1461,56 @@
           "delta"
         ],
         "additionalProperties": true,
-        "description": "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call publishes none."
+        "description": "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none."
+      }
+    },
+    {
+      "name": "stream.fallback",
+      "description": "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). Journaled as `stream.fallback`.",
+      "transient": false,
+      "stored": {
+        "as": "kind",
+        "kind": "stream.fallback",
+        "omitted": []
+      },
+      "fields": [
+        {
+          "name": "step",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "stream.fallback"
+            ]
+          },
+          "step": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "_tag",
+          "step",
+          "message"
+        ],
+        "additionalProperties": true,
+        "description": "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). Journaled as `stream.fallback`."
       }
     },
     {
@@ -3785,6 +3933,77 @@
       }
     },
     {
+      "kind": "tool.refused",
+      "writer": "The turn's bus (stored from `tool.refused`)",
+      "sensitive": "The refusal message, which may name missing permissions or quote the host's denial; the input is left out.",
+      "fields": [
+        {
+          "name": "step",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "invocationId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "tool",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "reason",
+          "type": "\"inactive\" | \"forbidden\" | \"denied\" | \"call-limit\" | \"tool-call-limit\"",
+          "required": true
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "body": [],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "invocationId": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string",
+            "enum": [
+              "inactive",
+              "forbidden",
+              "denied",
+              "call-limit",
+              "tool-call-limit"
+            ]
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "invocationId",
+          "tool",
+          "reason",
+          "message"
+        ],
+        "additionalProperties": true
+      }
+    },
+    {
       "kind": "tool.completed",
       "writer": "The turn's bus (stored from `tool.completed`)",
       "sensitive": "None: input and result are left out.",
@@ -4232,6 +4451,43 @@
         },
         "required": [
           "record"
+        ],
+        "additionalProperties": true
+      }
+    },
+    {
+      "kind": "stream.fallback",
+      "writer": "The turn's bus (stored from `stream.fallback`)",
+      "sensitive": "The stream's error text, which may quote the provider's error.",
+      "fields": [
+        {
+          "name": "step",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "message",
+          "type": "string",
+          "required": true
+        }
+      ],
+      "body": [],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "step": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "message": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "step",
+          "message"
         ],
         "additionalProperties": true
       }

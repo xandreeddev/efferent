@@ -232,8 +232,14 @@ per `llm.model`) count every successful call it routes, utility calls included.
 Each step's `engine.turn` span carries its call's usage under the OpenTelemetry
 GenAI names (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`,
 `gen_ai.usage.cache_read.input_tokens`, `gen_ai.usage.cache_creation.input_tokens`,
-`gen_ai.usage.reasoning.output_tokens`), and the `engine.run` span the run's sums
-as `engine.usage.{input,output,cache_read,cache_write,reasoning,total}_tokens`.
+`gen_ai.usage.reasoning.output_tokens`), the `engine.run` span the run's sums
+as `engine.usage.{input,output,cache_read,cache_write,reasoning,total}_tokens`,
+and the `agent.turn` span the turn's as
+`efferent.usage.{input,output,cache_read,cache_write,reasoning,total}_tokens`.
+The models plugin's `providers.generate` span puts the model's reasoning in
+`llm.reasoning` (its first 500 characters) only when the run captures trace
+content (`captureTraceContent`, read per call as `CurrentTraceContent`) or
+`EFFERENT_TRACE_CONTENT=1` is set; otherwise it reads `[redacted]`.
 
 The counts hold three invariants: both cache counts are inside the input, the
 reasoning is inside the output, and the total is input plus output. The usage

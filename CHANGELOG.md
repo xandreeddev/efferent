@@ -315,6 +315,61 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   code too. Other failures are still `plugin.activation`. Migration: a
   host that matched `plugin.activation` for these matches their own codes.
 
+- **`@xandreed/core`: `TurnEvent` gains `tool.refused` and `stream.fallback`,
+  and `LoopEvent` gains `stream_fallback`.** A call the tool registry
+  refuses before its handler runs (an inactive tool, a missing permission,
+  an `ActionPolicy` denial, the turn's or the tool's call limit) publishes
+  `tool.refused`; it published nothing. A step loop whose streamed call
+  fails before its first part publishes `stream.fallback` once per run.
+  Both are journaled (`tool.refused` without its input). Migration: an
+  exhaustive `Match` over `TurnEvent` or `LoopEvent` handles the new
+  members; a reader of a session's journal meets the two new kinds.
+- **`@xandreed/core`: every bus event's name is reserved.**
+  `RESERVED_KINDS` gains the new journal kinds `tool.refused` and
+  `stream.fallback`, and every `TurnEvent` name the journal does not store
+  as itself (`assistant.message`, `assistant.delta`, `tool.progress`,
+  `skills.activated`, `host`; `TURN_EVENT_NAMES` lists them all): a host
+  event under one of them fails with `events.reserved`, a
+  `Sessions.transact` draft with `ReservedKind`. The kinds reserved before
+  are reserved as they were. `journalSchemaOf` has a schema for every kind
+  the framework writes (`JOURNAL_KINDS`), not for every reserved name.
+  Migration: rename a host event that used one of these names; code that
+  looked up a schema for each of `RESERVED_KINDS` iterates `JOURNAL_KINDS`.
+- **`@xandreed/plugin-tool-discovery`: a refused call has an invocation id.**
+  The id (`<runId>:call:<n>`) is minted before the refusal checks, so a
+  refused call takes the next number and the calls after it count on from
+  there: their `invocationId`s differ from before when a turn had refusals.
+- **`@xandreed/core`: `StepRequest.captureTraceContent` is required.** A
+  hand-built `StepRequest` (a test, a host's own turn) adds it; `stepRequestOf`
+  fills it from the policy, the agent and `CurrentTraceContent`. A custom
+  `StepLoop` must provide it to its model calls as `CurrentTraceContent`,
+  whatever the caller's: `stepLoopConformance` checks it. Migration: wrap
+  the loop's model calls in
+  `Effect.provideService(CurrentTraceContent, request.captureTraceContent)`.
+- **The trace tree changes shape.** `Agent.turn` runs each admitted turn
+  under an `agent.turn` span, so `engine.run` is no longer a root (nor a
+  child of the caller's span). Contexts the framework captures and replays
+  no longer carry the span current at capture: a `tool.<name>` span is a
+  child of the model call that made the call (it was a child of the span
+  where the turn's tools were opened), a handler's spans are children of
+  its `tool.<name>` span, `engine.run` is a child of the span where
+  `turn.run` is called, the loop's callbacks and a policy's run under
+  `engine.turn` (some ran under `engine.run`), and the models plugin's
+  `providers.generate` is a child of the calling span, not of the span its
+  layer was built under. An inline bus subscriber's spans are children of
+  the publisher's span (they were children of the span where it
+  subscribed), and a session chassis turn's of the span where `send` is
+  called. Span annotations and links set where a context was captured
+  (`Effect.annotateSpans` around a layer's build or the turn's services) no
+  longer reach the replayed work's spans, where they replaced the turn's
+  ids. A parent span in `TurnInput.services` or `AgentConfig.services` is
+  ignored (wrap the `Agent.turn` call in `Effect.withParentSpan` instead),
+  and so is a `CurrentTraceContent` in `AgentConfig.services` (set
+  `AgentConfig.captureTraceContent`); one in `TurnInput.services` still
+  counts as where the turn's runs start. Migration: dashboards or queries
+  keyed on root spans or parent names follow the new tree
+  (`docs/framework.md`, "Traces and metrics").
+
 ### Added
 
 - `@xandreed/core`: every `TurnEvent` member carries a `description`
@@ -644,6 +699,53 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and sessions page and the README; the event reference lists the
   `skills.*` codes.
 
+- `@xandreed/core`: `traceTurn(writer, { spanMeta })`, the `agent.turn`
+  span as a lifecycle step for host-composed turns: `efferent.session.id`,
+  `efferent.run.id` and `efferent.turn` on it and on every span under it,
+  `gen_ai.conversation.id`, `efferent.origin`, `efferent.resumes` on a
+  resume, and the allowed `efferent.meta.<key>`s, and at its end `efferent.outcome`,
+  `efferent.failure.code` and the turn's usage
+  (`efferent.usage.*_tokens`; for a turn that failed, what `guardTurn`
+  records on its span: the usage its provider calls spent).
+  `Agent.turn` uses it.
+- `@xandreed/sdk`: `AgentConfig.spanMeta`, the keys of a turn's metadata its
+  span carries (none by default); the metrics `efferent.turns` and
+  `efferent.turn.duration` (milliseconds), by `efferent.outcome`, for every
+  turn `Agent.turn` runs once it is admitted.
+- `@xandreed/core`, `@xandreed/sdk`: `captureTraceContent` on `AgentConfig`,
+  `TurnPolicy`, `TurnRunOptions` and `StepRequest`, and the
+  `CurrentTraceContent` reference: a run's spans carry its prompts and
+  responses (`engine.step.input`, `engine.step.output`, the models plugin's
+  `llm.reasoning`) when its policy says so, else the agent, else the
+  reference where the run starts; off by default. `Agent.turn` never set
+  the loop's option before, so content capture only worked when calling
+  `runLoop` directly.
+- `@xandreed/core`: `replayableContext(context)`, a captured context without
+  the trace state of where it was captured (the parent span, the span
+  annotations and links, the trace-content switch), for code that provides a
+  context again later; the registry, the step loop, `turnOf`,
+  `stepRequestOf`, `Agent.turn`, the bus's subscribers, the session chassis,
+  `makeLiveLayer` and the models plugin's layers use it.
+- `@xandreed/core`: `stepLoopConformance` checks that a loop provides the
+  request's `captureTraceContent` to its model calls as
+  `CurrentTraceContent`, over a caller's on or off.
+- `@xandreed/core`: `ToolRefusedEvent`, `ToolRefusalReason`,
+  `StreamFallbackEvent`, `TURN_EVENT_NAMES` and `JOURNAL_KINDS`.
+- `@xandreed/plugin-agent-loop`: a pre-first-part stream failure emits
+  `stream_fallback` (the stream's error as text, an object as JSON, cut to
+  300 characters), which
+  `runSteps` publishes as `stream.fallback`, and counts
+  `engine.corrections{engine.kind: "stream-fallback"}`. `runLoop` provides
+  its `captureTraceContent` (`CurrentTraceContent` when unset) to the run as
+  `CurrentTraceContent`.
+- `@xandreed/plugin-models`: `llm.reasoning` carries the model's reasoning
+  when the call's `CurrentTraceContent` is on, as well as with
+  `EFFERENT_TRACE_CONTENT=1`, read per call.
+- Docs: `docs/framework.md` "Traces and metrics" (the span tree, the turn's
+  span, where spans nest, the metrics, trace content), the event list and
+  the journal vocabulary; the website's SDK and providers pages; the event
+  reference lists `tool.refused`, `stream.fallback` and the reserved names.
+
 ### Fixed
 
 - `@xandreed/plugin-session-sqlite`: processes opening one new database file
@@ -700,6 +802,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   plugin reference page says what each plugin contributes and reads when
   present (`Contributes`, `Optional`), and "none" for a plugin that provides
   nothing.
+
+- `scripts/record-journal-fixture.ts` records a refused call and a stream
+  fallback, so the next release's fixture holds `tool.refused` and
+  `stream.fallback`; the 0.13.0 fixture is unchanged and still decodes.
+  `journal-compat.test.ts` expects a fixture to hold every journal kind its
+  version reserved (a reserved bus name never stored as itself excepted).
+  The event-reference generator lists the journal from `JOURNAL_KINDS` and
+  fails on a reserved name that is neither a journal kind nor a bus event's.
 
 ## 0.13.0
 
