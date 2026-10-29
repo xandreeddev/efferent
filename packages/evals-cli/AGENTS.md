@@ -13,6 +13,7 @@ The `efferent-eval` command line over `@xandreed/evals`: it loads an app's `eval
 - Read files through `readJson`: a missing file is `missing`, one that does not decode `invalid`, any other failure `persistence`.
 - An `EvaluationError` that wraps a failure keeps it as `cause` and says what failed (`Cannot read <path>: EISDIR: …`, `Run <id> does not encode: …`), the reason from `reasonOf(Cause.die(error))` or a schema error's `message`, never `String(error)`.
 - App `commands` are dispatched before the built-in commands other than `help`, `inspect` and `compare`.
+- A command that loads the app is one `eval.cli` span carrying `eval.command`, opened inside the app's `observability` layer, which closes with the command (an interrupted one too) and so flushes its spans. Open no span outside that layer: its children would point at a parent the app's tracer never receives. `help`, `inspect` and `compare` load no app and open no span; `evaluationCli` and `writeJson` are `Effect.fnUntraced`.
 - Name test support `*.testing.ts`: the build leaves those files out.
 
 ## Public surface
@@ -45,7 +46,7 @@ None.
 
 ## Tests
 
-- `src/cli.test.ts`: the commands over `cliFixture` in a temporary directory (export failure, grading revisions, comparison, flags, file errors, the causes and messages of wrapped failures); `validate` on `node` (tsx's loader does not run on Bun) refuses configurations whose default export is not an app.
+- `src/cli.test.ts`: the commands over `cliFixture` in a temporary directory (export failure, the `eval.cli` span tree in the app's `observability` layer and its release after the spans end, an interrupted run's too, grading revisions, comparison, flags, file errors, the causes and messages of wrapped failures); `validate` on `node` (tsx's loader does not run on Bun) refuses configurations whose default export is not an app.
 - `src/run-main.adapter.test.ts`: signals and exit codes over a fake `CliProcess`; `:54` spawns `node` on `src/main.ts` with `hanging-run.testing.ts` and sends SIGINT (needs `node` on `PATH`).
 - `bun run verify:packages` runs `scripts/evaluation-consumer.fixture.mjs` on Node: `evaluationCli` from the packed package loads a TypeScript configuration and runs a suite.
 - Run: `bun test packages/evals-cli`.

@@ -204,6 +204,8 @@ eval.calibrate         calibrateGrader: eval.calibration.id, eval.run.id
 
 Logs written under `eval.trial` and `eval.grade` carry the same ids as annotations, under the same keys. Dataset-level assessment opens `eval.evaluator` per evaluator, `eval.semantic.run` for `semanticEvaluator`, the judges' `eval.semantic.llm` and `eval.semantic.jev`, and `eval.pairwise` over both orders. Each exporter's `exportRun` is one `eval.export` span carrying `eval.exporter` and `eval.run.id`.
 
+The command line traces through the app. An app's `observability` layer (a `Layer.Layer<never>`, such as `Layer.orDie(OtlpTelemetryFromEnv())` from `@xandreed/plugin-telemetry`) is provided around each command that loads the app, and that command is one `eval.cli` span carrying `eval.command`, over the spans above and the exports' `eval.export`. The layer closes with the command, so its spans are flushed when the command ends and when Ctrl-C or SIGTERM interrupts it. It has no error type: observability never fails an eval. `inspect`, `compare` and `help` load no app and open no span.
+
 ## Retrieval grading
 
 `rankingMetrics` provides hit rate, precision, recall, MRR, nDCG, anchor nDCG and unjudged/duplicate counts. Unknown relevance makes judged precision/full nDCG unavailable. Anchor nDCG deliberately measures against the known positive anchors and must be named as such. Applications may supply observed relevance grades when they own a stronger duplicate identity rule.

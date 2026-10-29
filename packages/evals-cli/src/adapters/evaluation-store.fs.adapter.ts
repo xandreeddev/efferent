@@ -9,7 +9,7 @@ const persistence = (what: string, error: unknown) =>
   new EvaluationError({ code: "persistence", message: `${what}: ${reasonOf(Cause.die(error))}`, cause: error })
 export const fileIo = <A>(action: () => Promise<A>) => Effect.tryPromise({ try: action, catch: (error) => persistence("File operation failed", error) })
 /** Write to a temporary file, then rename it into place; a failed write removes the temporary file. */
-export const writeJson = (path: string, value: unknown) => Effect.gen(function* () {
+export const writeJson = Effect.fnUntraced(function* (path: string, value: unknown) {
   yield* fileIo(() => mkdir(dirname(path), { recursive: true }))
   const temporary = `${path}.${randomUUID()}.tmp`
   yield* fileIo(() => writeFile(temporary, JSON.stringify(value, null, 2), { mode: 0o600 })).pipe(

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { createHash } from "node:crypto"
-import { Deferred, Effect, Fiber, Layer, Option, Ref, Result, Schema } from "effect"
+import { Deferred, Effect, Fiber, Layer, Option, Ref, Result, Schema, Tracer } from "effect"
 import {
   EvalId,
   EvalPath,
@@ -27,7 +27,7 @@ import {
 } from "../index.js"
 import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
 
-import { fixture, FixtureEnvironment } from "./fixture.testing.js"
+import { fixture, FixtureEnvironment, spanRecorder } from "./fixture.testing.js"
 import {
   EvaluationServicesLive,
   TrialExecution,
@@ -541,6 +541,13 @@ test("a value that is not an evaluation app is refused by shape, at the path of 
   const parsed = await Effect.runPromise(parseEvaluationApp(app))
   expect(parsed.suites).toEqual(app.suites)
   expect(parsed.graders[0]?.layer).toBe(app.graders[0]!.layer)
+})
+
+test("an app's observability layer is kept by decoding; anything else in its place is refused by shape", async () => {
+  const observability = Layer.succeed(Tracer.Tracer, spanRecorder().tracer)
+  const parsed = await Effect.runPromise(parseEvaluationApp({ ...fixture(), observability }))
+  expect(parsed.observability).toBe(observability)
+  expect(await refusedBy({ ...fixture(), observability: "otlp" })).toEqual([["shape", ["observability"]]])
 })
 
 test("a refusal keeps every violation and names the first five", async () => {

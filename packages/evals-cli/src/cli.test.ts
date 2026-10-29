@@ -1,9 +1,10 @@
-import { EvaluationExport, EvaluationError, EvaluationRunStore, comparisonIssues, positiveInt } from "@xandreed/evals"
+import { EvaluationExport, EvaluationError, EvaluationRunStore, comparisonIssues, positiveInt, type EvaluationApp } from "@xandreed/evals"
+import { spanRecorder } from "@xandreed/evals/testing/fixture.testing"
 import { expect, test } from "bun:test"
 import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Layer } from "effect"
+import { Deferred, Effect, Fiber, Layer, Option, Tracer } from "effect"
 import { evaluationCli } from "./cli.adapter.js"
 import { EvaluationRunStoreFsLive, readRun, readText, writeJson } from "./adapters/evaluation-store.fs.adapter.js"
 import { loadEvaluationApp } from "./config-loader.adapter.js"
@@ -60,6 +61,50 @@ test("failed export preserves the local result; inspect works without app config
       })
     )
   ).toBe(0)
+})
+
+/** `base` with a recording tracer as its observability layer, whose release notes the spans still open when it closes. */
+const observed = (base: EvaluationApp) => {
+  const recorder = spanRecorder()
+  const openAtClose: Array<ReadonlyArray<string>> = []
+  const observability = Layer.merge(
+    Layer.succeed(Tracer.Tracer, recorder.tracer),
+    Layer.effectDiscard(Effect.addFinalizer(() => Effect.sync(() => {
+      openAtClose.push(recorder.spans.filter((span) => span.status._tag === "Started").map((span) => span.name))
+    })))
+  )
+  return { ...recorder, openAtClose, app: { ...base, observability } }
+}
+
+test("a command over a loaded app is one eval.cli span in the app's observability layer, over the run, its trials and its grading", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-traces-"))
+  const { app: traced, named, parentOf, openAtClose } = observed(app)
+  expect(await Effect.runPromise(evaluationCli(["run", "suite", "--directory", directory], { config: traced, output }))).toBe(0)
+  expect(named("eval.cli").map((span) => [span.attributes.get("eval.command"), Option.isNone(span.parent)])).toEqual([["run", true]])
+  expect(named("eval.run").map(parentOf)).toEqual(["eval.cli"])
+  expect(named("eval.trial").map(parentOf)).toEqual(["eval.run"])
+  expect(named("eval.regrade").map(parentOf)).toEqual(["eval.run"])
+  expect(named("eval.grade").map(parentOf)).toEqual(["eval.regrade"])
+  // The layer closed with the command, once every span had ended: what it flushes is the whole trace.
+  expect(openAtClose).toEqual([[]])
+  // inspect loads no app, so it opens no span.
+  await Effect.runPromise(evaluationCli(["inspect", "--report", join(directory, "report.json")], { config: traced, output }))
+  expect(named("eval.cli")).toHaveLength(1)
+})
+
+test("an interrupted command still closes the app's observability layer, after its spans have ended", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-interrupted-traces-"))
+  const { named, openAtClose } = await Effect.runPromise(Effect.gen(function* () {
+    const started = yield* Deferred.make<void>()
+    const traced = observed(cliFixture(() => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))))
+    const running = yield* evaluationCli(["run", "suite", "--directory", directory], { config: traced.app, output }).pipe(Effect.forkChild)
+    yield* Deferred.await(started)
+    yield* Fiber.interrupt(running)
+    return traced
+  }))
+  expect(named("eval.cli").map((span) => span.status._tag)).toEqual(["Ended"])
+  expect(named("eval.trial").map((span) => span.status._tag)).toEqual(["Ended"])
+  expect(openAtClose).toEqual([[]])
 })
 
 test("grading creates consistent revision trial identities and keeps the original execution", async () => {

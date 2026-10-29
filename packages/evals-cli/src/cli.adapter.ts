@@ -94,11 +94,11 @@ const requireFreshDirectory = (directory: string) =>
         : Effect.void
     )
   )
-export const evaluationCli = (
-  args: ReadonlyArray<string>,
-  options: CliOptions = {}
-): Effect.Effect<number, EvaluationError> =>
-  Effect.gen(function* () {
+export const evaluationCli = Effect.fnUntraced(
+  function* (
+    args: ReadonlyArray<string>,
+    options: CliOptions = {}
+  ): Effect.fn.Return<number, EvaluationError> {
     const line = cliArguments(args)
     const output =
       options.output ??
@@ -165,6 +165,27 @@ export const evaluationCli = (
     const app =
       options.config ??
       (yield* loadEvaluationApp(line.value("--config", "eval.config.ts"), line.tokens))
+    // `inspect`, `compare` and `help` load no app, so they open no span. The
+    // command's span opens inside the app's observability layer, which closes
+    // with the command (an interrupted one too) and so flushes it.
+    return yield* appCommand(line, app, options, output).pipe(
+      Effect.provide(app.observability ?? Layer.empty)
+    )
+  }
+)
+type CliLine = ReturnType<typeof cliArguments>
+
+/**
+ * A command over a loaded app: one `eval.cli` span carrying `eval.command`,
+ * which the logs under it carry too.
+ */
+const appCommand = Effect.fn("eval.cli")(
+  function* (
+    line: CliLine,
+    app: EvaluationApp,
+    options: CliOptions,
+    output: (value: unknown) => void
+  ): Effect.fn.Return<number, EvaluationError> {
     const extension = app.commands[line.command]
     if (extension) {
       const result = yield* extension(line.args)
@@ -391,4 +412,10 @@ export const evaluationCli = (
       run.gates.some((gate) => gate.mode === "blocking" && !gate.passed)
       ? 2
       : 0
-  })
+  },
+  (effect, line) =>
+    Effect.annotateCurrentSpan("eval.command", line.command).pipe(
+      Effect.andThen(effect),
+      Effect.annotateLogs("eval.command", line.command)
+    )
+)
