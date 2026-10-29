@@ -135,6 +135,7 @@ page for the options, the environment variables and the metrics.
 caller's span, if any:
 
 ```text
+agent.turn.begin                 Agent.turn beginning the turn: session plugins activated, Sessions.begin
 agent.turn                       Agent.turn, or a host's composition with traceTurn(writer)
 └─ engine.run                    one run of the step loop (turn.run)
    └─ engine.turn                one step (engine.step is its one-based number)
@@ -145,7 +146,7 @@ agent.turn                       Agent.turn, or a host's composition with traceT
 ```
 
 `agent.turn` starts once the turn is admitted (after `Sessions.begin`; a turn
-that could not begin has no span) and encloses the turn-dependent plugins,
+that could not begin has no `agent.turn`) and encloses the turn-dependent plugins,
 the host's layer, the tools opened, `use`, the reply and the end. It carries
 `efferent.session.id`, `efferent.run.id`, `efferent.turn`,
 `gen_ai.conversation.id` (the session), `efferent.origin` (user or inbox)
@@ -164,19 +165,42 @@ the turn has becomes `efferent.meta.<key>` (a string, number or boolean as
 is, anything else as JSON). A host composing its own turn wraps everything
 after its begin in `traceTurn(writer, { spanMeta })` to get the same span.
 
+`agent.turn.begin` is the turn's sibling under the caller's span: `Agent.turn`
+opens it when it begins the turn itself (a turn the host began, its
+`TurnWriter` passed in, has none), around the session-scoped plugins'
+activation and `Sessions.begin`. It carries `efferent.session.id`,
+`efferent.run.id` and `efferent.origin`, and ends with `efferent.turn` once
+the turn begins, or with `efferent.failure.code` when it cannot: the
+refusal's code as `harnessCodeOf` gives it (`session.busy`,
+`turn.duplicate`, `session.missing`…), the code `agent.turn` would have
+ended with (`turn.defect` or `turn.interrupted` otherwise). A host
+composing its own turn wraps its begin in
+`traceTurnBegin({ session, runId, origin })`; the work it wraps returns the
+writer, or a value holding the admitted turn under `admitted`.
+
+**Ids in logs.** Logs carry the ids as annotations, under the span
+attributes' names (`turnAttributes(admitted)`, `sessionAttributes(session)`):
+`Agent.turn` annotates everything after the begin with
+`efferent.session.id`, `efferent.run.id` and `efferent.turn`, a line a tool
+handler, a plugin or the host's `use` logs included, and the begin with the
+first two.
+
 Spans nest where their work runs, not where a context was captured. The
 framework captures contexts to run work later (the services a tool handler
 runs with, a policy's callbacks, a model layer's dependencies, the services
 `Turn.run` replays, a bus subscriber's, the turn's `TurnInput.services`)
-and drops the trace state of where it captured them before providing them
-again (`replayableContext`): the parent span (`Tracer.ParentSpan`), the
-span annotations and links, and `CurrentTraceContent` (`Agent.turn` keeps
-one the turn's `TurnInput.services` carry, see trace content). A tool call stays
+and drops the trace and log state of where it captured them before
+providing them again (`replayableContext`): the parent span
+(`Tracer.ParentSpan`), the span annotations and links, the log annotations
+and log spans, the captured span's stack frame, and `CurrentTraceContent`
+(`Agent.turn` keeps one the turn's `TurnInput.services` carry, see trace
+content). A tool call stays
 under the model call that made it and a handler's spans under its
 `tool.<name>`, a host span wrapped around `turn.run` is the parent of its
 `engine.run`, a model layer built under a span does not pull its calls
 there, and annotations the host set where it built a layer or captured the
-turn's services (`Effect.annotateSpans`) do not replace the turn's ids. An
+turn's services (`Effect.annotateSpans`, `Effect.annotateLogs`) do not
+replace the turn's ids. An
 inline bus subscriber's spans nest under the publisher's. A parent span in
 `TurnInput.services` or `AgentConfig.services` is ignored: to put a turn
 under another span, wrap the `Agent.turn` call in `Effect.withParentSpan`.

@@ -19,16 +19,23 @@ export const CurrentTraceContent = Context.Reference<boolean>("@xandreed/core/Cu
 /**
  * A context captured to be provided again later (the services a layer was
  * built with, the services where a turn's tools were opened), without the
- * trace state of the place it was captured, so the work it runs is traced
- * where that work runs:
+ * trace and log state of the place it was captured, so the work it runs is
+ * traced and logged where that work runs:
  * - the parent span (`Tracer.ParentSpan`): spans nest under the span current
  *   where the work runs, not under the span current at capture;
  * - the span annotations and links (`Effect.annotateSpans`,
  *   `Effect.linkSpans`): providing the captured ones would replace those of
  *   where the work runs, the turn's ids among them;
+ * - the log annotations and log spans (`Effect.annotateLogs`,
+ *   `Effect.withLogSpan`), for the same reason: the turn's ids reach its
+ *   logs as annotations;
+ * - the stack frame of the span current at capture (`CurrentStackFrame`);
  * - `CurrentTraceContent`, which is read per call.
  * The work then runs with the values of the fiber it runs in. Removing
  * these keys removes nothing the context's type names.
  */
 export const replayableContext = <S>(context: Context.Context<S>): Context.Context<S> =>
-  Context.omit(Tracer.ParentSpan, References.TracerSpanAnnotations, References.TracerSpanLinks, CurrentTraceContent)(context) as Context.Context<S>
+  Context.omit(
+    Tracer.ParentSpan, References.TracerSpanAnnotations, References.TracerSpanLinks,
+    References.CurrentLogAnnotations, References.CurrentLogSpans, References.CurrentStackFrame, CurrentTraceContent,
+  )(context) as Context.Context<S>

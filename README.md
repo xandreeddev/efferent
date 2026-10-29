@@ -80,8 +80,9 @@ and multi-part messages](docs/framework.md#images-and-multi-part-messages)
 for the routes, the limits and the memory budgets).
 
 Each turn is one trace subtree under its `agent.turn` span (a child of the
-caller's span, if any), and the packages record Effect metrics; nothing
-leaves the process until the host provides an exporter. `@xandreed/plugin-telemetry` adds usage (by billed kind), cost and
+caller's span, if any; its begin is the `agent.turn.begin` beside it), its
+logs carry its ids as annotations, and the packages record Effect metrics;
+nothing leaves the process until the host provides an exporter. `@xandreed/plugin-telemetry` adds usage (by billed kind), cost and
 tool metrics per turn (`telemetryPlugin`, with the host's prices) and exports
 traces and metrics over OTLP/HTTP with Effect's own exporters
 (`OtlpTelemetryLive`, or `OtlpTelemetryFromEnv` for the standard

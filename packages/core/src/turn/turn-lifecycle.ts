@@ -1,4 +1,5 @@
 import { Cause, Effect, Exit, Option } from "effect"
+import type { ConversationId } from "../domain/message.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import { replayableContext } from "../loop/traceContent.js"
 import { RunContext } from "../ports/run-context.port.js"
@@ -184,9 +185,22 @@ export interface TurnTraceOptions {
   readonly spanMeta?: ReadonlyArray<string>
 }
 
-/** The ids every span of a turn carries, the turn's own included. */
-const turnIds = (admitted: AdmittedTurn): Record<string, unknown> => ({
-  "efferent.session.id": admitted.session.id,
+/**
+ * A session's id as span attributes and log annotations: `efferent.session.id`.
+ * Ids belong there, not in a log line's text.
+ */
+export const sessionAttributes = (session: ConversationId): Record<string, unknown> => ({
+  "efferent.session.id": session,
+})
+
+/**
+ * A turn's ids as span attributes and log annotations: `efferent.session.id`,
+ * `efferent.run.id` and `efferent.turn`. Every span under the turn's
+ * `agent.turn` carries them (`traceTurn`), and `Agent.turn` annotates the
+ * turn's logs with them.
+ */
+export const turnAttributes = (admitted: AdmittedTurn): Record<string, unknown> => ({
+  ...sessionAttributes(admitted.session.id),
   "efferent.run.id": admitted.runId,
   "efferent.turn": admitted.turn,
 })
@@ -196,7 +210,7 @@ const metaAttribute = (value: unknown): unknown =>
 
 /** The turn's span attributes as it starts: its ids, the conversation, its origin, the turn it resumes and the allowed metadata. */
 const turnSpanAttributes = (admitted: AdmittedTurn, spanMeta: ReadonlyArray<string>): Record<string, unknown> => ({
-  ...turnIds(admitted),
+  ...turnAttributes(admitted),
   "gen_ai.conversation.id": admitted.session.id,
   "efferent.origin": admitted.origin,
   ...(admitted.resumes === undefined ? {} : { "efferent.resumes": admitted.resumes }),
@@ -240,12 +254,60 @@ const turnEndAttributes = (exit: Exit.Exit<TurnResult, unknown>): Record<string,
  * records, so `guardTurn` runs under this span with no span between.
  * `Agent.turn` encloses everything after `Sessions.begin`
  * in it: the turn-dependent plugins, the host's layer, the tools opened, `use`,
- * the reply and the end; a host composing its own turn wraps the same.
+ * the reply and the end; a host composing its own turn wraps the same. The
+ * begin itself has its own span beside this one (`traceTurnBegin`).
  */
 export const traceTurn = (writer: TurnWriter, options: TurnTraceOptions = {}) =>
   <E, R>(effect: Effect.Effect<TurnResult, E, R>): Effect.Effect<TurnResult, E, R> =>
     effect.pipe(
       Effect.onExit((exit) => Effect.annotateCurrentSpan(turnEndAttributes(exit))),
-      Effect.annotateSpans(turnIds(writer.admitted)),
+      Effect.annotateSpans(turnAttributes(writer.admitted)),
       Effect.withSpan("agent.turn", { attributes: turnSpanAttributes(writer.admitted, options.spanMeta ?? []) }),
+    )
+
+/** A turn about to begin, as its begin span (`traceTurnBegin`) names it. */
+export interface TurnBeginTrace {
+  readonly session: ConversationId
+  readonly runId: string
+  /** Who begins it: a user (a `User` begin), or the inbox (an `Inbox` begin). */
+  readonly origin: AdmittedTurn["origin"]
+}
+
+/** The begin's ids, on its span and its logs. */
+const beginAttributes = (begin: TurnBeginTrace): Record<string, unknown> => ({
+  ...sessionAttributes(begin.session),
+  "efferent.run.id": begin.runId,
+})
+
+/** How a begin ended, as span attributes: the turn it began, or the failure's code (`turnEndingOf`, the code `agent.turn` would give). */
+const beginEndAttributes = (exit: Exit.Exit<{ readonly admitted: AdmittedTurn }, unknown>): Record<string, unknown> => Exit.match(exit, {
+  onSuccess: (begun) => ({ "efferent.turn": begun.admitted.turn }),
+  onFailure: (cause) => Option.match(turnEndingOf(Exit.failCause(cause)).failure, {
+    onNone: () => ({}),
+    onSome: (failure) => ({ "efferent.failure.code": failure.code }),
+  }),
+})
+
+/**
+ * Run the work that begins a turn under its span, `agent.turn.begin`, a
+ * sibling of the turn's `agent.turn` under the caller's span (if any). It
+ * starts with `efferent.session.id`, `efferent.run.id` and `efferent.origin`,
+ * and ends with `efferent.turn` once the turn begins, or with
+ * `efferent.failure.code` when it cannot (the refusal's code, as
+ * `harnessCodeOf` gives it: `session.busy`, `turn.duplicate`…; else
+ * `turn.failed`, `turn.defect` or `turn.interrupted`). The work's logs carry
+ * the session and run ids as annotations. The work returns what names the
+ * admitted turn: its `TurnWriter` (`Sessions.begin`), or a value holding the
+ * admitted turn under `admitted`. `Agent.turn` encloses the session-scoped
+ * plugins' activation and `Sessions.begin` in it when it begins the turn
+ * itself; a turn the host began (its writer passed in) has no begin span. A
+ * host composing its own turn wraps its begin the same way, then the rest
+ * in `traceTurn`.
+ */
+export const traceTurnBegin = (begin: TurnBeginTrace) =>
+  <A extends { readonly admitted: AdmittedTurn }, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+    effect.pipe(
+      Effect.onExit((exit) => Effect.annotateCurrentSpan(beginEndAttributes(exit))),
+      Effect.annotateLogs(beginAttributes(begin)),
+      Effect.withSpan("agent.turn.begin", { attributes: { ...beginAttributes(begin), "efferent.origin": begin.origin } }),
     )

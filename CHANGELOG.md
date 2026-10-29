@@ -104,6 +104,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Read `efferent.task.id`/`efferent.session.id` on `task.run`, and read
   those log annotations instead of grepping the tasks plugin's log text for
   ids.
+- A turn that cannot begin leaves an `agent.turn.begin` span carrying the
+  refusal's code: a trace check that expects every span under the caller's
+  to sit under `agent.turn` excludes the begin's subtree.
 
 ### Breaking
 
@@ -390,6 +393,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   call fails or times out), and `tasks.start`, `tasks.status`, `tasks.list`,
   `tasks.cancel` and `tasks.reconcile` with `efferent.session.id` and, for
   one task, `efferent.task.id`.
+- `@xandreed/core`: `traceTurnBegin({ session, runId, origin })` opens an
+  `agent.turn.begin` span around a turn's begin, beside `agent.turn` under
+  the caller's span (`efferent.session.id`, `efferent.run.id`,
+  `efferent.origin`, then `efferent.turn` or the refusal's
+  `efferent.failure.code`); `turnAttributes` and `sessionAttributes` give
+  the id keys spans and logs share.
+- `@xandreed/sdk`: `Agent.turn` begins a turn it begins itself under
+  `agent.turn.begin`, and every log line inside a turn carries
+  `efferent.session.id`, `efferent.run.id` and `efferent.turn` as
+  annotations.
 
 ### Changed
 
@@ -593,6 +606,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `tool_call`.
 - A pinned tool exchange survives a cut when its message also holds a
   provider-run tool.
+- `replayableContext` also drops the log annotations, log spans and stack
+  frame of where a context was captured, so annotations a host set there no
+  longer replace the turn's ids on its logs.
 
 ### Repository
 

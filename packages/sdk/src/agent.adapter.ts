@@ -31,11 +31,12 @@ import {
   TurnPrompt,
   TurnToolbox,
   traceTurn,
+  traceTurnBegin,
+  turnAttributes,
   turnEndingOf,
   turnOf,
 } from "@xandreed/core"
 import type {
-  AdmittedTurn,
   Capability,
   HarnessConfig,
   LoopLimits,
@@ -162,8 +163,11 @@ export interface Agent {
    * delivered while it ran), which the caller drains (`Sessions.drain`).
    * From the moment
    * the turn is admitted it runs under its `agent.turn` span (`traceTurn`),
-   * and is counted in the `efferent.turns` and `efferent.turn.duration`
-   * metrics by its `efferent.outcome`.
+   * its logs annotated with the turn's ids (`turnAttributes`), and is
+   * counted in the `efferent.turns` and `efferent.turn.duration` metrics by
+   * its `efferent.outcome`. A turn begun here begins under its own
+   * `agent.turn.begin` span beside it (`traceTurnBegin`), which ends with
+   * the refusal's code when the turn cannot begin.
    */
   readonly turn: <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -204,13 +208,6 @@ const measureTurn = <A extends TurnResult, E, R>(effect: Effect.Effect<A, E, R>)
 const entryOf = (item: Plugin | AgentPluginEntry): AgentPluginEntry => "plugin" in item ? item : { plugin: item }
 
 const isWriter = (turn: TurnWriter | NewTurn): turn is TurnWriter => "admitted" in turn
-
-/** The ids a log line about a turn carries, under the names its spans give them. */
-const turnIdsOf = (admitted: AdmittedTurn): Record<string, unknown> => ({
-  "efferent.session.id": admitted.session.id,
-  "efferent.run.id": admitted.runId,
-  "efferent.turn": admitted.turn,
-})
 
 /** A new turn's idempotency key: the host's, else `resume:<n>` for a resume of turn `n`, else the run id. */
 const keyOf = (turn: NewTurn): string => turn.key ?? (turn.resumes === undefined ? turn.runId : `resume:${turn.resumes}`)
@@ -321,7 +318,9 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   /**
    * One turn composed from the public pieces (`TurnLive`, `persistMessage`,
    * `openTurnTools`, `turnOf`, `guardTurn`), in this order:
-   * 0. the turn: the host's writer, or one begun here (Sessions.begin);
+   * 0. the session-scoped plugins activated, then the turn: the host's
+   *    writer, or one begun here (Sessions.begin); a turn begun here runs
+   *    0 under its `agent.turn.begin` span (`traceTurnBegin`);
    * 1. TurnLive: the bus and tasks, with the writer as the first
    *    subscriber, then memory (the session's earlier memory events) and
    *    RunContext;
@@ -345,7 +344,8 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    *    error's code (the end's own failure is logged, the turn's cause kept);
    *    an end not stored is tried again, the same, when the turn's scope closes.
    * 1 to 9 run under the turn's `agent.turn` span (`traceTurn`), opened once
-   * the turn is admitted (after 0), and are counted and timed by outcome.
+   * the turn is admitted (after 0), with the turn's ids on their logs, and
+   * are counted and timed by outcome.
    */
   const turn = <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
@@ -357,13 +357,22 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
     // The host's services may be a captured context: spans nest under the turn's, not where it was captured.
     // A trace content switch among the turn's own services is where its runs start, under the agent's and the policy's.
     const merged = Context.merge(replayableContext(Context.merge(runtime, input.services)), Context.pick(CurrentTraceContent)(input.services))
-    const context = perTurn ? yield* activateGraph(beforeTurn, "session", merged, scope) : merged
-    const memory = yield* required(context, ConversationMemory)
-    const registry = yield* required(context, ToolRegistry)
-    const loop = yield* required(context, StepLoop)
+    // The session plugins activated over the turn's services, its ports found, then its writer.
+    const open = (begin: (context: Context.Context<never>) => Effect.Effect<TurnWriter, TurnBeginError | HarnessError, Scope.Scope>) => Effect.gen(function* () {
+      const context = perTurn ? yield* activateGraph(beforeTurn, "session", merged, scope) : merged
+      const memory = yield* required(context, ConversationMemory)
+      const registry = yield* required(context, ToolRegistry)
+      const loop = yield* required(context, StepLoop)
+      const writer = yield* begin(context)
+      return { admitted: writer.admitted, writer, context, memory, registry, loop }
+    })
 
-    const own = !isWriter(input.turn)
-    const writer = isWriter(input.turn) ? input.turn : yield* beginTurn(context, input.turn)
+    const requested = input.turn
+    const own = !isWriter(requested)
+    // A turn begun here begins under its own span, beside the turn's; the host's writer has none.
+    const { writer, context, memory, registry, loop } = yield* (isWriter(requested)
+      ? open(() => Effect.succeed(requested))
+      : open((context) => beginTurn(context, requested)).pipe(traceTurnBegin({ session: requested.session.id, runId: requested.runId, origin: "user" })))
     const system = input.system ?? config.system
     const live: TurnLiveInput = {
       turn: writer,
@@ -423,7 +432,6 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
         yield* writer.end(turnEndingOf(exit)).pipe(
           Effect.catchTag("TurnClosed", (closed) => Effect.logDebug(`the failed turn's end was not stored: the turn was ${closed.reason}`)),
           Effect.catch((error) => Effect.logWarning(`the failed turn's end was not stored: ${reasonOf(Cause.fail(error))}`)),
-          Effect.annotateLogs(turnIdsOf(writer.admitted)),
         )
         return yield* Effect.failCause(exit.cause)
       }
@@ -431,8 +439,9 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       const { pending } = yield* writer.end(turnEndingOf(exit))
       return { ...exit.value, pending } satisfies TurnResult
     })
-    // From admission to the end: the turn's span encloses its plugins, layer, tools, `use`, reply and end.
-    return yield* admitted.pipe(measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] }))
+    // From admission to the end: the turn's span encloses its plugins, layer, tools, `use`, reply and end,
+    // and every log line in it carries the turn's ids.
+    return yield* admitted.pipe(Effect.annotateLogs(turnAttributes(writer.admitted)), measureTurn, traceTurn(writer, { spanMeta: config.spanMeta ?? [] }))
   }))) as Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
   // The probes are the runtime's alone, wherever this is read (a turn's own services hold others).
