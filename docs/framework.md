@@ -769,7 +769,13 @@ A streamed step stores the assistant message a non-streamed one stores: its
 text and reasoning parts keep their provider metadata (Anthropic's thinking
 signature and redacted thinking, the `itemId` and `encryptedContent` of an
 OpenAI Responses reasoning item), so the later requests of the session, and
-their replays, send that reasoning back either way.
+their replays, send that reasoning back either way. That metadata is stored
+as JSON in `providerOptions` (`ProviderOptions`, keyed by provider), less
+core's own `engine` key, which no request carries. A tool the provider runs
+(a provider-defined tool) keeps its call and its result in the assistant
+message, in arrival order, the result marked `providerExecuted`; the
+provider is sent both back as its own, and a chat-completions model is sent
+neither. A preliminary tool result is not stored.
 
 Effect AI models hide provider configuration inside adapters. Efferent's
 provider adapters and routers describe their public options with

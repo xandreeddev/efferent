@@ -118,7 +118,7 @@ const responseStatus = (error: unknown): number | undefined =>
  * protocol failing, an `InvalidResponseError`: the model's own malformed
  * output is the only invalid output the loop answers with a corrective turn.
  */
-export const mapOpenAiCodexError = (model: string, error: unknown): unknown =>
+export const mapOpenAiCodexError = <E>(model: string, error: E): E | AiError.AiError =>
   responseStatus(error) === 404
     ? AiError.make({
         module: "OpenAiCodex",

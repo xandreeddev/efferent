@@ -225,6 +225,31 @@ describe("a tool result with images in the memory log", () => {
   })
 })
 
+describe("a pinned exchange", () => {
+  const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(`run-${turn}`, seq), runId: `run-${turn}`, turn, step: 0, at: seq, body })
+  const call = (id: string, providerExecuted: boolean) =>
+    ({ type: "tool-call" as const, toolCallId: ToolCallId.make(id), toolName: providerExecuted ? "web_search" : "load_skill", input: {}, providerExecuted })
+  const exchange: AgentMessage = {
+    role: "assistant",
+    content: [call("c1", false), call("p1", true), { type: "tool-result", toolCallId: ToolCallId.make("p1"), toolName: "web_search", output: "found", isError: false, providerExecuted: true }],
+  }
+  const log: ReadonlyArray<LogEntry> = [
+    at(0, 1, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "first" }) }),
+    at(1, 1, { _tag: "Message", message: exchange }),
+    at(2, 1, {
+      _tag: "ToolResult", toolCallId: ToolCallId.make("c1"), toolName: "load_skill", isError: false, encoded: "skill", view: "skill", viewVersion: "1", subjects: [], artifacts: [], pinned: true,
+    }),
+    at(3, 2, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "second" }) }),
+    at(4, 2, { _tag: "Compaction", strategy: "test", version: "1", action: { _tag: "DropTurns", throughTurn: 1, ledger: "earlier" } }),
+  ]
+
+  test("outlives a cut with its call, when the message also holds a tool the provider ran (whose result it holds itself)", () => {
+    const rendered = renderLog(log, options(2, { mode: "none", maxImages: 0, maxChars: 0 }))
+    expect(rendered.map((message) => message.role)).toEqual(["user", "assistant", "tool", "user"])
+    expect(rendered[1]).toEqual(exchange)
+  })
+})
+
 describe("the summarizer's transcript", () => {
   const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(`run-${turn}`, seq), runId: `run-${turn}`, turn, step: 0, at: seq, body })
   const asked = (seq: number, turn: number, text: string) => at(seq, turn, { _tag: "TurnStarted", userMessage: new UserMessage({ text }) })

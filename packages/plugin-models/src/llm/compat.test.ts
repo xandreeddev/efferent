@@ -356,7 +356,7 @@ describe("makeCompatLanguageModel", () => {
       inputTokens: { total: 1000, uncached: 100, cacheRead: 600, cacheWrite: 300 },
       outputTokens: { total: 30, text: 30, reasoning: 0 },
     })
-    const extracted = extractUsage(undefined, await Effect.runPromise(fromChatCompletion("Test", body)))
+    const extracted = extractUsage(usageOf(await Effect.runPromise(fromChatCompletion("Test", body))), [])
     expect([extracted.outputTokens, extracted.reasoningTokens, extracted.totalTokens]).toEqual([50, 50, 1050])
     // The model reads them the same way. A standard-only endpoint (a configured one, a local server) still
     // reads its reasoning; only a model told not to (the built-in google provider) reads none.
@@ -435,7 +435,7 @@ test("interrupting a provider call aborts fetch while response bytes are pending
 
 describe("toChatMessages: a user's images", () => {
   const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-  const chat = (messages: ReadonlyArray<AgentMessage>) => toChatMessages(Prompt.make(toPromptMessages(messages) as Prompt.RawInput))
+  const chat = (messages: ReadonlyArray<AgentMessage>) => toChatMessages(Prompt.make(toPromptMessages(messages)))
 
   test("an image-only message is its label line, never empty content", async () => {
     const image = await Effect.runPromise(mediaFromBase64(pixel, { name: "pixel.png" }))
@@ -458,7 +458,7 @@ describe("toChatMessages: images on an endpoint that reads them", () => {
   const pixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
   const image = Effect.runSync(mediaFromBase64(pixel, { name: "pixel.png" }))
   const dataUrl = `data:image/png;base64,${pixel}`
-  const prompt = (messages: ReadonlyArray<AgentMessage>) => Prompt.make(toPromptMessages(messages) as Prompt.RawInput)
+  const prompt = (messages: ReadonlyArray<AgentMessage>) => Prompt.make(toPromptMessages(messages))
   const callAndResult = (id: string, text: string): ReadonlyArray<AgentMessage> => [
     { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make(id), toolName: "screenshot", input: {} }] },
     { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make(id), toolName: "screenshot", output: text, isError: false, media: [image] }] },
@@ -521,5 +521,28 @@ describe("toChatMessages: images on an endpoint that reads them", () => {
     expect(tool?.role === "tool" ? tool.content.map((part) => part.type === "tool-result" ? [part.result, part.modelOutput] : []) : []).toEqual([[mediaLabel(image), undefined]])
     const plain = prompt([{ role: "user", content: "hi" }])
     expect(promptWithImageLabels(plain).content[0]).toBe(plain.content[0])
+  })
+})
+
+describe("toChatMessages: a tool the provider ran", () => {
+  test("its call and result are left out of a replay to a chat-completions model, never sent as a plain tool_call", () => {
+    const messages: ReadonlyArray<AgentMessage> = [
+      { role: "user", content: "find it" },
+      {
+        role: "assistant",
+        content: [
+          { type: "text", text: "Searching." },
+          { type: "tool-call", toolCallId: ToolCallId.make("ws_1"), toolName: "web_search", input: { query: "effect" }, providerExecuted: true },
+          { type: "tool-result", toolCallId: ToolCallId.make("ws_1"), toolName: "web_search", output: [{ url: "https://effect.website" }], isError: false, providerExecuted: true },
+          { type: "tool-call", toolCallId: ToolCallId.make("c1"), toolName: "read", input: { path: "a" }, providerExecuted: false },
+        ],
+      },
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "read", output: "contents", isError: false }] },
+    ]
+    expect(toChatMessages(Prompt.make(toPromptMessages(messages)))).toEqual([
+      { role: "user", content: "find it" },
+      { role: "assistant", content: "Searching.", tool_calls: [{ id: "c1", type: "function", function: { name: "read", arguments: '{"path":"a"}' } }] },
+      { role: "tool", tool_call_id: "c1", content: "contents" },
+    ])
   })
 })

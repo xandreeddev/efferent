@@ -1,12 +1,12 @@
 import { Option, Schema } from "effect"
+import { Response } from "effect/ai"
+import type { Prompt } from "effect/ai"
 import type { ToolCallSummary } from "../domain/loop-event.entity.js"
 import type { Media } from "../domain/media.entity.js"
-import { ToolCallId } from "../domain/message.entity.js"
+import { ProviderOptions, ToolCallId } from "../domain/message.entity.js"
 import type {
   AgentMessage,
-  ReasoningPart,
-  TextPart,
-  ToolCallPart,
+  AssistantMessage,
   ToolResultPart,
   UserContentPart,
 } from "../domain/message.entity.js"
@@ -16,11 +16,15 @@ import { framed, hostNote } from "../turn/model-text.js"
 
 /**
  * Bridges the persisted `AgentMessage` with `@effect/ai`'s `Prompt`/`Response`
- * encodings. The opaque provider blob is carried verbatim both ways —
- * `AgentMessage.providerOptions ↔ prompt part options ↔ response part
- * metadata` — which is how Gemini's `thought_signature` round-trips across
- * turns (the framework's own `fromResponseParts` drops it, so the engine maps
- * by hand and keeps the blob). Everything here is pure: no mutation, no IO.
+ * encodings. The provider blob is carried both ways — response part
+ * `metadata` → `AgentMessage.providerOptions` → prompt part `options` — which
+ * is how a provider's private fields (an Anthropic thinking signature,
+ * OpenAI's reasoning item id and encrypted content) round-trip across turns.
+ * The loop keeps the response parts the framework's `Prompt.fromResponseParts`
+ * folds away (the finish, its usage and stamp), so the mapping is by hand,
+ * with its rules: a result of a tool the provider ran stays in the assistant
+ * message, and a preliminary result is no result. Everything here is pure:
+ * no mutation, no IO.
  */
 
 /**
@@ -57,46 +61,47 @@ export const safeKeepFrom = (
   return cut === undefined || cut <= 0 ? Option.none() : Option.some(cut)
 }
 
-/** The read-side projection of a response content part (type-erased). */
-interface AnyPart {
-  readonly type: string
-  readonly text?: string
-  readonly id?: string
-  readonly name?: string
-  readonly params?: unknown
-  readonly result?: unknown
-  /** The tool's success/failure schema encoding — what a provider may see. */
-  readonly encodedResult?: unknown
-  readonly isFailure?: boolean
-  readonly providerExecuted?: boolean
-  readonly metadata?: unknown
-  readonly usage?: unknown
-}
+type AssistantPart = AssistantMessage["content"][number]
+type ResponseToolResult = Extract<Response.AnyPart, { readonly type: "tool-result" }>
 
-const hasKeys = (o: unknown): o is Record<string, unknown> =>
-  typeof o === "object" && o !== null && Object.keys(o).length > 0
-
-const withOptions = (blob: unknown): { readonly options?: unknown } =>
-  hasKeys(blob) ? { options: blob } : {}
-
-const withProviderOptions = (blob: unknown): { readonly providerOptions?: unknown } =>
-  hasKeys(blob) ? { providerOptions: blob } : {}
-
-/** The engine's own usage stamp inside `providerOptions` (see
+/** The engine's own stamp inside `providerOptions` (see
  *  {@link withUsageOnAssistant}). */
-const USAGE_KEY = "engine"
+const ENGINE_KEY = "engine"
 
-/** The provider blob rides out verbatim — EXCEPT the engine's own stamp,
- *  which is engine-private bookkeeping: replaying it to a provider is at
- *  best noise, at worst a 400 on a strict gateway. */
-const withoutEngineStamp = (blob: unknown): unknown => {
-  if (!hasKeys(blob)) return blob
-  const { [USAGE_KEY]: _engine, ...rest } = blob
+const hasKeys = (blob: ProviderOptions): boolean => Object.keys(blob).length > 0
+
+/** A blob without the engine's own stamp: engine-private bookkeeping, which
+ *  is never sent to a provider (at best noise, at worst a 400 on a strict
+ *  gateway). */
+const withoutEngine = (blob: ProviderOptions): ProviderOptions => {
+  const { [ENGINE_KEY]: _engine, ...rest } = blob
   return rest
 }
 
+/** A stored blob as prompt `options`, the engine's stamp left out; none when nothing else is in it. */
+const withOptions = (blob: ProviderOptions | undefined): { readonly options?: ProviderOptions } => {
+  const sent = blob === undefined ? {} : withoutEngine(blob)
+  return hasKeys(sent) ? { options: sent } : {}
+}
+
+const toJsonText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
+const fromJsonText = Schema.decodeUnknownOption(Schema.fromJsonString(ProviderOptions))
+
+/**
+ * A response part's metadata as the blob a message keeps: the engine's key
+ * left out, copied through JSON text (a field a provider left `undefined` is
+ * dropped, as the store would drop it), none when nothing is left.
+ */
+const providerOptionsOf = (metadata: Response.ProviderMetadata): Option.Option<ProviderOptions> => {
+  const blob = withoutEngine(metadata)
+  return hasKeys(blob) ? Option.filter(Option.flatMap(toJsonText(blob), fromJsonText), hasKeys) : Option.none()
+}
+
+const withProviderOptions = (metadata: Response.ProviderMetadata): { readonly providerOptions?: ProviderOptions } =>
+  Option.match(providerOptionsOf(metadata), { onNone: () => ({}), onSome: (providerOptions) => ({ providerOptions }) })
+
 /** An image → an `@effect/ai` `file` part with its base64 data, type and name. */
-const filePart = (media: Media): unknown =>
+const filePart = (media: Media): Prompt.FilePartEncoded =>
   ({ type: "file", mediaType: media.mediaType, data: media.data, ...(media.name === undefined ? {} : { fileName: media.name }) })
 
 /**
@@ -104,8 +109,8 @@ const filePart = (media: Media): unknown =>
  * text (an empty text part is left out: providers refuse them), an image as
  * a `file` part.
  */
-const userPromptParts = (parts: ReadonlyArray<UserContentPart>): ReadonlyArray<unknown> =>
-  parts.flatMap((part): ReadonlyArray<unknown> => part.type === "text"
+const userPromptParts = (parts: ReadonlyArray<UserContentPart>): ReadonlyArray<Prompt.UserMessagePartEncoded> =>
+  parts.flatMap((part): ReadonlyArray<Prompt.UserMessagePartEncoded> => part.type === "text"
     ? part.text.length === 0 ? [] : [{ type: "text", text: part.text, ...withOptions(part.providerOptions) }]
     : [filePart(part)])
 
@@ -115,55 +120,59 @@ const userPromptParts = (parts: ReadonlyArray<UserContentPart>): ReadonlyArray<u
  * each image as a `file` part. A result without images has none, and the
  * provider sends its `result` as before.
  */
-const toolModelOutput = (output: unknown, media: ReadonlyArray<Media> | undefined): { readonly modelOutput?: ReadonlyArray<unknown> } => {
+const toolModelOutput = (
+  output: unknown,
+  media: ReadonlyArray<Media> | undefined,
+): { readonly modelOutput?: ReadonlyArray<Prompt.TextPartEncoded | Prompt.FilePartEncoded> } => {
   if (media === undefined || media.length === 0) return {}
   const text = typeof output === "string" ? output : JSON.stringify(output ?? null)
-  return { modelOutput: [...(text.length === 0 ? [] : [{ type: "text", text }]), ...media.map(filePart)] }
+  return { modelOutput: [...(text.length === 0 ? [] : [{ type: "text" as const, text }]), ...media.map(filePart)] }
 }
 
-/** `AgentMessage[]` → `@effect/ai` encoded prompt messages (spreadable). A text-only user message stays a string. */
+/** A tool result → its prompt part; one the provider ran says so, and the provider sends it back as its own. */
+const toolResultPromptPart = (p: ToolResultPart): Prompt.ToolResultPartEncoded => ({
+  type: "tool-result",
+  id: p.toolCallId,
+  name: p.toolName,
+  result: p.output,
+  ...toolModelOutput(p.output, p.media),
+  isFailure: p.isError ?? false,
+  providerExecuted: p.providerExecuted ?? false,
+  ...withOptions(p.providerOptions),
+})
+
+const assistantPromptPart = (p: AssistantPart): Prompt.AssistantMessagePartEncoded => {
+  if (p.type === "text") return { type: "text", text: p.text, ...withOptions(p.providerOptions) }
+  if (p.type === "reasoning") return { type: "reasoning", text: p.text, ...withOptions(p.providerOptions) }
+  if (p.type === "tool-call") {
+    return {
+      type: "tool-call",
+      id: p.toolCallId,
+      name: p.toolName,
+      params: p.input ?? {},
+      providerExecuted: p.providerExecuted ?? false,
+      ...withOptions(p.providerOptions),
+    }
+  }
+  return toolResultPromptPart(p)
+}
+
+/**
+ * `AgentMessage[]` → `@effect/ai` encoded prompt messages (`Prompt.make`
+ * takes them). A text-only user message stays a string. The engine's stamp
+ * is left out of every blob, so it never reaches a provider.
+ */
 export const toPromptMessages = (
   messages: ReadonlyArray<AgentMessage>,
-): ReadonlyArray<unknown> =>
-  messages.map((m) => {
+): ReadonlyArray<Prompt.MessageEncoded> =>
+  messages.map((m): Prompt.MessageEncoded => {
     if (m.role === "user") {
       return { role: "user", content: typeof m.content === "string" ? m.content : userPromptParts(m.content) }
     }
     if (m.role === "assistant") {
-      return {
-        role: "assistant",
-        content: m.content.map((p) => {
-          if (p.type === "text") {
-            return { type: "text", text: p.text, ...withOptions(p.providerOptions) }
-          }
-          if (p.type === "reasoning") {
-            return { type: "reasoning", text: p.text, ...withOptions(p.providerOptions) }
-          }
-          return {
-            type: "tool-call",
-            id: p.toolCallId,
-            name: p.toolName,
-            params: p.input ?? {},
-            providerExecuted: p.providerExecuted ?? false,
-            ...withOptions(p.providerOptions),
-          }
-        }),
-        ...withOptions(withoutEngineStamp(m.providerOptions)),
-      }
+      return { role: "assistant", content: m.content.map(assistantPromptPart), ...withOptions(m.providerOptions) }
     }
-    return {
-      role: "tool",
-      content: m.content.map((p) => ({
-        type: "tool-result",
-        id: p.toolCallId,
-        name: p.toolName,
-        result: p.output,
-        ...toolModelOutput(p.output, p.media),
-        isFailure: p.isError ?? false,
-        providerExecuted: false,
-        ...withOptions(p.providerOptions),
-      })),
-    }
+    return { role: "tool", content: m.content.map(toolResultPromptPart) }
   })
 
 /**
@@ -178,32 +187,24 @@ export const toPromptMessages = (
  * Pure: returns new part objects; the input is never mutated.
  */
 export const withToolCallIds = (
-  content: ReadonlyArray<unknown>,
+  content: ReadonlyArray<Response.AnyPart>,
   turnIndex: number,
-): ReadonlyArray<unknown> =>
+): ReadonlyArray<Response.AnyPart> =>
   content
     .reduce(
-      (acc: { calls: number; results: number; out: ReadonlyArray<unknown> }, part) => {
-        const p = part as AnyPart
-        const bare = p.id === undefined || p.id === ""
-        if (p.type === "tool-call") {
+      (acc: { calls: number; results: number; out: ReadonlyArray<Response.AnyPart> }, part) => {
+        if (part.type === "tool-call") {
           return {
             calls: acc.calls + 1,
             results: acc.results,
-            out: [
-              ...acc.out,
-              bare ? { ...p, id: `${turnIndex}:${p.name ?? ""}:${acc.calls}` } : part,
-            ],
+            out: [...acc.out, part.id === "" ? { ...part, id: `${turnIndex}:${part.name}:${acc.calls}` } : part],
           }
         }
-        if (p.type === "tool-result") {
+        if (part.type === "tool-result") {
           return {
             calls: acc.calls,
             results: acc.results + 1,
-            out: [
-              ...acc.out,
-              bare ? { ...p, id: `${turnIndex}:${p.name ?? ""}:${acc.results}` } : part,
-            ],
+            out: [...acc.out, part.id === "" ? { ...part, id: `${turnIndex}:${part.name}:${acc.results}` } : part],
           }
         }
         return { ...acc, out: [...acc.out, part] }
@@ -211,54 +212,52 @@ export const withToolCallIds = (
       { calls: 0, results: 0, out: [] },
     ).out
 
+/** A result the model or a tool will still replace: effect/ai streams them before the final one. */
+const isSettled = (p: Response.AnyPart): boolean => p.type !== "tool-result" || !p.preliminary
+
+/** The persisted form of a tool result: its schema encoding when the toolkit
+ *  produced one (a transforming schema's decoded value is not JSON-safe). */
+const encodedOf = (p: ResponseToolResult): unknown => p.encodedResult !== undefined ? p.encodedResult : p.result
+
+const toolResultOf = (p: ResponseToolResult): ToolResultPart => ({
+  type: "tool-result",
+  toolCallId: ToolCallId.make(p.id),
+  toolName: p.name,
+  output: encodedOf(p),
+  isError: p.isFailure,
+  ...(p.providerExecuted ? { providerExecuted: true } : {}),
+  ...withProviderOptions(p.metadata),
+})
+
 /**
  * One turn's response content → the `AgentMessage` tail: an assistant message
- * holding text/reasoning/tool-call parts, then a tool message holding the
- * resolved tool-result parts. Provider metadata (incl. `thought_signature`)
- * is preserved into `providerOptions`.
+ * holding its text, reasoning and tool-call parts and the results of the
+ * tools the provider ran, in arrival order, then a tool message holding the
+ * results of the tools the loop ran. A preliminary result is left out.
+ * Provider metadata is kept in `providerOptions`.
  */
 export const responseToAgentMessages = (
-  content: ReadonlyArray<unknown>,
+  content: ReadonlyArray<Response.AnyPart>,
 ): ReadonlyArray<AgentMessage> => {
-  const parts = content as ReadonlyArray<AnyPart>
-  const assistantParts = parts.flatMap(
-    (p): ReadonlyArray<TextPart | ReasoningPart | ToolCallPart> => {
-    if (p.type === "text") {
-      return [{ type: "text" as const, text: p.text ?? "", ...withProviderOptions(p.metadata) }]
-    }
-    if (p.type === "reasoning") {
-      return [
-        { type: "reasoning" as const, text: p.text ?? "", ...withProviderOptions(p.metadata) },
-      ]
-    }
+  const parts = content.filter(isSettled)
+  const assistantParts = parts.flatMap((p): ReadonlyArray<AssistantPart> => {
+    if (p.type === "text") return [{ type: "text", text: p.text, ...withProviderOptions(p.metadata) }]
+    if (p.type === "reasoning") return [{ type: "reasoning", text: p.text, ...withProviderOptions(p.metadata) }]
     if (p.type === "tool-call") {
-      return [
-        {
-          type: "tool-call" as const,
-          toolCallId: ToolCallId.make(p.id ?? ""),
-          toolName: p.name ?? "",
-          input: p.params ?? {},
-          providerExecuted: p.providerExecuted ?? false,
-          ...withProviderOptions(p.metadata),
-        },
-      ]
+      return [{
+        type: "tool-call",
+        toolCallId: ToolCallId.make(p.id),
+        toolName: p.name,
+        input: p.params ?? {},
+        providerExecuted: p.providerExecuted,
+        ...withProviderOptions(p.metadata),
+      }]
     }
+    if (p.type === "tool-result" && p.providerExecuted) return [toolResultOf(p)]
     return []
-    },
-  )
+  })
   const toolParts = parts.flatMap((p): ReadonlyArray<ToolResultPart> =>
-    p.type === "tool-result"
-      ? [
-          {
-            type: "tool-result" as const,
-            toolCallId: ToolCallId.make(p.id ?? ""),
-            toolName: p.name ?? "",
-            output: encodedOf(p),
-            isError: p.isFailure ?? false,
-            ...withProviderOptions(p.metadata),
-          },
-        ]
-      : [],
+    p.type === "tool-result" && !p.providerExecuted ? [toolResultOf(p)] : [],
   )
   return [
     ...(assistantParts.length > 0
@@ -269,27 +268,18 @@ export const responseToAgentMessages = (
 }
 
 /** Joined text of the assistant text parts in one turn's response. */
-export const responseText = (content: ReadonlyArray<unknown>): string =>
-  (content as ReadonlyArray<AnyPart>)
-    .filter((p) => p.type === "text")
-    .map((p) => p.text ?? "")
-    .join("")
+export const responseText = (content: ReadonlyArray<Response.AnyPart>): string =>
+  content.flatMap((p) => p.type === "text" ? [p.text] : []).join("")
 
 /** Joined text of the reasoning parts (when the provider surfaces them). */
-export const responseReasoning = (content: ReadonlyArray<unknown>): string =>
-  (content as ReadonlyArray<AnyPart>)
-    .filter((p) => p.type === "reasoning")
-    .map((p) => p.text ?? "")
-    .join("")
-    .trim()
+export const responseReasoning = (content: ReadonlyArray<Response.AnyPart>): string =>
+  content.flatMap((p) => p.type === "reasoning" ? [p.text] : []).join("").trim()
 
 /** Tool-call summaries; `id` is the key that pairs a call with its result. */
 export const responseToolCalls = (
-  content: ReadonlyArray<unknown>,
+  content: ReadonlyArray<Response.AnyPart>,
 ): ReadonlyArray<ToolCallSummary> =>
-  (content as ReadonlyArray<AnyPart>)
-    .filter((p) => p.type === "tool-call")
-    .map((p) => ({ id: p.id ?? "", toolName: p.name ?? "", args: p.params ?? {} }))
+  content.flatMap((p) => p.type === "tool-call" ? [{ id: p.id, toolName: p.name, args: p.params ?? {} }] : [])
 
 export interface ToolResultSummary {
   readonly id: string
@@ -298,35 +288,20 @@ export interface ToolResultSummary {
   readonly result: unknown
 }
 
-/** The persisted form of a tool result: its schema encoding when the toolkit
- *  produced one (a transforming schema's decoded value is not JSON-safe). */
-const encodedOf = (p: AnyPart): unknown => p.encodedResult !== undefined ? p.encodedResult : p.result
-
-/** Tool-result summaries; `id` matches the originating call's id. */
+/** Tool-result summaries; `id` matches the originating call's id. A preliminary result is left out. */
 export const responseToolResults = (
-  content: ReadonlyArray<unknown>,
+  content: ReadonlyArray<Response.AnyPart>,
 ): ReadonlyArray<ToolResultSummary> =>
-  (content as ReadonlyArray<AnyPart>)
-    .filter((p) => p.type === "tool-result")
-    .map((p) => ({
-      id: p.id ?? "",
-      toolName: p.name ?? "",
-      ok: !(p.isFailure ?? false),
-      result: p.result,
-    }))
+  content.flatMap((p) => p.type === "tool-result" && !p.preliminary
+    ? [{ id: p.id, toolName: p.name, ok: !p.isFailure, result: p.result }]
+    : [])
 
-/** Effect v4 usage: the input total with its cache reads and writes inside, the output total with its reasoning inside. */
-interface ProviderUsage {
-  readonly inputTokens?: {
-    readonly total?: number | undefined
-    readonly cacheRead?: number | undefined
-    readonly cacheWrite?: number | undefined
-  } | undefined
-  readonly outputTokens?: { readonly total?: number | undefined; readonly reasoning?: number | undefined } | undefined
-}
+const isFinish = (p: Response.AnyPart): p is Response.FinishPart => p.type === "finish"
 
-const carriesUsage = (usage: ProviderUsage | undefined): boolean =>
-  usage?.inputTokens?.total !== undefined || usage?.outputTokens?.total !== undefined
+const carriesUsage = (usage: Response.Usage): boolean =>
+  usage.inputTokens.total !== undefined || usage.outputTokens.total !== undefined
+
+const decodeResponseUsage = Schema.decodeUnknownOption(Response.Usage)
 
 /**
  * Token usage from a response's `usage` + the finish part's. Effect's
@@ -336,37 +311,29 @@ const carriesUsage = (usage: ProviderUsage | undefined): boolean =>
  * shares) and the full output with the reasoning inside it. Each count is
  * read from the response's usage, then the finish part's; the result holds
  * the `TokenUsage` invariants (`tokenUsage`), so an output reported below
- * its reasoning is raised to it. Gemini's raw usage metadata is the last
- * fallback: its output is candidates plus thoughts, the thoughts as reasoning.
+ * its reasoning is raised to it. No usage reads as zero. `usage` is decoded
+ * as effect/ai's `Response.Usage`: one that is not reads as absent.
  */
 export const extractUsage = (
   usage: unknown,
-  content: ReadonlyArray<unknown>,
+  content: ReadonlyArray<Response.AnyPart>,
 ): TokenUsage => {
-  const u = (usage ?? {}) as ProviderUsage
   // Some streaming adapters emit a finish part from the choice AND a later
   // usage-only finish part — scan all of them, prefer the one carrying usage.
-  const finishes = (content as ReadonlyArray<AnyPart>).filter((p) => p.type === "finish")
-  const finish = finishes.find((p) => carriesUsage(p.usage as ProviderUsage | undefined)) ?? finishes[0]
-  const fu = finish?.usage as ProviderUsage | undefined
-  if (carriesUsage(u) || carriesUsage(fu)) {
-    return tokenUsage({
-      inputTokens: u.inputTokens?.total ?? fu?.inputTokens?.total ?? 0,
-      outputTokens: u.outputTokens?.total ?? fu?.outputTokens?.total ?? 0,
-      cacheReadTokens: u.inputTokens?.cacheRead ?? fu?.inputTokens?.cacheRead ?? 0,
-      cacheWriteTokens: u.inputTokens?.cacheWrite ?? fu?.inputTokens?.cacheWrite ?? 0,
-      reasoningTokens: u.outputTokens?.reasoning ?? fu?.outputTokens?.reasoning ?? 0,
-    })
-  }
-  const gm = (finish?.metadata as
-    | { readonly google?: { readonly usageMetadata?: Record<string, number> } }
-    | undefined)?.google?.usageMetadata
-  const thoughts = gm?.["thoughtsTokenCount"] ?? 0
+  const finishes = content.filter(isFinish)
+  const finish = finishes.find((p) => carriesUsage(p.usage)) ?? finishes[0]
+  const read: ReadonlyArray<Response.Usage> = [
+    ...Option.toArray(decodeResponseUsage(usage)),
+    ...(finish === undefined ? [] : [finish.usage]),
+  ]
+  const first = (count: (u: Response.Usage) => number | undefined): number =>
+    read.map(count).find((value) => value !== undefined) ?? 0
   return tokenUsage({
-    inputTokens: gm?.["promptTokenCount"] ?? 0,
-    outputTokens: (gm?.["candidatesTokenCount"] ?? 0) + thoughts,
-    cacheReadTokens: gm?.["cachedContentTokenCount"] ?? 0,
-    reasoningTokens: thoughts,
+    inputTokens: first((u) => u.inputTokens.total),
+    outputTokens: first((u) => u.outputTokens.total),
+    cacheReadTokens: first((u) => u.inputTokens.cacheRead),
+    cacheWriteTokens: first((u) => u.inputTokens.cacheWrite),
+    reasoningTokens: first((u) => u.outputTokens.reasoning),
   })
 }
 
@@ -386,36 +353,28 @@ export const withUsageOnAssistant = (
     ...usage,
     ...Option.match(model, { onNone: () => ({}), onSome: (id) => ({ model: id }) }),
   }
-  return messages.map((m, i) => {
-    if (i !== at || m.role !== "assistant") return m
-    const prev = hasKeys(m.providerOptions) ? m.providerOptions : {}
-    return { ...m, providerOptions: { ...prev, [USAGE_KEY]: stamp } }
-  })
+  return messages.map((m, i) =>
+    i !== at || m.role !== "assistant" ? m : { ...m, providerOptions: { ...m.providerOptions, [ENGINE_KEY]: stamp } },
+  )
 }
 
+/** A stamp's model: the resolved `provider:modelId`. */
+const decodeModelStamp = Schema.decodeUnknownOption(Schema.Struct({ model: Schema.NonEmptyString }))
+
 /** The resolved `provider:modelId` the router stamped onto the finish part. */
-export const extractModel = (content: ReadonlyArray<unknown>): Option.Option<string> => {
-  const finish = (content as ReadonlyArray<AnyPart>).find((p) => p.type === "finish")
-  const model = (finish?.metadata as { readonly router?: { readonly model?: unknown } } | undefined)
-    ?.router?.model
-  return typeof model === "string" && model.length > 0 ? Option.some(model) : Option.none()
-}
+export const extractModel = (content: ReadonlyArray<Response.AnyPart>): Option.Option<string> =>
+  Option.flatMap(Option.fromNullishOr(content.find(isFinish)), (finish) =>
+    Option.map(decodeModelStamp(finish.metadata["router"]), (stamp) => stamp.model))
 
 const decodeUsage = Schema.decodeUnknownOption(TokenUsage)
 
 /** The turn usage embedded on a persisted assistant message, if any,
  *  decoded: a stamp written before 0.14.0 reads 0 cache-write and reasoning tokens. */
-export const assistantUsage = (msg: AgentMessage): Option.Option<TokenUsage> => {
-  if (msg.role !== "assistant") return Option.none()
-  const opts = msg.providerOptions as Record<string, unknown> | undefined
-  const usage = opts?.[USAGE_KEY]
-  return hasKeys(usage) ? decodeUsage(usage) : Option.none()
-}
+export const assistantUsage = (msg: AgentMessage): Option.Option<TokenUsage> =>
+  msg.role !== "assistant" ? Option.none() : decodeUsage(msg.providerOptions?.[ENGINE_KEY])
 
 /** The `provider:modelId` embedded alongside the usage stamp, if any. */
-export const assistantModel = (msg: AgentMessage): Option.Option<string> => {
-  if (msg.role !== "assistant") return Option.none()
-  const opts = msg.providerOptions as Record<string, unknown> | undefined
-  const model = (opts?.[USAGE_KEY] as { readonly model?: unknown } | undefined)?.model
-  return typeof model === "string" && model.length > 0 ? Option.some(model) : Option.none()
-}
+export const assistantModel = (msg: AgentMessage): Option.Option<string> =>
+  msg.role !== "assistant"
+    ? Option.none()
+    : Option.map(decodeModelStamp(msg.providerOptions?.[ENGINE_KEY]), (stamp) => stamp.model)

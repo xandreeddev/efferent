@@ -88,6 +88,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and a custom `StepLoop` that streams reruns `stepLoopConformance`.
 - Narrow options typed `unknown` to `{ prompt }` before passing them to
   `prependClaudeCode`, `withAnthropicCacheBreakpoints` or `generateWith`.
+- Pass effect/ai parts (`GenerateTextResponse.content`,
+  `Response.makePart(...)`) to `responseToAgentMessages`, `responseText`,
+  `responseReasoning`, `responseToolCalls`, `responseToolResults`,
+  `withToolCallIds`, `extractUsage` and `extractModel`, and a stream of them
+  to `foldStreamParts`; `Prompt.make(toPromptMessages(messages))` needs no
+  cast.
+- Put only JSON in `providerOptions`, and handle `tool-result` parts in code
+  that walks an assistant message's parts.
 
 ### Breaking
 
@@ -263,6 +271,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `withAnthropicCacheBreakpoints` take call options with a `prompt` and
   return them with the prompt as a `Prompt` (other options kept), instead of
   `unknown`; `generateWith` takes options with a `prompt`.
+- `@xandreed/core`: every `providerOptions` is `ProviderOptions` (a JSON
+  record, optional key).
+- `@xandreed/core`: `AssistantMessage.content` may hold the result of a tool
+  the provider ran (`ToolResultPart.providerExecuted`). Only sessions with
+  provider-defined tools write one, and an older release cannot read such a
+  message.
+- `@xandreed/core`: the response helpers and `FoldedTurn` use effect/ai
+  types, `toPromptMessages` returns `Prompt.MessageEncoded`s, `extractUsage`
+  decodes its usage as effect/ai's `Usage` (no longer reading Gemini's raw
+  usage metadata), and `responseToolResults` leaves out preliminary results.
+- `@xandreed/plugin-models`: `fromChatCompletion` returns
+  `Response.PartEncoded`s, and `thinkingParams` returns a JSON object.
 
 ### Added
 
@@ -514,6 +534,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and `encryptedContent`. Later requests send that reasoning back.
 - The model catalog no longer throws on a credential stored under a name
   such as `toString`.
+- A provider-run tool's result is stored after its call in the assistant
+  message and replayed to that provider as its own, instead of as a
+  `providerExecuted: false` tool message.
+- A chat-completions model is no longer sent a provider-run tool as a plain
+  `tool_call`.
+- A pinned tool exchange survives a cut when its message also holds a
+  provider-run tool.
 
 ### Repository
 
@@ -645,6 +672,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the catalog, the image and effort flags and `buildProvider` read it, with
   one builder per route, and a pin test holds every built-in selection's
   catalog entry, flags and descriptor settings to their earlier values.
+- `effect/no-record-cast` runs in every package, with its shrinking
+  `RECORD_CAST_EDGES`; its per-package list is gone.
 
 ## 0.14.0 — 2026-10-29
 

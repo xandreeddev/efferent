@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { AiError } from "effect/ai"
+import { HttpClientError, HttpClientRequest } from "effect/http"
 import { Cause, Effect, Exit, Fiber, Option, Ref, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
@@ -34,6 +35,14 @@ describe("classifyLlmError", () => {
     expect(classify(reasonError(new AiError.NetworkError({ reason: "TransportError", request, description: "reset" })))).toBe("transient")
     expect(classify(reasonError(new AiError.InvalidOutputError({ description: "not JSON" })))).toBe("permanent")
     expect(classify("boom")).toBe("permanent")
+  })
+
+  test("a raw HTTP client's transport failure (the subscription socket's) is transient; its other failures, or a look-alike, permanent", () => {
+    const socketRequest = HttpClientRequest.post("https://chatgpt.example/backend-api/codex/responses")
+    const failure = (reason: HttpClientError.HttpClientErrorReason) => new HttpClientError.HttpClientError({ reason })
+    expect(classify(failure(new HttpClientError.TransportError({ request: socketRequest, description: "socket closed" })))).toBe("transient")
+    expect(classify(failure(new HttpClientError.EncodeError({ request: socketRequest, description: "not JSON" })))).toBe("permanent")
+    expect(classify({ _tag: "HttpClientError", reason: { _tag: "TransportError" } })).toBe("permanent")
   })
 
   test("429 with a Retry-After beyond the honored cap is a DAILY QUOTA — permanent", () => {

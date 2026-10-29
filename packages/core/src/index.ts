@@ -5,6 +5,7 @@ export {
   AssistantMessage,
   Checkpoint,
   ConversationId,
+  ProviderOptions,
   ReasoningPart,
   TextPart,
   ToolCallId,

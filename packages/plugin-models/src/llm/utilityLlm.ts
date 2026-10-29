@@ -1,4 +1,4 @@
-import { Prompt } from "effect/ai"
+import { Prompt, Response } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Cause, Effect, Layer, Option } from "effect"
 import { AuthStore, extractUsage, parseModelSelection, reasonOf, replayableContext, SettingsStore, UtilityError, UtilityLlm } from "@xandreed/core"
@@ -47,14 +47,10 @@ export const UtilityLlmLive = Layer.effect(
             Effect.provide(context),
             Effect.provideService(HttpClient.HttpClient, http),
           )
-          const text = res.content
-            .flatMap((p) => {
-              const part = p as { readonly type?: string; readonly text?: string }
-              return part.type === "text" ? [part.text ?? ""] : []
-            })
-            .join("")
+          const parts = res.content.filter(Response.isPart)
+          const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
           // The loop's own reading of provider usage, so both count alike.
-          return { text, usage: extractUsage(res.usage, res.content) }
+          return { text, usage: extractUsage(res.usage, parts) }
         }),
     }
   }),

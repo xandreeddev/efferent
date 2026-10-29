@@ -5,8 +5,8 @@ import { TokenUsage } from "./token-usage.entity.js"
 /**
  * The persisted conversation vocabulary — a stable, provider-agnostic shape
  * the loop appends to and the store persists verbatim. `providerOptions` is
- * an opaque blob that round-trips provider-private fields (e.g. Gemini's
- * `thought_signature` on a reasoning part) without the engine inspecting them.
+ * a JSON blob that round-trips provider-private fields (an Anthropic thinking
+ * signature, OpenAI's reasoning item id) without the engine inspecting them.
  */
 
 export const ConversationId = Schema.String.check(Schema.isUUID()).pipe(Schema.brand("ConversationId"))
@@ -25,17 +25,25 @@ export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
   createdAt: Schema.Number,
 }) {}
 
+/**
+ * A provider's private fields, by provider: effect/ai's response part
+ * `metadata`, replayed as its prompt part `options`. The `engine` key is
+ * core's own (the turn's usage stamp), never sent to a provider.
+ */
+export const ProviderOptions = Schema.Record(Schema.String, Schema.Json)
+export type ProviderOptions = typeof ProviderOptions.Type
+
 export const TextPart = Schema.Struct({
   type: Schema.Literal("text"),
   text: Schema.String,
-  providerOptions: Schema.optional(Schema.Unknown),
+  providerOptions: Schema.optionalKey(ProviderOptions),
 })
 export type TextPart = typeof TextPart.Type
 
 export const ReasoningPart = Schema.Struct({
   type: Schema.Literal("reasoning"),
   text: Schema.String,
-  providerOptions: Schema.optional(Schema.Unknown),
+  providerOptions: Schema.optionalKey(ProviderOptions),
 })
 export type ReasoningPart = typeof ReasoningPart.Type
 
@@ -44,7 +52,7 @@ export const ToolCallPart = Schema.Struct({
   toolCallId: ToolCallId,
   toolName: Schema.String,
   input: Schema.Unknown,
-  providerOptions: Schema.optional(Schema.Unknown),
+  providerOptions: Schema.optionalKey(ProviderOptions),
   providerExecuted: Schema.optional(Schema.Boolean),
 })
 export type ToolCallPart = typeof ToolCallPart.Type
@@ -54,8 +62,10 @@ export const ToolResultPart = Schema.Struct({
   toolCallId: ToolCallId,
   toolName: Schema.String,
   output: Schema.Unknown,
-  providerOptions: Schema.optional(Schema.Unknown),
+  providerOptions: Schema.optionalKey(ProviderOptions),
   isError: Schema.optional(Schema.Boolean),
+  /** Run by the provider (a provider-defined tool): the result is the assistant message's, after its call. */
+  providerExecuted: Schema.optionalKey(Schema.Boolean),
   /**
    * Images sent with the result, after `output`'s text: memory's render of
    * the images a result's slots name (`LogBody.ToolResult.media`). Only a
@@ -79,21 +89,22 @@ export type UserContentPart = typeof UserContentPart.Type
 export const UserRoleMessage = Schema.Struct({
   role: Schema.Literal("user"),
   content: Schema.Union([Schema.String, Schema.Array(UserContentPart)]),
-  providerOptions: Schema.optional(Schema.Unknown),
+  providerOptions: Schema.optionalKey(ProviderOptions),
 })
 export type UserRoleMessage = typeof UserRoleMessage.Type
 
+/** What a model said in one step, in arrival order: a result of a tool the provider ran is among its parts. */
 export const AssistantMessage = Schema.Struct({
   role: Schema.Literal("assistant"),
-  content: Schema.Array(Schema.Union([TextPart, ReasoningPart, ToolCallPart])),
-  providerOptions: Schema.optional(Schema.Unknown),
+  content: Schema.Array(Schema.Union([TextPart, ReasoningPart, ToolCallPart, ToolResultPart])),
+  providerOptions: Schema.optionalKey(ProviderOptions),
 })
 export type AssistantMessage = typeof AssistantMessage.Type
 
 export const ToolMessage = Schema.Struct({
   role: Schema.Literal("tool"),
   content: Schema.Array(ToolResultPart),
-  providerOptions: Schema.optional(Schema.Unknown),
+  providerOptions: Schema.optionalKey(ProviderOptions),
 })
 export type ToolMessage = typeof ToolMessage.Type
 

@@ -37,7 +37,7 @@ Steering text (`pendingInput`) is the host's; the fold's summary message is core
 
 ## Erasure files
 
-`src/loop.ts`, the prompt assembly: the rendered `AgentMessage`s into `Prompt.make` (`:398`), the instrumented toolkit's `handle` over the generic `Tools` (`:424`) and the tool choice into its tool-name union (`:430`).
+`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:424`) and the tool choice into its tool-name union (`:430`).
 
 ## Layout
 

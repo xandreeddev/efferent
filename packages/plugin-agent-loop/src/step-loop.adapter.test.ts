@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
-import type { Tool } from "effect/ai"
+import type { Response, Tool } from "effect/ai"
 import { Cause, Context, Effect, Option, Ref, Stream } from "effect"
 import { addUsage, ConversationId, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, reasonOf, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, TurnClosed, zeroUsage } from "@xandreed/core"
 import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
@@ -39,14 +39,14 @@ const minimalLoop = StepLoop.of({
           : Option.getOrElse(Option.flatMap(plan, (value) => value.model), () => model)
         const prompt = Option.match(plan, {
           onNone: () => Prompt.empty,
-          onSome: (value) => Prompt.concat(Prompt.make([{ role: "system", content: value.system }]), Prompt.make(toPromptMessages(value.messages) as Prompt.RawInput)),
+          onSome: (value) => Prompt.concat(Prompt.make([{ role: "system", content: value.system }]), Prompt.make(toPromptMessages(value.messages))),
         })
         const toolChoice = Option.flatMap(plan, (value) => value.toolChoice)
         if (Option.isSome(plan)) yield* request.dispatch(index, {
           prompt, tools: Object.values(toolkit.tools), toolChoice: Option.getOrElse(toolChoice, () => "auto"), model: provider,
         })
         // The tools declare no dependencies: the call needs no services (`Tool.Any` widens them to `any`).
-        const generated: Effect.Effect<{ readonly content: ReadonlyArray<unknown> }, unknown> = provider.generateText({ prompt, toolkit, ...Option.match(toolChoice, { onNone: () => ({}), onSome: (choice) => ({ toolChoice: choice }) }) }) as never
+        const generated: Effect.Effect<{ readonly content: ReadonlyArray<Response.AnyPart> }, unknown> = provider.generateText({ prompt, toolkit, ...Option.match(toolChoice, { onNone: () => ({}), onSome: (choice) => ({ toolChoice: choice }) }) }) as never
         return yield* generated.pipe(
           // The run's trace content switch, for the model call to read.
           Effect.provideService(CurrentTraceContent, request.captureTraceContent),
@@ -60,7 +60,7 @@ const minimalLoop = StepLoop.of({
           : Effect.fail(error)),
         Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
       )
-      const content: ReadonlyArray<unknown> = response.content
+      const content: ReadonlyArray<Response.AnyPart> = response.content
       const entries = yield* request.record(index, responseToAgentMessages(content))
       const used = extractUsage(undefined, content)
       const total = addUsage(usage, used)
