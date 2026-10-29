@@ -58,6 +58,7 @@ export {
   LabelReview
 } from "./assessment.entity.js"
 export {
+  assessmentOfAiError,
   validateDataset,
   validateMetrics,
   numericMetric,

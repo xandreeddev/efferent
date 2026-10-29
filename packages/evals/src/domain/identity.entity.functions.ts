@@ -1,10 +1,14 @@
 import { Cause, Option, Predicate, Schema } from "effect"
+import type { AssessmentError } from "../assessment.entity.js"
 import { EvaluationError } from "./identity.entity.js"
 
 const evaluationErrorShape = Schema.is(Schema.Struct(EvaluationError.fields))
 
 /** An `EvaluationError` by its tag and fields, whichever installed copy of the package made it (`instanceof` is false across copies). */
 export const isEvaluationError = (value: unknown): value is EvaluationError => evaluationErrorShape(value)
+
+/** Whether a failed grade or assessment is a missing measurement (`unavailable`) rather than an error. */
+export const isUnavailable = (error: EvaluationError | AssessmentError): boolean => error.code === "unavailable"
 
 const stringField = (value: unknown, key: string): Option.Option<string> =>
   Predicate.isObject(value) ? Option.filter(Option.some(value[key]), Predicate.isString) : Option.none()

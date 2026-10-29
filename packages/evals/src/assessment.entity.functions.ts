@@ -1,6 +1,19 @@
+import type { AiError } from "effect/ai"
 import { Effect, Match, Option, Schema } from "effect"
 import { AssessmentError, Metric, type EvaluationResult } from "./assessment.entity.js"
 import type { Dataset } from "./assessment.usecase.js"
+
+/**
+ * A failed model call as an assessment error: `unavailable` when the
+ * provider may answer on a retry (a rate limit, a network or server
+ * failure, output that did not parse), `provider` otherwise. The message
+ * names the reason (`RateLimitError: …`); the `AiError` is the cause.
+ */
+export const assessmentOfAiError = (error: AiError.AiError): AssessmentError => new AssessmentError({
+  code: error.isRetryable ? "unavailable" : "provider",
+  message: `${error.reason._tag}: ${error.message}`,
+  cause: error,
+})
 
 export const validateDataset = <I, Ref>(dataset: Dataset<I, Ref>) => Effect.gen(function* () {
   const ids = dataset.cases.map((item) => item.id)
@@ -10,13 +23,13 @@ export const validateDataset = <I, Ref>(dataset: Dataset<I, Ref>) => Effect.gen(
   if (invalid) return yield* Effect.fail(new AssessmentError({ code: "invalid", message: "Dataset needs unique cases, provenance and disjoint calibration/validation families" }))
   yield* Effect.forEach(dataset.cases, (item) => Effect.all([
     Schema.decodeEffect(Schema.toType(dataset.input))(item.input), Schema.decodeEffect(Schema.toType(dataset.reference))(item.reference),
-  ], { concurrency: 1 }).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) }))), { concurrency: 1 })
+  ], { concurrency: 1 }).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: `Dataset case ${item.id} does not decode: ${error.message}`, cause: error }))), { concurrency: 1 })
   return dataset
 })
 
 export const validateMetrics = (metrics: ReadonlyArray<Metric>, expected: ReadonlyArray<string>) =>
   Schema.decodeEffect(Schema.toType(Schema.Array(Metric)))(metrics).pipe(
-    Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) })),
+    Effect.mapError((error) => new AssessmentError({ code: "invalid", message: `Evaluator returned invalid metrics: ${error.message}`, cause: error })),
     Effect.flatMap((values) => {
       const names = values.map((metric) => metric.name)
       return new Set(names).size !== names.length || expected.some((name) => !names.includes(name)) || names.some((name) => !expected.includes(name)) ||

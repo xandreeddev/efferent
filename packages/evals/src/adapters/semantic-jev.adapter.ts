@@ -1,6 +1,7 @@
-import { Effect, Layer, Schema } from "effect"
+import { Cause, Effect, Layer, Schema } from "effect"
 import { AssessmentError } from "../assessment.entity.js"
 import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
+import { reasonOf } from "../domain/identity.entity.functions.js"
 import type { SemanticInput } from "../semantic.entity.js"
 import { validateSemanticInput, validateSemanticAnswers } from "../semantic.entity.functions.js"
 import { SemanticJudge } from "../ports/semantic-judge.port.js"
@@ -26,10 +27,10 @@ export const makeSemanticJevJudge = (options: SemanticJevOptions) => Effect.gen(
         return yield* Effect.fail(new AssessmentError({ code: "invalid", message: "Jev input exceeds its byte limit" }))
       const response = yield* Effect.tryPromise({
         try: (signal) => options.evaluate(input, signal),
-        catch: (error) => new AssessmentError({ code: "provider", message: String(error) }),
+        catch: (error) => new AssessmentError({ code: "provider", message: `Jev request failed: ${reasonOf(Cause.die(error))}`, cause: error }),
       }).pipe(Effect.timeoutOrElse({ duration: timeoutMs, orElse: () => Effect.fail((() => new AssessmentError({ code: "timeout", message: "Jev deadline exceeded" }))()) }))
       const decoded = yield* Schema.decodeUnknownEffect(Schema.Struct({ answers: Schema.Unknown }))(response).pipe(
-        Effect.mapError((error) => new AssessmentError({ code: "invalid", message: String(error) })),
+        Effect.mapError((error) => new AssessmentError({ code: "invalid", message: `Jev response does not decode: ${error.message}`, cause: error })),
       )
       const answers = yield* validateSemanticAnswers(input, decoded.answers)
       return { answers, usage: unknownEvaluationUsage, metadata: { ...options.metadata, model: "typesafe-ai/jev" } }

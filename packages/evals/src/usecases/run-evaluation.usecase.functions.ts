@@ -1,5 +1,5 @@
 import { Cause, Clock, Effect, Exit, Option, Ref, Schema, Semaphore } from "effect"
-import { reasonOf } from "../domain/identity.entity.functions.js"
+import { isUnavailable, reasonOf } from "../domain/identity.entity.functions.js"
 import type {
   EvaluationApp,
   EvaluationSelection,
@@ -95,7 +95,8 @@ export const gradeTrial = (
                           (error) =>
                             new EvaluationError({
                               code: "invalid",
-                              message: error.message
+                              message: error.message,
+                              cause: error
                             })
                         )
                       )
@@ -136,7 +137,7 @@ export const gradeTrial = (
                 version: grader.definition.version,
                 scope: binding.scope,
                 status: Cause.findErrorOption(assessed.cause).pipe(
-                  Option.exists((error) => error.code === "unavailable")
+                  Option.exists(isUnavailable)
                 )
                   ? "unavailable"
                   : "error",
@@ -166,7 +167,8 @@ const decodeRunId = (runId: string) =>
       (error) =>
         new EvaluationError({
           code: "invalid",
-          message: `Run id ${JSON.stringify(runId)}: ${error.message}`
+          message: `Run id ${JSON.stringify(runId)}: ${error.message}`,
+          cause: error
         })
     )
   )

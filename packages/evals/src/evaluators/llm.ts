@@ -1,7 +1,7 @@
 import { LanguageModel } from "effect/ai"
 import type { Prompt } from "effect/ai"
 import { Effect, Option, Schema } from "effect"
-import { AssessmentError } from "../assessment.entity.js"
+import { assessmentOfAiError } from "../assessment.entity.functions.js"
 import type { Assessment, Evaluator } from "../assessment.usecase.js"
 
 /** The host provides its native model Layer, prompt builder and rubric schema. */
@@ -16,6 +16,6 @@ export const llmEvaluator = <I, A, Encoded extends Record<string, unknown>>(opti
   id: options.id, version: options.version, metrics: options.metrics,
   run: (input) => LanguageModel.generateObject({ prompt: options.prompt(input), schema: options.schema, objectName: options.id.replaceAll(/[^a-zA-Z0-9_]/g, "_") }).pipe(
     Effect.map((response) => ({ ...options.assessment(response.value), usage: { inputTokens: Option.fromNullishOr(response.usage.inputTokens.total), outputTokens: Option.fromNullishOr(response.usage.outputTokens.total), costUsd: Option.none<number>() } })),
-    Effect.mapError((error) => new AssessmentError({ code: "provider", message: String(error) })),
+    Effect.mapError(assessmentOfAiError),
   ),
 })

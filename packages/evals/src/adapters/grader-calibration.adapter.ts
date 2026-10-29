@@ -5,6 +5,7 @@ import { CalibrationObservation, CalibrationReference } from "../domain/grader-c
 import { calibrationAgreement } from "../domain/grader-calibration.entity.functions.js"
 import { GradingContext } from "../domain/grading-context.entity.js"
 import { gradingContext, fingerprint } from "../domain/grading-context.entity.functions.js"
+import { isUnavailable } from "../domain/identity.entity.functions.js"
 import { EvalId, EvaluationError } from "../domain/identity.entity.js"
 import { defineRunnable } from "./runnable.adapter.js"
 import { runnableExecutionPort } from "../ports/runnable-execution.port.js"
@@ -34,7 +35,7 @@ interface GraderCalibrationOptions<I> {
 export const defineGraderCalibration = <I>(options: GraderCalibrationOptions<I>) => {
   const encode = Schema.encodeEffect(Schema.toCodecJson(options.input))
   return Effect.forEach(options.cases, (item) => encode(item.input).pipe(
-    Effect.mapError((error) => new EvaluationError({ code: "invalid", message: `calibration ${options.id}, case ${item.id}: the input does not encode: ${error.message}` })),
+    Effect.mapError((error) => new EvaluationError({ code: "invalid", message: `calibration ${options.id}, case ${item.id}: the input does not encode: ${error.message}`, cause: error })),
   ), { concurrency: 1 }).pipe(Effect.map((inputs) => calibrationOf(options, inputs)))
 }
 
@@ -55,7 +56,7 @@ const calibrationOf = <I>(options: GraderCalibrationOptions<I>, inputs: Readonly
   const environmentId = `${subjectId}.in-process`
   const budget = { maxBytes: 1_048_576, reservedBytes: 0 }
   const decode = <A>(codec: Schema.Codec<A>, value: unknown) => Schema.decodeUnknownEffect(codec)(value).pipe(
-    Effect.mapError((error) => new EvaluationError({ code: "invalid", message: String(error) })),
+    Effect.mapError((error) => new EvaluationError({ code: "invalid", message: `calibration ${id}: ${error.message}`, cause: error })),
   )
   const runnable = defineRunnable({
     definition: { id: EvalId.make(subjectId), version: options.version, description: options.description,
@@ -77,7 +78,7 @@ const calibrationOf = <I>(options: GraderCalibrationOptions<I>, inputs: Readonly
         )
         const observation: CalibrationObservation = result._tag === "Success"
           ? { status: result.success.status, metrics: result.success.metrics, reason: result.success.reason }
-          : { status: result.failure.code === "unavailable" ? "unavailable" : "error", metrics: [], reason: result.failure.message }
+          : { status: isUnavailable(result.failure) ? "unavailable" : "error", metrics: [], reason: result.failure.message }
         yield* Ref.set(world, Option.some(observation))
         yield* recorder.record("calibration.observed", observation)
         return { output: observation, evidence: { context, observation } }

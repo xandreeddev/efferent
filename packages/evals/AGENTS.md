@@ -8,7 +8,9 @@ The evaluation domain: tasks, runnables, candidates, trials, transcripts, outcom
 - Use cases resolve services through `EvaluationServices` and build no Layers; Layers are built in `src/adapters/` (`EvaluationServicesLive`, `defineRunnable`).
 - Every chosen id is an `EvalId` (one segment, no `/` or `@`); trial and event ids are `EvalPath`s (`run/suite/candidate/task/sample`); a grader key is `<id>@<version>`.
 - Record a failure's reason with `reasonOf` (`code: message`, `interrupted`, or a defect's message), never a stack or a path: reports and exports are shared.
-- A missing measurement stays unavailable, never a zero, and never passes a gate.
+- An `EvaluationError` or `AssessmentError` that wraps a failure keeps it as `cause` and says what failed in `message` (a schema error's `message`, `reasonOf(Cause.die(error))` for a foreign one), never `String(error)`; `reasonOf` never reads the cause.
+- A model call's `AiError` becomes `assessmentOfAiError(error)`: `unavailable` when the provider may answer on a retry (`isRetryable`), `provider` otherwise, its message led by the reason's tag.
+- A missing measurement stays unavailable, never a zero, and never passes a gate; `isUnavailable(error)` tells one from an error.
 - `gradingContext` never truncates: over budget is `unavailable`, and omissions are recorded by the app.
 - Order with an explicit `Order` (`Order.String`, code-unit order), never the locale: fingerprints and comparison lines must match on every machine.
 - Persist each transcript event and the settled trial as they happen; a trial settles under `uninterruptibleMask`, so an interrupted one is stored as `cancelled`.
@@ -20,7 +22,7 @@ The evaluation domain: tasks, runnables, candidates, trials, transcripts, outcom
 - App contract: `defineEvaluationApp`, `validateEvaluationApp`, `defineRunnable`, `defineGraderCalibration`, `runnableExecutionPort`, `evaluationEnvironmentPort` (types `EvaluationApp`, `EvaluationSelection` and the registrations).
 - Use cases: `runEvaluation`, `gradeEvaluation`, `calibrateGrader`, `gradeTrial`, `executionFingerprint`, `runGates`, `comparisonIssues`, `reviewBundle`, `approveReviews`, `gradingContext`, `fingerprint` (also `evaluationFingerprint`), `tasksFromDataset`.
 - Ports: `EvaluationServices`, `EvaluationRunStore`, `EvaluationExport`, `TrialExecution`, `TrialRecorder`, `EvidenceProjector`, `GraderAssessment`, `SemanticJudge`. A host composes `EvaluationServicesLive(app)` plus an `EvaluationRunStore` (evals-cli has the file one); `SemanticLlmLive` / `makeSemanticLlmJudge` (needs a `LanguageModel`), `SemanticJevLive` / `makeSemanticJevJudge`; `isolatedServices`.
-- Assessment: `assess`, `assessAll`, `semanticEvaluator`, `semanticResponseSchema`, `validateSemanticInput`, `validateSemanticAnswers`, `assessCompleteness`, `evaluationScores`, `projectEvaluatorInput`, `evaluatorRegistry`, `compareCalibrationMetric`, `summarizeCalibration`, `compareDecisionTrials`, `calibrationAgreement`, `selectionMetrics`, `validateDataset`, `validateMetrics`, `numericMetric`, `summarizeAssessments`, `unknownEvaluationUsage`, and their schemas.
+- Assessment: `assess`, `assessAll`, `semanticEvaluator`, `semanticResponseSchema`, `validateSemanticInput`, `validateSemanticAnswers`, `assessCompleteness`, `evaluationScores`, `projectEvaluatorInput`, `evaluatorRegistry`, `compareCalibrationMetric`, `summarizeCalibration`, `compareDecisionTrials`, `calibrationAgreement`, `selectionMetrics`, `assessmentOfAiError`, `validateDataset`, `validateMetrics`, `numericMetric`, `summarizeAssessments`, `unknownEvaluationUsage`, and their schemas.
 - Retrieval: `rankingMetrics`, `contextualPrecision`, `contextualRecall`, `contextualRelevancy`, `semanticRetrievalGraders(judge, { rubric })` (a `RetrievalJudge` gets `retrievalItems`, the units it gives one verdict each), `retrievalItems`. Statistics (also `@xandreed/evals/stats`): `wilsonInterval`, `percentile`, `mean`, `standardDeviation`. Flags: `argValue`, `hasFlag`, `csv`, `positiveInt`.
 
 ## Model-facing text
@@ -30,7 +32,7 @@ The prompts are the app's (`SemanticLlmOptions.prompt`, the judge given to `sema
 | Text | Source | Pinned by |
 |---|---|---|
 | The judge's structured-output name, `semantic_assessment` | `src/adapters/semantic-llm.adapter.ts:23` | unpinned |
-| The judge's response schema: one property per question id, `probability` in 0..1, `score` within the scale, `choice` among the offered keys, nothing else | `src/semantic.entity.functions.ts:35-44` | structure, `src/semantic.test.ts:87`, `:95` |
+| The judge's response schema: one property per question id, `probability` in 0..1, `score` within the scale, `choice` among the offered keys, nothing else | `src/semantic.entity.functions.ts:37-46` | structure, `src/semantic.test.ts:111`, `:119` |
 | `llmEvaluator`'s object name, from its id (not exported) | `src/evaluators/llm.ts:17` | unpinned |
 
 ## Erasure files

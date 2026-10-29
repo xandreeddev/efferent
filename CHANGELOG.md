@@ -158,6 +158,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `backpressure` check, with `BashSubject.holdsBack`.
 - `isFrozenRefusal(error)` in `@xandreed/plugin-render`: whether a
   `RenderStore` refused a write because the surface is frozen.
+- `assessmentOfAiError` in `@xandreed/evals` turns a failed model call into
+  an `AssessmentError`: `unavailable` when the provider may answer on a
+  retry, `provider` otherwise, with the reason first in the message
+  (`RateLimitError: …`) and the `AiError` as the `cause`.
+  `EvaluationError` and `AssessmentError` take an optional `cause`.
 
 ### Fixed
 
@@ -299,6 +304,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   drops `undefined` fields, as SQLite does.
 - Failures the framework drops on purpose are logged: lost writes and
   cleanups at Warn, expected misses at Debug.
+- Evals keep provider reasons: a rate limit, network or server failure, or
+  unparseable judge output is `unavailable` instead of `error`, and every
+  provider failure names the provider's reason instead of a generic class.
+- Evals errors that wrap a schema, transport or provider failure keep it as
+  `cause` and say what failed (`Dataset case bad does not decode: …`).
+  Reasons in reports still carry no stacks or causes.
 
 ### Repository
 
@@ -376,6 +387,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   history eight at a time instead of one by one.
 - The render surface recognises a frozen refusal through that guard instead
   of comparing the error code, and `plugin-render` passes
+  `effect/no-error-code-compare`.
+- `@xandreed/evals` passes `effect/no-stringified-cause` and
   `effect/no-error-code-compare`.
 
 ## 0.14.0 — 2026-10-29

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test"
-import { Effect, Option, Ref, Schema } from "effect"
+import { Effect, Option, Predicate, Ref, Schema } from "effect"
 import { AssessmentError } from "./assessment.entity.js"
 import { assessAll } from "./assessment.usecase.functions.js"
 import { validateDataset, summarizeAssessments } from "./assessment.entity.functions.js"
@@ -23,6 +23,12 @@ test("dataset rejects duplicate IDs and cross-split case families", async () => 
   expect(await Effect.runPromise(validateDataset(data).pipe(Effect.isSuccess))).toBe(true)
   expect(await Effect.runPromise(validateDataset({ ...data, cases: data.cases.map((c) => ({ ...c, family: "shared" })) }).pipe(Effect.isSuccess))).toBe(false)
   expect(await Effect.runPromise(validateDataset({ ...data, cases: [...data.cases, data.cases[0]!] }).pipe(Effect.isSuccess))).toBe(false)
+})
+test("a case that does not decode is named, and its schema error kept as the cause", async () => {
+  const error = await Effect.runPromise(validateDataset({ ...data, input: Schema.String.check(Schema.isNonEmpty()), cases: data.cases.map((c) => c.id === "bad" ? { ...c, input: "" } : c) }).pipe(Effect.flip))
+  expect(error.code).toBe("invalid")
+  expect(error.message).toStartWith("Dataset case bad does not decode: ")
+  expect(Predicate.isTagged(error.cause, "SchemaError")).toBe(true)
 })
 test("one judge call emits several independently selected metrics", async () => {
   const program = Effect.gen(function* () {

@@ -31,7 +31,9 @@ export const EvaluationResult = Schema.Struct({
   metadata: Schema.Record(Schema.String, Schema.Unknown),
 })
 export type EvaluationResult = typeof EvaluationResult.Type
+/** `message` says what failed; `cause` keeps the failure it wraps (a schema or provider error) for an operator, never for a report. */
 export class AssessmentError extends Schema.TaggedError<AssessmentError>()("AssessmentError", {
   code: Schema.Literals(["invalid", "unavailable", "provider", "persistence", "timeout"]),
   message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
 }) {}
