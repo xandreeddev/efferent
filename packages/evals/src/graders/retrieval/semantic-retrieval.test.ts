@@ -9,6 +9,7 @@ import {
   RetrievalContext
 } from "../../index.js"
 import type { RetrievalItem } from "../../index.js"
+import { spanRecorder } from "../../testing/fixture.testing.js"
 const input: RetrievalContext = {
   query: "When does it start?",
   documents: [
@@ -57,6 +58,24 @@ test("semantic retrieval validates statement coverage and keeps precision order"
     )
   )
   expect(grades.map((grade) => grade.metrics[0]?.value)).toEqual([1, 1, 1 / 3])
+})
+test("each retrieval grade is one eval.retrieval.assess span naming its measure, the judge called under it", async () => {
+  const { tracer, named, parentOf } = spanRecorder()
+  const graders = semanticRetrievalGraders((measure) =>
+    Effect.succeed({
+      verdicts: retrievalItems(measure, input).map((item) => ({ id: item.id, relevant: true, reason: "fixture" }))
+    }).pipe(Effect.withSpan("judge"))
+  )
+  const projected = await Effect.runPromise(context())
+  await Effect.runPromise(
+    Effect.forEach(graders, (grader) =>
+      GraderAssessment.use((port) => port.assess(projected, candidate)).pipe(Effect.provide(grader.layer)),
+      { concurrency: 1 }
+    ).pipe(Effect.withTracer(tracer))
+  )
+  expect(named("eval.retrieval.assess").map((span) => span.attributes.get("eval.retrieval.measure")))
+    .toEqual(["contextual-precision", "contextual-recall", "contextual-relevancy"])
+  expect(named("judge").map(parentOf)).toEqual(["eval.retrieval.assess", "eval.retrieval.assess", "eval.retrieval.assess"])
 })
 test("a judge omitting verdicts is an error rather than a low score", async () => {
   const grader = semanticRetrievalGraders(() =>

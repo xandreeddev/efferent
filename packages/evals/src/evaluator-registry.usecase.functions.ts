@@ -9,7 +9,7 @@ export const projectEvaluatorInput = <Whole, Input, R, P = never>(evaluator: Eva
 })
 
 /** An application's registry value: unique `id@version` entries resolved by calibrations and journeys. */
-export const evaluatorRegistry = <I, R>(entries: ReadonlyArray<EvaluatorRegistration<I, R>>) => Effect.gen(function* () {
+export const evaluatorRegistry = Effect.fnUntraced(function* <I, R>(entries: ReadonlyArray<EvaluatorRegistration<I, R>>) {
   const keys = entries.map((entry) => `${entry.id}@${entry.version}`)
   if (new Set(keys).size !== keys.length || entries.some((entry) => !entry.id.trim() || !entry.version.trim() || !entry.projectionVersion.trim() || !entry.promptHash.trim() || entry.id !== entry.evaluator.id || entry.version !== entry.evaluator.version))
     return yield* Effect.fail(new AssessmentError({ code: "invalid", message: "Registry needs unique versioned entries and matching evaluator identities" }))

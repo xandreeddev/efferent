@@ -5,7 +5,7 @@ import {
   EvaluationServicesLive, EvaluationRunStore, runEvaluation, gradeEvaluation, executionFingerprint,
   runGates, parseEvaluationApp, unknownEvaluationUsage, calibrateGrader, CalibrationReference, CalibrationObservation,
 } from "../index.js"
-import { fixture } from "./fixture.testing.js"
+import { fixture, spanRecorder } from "./fixture.testing.js"
 
 const Input = Schema.Struct({ evidence: Schema.OptionFromNullOr(Schema.Boolean) })
 const target = {
@@ -42,6 +42,15 @@ test("the actual grader is calibrated on passes, rejections and unavailable evid
   const replay = await Effect.runPromise(gradeEvaluation(app, report, "replay").pipe(Effect.provide(Layer.merge(EvaluationServicesLive(app), store))))
   expect(executionFingerprint(replay)).toBe(executionFingerprint(report))
   expect(replay.gates.every((gate) => gate.passed)).toBe(true)
+})
+test("a calibration is one eval.calibrate span over its run; the subject runs under each trial and the agreement is projected under each grade", async () => {
+  const { tracer, named, parentOf } = spanRecorder()
+  await Effect.runPromise(calibrateGrader(app, "calibration", "cal", { ids: [], split: "all" }).pipe(Effect.provide(Layer.merge(EvaluationServicesLive(app), store)), Effect.withTracer(tracer)))
+  expect(named("eval.calibrate").map((span) => [span.attributes.get("eval.calibration.id"), span.attributes.get("eval.run.id")])).toEqual([["calibration", "cal"]])
+  expect(named("eval.run").map(parentOf)).toEqual(["eval.calibrate"])
+  expect(named("eval.calibration.execute").map(parentOf)).toEqual(["eval.trial", "eval.trial", "eval.trial"])
+  expect(named("eval.calibration.project").map(parentOf)).toEqual(["eval.grade", "eval.grade", "eval.grade"])
+  expect([...named("eval.calibration.execute"), ...named("eval.calibration.project")].every((span) => span.attributes.get("eval.calibration.id") === "calibration")).toBe(true)
 })
 test("a permissive mutation cannot pass calibration", async () => {
   const mutated = Effect.runSync(defineGraderCalibration({ id: "mutation", version: "1", description: "Always accepts", input: Input,

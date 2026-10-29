@@ -6,7 +6,7 @@ import {
   EvaluationRunStore,
   runEvaluation
 } from "@xandreed/evals"
-import { fixture } from "@xandreed/evals/testing/fixture.testing"
+import { fixture, spanRecorder } from "@xandreed/evals/testing/fixture.testing"
 import { langsmithExporter } from "./langsmith-export.adapter.js"
 
 /**
@@ -147,4 +147,18 @@ test("a refused request is a provider error that keeps the client's error as its
   expect(refused.code).toBe("provider")
   expect(refused.message).toStartWith("LangSmith export: Failed to create project. Received status [401]")
   expect(refused.cause).toBeInstanceOf(Error)
+})
+
+test("an export is one eval.export span naming the exporter and the run", async () => {
+  const stub = langsmithStub()
+  const run = await report()
+  const { tracer, named } = spanRecorder()
+  await Effect.runPromise(
+    EvaluationExport.use((port) => port.exportRun(run)).pipe(
+      Effect.provide(langsmithExporter({ apiUrl: stub.url, apiKey: "fixture", project: "fixture" }).layer),
+      Effect.withTracer(tracer),
+      Effect.ensuring(Effect.sync(stub.stop))
+    )
+  )
+  expect(named("eval.export").map((span) => [span.attributes.get("eval.exporter"), span.attributes.get("eval.run.id")])).toEqual([["langsmith", "fixture-run"]])
 })

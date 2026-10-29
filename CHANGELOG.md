@@ -367,6 +367,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   failure.
 - `foundry check` runs as one `foundry.check` span above
   `foundry.pipeline`.
+- `@xandreed/evals`: evaluations are traced. `runEvaluation` opens
+  `eval.run`, each trial `eval.trial` (`eval.run.id`, `eval.trial.id`,
+  `eval.suite.id`, `eval.task.id`, `eval.candidate.id`, `eval.sample`),
+  `gradeEvaluation` `eval.regrade` and each trial's grading `eval.grade`;
+  `calibrateGrader` opens `eval.calibrate`. Logs under a trial or a grade
+  carry the same ids. The semantic evaluator, the retrieval graders and the
+  pairwise check open `eval.semantic.run`, `eval.retrieval.assess` and
+  `eval.pairwise`; the judges' spans keep their names.
+- `@xandreed/evals-langfuse` and `@xandreed/evals-langsmith`: an export is
+  one `eval.export` span carrying `eval.exporter` and `eval.run.id`.
 
 ### Changed
 
@@ -714,6 +724,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   replaceable-module layer, the step loop, the tool registry and foundry's
   gates and rule registry are `Effect.fnUntraced`, so traces keep their
   shape.
+- `effect/prefer-effect-fn` runs in `evals`, `evals-langfuse` and
+  `evals-langsmith`.
 
 ## 0.14.0 — 2026-10-29
 

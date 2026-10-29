@@ -62,8 +62,8 @@ export const semanticRetrievalGraders = (
       }
     },
     layer: Layer.succeed(GraderAssessment, {
-      assess: (context) =>
-        Effect.gen(function* () {
+      assess: Effect.fn("eval.retrieval.assess", { attributes: { "eval.retrieval.measure": measure } })(
+        function* (context) {
           const input = yield* Schema.decodeUnknownEffect(RetrievalContext)(
             context.input
           ).pipe(
@@ -146,6 +146,7 @@ export const semanticRetrievalGraders = (
             usage: unknownEvaluationUsage,
             metadata: { verdicts: verdict.verdicts }
           }
-        })
+        }
+      )
     })
   }))

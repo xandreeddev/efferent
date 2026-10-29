@@ -13,18 +13,18 @@ export interface SemanticLlmOptions {
 }
 
 /** Captures the supplied model service; each profile can supply its own native prompt builder. */
-export const makeSemanticLlmJudge = (options: SemanticLlmOptions) => Effect.gen(function* () {
+export const makeSemanticLlmJudge = Effect.fnUntraced(function* (options: SemanticLlmOptions) {
   const model = yield* LanguageModel.LanguageModel
   return SemanticJudge.of({
     id: options.id,
-    evaluate: (input) => Effect.gen(function* () {
+    evaluate: Effect.fn("eval.semantic.llm", { attributes: { "eval.backend": options.id } })(function* (input) {
       yield* validateSemanticInput(input)
       const response = yield* model.generateObject({
         prompt: options.prompt(input), schema: semanticResponseSchema(input.questions), objectName: "semantic_assessment",
       }).pipe(Effect.mapError(assessmentOfAiError))
       const answers = yield* validateSemanticAnswers(input, response.value.answers)
       return { answers, usage: { inputTokens: Option.fromNullishOr(response.usage.inputTokens.total), outputTokens: Option.fromNullishOr(response.usage.outputTokens.total), costUsd: Option.none<number>() }, metadata: options.metadata ?? {} }
-    }).pipe(Effect.withSpan("eval.semantic.llm", { attributes: { "eval.backend": options.id } })),
+    }),
   })
 })
 

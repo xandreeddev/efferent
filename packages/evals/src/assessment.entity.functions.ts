@@ -15,7 +15,7 @@ export const assessmentOfAiError = (error: AiError.AiError): AssessmentError => 
   cause: error,
 })
 
-export const validateDataset = <I, Ref>(dataset: Dataset<I, Ref>) => Effect.gen(function* () {
+export const validateDataset = Effect.fnUntraced(function* <I, Ref>(dataset: Dataset<I, Ref>) {
   const ids = dataset.cases.map((item) => item.id)
   const invalid = !dataset.id.trim() || !dataset.version.trim() || ids.length === 0 || new Set(ids).size !== ids.length ||
     dataset.cases.some((item) => !item.id.trim() || !item.family.trim() || !item.provenance.trim() || dataset.cases.some((other) => other.family === item.family && other.split !== item.split)) ||

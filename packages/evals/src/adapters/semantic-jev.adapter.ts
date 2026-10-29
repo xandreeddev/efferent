@@ -14,14 +14,14 @@ export interface SemanticJevOptions {
   readonly metadata?: Schema.JsonObject
 }
 
-export const makeSemanticJevJudge = (options: SemanticJevOptions) => Effect.gen(function* () {
+export const makeSemanticJevJudge = Effect.fnUntraced(function* (options: SemanticJevOptions) {
   const maxInputBytes = options.maxInputBytes ?? 24_000
   const timeoutMs = options.timeoutMs ?? 10_000
   if (!Number.isInteger(maxInputBytes) || maxInputBytes < 1 || !Number.isFinite(timeoutMs) || timeoutMs <= 0)
     return yield* Effect.fail(new AssessmentError({ code: "invalid", message: "Jev input limit and deadline must be positive" }))
   return SemanticJudge.of({
     id: "jev",
-    evaluate: (input) => Effect.gen(function* () {
+    evaluate: Effect.fn("eval.semantic.jev", { attributes: { "gen_ai.request.model": "typesafe-ai/jev" } })(function* (input) {
       yield* validateSemanticInput(input)
       if (new TextEncoder().encode(JSON.stringify(input)).byteLength > maxInputBytes)
         return yield* Effect.fail(new AssessmentError({ code: "invalid", message: "Jev input exceeds its byte limit" }))
@@ -34,7 +34,7 @@ export const makeSemanticJevJudge = (options: SemanticJevOptions) => Effect.gen(
       )
       const answers = yield* validateSemanticAnswers(input, decoded.answers)
       return { answers, usage: unknownEvaluationUsage, metadata: { ...options.metadata, model: "typesafe-ai/jev" } }
-    }).pipe(Effect.withSpan("eval.semantic.jev", { attributes: { "gen_ai.request.model": "typesafe-ai/jev" } })),
+    }),
   })
 })
 

@@ -106,6 +106,9 @@ const src = (name: string): string => `packages/${name}/src/**`
  * the list is deleted.
  */
 const EFFECT_FN_CLEAN = [
+  "evals",
+  "evals-langfuse",
+  "evals-langsmith",
   "plugin-agent-loop",
   "runtime",
   "sdk",
