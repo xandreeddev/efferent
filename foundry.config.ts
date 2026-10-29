@@ -111,29 +111,6 @@ const EFFECT_FN_CLEAN = [
   "plugin-memory-digest",
 ].map(src)
 
-const UNKNOWN_JSON_CLEAN = [
-  "core",
-  "sdk",
-  "evals",
-  "evals-cli",
-  "evals-langfuse",
-  "evals-langsmith",
-  "plugin-agent-loop",
-  "runtime",
-  "plugin-memory-window",
-  "plugin-memory-summary",
-  "plugin-memory-digest",
-  "plugin-tool-discovery",
-  "plugin-models",
-  "plugin-sessions",
-  "plugin-tasks",
-  "plugin-render",
-  "plugin-workspace",
-  "plugin-telemetry",
-  "plugin-session-sqlite",
-  "foundry",
-].map(src)
-
 const RECORD_CAST_CLEAN = [
   "sdk",
   "evals",
@@ -369,7 +346,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
     { rule: "effect/no-stringified-cause", include: CHECKED, exclude: TEST_SCAFFOLDING },
     // One package at a time (the lists above).
-    { rule: "effect/no-unknown-json", include: UNKNOWN_JSON_CLEAN, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_JSON_EDGES },
+    { rule: "effect/no-unknown-json", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_JSON_EDGES },
     { rule: "effect/no-record-cast", include: RECORD_CAST_CLEAN, exclude: TEST_SCAFFOLDING, allow: RECORD_CAST_EDGES },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },

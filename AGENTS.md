@@ -48,8 +48,7 @@ code (`*.test.ts`, `*.bench.ts`, `testing.ts`, `*.testing.ts`,
 `testing.port.ts`, `testing/`); `no-error-code-compare` also skips kits
 (`*.conformance.ts`). A rule marked
 "per package" runs only in the packages its list in `foundry.config.ts`
-names (`EFFECT_FN_CLEAN`, `UNKNOWN_JSON_CLEAN`,
-`RECORD_CAST_CLEAN`): to add a package, fix its findings and add its
+names (`EFFECT_FN_CLEAN`, `RECORD_CAST_CLEAN`): to add a package, fix its findings and add its
 line, never the baseline; once the list names every package, the rule takes
 `CHECKED` and the list is deleted. An `allow` list
 (`ROLELESS_FILES`, `NULLABLE_EDGES`, `RECORD_CAST_EDGES`) only shrinks: an entry that excuses
@@ -67,7 +66,7 @@ nothing fails.
 | `effect/no-parallel-interface` | an interface shadowing a same-named schema | `type X = typeof X.Type` |
 | `effect/no-json-parse` | `JSON.parse` | decode with `Schema.fromJsonString(S)` (`decodeUnknownEffect`, `decodeUnknownResult`, `decodeUnknownOption`); `S` is `Schema.Json` when the shape is open |
 | `effect/no-sync-codec` | `decodeSync`, `decodeUnknownSync`, `encodeSync`, `encodeUnknownSync` | the Effect, Result or Option codec, its failure handled |
-| `effect/no-unknown-json` | per package: `Schema.Record(Schema.String, Schema.Unknown)`, `Schema.fromJsonString(Schema.Unknown)`, but as the argument of a `Schema.encode*` call (`UNKNOWN_JSON_EDGES` aside) | decode the shape that is read; `Schema.Json` or `Schema.JsonObject` for JSON that stays open |
+| `effect/no-unknown-json` | `Schema.Record(Schema.String, Schema.Unknown)`, `Schema.fromJsonString(Schema.Unknown)`, but as the argument of a `Schema.encode*` call (`UNKNOWN_JSON_EDGES` aside) | decode the shape that is read; `Schema.Json` or `Schema.JsonObject` for JSON that stays open |
 | `effect/no-record-cast` | per package: `as Record<string, unknown>`, `as Record<string, any>`, `as { … }` (`RECORD_CAST_EDGES` aside) | decode with a Schema, narrow with `Predicate.hasProperty`, or fix the type at its source |
 | `effect/no-cause-pretty-data` | `Cause.pretty` anywhere but an `Effect.log*` argument | log the cause; data keeps `Cause.prettyErrors` messages or `reasonOf` |
 | `effect/no-effect-promise` | `Effect.promise` | `Effect.tryPromise` with a typed error, logged or handled |

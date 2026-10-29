@@ -612,6 +612,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`UNKNOWN_JSON_EDGES`: the MCP bridge, plugin entry options, the model
   request descriptor and the deprecated JSON helpers).
 - `effect/no-record-cast` runs in plugin-sessions.
+- `effect/no-unknown-json` runs in every package (with its shrinking
+  `UNKNOWN_JSON_EDGES` allow list); its per-package list is gone.
 
 ## 0.14.0 — 2026-10-29
 
