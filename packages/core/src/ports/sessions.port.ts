@@ -1,7 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope, Stream } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
-import type { HarnessError } from "../harness/plugin.entity.js"
 import type { JsonObject, SessionExists, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "../session/session-log.entity.js"
 import type {
   AdmittedTurn,
@@ -16,6 +15,7 @@ import type {
   TurnBeginError,
   TurnClosed,
   TurnEnding,
+  TurnError,
 } from "../session/sessions.entity.js"
 
 /** One event to record; the writer stamps the turn (or none, outside a turn). */
@@ -47,35 +47,36 @@ export interface Decided<A> {
  * and `transact` refuse a draft under one of the framework's kinds
  * (`RESERVED_KINDS`) with `events.reserved`, storing nothing of that call,
  * unless the framework's turn wrote it (`frameworkDraft`): only the turn
- * records memory, the bus's events and `request.prepared`.
+ * records memory, the bus's events and `request.prepared`. Every method
+ * fails with a `TurnError`: read its code with `harnessCodeOf`.
  */
 export interface TurnWriter {
   readonly admitted: AdmittedTurn
   /** The `turn.started` event that opened the turn. */
   readonly started: SessionLogEvent
   /** The session's events before this turn (a fork's parent first), of the given kinds: what memory is rebuilt from. */
-  readonly history: (kinds: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
+  readonly history: (kinds: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<SessionLogEvent>, TurnError>
   /**
    * A fresh durable snapshot including this turn (a fork's inherited history first). Flush queued writes before reading.
    * With `after`, only this session's own events stored after that seq: the inherited history precedes them all.
    */
-  readonly snapshot: (kinds: ReadonlyArray<string>, after?: number) => Effect.Effect<ReadonlyArray<SessionLogEvent>, HarnessError>
+  readonly snapshot: (kinds: ReadonlyArray<string>, after?: number) => Effect.Effect<ReadonlyArray<SessionLogEvent>, TurnError>
   /** Queue events; returns once queued. */
-  readonly append: (drafts: ReadonlyArray<TurnDraft>) => Effect.Effect<void, HarnessError>
+  readonly append: (drafts: ReadonlyArray<TurnDraft>) => Effect.Effect<void, TurnError>
   /**
    * Run `op` in queue order (after everything queued before it). When
    * someone else closes the turn meanwhile, `op` is interrupted and the
    * write fails with `turn.closed`.
    */
-  readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | HarnessError>
+  readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | TurnError>
   /**
    * Check, then append, atomically: `decide` sees the events others wrote
    * during this turn and says what to record. When someone else writes
    * before the commit, it decides again with their events.
    */
-  readonly transact: <A, E>(decide: (foreign: ReadonlyArray<SessionLogEvent>) => Effect.Effect<Decision<A>, E>) => Effect.Effect<Decided<A>, E | HarnessError>
+  readonly transact: <A, E>(decide: (foreign: ReadonlyArray<SessionLogEvent>) => Effect.Effect<Decision<A>, E>) => Effect.Effect<Decided<A>, E | TurnError>
   /** Wait until everything queued so far is stored. */
-  readonly flush: Effect.Effect<void, HarnessError>
+  readonly flush: Effect.Effect<void, TurnError>
   /**
    * Close the turn: `turn.ended` is committed after every write queued
    * before it. It is admitted like a write (so it waits while one waits for
@@ -87,7 +88,7 @@ export interface TurnWriter {
    * the last ending whose commit was tried. Returns how many inbox items
    * wait.
    */
-  readonly end: (ending: TurnEnding) => Effect.Effect<{ readonly pending: number }, HarnessError>
+  readonly end: (ending: TurnEnding) => Effect.Effect<{ readonly pending: number }, TurnError>
   /** Completes when someone else closed the turn; never when it ends by `end`. */
   readonly closed: Effect.Effect<TurnClosed>
 }

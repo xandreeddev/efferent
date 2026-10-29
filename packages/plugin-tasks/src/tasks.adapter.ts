@@ -13,7 +13,7 @@ import {
   Tasks,
   UserMessage,
 } from "@xandreed/core"
-import type { JsonObject, ReservedKind, SessionAddress, TaskMode, TaskView, TurnOutcome, TurnRefused, TurnWriter } from "@xandreed/core"
+import type { JsonObject, ReservedKind, SessionAddress, TaskMode, TaskView, TurnError, TurnOutcome, TurnRefused, TurnWriter } from "@xandreed/core"
 import { deliveredOf, deliveryId, endOf, goneEnd, isActive, isChildOf, isFinished, noticeOf, resultOf, startedOf } from "./task.entity.functions.js"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started, TasksConfig } from "./task-records.entity.js"
@@ -85,7 +85,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
   })).pipe(Effect.catchTag("ReservedKind", reservedIsDefect), Effect.asVoid)
 
   /** The turn's body until its deadline (then none) or until someone else closes the turn. */
-  const bounded = (body: Effect.Effect<TurnOutcome, HarnessError>, writer: TurnWriter, deadline: Option.Option<number>) => Effect.gen(function* () {
+  const bounded = (body: Effect.Effect<TurnOutcome, TurnError>, writer: TurnWriter, deadline: Option.Option<number>) => Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis
     const timed = Option.match(deadline, {
       onNone: () => body.pipe(Effect.map(Option.some)),

@@ -28,7 +28,7 @@ import {
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
-import type { SessionAddress, Turn, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import type { SessionAddress, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -218,7 +218,7 @@ const record = Effect.gen(function* () {
     turn: { session: address, userMessage: new UserMessage({ text }), runId, ...extra },
     services: Context.merge(Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), digester), matcher), Context.make(Sessions, sessions)),
   })
-  const turnOf = (turnInput: ReturnType<typeof input>, use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, Scope.Scope>) =>
+  const turnOf = (turnInput: ReturnType<typeof input>, use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, Scope.Scope>) =>
     Effect.exit(agent.turn(turnInput, use))
 
   /** Deliver through the loop: complete once delivered. */

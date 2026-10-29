@@ -3,7 +3,7 @@ import type { Prompt, Response } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scope, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { pixelPng, sameUsage } from "../conformance.functions.js"
+import { failureCode, pixelPng, sameUsage } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { addUsage, tokenUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
@@ -13,7 +13,7 @@ import { RunContext } from "../ports/run-context.port.js"
 import { Sessions } from "../ports/sessions.port.js"
 import { turnUsageOf } from "../session/session-event.entity.functions.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
-import type { SessionAddress } from "../session/sessions.entity.js"
+import type { SessionAddress, TurnError } from "../session/sessions.entity.js"
 import type { TurnRunner } from "../ports/turn.port.js"
 import { UserMessage } from "./user-message.entity.js"
 
@@ -106,7 +106,7 @@ export const turnConformance = (
   const check = (
     name: string,
     id: string,
-    body: (runner: TurnRunner, session: Session, history: Ref.Ref<ReadonlyArray<ReadonlyArray<AgentMessage>>>) => Effect.Effect<void, ConformanceFailure | HarnessError, Scope.Scope>,
+    body: (runner: TurnRunner, session: Session, history: Ref.Ref<ReadonlyArray<ReadonlyArray<AgentMessage>>>) => Effect.Effect<void, ConformanceFailure | TurnError, Scope.Scope>,
   ): ConformanceCheck => ({
     name,
     run: Effect.scoped(Effect.gen(function* () {
@@ -126,7 +126,7 @@ export const turnConformance = (
       yield* body({
         turn: (input, use) => acquired.turn({ ...input, services: Context.merge(Context.merge(services, matcher), input.services) }, use),
       }, { sessions, address: { id: view.header.id, owner: "conformance" } }, history)
-    })).pipe(Effect.catchTag("HarnessError", (error) => fail(id)(`${error.code}: ${error.message}`))),
+    })).pipe(Effect.catch((error) => error._tag === "ConformanceFailure" ? Effect.fail(error) : fail(id)(`${failureCode(error)}: ${error.message}`))),
   })
   const input = (session: Session, runId: string) => ({
     turn: { session: session.address, userMessage: new UserMessage({ text: `the message of ${runId}` }), runId }, services: Context.empty(),

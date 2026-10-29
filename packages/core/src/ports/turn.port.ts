@@ -10,7 +10,7 @@ import type { MemoryReader } from "./memory.port.js"
 import type { RunContext } from "./run-context.port.js"
 import type { TurnWriter } from "./sessions.port.js"
 import type { JsonObject } from "../session/session-log.entity.js"
-import type { AdmittedTurn, SessionAddress } from "../session/sessions.entity.js"
+import type { AdmittedTurn, SessionAddress, TurnError } from "../session/sessions.entity.js"
 import type { Correctives, LoopLimits, RunResult } from "./step-loop.port.js"
 import type { SkillMatch } from "./tool-registry.port.js"
 import type { TurnEvents, TurnEventsService, TurnTasks, TurnTasksService } from "./turn-events.port.js"
@@ -88,10 +88,10 @@ export interface TurnTools {
   /** Ask the matcher without writing anything (run it beside other pre-turn work). */
   readonly match: (userMessage: UserMessage) => Effect.Effect<SkillMatch, HarnessError>
   /** Activate the always-on skills and a match; recorded as a decision. */
-  readonly apply: (match: SkillMatch) => Effect.Effect<ReadonlyArray<string>, HarnessError>
+  readonly apply: (match: SkillMatch) => Effect.Effect<ReadonlyArray<string>, TurnError>
   /** `match` then `apply`. */
-  readonly select: (userMessage: UserMessage) => Effect.Effect<ReadonlyArray<string>, HarnessError>
-  readonly activate: (skills: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, HarnessError>
+  readonly select: (userMessage: UserMessage) => Effect.Effect<ReadonlyArray<string>, TurnError>
+  readonly activate: (skills: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, TurnError>
   readonly active: Effect.Effect<ReadonlyArray<string>>
   readonly skills: ReadonlyArray<SkillDefinition>
 }
@@ -109,16 +109,16 @@ export interface Turn {
   readonly tasks: TurnTasksService
   readonly tools: TurnTools
   /** Record a turn-context message (e.g. the user's intent) the model sees this turn. */
-  readonly context: (entry: { readonly id: string; readonly version: string; readonly text: string }) => Effect.Effect<void, HarnessError>
+  readonly context: (entry: { readonly id: string; readonly version: string; readonly text: string }) => Effect.Effect<void, TurnError>
   /** Answer without the loop; still a recorded turn. */
   readonly reply: (text: string) => Effect.Effect<TurnOutcome>
-  readonly run: <R = never>(policy: TurnPolicy<R>) => Effect.Effect<RunResult, HarnessError, R>
+  readonly run: <R = never>(policy: TurnPolicy<R>) => Effect.Effect<RunResult, TurnError, R>
   /** The turn's usage so far, every run of it included (`RunContext.usage`). */
   readonly usage: Effect.Effect<TokenUsage>
   /** Wait until every journal write queued so far is stored (e.g. before delivering an answer). */
-  readonly flush: Effect.Effect<void, HarnessError>
+  readonly flush: Effect.Effect<void, TurnError>
   /** Run a host store write in journal order and return its result. */
-  readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | HarnessError>
+  readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | TurnError>
 }
 
 /** What every turn provides to the host's code, its per-turn layer and its tools. */
@@ -195,6 +195,6 @@ export interface TurnInput<A = never, E = never> {
 export interface TurnRunner {
   readonly turn: <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
-    use: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError, R>,
-  ) => Effect.Effect<TurnResult, HarnessError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+    use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
+  ) => Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 }

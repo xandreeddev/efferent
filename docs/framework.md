@@ -1654,6 +1654,18 @@ unreachable, busy, or data that does not decode (`session.state`,
 `session.decode`), with what failed underneath as its `cause`; a log that
 answers what its contract rules out is a defect.
 
+The writer's methods fail with `TurnError` (`@xandreed/core`): `TurnClosed`,
+`ReservedKind`, `SessionContended`, `SessionLogError` or a `HarnessError`. So
+do the turn's ports that write through it (`RunContext.flush`, `write` and
+`activate`; the bus's `publish` and `drain`; memory's records; the step
+loop's `run`; the tool registry's `open`, `activate`, `apply` and `select`;
+`Turn.run`, `context`, `flush` and `write`; `TaskExecutor`) and
+`Agent.turn`, which fails with `TurnError` or the host layer's error. The
+writer may raise each of the first four as the `HarnessError` of its code
+(`turn.closed`, `events.reserved`, `session.contended`, `session.log`):
+read a failure's code with `harnessCodeOf`, which gives that code for
+either form, rather than its `code` field.
+
 **Ownership** is configured:
 
 - `{ mode: "lease", ttlMs, renew }`: several instances over one log. A turn

@@ -1,6 +1,6 @@
 import { Cause, Exit, Option, Schema } from "effect"
 import { framed, isHarnessError } from "@xandreed/core"
-import type { HarnessError, SessionLogEvent, SessionView, TaskStatus, TaskView, TurnOutcome } from "@xandreed/core"
+import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnError, TurnOutcome } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started } from "./task-records.entity.js"
 
@@ -60,7 +60,7 @@ export const isChildOf = (view: SessionView, parent: string): boolean =>
 export const goneEnd: TaskEnd = { status: "cancelled", reply: Option.none(), failure: Option.some({ code: "task.removed", message: "the task's session was removed" }) }
 
 /** How the child's turn went, as its result records it: a turn past its deadline is interrupted. */
-export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option<TurnOutcome>, HarnessError>): Result => Exit.match(exit, {
+export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option<TurnOutcome>, TurnError>): Result => Exit.match(exit, {
   onSuccess: (outcome) => Option.match(outcome, {
     onNone: () => ({ taskId, outcome: "interrupted", reply: Option.none(), failure: Option.some({ code: "task.deadline", message: "the task ran out of time" }) }),
     onSome: (done) => ({

@@ -3,7 +3,7 @@ import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Option, Ref, Stream } from "effect"
 import { addUsage, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isHarnessError, makeTurnEvents, makeTurnTasks, reasonOf, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, zeroUsage } from "@xandreed/core"
-import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, TokenUsage, TurnEvent } from "@xandreed/core"
+import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
 /**
@@ -16,9 +16,9 @@ const minimalLoop = StepLoop.of({
     const handlers = request.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>
     const model = yield* Effect.orDie(Effect.fromOption(Context.getOption(request.handlers, LanguageModel.LanguageModel)))
     const toolkit = yield* request.tools.toolkit.pipe(Effect.provide(handlers))
-    const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, HarnessError> => request.completion(info).pipe(
+    const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, TurnError> => request.completion(info).pipe(
       Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, verdict })))
-    const step = (index: number, text: string, usage: TokenUsage): Effect.Effect<RunResult, HarnessError> => Effect.gen(function* () {
+    const step = (index: number, text: string, usage: TokenUsage): Effect.Effect<RunResult, TurnError> => Effect.gen(function* () {
       if (index >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text, steps: index, usage } satisfies RunResult
       const activeTools = yield* request.tools.active
       const info: StepInfo = { stepIndex: index, activeTools, lastUsage: Option.none() }

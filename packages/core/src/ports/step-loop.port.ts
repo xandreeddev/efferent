@@ -5,6 +5,7 @@ import type { AgentMessage } from "../domain/message.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import type { CompletionVerdict } from "../turn/turn-event.entity.js"
 import type { InitialBatch, StepInfo, ToolChoice } from "./capability.port.js"
 import type { RunTools } from "./tool-registry.port.js"
@@ -41,14 +42,14 @@ export interface StepRequest {
   readonly limits: LoopLimits
   /** A host-planned first batch, run as step zero without a provider call. */
   readonly initial: Option.Option<InitialBatch>
-  readonly plan: (step: StepInfo) => Effect.Effect<StepPlan, HarnessError>
+  readonly plan: (step: StepInfo) => Effect.Effect<StepPlan, TurnError>
   /**
    * Validate an actual dispatch against a fresh durable derivation. Run immediately before each provider attempt,
    * including a streaming fallback; a failed check fails the step (a streamed step does not fall back).
    */
-  readonly dispatch: (step: number, request: ModelDispatch) => Effect.Effect<void, HarnessError>
+  readonly dispatch: (step: number, request: ModelDispatch) => Effect.Effect<void, TurnError>
   /** Persist a step's appended messages; returns their log entries. */
-  readonly record: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<ReadonlyArray<LogEntry>, HarnessError>
+  readonly record: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /**
    * A provider refused the step's request over an image (an `InvalidRequestError`
    * that names one; `reason` is what it said). Records an `OmitMedia`
@@ -59,7 +60,7 @@ export interface StepRequest {
    * choice, system prompt and directive the refused request was planned
    * with; any other `plan` of a step asks the policy again.
    */
-  readonly onMediaRejected: (reason: string) => Effect.Effect<boolean, HarnessError>
+  readonly onMediaRejected: (reason: string) => Effect.Effect<boolean, TurnError>
   readonly completion: (step: StepInfo) => Effect.Effect<CompletionVerdict, HarnessError>
   readonly steering: Effect.Effect<Option.Option<string>, HarnessError>
   readonly correctives: Option.Option<Correctives>
@@ -113,5 +114,5 @@ export interface RunResult {
 export class StepLoop extends Context.Service<StepLoop, {
   readonly id: string
   readonly version: string
-  readonly run: (request: StepRequest) => Effect.Effect<RunResult, HarnessError>
+  readonly run: (request: StepRequest) => Effect.Effect<RunResult, TurnError>
 }>()("efferent/StepLoop") {}

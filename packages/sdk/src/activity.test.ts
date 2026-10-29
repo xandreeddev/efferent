@@ -6,6 +6,7 @@ import { TestClock } from "effect/testing"
 import {
   awaitIdle,
   ConversationId,
+  harnessCodeOf,
   processActivity,
   SessionLog,
   SessionLogError,
@@ -59,6 +60,9 @@ const define = (extra: { readonly plugins?: ReadonlyArray<typeof sessionsPlugin>
 const runToEnd = (turn: Turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) })))
 
 const endings = (events: ReadonlyArray<SessionLogEvent>) => events.filter((event) => event.kind === "turn.ended").map((event) => event.data.reason)
+
+/** A failure by its framework code (`harnessCodeOf`), else its tag. */
+const codeOf = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
 
 const idle: ProcessActivity = { openTurns: [], beginningTurns: 0, runningTasks: 0, busy: false }
 
@@ -135,7 +139,7 @@ describe("a SIGTERM drain: stop admitting, wait until idle, close", () => {
     // SIGTERM: stop admitting, then wait (bounded) until nothing is open or running.
     yield* Ref.set(draining, true)
     const refused = yield* Effect.flip(agent.turn({ turn: ask("run-2", "too late"), services: turnServices }, runToEnd))
-    expect(refused.code).toBe("turn.refused")
+    expect(codeOf(refused)).toBe("turn.refused")
     const drained = yield* Effect.forkChild(awaitIdle({ timeout: "25 seconds" }).pipe(Effect.provide(services)))
     yield* Effect.yieldNow
     expect(drained.pollUnsafe()).toBeUndefined()
@@ -207,7 +211,7 @@ describe("lease keep-alive", () => {
     const result = yield* Fiber.join(running)
     const view = yield* sessions.get(session)
     return {
-      result: result._tag === "Success" ? result.success.outcome : result.failure.code,
+      result: result._tag === "Success" ? result.success.outcome : codeOf(result.failure),
       stored: endings(yield* sessions.read(session)),
       open: Option.isSome(view.open),
     }

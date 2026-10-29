@@ -14,7 +14,7 @@ import {
   TurnAdmissionOpen,
   UserMessage,
 } from "@xandreed/core"
-import type { JsonObject, SessionLogEvent, Turn, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import type { JsonObject, SessionLogEvent, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
@@ -85,7 +85,7 @@ const capturingTracer = (spans: Array<Tracer.NativeSpan>) => Tracer.make({
 const conversation = ConversationId.make("00000000-0000-4000-8000-0000000000d7")
 
 /** Activate the always-on skill, then run the turn to its end, the run wrapped in the host's own span. */
-const runToEnd = (policy: TurnPolicy = {}) => (turn: Turn): Effect.Effect<TurnOutcome, HarnessError> =>
+const runToEnd = (policy: TurnPolicy = {}) => (turn: Turn): Effect.Effect<TurnOutcome, TurnError> =>
   turn.tools.select(turn.userMessage).pipe(
     Effect.andThen(turn.run(policy).pipe(Effect.withSpan("host.use"))),
     Effect.map((run): TurnOutcome => ({ outcome: run.outcome, reply: Option.some(run.text) })),
@@ -102,7 +102,7 @@ interface Traced {
 /** One turn of a fresh agent, under the host's `host.request` span, with a tracer that keeps every span. */
 const traced = (options: {
   readonly config?: Partial<AgentConfig>
-  readonly use?: (turn: Turn) => Effect.Effect<TurnOutcome, HarnessError>
+  readonly use?: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError>
   readonly meta?: JsonObject
   readonly createSession?: boolean
   /** The turn's services as the host hands them over (by default, as they are). */

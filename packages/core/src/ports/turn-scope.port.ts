@@ -9,6 +9,7 @@ import type { TurnOutcome } from "./turn.port.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { ModelRequestHeader } from "../turn/model-request.entity.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
+import type { TurnError } from "../session/sessions.entity.js"
 
 /*
  * The turn as services. `TurnLive(input)` provides them, with RunContext,
@@ -38,14 +39,14 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
   readonly strategy: { readonly id: string; readonly version: string }
   readonly session: MemorySession
   /** Record and flush a request's reconstruction header before dispatch. */
-  readonly prepareRequest: (header: ModelRequestHeader) => Effect.Effect<void, HarnessError>
+  readonly prepareRequest: (header: ModelRequestHeader) => Effect.Effect<void, TurnError>
   /**
    * Flush, then read what storage holds, never the memory session's state:
    * the history memory was opened over (read once, at open), and this
    * turn's events from its start, each read taking only the events stored
    * after the last one read.
    */
-  readonly requestSnapshot: Effect.Effect<RequestSnapshot, HarnessError>
+  readonly requestSnapshot: Effect.Effect<RequestSnapshot, TurnError>
   /** The turn's number; fails with `turn.unstarted` before `persistMessage`. */
   readonly number: Effect.Effect<number, HarnessError>
   /**
@@ -53,21 +54,21 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
    * number. Once: a second call fails. Anything built before it (a host
    * layer, a matcher's history) sees only earlier turns.
    */
-  readonly persistMessage: Effect.Effect<number, HarnessError>
+  readonly persistMessage: Effect.Effect<number, TurnError>
   /**
    * Record a TurnContext entry. Before `persistMessage` (a plugin or a host
    * layer built with the turn) it waits, and is recorded right after the
    * message: the turn's entries follow its TurnStarted.
    */
-  readonly context: (entry: TurnContextEntry) => Effect.Effect<void, HarnessError>
+  readonly context: (entry: TurnContextEntry) => Effect.Effect<void, TurnError>
   /** Record TurnEnded, then publish `turn.ended`. Once; a no-op when the message was never persisted. */
-  readonly persistReply: (outcome: TurnOutcome) => Effect.Effect<void, HarnessError>
+  readonly persistReply: (outcome: TurnOutcome) => Effect.Effect<void, TurnError>
 }>()("efferent/TurnMemory") {}
 
 /** The turn's tools: registry-opened once, then shared by the loop, the host and RunContext.activate. */
 export class TurnToolbox extends Context.Service<TurnToolbox, {
   /** Open the tools. Once: a second call fails. The handlers run with the services of the opener. */
-  readonly open: Effect.Effect<RunTools, HarnessError>
+  readonly open: Effect.Effect<RunTools, TurnError>
   /** The open tools; fails with `tools.unavailable` before `open`. */
   readonly tools: Effect.Effect<RunTools, HarnessError>
 }>()("efferent/TurnToolbox") {}
@@ -79,9 +80,9 @@ export class TurnPrompt extends Context.Service<TurnPrompt, {
    * sections, rendered once per turn in the caller's services and recorded
    * (SystemPrepared) when it differs from the last one recorded.
    */
-  readonly system: (variant: Option.Option<string>) => Effect.Effect<string, HarnessError>
+  readonly system: (variant: Option.Option<string>) => Effect.Effect<string, TurnError>
   /** Render the turn-tier sections once, as TurnContext entries (later calls do nothing). */
-  readonly turnSections: Effect.Effect<void, HarnessError>
+  readonly turnSections: Effect.Effect<void, TurnError>
 }>()("efferent/TurnPrompt") {}
 
 /** What `TurnLive` builds one turn from. */

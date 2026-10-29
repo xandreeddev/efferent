@@ -2,7 +2,7 @@ import { LanguageModel, Tool } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Context, Effect, Layer, Metric, Option, Ref, Schema, Stream, Tracer } from "effect"
 import { ConversationId, defineCapability, defineSkill, defineTool, Failure, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
-import type { HarnessError, ModelPrice, Turn, TurnOutcome, TurnResult } from "@xandreed/core"
+import type { ModelPrice, Turn, TurnError, TurnOutcome, TurnResult } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
@@ -79,7 +79,7 @@ export const capturingTracer = (spans: Array<Tracer.NativeSpan>) => Tracer.make(
 })
 
 /** Activate the always-on skill, then run the turn to its end. */
-const runToEnd = (turn: Turn): Effect.Effect<TurnOutcome, HarnessError> =>
+const runToEnd = (turn: Turn): Effect.Effect<TurnOutcome, TurnError> =>
   turn.tools.select(turn.userMessage).pipe(
     Effect.andThen(turn.run({})),
     Effect.map((run): TurnOutcome => ({ outcome: run.outcome, reply: Option.some(run.text) })),
@@ -96,7 +96,7 @@ export const scriptedTurn = (options: {
   readonly telemetry?: Partial<TelemetryOptions> & Readonly<Record<string, unknown>>
   readonly streaming?: boolean
   readonly tracer?: Tracer.Tracer
-}): Effect.Effect<TurnResult, HarnessError> => Effect.scoped(Effect.gen(function* () {
+}): Effect.Effect<TurnResult, TurnError> => Effect.scoped(Effect.gen(function* () {
   const agent = yield* Agent.define({
     plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: telemetryPlugin, options: options.telemetry ?? {} }],
     capabilities: [host],

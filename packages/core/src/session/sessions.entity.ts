@@ -251,9 +251,14 @@ export const turnBeginCodes = {
 } as const satisfies Record<TurnBeginError["_tag"], string>
 
 /**
- * What a turn's own writes fail with: `TurnClosed` once someone else closed
- * the turn, `ReservedKind` for a draft under one of the framework's kinds,
- * `SessionContended` and `SessionLogError` from the store, and a
- * `HarnessError` for the rest.
+ * What a turn's own writes fail with, and the ports on the turn's path that
+ * write through them (`TurnWriter`, `RunContext`, the bus, memory, the step
+ * loop, the tool registry, `Turn`, `TurnRunner`): `TurnClosed` once someone
+ * else closed the turn, `ReservedKind` for a draft under one of the
+ * framework's kinds, `SessionContended` and `SessionLogError` from the
+ * store, and a `HarnessError` for the rest. A writer may raise any of the
+ * first four as the `HarnessError` of its code (`turn.closed`,
+ * `events.reserved`, `session.contended`, `session.log`): `harnessCodeOf`
+ * gives the same code for either form.
  */
 export type TurnError = HarnessError | TurnClosed | ReservedKind | SessionContended | SessionLogError

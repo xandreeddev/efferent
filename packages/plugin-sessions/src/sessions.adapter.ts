@@ -4,6 +4,7 @@ import {
   ConversationId,
   EntryId,
   HarnessError,
+  harnessCodeOf,
   harnessDefectsAsFailures,
   InboxFull,
   KeyConflict,
@@ -450,10 +451,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       // again, and lets the turn go when that fails too, so the next begin reaps it and takes its items again.
       return yield* open.writer.end(ending).pipe(
         Effect.map((ended) => Option.some(ended.pending > 0)),
-        Effect.catch((error) => (error.code === "turn.closed" ? Effect.logDebug : Effect.logWarning)(`inbox turn ${open.writer.admitted.turn} of ${address.id} did not store its end: ${error.code}: ${error.message}`).pipe(
-          Effect.annotateLogs(turnLogIds(address.id, open.writer.admitted.turn)),
-          Effect.as(Option.some(true)),
-        )),
+        Effect.catch((error) => {
+          const code = Option.getOrElse(harnessCodeOf(error), () => error._tag)
+          return (code === "turn.closed" ? Effect.logDebug : Effect.logWarning)(`inbox turn ${open.writer.admitted.turn} of ${address.id} did not store its end: ${code}: ${error.message}`).pipe(
+            Effect.annotateLogs(turnLogIds(address.id, open.writer.admitted.turn)),
+            Effect.as(Option.some(true)),
+          )
+        }),
       )
     })).pipe(
       Effect.catchTags({

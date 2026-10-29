@@ -2,7 +2,7 @@ import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Option, Ref, Schema } from "effect"
 import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isHarnessError, reasonOf, StepLoop } from "@xandreed/core"
-import type { AgentMessage, CompletionVerdict, LogEntry, LoopEvent, RunResult, StepInfo, StepPlan, StepRequest, StepResult, TokenUsage } from "@xandreed/core"
+import type { AgentMessage, CompletionVerdict, LogEntry, LoopEvent, RunResult, StepInfo, StepPlan, StepRequest, StepResult, TokenUsage, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopToolChoice } from "./loop.js"
 
@@ -57,7 +57,7 @@ export const runSteps = (request: StepRequest): Effect.Effect<RunResult, Harness
     yield* request.events.publish({ _tag: "step.ended", step, status, results: recorded })
   })
 
-  const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, HarnessError> => request.completion(info).pipe(
+  const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, TurnError> => request.completion(info).pipe(
     Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, verdict })),
   )
 
