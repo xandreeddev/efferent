@@ -301,7 +301,7 @@ host
 
 ## Begin codes
 
-When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/core`, also exported by `@xandreed/sdk`; `harnessCodeOf` gives the code of the begin error itself). The HTTP status is a suggestion for a host serving turns over HTTP.
+When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with the begin error itself (`TurnBeginError`), before anything is opened: match it with `Effect.catchTag`. Each stands for one of these codes (`turnBeginCodes` from `@xandreed/core`, also exported by `@xandreed/sdk`; `harnessCodeOf` and `turnEndingOf` give it). The HTTP status is a suggestion for a host serving turns over HTTP.
 
 | Begin error | Code | Suggested HTTP status | Meaning |
 | --- | --- | --- | --- |

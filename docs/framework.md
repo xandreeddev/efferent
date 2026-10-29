@@ -476,10 +476,17 @@ while it ran), which its caller drains (see [the inbox](#sessions-one-log-per-se
 begins through the `Sessions` in its services and ends. With `resumes: n`
 the turn resumes turn `n`, a turn that was cancelled or interrupted, and
 its key defaults to `resume:<n>` (see [resuming a turn](#resuming-a-turn)). A
-turn that cannot begin fails with the reason as its code (`session.busy`,
-`turn.duplicate`, `turn.key-conflict`, `turn.not-resumable`, `turn.refused`,
-`turn.attachment-rejected` for an image the turn cannot take, see
-[Images and multi-part messages](#images-and-multi-part-messages); all of
+turn that cannot begin fails with the refusal itself, a `TurnBeginError`
+(`SessionBusy`, `TurnDuplicate`, `KeyConflict`, `RunIdReused`,
+`NotResumable`, `TurnRefused`, `AttachmentRejected` for an image the turn
+cannot take, see
+[Images and multi-part messages](#images-and-multi-part-messages),
+`SessionMissing`, `SessionContended`, `SessionLogError`), before anything
+is opened, run or counted: match one with `Effect.catchTag("SessionBusy", …)`,
+and read what it names from its fields (the open turn, whether a duplicate
+still runs, why a turn cannot be resumed). `harnessCodeOf` gives the code
+each stands for (`session.busy`, `turn.duplicate`, `turn.key-conflict`,
+`turn.not-resumable`, `turn.refused`, `turn.attachment-rejected`…; all of
 them are `turnBeginCodes` from `@xandreed/core`, also exported by `@xandreed/sdk`, with suggested HTTP statuses
 in the [event reference](event-reference.md#begin-codes)); a turn someone else
 closes (a cancel, a reaped lease, a removed session) fails with that
@@ -495,7 +502,7 @@ number, key, origin, command and claimed inbox items) and on the bus
 `turn.started` event; it is `{}` when none was given. The model never sees
 it, and it is not part of the idempotency key's fingerprint (the message,
 the command and `resumes` are): a retry with the same key and other
-metadata is still `turn.duplicate`. `Sessions.drain(address, run, { meta })` begins its
+metadata is still `TurnDuplicate`. `Sessions.drain(address, run, { meta })` begins its
 inbox turns with it.
 
 **How a turn ends.** A turn the agent began is ended with
@@ -1336,7 +1343,9 @@ needs the final outcome subscribes in the caller's outer scope, using
 `Scope.provide(observerScope)`, and uses services that remain open there.
 A host composing by hand uses the same pieces over a
 `stackPlugins` stack instead of a graph, builds session plugins such as
-`MemoryDigestLive()` per turn over the turn's services, ends a turn it
+`MemoryDigestLive()` per turn over the turn's services, lets a begin
+refusal through as the turn's failure (`TurnBeginError`, as `TurnRunner`
+types it), ends a turn it
 began with `writer.end(turnEndingOf(exit))`, taking the exit after
 `harnessDefectsAsFailures` (failing the turn when that end fails on
 success, as `Agent.turn` does), and wraps everything after its begin, that
@@ -1351,9 +1360,11 @@ interrupt, tasks joined before the reply, a model-driven turn's
 the user's attachments stored with the turn and reaching its first request
 as image parts, the host layer seeing only
 earlier turns, a turn it begins returning the inbox items its end left
-waiting (`TurnResult.pending`), an interrupted turn ending at once while a
-background reaction to its reply never returns, and a background reaction
-that publishes past its queue's size not hanging the turn.
+waiting (`TurnResult.pending`), a turn begun while another is open
+failing with that `SessionBusy` itself and running and storing nothing, an
+interrupted turn ending at once while a background reaction to its reply
+never returns, and a background reaction that publishes past its queue's
+size not hanging the turn.
 
 ## Images and multi-part messages
 
@@ -1382,10 +1393,10 @@ header. A refusal is `AttachmentRejected` with a `reason`: `Empty`,
 image is at fault, its `index`. More than `MEDIA_LIMITS.attachments` images
 fail earlier, when the `UserMessage` is constructed or decoded (a schema
 error); `TooMany` is only for a value that skipped that check. `Agent.turn`
-turns a refusal into a `HarnessError` (`turn.attachment-rejected`) whose
-message holds the reason; a host that wants it typed (to answer 413 for
-`TooLarge` and `TooLargeTogether`, say) runs `normalizeUserMessage` on the
-message itself before the turn and branches on `AttachmentRejected.reason`.
+fails with the `AttachmentRejected` itself (its code is
+`turn.attachment-rejected`), so a host branches on its `reason` (to answer
+413 for `TooLarge` and `TooLargeTogether`, say) with
+`Effect.catchTag("AttachmentRejected", …)`.
 
 | `MEDIA_LIMITS` | Value | What it bounds |
 |---|---|---|
@@ -1405,7 +1416,7 @@ with: a retry with the same images is the same turn (`TurnDuplicate`), even
 when the host's `Media` values were not normalised; other images under the
 key are a `KeyConflict`. `Agent.turn` checks the attachments the same way
 before it begins a turn, whatever `Sessions` the turn's services hold, and
-fails with `turn.attachment-rejected`. A message without text gives the
+fails with that `AttachmentRejected` (`turn.attachment-rejected`). A message without text gives the
 session no title.
 
 **Storage.** Images are stored inline, once: in the turn's `turn.started`,
@@ -1626,7 +1637,7 @@ another message, command or `resumes` is `KeyConflict`: keys are found in the lo
 the check holds across restarts. A run id names one turn's run (memory numbers
 the turn's entries `<runId>:<n>` from it): a begin under a run id an earlier
 turn of the session, or of the history a fork inherits, was begun with is
-`RunIdReused` (`Agent.turn`: `turn.run-reused`), checked right after the key,
+`RunIdReused` (code `turn.run-reused`), checked right after the key,
 and opens nothing. The writer (`TurnWriter`) is the turn's one
 way to write: `append`, `write(op)` in queue order, `transact(decide)`
 (check, then append: decided again with the events others wrote when
@@ -1930,8 +1941,7 @@ The drain is four steps: stop admitting new turns, wait (bounded) until
 idle, stop the host's own request fibers, then close the scope the
 services live in. Admission is the host's: a `TurnAdmission` that refuses
 while draining makes every new turn, user's or inbox's or task's, fail to
-begin with `TurnRefused` (`Agent.turn` fails with `turn.refused`, a host
-answers 503). A request that got past the admission just before the flag
+begin with `TurnRefused` (code `turn.refused`, a host answers 503). A request that got past the admission just before the flag
 was set is a begin in flight, so the wait covers it. A task that finishes
 while draining still stores its result and delivers it to its parent's
 inbox, where it waits (its reaction is refused) until the session is next
@@ -2014,8 +2024,8 @@ Otherwise the begin fails with `NotResumable` (`session`, `turn` and a
 log; a fork's inherited turns are its parent's), `inbox` (an inbox turn),
 `superseded` (another user's turn began after it, a resume of it that
 completed or ended partial included) or `finished` (it ended completed,
-partial or failed, a `turn.unended` scope included). `Agent.turn` fails
-with `turn.not-resumable`. The check runs in the commit that opens the
+partial or failed, a `turn.unended` scope included); its code is
+`turn.not-resumable`. The check runs in the commit that opens the
 turn, after the key's (`TurnDuplicate`, `KeyConflict`) and after
 `SessionBusy`. `resumes` is typed as a number: one that is not a whole
 number of at least 1 names no turn, and is refused as `missing` before
@@ -2062,11 +2072,11 @@ turn may call it again: a tool with side effects makes them safe to repeat,
 for example keyed by its input.
 
 **Keys.** `Agent.turn` keys a resume `resume:<n>` unless the host gives a
-key, and each try needs a new run id (`turn.run-reused` otherwise). A
-retry of the same resume is `turn.duplicate` once its turn has begun,
+key, and each try needs a new run id (`RunIdReused` otherwise). A
+retry of the same resume is `TurnDuplicate` once its turn has begun,
 however that turn ended (`lookup(address, "resume:<n>")` finds it), and
 the same key with another message or no `resumes` is
-`turn.key-conflict`; a begin refused before it opened anything
+`KeyConflict`; a begin refused before it opened anything
 (`NotResumable`, `SessionBusy`, `TurnRefused`) stored nothing and can be
 retried with the same key. A resume whose turn failed (a provider error,
 say) does not stand in the way of turn `n`: resume turn `n` again with a

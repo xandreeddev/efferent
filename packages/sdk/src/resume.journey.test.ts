@@ -193,8 +193,9 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
     expect(turnTwo.filter((event) => event.kind === "turn.ended").map((event) => event.data.reason)).toEqual(["completed"])
 
     // 4-5. A retried resume is the turn it began; a finished turn cannot be resumed; neither opened a turn.
-    expect(codeOf(observed.retried)).toBe("turn.duplicate")
-    expect([codeOf(observed.refused), observed.refused.message]).toEqual(["turn.not-resumable", "turn 2 of session 00000000-0000-4000-8000-0000000000aa cannot be resumed (finished)"])
+    // Each refusal reaches the caller as it is, naming the turn, and stands for its code.
+    expect([codeOf(observed.retried), observed.retried]).toMatchObject(["turn.duplicate", { _tag: "TurnDuplicate", turn: 2, open: false }])
+    expect([codeOf(observed.refused), observed.refused]).toMatchObject(["turn.not-resumable", { _tag: "NotResumable", session: "00000000-0000-4000-8000-0000000000aa", turn: 2, reason: "finished" }])
     expect([observed.view.turns, Option.isNone(observed.view.open)]).toEqual([2, true])
   })
 
@@ -227,6 +228,6 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
     const prompt = observed.prompt
     expect(prompt.indexOf("FOUND record-alpha-a")).toBeGreaterThan(prompt.indexOf("find alpha and fetch its page"))
     expect(prompt.lastIndexOf("find alpha and fetch its page")).toBeGreaterThan(prompt.indexOf("FOUND record-alpha-a"))
-    expect([codeOf(observed.answered), observed.answered.message]).toEqual(["turn.not-resumable", "turn 1 of session 00000000-0000-4000-8000-0000000000aa cannot be resumed (superseded)"])
+    expect([codeOf(observed.answered), observed.answered]).toMatchObject(["turn.not-resumable", { _tag: "NotResumable", session: "00000000-0000-4000-8000-0000000000aa", turn: 1, reason: "superseded" }])
   })
 })

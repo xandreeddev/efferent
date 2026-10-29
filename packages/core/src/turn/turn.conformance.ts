@@ -1,6 +1,6 @@
 import { LanguageModel } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Scope, Stream } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Result, Scope, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { failureCode, pixelPng, sameUsage } from "../conformance.functions.js"
@@ -13,7 +13,7 @@ import { RunContext } from "../ports/run-context.port.js"
 import { Sessions } from "../ports/sessions.port.js"
 import { turnUsageOf } from "../session/session-event.entity.functions.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
-import type { SessionAddress, TurnError } from "../session/sessions.entity.js"
+import type { SessionAddress, TurnBeginError, TurnError } from "../session/sessions.entity.js"
 import type { TurnRunner } from "../ports/turn.port.js"
 import { UserMessage } from "./user-message.entity.js"
 
@@ -81,7 +81,9 @@ const billedTotal = (count: number) => Array.from({ length: count }, (_, index) 
  * attachments reach the first request as image parts; the host layer
  * sees only earlier turns; a turn the runner begins and ends returns the
  * inbox items its end left waiting (`TurnResult.pending`), for its caller
- * to drain; an interrupted turn ends at once, its reply and end recorded,
+ * to drain; a turn that cannot begin (one begun while another is open)
+ * fails with the refusal itself (`SessionBusy`), running and storing
+ * nothing; an interrupted turn ends at once, its reply and end recorded,
  * though a background reaction to its reply never returns; and a
  * background reaction publishing what it takes past its queue's size does
  * not hang the turn. Those last two wait up to two seconds on the live
@@ -106,7 +108,7 @@ export const turnConformance = (
   const check = (
     name: string,
     id: string,
-    body: (runner: TurnRunner, session: Session, history: Ref.Ref<ReadonlyArray<ReadonlyArray<AgentMessage>>>) => Effect.Effect<void, ConformanceFailure | TurnError, Scope.Scope>,
+    body: (runner: TurnRunner, session: Session, history: Ref.Ref<ReadonlyArray<ReadonlyArray<AgentMessage>>>) => Effect.Effect<void, ConformanceFailure | TurnBeginError | TurnError, Scope.Scope>,
   ): ConformanceCheck => ({
     name,
     run: Effect.scoped(Effect.gen(function* () {
@@ -250,6 +252,23 @@ export const turnConformance = (
       yield* expect("pending", result.pending === 1, `the turn returned pending ${result.pending ?? "absent"} with one item delivered while it ran (its caller drains what waits)`)
       const waiting = (yield* session.sessions.get(session.address).pipe(Effect.mapError(sessionFailure))).pending
       yield* expect("pending", waiting === 1, `after the turn ${waiting} items wait in the session's inbox`)
+    })),
+    check("a turn that cannot begin fails with the refusal itself, running and storing nothing", "begin-refusal", (turns, session) => Effect.gen(function* () {
+      const started = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const first = yield* Effect.forkChild(turns.turn(input(session, "run-1"), () =>
+        Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(reply("first")))))
+      yield* Deferred.await(started)
+      const ran = yield* Ref.make(false)
+      const second = yield* Effect.result(turns.turn(input(session, "run-2"), () => Ref.set(ran, true).pipe(Effect.andThen(reply("second")))))
+      yield* Deferred.succeed(release, undefined)
+      yield* Fiber.join(first)
+      const ended = Result.match(second, { onSuccess: () => "success", onFailure: (error) => `${error._tag} (${failureCode(error)})` })
+      yield* expect("begin-refusal", Result.isFailure(second) && second.failure._tag === "SessionBusy",
+        `a turn begun while another was open ended with ${ended}, not the refusal SessionBusy itself`)
+      yield* expect("begin-refusal", !(yield* Ref.get(ran)), "the refused turn ran its use")
+      const refused = ofRun(yield* stored(session), "run-2").map((event) => event.kind)
+      yield* expect("begin-refusal", refused.length === 0, `the refused turn stored ${refused.join(", ")}`)
     })),
     check("an interrupted turn ends at once, its reply and end recorded, while a background reaction to its reply never returns", "stuck-reaction", (turns, session) => Effect.gen(function* () {
       const outer = yield* Effect.scope

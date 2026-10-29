@@ -27,7 +27,7 @@ import {
   TurnEvents,
   UserMessage,
 } from "@xandreed/sdk"
-import type { Capability, SessionAddress, SessionLog, Turn, TurnError, TurnEvent, TurnEventOf, TurnEventsService, TurnOutcome } from "@xandreed/sdk"
+import type { Capability, SessionAddress, SessionLog, Turn, TurnBeginError, TurnError, TurnEvent, TurnEventOf, TurnEventsService, TurnOutcome } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { decodeSse, RenderFeed, RenderFeedLive, renderFeedDefaults, SessionsJournalTailLive, sseHeaders, SseTransport } from "@xandreed/plugin-render"
@@ -300,8 +300,10 @@ const replay = (host: Host, address: SessionAddress, key: Option.Option<string>)
 /**
  * POST /sessions/:id/turns, `{ text, resumes? }` with an `Idempotency-Key`
  * header: the turn as SSE frames, `started` first and `done` last. A turn
- * that cannot begin is answered with its code's status before anything
- * streams. `waitUntil` keeps the turn running after the client leaves.
+ * that cannot begin is answered before anything streams: a retry by the
+ * stored answer, a busy session with the turn it has open, any other
+ * refusal with its code's status. `waitUntil` keeps the turn running after
+ * the client leaves.
  */
 export const turnRoute = (host: Host, owner: string, id: string, request: Request, waitUntil: (work: Promise<unknown>) => void): Promise<Response> =>
   Effect.runPromise(Effect.gen(function* () {
@@ -317,7 +319,7 @@ export const turnRoute = (host: Host, owner: string, id: string, request: Reques
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
     const writer = writable.getWriter()
     const push = yield* clientPush(writer)
-    const started = yield* Deferred.make<void, string>() // done by `use`, or failed with the code the turn could not begin with
+    const started = yield* Deferred.make<void, TurnBeginError | TurnError>() // done by `use`, or failed as the turn did before it started
     const newTurn = {
       session: address, userMessage: new UserMessage({ text: body.text }), runId: crypto.randomUUID(),
       ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ key: value }) }),
@@ -328,15 +330,24 @@ export const turnRoute = (host: Host, owner: string, id: string, request: Reques
         Deferred.succeed(started, undefined).pipe(
           Effect.andThen(push({ event: "started", data: { turn: turn.turn, after: head.seq, resumes: turn.admitted.resumes ?? null } })),
           Effect.andThen(streamTo(push)(turn)))))
+      if (yield* Deferred.done(started, Exit.asVoid(exit))) return // it never started: the route answers
       const ending = turnEndingOf(exit) // what the journal stores as the turn's `turn.ended`
       const code = Option.map(ending.failure, (failure) => failure.code)
-      if (yield* Deferred.fail(started, Option.getOrElse(code, () => "turn.failed"))) return // it never started: the route answers
       yield* push({ event: "done", data: { outcome: ending.reason, code: Option.getOrNull(code), usage: Exit.isSuccess(exit) ? exit.value.usage : null } })
     }).pipe(Effect.ensuring(closeStream(writer)))
     waitUntil(Effect.runPromise(run))
     return yield* Deferred.await(started).pipe(
       Effect.as(new Response(readable, { headers: sseHeaders })),
-      Effect.catch((code) => code === turnBeginCodes.TurnDuplicate ? replay(host, address, key) : Effect.succeed(problem(statusOf(code), code))),
+      // A refusal is the turn's failure as it is, its fields included: match the ones answered apart by tag.
+      Effect.catchTags({
+        TurnDuplicate: () => replay(host, address, key),
+        SessionBusy: (busy) => Effect.succeed(Response.json({ code: turnBeginCodes.SessionBusy, turn: busy.turn }, { status: 409 })),
+      }),
+      // Any other failure before the turn started (another refusal, a defect, an interruption): the status for its code.
+      Effect.catchCause((cause) => {
+        const code = Option.match(turnEndingOf(Exit.failCause(cause)).failure, { onNone: () => "turn.failed", onSome: (failure) => failure.code })
+        return Effect.succeed(problem(statusOf(code), code))
+      }),
     )
   }).pipe(Effect.catchTags({
     SchemaError: () => Effect.succeed(problem(400, "request.invalid")),
@@ -683,7 +694,7 @@ describe("serving turns over HTTP", () => {
     ])
   })))
 
-  test("while a turn runs: another is 409 session.busy, its own retry 409 turn.duplicate, and /ping and awaitIdle say busy until it ends", () => run(Effect.gen(function* () {
+  test("while a turn runs: another is 409 session.busy naming the open turn, its own retry 409 turn.duplicate, and /ping and awaitIdle say busy until it ends", () => run(Effect.gen(function* () {
     const release = yield* Deferred.make<void>()
     const host = yield* hostWith(yield* scripted([says("Slow.")], { hold: Deferred.await(release) }))
     const { waitUntil, settled } = background()
@@ -693,7 +704,7 @@ describe("serving turns over HTTP", () => {
       turnRoute(host, owner, sessionId, post(turns, { text: "again" }), waitUntil),
       turnRoute(host, owner, sessionId, post(turns, { text: "slow" }, { "idempotency-key": "k-1" }), waitUntil),
     ]).then((responses) => Promise.all(responses.map((response) => response.json().then((body) => [response.status, body])))))
-    expect(refused).toEqual([[409, { code: "session.busy" }], [409, { code: "turn.duplicate" }]])
+    expect(refused).toEqual([[409, { code: "session.busy", turn: 1 }], [409, { code: "turn.duplicate" }]])
     expect(yield* Effect.promise(() => pingRoute(host).then((response) => response.json()))).toMatchObject({ busy: true, openTurns: 1 })
     expect((yield* awaitIdle({ timeout: "20 millis" }).pipe(Effect.provide(host.services))).busy).toBe(true)
     yield* Deferred.succeed(release, undefined)

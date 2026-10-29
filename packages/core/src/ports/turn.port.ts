@@ -10,7 +10,7 @@ import type { MemoryReader } from "./memory.port.js"
 import type { RunContext } from "./run-context.port.js"
 import type { TurnWriter } from "./sessions.port.js"
 import type { JsonObject } from "../session/session-log.entity.js"
-import type { AdmittedTurn, SessionAddress, TurnError } from "../session/sessions.entity.js"
+import type { AdmittedTurn, SessionAddress, TurnBeginError, TurnError } from "../session/sessions.entity.js"
 import type { Correctives, LoopLimits, RunResult } from "./step-loop.port.js"
 import type { SkillMatch } from "./tool-registry.port.js"
 import type { TurnEvents, TurnEventsService, TurnTasks, TurnTasksService } from "./turn-events.port.js"
@@ -146,13 +146,13 @@ export interface NewTurn {
    * cancelled or interrupted (only inbox turns, and resumes of it that
    * failed, were cancelled or were interrupted, may have run since);
    * otherwise, or when `n` is not a whole number of at least 1, the turn
-   * fails to begin with `turn.not-resumable`. Memory is what a plain new
-   * turn would see: what turn `n` stored (its message and whole steps), then
-   * this turn's message. Stored in `turn.started`, shown on `admitted` and
-   * the bus `turn.started`, and part of the key's fingerprint. With the
-   * default key `resume:<n>`, a retry is `turn.duplicate` once the resuming
-   * turn has begun, however it ended: to try a resume that failed again,
-   * pass a new key.
+   * fails to begin with `NotResumable` (`turn.not-resumable`). Memory is
+   * what a plain new turn would see: what turn `n` stored (its message and
+   * whole steps), then this turn's message. Stored in `turn.started`, shown
+   * on `admitted` and the bus `turn.started`, and part of the key's
+   * fingerprint. With the default key `resume:<n>`, a retry is
+   * `TurnDuplicate` (`turn.duplicate`) once the resuming turn has begun,
+   * however it ended: to try a resume that failed again, pass a new key.
    */
   readonly resumes?: number
 }
@@ -190,11 +190,15 @@ export interface TurnInput<A = never, E = never> {
 /**
  * Anything that runs one admitted turn the way `Agent.turn` does: an
  * agent, or a host's own composition of the turn's steps (see
- * `turnConformance`).
+ * `turnConformance`). A turn it begins itself and that cannot begin fails
+ * with the refusal itself (`TurnBeginError`: `SessionBusy`,
+ * `TurnDuplicate`…), before anything runs, so a caller matches it with
+ * `Effect.catchTag`; `harnessCodeOf` gives the code it stands for
+ * (`turnBeginCodes`).
  */
 export interface TurnRunner {
   readonly turn: <A = never, E = never, R = never>(
     input: TurnInput<A, E>,
     use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>,
-  ) => Effect.Effect<TurnResult, TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
+  ) => Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 }

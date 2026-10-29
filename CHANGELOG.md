@@ -54,6 +54,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `code === "turn.closed"`, and handle `TurnClosed.reason` `"ended"` where
   reasons are matched exhaustively. A custom `Sessions` writer raises these
   tags and reruns `sessionsConformance`; a `SessionLog` is unaffected.
+- Match a begin refusal by tag (`Effect.catchTag("SessionBusy", …)`) and
+  read what it names from its fields, not its message; read its code with
+  `harnessCodeOf(error)` or `turnEndingOf(exit)`. Widen annotations on
+  `Agent.turn`'s error to `TurnBeginError | TurnError`. A hand-composed
+  `TurnRunner` lets the `Sessions.begin` refusal through and reruns
+  `turnConformance`. The events guide's turn route answers a busy session
+  with `{ code: "session.busy", turn }`.
 
 ### Breaking
 
@@ -171,6 +178,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `harnessDefectsAsFailures` restores any `TurnError` carried as a defect
   (`E | TurnError`), and `runSteps` and the tool registry pass `TurnError`s
   through.
+- `Agent.turn` and `TurnRunner.turn` fail a turn that cannot begin with the
+  refusal itself (`TurnBeginError`: `SessionBusy`, `TurnDuplicate`,
+  `KeyConflict`, `RunIdReused`, `NothingPending`, `NotResumable`,
+  `TurnRefused`, `SessionMissing`, `SessionContended`, `SessionLogError`,
+  `AttachmentRejected`) instead of a `HarnessError` with its code; their
+  error type is `TurnBeginError | TurnError | E`. The refusal keeps its
+  fields, and its code is unchanged. `turnConformance` checks that a turn
+  begun while another is open fails with that `SessionBusy` and runs and
+  stores nothing.
 
 ### Added
 

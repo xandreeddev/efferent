@@ -47,6 +47,14 @@ const reply = Effect.scoped(Effect.gen(function* () {
 reads and writes and reasoning included). [Token usage](/docs/concepts/providers/#token-usage)
 lists what it leaves out (utility calls, failed or retried attempts).
 
+A turn that cannot begin fails with the refusal itself, before anything is
+opened: `SessionBusy` (another turn is open; it names that turn),
+`TurnDuplicate`, `KeyConflict`, `NotResumable`, `TurnRefused`… Handle one
+with `Effect.catchTag("SessionBusy", (busy) => …)`; `harnessCodeOf` gives
+the code it stands for (`session.busy`), and the
+[event reference](/docs/concepts/event-reference/#begin-codes) suggests an
+HTTP status for each.
+
 A new turn may carry the host's metadata, `meta` (a request id, a tenant):
 `turn: { session, userMessage, runId, key, meta }`. It is stored with the
 turn's start, given to the host's `TurnAdmission`, and shown on
@@ -59,7 +67,8 @@ was reaped) can be resumed by the next one:
 `turn: { session, userMessage, runId, resumes: 1 }`. Turn 1 must be the
 session's last turn begun by a user, with only inbox turns (and resumes
 of it that did not complete) after it, and must have ended cancelled or
-interrupted; otherwise the turn fails to begin with `turn.not-resumable`.
+interrupted; otherwise the turn fails to begin with `NotResumable`
+(`turn.not-resumable`).
 Memory keeps what turn 1 stored: its message and its whole steps (a step's
 tool calls and their results are stored together once its tools return, so
 a call that was still running is gone), then the new turn's message, which
@@ -79,7 +88,8 @@ image built with `mediaFromBytes(bytes)` or `mediaFromBase64(data)` from
 `@xandreed/core` (PNG, JPEG, GIF or WebP, within `MEDIA_LIMITS`). The session
 checks each image again from its bytes when the turn begins and stores it
 inline, once, in the turn's start; an image it refuses fails the turn with
-`turn.attachment-rejected` before anything is stored. A tool returns images the
+`AttachmentRejected` (`turn.attachment-rejected`, its `reason` and `index`
+kept) before anything is stored. A tool returns images the
 same way, as `Media` values in its result (its view's `media` picks which
 are sent; every one by default); memory stores each once, where the tool put
 it. The current turn's images (its message's, then its tool results', newest
