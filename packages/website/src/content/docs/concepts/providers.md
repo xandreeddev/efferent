@@ -451,6 +451,16 @@ content (`captureTraceContent`, read per call as `CurrentTraceContent`) or
 `EFFERENT_TRACE_CONTENT=1` is set (read with `Config`, from the current
 `ConfigProvider`); otherwise it reads `[redacted]`.
 
+That span encloses the whole routed call: its credential, a
+`models.credentials` span (an endpoint's own key, or the `AuthStore`'s with a
+token refresh included), the provider's build and the request. The counters
+and `llm.request.duration` count the request alone, so a credential that
+cannot be had counts no request. A `UtilityLlm` completion is a
+`models.utility` span around its call's `providers.generate`. Logs written
+during a call carry its model as the `llm.model` annotation, never in their
+text; the warning before the fallback rung carries `llm.model` (the primary)
+and `llm.fallback_model`.
+
 The counts hold three invariants: both cache counts are inside the input, the
 reasoning is inside the output, and the total is input plus output. The usage
 `agent.turn` returns, the bus `turn.ended` event and the stored `step.usage`

@@ -21,37 +21,37 @@ export const UtilityLlmLive = Layer.effect(
     const settings = yield* SettingsStore
 
     return {
-      complete: (prompt: string) =>
-        Effect.gen(function* () {
-          const loaded = yield* settings.load.pipe(
-            Effect.mapError((e) => new UtilityError({ message: e.message, cause: e })),
-          )
-          const raw = Option.getOrElse(
-            Option.orElse(loaded.fastModel, () => loaded.model),
-            () => "",
-          )
-          const selection = yield* Option.match(parseModelSelection(raw), {
-            onNone: () =>
-              Effect.fail(new UtilityError({ message: "no fast/general model configured" })),
-            onSome: Effect.succeed,
-          })
-          const res = yield* withConfiguredEffort(generateWith(selection, {
-            prompt: Prompt.make(prompt),
-            tools: [],
-            toolChoice: "none",
-            responseFormat: { type: "text" },
-          }), Option.orElse(loaded.fastReasoningEffort, () => loaded.reasoningEffort)).pipe(
-            Effect.mapError((e) => new UtilityError({ message: reasonOf(Cause.fail(e)), cause: e })),
-            // The transport's fetch innermost, as the routed model sets it (router.ts).
-            (call) => Option.match(fetch, { onNone: () => call, onSome: (value) => Effect.provideService(call, FetchHttpClient.Fetch, value) }),
-            Effect.provide(context),
-            Effect.provideService(HttpClient.HttpClient, http),
-          )
-          const parts = res.content.filter(Response.isPart)
-          const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
-          // The loop's own reading of provider usage, so both count alike.
-          return { text, usage: extractUsage(res.usage, parts) }
-        }),
+      // One `models.utility` span per completion, around the routed call's `providers.generate`.
+      complete: Effect.fn("models.utility")(function* (prompt: string) {
+        const loaded = yield* settings.load.pipe(
+          Effect.mapError((e) => new UtilityError({ message: e.message, cause: e })),
+        )
+        const raw = Option.getOrElse(
+          Option.orElse(loaded.fastModel, () => loaded.model),
+          () => "",
+        )
+        const selection = yield* Option.match(parseModelSelection(raw), {
+          onNone: () =>
+            Effect.fail(new UtilityError({ message: "no fast/general model configured" })),
+          onSome: Effect.succeed,
+        })
+        const res = yield* withConfiguredEffort(generateWith(selection, {
+          prompt: Prompt.make(prompt),
+          tools: [],
+          toolChoice: "none",
+          responseFormat: { type: "text" },
+        }), Option.orElse(loaded.fastReasoningEffort, () => loaded.reasoningEffort)).pipe(
+          Effect.mapError((e) => new UtilityError({ message: reasonOf(Cause.fail(e)), cause: e })),
+          // The transport's fetch innermost, as the routed model sets it (router.ts).
+          (call) => Option.match(fetch, { onNone: () => call, onSome: (value) => Effect.provideService(call, FetchHttpClient.Fetch, value) }),
+          Effect.provide(context),
+          Effect.provideService(HttpClient.HttpClient, http),
+        )
+        const parts = res.content.filter(Response.isPart)
+        const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
+        // The loop's own reading of provider usage, so both count alike.
+        return { text, usage: extractUsage(res.usage, parts) }
+      }),
     }
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))

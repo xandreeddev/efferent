@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AiError } from "effect/ai"
 import { HttpClientError, HttpClientRequest } from "effect/http"
-import { Cause, Effect, Exit, Fiber, Option, Ref, Stream } from "effect"
+import { Cause, Effect, Exit, Fiber, Logger, Option, Ref, References, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import { classifyLlmError, rejectEmptyResponse, retryableLlm, retryableLlmStream } from "./retry.js"
@@ -17,6 +17,11 @@ const httpError = (status: number, headers: Record<string, string> = {}) =>
 const reasonError = (reason: AiError.AiErrorReason) => AiError.make({ module: "Test", method: "generateText", reason })
 /** Classified now, on the wall clock. */
 const classify = (error: unknown) => classifyLlmError(error, Date.now())
+
+/** A logger keeping each line's text and its `llm.model` annotation. */
+const capturingLogs = (logged: Array<readonly [string, unknown]>) => Logger.layer([Logger.make((options) => {
+  logged.push([[options.message].flat().join(" "), options.fiber.getRef(References.CurrentLogAnnotations)["llm.model"]])
+})])
 
 describe("classifyLlmError", () => {
   test("429 and 5xx are transient; other 4xx permanent", () => {
@@ -86,6 +91,19 @@ describe("retryableLlm", () => {
   test("an exhausted quota fails at once; a plain 429 is retried", async () => {
     expect(await attempts(reasonError(new AiError.QuotaExhaustedError({ http: { request, response: { status: 429, headers: {} } } })))).toBe(1)
     expect(await attempts(httpError(429))).toBe(2)
+  })
+
+  test("a transient failure that exhausts the retries is logged with its model as an annotation, not in its text", async () => {
+    const logged: Array<readonly [string, unknown]> = []
+    await Effect.runPromise(Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(Effect.exit(retryableLlm("gw:slow")(Effect.fail(httpError(503)))))
+      yield* TestClock.adjust("1 minute")
+      yield* Fiber.join(fiber)
+    }).pipe(Effect.provide(TestClock.layer()), Effect.provide(capturingLogs(logged))))
+    expect(logged).toHaveLength(1)
+    expect(logged[0]?.[0]).toStartWith("transient failure exhausted retries: ")
+    expect(logged[0]?.[0]).not.toContain("gw:slow")
+    expect(logged[0]?.[1]).toBe("gw:slow")
   })
 })
 
@@ -163,6 +181,16 @@ describe("retryableLlmStream", () => {
     )
     expect(exit._tag).toBe("Failure")
     expect(attempts).toHaveLength(1)
+  })
+
+  test("a transient failure after content is logged with its model as an annotation, not in its text", async () => {
+    const logged: Array<readonly [string, unknown]> = []
+    const { stream } = scripted([Stream.fromIterable([delta]).pipe(Stream.concat(Stream.fail(transient500)))])
+    await Effect.runPromise(Effect.exit(Stream.runCollect(retryableLlmStream("gw:slow")(stream))).pipe(Effect.provide(capturingLogs(logged))))
+    expect(logged).toHaveLength(1)
+    expect(logged[0]?.[0]).toStartWith("transient stream failure was final: ")
+    expect(logged[0]?.[0]).not.toContain("gw:slow")
+    expect(logged[0]?.[1]).toBe("gw:slow")
   })
 
   test("a permanent error never retries", async () => {

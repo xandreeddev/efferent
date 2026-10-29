@@ -156,7 +156,7 @@ export const retryableLlm =
       Effect.tapError((error) =>
         Effect.flatMap(isTransientLlmError(error), (transient) =>
           transient
-            ? Effect.logWarning(`${label}: transient failure exhausted retries: ${String(error)}`)
+            ? Effect.logWarning(`transient failure exhausted retries: ${String(error)}`).pipe(Effect.annotateLogs("llm.model", label))
             : Effect.void,
         ),
       ),
@@ -228,7 +228,7 @@ export const retryableLlmStream =
           Stream.tapError((error) =>
             Effect.flatMap(isTransientLlmError(error), (transient) =>
               transient
-                ? Effect.logWarning(`${label}: transient stream failure was final: ${String(error)}`)
+                ? Effect.logWarning(`transient stream failure was final: ${String(error)}`).pipe(Effect.annotateLogs("llm.model", label))
                 : Effect.void,
             ),
           ),

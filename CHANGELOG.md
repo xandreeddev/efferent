@@ -111,6 +111,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   directly under `agent.turn` finds them under `turn.persist_reply`.
 - Read `efferent.session.id`, `efferent.run.id` and `efferent.turn` from the
   sessions plugin's log annotations instead of its log text.
+- Read the `llm.model` and `llm.fallback_model` log annotations instead of
+  the models plugin's retry and fallback warning text.
 
 ### Breaking
 
@@ -313,6 +315,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   session, run or turn ids (for example "the turn's end was not stored when
   its scope closed" and "an inbox turn ended failed"); the ids are log
   annotations.
+- `@xandreed/plugin-models`: the retry and fallback warnings no longer name
+  the model in their text (`<model>: transient failure exhausted retries…`,
+  `<model> exhausted retries … falling back to <model>`); the fallback
+  warning carries `llm.model` and `llm.fallback_model` annotations.
 
 ### Added
 
@@ -436,6 +442,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/core`: `extractModel` is deprecated in favour of
   `responseModelOf`; it still reads `router.model` until the next minor
   release.
+- `@xandreed/plugin-models`: a routed call's `providers.generate` span
+  encloses its credential (a new `models.credentials` span: an endpoint's
+  own key, or the AuthStore's, a token refresh included) and the provider's
+  build; the `llm.*` counters and `llm.request.duration` still count the
+  request alone. A `UtilityLlm` completion is a `models.utility` span, and
+  logs written during a routed call carry the model as `llm.model`.
 
 ### Fixed
 
@@ -790,6 +802,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `Effect.fnUntraced` for entity functions, constructors, per-event helpers
   and kits.
 - `effect/prefer-effect-fn` runs in `plugin-sessions`.
+- `effect/prefer-effect-fn` runs in `plugin-models`.
 
 ## 0.14.0 — 2026-10-29
 

@@ -224,25 +224,24 @@ const nodeTransport = (config: ProxyConfig, version: string) => Effect.gen(funct
  * fails with `ProxyUnsupported` when a proxy applies. Its connection pools
  * close with the scope.
  */
-export const modelsTransportFor = (options: HttpProxyOptions): Effect.Effect<Option.Option<Context.Service.Shape<typeof ModelsTransport>>, ProxyInvalid | ProxyUnsupported | Config.ConfigError, Scope.Scope> =>
-  Effect.gen(function* () {
-    const config = yield* Effect.fromResult(resolveProxy(options, yield* readEnvironment))
-    const runtime = currentRuntime()
-    if (!usesProxy(config)) {
-      return yield* Match.value(runtime).pipe(
-        Match.tag("Node", () => turnsProxyOff(config) ? Effect.map(nodeDirectTransport, Option.some) : Effect.succeedNone),
-        Match.orElse(() => Effect.succeedNone),
-      )
-    }
-    return Option.some(yield* Match.value(runtime).pipe(
-      Match.tag("Bun", ({ version }) => Effect.succeed(bunTransport(config, version))),
-      Match.tag("Node", ({ version }) => nodeTransport(config, version)),
-      Match.tag("Other", () => Effect.fail(new ProxyUnsupported({
-        message: "a proxy is configured, but this runtime is neither Node nor Bun: the models plugin cannot send its calls through a proxy here",
-      }))),
-      Match.exhaustive,
-    ))
-  })
+export const modelsTransportFor = Effect.fnUntraced(function* (options: HttpProxyOptions): Effect.fn.Return<Option.Option<Context.Service.Shape<typeof ModelsTransport>>, ProxyInvalid | ProxyUnsupported | Config.ConfigError, Scope.Scope> {
+  const config = yield* Effect.fromResult(resolveProxy(options, yield* readEnvironment))
+  const runtime = currentRuntime()
+  if (!usesProxy(config)) {
+    return yield* Match.value(runtime).pipe(
+      Match.tag("Node", () => turnsProxyOff(config) ? Effect.map(nodeDirectTransport, Option.some) : Effect.succeedNone),
+      Match.orElse(() => Effect.succeedNone),
+    )
+  }
+  return Option.some(yield* Match.value(runtime).pipe(
+    Match.tag("Bun", ({ version }) => Effect.succeed(bunTransport(config, version))),
+    Match.tag("Node", ({ version }) => nodeTransport(config, version)),
+    Match.tag("Other", () => Effect.fail(new ProxyUnsupported({
+      message: "a proxy is configured, but this runtime is neither Node nor Bun: the models plugin cannot send its calls through a proxy here",
+    }))),
+    Match.exhaustive,
+  ))
+})
 
 /**
  * `ModelsTransportLive(options)` — the models plugin's network path from a

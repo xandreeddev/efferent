@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Response as AiResponse } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
-import { ConfigProvider, Effect, Layer, Metric, Option, Redacted, Ref, Schema, Stream, Tracer } from "effect"
-import { AuthStore, CurrentModelCallPolicy, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, responseModelOf, SettingsStore } from "@xandreed/core"
+import { ConfigProvider, Effect, Exit, Layer, Logger, Metric, Option, Redacted, Ref, References, Schema, Stream, Tracer } from "effect"
+import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, responseModelOf, SettingsStore } from "@xandreed/core"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { generateWith, LanguageModelLive, LanguageModelSelectionLive, stampResponse, tapStreamTelemetry, withFallbackRung } from "./router.js"
 
@@ -294,6 +294,21 @@ describe("withFallbackRung", () => {
     expect(calls).toHaveLength(2)
   })
 
+  test("the fall back is logged with both models as annotations, neither in its text", async () => {
+    const logged: Array<readonly [string, unknown, unknown]> = []
+    const capture = Logger.layer([Logger.make((options) => {
+      const annotations = options.fiber.getRef(References.CurrentLogAnnotations)
+      logged.push([[options.message].flat().join(" "), annotations["llm.model"], annotations["llm.fallback_model"]])
+    })])
+    const { call } = scripted({ "opencode:kimi-k2.6": Effect.fail(transient), "google:gemini-3.5-flash": Effect.succeed("saved") })
+    await Effect.runPromise(withFallbackRung(primary, fallback, call).pipe(Effect.provide(capture)))
+    expect(logged).toHaveLength(1)
+    expect(logged[0]?.[0]).toStartWith("exhausted retries (")
+    expect(logged[0]?.[0]).not.toContain("kimi-k2.6")
+    expect(logged[0]?.[0]).not.toContain("gemini-3.5-flash")
+    expect(logged[0]?.slice(1)).toEqual(["opencode:kimi-k2.6", "google:gemini-3.5-flash"])
+  })
+
   test("a healthy primary never touches the fallback", async () => {
     const { call, calls } = scripted({ "opencode:kimi-k2.6": Effect.succeed("fine") })
     const out = await Effect.runPromise(
@@ -533,5 +548,94 @@ describe("the routed model's surface", () => {
       provider: "opencode", model: "glm-5.2",
       settings: { fallback: "google:gemini-3.5-flash", policy: { effort: "high" } },
     })
+  })
+})
+
+describe("a routed call's providers.generate span", () => {
+  const requests = (label: string, outcome: "ok" | "error", fallback: ReadonlyArray<[string, string]>) =>
+    counterValue("llm.requests", "routed LLM calls by final outcome (after retries)", [["llm.model", label], ["outcome", outcome], ...fallback])
+  /** The names of the spans' parents, `none` for a parent not captured. */
+  const parentsOf = (spans: ReadonlyArray<Tracer.NativeSpan>, name: string) => {
+    const byId = new Map(spans.map((span) => [span.spanId, span] as const))
+    return spans.filter((span) => span.name === name).map((span) => Option.match(Option.flatMap(span.parent, (parent) => Option.fromNullishOr(byId.get(parent.spanId))), {
+      onNone: () => "none",
+      onSome: (parent) => parent.name,
+    }))
+  }
+
+  test("encloses the call's credential, models.credentials, on every method; logs inside it carry the model; the counters count the provider's calls alone", async () => {
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: async (request) => {
+        const { stream } = await request.json() as { readonly stream?: boolean }
+        return stream
+          ? new Response(`data: {"choices":[{"delta":{"content":"{\\"ok\\":true}"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1,"total_tokens":4}}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } })
+          : Response.json({ choices: [{ finish_reason: "stop", message: { content: `{"ok":true}` } }], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } })
+      },
+    })
+    // A store that logs while it resolves the key, as a refresh does.
+    const auth = Layer.succeed(AuthStore, AuthStore.of({
+      all: Effect.succeed(new Map()),
+      get: () => Effect.succeed(Option.some({ type: "local" as const, baseUrl: `http://127.0.0.1:${server.port}/v1` })),
+      resolveKey: () => Effect.logInfo("refreshing the token").pipe(Effect.as(Option.none())),
+      set: () => Effect.void,
+      remove: () => Effect.void,
+    }))
+    const spans: Array<Tracer.NativeSpan> = []
+    const logged: Array<readonly [string, unknown]> = []
+    const capture = Logger.layer([Logger.make((options) => {
+      logged.push([[options.message].flat().join(" "), options.fiber.getRef(References.CurrentLogAnnotations)["llm.model"]])
+    })])
+    const label = "span-local:credentials"
+    await Effect.runPromise(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection(label))
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelSelectionLive(selection, Option.none()).pipe(Layer.provide(auth))),
+      )
+      yield* model.generateText({ prompt: "hi" })
+      yield* model.generateObject({ prompt: "hi", schema: Schema.Struct({ ok: Schema.Boolean }) })
+      yield* Stream.runDrain(model.streamText({ prompt: "hi" }))
+    }).pipe(Effect.withTracer(capturingTracer(spans)), Effect.provide(capture))).finally(() => server.stop(true))
+    expect(parentsOf(spans, "models.credentials")).toEqual(["providers.generate", "providers.generate", "providers.generate"])
+    // The call's own attributes still land on providers.generate, not on its credential's span.
+    expect(spans.filter((span) => span.name === "providers.generate").map((span) => [span.attributes.get("llm.model"), span.attributes.get("llm.finish_reason")])).toEqual([[label, "stop"], [label, "stop"], [label, "stop"]])
+    expect(logged.filter(([message]) => message === "refreshing the token")).toEqual([["refreshing the token", label], ["refreshing the token", label], ["refreshing the token", label]])
+    expect(await Promise.all([
+      requests(label, "ok", [["fallback", "false"]]),
+      requests(label, "ok", []),
+      counterValue("llm.usage.input_tokens", "prompt tokens consumed by routed LLM calls", [["llm.model", label]]),
+    ])).toEqual([2, 1, 9])
+  })
+
+  test("a credential that cannot be resolved ends it and models.credentials failed, and counts no request", async () => {
+    const auth = Layer.succeed(AuthStore, AuthStore.of({
+      all: Effect.succeed(new Map()),
+      get: () => Effect.succeed(Option.none()),
+      resolveKey: (provider) => Effect.fail(new AuthError({ provider, message: "the token refresh was refused" })),
+      set: () => Effect.void,
+      remove: () => Effect.void,
+    }))
+    const spans: Array<Tracer.NativeSpan> = []
+    const label = "span-refused:credentials"
+    const failures = await Effect.runPromise(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection(label))
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelSelectionLive(selection, Option.none()).pipe(Layer.provide(auth))),
+      )
+      return yield* Effect.all([
+        Effect.flip(model.generateText({ prompt: "hi" })),
+        Effect.flip(Stream.runDrain(model.streamText({ prompt: "hi" }))),
+      ], { concurrency: 1 })
+    }).pipe(Effect.withTracer(capturingTracer(spans))))
+    expect(failures.map((error) => AiError.isAiError(error) ? error.reason._tag : "escaped")).toEqual(["AuthenticationError", "AuthenticationError"])
+    expect(parentsOf(spans, "models.credentials")).toEqual(["providers.generate", "providers.generate"])
+    const failed = (name: string) => spans.filter((span) => span.name === name).map((span) => span.status._tag === "Ended" && Exit.isFailure(span.status.exit))
+    expect([failed("providers.generate"), failed("models.credentials")]).toEqual([[true, true], [true, true]])
+    expect(await Promise.all([
+      requests(label, "ok", [["fallback", "false"]]),
+      requests(label, "error", [["fallback", "false"]]),
+      requests(label, "ok", []),
+      requests(label, "error", []),
+    ])).toEqual([0, 0, 0, 0])
   })
 })
