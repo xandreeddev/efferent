@@ -75,11 +75,25 @@ src/
 
 ```bash
 bun run foundry check                      # self-check (the dogfood; CI-enforced)
-bun run foundry check --config <f> [--baseline <f.json>] [--update-baseline]
+bun run foundry check --config <f> [--baseline <f.json>] [--update-baseline [--allow-grow]]
 bun run foundry demo                       # key-free E2E: scripted implementor, 3 attempts
 bun run foundry demo --implementor claude  # same spec, real agent
 bun test packages/foundry                  # colocated unit tests (no LLM, no network)
 ```
+
+`--update-baseline` only shrinks the baseline. `--allow-grow` grandfathers
+new findings and prints a warning: a profile with `baseline: "empty"` (the
+repo profile, so `bun run typecheck` and CI) grandfathers nothing and fails
+with `quality/baseline-empty` while the file holds a fingerprint. Never grow
+the repo's `.foundry/baseline.json`; fix the finding instead.
+
+A config's `registration` arms the `registration` gate
+(`gates/registrationGate.ts`, findings `quality/package-registered`): every
+package under its `roots` must be covered by the profile's rules and
+boundaries layers and listed in each file registry it names (a top-level
+`const` array in a TypeScript file, or the keys of a JSON object). The repo
+knowledge (which lists, which packages are exempt) is data in the root
+`foundry.config.ts`; the gate imports no workspace package.
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

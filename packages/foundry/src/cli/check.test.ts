@@ -1,16 +1,19 @@
-import { describe, expect, test } from "bun:test"
-import { mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs"
+import { describe, expect, spyOn, test } from "bun:test"
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import * as path from "node:path"
 import { Effect, Option, Schema } from "effect"
+import { BaselineFile, baselineRefusal } from "../domain/baseline.js"
 import { RuleConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
 import { effectPack, vendoredPackFiles } from "../gates/rules/packs.js"
+import { makeRegistrationGate } from "../gates/registrationGate.js"
 import { TsProjectCachedLive } from "../gates/TsProject.port.js"
-import { gatesFromConfig, loadConfig } from "./check.js"
+import { gatesFromConfig, loadConfig, runCheck } from "./check.js"
 
-const REPO_NODE_MODULES = path.resolve(import.meta.dir, "../../../../node_modules")
+const REPO_ROOT = path.resolve(import.meta.dir, "../../../..")
+const REPO_NODE_MODULES = path.join(REPO_ROOT, "node_modules")
 
 const TSCONFIG = JSON.stringify({
   compilerOptions: {
@@ -254,5 +257,139 @@ describe("vendored packs — plain twins of the library", () => {
     const exit = await Effect.runPromiseExit(vendoredPackFiles("no-such-pack"))
     expect(exit._tag).toBe("Failure")
     expect(String(exit)).toContain("effect, quality")
+  })
+})
+
+/** A one-rule workspace (`local/no-fixme`) for the baseline flows; `fixme`
+ *  seeds the one finding. */
+const seedBaselineWorkspace = (options: { readonly policy?: "ratchet" | "empty"; readonly fixme: boolean }): string => {
+  const dir = mkdtempSync(path.join(tmpdir(), "foundry-baseline-"))
+  writeFileSync(path.join(dir, "tsconfig.json"), TSCONFIG)
+  mkdirSync(path.join(dir, "src"), { recursive: true })
+  writeFileSync(path.join(dir, "src", "a.ts"), options.fixme ? "export const a = 1 // FIXME\n" : "export const a = 1\n")
+  writeConfig(
+    dir,
+    [
+      "export const customRules = [{",
+      '  id: "local/no-fixme", defaultSeverity: "error", description: "no FIXME", fixHint: "fix it",',
+      '  check: (ctx) => ctx.sourceFile.text.includes("FIXME") ? [{ node: ctx.sourceFile, message: "FIXME marker" }] : [],',
+      "}]",
+      "export default {",
+      '  tsconfig: "tsconfig.json",',
+      '  rules: [{ rule: "local/no-fixme", include: ["src/**"] }],',
+      "  typecheck: false,",
+      ...(options.policy === undefined ? [] : [`  baseline: "${options.policy}",`]),
+      "}",
+      "",
+    ].join("\n"),
+  )
+  return dir
+}
+
+const writeBaseline = (dir: string, fingerprints: ReadonlyArray<string>): string => {
+  const file = path.join(dir, "baseline.json")
+  writeFileSync(file, `${JSON.stringify({ version: 1, fingerprints })}\n`)
+  return file
+}
+
+/** Run `foundry check` with its console captured. */
+const check = async (dir: string, options: { readonly baseline: string; readonly update?: boolean; readonly allowGrow?: boolean }) => {
+  const out: Array<string> = []
+  const log = spyOn(console, "log").mockImplementation((...args: ReadonlyArray<unknown>) => void out.push(args.join(" ")))
+  const error = spyOn(console, "error").mockImplementation((...args: ReadonlyArray<unknown>) => void out.push(args.join(" ")))
+  const code = await Effect.runPromise(
+    runCheck({
+      configPath: path.join(dir, "foundry.config.ts"),
+      baselinePath: Option.some(options.baseline),
+      updateBaseline: options.update === true,
+      allowGrow: options.allowGrow === true,
+    }).pipe(Effect.provide(TsProjectCachedLive)),
+  ).finally(() => {
+    log.mockRestore()
+    error.mockRestore()
+  })
+  return { code, output: out.join("\n") }
+}
+
+const storedFingerprints = (file: string): ReadonlyArray<string> =>
+  Schema.decodeUnknownSync(Schema.fromJsonString(BaselineFile))(readFileSync(file, "utf8")).fingerprints
+
+describe("the baseline policy", () => {
+  test("ratchet (the default): a grandfathered finding passes", async () => {
+    const dir = seedBaselineWorkspace({ fixme: true })
+    const baseline = path.join(dir, "baseline.json")
+    expect((await check(dir, { baseline, update: true, allowGrow: true })).code).toBe(0)
+    expect(storedFingerprints(baseline).length).toBe(1)
+    const result = await check(dir, { baseline })
+    expect(result.code).toBe(0)
+    expect(result.output).toContain("1 grandfathered · 0 NEW findings")
+  })
+
+  test("empty: a baseline holding a fingerprint fails even with nothing left to report", async () => {
+    const dir = seedBaselineWorkspace({ policy: "empty", fixme: false })
+    const result = await check(dir, { baseline: writeBaseline(dir, ["0badc0de"]) })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain("[quality/baseline-empty]")
+    expect(result.output).toContain("holds 1 fingerprint, but this profile's baseline must stay empty")
+  })
+
+  test("empty: the file grandfathers nothing, so a finding it lists still fails as NEW", async () => {
+    const dir = seedBaselineWorkspace({ policy: "empty", fixme: true })
+    const baseline = path.join(dir, "baseline.json")
+    // Mint the finding's fingerprint the only way the CLI allows.
+    expect((await check(dir, { baseline, update: true, allowGrow: true })).code).toBe(0)
+    const result = await check(dir, { baseline })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain("0 grandfathered · 1 NEW finding")
+    expect(result.output).toContain("[local/no-fixme]")
+    expect(result.output).toContain("[quality/baseline-empty]")
+  })
+
+  test("empty: an empty baseline on a clean workspace passes", async () => {
+    const dir = seedBaselineWorkspace({ policy: "empty", fixme: false })
+    const result = await check(dir, { baseline: writeBaseline(dir, []) })
+    expect(result.code).toBe(0)
+    expect(result.output).not.toContain("quality/baseline-empty")
+  })
+
+  test("--update-baseline refuses to grow without --allow-grow", async () => {
+    const dir = seedBaselineWorkspace({ policy: "empty", fixme: true })
+    const baseline = writeBaseline(dir, [])
+    const result = await check(dir, { baseline, update: true })
+    expect(result.code).toBe(1)
+    expect(result.output).toContain("REFUSING to grow")
+    expect(storedFingerprints(baseline)).toEqual([])
+  })
+
+  test("--allow-grow warns that an empty-baseline profile, and so CI, refuses the result", async () => {
+    const dir = seedBaselineWorkspace({ policy: "empty", fixme: true })
+    const result = await check(dir, { baseline: path.join(dir, "baseline.json"), update: true, allowGrow: true })
+    expect(result.output).toContain("WARNING: --allow-grow grandfathered 1 NEW finding")
+    expect(result.output).toContain("will REFUSE")
+    const ratchet = await check(seedBaselineWorkspace({ fixme: true }), {
+      baseline: path.join(tmpdir(), `foundry-grow-${Date.now()}.json`),
+      update: true,
+      allowGrow: true,
+    })
+    expect(ratchet.output).toContain("WARNING: --allow-grow grandfathered 1 NEW finding")
+  })
+})
+
+describe("the repository profile", () => {
+  test("every package is registered everywhere the profile names", async () => {
+    const { config, rootDir } = await Effect.runPromise(loadConfig(path.join(REPO_ROOT, "foundry.config.ts")))
+    const registration = Option.getOrThrow(config.registration)
+    // The gate is pointed at a non-empty set of lists, the plugin list included.
+    expect(registration.registries.length).toBe(5)
+    const findings = await Effect.runPromise(makeRegistrationGate(config, registration).run({ rootDir, files: [] }))
+    expect(findings.map((f) => f.message)).toEqual([])
+  })
+
+  test("the committed baseline is empty and the profile refuses one that is not", async () => {
+    const { config } = await Effect.runPromise(loadConfig(path.join(REPO_ROOT, "foundry.config.ts")))
+    expect(config.baseline).toBe("empty")
+    const committed = new Set(storedFingerprints(path.join(REPO_ROOT, ".foundry", "baseline.json")))
+    expect(Option.isNone(baselineRefusal(config.baseline, ".foundry/baseline.json", committed))).toBe(true)
+    expect(Option.isSome(baselineRefusal(config.baseline, ".foundry/baseline.json", new Set(["0badc0de"])))).toBe(true)
   })
 })

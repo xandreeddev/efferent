@@ -112,6 +112,14 @@ would judge attempt N against attempt N-1's source).
    monorepo's `cli → adapters → core` rule a real gate.
 3. **`typecheck`** — `ts.getPreEmitDiagnostics` on the shared program (no
    subprocess, exact positions) → `ts/<code>` findings.
+4. **`registration`** (`registrationGate.ts`, armed by the config's
+   `registration`) — every package directory under its `roots` must be
+   covered by the profile's own rules and boundaries layers and listed in
+   each file registry it names (a top-level `const` array in a TypeScript
+   file, or the keys of a JSON object such as a tsconfig's `paths`) →
+   `quality/package-registered` findings naming the package and the list.
+   A package nobody registered is otherwise skipped in silence: ungated,
+   unbuilt, unpublished.
 
 (The `eval-shape` gate was retired 2026-09-05: its rules targeted the deleted
 evals-v2 API and nothing armed it; the v3 scenario runner enforces non-empty
@@ -176,8 +184,16 @@ never falls back to a builtin set. A `foundry.config.ts` has two channels:
 `foundry check --baseline <f.json>`: findings whose fingerprint —
 `fnv1a(rule + file + normalized line CONTENT)`, so unrelated edits don't
 churn — is in the committed baseline are grandfathered; any NEW fingerprint
-fails; `--update-baseline` rewrites (and in CI may only shrink). This is how
-sdk-core migrates incrementally instead of big-bang.
+fails; `--update-baseline` rewrites and may only shrink unless
+`--allow-grow` is passed, which grandfathers the new findings and prints a
+warning. This is how a legacy codebase adopts the gates incrementally
+instead of big-bang.
+
+A config with `baseline: "empty"` uses the file only as the ratchet's
+anchor: it grandfathers nothing, and `foundry check --baseline` fails with
+`quality/baseline-empty` while the file holds a fingerprint. Fingerprints
+are opaque hashes in a diff, so this is what keeps a grown baseline from
+passing CI. The repository profile (`foundry.config.ts`) declares it.
 
 ## Dogfooding + CI
 

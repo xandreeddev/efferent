@@ -31,6 +31,30 @@ errors are `Schema.TaggedError` values (no `try`/`catch`/`throw`), state is a
 fold (no `let`, no loop statements), absence is `Option`, union branching is
 `Match`, dependency direction between packages is a build-failing gate.
 
+The committed baseline (`.foundry/baseline.json`) stays empty, and
+`bun run typecheck` fails while it holds a fingerprint
+(`quality/baseline-empty`): the repo profile grandfathers nothing. Fix a
+finding instead of passing `--update-baseline --allow-grow`; that flag
+warns that CI will refuse the grown file.
+
+A new package under `packages/` must be registered by hand, and
+`bun run typecheck` fails (`quality/package-registered`) naming each list
+it is missing from:
+
+- `CHECKED` in `foundry.config.ts` (`"packages/<name>/src/**"`), so the
+  rules check its sources;
+- a `boundaries.layers` entry in `foundry.config.ts`, so its imports are
+  checked (add a `<name>-tests` layer before it if its tests import more);
+- `names` in `scripts/build-packages.ts`, so it is built, verified and
+  published (foundry, development tooling, is exempt);
+- `compilerOptions.paths` in `tsconfig.base.json` (`"@xandreed/<name>"`);
+- for a `plugin-*` package, `firstParty` in
+  `scripts/generate-plugin-reference.ts` (import the package and list its
+  plugins).
+
+The lists the check reads are the `registration` data in
+`foundry.config.ts`; the docs site (`packages/website`) is exempt.
+
 ## PRs
 
 - Branch off `main`; PRs squash-merge.
@@ -65,7 +89,7 @@ fold (no `let`, no loop statements), absence is `Option`, union branching is
 
 The framework packages are published from a maintainer's terminal; there is
 no release automation, and publishing needs explicit sign-off. All 19
-publishable packages share one version (`0.14.0` in the sources) and are
+publishable packages (`names` in `scripts/build-packages.ts`) share one version (`0.14.0` in the sources) and are
 published under npm's `latest` tag. The previously published `efferent`,
 `@xandreed/cli` and `@xandreed/sdk-*` packages are a frozen earlier line.
 

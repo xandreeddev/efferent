@@ -6,11 +6,12 @@ import { ConfigError, WorkspaceError } from "../domain/Errors.js"
 import type { Finding } from "../domain/Finding.js"
 import { GateSuiteConfig } from "../domain/Rules.js"
 import type { Gate, Workspace } from "../ports/Gate.js"
-import { BaselineFile, diffAgainstBaseline, fingerprint } from "../domain/baseline.js"
+import { BaselineFile, baselineRefusal, diffAgainstBaseline, fingerprint } from "../domain/baseline.js"
 import type { FingerprintedFinding } from "../domain/baseline.js"
 import { runPipeline } from "../pipeline/runPipeline.js"
 import { makeBoundariesGate } from "../gates/boundariesGate.js"
 import { makeIdiomGate } from "../gates/idiomGate.js"
+import { makeRegistrationGate } from "../gates/registrationGate.js"
 import type { IdiomRule } from "../gates/idiomGate.js"
 import { decodeRegistry } from "../gates/rules/custom.js"
 import { makeTypecheckGate } from "../gates/typecheckGate.js"
@@ -23,7 +24,8 @@ export interface CheckArgs {
   readonly updateBaseline: boolean
   /** `--update-baseline` is SHRINK-ONLY by default — grandfathering a NEW
    *  finding requires this explicit flag (the ratchet must never grow by
-   *  accident in a routine re-mint). */
+   *  accident in a routine re-mint), and growing prints a warning: a
+   *  profile with `baseline: "empty"` refuses the grown file. */
   readonly allowGrow?: boolean
 }
 
@@ -79,6 +81,10 @@ export const gatesFromConfig = (
   ...Option.match(config.boundaries, {
     onNone: () => [] as ReadonlyArray<Gate<TsProject>>,
     onSome: (layers) => [makeBoundariesGate(layers, config.tsconfig)],
+  }),
+  ...Option.match(config.registration, {
+    onNone: () => [] as ReadonlyArray<Gate<TsProject>>,
+    onSome: (registration) => [makeRegistrationGate(config, registration)],
   }),
   ...(config.typecheck ? [makeTypecheckGate(config.tsconfig)] : []),
 ]
@@ -139,10 +145,20 @@ const writeBaseline = (
     ),
   )
 
+/** The loud part of `--allow-grow`: grandfathered findings vanish from every
+ *  later check, and a zero-baseline profile refuses the file outright. */
+const growWarning = (count: number, baselinePath: string, policy: GateSuiteConfig["baseline"]): string =>
+  [
+    `WARNING: --allow-grow grandfathered ${count} NEW finding${count === 1 ? "" : "s"} into ${baselinePath}; \`foundry check --baseline\` no longer reports ${count === 1 ? "it" : "them"}.`,
+    policy === "empty"
+      ? `WARNING: this profile's baseline must stay empty (baseline: "empty"): the next \`foundry check\`, and so CI, will REFUSE ${baselinePath} until the findings are fixed.`
+      : `WARNING: a profile with baseline: "empty" (a zero-baseline CI) refuses this file; review it as you would the findings.`,
+  ].join("\n")
+
 /**
  * `foundry check`: run the config's gate suite over its workspace. With a
- * baseline, pre-existing findings are grandfathered (the ratchet); without
- * one, any error finding fails.
+ * baseline, pre-existing findings are grandfathered (the ratchet) unless the
+ * profile's baseline must stay empty; without one, any error finding fails.
  */
 export const runCheck = (
   args: CheckArgs,
@@ -156,7 +172,7 @@ export const runCheck = (
         new ConfigError({
           path: args.configPath,
           message:
-            "the config describes no runnable static gates (no rules, no boundaries, typecheck off) — nothing to check",
+            "the config describes no runnable static gates (no rules, no boundaries, no registration, typecheck off) — nothing to check",
         }),
       )
     }
@@ -174,7 +190,9 @@ export const runCheck = (
           const errors = report.failures.flatMap((v) => v.findings)
           const entries = yield* fingerprintFindings(errors, rootDir)
           const baseline = yield* readBaseline(baselinePath)
-          const diff = diffAgainstBaseline(entries, baseline)
+          // An empty-baseline profile grandfathers nothing, whatever the file holds.
+          const grandfathered = config.baseline === "empty" ? new Set<string>() : baseline
+          const diff = diffAgainstBaseline(entries, grandfathered)
           if (args.updateBaseline) {
             if (diff.fresh.length > 0 && args.allowGrow !== true) {
               yield* Effect.sync(() => {
@@ -186,18 +204,24 @@ export const runCheck = (
               return 1
             }
             yield* writeBaseline(baselinePath, diff.current)
-            yield* Effect.sync(() =>
-              console.log(`baseline updated: ${diff.current.length} grandfathered findings → ${baselinePath}`),
-            )
+            yield* Effect.sync(() => {
+              console.log(`baseline updated: ${diff.current.length} grandfathered findings → ${baselinePath}`)
+              if (diff.fresh.length > 0) console.error(growWarning(diff.fresh.length, baselinePath, config.baseline))
+            })
             return 0
           }
+          const refusal = baselineRefusal(config.baseline, baselinePath, baseline)
           yield* Effect.sync(() => {
             console.log(
-              `baseline: ${baseline.size} grandfathered · ${diff.fresh.length} NEW finding${diff.fresh.length === 1 ? "" : "s"}`,
+              `baseline: ${grandfathered.size} grandfathered · ${diff.fresh.length} NEW finding${diff.fresh.length === 1 ? "" : "s"}`,
             )
             diff.fresh.forEach((entry) => console.log(`  ${renderFindingLine(entry.finding)}`))
+            Option.toArray(refusal).forEach((finding) => {
+              console.log(`  ${renderFindingLine(finding)}`)
+              Option.toArray(finding.fixHint).forEach((hint) => console.log(`    fix: ${hint}`))
+            })
           })
-          return diff.fresh.length > 0 ? 1 : 0
+          return diff.fresh.length > 0 || Option.isSome(refusal) ? 1 : 0
         }),
     })
   })

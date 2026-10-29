@@ -59,7 +59,16 @@ a check that is green before any work cannot measure the work.
 Legacy findings live in a committed **baseline** that may only shrink. A new
 finding anywhere fails the build outright; fixing an old one and forgetting
 to shrink the baseline also fails. The repo's baseline is **empty** — every
-rule holds everywhere — and CI runs foundry's gates on foundry's own source.
+rule holds everywhere — and the repo profile declares that it stays so
+(`baseline: "empty"`): a baseline that holds a fingerprint fails the build,
+so `--update-baseline --allow-grow` cannot grandfather a finding past CI.
+CI also runs foundry's gates on foundry's own source.
+
+A **registration** gate closes the other silent gap: a package is gated,
+built and published only once it is listed by hand, so every package must
+appear in each list the profile names (its rules, a boundaries layer, the
+build's package list, the tsconfig paths, the plugin reference), and the
+build fails naming the list a package is missing from.
 
 ## Lessons — deterministic memory
 
