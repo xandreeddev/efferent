@@ -11,7 +11,7 @@ import type { MemoryPolicy } from "./memory-session.js"
 
 const policy: MemoryPolicy = {
   strategy: { id: "test", version: "1" },
-  render: { turnContext: "current", replies: true, digests: true, media: { mode: "none", maxImages: 0 } },
+  render: { turnContext: "current", replies: true, digests: true, media: { mode: "none", maxImages: 0, maxChars: 0 } },
   digestOnWrite: Option.some(() => true),
   maintain: () => Effect.succeed({ actions: [], digest: [] }),
 }

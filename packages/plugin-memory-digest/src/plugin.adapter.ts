@@ -1,5 +1,5 @@
 import { Effect, Layer, Option, Schema } from "effect"
-import { definePlugin, HarnessError, ResultDigester, UtilityLlm } from "@xandreed/core"
+import { definePlugin, HarnessError, ResultDigester, userMessageText, UtilityLlm } from "@xandreed/core"
 import type { DigestOutcome, DigestTask } from "@xandreed/core"
 
 export const MemoryDigestConfig = Schema.Struct({
@@ -17,14 +17,14 @@ const clip = (text: string, max: number): string => text.length <= max ? text : 
 export const digestPrompt = (task: DigestTask, maxSourceChars: number): string => task.mode === "select"
   ? [
     task.instructions,
-    `Request: ${task.userMessage.text}`,
+    `Request: ${userMessageText(task.userMessage)}`,
     "Items:",
     ...task.items.map((item) => `[${item.key}] ${clip(item.text, Math.max(200, Math.floor(maxSourceChars / Math.max(1, task.items.length))))}`),
     "Reply with the keys of the items to keep, one per line, and nothing else.",
   ].join("\n\n")
   : [
     task.instructions,
-    `Request: ${task.userMessage.text}`,
+    `Request: ${userMessageText(task.userMessage)}`,
     `Result:\n${clip(task.source, maxSourceChars)}`,
     "Reply with the summary only.",
   ].join("\n\n")

@@ -80,7 +80,7 @@ dry run unless `--publish` is passed (see [publishing](../CONTRIBUTING.md#publis
 
 ## Agent-loop trace content
 
-The loop retains provider-neutral `engine.run` and `engine.turn` spans. Each step has its one-based `engine.step`, selected tool names, finish reason and measured token usage. `captureTraceContent: true` explicitly enables `engine.step.input` (the exact Effect prompt and active tools) and `engine.step.output` (model/tool response content and usage). Content capture is disabled by default; hosts own consent, masking and exporter retention, and can map these attributes into their observability backend without changing the loop protocol.
+The loop retains provider-neutral `engine.run` and `engine.turn` spans. Each step has its one-based `engine.step`, selected tool names, finish reason and measured token usage. `captureTraceContent: true` explicitly enables `engine.step.input` (the exact Effect prompt and active tools) and `engine.step.output` (model/tool response content and usage). Content capture is disabled by default; hosts own consent, masking and exporter retention, and can map these attributes into their observability backend without changing the loop protocol. An image is never traced: a prompt's `file` part keeps its media type and the length of its data, a `Media` value its fingerprint.
 
 ```ts
 runLoop({
@@ -334,9 +334,11 @@ begins through the `Sessions` in its services and ends. With `resumes: n`
 the turn resumes turn `n`, a turn that was cancelled or interrupted, and
 its key defaults to `resume:<n>` (see [resuming a turn](#resuming-a-turn)). A
 turn that cannot begin fails with the reason as its code (`session.busy`,
-`turn.duplicate`, `turn.key-conflict`, `turn.not-resumable`, `turn.refused`; all of them are
-`turnBeginCodes` from `@xandreed/sdk`, with suggested HTTP statuses in the
-[event reference](event-reference.md#begin-codes)); a turn someone else
+`turn.duplicate`, `turn.key-conflict`, `turn.not-resumable`, `turn.refused`,
+`turn.attachment-rejected` for an image the turn cannot take, see
+[Images and multi-part messages](#images-and-multi-part-messages); all of
+them are `turnBeginCodes` from `@xandreed/sdk`, with suggested HTTP statuses
+in the [event reference](event-reference.md#begin-codes)); a turn someone else
 closes (a cancel, a reaped lease, a removed session) fails with
 `turn.closed`.
 
@@ -379,9 +381,12 @@ before taking the exit so a `HarnessError` carried as a defect keeps its
 code.
 
 A prompt is text sent to a model; the user's message is a `UserMessage` value
-(`new UserMessage({ text })`, never blank), and every field or parameter holding
-it is named `userMessage`. The memory log stores it as text under its original
-`prompt` key, so existing logs decode and their fingerprints do not change.
+(`new UserMessage({ text, attachments })`: text, images or both, never
+nothing), and every field or parameter holding it is named `userMessage`. The
+memory log stores its text under the original `prompt` key and its images,
+only when it has some, under `attachments`, so existing logs decode and their
+fingerprints do not change. See [Images and multi-part
+messages](#images-and-multi-part-messages).
 
 **Per-turn host services.** `input.layer` is a layer the turn builds inside
 its scope, after `RunContext`, `TurnEvents` and `TurnTasks` exist, so it may
@@ -511,7 +516,9 @@ Digests of several results run concurrently (`MemoryPolicy.digestConcurrency`,
 four by default) and are recorded in the order of their results.
 
 A tool owns how its result appears: `render`, `compact`, `subjects`,
-`artifacts` (image and file references, rendered as references for now) and
+`artifacts` (image and file references by URL, always rendered as reference
+lines; an image the model is to see is a `Media` value, see [Images and
+multi-part messages](#images-and-multi-part-messages)) and
 an optional `digest`. A `Select` digest keeps whole items by key and
 re-renders them, so every identifier an answer may cite survives. A
 `Summarize` digest is accepted only when every `preserve`d identifier appears
@@ -852,8 +859,112 @@ checks a composition: the writer first, the message before the matcher's
 history, the reply and the turn's end exactly once on success, failure and
 interrupt, tasks joined before the reply, a model-driven turn's
 `TurnResult.usage` equal to its stored `step.usage` records (`turnUsageOf`),
-and the host layer seeing only
+the user's attachments stored with the turn and reaching its first request
+as image parts, and the host layer seeing only
 earlier turns.
+
+## Images and multi-part messages
+
+A user's message can carry images: `new UserMessage({ text, attachments })`,
+with at most `MEDIA_LIMITS.attachments` `Media` values. The text may be empty
+when there is an image; a message with neither is refused. A `Media` is one
+image, inline: `{ type: "media", mediaType, data, fingerprint, bytes, name?,
+alt? }`, `data` being padded base64 without a `data:` prefix and
+`fingerprint` a content hash of the bytes (not cryptographic). Build one with
+the constructors, which check the bytes:
+
+```ts
+import { mediaFromBase64, mediaFromBytes, UserMessage } from "@xandreed/core"
+
+const shot = yield* mediaFromBytes(bytes, { name: "form.png", alt: "the failing form" })
+const pasted = yield* mediaFromBase64(dataUrl) // a data: URL, or base64 with line breaks
+const userMessage = new UserMessage({ text: "What is wrong here?", attachments: [shot, pasted] })
+yield* agent.turn({ turn: { session, userMessage, runId }, services }, use)
+```
+
+The media type is the one the bytes are (PNG, JPEG, GIF or WebP), whatever a
+`data:` prefix or the caller says, and the image's size is read from its
+header. A refusal is `AttachmentRejected` with a `reason`: `Empty`,
+`InvalidBase64`, `UnsupportedType`, `TooLarge`, `TooManyPixels`,
+`Unreadable` (a header without a size) or `TooLargeTogether`, and, when one
+image is at fault, its `index`. More than `MEDIA_LIMITS.attachments` images
+fail earlier, when the `UserMessage` is constructed or decoded (a schema
+error); `TooMany` is only for a value that skipped that check. `Agent.turn`
+turns a refusal into a `HarnessError` (`turn.attachment-rejected`) whose
+message holds the reason; a host that wants it typed (to answer 413 for
+`TooLarge` and `TooLargeTogether`, say) runs `normalizeUserMessage` on the
+message itself before the turn and branches on `AttachmentRejected.reason`.
+
+| `MEDIA_LIMITS` | Value | What it bounds |
+|---|---|---|
+| `imageBytes` | 3 932 160 (3.75 MiB, 5 242 880 base64 characters) | one image's bytes |
+| `maxPixels` | 8000 | either side of one image |
+| `attachments` | 8 | images on one user message |
+| `requestImages` | 8 | images one request sends as images, whatever `maxImages` says; the memory plugins' default `maxImages` |
+| `requestChars` | 20 000 000 | base64 of one message's images together; the memory plugins' default (and largest) `maxMediaChars` |
+| `toolResultImages` | 4 | images one tool result may carry (reserved: tools cannot return images yet) |
+
+**Begin.** `Sessions.begin` normalises the message before anything else
+(`normalizeUserMessage`): each image's type, size and fingerprint are taken
+again from its data, and the images together must stay within
+`requestChars`. That value is what the session stores in `turn.started`, what
+the turn's `admitted.userMessage` holds and what a retried key is compared
+with: a retry with the same images is the same turn (`TurnDuplicate`), even
+when the host's `Media` values were not normalised; other images under the
+key are a `KeyConflict`. `Agent.turn` checks the attachments the same way
+before it begins a turn, whatever `Sessions` the turn's services hold, and
+fails with `turn.attachment-rejected`. A message without text gives the
+session no title.
+
+**Storage.** Images are stored inline, once: in the turn's `turn.started`,
+under `userMessage.attachments` (the memory log's `TurnStarted` entry is
+that event). A text-only message is stored exactly as before. A session
+grows by up to about 5 MB per image, and each turn reads the session's
+images back with its memory, so a long session of images is a heavy one. A
+`SessionLog` must hold an event of `requestChars` base64 characters;
+`sessionLogConformance` checks one.
+
+**What the model sees.** The memory plugins' `media` option decides. The
+current turn's attachments are sent as images first, while they fit: the
+images, then the text (an empty text part is left out). With `none`, the
+default, an earlier turn's image is a label line, `[image omitted:
+image/png, 182 KB, form.png: the failing form]`. With `inline`, earlier
+turns' images are sent too, newest turn first and a whole turn at a time,
+until one does not fit. All of them stay within `maxImages` images (never
+more than `MEDIA_LIMITS.requestImages`) and `maxMediaChars` base64
+characters; an image that does not fit is a label line. With the defaults
+(`maxImages` and `attachments` both 8, `maxMediaChars` the same
+`requestChars` a message's images are held to) a message's own images
+always fit; `maxMediaChars: 0` sends no image at all, for a host whose
+models read text only. What is sent changes only when a turn starts, so
+a provider's prompt cache holds within a turn. An image counts as
+`IMAGE_TOKEN_ESTIMATE` (1 600) tokens in memory's estimates, and the context
+fingerprint hashes its fingerprint, not its data. A request's render recipe
+records the budget (`media.maxChars`; a header from before reads
+`requestChars`), so replays and dispatch checks rebuild the same images.
+
+The step loop sends an image as an effect/ai `file` part:
+
+| Route | Images |
+|---|---|
+| `anthropic` (Messages API) | image blocks |
+| `openai`, `openai-codex`, OpenCode `gpt-*` (Responses API) | `input_image` |
+| OpenCode's other models, `google` and configured endpoints (chat completions) | not sent yet: the message's text, then a label line per image |
+
+**Text views.** Transcripts (`raw`, `reference`), digests, ledgers and
+summaries read a message as `userMessageText`: its text, then one label line
+per image. `queryLog` searches with each image's data elided
+(`elideMediaData`). The bus and stored `turn.started` carry the images'
+base64: elide them before streaming events to a browser. The skill
+matcher's decision hash adds the images' fingerprints only when there are
+some.
+
+**Compatibility.** Logs written before decode unchanged, a whitespace-only
+message included. A 0.13 reader of a newer log drops the images it does not
+know, fails on a message without text, and a replay of a request with images
+diverges there (`request.diverged`).
+
+Tools cannot return images yet; an `ArtifactRef` stays a reference by URL.
 
 ## Sessions: one log per session
 
@@ -876,7 +987,9 @@ background tasks. Two layers split the work:
   so instances sharing them need clocks in step; a host's own store may read
   its database server's clock instead.
   `sessionLogConformance(log)` checks all of it, including that one of many
-  concurrent commits wins. `sessionLogRecoveryConformance({ open,
+  concurrent commits wins and that an event as large as a message's images
+  at their limit (`MEDIA_LIMITS.requestChars` base64 characters) comes back
+  whole. `sessionLogRecoveryConformance({ open,
   callerClock })` checks, inside one process, what must survive handles,
   reopening and interruption: `open` opens
   a new handle on the same data each time (scoped), and the kit checks that

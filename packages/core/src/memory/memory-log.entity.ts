@@ -1,7 +1,8 @@
-import { Schema } from "effect"
+import { Schema, SchemaTransformation } from "effect"
+import { Media } from "../domain/media.entity.js"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
 import { DecisionId } from "../decision-record.entity.js"
-import { UserMessageFromString } from "../turn/user-message.entity.js"
+import { UserMessage } from "../turn/user-message.entity.js"
 
 /**
  * The conversation memory log — the single source every model request is
@@ -23,7 +24,12 @@ export const Subject = Schema.Struct({
 })
 export type Subject = typeof Subject.Type
 
-/** A file or image a tool result carries, kept by reference (never inlined in the log). */
+/**
+ * A file or image a tool result points to by URL: the log keeps the
+ * reference, never the content, and every render shows it as a reference
+ * line, whatever the media mode. An image the model is to see is a `Media`
+ * value, stored inline.
+ */
 export const ArtifactRef = Schema.Struct({
   id: Schema.Trimmed.check(Schema.isNonEmpty()),
   kind: Schema.Literals(["image", "file"]),
@@ -48,6 +54,13 @@ export type CompactionAction = typeof CompactionAction.Type
 export const ActivationSource = Schema.Literals(["always", "matcher", "load_skill", "host"])
 export type ActivationSource = typeof ActivationSource.Type
 
+/** A TurnStarted body as stored: the text under `prompt`, the images (when there are some) under `attachments`. */
+const StoredTurnStarted = Schema.Struct({
+  _tag: Schema.Literal("TurnStarted"),
+  prompt: Schema.String,
+  attachments: Schema.optionalKey(Schema.Array(Schema.toEncoded(Media))),
+})
+
 export const LogBody = Schema.Union(
   [Schema.TaggedStruct("SystemPrepared", {
     fingerprint: Schema.String,
@@ -55,13 +68,21 @@ export const LogBody = Schema.Union(
     sections: Schema.Array(Schema.Struct({ id: Schema.String, version: Schema.String, fingerprint: Schema.String })),
   }),
   /**
-   * The user's message, stored as plain text under its original key
-   * `prompt`: existing logs decode unchanged and an entry's canonical bytes
-   * (and so every fingerprint and cache key) stay the same.
+   * The user's message, stored with its text under the original key
+   * `prompt` and its images, only when it has some, under `attachments`: a
+   * text-only message is stored exactly as before, so existing logs decode
+   * unchanged and an entry's canonical bytes (and so every fingerprint and
+   * cache key) stay the same.
    */
-  Schema.TaggedStruct("TurnStarted", { userMessage: UserMessageFromString }).pipe(
-    Schema.encodeKeys({ userMessage: "prompt" }),
-  ),
+  StoredTurnStarted.pipe(Schema.decodeTo(
+    Schema.TaggedStruct("TurnStarted", { userMessage: UserMessage }),
+    SchemaTransformation.transform({
+      decode: ({ prompt, attachments }) => ({ _tag: "TurnStarted" as const, userMessage: attachments === undefined ? { text: prompt } : { text: prompt, attachments } }),
+      encode: ({ userMessage }) => userMessage.attachments === undefined
+        ? { _tag: "TurnStarted" as const, prompt: userMessage.text }
+        : { _tag: "TurnStarted" as const, prompt: userMessage.text, attachments: userMessage.attachments },
+    }),
+  )),
   Schema.TaggedStruct("TurnContext", { sectionId: Schema.String, version: Schema.String, text: Schema.String }),
   Schema.TaggedStruct("Message", { message: AgentMessage }),
   Schema.TaggedStruct("ToolResult", {

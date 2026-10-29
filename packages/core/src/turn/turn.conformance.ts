@@ -1,10 +1,11 @@
 import { LanguageModel } from "effect/ai"
-import type { Response } from "effect/ai"
+import type { Prompt, Response } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Stream } from "effect"
 import type { Scope } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { sameUsage } from "../conformance.functions.js"
+import { pixelPng, sameUsage } from "../conformance.functions.js"
+import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { addUsage, tokenUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
@@ -71,8 +72,9 @@ const billedTotal = (count: number) => Array.from({ length: count }, (_, index) 
  * is in memory before the matcher reads the history; the reply is recorded
  * and the turn ended exactly once on success, failure and interrupt; tasks
  * are joined before the reply; a model-driven turn's `TurnResult.usage` is
- * what its stored `step.usage` records sum to (`turnUsageOf`); and the host
- * layer sees only earlier turns.
+ * what its stored `step.usage` records sum to (`turnUsageOf`); the user's
+ * attachments reach the first request as image parts; and the host layer
+ * sees only earlier turns.
  *
  * `runner` is acquired afresh for each check. `services` are merged into
  * every turn's services (the model, the `Sessions` the turns begin with, and
@@ -82,6 +84,9 @@ const billedTotal = (count: number) => Array.from({ length: count }, (_, index) 
  * with the kit's own model, which answers with text only, under a policy
  * that completes after the first reply (`requireCompletion: false`, a
  * complete verdict); its expected counts follow the calls the model answered.
+ * The attachments check runs the loop once with a model of its own that
+ * records each request; it needs the composition's memory to admit one small
+ * image (the memory plugins' defaults do; `maxMediaChars: 0` does not).
  */
 export const turnConformance = (
   runner: Effect.Effect<TurnRunner, HarnessError, Scope.Scope>,
@@ -186,6 +191,33 @@ export const turnConformance = (
       const calls = yield* billing.calls
       yield* expect("usage", calls >= 2 && sameUsage(result.usage, billedTotal(calls)),
         `the turn's usage lost the provider's counts: ${JSON.stringify(result.usage)} for ${calls} model calls, which reported ${JSON.stringify(billedTotal(calls))}`)
+    })),
+    check("the user's attachments are stored with the turn and reach the first request as image parts", "attachments", (turns, session) => Effect.gen(function* () {
+      const image = yield* mediaFromBase64(pixelPng, { name: "pixel.png" }).pipe(
+        Effect.mapError((error) => new ConformanceFailure({ check: "attachments", message: error.message })),
+      )
+      const requests = yield* Ref.make<ReadonlyArray<Prompt.Prompt>>([])
+      const model = yield* LanguageModel.make({
+        generateText: (options) => Ref.update(requests, (all) => [...all, options.prompt]).pipe(Effect.as<Array<Response.PartEncoded>>([
+          { type: "text", text: "a pixel" },
+          { type: "finish", reason: "stop", usage: billedCall(0) },
+        ])),
+        streamText: () => Stream.die("the conformance model does not stream"),
+      })
+      const userMessage = new UserMessage({ text: "what is this?", attachments: [image] })
+      yield* turns.turn({ turn: { session: session.address, userMessage, runId: "run-1" }, services: Context.make(LanguageModel.LanguageModel, model) }, (turn) =>
+        turn.run({
+          limits: { streaming: false, maxSteps: 1, requireCompletion: false },
+          completion: () => Effect.succeed({ complete: true, awaiting: [], facts: {} }),
+        }).pipe(Effect.map((result) => ({ outcome: "completed" as const, reply: Option.some(result.text) }))))
+      const first = (yield* Ref.get(requests))[0]
+      yield* expect("attachments", first !== undefined, "the turn made no request")
+      const files = (first?.content ?? []).flatMap((message) => message.role === "user"
+        ? message.content.flatMap((part) => part.type === "file" ? [part] : []) : [])
+      yield* expect("attachments", files.some((part) => part.mediaType === image.mediaType && part.data === image.data),
+        `the first request carried ${files.length} file parts, none of them the attached ${image.mediaType}`)
+      const started = (yield* stored(session)).find((event) => event.kind === "turn.started" && event.data.runId === "run-1")
+      yield* expect("attachments", JSON.stringify(started?.data.userMessage ?? null).includes(image.fingerprint), "the stored turn.started does not hold the attachment")
     })),
     check("the host layer is built before the message: it sees only earlier turns", "layer-before-message", (turns, session) => Effect.gen(function* () {
       const seen = yield* Ref.make<ReadonlyArray<string>>([])

@@ -6,7 +6,7 @@ import { WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
 const config = {
   compactPreviousTurn: true, turnContext: "current" as const, replies: true, spillMinChars: 100, previewChars: 20, ledgerTurnChars: 40,
-  digestOnWriteChars: 0, digests: true, media: "none" as const, maxImages: 8,
+  digestOnWriteChars: 0, digests: true, media: "none" as const, maxImages: 8, maxMediaChars: 20_000_000,
 }
 const views: ToolViews = {
   view: (_tool, encoded) => Effect.succeed({ text: String(encoded), version: "1", subjects: [], artifacts: [], pinned: false }),

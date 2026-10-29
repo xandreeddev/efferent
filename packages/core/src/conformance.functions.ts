@@ -18,6 +18,9 @@ export const expect = (check: string, holds: boolean, message: string): Effect.E
 export const sameUsage = (a: TokenUsage, b: TokenUsage): boolean =>
   (Object.keys(zeroUsage) as ReadonlyArray<keyof TokenUsage>).every((key) => a[key] === b[key])
 
+/** A 1x1 PNG, as base64: the image the kits attach. */
+export const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+
 /** A fresh id per session, so a kit can run against a shared store. */
 export const freshId = Effect.sync(() => ConversationId.make(crypto.randomUUID()))
 

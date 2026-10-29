@@ -30,13 +30,13 @@ There are two kinds of events. The **bus** carries a turn's typed events (`TurnE
 
 ### `turn.started`
 
-Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said, `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model), and `resumes`, present only on a turn that resumes an earlier one, is that turn's number. Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` and `resumes` only when they were given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.
+Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said (as the session stored it: its images, inline as base64, normalised), `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model), and `resumes`, present only on a turn that resumes an earlier one, is that turn's number. Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` and `resumes` only when they were given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.
 
 | Field | Type |
 | --- | --- |
 | `runId` | `string` |
 | `turn` | `integer` |
-| `userMessage` | `{ text }` |
+| `userMessage` | `{ text, attachments }` |
 | `meta` | `object` |
 | `resumes` | `integer` (optional) |
 
@@ -198,7 +198,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 
 | Kind | Written by | Sensitive content | Fields |
 | --- | --- | --- | --- |
-| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message, the host's command and the host's metadata (`meta`), when given. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `entry`, `at`, `meta`, `resumes` |
+| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message (its images, inline as base64, included), the host's command and the host's metadata (`meta`), when given. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `entry`, `at`, `meta`, `resumes` |
 | `memory.system` | Memory, when the turn's system prompt (or a variant) changes | The full system prompt text. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.section` | Memory: `turn.context(…)` and turn-tier prompt sections | Turn sections: the host's context for this turn, as the model sees it. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.step` | Memory: the step policy's step context | Step context text. | `entry`, `runId`, `step`, `at`, `body` |
@@ -268,10 +268,11 @@ inbox.dropped
 
 ## Begin codes
 
-When `Agent.turn` begins the turn itself and `Sessions.begin` refuses it, the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/sdk`). The HTTP status is a suggestion for a host serving turns over HTTP.
+When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/sdk`). The HTTP status is a suggestion for a host serving turns over HTTP.
 
 | Begin error | Code | Suggested HTTP status | Meaning |
 | --- | --- | --- | --- |
+| `AttachmentRejected` | `turn.attachment-rejected` | 400 | An attachment of the user's message is not an image the framework takes (not base64, not a PNG, JPEG, GIF or WebP, over the size or pixel limits, too large together; see `MEDIA_LIMITS`). `Agent.turn` checks before it calls `Sessions.begin`: nothing was opened. The `HarnessError` carries the reason only in its message; a host that wants it typed (to answer 413 for `TooLarge` and `TooLargeTogether`, or name the attachment by its `index`) runs `normalizeUserMessage` from `@xandreed/core` on the message first and branches on `AttachmentRejected.reason`. |
 | `SessionBusy` | `session.busy` | 409 | Another turn is open in the session. Retry after it ends, or queue the message. |
 | `TurnDuplicate` | `turn.duplicate` | 200 once that turn ended, 409 while it is open | The key was begun before with the same message, command and `resumes`: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it). |
 | `KeyConflict` | `turn.key-conflict` | 409 | The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts). |

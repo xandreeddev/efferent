@@ -6,11 +6,13 @@ import {
   harnessDefectsAsFailures,
   InboxFull,
   KeyConflict,
+  normalizeUserMessage,
   NothingPending,
   NotResumable,
   RESERVED_KINDS,
   resumeRefusal,
   ReservedKind,
+  sameUserMessage,
   SessionBusy,
   SessionLog,
   SessionLogError,
@@ -27,6 +29,7 @@ import {
 } from "@xandreed/core"
 import type {
   AdmittedTurn,
+  AttachmentRejected,
   BeginTurn,
   InboxItem,
   JsonObject,
@@ -215,7 +218,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         if (Option.isSome(previous)) {
           const started = yield* turnStartedOf(previous.value.event).pipe(Effect.mapError(storage("session.decode")))
           // The key's fingerprint is the message, the command and the turn resumed, never `meta`: a retry with other metadata is the same turn.
-          const same = started.userMessage.text === input.userMessage.text && canonicalJson(started.command) === canonicalJson(input.command)
+          const same = sameUserMessage(started.userMessage, input.userMessage) && canonicalJson(started.command) === canonicalJson(input.command)
             && started.resumes === input.resumes
           return yield* Effect.fail(same
             ? new TurnDuplicate({ session: address.id, turn: previous.value.turn, open: Option.exists(state.open, (open) => open.turn === previous.value.turn) })
@@ -243,7 +246,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         ...state,
         turns: turn,
         open: Option.some(open),
-        title: Option.orElse(state.title, () => input._tag === "User" ? Option.some(titleOf(input.userMessage.text, config.titleChars)) : Option.none()),
+        title: Option.orElse(state.title, () => input._tag === "User" && input.userMessage.text.length > 0 ? Option.some(titleOf(input.userMessage.text, config.titleChars)) : Option.none()),
         inbox: state.inbox.map((slot) => waiting.includes(slot.id) ? { ...slot, claimedBy: Option.some(turn) } : slot),
       }
       const starting = yield* turnStartedDraft(turn, {
@@ -278,7 +281,20 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     return open
   }))
 
-  const begin = (address: SessionAddress, input: BeginTurn) => openTurn(address, input).pipe(Effect.map((open) => open.writer))
+  /**
+   * A user's message normalised once, before anything else: the key's
+   * comparison with an earlier turn, the stored `turn.started` and
+   * `admitted` all use this value, so a retry with the same images is the
+   * same turn and memory takes exactly what was stored.
+   */
+  const normalized = (input: BeginTurn): Effect.Effect<BeginTurn, AttachmentRejected> => input._tag === "User"
+    ? normalizeUserMessage(input.userMessage).pipe(Effect.map((userMessage) => ({ ...input, userMessage })))
+    : Effect.succeed(input)
+
+  const begin = (address: SessionAddress, input: BeginTurn) => normalized(input).pipe(
+    Effect.flatMap((ready) => openTurn(address, ready)),
+    Effect.map((open) => open.writer),
+  )
 
   /** Close this instance's writer of a session, if it holds `turn` (or any turn). */
   const closeLocal = (id: string, reason: "cancelled" | "removed", turn: Option.Option<number>) => Ref.get(writers).pipe(Effect.flatMap((all) =>

@@ -11,8 +11,34 @@ export {
   ToolCallPart,
   ToolMessage,
   ToolResultPart,
+  UserContentPart,
   UserRoleMessage,
 } from "./domain/message.entity.js"
+export {
+  AttachmentRejected,
+  AttachmentRejectedReason,
+  ImageMediaType,
+  Media,
+  MEDIA_LIMITS,
+  MediaFingerprint,
+  MediaSlot,
+} from "./domain/media.entity.js"
+export {
+  base64Length,
+  elideMediaData,
+  IMAGE_TOKEN_ESTIMATE,
+  imageSizeOf,
+  isMediaValue,
+  mediaAt,
+  mediaFingerprintOf,
+  mediaFromBase64,
+  mediaFromBytes,
+  mediaLabel,
+  mediaSlotsOf,
+  normalizeMedia,
+  sniffImageType,
+} from "./domain/media.entity.functions.js"
+export type { ImageSize, MediaDescription } from "./domain/media.entity.functions.js"
 export { Failure } from "./domain/failure.entity.js"
 export { toFailure } from "./domain/failure.entity.functions.js"
 export { AgentFailure, AgentFailureCategory } from "./domain/agent-failure.entity.js"
@@ -175,6 +201,7 @@ export * from "./ports/tool-registry.port.js"
 
 // the host-composed turn: the user's message, typed events, background tasks, the step loop and the turn
 export * from "./turn/user-message.entity.js"
+export { attachmentsOf, normalizeUserMessage, sameUserMessage, userMessageText } from "./turn/user-message.entity.functions.js"
 export * from "./turn/turn-event.entity.js"
 export * from "./turn/turn-event.entity.functions.js"
 export * from "./turn/model-request.entity.js"

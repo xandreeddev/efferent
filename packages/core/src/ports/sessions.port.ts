@@ -1,5 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope, Stream } from "effect"
+import type { AttachmentRejected } from "../domain/media.entity.js"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { JsonObject, SessionExists, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "../session/session-log.entity.js"
@@ -156,9 +157,13 @@ export class Sessions extends Context.Service<Sessions, {
    * `NotResumable` (`missing`) before anything else, the admission included.
    * `resumes` is stored in `turn.started`, shown on `admitted` and part of
    * the key's fingerprint.
+   * A user message is normalised first (`normalizeUserMessage`), before
+   * anything else: an image its bytes do not support fails with
+   * `AttachmentRejected`, and the normalised message is what is stored,
+   * admitted and compared with an earlier turn of the same key.
    */
   readonly begin: (address: SessionAddress, input: BeginTurn) =>
-    Effect.Effect<TurnWriter, SessionBusy | TurnDuplicate | KeyConflict | NothingPending | NotResumable | TurnRefused | SessionMissing | SessionLogError, Scope.Scope>
+    Effect.Effect<TurnWriter, AttachmentRejected | SessionBusy | TurnDuplicate | KeyConflict | NothingPending | NotResumable | TurnRefused | SessionMissing | SessionLogError, Scope.Scope>
   /** Put an item in the inbox (once per id); `pending` counts what waits after it. */
   readonly deliver: (address: SessionAddress, item: InboxItem) =>
     Effect.Effect<{ readonly delivered: boolean; readonly pending: number }, InboxFull | SessionMissing | SessionLogError>

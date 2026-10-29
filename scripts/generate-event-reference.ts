@@ -24,7 +24,7 @@ const fail = (message: string) => failures.push(message)
 
 /** Who writes each reserved kind, and what a host must treat as sensitive in it. */
 const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensitive: string }>> = {
-  "turn.started": { writer: "plugin-sessions, when `Sessions.begin` opens the turn", sensitive: "The user's message, the host's command and the host's metadata (`meta`), when given." },
+  "turn.started": { writer: "plugin-sessions, when `Sessions.begin` opens the turn", sensitive: "The user's message (its images, inline as base64, included), the host's command and the host's metadata (`meta`), when given." },
   "memory.system": { writer: "Memory, when the turn's system prompt (or a variant) changes", sensitive: "The full system prompt text." },
   "memory.section": { writer: "Memory: `turn.context(…)` and turn-tier prompt sections", sensitive: "Turn sections: the host's context for this turn, as the model sees it." },
   "memory.step": { writer: "Memory: the step policy's step context", sensitive: "Step context text." },
@@ -57,6 +57,7 @@ const RECORDED_AS: Readonly<Record<string, string>> = {
 
 /** A suggested HTTP status for each begin code, for a host that serves turns over HTTP. */
 const BEGIN_HTTP: Readonly<Record<string, { readonly status: string; readonly meaning: string }>> = {
+  AttachmentRejected: { status: "400", meaning: "An attachment of the user's message is not an image the framework takes (not base64, not a PNG, JPEG, GIF or WebP, over the size or pixel limits, too large together; see `MEDIA_LIMITS`). `Agent.turn` checks before it calls `Sessions.begin`: nothing was opened. The `HarnessError` carries the reason only in its message; a host that wants it typed (to answer 413 for `TooLarge` and `TooLargeTogether`, or name the attachment by its `index`) runs `normalizeUserMessage` from `@xandreed/core` on the message first and branches on `AttachmentRejected.reason`." },
   SessionBusy: { status: "409", meaning: "Another turn is open in the session. Retry after it ends, or queue the message." },
   TurnDuplicate: { status: "200 once that turn ended, 409 while it is open", meaning: "The key was begun before with the same message, command and `resumes`: that turn is the answer, so serve its result instead of running again (`Sessions.lookup(address, key)` finds it)." },
   KeyConflict: { status: "409", meaning: "The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts)." },
@@ -288,7 +289,7 @@ const body = (links: { readonly framework: string }) => [
   "A host event, or a `Sessions.transact` draft, may not use these names: the publish fails with `events.reserved`, the transact with `ReservedKind`. The list is matched exactly, not by prefix: other names in these namespaces are accepted, but a host should use its own namespace.",
   fence("text", RESERVED_KINDS.join("\n")),
   "## Begin codes",
-  "When `Agent.turn` begins the turn itself and `Sessions.begin` refuses it, the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/sdk`). The HTTP status is a suggestion for a host serving turns over HTTP.",
+  "When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.begin` refuses it, or, for `AttachmentRejected`, `Agent.turn`'s own check of the attachments before it), the turn fails with a `HarnessError` whose `code` is one of these (`turnBeginCodes` from `@xandreed/sdk`). The HTTP status is a suggestion for a host serving turns over HTTP.",
   table(["Begin error", "Code", "Suggested HTTP status", "Meaning"], beginCodes.map((entry) => [code(entry.tag), code(entry.code), entry.http, entry.meaning])),
   "## Common turn error codes",
   `Besides the begin codes, these are common \`HarnessError\` codes a turn fails with, or that a stored \`turn.ended\` carries in \`failure.code\`. A failed turn's \`turn.ended\` carries the code of the error it failed with (one of these, a plugin's, or a host's own), else \`turn.failed\`, \`turn.defect\` or \`turn.interrupted\` (\`turnEndingOf\` from \`@xandreed/core\`), with the error's message cut to 500 characters; a closer that ends its writer itself stores its own code (plugin-tasks: \`task.turn\`, \`task.deadline\`). The list is not exhaustive: it has every code the packages raise under ${OWNED_PREFIXES.filter((prefix) => prefix !== "task.").map((prefix) => code(`${prefix}*`)).join(", ")} (the generator checks), but other plugins raise codes of their own (a memory strategy's, a store's), and a host's own errors keep their own codes.`,

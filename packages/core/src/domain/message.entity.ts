@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { Media } from "./media.entity.js"
 import { TokenUsage } from "./token-usage.entity.js"
 
 /**
@@ -58,10 +59,19 @@ export const ToolResultPart = Schema.Struct({
 })
 export type ToolResultPart = typeof ToolResultPart.Type
 
-/** A model-visible message in the user role (the user's own words, turn context, host notes). */
+/** One part of a multi-part user message: text, or an image sent inline. */
+export const UserContentPart = Schema.Union([TextPart, Media])
+export type UserContentPart = typeof UserContentPart.Type
+
+/**
+ * A model-visible message in the user role (the user's own words, turn
+ * context, host notes): text, or parts when it carries images (a user's
+ * attachments). Narrow with `typeof content === "string"` before reading it
+ * as text.
+ */
 export const UserRoleMessage = Schema.Struct({
   role: Schema.Literal("user"),
-  content: Schema.String,
+  content: Schema.Union([Schema.String, Schema.Array(UserContentPart)]),
   providerOptions: Schema.optional(Schema.Unknown),
 })
 export type UserRoleMessage = typeof UserRoleMessage.Type

@@ -10,6 +10,7 @@ import {
   harnessDefectsAsFailures,
   HarnessError,
   isBudgetTokens,
+  normalizeUserMessage,
   openTurnTools,
   SessionEnvironment,
   Sessions,
@@ -124,10 +125,14 @@ const entryOf = (item: Plugin | AgentPluginEntry): AgentPluginEntry => "plugin" 
 const isWriter = (turn: TurnWriter | NewTurn): turn is TurnWriter => "admitted" in turn
 
 /**
- * Why a turn could not begin (`Sessions.begin` failed), as the code of the
- * `HarnessError` `Agent.turn` fails with: keyed by the begin error's tag.
+ * Why a turn could not begin (`Sessions.begin` failed, or, for
+ * `AttachmentRejected`, the attachments' check before it), as the code of
+ * the `HarnessError` `Agent.turn` fails with: keyed by the begin error's
+ * tag. An `AttachmentRejected`'s `reason` is in the message only; a host
+ * that branches on it runs `normalizeUserMessage` itself before the turn.
  */
 export const turnBeginCodes = {
+  AttachmentRejected: "turn.attachment-rejected",
   SessionBusy: "session.busy",
   TurnDuplicate: "turn.duplicate",
   KeyConflict: "turn.key-conflict",
@@ -141,14 +146,25 @@ export const turnBeginCodes = {
 /** A new turn's idempotency key: the host's, else `resume:<n>` for a resume of turn `n`, else the run id. */
 const keyOf = (turn: NewTurn): string => turn.key ?? (turn.resumes === undefined ? turn.runId : `resume:${turn.resumes}`)
 
-/** Begin a turn with the Sessions of the turn's services; its writer lives in the turn's scope. */
-const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effect<TurnWriter, HarnessError, Scope.Scope> =>
-  required(context, Sessions).pipe(Effect.flatMap((sessions) => sessions.begin(turn.session, {
-    _tag: "User", userMessage: turn.userMessage, runId: turn.runId, key: keyOf(turn), command: turn.command ?? {},
+/**
+ * Begin a turn with the Sessions of the turn's services; its writer lives in
+ * the turn's scope. The message's attachments are checked first
+ * (`normalizeUserMessage`), whatever Sessions the turn's services hold, and
+ * the normalised message is the one begun.
+ */
+const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effect<TurnWriter, HarnessError, Scope.Scope> => Effect.gen(function* () {
+  const sessions = yield* required(context, Sessions)
+  const userMessage = yield* normalizeUserMessage(turn.userMessage)
+  return yield* sessions.begin(turn.session, {
+    _tag: "User", userMessage, runId: turn.runId, key: keyOf(turn), command: turn.command ?? {},
     ...(turn.meta === undefined ? {} : { meta: turn.meta }),
     ...(turn.resumes === undefined ? {} : { resumes: turn.resumes }),
-  })), Effect.mapError((error) => error instanceof HarnessError ? error : failure(turnBeginCodes[error._tag], error._tag === "NotResumable"
+  })
+}).pipe(Effect.mapError((error) => error instanceof HarnessError ? error
+  : failure(turnBeginCodes[error._tag], error._tag === "NotResumable"
     ? `turn ${error.turn} of session ${turn.session.id} cannot be resumed (${error.reason})`
+    : error._tag === "AttachmentRejected"
+    ? `the turn could not begin (AttachmentRejected, ${error.reason}: ${error.message}) in session ${turn.session.id}`
     : `the turn could not begin (${error._tag}) in session ${turn.session.id}`)))
 
 /** The turn's body, until someone else closes the turn: then the body is interrupted and the turn fails. */

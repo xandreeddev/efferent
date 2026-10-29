@@ -6,7 +6,7 @@ import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import type { AgentMessage, AgentResult } from "@xandreed/core"
-import { addUsage, zeroUsage } from "@xandreed/core"
+import { addUsage, elideMediaData, isMediaValue, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
 import { extractModel, extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core"
@@ -314,6 +314,17 @@ interface LoopState {
   readonly streamingHealthy: boolean
 }
 
+/**
+ * A step's content as a trace attribute: an image is traced by its type,
+ * size and fingerprint, never its bytes (a prompt's `file` part keeps its
+ * type and the length of its data; a `Media` value its fingerprint).
+ */
+const tracedJson = (value: unknown): string => JSON.stringify(value, (_key, field: unknown) =>
+  isMediaValue(field) ? elideMediaData(field)
+    : typeof field === "object" && field !== null && "type" in field && field.type === "file" && "data" in field && typeof field.data === "string"
+      ? { ...field, data: `[${field.data.length} base64 characters]` }
+      : field)
+
 export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
   options: RunLoopOptions<Tools, R>,
 ) =>
@@ -359,7 +370,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
 
         if (options.captureTraceContent === true)
           yield* Effect.annotateCurrentSpan({
-            "engine.step.input": JSON.stringify({ messages: prompt.content, activeTools: toolNames }),
+            "engine.step.input": tracedJson({ messages: prompt.content, activeTools: toolNames }),
           })
 
         const toolSequence = yield* Ref.make(0)
@@ -544,7 +555,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           "engine.step.usage_available": !planned,
           ...(!planned ? { "engine.step.usage": JSON.stringify(usage), ...stepUsageAttributes(usage) } : {}),
           ...(options.captureTraceContent === true
-            ? { "engine.step.output": JSON.stringify({ content, usage, finishReason: outcome.finishReason }) }
+            ? { "engine.step.output": tracedJson({ content, usage, finishReason: outcome.finishReason }) }
             : {}),
         })
         const model = extractModel(content)

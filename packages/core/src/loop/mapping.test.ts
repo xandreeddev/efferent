@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Option } from "effect"
+import { Effect, Option } from "effect"
+import { Prompt } from "effect/ai"
+import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import { uncachedInputTokens } from "../domain/token-usage.entity.functions.js"
@@ -262,4 +264,24 @@ test("tool results persist their schema encoding, not the decoded value", () => 
     { type: "tool-result", id: "c1", name: "when", result: new Date(0), encodedResult: "1970-01-01T00:00:00.000Z", isFailure: false },
   ])
   expect(tool).toEqual({ role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "when", output: "1970-01-01T00:00:00.000Z", isError: false }] })
+})
+
+describe("a multi-part user message → effect/ai prompt parts", () => {
+  const pixel = Effect.runSync(mediaFromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", { name: "pixel.png" }))
+
+  test("an image is a file part with its base64, type and name; an empty text part is left out; text-only stays a string", () => {
+    const messages: ReadonlyArray<AgentMessage> = [
+      { role: "user", content: "plain" },
+      { role: "user", content: [pixel, { type: "text", text: "" }, { type: "text", text: "what is it?" }] },
+    ]
+    expect(toPromptMessages(messages)).toEqual([
+      { role: "user", content: "plain" },
+      { role: "user", content: [{ type: "file", mediaType: "image/png", data: pixel.data, fileName: "pixel.png" }, { type: "text", text: "what is it?" }] },
+    ])
+    const prompt = Prompt.make(toPromptMessages(messages) as Prompt.RawInput)
+    const parts = prompt.content[1]?.role === "user" ? prompt.content[1].content : []
+    expect(parts.map((part) => part.type === "file" ? [part.type, part.mediaType, part.data, part.fileName] : [part.type])).toEqual([
+      ["file", "image/png", pixel.data, "pixel.png"], ["text"],
+    ])
+  })
 })

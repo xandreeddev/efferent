@@ -7,6 +7,7 @@ import type { LogBody } from "../memory/memory-log.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
 import { zeroUsage } from "../domain/token-usage.entity.functions.js"
+import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
 import { MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
 import type { SessionDraft, SessionLogEvent } from "./session-log.entity.js"
@@ -197,5 +198,29 @@ describe("a turn's usage from the stored events", () => {
   test("a step.usage record with a malformed usage fails", async () => {
     const broken = stepUsage(1, 1, { step: 0, model: null, usage: { inputTokens: "many" } })
     expect((await Effect.runPromise(Effect.result(turnUsageOf([broken], 1))))._tag).toBe("Failure")
+  })
+})
+
+describe("a stored turn.started and its user message", () => {
+  const pixel = Effect.runSync(mediaFromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", { name: "pixel.png" }))
+  const startedEvent = (data: Record<string, unknown>): SessionLogEvent => ({ session, seq: 1, turn: Option.some(1), kind: "turn.started", at: 0, data })
+  const fields = { runId: "run-1", key: "k", origin: "user", command: {}, claimed: [], entry: "run-1:0", at: 7 }
+
+  test("one written before 0.14.0 with whitespace-only text still decodes, and is the memory's TurnStarted", async () => {
+    const event = startedEvent({ ...fields, userMessage: { text: " " } })
+    expect(Option.isSome(Schema.decodeUnknownOption(journalSchemaOf("turn.started").pipe(Option.getOrThrow))(event.data))).toBe(true)
+    const [entry] = await Effect.runPromise(entriesOfEvents([event]))
+    expect(entry?.body._tag === "TurnStarted" ? entry.body.userMessage.text : "").toBe(" ")
+  })
+
+  test("a text-only message is stored as before; one with images stores them and reads back as the memory's entry", async () => {
+    const draft = (userMessage: UserMessage) => Effect.runPromise(turnStartedDraft(1, {
+      runId: "run-1", key: "k", origin: "user", userMessage, command: {}, claimed: [], entry: EntryId.make("run-1:0"), at: 7,
+    }))
+    expect((await draft(new UserMessage({ text: "hello" }))).data.userMessage).toEqual({ text: "hello" })
+    const withImage = await draft(new UserMessage({ text: "", attachments: [pixel] }))
+    expect(withImage.data.userMessage).toEqual({ text: "", attachments: [pixel] })
+    const [entry] = await Effect.runPromise(entriesOfEvents([startedEvent(JSON.parse(JSON.stringify(withImage.data)))]))
+    expect(entry?.body).toEqual({ _tag: "TurnStarted", userMessage: new UserMessage({ text: "", attachments: [pixel] }) })
   })
 })

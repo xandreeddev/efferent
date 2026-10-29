@@ -209,6 +209,62 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   compares it in the key's fingerprint. The new `resumes` fields are
   optional keys, present only on a turn that resumes one, so turns, stored
   records and events without it are unchanged.
+- **`@xandreed/core`: `UserMessage` may carry images, and its rule
+  changed.** It is `{ text, attachments? }`: `text` is a plain string (it was
+  `NonEmptyString`) and a message needs text or at least one attachment
+  (`text.length > 0 || attachments`), at most `MEDIA_LIMITS.attachments`.
+  Whitespace-only text is still a message, so every log written before
+  decodes. Code that read `userMessage.text` as the whole message reads
+  `userMessageText(userMessage)` (its text and a label line per image) where
+  images matter.
+- **`@xandreed/core`: `UserMessageFromString` is removed.** It was the
+  memory log's text-only `TurnStarted` codec; the log's `TurnStarted` now
+  stores `prompt` and, only when there are images, `attachments`, so a
+  text-only entry is stored exactly as before. No replacement.
+- **`@xandreed/core`: `UserRoleMessage.content` is
+  `string | ReadonlyArray<TextPart | Media>`** (`UserContentPart`). A
+  message with images renders as parts. Code that reads it as a string
+  narrows first (`typeof content === "string"`).
+- **`@xandreed/core`, `@xandreed/plugin-sessions`: `Sessions.begin` can
+  fail with `AttachmentRejected`.** The error union gains it; a begin
+  normalises the user's message first (`normalizeUserMessage`) and stores
+  that value. A `catchTags` over every begin error adds it; `Agent.turn`
+  fails with `turn.attachment-rejected` (`turnBeginCodes.AttachmentRejected`),
+  its reason in the message only (a host that branches on it runs
+  `normalizeUserMessage` itself first). A `Sessions` implementation of the
+  host's adds it to `begin`, and should store and compare the normalised
+  message as plugin-sessions does.
+- **`@xandreed/core`: `RenderOptions.media` and `MemoryRenderRecipe.media`
+  require `maxChars`**, the base64 characters of the images a request sends.
+  A custom `MemoryPolicy.render` adds it (`MEDIA_LIMITS.requestChars`); a
+  stored `request.prepared` header written before reads that value, and new
+  headers store it (a golden of stored headers sees the new key). `maxImages`
+  now also caps the images sent (never more than `MEDIA_LIMITS.requestImages`
+  whatever it says), besides the artifact reference lines.
+- **`@xandreed/plugin-memory-window`, `@xandreed/plugin-memory-summary`:
+  `MemoryWindowConfig` and `MemorySummaryConfig` require `maxMediaChars`.**
+  JSON and plugin configuration are unaffected (the graph merges the
+  defaults); code that calls `windowPolicy` or `summaryPolicy` with a whole
+  config literal spreads `memoryWindowDefaults` / `memorySummaryDefaults`
+  or adds the field.
+- **`@xandreed/core`: `sessionLogConformance` has a new check**: an event
+  of `MEDIA_LIMITS.requestChars` base64 characters comes back whole. A host's
+  store with a smaller row or document limit fails it; such a store cannot
+  hold a message's images at their limit.
+- **`@xandreed/core`: `memoryConformance` and `turnConformance` have new
+  `attachments` checks**, which a host's memory strategy or turn
+  composition that passed before can fail. `memoryConformance`: a message's
+  images survive a reopen, the current turn's are built as image parts with
+  their data, an earlier turn's as image parts or label lines, and no empty
+  text part is built. `turnConformance`: the user's attachments are stored
+  in `turn.started` and reach the first request as `file` parts. A strategy
+  that renders `TurnStarted` from `userMessage.text` alone, or one set to
+  send no images (`maxImages: 0`, `maxMediaChars: 0`), fails them; run the
+  kits with a budget that admits one small image.
+- **`@xandreed/core`: readers of 0.13 cannot read every newer log.** A
+  0.13 reader drops a message's images and fails on a message without text;
+  a replay of a request with images diverges there (`request.diverged`).
+  Logs written before 0.14.0 decode unchanged in 0.14.0.
 
 ### Added
 
@@ -452,6 +508,46 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   storages, `Redacted` secrets, `credentialEnv`, a `HostCredentials`
   example, refresh, lifetime and precedence); the conformance page lists the
   three kits; the plugin reference shows each plugin's optional services.
+
+- `@xandreed/core`: images. `Media` (an image inline: base64, media type,
+  size, fingerprint, optional name and alt), `MediaSlot`, `ImageMediaType`,
+  `MediaFingerprint`, `AttachmentRejected`, `AttachmentRejectedReason` and
+  `MEDIA_LIMITS`, and the types `ImageSize` and `MediaDescription`;
+  `mediaFromBytes` and `mediaFromBase64` (a `data:` prefix and line breaks
+  removed; the type sniffed from the bytes; PNG, JPEG, GIF and WebP headers
+  read for a size of at most 8000 pixels a side), `normalizeMedia`,
+  `sniffImageType`, `imageSizeOf`, `mediaFingerprintOf`, `mediaLabel`,
+  `isMediaValue`, `mediaSlotsOf`, `mediaAt`, `elideMediaData`,
+  `base64Length` and `IMAGE_TOKEN_ESTIMATE`.
+- `@xandreed/core`: `UserMessage.attachments`, with `attachmentsOf`,
+  `normalizeUserMessage`, `sameUserMessage` and `userMessageText`. A user's
+  images are stored inline in `turn.started` (the event reference lists
+  `turn.started.userMessage.attachments`) and sent to the model as effect/ai
+  `file` parts (an empty text part is left out): image blocks on Anthropic,
+  `input_image` on the Responses routes; chat-completions routes
+  (`toChatMessages` in `@xandreed/plugin-models`) send the text and a label
+  line per image for now, so a message of images alone is never empty. The
+  current turn's images are sent first, within `maxImages` and the new
+  `maxChars` (with the defaults a message's own images always fit;
+  `maxMediaChars: 0` sends none, for models that read text only); memory's
+  `media: "inline"` sends earlier turns' too, newest turn first and a whole
+  turn at a time, and `none` (still the default) shows them as label lines.
+  A request sends at most `MEDIA_LIMITS.requestImages` images. Token
+  estimates count an image as 1 600 tokens; context fingerprints,
+  `queryLog`, transcripts, digests, ledgers and the loop's captured trace
+  content never carry an image's base64.
+- `@xandreed/plugin-memory-window`, `@xandreed/plugin-memory-summary`:
+  `maxMediaChars` (default and largest `MEDIA_LIMITS.requestChars`), the
+  base64 characters of the images one request sends; `maxImages` defaults
+  to `MEDIA_LIMITS.requestImages`.
+- `@xandreed/sdk`: `Agent.turn` checks a new turn's attachments before it
+  begins, whatever `Sessions` the turn's services hold, and fails with
+  `turn.attachment-rejected`; the event reference suggests 400 for it (a
+  host that wants 413 for an oversized image runs `normalizeUserMessage`
+  first and reads `AttachmentRejected.reason`).
+- Docs: `docs/framework.md` "Images and multi-part messages", the website's
+  SDK and sessions page, a provider table of the routes that take images,
+  and the new kit checks on the conformance page.
 
 ### Fixed
 

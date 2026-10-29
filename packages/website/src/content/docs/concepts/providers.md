@@ -186,6 +186,24 @@ Hosts composing layers themselves use the stores directly:
 `LocalAuthStoreLive(cwd, home)` and `LocalSettingsStoreLive(cwd, home)`. Each
 passes its [conformance kit](/docs/concepts/conformance).
 
+## Images
+
+A user's images (`UserMessage.attachments`) reach the model as image parts on
+the routes that take them; on the others the model gets the message's text
+and a label line in place of each image (`[image omitted: image/png, 182 KB,
+form.png]`).
+
+| Route | Images |
+|---|---|
+| `anthropic` (Messages API) | image blocks |
+| `openai`, `openai-codex`, OpenCode `gpt-*` (Responses API) | `input_image` |
+| OpenCode's other models, `google` and configured endpoints (chat completions) | not sent yet: a label line per image |
+
+An image is at most 3.75 MiB and 8000 pixels a side, a message carries at
+most 8, they take at most 20 000 000 base64 characters together, and one
+request sends at most 8 images, whatever the memory plugins' `maxImages`
+says (`MEDIA_LIMITS`): within Anthropic's per-image and per-request limits.
+
 ## Token usage
 
 Each model call the step loop makes reports a `TokenUsage`: `inputTokens` (the

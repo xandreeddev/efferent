@@ -1,7 +1,7 @@
 import { AiError, LanguageModel, Tool } from "effect/ai"
 import type { Prompt } from "effect/ai"
-import { Effect, Result, Option, Stream } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
+import { Effect, Result, Option, Schema, Stream } from "effect"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, strictJsonSchema, toolParametersSchema } from "@xandreed/core"
 import type { ModelCallPolicy } from "@xandreed/core"
 import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
 import type { CompletionUsage, UsageReading } from "./sse.js"
@@ -100,7 +100,35 @@ const requestInfo = (chatUrl: string) => ({
   headers: { "content-type": "application/json" },
 })
 
-/** Decoded `Prompt` messages → chat-completions message objects. */
+const isImageType = Schema.is(ImageMediaType)
+
+/** The bytes a file part's inline data decodes to: a byte array's length, or the size its base64 (a `data:` prefix allowed) stands for. */
+const decodedBytes = (data: string | Uint8Array): number => {
+  if (typeof data !== "string") return data.length
+  const base64 = data.replace(/^data:[^,]*;base64,/i, "").replace(/\s+/g, "")
+  const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding)
+}
+
+/**
+ * The line a chat-completions request carries in place of a user's file
+ * part, which these routes do not send yet: an inline image's `mediaLabel`
+ * (`[image omitted: image/png, 70 B, pixel.png]`, as memory labels it),
+ * anything else `[file omitted: <type>, <name>]`.
+ */
+const filePartLabel = (part: Prompt.FilePart): string => {
+  const data = part.data
+  return isImageType(part.mediaType) && !(data instanceof URL)
+    ? mediaLabel({ mediaType: part.mediaType, bytes: decodedBytes(data), ...(part.fileName === undefined ? {} : { name: part.fileName }) })
+    : `[file omitted: ${[part.mediaType, ...(part.fileName === undefined ? [] : [part.fileName])].join(", ")}]`
+}
+
+/**
+ * Decoded `Prompt` messages → chat-completions message objects. A user
+ * message is one string: its text, then a label line per file part (images
+ * are not sent on these routes yet), so a message of images alone is never
+ * empty. A text-only message is its text, as before.
+ */
 export const toChatMessages = (prompt: Prompt.Prompt): ReadonlyArray<Json> =>
   prompt.content.flatMap((message): ReadonlyArray<Json> => {
     if (message.role === "system") {
@@ -110,7 +138,8 @@ export const toChatMessages = (prompt: Prompt.Prompt): ReadonlyArray<Json> =>
       const text = message.content
         .flatMap((p) => (p.type === "text" ? [p.text] : []))
         .join("")
-      return [{ role: "user", content: text }]
+      const labels = message.content.flatMap((p) => (p.type === "file" ? [filePartLabel(p)] : []))
+      return [{ role: "user", content: [text, ...labels].filter((line) => line.length > 0).join("\n") }]
     }
     if (message.role === "assistant") {
       const text = message.content

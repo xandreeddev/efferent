@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Effect, Layer, Option, Ref, Schema, Stream, Tracer } from "effect"
-import { Failure } from "@xandreed/core"
+import { Failure, mediaFromBase64 } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import { DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
 
@@ -185,7 +185,7 @@ describe("runLoop", () => {
     expect(result.finalText).toBe("fixed")
     expect(result.outcome).toBe("ok")
     const corrective = result.newTail.find(
-      (m) => m.role === "user" && m.content.includes("could not be parsed"),
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("could not be parsed"),
     )
     expect(corrective).toBeDefined()
   })
@@ -203,7 +203,7 @@ describe("runLoop", () => {
     )
     expect(result.finalText).toBe("recovered")
     const corrective = result.newTail.find(
-      (m) => m.role === "user" && m.content.includes("could not be parsed"),
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("could not be parsed"),
     )
     expect(corrective).toBeDefined()
   })
@@ -414,7 +414,7 @@ describe("runLoop steering (pendingInput)", () => {
     expect(persisted).toEqual(["assistant", "tool", "user", "assistant"])
     // …and part of the durable tail.
     const steer = result.newTail.find(
-      (m) => m.role === "user" && m.content.includes("focus on the ERROR path"),
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("focus on the ERROR path"),
     )
     expect(steer).toBeDefined()
   })
@@ -587,7 +587,7 @@ describe("runLoop streaming", () => {
     )
     expect(result.finalText).toBe("all done")
     const corrective = result.newTail.find(
-      (m) => m.role === "user" && m.content.includes("could not be parsed"),
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("could not be parsed"),
     )
     expect(corrective).toBeDefined()
   })
@@ -716,6 +716,21 @@ test("step trace content is explicit, includes replay context and is off by defa
     () => [{ type: "text", text: "private answer" }, finish("stop")])
   expect(snapshots[1]?.has("engine.step.input")).toBe(false)
   expect(snapshots[1]?.has("engine.step.output")).toBe(false)
+})
+
+test("traced step content names an image by its size, never its bytes", async () => {
+  const pixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
+  const pixel = await Effect.runPromise(mediaFromBase64(pixelPng))
+  const snapshots: Array<ReadonlyMap<string, unknown>> = []
+  const capture = (event: LoopEvent) => event.type === "turn_start"
+    ? Effect.currentSpan.pipe(Effect.tap((span) => Effect.sync(() => snapshots.push(span.attributes))), Effect.asVoid, Effect.orDie)
+    : Effect.void
+  await run(runLoop({ system: "sys", messages: [{ role: "user", content: [pixel, { type: "text", text: "what is this?" }] }], toolkit: kit, captureTraceContent: true, onEvent: capture }),
+    () => [{ type: "text", text: "a pixel" }, finish("stop")])
+  const input = String(snapshots[0]?.get("engine.step.input"))
+  expect(input).toContain("what is this?")
+  expect(input).toContain(`[${pixelPng.length} base64 characters]`)
+  expect(input).not.toContain(pixelPng.slice(0, 24))
 })
 
 
