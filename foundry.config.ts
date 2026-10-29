@@ -99,33 +99,6 @@ const ENVIRONMENT_EDGES = ["**/main.ts", "packages/plugin-workspace/src/bash.ada
 const src = (name: string): string => `packages/${name}/src/**`
 
 /**
- * Rules that enter one package at a time, never through the baseline. Each
- * list names the packages already clean of its rule, one per line: a
- * cleanup change fixes one package's findings and adds its line. Once a
- * list names every package in CHECKED, its rule takes CHECKED instead and
- * the list is deleted.
- */
-const EFFECT_FN_CLEAN = [
-  "evals",
-  "evals-cli",
-  "evals-langfuse",
-  "evals-langsmith",
-  "plugin-agent-loop",
-  "runtime",
-  "sdk",
-  "plugin-memory-window",
-  "plugin-memory-summary",
-  "plugin-memory-digest",
-  "plugin-tool-discovery",
-  "plugin-session-sqlite",
-  "plugin-tasks",
-  "plugin-render",
-  "plugin-workspace",
-  "plugin-telemetry",
-  "foundry",
-].map(src)
-
-/**
  * Open schemas (`effect/no-unknown-json`) core keeps for now. The MCP
  * bridge passes a model's arguments to a server it does not know; a
  * plugin entry's in-code options may hold values that are not JSON (a
@@ -354,8 +327,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
-    // One package at a time (the list above).
-    { rule: "effect/prefer-effect-fn", include: EFFECT_FN_CLEAN, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/prefer-effect-fn", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/require-concurrency-option", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "quality/no-skipped-tests", include: CHECKED },
     { rule: "quality/no-empty-catch", include: CHECKED },

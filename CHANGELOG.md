@@ -803,6 +803,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and kits.
 - `effect/prefer-effect-fn` runs in `plugin-sessions`.
 - `effect/prefer-effect-fn` runs in `plugin-models`.
+- `effect/prefer-effect-fn` runs in every package and its per-package list
+  is gone. The effect-idioms skill states the span policy (`Effect.fn` at a
+  port's boundary, `Effect.fnUntraced` for the rest), the shared span and
+  log-annotation keys and every span name; the span trees show
+  `models.credentials` under `providers.generate`.
 
 ## 0.14.0 — 2026-10-29
 

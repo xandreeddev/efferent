@@ -135,6 +135,7 @@ agent.turn                       Agent.turn, or a host's composition with traceT
 │  └─ engine.turn                one step
 │     └─ LanguageModel.*         effect/ai's span of the model call
 │        ├─ providers.generate   the models plugin's call (model, usage, finish reason)
+│        │  └─ models.credentials  the call's credential, a token refresh included
 │        └─ tool.<name>          the tool registry's call, refused calls included
 │           └─ (the handler's own spans)
 └─ turn.persist_reply            the turn's reply recorded as it ends (guardTurn), failed or not

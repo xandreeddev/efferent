@@ -125,7 +125,7 @@ new rule that needs a per-file exemption uses `exclude`, `allow` for
 today's exceptions, or a boundary when only part of what it flags is the
 design there. A rule with
 findings enters through its `include`, one clean package at a time (a
-per-package list in the root `foundry.config.ts`, today `EFFECT_FN_CLEAN`),
+per-package list in the root `foundry.config.ts`),
 never through the baseline; once its list names every package, the rule
 takes `CHECKED` and the list is deleted.
 
@@ -147,8 +147,7 @@ crosses a boundary instead of trusting it: `effect/no-unknown-json`
 providers: an `anthropic`, `openai`, `google` or `router` key, written in
 an object or a type, destructured or read (`x.openai`, `x["router"]`).
 In the root profile each runs over every package (`CHECKED`), less the
-files its entry excludes, but `prefer-effect-fn`, which still enters
-package by package, and `no-provider-namespace`, which runs in the two
+files its entry excludes, but `no-provider-namespace`, which runs in the two
 provider-neutral packages, core and the agent loop (`PROVIDER_NEUTRAL`).
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
