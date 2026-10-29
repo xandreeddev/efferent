@@ -91,7 +91,7 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "turn.numbering", where: "the turn's memory", meaning: "Memory numbered the user's message differently from the turn the session stored." },
   { code: "events.reserved", where: "publishing a host event", meaning: "The host event's name is one of the reserved kinds." },
   { code: "events.depth", where: "publishing an event", meaning: "Reactions nested deeper than `maxEventDepth` (8 by default)." },
-  { code: "events.background", where: "a background subscription", meaning: "A background handler died with a defect; the turn fails when the bus drains." },
+  { code: "events.background", where: "a background subscription", meaning: "A background handler was interrupted; the turn fails when the bus drains. One that dies with a defect fails it with that defect (`turn.defect`)." },
   { code: "events.encode", where: "a host event's `make` / `publish`", meaning: "The payload did not encode with the host event's schema." },
   { code: "service.missing", where: "`Agent.turn`", meaning: "A service the turn needs is not provided by the agent's plugins or the turn's services." },
   { code: "config.graph", where: "`Agent.define`", meaning: "The plugin graph cannot be built (a missing provider, a cycle, a misplaced turn-dependent plugin)." },

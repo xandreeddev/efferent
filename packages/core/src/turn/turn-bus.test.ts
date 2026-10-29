@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
-import { Deferred, Effect, Option, Ref, Schema, Tracer } from "effect"
+import { Cause, Deferred, Effect, Exit, Option, Ref, Schema, Tracer } from "effect"
 import { Failure } from "../domain/failure.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
+import { turnEndingOf } from "../session/sessions.entity.functions.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
 import { defineHostEvent, onEvent, onTool, subscribeAll } from "./turn-event.entity.functions.js"
 import type { TurnEvent } from "./turn-event.entity.js"
@@ -130,6 +131,36 @@ describe("the turn event bus", () => {
       }
     })))
     expect(outcome).toEqual({ drained: "reaction.failed", next: "reaction.failed", seen: [0] })
+  })
+
+  test("a background handler's defect stays a defect: the drain and the next delivery die with it, and no failure carries its stack", async () => {
+    // Made here, so its stack names this file.
+    const defect = new Error("renderer crashed")
+    const outcome = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      yield* onEvent("step.started", () => Effect.die(defect), { mode: "background" })(events)
+      yield* events.publish(started(0))
+      return { drained: yield* Effect.exit(events.drain), next: yield* Effect.exit(events.publish(started(1))) }
+    })))
+    const causes = [outcome.drained, outcome.next].map((exit) => exit._tag === "Failure" ? exit.cause : Cause.empty)
+    expect(causes.map((cause) => [Cause.hasFails(cause), Cause.squash(cause) === defect])).toEqual([[false, true], [false, true]])
+    // How the turn ends on it: the defect's message, without the stack.
+    const ending = turnEndingOf(Exit.map(outcome.drained, () => ({ outcome: "completed" as const })))
+    expect(Option.getOrThrow(ending.failure)).toEqual({ code: "turn.defect", message: "Error: renderer crashed" })
+  })
+
+  test("a HarnessError a background handler dies with is still the typed error the drain fails with; an interruption fails it with events.background", async () => {
+    const drainedAfter = (handle: () => Effect.Effect<void, HarnessError>) => run(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      yield* onEvent("step.started", handle, { mode: "background" })(events)
+      yield* events.publish(started(0))
+      yield* events.drain
+    })))
+    const codes = await Promise.all([() => Effect.die(new HarnessError({ code: "reaction.died", message: "no" })), () => Effect.interrupt].map(async (handle) => {
+      const drained = await drainedAfter(handle)
+      return drained._tag === "Failure" ? `${drained.failure.code}: ${drained.failure.message}` : "none"
+    }))
+    expect(codes).toEqual(["reaction.died: no", "events.background: a background handler was interrupted"])
   })
 })
 

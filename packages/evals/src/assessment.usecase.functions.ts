@@ -1,4 +1,5 @@
 import { Cause, Clock, Effect, Exit, Option } from "effect"
+import { reasonOf } from "./domain/identity.entity.functions.js"
 import { AssessmentError, type EvaluationResult } from "./assessment.entity.js"
 import { validateMetrics } from "./assessment.entity.functions.js"
 import type { EvaluatorBinding } from "./assessment.usecase.js"
@@ -17,7 +18,7 @@ export const assess = <I, R>(binding: EvaluatorBinding<I, R>, input: I): Effect.
     const common = { version: 2 as const, evaluator: evaluator.id, evaluatorVersion: evaluator.version, startedAt, endedAt: yield* Clock.currentTimeMillis }
     if (Exit.isFailure(result)) {
       const error = Cause.findErrorOption(result.cause)
-      return { ...common, status: Option.isSome(error) && error.value.code === "unavailable" ? "unavailable" as const : "error" as const, metrics: [], references: [], reason: Option.some(Cause.pretty(result.cause)), usage: unknownEvaluationUsage, metadata: {} }
+      return { ...common, status: Option.isSome(error) && error.value.code === "unavailable" ? "unavailable" as const : "error" as const, metrics: [], references: [], reason: Option.some(reasonOf(result.cause)), usage: unknownEvaluationUsage, metadata: {} }
     }
     return { ...common, status: "scored" as const, metrics: result.value.metrics.filter((metric) => binding.select.includes(metric.name)), reason: Option.some(result.value.reason), references: result.value.references ?? [], usage: result.value.usage ?? unknownEvaluationUsage, metadata: result.value.metadata ?? {} }
   }).pipe(Effect.withSpan("eval.evaluator", { attributes: { "eval.evaluator.id": binding.evaluator.id, "eval.evaluator.version": binding.evaluator.version } }))

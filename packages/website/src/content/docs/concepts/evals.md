@@ -117,7 +117,7 @@ const registration = defineRunnable({
 
 `EvaluationEnvironment.open` acquires a fresh scoped world. `inspect` observes its resulting state. Acquire resources with `Effect.acquireRelease`; the scope closes after success, failure or timeout. A function evaluation may use a small in-process world; a stateful agent may inspect database records or filesystem changes. Docker is one possible app-owned environment.
 
-`TrialRecorder.record` persists each transcript event during execution. If a target fails, the earlier events remain. The runner persists the terminal execution before grading and each completed grade independently. A grading failure does not erase the target's evidence.
+`TrialRecorder.record` persists each transcript event during execution. If a target fails, the earlier events remain. The runner persists the terminal execution before grading and each completed grade independently. A grading failure does not erase the target's evidence. A failed trial, grade or assessment records its reason as text: `code: message` for a coded error, `interrupted`, or a defect's message, never a stack trace or the local paths in one, so reports and exports can be shared.
 
 ## Evidence projection
 

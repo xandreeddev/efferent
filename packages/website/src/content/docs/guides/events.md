@@ -142,7 +142,9 @@ A handler is part of the turn:
   `tool.progress` the tool's handler stops there.
 - A background handler that fails is latched: the next delivery to it fails,
   and so does the drain before the reply is recorded, which fails the turn.
-  A handler that dies with a defect fails it with `events.background`.
+  A handler that dies with a defect fails it with that defect (stored as
+  `turn.defect`, its message without the stack); one that is interrupted
+  fails it with `events.background`.
 - A background queue holds 256 events unless the subscription's `capacity`
   says otherwise. When it is full, `publish` waits: a slow handler slows the
   step loop.

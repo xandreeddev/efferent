@@ -17,10 +17,19 @@ type Queued<E> =
   | { readonly _tag: "Event"; readonly event: E; readonly depth: number; readonly traceContent: boolean }
   | { readonly _tag: "Marker"; readonly done: Deferred.Deferred<void, HarnessError> }
 
-/** A background handler's failure as the typed error the turn fails with. */
-const failureOf = (cause: Cause.Cause<HarnessError>): HarnessError => Option.getOrElse(Cause.findErrorOption(cause), () => {
-  const defect = Cause.squash(cause)
-  return defect instanceof HarnessError ? defect : new HarnessError({ code: "events.background", message: Cause.pretty(cause).slice(0, 300) })
+/**
+ * A background handler's failure as the turn fails with it: its typed error,
+ * or a HarnessError it carried as a defect, as a failure; any other defect
+ * stays the defect it is; an interruption alone fails with `events.background`.
+ */
+const failureOf = (cause: Cause.Cause<HarnessError>): Cause.Cause<HarnessError> => Option.match(Cause.findErrorOption(cause), {
+  onSome: Cause.fail,
+  onNone: () => {
+    const defect = Cause.squash(cause)
+    return defect instanceof HarnessError ? Cause.fail(defect)
+      : Cause.hasInterruptsOnly(cause) ? Cause.fail(new HarnessError({ code: "events.background", message: "a background handler was interrupted" }))
+      : cause
+  },
 })
 
 const defaultCapacity = 256
@@ -52,11 +61,11 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
   /** A queue and a fiber: handled in order, off the publisher's path; its depth and trace content switch travel with each event. */
   const background = <E>(handle: (event: E) => Effect.Effect<void, HarnessError>, capacity: number) => Effect.gen(function* () {
     const queue = yield* Queue.bounded<Queued<E>>(capacity)
-    const failed = yield* Ref.make(Option.none<HarnessError>())
+    const failed = yield* Ref.make(Option.none<Cause.Cause<HarnessError>>())
     const take: Effect.Effect<void> = Queue.take(queue).pipe(Effect.flatMap((item) => Effect.gen(function* () {
       const failure = yield* Ref.get(failed)
       if (item._tag === "Marker") {
-        yield* Option.match(failure, { onNone: () => Deferred.succeed(item.done, undefined), onSome: (error) => Deferred.fail(item.done, error) })
+        yield* Option.match(failure, { onNone: () => Deferred.succeed(item.done, undefined), onSome: (cause) => Deferred.failCause(item.done, cause) })
         return
       }
       if (Option.isSome(failure)) return
@@ -69,7 +78,7 @@ export const makeTurnEvents = (options: { readonly maxDepth: number }): Effect.E
     yield* Effect.forkScoped(Effect.forever(take))
     const deliver = (event: E): Effect.Effect<void, HarnessError> => Effect.gen(function* () {
       const failure = yield* Ref.get(failed)
-      if (Option.isSome(failure)) return yield* Effect.fail(failure.value)
+      if (Option.isSome(failure)) return yield* Effect.failCause(failure.value)
       yield* Ref.update(queued, (value) => value + 1)
       yield* Queue.offer(queue, { _tag: "Event", event, depth: yield* Effect.service(depth), traceContent: yield* Effect.service(CurrentTraceContent) })
     })

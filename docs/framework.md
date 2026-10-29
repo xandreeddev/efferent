@@ -874,7 +874,10 @@ authorizes: `resolveCapabilities` checks every activation against the turn's
 (active set, grants, `ActionPolicy`, per-turn budgets, read/write lanes): a
 call that runs publishes `tool.started` and `tool.completed` before it
 returns (its handler's `tool.progress` between them), and a refused call
-publishes `tool.refused` instead.
+publishes `tool.refused` instead. A handler that dies returns `ToolDefect`
+to the model, with the first line of the defect's message only; the whole
+cause, stack included, is logged at error level with the call's `tool` and
+`invocationId`.
 
 Tools only grow within a conversation and are sent in activation order.
 Restrict a step with a tool choice or a handler failure, never by removing a

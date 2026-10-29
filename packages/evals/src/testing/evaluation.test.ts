@@ -92,6 +92,23 @@ test("a failed execution preserves partial events and releases its environment",
   expect(report.gates[0]?.value).toEqual(Option.none())
 })
 
+test("a failed trial or grade keeps its error's code and message as its reason, never a stack frame or a path", async () => {
+  // Made here, so their stacks name this file.
+  const crashed = new Error("disk on fire")
+  const judged = new Error("judge crashed")
+  const died = await Effect.runPromise(run(fixture(() => Effect.die(crashed))))
+  const failed = await Effect.runPromise(run(fixture(() => Effect.fail(new EvaluationError({ code: "execution", message: "the target refused" })))))
+  const app = fixture()
+  const graded = await Effect.runPromise(run({
+    ...app,
+    graders: [{ ...app.graders[0]!, layer: Layer.succeed(GraderAssessment, { assess: () => Effect.die(judged) }) }]
+  }))
+  expect([died.trials[0]?.status, died.trials[0]?.reason]).toEqual(["error", "disk on fire"])
+  expect([failed.trials[0]?.status, failed.trials[0]?.reason]).toEqual(["error", "execution: the target refused"])
+  expect([graded.trials[0]?.grades[0]?.status, graded.trials[0]?.grades[0]?.reason]).toEqual(["error", "judge crashed"])
+  expect(JSON.stringify([died, failed, graded])).not.toContain(import.meta.dir)
+})
+
 test("unavailable context emits no zero and cannot pass a gate", async () => {
   const app = fixture()
   const report = await Effect.runPromise(

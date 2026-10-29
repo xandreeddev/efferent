@@ -1,4 +1,5 @@
 import { Cause, Clock, Effect, Exit, Option, Ref, Semaphore } from "effect"
+import { reasonOf } from "../domain/identity.entity.functions.js"
 import type {
   EvaluationApp,
   EvaluationSelection,
@@ -140,7 +141,7 @@ export const gradeTrial = (
                   ? "unavailable"
                   : "error",
                 metrics: [],
-                reason: Cause.pretty(assessed.cause),
+                reason: reasonOf(assessed.cause),
                 context: Exit.isSuccess(context)
                   ? Option.some(context.value)
                   : Option.none(),
@@ -286,7 +287,7 @@ const runTrial = (
           evidence: Exit.isSuccess(execution)
             ? Option.some(execution.value.evidence)
             : Option.none(),
-          reason: Exit.isSuccess(execution) ? "" : Cause.pretty(execution.cause)
+          reason: Exit.isSuccess(execution) ? "" : reasonOf(execution.cause)
         }
         yield* Ref.set(state, completed)
         yield* store.writeTrial(completed)

@@ -41,7 +41,7 @@ export {
 } from "./domain/media.entity.functions.js"
 export type { ImageSize, MediaDescription, ToolResultMedia } from "./domain/media.entity.functions.js"
 export { Failure } from "./domain/failure.entity.js"
-export { toFailure } from "./domain/failure.entity.functions.js"
+export { reasonOf, toFailure } from "./domain/failure.entity.functions.js"
 export { AgentFailure, AgentFailureCategory } from "./domain/agent-failure.entity.js"
 export type { AgentFailure as AgentFailureType, AgentFailureCategory as AgentFailureCategoryType } from "./domain/agent-failure.entity.js"
 export { toAgentFailure, toolResultFailure } from "./domain/agent-failure.entity.functions.js"
