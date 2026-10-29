@@ -1,5 +1,5 @@
-import { Clock, Effect, FiberSet, Layer, Option } from "effect"
-import { TaskRunner } from "@xandreed/core"
+import { Clock, Context, Effect, FiberSet, Layer, Option } from "effect"
+import { TaskActivity, TaskRunner } from "@xandreed/core"
 
 /**
  * Background work on fibers of this process, each on its own fiber (it
@@ -10,16 +10,21 @@ import { TaskRunner } from "@xandreed/core"
  * included (no `replayableContext`: a new fiber has no other): its spans nest
  * under the span current where the layer was built, and it reads the
  * `CurrentTraceContent` set there.
+ * It also provides `TaskActivity`: the work running now, counted from the
+ * moment `run` hands it over until it ends. The fiber is forked and joins
+ * the set in one step, so a caller interrupted as it hands work over leaves
+ * none running outside the set (uncounted, and not interrupted with it).
  */
-export const InProcessTaskRunnerLive = (options?: { readonly maxMs?: number }): Layer.Layer<TaskRunner> => Layer.effect(TaskRunner, Effect.gen(function* () {
+export const InProcessTaskRunnerLive = (options?: { readonly maxMs?: number }): Layer.Layer<TaskRunner | TaskActivity> => Layer.effectContext(Effect.gen(function* () {
   const fibers = yield* FiberSet.make<void>()
   const context = yield* Effect.context<never>()
-  return TaskRunner.of({
+  const runner = TaskRunner.of({
     run: (work) => Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis
       const deadline = Option.map(Option.fromNullishOr(options?.maxMs), (ms) => now + ms)
-      const fiber = yield* Effect.sync(() => Effect.runForkWith(context)(work(deadline)))
-      yield* FiberSet.add(fibers, fiber)
+      yield* Effect.sync(() => FiberSet.addUnsafe(fibers, Effect.runForkWith(context)(work(deadline))))
     }),
   })
+  const activity = TaskActivity.of({ running: FiberSet.size(fibers), idle: FiberSet.awaitEmpty(fibers) })
+  return Context.make(TaskRunner, runner).pipe(Context.add(TaskActivity, activity))
 }))

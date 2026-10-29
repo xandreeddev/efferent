@@ -1,4 +1,4 @@
-import { Clock, Deferred, Effect, Exit, HashSet, Option, Queue, Ref, Schedule, Scope, Semaphore } from "effect"
+import { Clock, Deferred, Effect, Exit, HashSet, Option, Queue, Ref, Scope, Semaphore } from "effect"
 import { HarnessError, turnEndedDraft, TurnClosed } from "@xandreed/core"
 import type {
   AdmittedTurn,
@@ -294,12 +294,16 @@ export const makeTurnWriter = (input: TurnWriterInput, scope: Scope.Scope): Effe
     return yield* Deferred.await(result)
   })
 
-  // A keep-alive extends the lease between writes; when it is refused, the turn was closed elsewhere.
+  // The keep-alive extends the lease between writes: every `everyMs`, a state-only commit (it bumps the
+  // head's `updatedAt`), the first one interval after the begin, whose own commit set the lease, so a short
+  // turn costs no extra commit. It is queued in order with the turn's items, so a `write` or `transact`
+  // still running holds it back. When it is refused, the turn was closed elsewhere.
   if (ownership.mode === "lease" && typeof ownership.renew === "object") {
+    const every = `${ownership.renew.everyMs} millis` as const
     const renew = inOrder(commitPlan((at) => Effect.gen(function* () {
       return { drafts: [], next: renewed(at.state, yield* storageNow, true), result: undefined }
     }), { renew: false }), false).pipe(Effect.ignore)
-    yield* Effect.forkIn(renew.pipe(Effect.repeat(Schedule.spaced(`${ownership.renew.everyMs} millis`)), Effect.asVoid), scope)
+    yield* Effect.forkIn(Effect.sleep(every).pipe(Effect.andThen(renew), Effect.forever, Effect.asVoid), scope)
   }
 
   // Runs first when the scope closes (finalizers run last-added first). A turn whose end could not be

@@ -353,6 +353,7 @@ skills, step context, completion) is the host's.
 | Sessions, turns and the inbox | `Sessions` | `@xandreed/plugin-sessions` |
 | Turn admission (budgets) | `TurnAdmission` | `TurnAdmissionOpen` (core), or the host's |
 | Background tasks | `Tasks` (over the host's `TaskRunner` and `TaskExecutor`) | `@xandreed/plugin-tasks` |
+| Busy signal (optional) | `TurnActivity`, `TaskActivity` | `@xandreed/plugin-sessions`, `InProcessTaskRunnerLive` (`@xandreed/plugin-tasks`) |
 | Memory strategy | `ConversationMemory` | `@xandreed/plugin-memory-window`, `@xandreed/plugin-memory-summary` |
 | Tool digests | `ResultDigester` (optional) | `@xandreed/plugin-memory-digest` |
 | Tool registry and discovery | `ToolRegistry` | `@xandreed/plugin-tool-discovery` |
@@ -1045,7 +1046,7 @@ defaults and its layer:
 
 | Package | Layer | Provides | Requires |
 | --- | --- | --- | --- |
-| `@xandreed/plugin-sessions` | `SessionsPluginLive` | `Sessions` | `SessionLog`, `TurnAdmission` |
+| `@xandreed/plugin-sessions` | `SessionsPluginLive` | `Sessions`, `TurnActivity` | `SessionLog`, `TurnAdmission` |
 | `@xandreed/plugin-session-sqlite` | `SessionLogSqliteLive(path)` | `SessionLog` | — |
 | `@xandreed/plugin-tasks` | `TasksPluginLive` | `Tasks`, `Capabilities` (with `tools`) | `Sessions`, `TaskRunner`, `TaskExecutor` |
 | `@xandreed/plugin-memory-window` | `MemoryWindowLive` | `ConversationMemory`, `Capabilities` (recall) | — |
@@ -1384,6 +1385,30 @@ model requests) and every bus event's name are refused there
   clock judges every instance by that one. `renew: "none"` fixes the lease
   at begin, `"on-commit"` extends it with each write, `{ everyMs }` also
   renews from a keep-alive (which notices a remote cancel within `everyMs`).
+  This is the default: `{ mode: "lease", ttlMs: 60_000, renew: { everyMs:
+  20_000 } }`.
+
+  **The keep-alive** is what lets a step write nothing for longer than the
+  lease: a provider call that streams for two minutes, or a tool that runs
+  for five, would otherwise lose its turn under `"on-commit"` (the step's
+  first write after it is refused, the turn closes with `turn.closed`, and
+  the next begin reaps it as `turn.lease`). While the turn's writer is
+  open, every `everyMs` it commits the state alone with the lease extended,
+  in order with the turn's writes; the first renewal comes one interval
+  after the begin, whose own commit set the lease, so a turn shorter than
+  `everyMs` costs no extra commit. Being in order, a renewal cannot pass a
+  `write` (`RunContext.write`) or a `transact` still running: keep those
+  shorter than the lease, and do slow work outside them. `everyMs` must be at most half of
+  `ttlMs`, so a renewal lands before the lease runs out even when one is
+  late: a slower keep-alive is refused when the layer is built
+  (`config.options`, from `SessionsLive` and from the plugin's options).
+  Each renewal is a commit, so it bumps the head's `updatedAt` (an owner's
+  `list` orders by it: a session with an open turn moves up every
+  `everyMs`) and, on SQLite, costs a write. A turn whose process hangs
+  stays held while the keep-alive runs: the lease protects against a
+  holder that stopped, not one that stalled; `Sessions.cancel` closes it.
+  `renew: "on-commit"` restores the behaviour before the keep-alive was the
+  default.
 - `{ mode: "process" }`: a turn is held without expiry for as long as the
   process that began it runs. The turn names its holder's host, pid and
   start time: a turn left open by a process of this host that has stopped
@@ -1477,8 +1502,9 @@ task's. `Tasks.start(parent, { instructions, mode })` records `task.started`
 in the parent, checked against the tasks stored (a task does not start
 tasks; a session runs `maxRunning`, two, at once), and hands the work to the
 host's `TaskRunner`: `InProcessTaskRunnerLive` forks it on this process (its
-own fiber, interrupted with the layer), and a serverless host registers it
-with its `waitUntil`. The work begins the child's turn once (its key is the
+own fiber, interrupted with the layer, counted by the `TaskActivity` the
+layer also provides), and a serverless host registers it with its
+`waitUntil`. The work begins the child's turn once (its key is the
 task's), runs it through the host's `TaskExecutor.turn` until the runner's
 deadline, records `task.result` before the turn closes, delivers the result
 to the parent's inbox (`task:<id>`, once) and drains the parent, whose
@@ -1519,6 +1545,113 @@ delivered as interrupted. With `tools`, the model gets `start_task` and
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events
 after a cursor, then follows `changes` and polls.
+
+### Busy signal and graceful shutdown
+
+A process that serves turns needs to say whether it is busy (a `/ping` a
+load balancer or a deploy reads) and to stop without cutting turns in half
+(a SIGTERM before a restart). Two optional ports in `@xandreed/core` count
+what this process has in flight:
+
+- `TurnActivity`: the turns its `Sessions` has in flight, read at one
+  moment (`current`). A begin counts from the moment it is asked for,
+  through the host's admission (which may queue it) and the opening commit
+  (which may wait on the store), until its writer is handed over or it
+  fails (`beginning`, a count). The turn then counts as open, with its
+  `session`, `turn` and `since` (this process's Clock time once its begin
+  was stored), oldest first, until its writer's scope closes (a turn ended
+  but whose scope is still open still counts, beside the session's next
+  turn). A begin that failed after storing its turn counts until its scope
+  has closed that turn. `SessionsLive` and `SessionsPluginLive` provide it.
+  A turn held by another process over the same log is that process's; with
+  several `Sessions` instances in one process, each counts its own.
+- `TaskActivity`: the background work its `TaskRunner` runs, counted from
+  the moment `run` hands it over until it ends. `InProcessTaskRunnerLive`
+  provides it; a runner that hands work elsewhere (a serverless
+  `waitUntil`) has none unless the host provides one.
+
+`processActivity` reads both from the current services into a
+`ProcessActivity`: `{ openTurns, beginningTurns, runningTasks, busy }` (a
+port that is not there counts nothing). `awaitIdle({ timeout })` waits
+until nothing is open, beginning or running at the same moment (a task that
+opens its parent's inbox turn before it ends is waited for too) and returns
+that activity; with a `timeout` it stops waiting then and returns what is
+still in flight, with `busy: true`. `agent.activity` is `processActivity`
+over the agent's runtime services: the `Sessions` and task runner given in
+`Agent.define`'s `services` (built from the layers above, so their ports
+come along), or a runtime-scoped sessions plugin in its graph. A `Sessions`
+passed only in a turn's services is not the agent's to see; read
+`processActivity` over the host's own services instead.
+
+The drain is four steps: stop admitting new turns, wait (bounded) until
+idle, stop the host's own request fibers, then close the scope the
+services live in. Admission is the host's: a `TurnAdmission` that refuses
+while draining makes every new turn, user's or inbox's or task's, fail to
+begin with `TurnRefused` (`Agent.turn` fails with `turn.refused`, a host
+answers 503). A request that got past the admission just before the flag
+was set is a begin in flight, so the wait covers it. A task that finishes
+while draining still stores its result and delivers it to its parent's
+inbox, where it waits (its reaction is refused) until the session is next
+drained.
+
+```ts
+// Inside the host's Effect.gen, in the scope the process closes last.
+import { Effect, Layer, Ref } from "effect"
+import { LanguageModel } from "effect/ai"
+import { awaitIdle, TurnAdmission, TurnRefused } from "@xandreed/core"
+import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
+import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
+import { SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
+import { SessionsPluginLive } from "@xandreed/plugin-sessions"
+import { InProcessTaskRunnerLive } from "@xandreed/plugin-tasks"
+import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
+import { Agent } from "@xandreed/sdk"
+
+const draining = yield* Ref.make(false)
+const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
+  admit: (turn, open) => Effect.gen(function* () {
+    if (yield* Ref.get(draining)) return yield* Effect.fail(new TurnRefused({ session: turn.session.id, reason: "draining", message: "shutting down" }))
+    return yield* open
+  }),
+}))
+const sessions = SessionsPluginLive().pipe(Layer.provide(Layer.merge(SessionLogSqliteLive(".efferent/runtime/sessions.db"), admission)))
+// The runner on top of the sessions, not beside them: closing interrupts its tasks while the log is still open.
+const services = yield* Layer.build(InProcessTaskRunnerLive().pipe(Layer.provideMerge(sessions)))
+const agent = yield* Agent.define({ services, plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel] })
+
+// GET /ping: 200 with the counts (a session id is the host's to show or not).
+const ping = agent.activity.pipe(Effect.map((now) => ({ busy: now.busy, openTurns: now.openTurns.length, runningTasks: now.runningTasks })))
+
+// On SIGTERM: stop admitting, wait at most 25 s; then the host stops its server, then closes the services' scope.
+const drain = Effect.gen(function* () {
+  yield* Ref.set(draining, true)
+  const left = yield* awaitIdle({ timeout: "25 seconds" }).pipe(Effect.provide(services))
+  if (left.busy) yield* Effect.logWarning(`stopping with ${left.openTurns.length + left.beginningTurns} turns and ${left.runningTasks} tasks in flight`)
+})
+```
+
+What is still running when the wait ends needs the last two steps in that
+order. A turn's writer lives in the turn's own scope (`Agent.turn`'s, in
+the fiber serving the request), not in the services' scope, and
+`SessionsLive` holds no finalizer over it: closing the services does not
+stop that turn, it closes the log under it (`SessionLogSqliteLive` closes
+its database). So stop the host's request fibers first, interrupting or
+awaiting them (an HTTP server's shutdown, for one): a turn whose scope
+is interrupted while the log is open ends interrupted (`turn.interrupted`)
+and can be resumed. Then close the services. The task runner's layer
+interrupts its tasks when it closes and waits for them, and a task whose
+fiber is interrupted ends its child's turn the same way, provided the log
+is still open: build the runner on top of the sessions with
+`Layer.provideMerge`, as above, so it closes first. `Layer.mergeAll` closes
+its layers at the same time, and a task's end may then race the log's
+close. A turn still running when its log closes cannot store its end: the
+next process reaps it as interrupted with `turn.lease`, under a lease once
+the lease runs out (until then a begin on that session fails with
+`SessionBusy`), under process ownership at the first touch after the
+process is gone. Keep the wait below the platform's grace period (a
+container's stop timeout, say), with time left for those two steps.
+`packages/sdk/src/activity.test.ts` runs this recipe, including a drain
+that times out.
 
 ### Resuming a turn
 

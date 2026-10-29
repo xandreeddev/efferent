@@ -16,6 +16,7 @@ import {
 } from "@xandreed/core"
 import type { BeginTurn, SessionAddress, SessionLogEvent, TaskView, TurnOutcome, TurnWriter } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
+import type { SessionsConfig } from "@xandreed/plugin-sessions"
 import { noticeOf } from "./task.entity.functions.js"
 import { tasksDefaults } from "./task-records.entity.js"
 import type { TasksConfig } from "./task-records.entity.js"
@@ -56,7 +57,7 @@ const harness = (input: {
     turn: input.turn ?? ((_writer, task) => Effect.succeed({ outcome: "completed", reply: Option.some(`found: ${task.instructions}`) })),
     react,
   }))
-  const sessionsLayer = SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, input.admission ?? TurnAdmissionOpen)))
+  const sessionsLayer = SessionsLive(onCommit).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, input.admission ?? TurnAdmissionOpen)))
   const context = yield* Layer.build(TasksLive({ ...tasksDefaults, ...input.config }).pipe(Layer.provideMerge(Layer.mergeAll(sessionsLayer, runner, executor))))
   const sessions = Context.get(context, Sessions)
   const parent = yield* sessions.create({ owner }).pipe(Effect.map((view): SessionAddress => ({ id: view.header.id, owner })))
@@ -71,6 +72,9 @@ const harness = (input: {
     kinds: (address: SessionAddress) => sessions.read(address).pipe(Effect.map(kinds)),
   }
 })
+
+/** Leases renewed only by writes, without the default keep-alive: an abandoned turn's lease runs out. */
+const onCommit: SessionsConfig = { ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } }
 
 const scenario = <A, E>(body: Effect.Effect<A, E, Scope.Scope>) => Effect.runPromise(Effect.scoped(body).pipe(Effect.provide(TestClock.layer())))
 

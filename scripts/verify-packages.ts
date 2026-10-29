@@ -116,7 +116,7 @@ import { LanguageModel } from "effect/ai"
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Bash, bashConformance, Capabilities, FileSystem, fileSystemConformance, makeMemoryFileSystem, Sessions, SessionEnvironment, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { awaitIdle, Bash, bashConformance, Capabilities, FileSystem, fileSystemConformance, makeMemoryFileSystem, Sessions, SessionEnvironment, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskActivity, TaskExecutor, Tasks, TurnActivity, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
 import { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
 import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
@@ -173,10 +173,14 @@ const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
   return (yield* writer.end({ reason: "completed", failure: Option.none() })).pending
  }))
  if (pending > 0) yield* sessions.drain(address, react)
- return yield* Deferred.await(done).pipe(Effect.timeout("5 seconds"))
+ const text = yield* Deferred.await(done).pipe(Effect.timeout("5 seconds"))
+ // The built context holds the sessions' TurnActivity and the runner's TaskActivity: wait until both settle.
+ const probes = Option.isSome(Context.getOption(context, TurnActivity)) && Option.isSome(Context.getOption(context, TaskActivity))
+ const idle = yield* awaitIdle({ timeout: "5 seconds" }).pipe(Effect.provide(context))
+ return { text, probes, idle }
 })))
-if (!answered.includes("found the answer")) process.exit(1)
-console.log("Sessions over SQLite, a background task and the reaction to its result passed")
+if (!answered.text.includes("found the answer") || !answered.probes || answered.idle.busy || answered.idle.openTurns.length > 0 || answered.idle.beginningTurns > 0 || answered.idle.runningTasks > 0) process.exit(1)
+console.log("Sessions over SQLite, a background task, the reaction to its result and awaitIdle after them passed")
 const recovery = sessionLogRecoveryConformance({ open: makeSessionLogSqlite(".efferent/recovery.db"), callerClock: true })
 const recoveryFailures = (await Effect.runPromise(Effect.forEach(recovery, (check) => Effect.result(check.run).pipe(
  Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
@@ -298,6 +302,26 @@ const { tmpdir } = await import("node:os")
 const { join } = await import("node:path")
 const { Bash, bashConformance, Capabilities, FileSystem, SessionEnvironment, UserMessage } = await import("@xandreed/core")
 const { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } = await import("@xandreed/plugin-workspace")
+// The busy signal on Node: an open turn and a running task count, and awaitIdle sees both settle.
+const { awaitIdle, processActivity, TaskRunner } = await import("@xandreed/core")
+const { InProcessTaskRunnerLive } = await import("@xandreed/plugin-tasks")
+const { Deferred, Scope, Exit } = await import("effect")
+const busy = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const services = yield* Layer.build(InProcessTaskRunnerLive().pipe(Layer.provideMerge(SessionsPluginLive().pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen))))))
+  const sessions = Context.get(services, Sessions)
+  const view = yield* sessions.create({ owner: "node" })
+  const scope = yield* Scope.make()
+  const writer = yield* sessions.begin({ id: view.header.id, owner: "node" }, { _tag: "User", userMessage: new UserMessage({ text: "hello" }), runId: "run-1", key: "k1", command: {} }).pipe(Scope.provide(scope))
+  const release = yield* Deferred.make()
+  yield* Context.get(services, TaskRunner).run(() => Deferred.await(release))
+  const during = yield* processActivity.pipe(Effect.provide(services))
+  yield* writer.end({ reason: "completed", failure: Option.none() })
+  yield* Scope.close(scope, Exit.void)
+  yield* Deferred.succeed(release, undefined)
+  const after = yield* awaitIdle({ timeout: "5 seconds" }).pipe(Effect.provide(services))
+  return JSON.stringify([during.openTurns.length, during.beginningTurns, during.runningTasks, during.busy, after.busy])
+})))
+if (busy !== JSON.stringify([1, 0, 1, true, false])) { console.error("busy signal on Node: " + busy); process.exit(1) }
 const linkTo = (target, path) => Effect.tryPromise(() => symlink(target, path))
 // The model store kits over every adapter plugin-models ships: in memory, and on files in temporary directories.
 const { authStoreConformance, AuthStore, ModelCatalog, modelCatalogConformance, SettingsStore, settingsStoreConformance } = await import("@xandreed/core")
@@ -313,7 +337,7 @@ const stores = await runKit("AuthStore (memory)", authStoreConformance(await ser
   + await runKit("ModelCatalog", modelCatalogConformance(await serviceOf(ModelCatalog, ConfiguredModelCatalogLive.pipe(Layer.provide(MemoryAuthStoreLive(new Map([["opencode", { type: "api_key", key: "k" }]]))))), { includes: ["opencode:glm-5.2"] }))
 rmSync(kitHome, { recursive: true, force: true })
 rmSync(kitCwd, { recursive: true, force: true })
-console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + ") and the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + ")")
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, and the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + ")")
 ${localKits}
 ${workspaceJourney}
 `)

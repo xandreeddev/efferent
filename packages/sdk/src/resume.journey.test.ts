@@ -110,7 +110,7 @@ const cancelledMidToolCall = Effect.gen(function* () {
     turnServices: [LanguageModel.LanguageModel],
     limits: { streaming: false, maxSteps: 6 },
   })
-  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+  const sessions = Context.get(yield* Layer.build(SessionsLive({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
   yield* sessions.create({ owner: session.owner, id: session.id })
   const services = (model: LanguageModel.LanguageModel) => Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions))
 
