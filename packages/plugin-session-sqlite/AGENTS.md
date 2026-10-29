@@ -13,6 +13,7 @@ Core's `SessionLog` port in one SQLite file (`session_heads` and `session_log_ev
 - Removal cascades through foreign keys (`foreign_keys = ON`): a session's events and child sessions go with its head.
 - The tables are created with `IF NOT EXISTS` and carry no version: change no existing table or column without adding a migration first.
 - Change behaviour by adding the check to core's `sessionLogConformance` or `sessionLogRecoveryConformance` first.
+- Each `SessionLog` call is an `Effect.fn` span, `session_log.<create|head|list|read|commit|remove>`, carrying `efferent.session.id` when the call names a session (`onSession`); opening the file is `session_log.open`. `makeSessionLogSqlite` is `Effect.fnUntraced` (it runs when the layer is built), and the per-call helpers (`operation`, `decodeRow`) open no span.
 
 ## Public surface
 
@@ -42,7 +43,7 @@ None.
 
 ## Tests
 
-- `src/session-log.adapter.test.ts`: core's `sessionLogConformance`, and `sessionLogRecoveryConformance` with `callerClock: true`, over a temporary file; the pragmas (`:30`) and a damaged row failing with `store.decode` (`:40`).
+- `src/session-log.adapter.test.ts`: core's `sessionLogConformance`, and `sessionLogRecoveryConformance` with `callerClock: true`, over a temporary file; the pragmas (`:30`), a damaged row failing with `store.decode` (`:40`), and the `session_log.*` spans under the caller's, with the session's id (`:68`).
 - `src/sessions.conformance.test.ts`: core's `sessionsConformance` over `SessionsLive` instances sharing one SQLite file, as several servers over one store.
 - `src/session-recovery.test.ts`: crash recovery against real processes (`session-holder.testing.ts`, stopped with SIGKILL): concurrent opens, a commit waiting past its `notAfter`, a wait that never blocks the thread, `store.busy`, a process killed mid-commit, compare-and-swap races, reaping a dead holder's turn.
 - `packages/sdk/src/agent.backends.test.ts`: the model sees the same requests over the memory and SQLite logs; `verify:packages` (on Bun) runs sessions with a background task and the recovery kit over the packed package.

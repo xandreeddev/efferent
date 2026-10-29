@@ -356,6 +356,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   request's `runId` and `step`, never a user's message or its images.
 - `buildProvider`'s result names its route: `anthropic`,
   `openai-responses`, `openai-codex` or `compat`.
+- `@xandreed/plugin-session-sqlite`: every `SessionLog` call is a span
+  (`session_log.create`, `head`, `list`, `read`, `commit`, `remove`) that
+  ends with the call's failure; calls that name a session carry
+  `efferent.session.id`, and opening the SQLite file is a
+  `session_log.open` span.
 
 ### Changed
 
@@ -695,6 +700,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The `effect/no-provider-namespace` gate rule bans `anthropic`, `openai`,
   `google` and `router` keys in core and the agent loop, tests and kits
   aside.
+- `effect/prefer-effect-fn` runs in `plugin-session-sqlite`.
 
 ## 0.14.0 — 2026-10-29
 
