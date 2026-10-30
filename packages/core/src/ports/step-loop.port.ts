@@ -71,12 +71,15 @@ export interface StepRequest {
    */
   readonly dispatch: (step: number, request: ModelDispatch) => Effect.Effect<void, TurnError>
   /**
-   * Persist appended messages under `step`; returns their log entries. A
-   * step's tail (the response and its tool results) is recorded under that
-   * step, before its `step.ended`; the loop's own messages (a corrective, a
+   * Persist appended messages durably under `step`; returns their log entries.
+   * Store the assistant response before any handler runs, then each final
+   * tool result as it returns, before waiting for sibling calls. A step's
+   * tail is recorded incrementally before its `step.ended`; the loop's own messages (a corrective, a
    * nudge, a steer) under the next step, which reads them.
    */
   readonly record: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
+  /** Fresh durable entries of this run's step, including raw results whose presentation or digest did not finish. */
+  readonly recorded: (step: number) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /**
    * A provider refused the step's request over an image (an `InvalidRequestError`
    * that names one; `reason` is what it said). Records an `OmitMedia`

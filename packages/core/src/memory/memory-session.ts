@@ -1,5 +1,5 @@
 import { Clock, Effect, Option, Ref, Semaphore } from "effect"
-import { toolResultMedia } from "../domain/media.entity.functions.js"
+import { elideMediaData, mediaSlotsOf, toolResultMedia } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { RunId, RunOrdinal } from "../domain/run.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
@@ -11,15 +11,17 @@ import type { CompactionAction, EntryId, LogBody, LogEntry } from "./memory-log.
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
   buildContext,
+  canonicalJson,
   currentTurnOf,
   entryId,
   latestRunOf,
+  presentedEntries,
   queryLog,
   rawTranscript,
   referenceTranscript,
   renderLog,
   subjectsOf,
-  toolInputsOf,
+  toolInputOf,
 } from "./memory-log.entity.functions.js"
 
 /**
@@ -89,21 +91,36 @@ export const openLogSession = Effect.fnUntraced(function* (
   const digester = yield* Effect.serviceOption(ResultDigester)
   const stored = yield* log.read
   const entries = yield* Ref.make(stored)
-  const counter = yield* Ref.make(stored.filter((entry) => entry.runId === runId).length)
+  const nextIndex = (all: ReadonlyArray<LogEntry>): number => {
+    const own = all.filter((entry) => entry.runId === runId)
+    const prefix = `${runId}:`
+    return own.reduce((next, entry) => {
+      const suffix = String(entry.id).startsWith(prefix) ? String(entry.id).slice(prefix.length) : ""
+      const index = /^\d+$/.test(suffix) ? Number(suffix) : -1
+      return Number.isSafeInteger(index) && index >= 0 ? Math.max(next, index + 1) : next
+    }, own.length)
+  }
+  const counter = yield* Ref.make(nextIndex(stored))
   const writing = yield* Semaphore.make(1)
   /** A render of the log: the step context of run `run` of the turn; the latest run that recorded one when none is named. */
   const renderOptions = (all: ReadonlyArray<LogEntry>, stepContext: "tail" | "none", run: RunOrdinal = latestRunOf(all, runId)): RenderOptions => ({
     ...policy.render, stepContext, strategy: policy.strategy.id, currentTurn: currentTurnOf(all), currentRun: runId, run,
   })
   // One record at a time: ids, the stored order and the session's order agree (a request is
-  // rebuilt from the stored entries up to its build's last one), and a refused append takes no id.
+  // rebuilt from the stored entries up to its build's last one). A failed acknowledgement
+  // is reconciled from storage; a proven refusal takes no id, an uncertain write reserves it.
   const record = (bodies: ReadonlyArray<LogBody>, step: number) => bodies.length === 0 ? Effect.succeed<ReadonlyArray<LogEntry>>([]) : writing.withPermits(1)(Effect.gen(function* () {
     const current = currentTurnOf(yield* Ref.get(entries))
     const turn = bodies.some((body) => body._tag === "TurnStarted") ? current + 1 : Math.max(current, 1)
     const at = yield* Clock.currentTimeMillis
     const start = yield* Ref.get(counter)
     const appended = bodies.map((body, index): LogEntry => ({ id: entryId(runId, start + index), runId, turn, step, at, body }))
-    yield* log.append(appended)
+    yield* log.append(appended).pipe(Effect.onError(() => (log.snapshot ?? log.read).pipe(
+      Effect.flatMap((actual) => Ref.set(entries, actual).pipe(Effect.andThen(Ref.set(counter, nextIndex(actual))))),
+      Effect.catchCause((cause) => Effect.logWarning("the memory append failed and its durable snapshot could not be read", cause).pipe(
+        Effect.andThen(Ref.update(counter, (next) => Math.max(next, start + bodies.length))),
+      )),
+    )))
     yield* Ref.set(counter, start + bodies.length)
     yield* Ref.update(entries, (all) => [...all, ...appended])
     return appended
@@ -113,10 +130,9 @@ export const openLogSession = Effect.fnUntraced(function* (
     Ref.get(entries).pipe(Effect.flatMap((all) => Option.match(Option.all([digester, latestUserMessage(all)]), {
       onNone: () => Effect.succeed<ReadonlyArray<LogEntry>>([]),
       onSome: ([service, userMessage]) => Effect.gen(function* () {
-        const inputs = toolInputsOf(all, [])
         const bodies = yield* Effect.forEach(targets, (entry): Effect.Effect<ReadonlyArray<LogBody>> => entry.body._tag !== "ToolResult" || entry.body.isError
           ? Effect.succeed([])
-          : views.digest(entry.body.toolName, entry.body.encoded, inputs.get(String(entry.body.toolCallId)) ?? {}, userMessage).pipe(
+          : views.digest(entry.body.toolName, entry.body.encoded, toolInputOf(all, entry), userMessage).pipe(
             Effect.flatMap(Option.match({
               onNone: () => Effect.succeed<ReadonlyArray<LogBody>>([]),
               onSome: (task) => service.digest(task).pipe(
@@ -132,34 +148,51 @@ export const openLogSession = Effect.fnUntraced(function* (
         return yield* record(bodies.flat(), step)
       }),
     })))
-  const recordTail = (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number) => Effect.gen(function* () {
-    const inputs = toolInputsOf(yield* Ref.get(entries), tail)
+  const recordTail = (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => Effect.gen(function* () {
+    // Persist the returned value before calling any host view or optional digester.
     const bodies = yield* Effect.forEach(tail, (message): Effect.Effect<ReadonlyArray<LogBody>> => message.role !== "tool"
-      ? Effect.succeed([{ _tag: "Message", message }])
+      ? Effect.succeed([{ _tag: "Message", message, ...(run === undefined ? {} : { run }) }])
       : Effect.forEach(message.content, (part) => {
-        const params = inputs.get(String(part.toolCallId)) ?? {}
         const isError = part.isError ?? false
-        return views.view(part.toolName, part.output, params, isError).pipe(
-          // A failed call sends no image; a result's images are checked once, here (`toolResultMedia`).
-          Effect.flatMap((view) => toolResultMedia(part.output, isError ? [] : view.media ?? []).pipe(Effect.map((media): LogBody => ({
+        const elided = elideMediaData(part.output)
+        const text = typeof elided === "string" ? elided : canonicalJson(elided)
+        return toolResultMedia(part.output, isError ? [] : mediaSlotsOf(part.output)).pipe(Effect.map((media): LogBody => ({
             _tag: "ToolResult", toolCallId: part.toolCallId, toolName: part.toolName, isError,
+            ...(run === undefined ? {} : { run }),
             encoded: part.output,
-            view: media.labels.length === 0 ? view.text : [view.text, ...media.labels].filter((line) => line.length > 0).join("\n"),
-            viewVersion: view.version, subjects: view.subjects, artifacts: view.artifacts, pinned: view.pinned,
+            view: media.labels.length === 0 ? text : [text, ...media.labels].filter((line) => line.length > 0).join("\n"),
+            viewVersion: "raw", subjects: [], artifacts: [], pinned: false,
             ...(media.slots.length === 0 ? {} : { media: media.slots }),
             ...(media.labels.length === 0 ? {} : { mediaNotes: media.labels }),
-          })))),
-        )
+          })))
       }, { concurrency: 1 }), { concurrency: 1 })
     const recorded = yield* record(bodies.flat(), step)
+    const all = yield* Ref.get(entries)
+    const presentations = yield* Effect.forEach(recorded, (entry): Effect.Effect<ReadonlyArray<LogBody>> => {
+      if (entry.body._tag !== "ToolResult") return Effect.succeed([])
+      const body = entry.body
+      return views.view(body.toolName, body.encoded, toolInputOf(all, entry), body.isError).pipe(
+        Effect.flatMap((view) => toolResultMedia(body.encoded, body.isError ? [] : view.media ?? []).pipe(Effect.map((media): ReadonlyArray<LogBody> => {
+          const presentation = {
+            view: media.labels.length === 0 ? view.text : [view.text, ...media.labels].filter((line) => line.length > 0).join("\n"),
+            viewVersion: view.version, subjects: view.subjects, artifacts: view.artifacts, pinned: view.pinned,
+            media: media.slots, mediaNotes: media.labels,
+          }
+          const previous = { view: body.view, viewVersion: body.viewVersion, subjects: body.subjects, artifacts: body.artifacts, pinned: body.pinned, media: body.media ?? [], mediaNotes: body.mediaNotes ?? [] }
+          return canonicalJson(presentation) === canonicalJson(previous) ? [] : [{ _tag: "ToolPresentation", entry: entry.id, ...presentation }]
+        }))),
+      )
+    }, { concurrency: 1 })
+    const presented = yield* record(presentations.flat(), step)
+    const shown = presentedEntries([...recorded, ...presented]).slice(0, recorded.length)
     const onWrite = policy.digestOnWrite
-    const targets = Option.isNone(onWrite) ? [] : recorded.filter((entry) =>
+    const targets = Option.isNone(onWrite) ? [] : shown.filter((entry) =>
       entry.body._tag === "ToolResult" && onWrite.value({ tool: entry.body.toolName, chars: entry.body.view.length }))
     const digests = yield* digest(targets, views, "write", step)
-    return [...recorded, ...digests]
+    return [...shown, ...presented, ...digests]
   })
   const maintain = (signal: MaintainSignal) => Effect.gen(function* () {
-    const all = yield* Ref.get(entries)
+    const all = presentedEntries(yield* Ref.get(entries))
     const decision = yield* policy.maintain({
       entries: all, signal, turn: currentTurnOf(all), runId,
       render: (candidate) => renderLog(candidate, renderOptions(candidate, "tail")),
@@ -176,7 +209,7 @@ export const openLogSession = Effect.fnUntraced(function* (
     entries: Ref.get(entries),
     query: (query) => Ref.get(entries).pipe(Effect.map((all) => queryLog(all, query))),
     subjects: (kinds) => Ref.get(entries).pipe(Effect.map((all) => subjectsOf(all, kinds))),
-    resolve: (id) => Ref.get(entries).pipe(Effect.map((all) => Option.fromNullishOr(all.find((entry) => entry.id === id)))),
+    resolve: (id) => Ref.get(entries).pipe(Effect.map((all) => Option.fromNullishOr(presentedEntries(all).find((entry) => entry.id === id)))),
     transcript: (fidelity) => Ref.get(entries).pipe(Effect.map((all) => fidelity === "raw" ? rawTranscript(all)
       : fidelity === "reference" ? referenceTranscript(all) : renderLog(all, renderOptions(all, "tail")))),
     record,

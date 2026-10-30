@@ -10,9 +10,9 @@ import { UserMessage } from "../turn/user-message.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
   artifactLines, buildContext, canonicalJson, digestTranscript, emptyQuery, entriesSendingMedia, entryId, estimateMessageTokens, fingerprintOf, latestRunOf, ledgerOf, queryLog,
-  rawTranscript, referenceTranscript, renderLog,
+  presentedEntries, rawTranscript, referenceTranscript, renderLog, subjectsOf,
 } from "./memory-log.entity.functions.js"
-import { ArtifactRef, LogBody, LogEntry, Subject } from "./memory-log.entity.js"
+import { ArtifactId, ArtifactRef, LogBody, LogEntry, Subject, SubjectId } from "./memory-log.entity.js"
 
 /** The run of turn `turn`, as these logs name it. */
 const runOf = (turn: number) => RunId.make(`run-${turn}`)
@@ -376,7 +376,7 @@ describe("the text a render adds", () => {
     const none = () => "none"
     const cases = {
       SystemPrepared: none, TurnStarted: none, TurnContext: none, Message: none, ToolResult: none,
-      ToolDigest: none, StepContext: none, ToolsActivated: none, TurnEnded: none,
+      ToolDigest: none, ToolPresentation: none, StepContext: none, ToolsActivated: none, TurnEnded: none,
     }
     // @ts-expect-error: the cases leave Compaction out.
     expect(() => LogBody.match(body, cases)).toThrow()
@@ -405,5 +405,138 @@ describe("the text a render adds", () => {
     expect(artifactLines(artifacts, 2)).toBe("\nArtifacts:\n- image a1 (image/png): the chart\n- file f1 (application/pdf)\n- … 1 more")
     expect(artifactLines(artifacts, 0)).toBe("\nArtifacts:\n- … 3 more")
     expect(artifactLines([], 2)).toBe("")
+  })
+})
+
+describe("rendering an interrupted tool exchange", () => {
+  const at = (index: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(runOf(turn), index), runId: runOf(turn), turn, step: 0, at: index, body })
+  const call = (id: string, providerExecuted = false) => ({ type: "tool-call" as const, toolCallId: ToolCallId.make(id), toolName: "lookup", input: { query: id }, providerExecuted })
+  const result = (index: number, turn: number, id: string, view: string, isError = false) => at(index, turn, {
+    _tag: "ToolResult", toolCallId: ToolCallId.make(id), toolName: "lookup", isError, encoded: view, view, viewVersion: "1", subjects: [], artifacts: [], pinned: false,
+  })
+  const rendered = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, options(2, { mode: "none", maxImages: 0, maxChars: 0 }))
+  const interrupted = (id: string): ToolResultPart => ({
+    type: "tool-result", toolCallId: ToolCallId.make(id), toolName: "lookup", isError: true,
+    output: { error: "ToolInterrupted", message: "This call has no recorded result. It may have run before the turn stopped. Check the current state before deciding whether to call it again." },
+  })
+
+  test("a request ending after a call gets an exact failure, without changing the stored entry", () => {
+    const message: AgentMessage = { role: "assistant", content: [call("c1")] }
+    const entry = at(1, 1, { _tag: "Message", message })
+    expect(rendered([entry])).toEqual([message, { role: "tool", content: [interrupted("c1")] }])
+    expect(entry.body).toEqual({ _tag: "Message", message })
+  })
+
+  test("a completed sibling stays byte-exact and only the unanswered call is repaired before the next user message", () => {
+    const message: AgentMessage = { role: "assistant", content: [call("c1"), call("c2")] }
+    const entries = [at(1, 1, { _tag: "Message", message }), result(2, 1, "c2", "found"), started(2, "continue", [])]
+    expect(rendered(entries)).toEqual([
+      message,
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c2"), toolName: "lookup", output: "found", isError: false }, interrupted("c1")] },
+      { role: "user", content: "continue" },
+    ])
+  })
+
+  test("provider-executed calls stay untouched and an actual failed result is never replaced", () => {
+    const message: AgentMessage = { role: "assistant", content: [
+      call("provider", true),
+      { type: "tool-result", toolCallId: ToolCallId.make("provider"), toolName: "lookup", output: { rows: 1 }, isError: false, providerExecuted: true },
+      call("local"),
+    ] }
+    expect(rendered([at(1, 1, { _tag: "Message", message }), result(2, 1, "local", "denied", true)])).toEqual([
+      message,
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("local"), toolName: "lookup", output: "denied", isError: true }] },
+    ])
+    const providerOnly: AgentMessage = { role: "assistant", content: [call("provider", true)] }
+    expect(rendered([at(1, 1, { _tag: "Message", message: providerOnly })])).toEqual([providerOnly])
+  })
+
+  test("a provider reusing an id in a later turn does not hide the first turn's missing result", () => {
+    const message: AgentMessage = { role: "assistant", content: [call("same")] }
+    expect(rendered([
+      at(1, 1, { _tag: "Message", message }), started(2, "again", []), at(1, 2, { _tag: "Message", message }), result(2, 2, "same", "done"),
+    ])).toEqual([
+      message, { role: "tool", content: [interrupted("same")] }, { role: "user", content: "again" }, message,
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("same"), toolName: "lookup", output: "done", isError: false }] },
+    ])
+  })
+
+  test("a compaction that drops the exchange creates no orphan repair", () => {
+    const message: AgentMessage = { role: "assistant", content: [call("c1")] }
+    const compacted = at(1, 2, { _tag: "Compaction", strategy: "test", version: "1", action: { _tag: "DropTurns", throughTurn: 1, ledger: "Earlier work" } })
+    expect(rendered([at(1, 1, { _tag: "Message", message }), compacted])).toEqual([{ role: "user", content: "[Host note: earlier turns were condensed to free context.]\n\nEarlier work" }])
+  })
+})
+
+describe("a raw result's later presentation", () => {
+  const raw: LogEntry = {
+    id: entryId(runOf(1), 1), runId: runOf(1), turn: 1, step: 0, at: 1,
+    body: { _tag: "ToolResult", toolCallId: ToolCallId.make("c1"), toolName: "lookup", encoded: { id: "row" }, isError: false, view: '{"id":"row"}', viewVersion: "raw", subjects: [], artifacts: [], pinned: false },
+  }
+  const subject = { kind: "record", id: SubjectId.make("row"), label: Option.some("a record"), data: Option.none() }
+  const artifact = { id: ArtifactId.make("report"), kind: "file" as const, mediaType: "text/plain", url: "https://example.test/report", alt: Option.none() }
+  const presentation: LogEntry = {
+    id: entryId(runOf(1), 2), runId: runOf(1), turn: 1, step: 0, at: 2,
+    body: { _tag: "ToolPresentation", entry: raw.id, view: "FOUND row", viewVersion: "2", subjects: [subject], artifacts: [artifact], pinned: true, media: [], mediaNotes: [] },
+  }
+
+  test("a prefix before the presentation stays raw, and later presentations change no stored bytes", () => {
+    expect(renderLog([raw], options(1, { mode: "none", maxImages: 0, maxChars: 0 }))[0]).toEqual({ role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "lookup", output: '{"id":"row"}', isError: false }] })
+    expect(renderLog([raw, presentation], options(1, { mode: "none", maxImages: 8, maxChars: 0 }))[0]).toEqual({ role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "lookup", output: "FOUND row\nArtifacts:\n- file report (text/plain)", isError: false }] })
+    expect(raw.body._tag === "ToolResult" ? [raw.body.view, raw.body.viewVersion, raw.body.subjects] : []).toEqual(['{"id":"row"}', "raw", []])
+    expect(presentedEntries([presentation, raw])[1]).toEqual(raw)
+  })
+
+  test("queries, subjects and summarizer transcripts read the selected view exactly once", () => {
+    const entries = [raw, presentation]
+    expect(queryLog(entries, { ...emptyQuery, kinds: ["ToolResult"], subject: Option.some({ kind: "record", id: Option.some("row") }) }).map((entry) => entry.id)).toEqual([raw.id])
+    expect(queryLog(entries, { ...emptyQuery, kinds: ["ToolResult"], text: Option.some("FOUND row") }).map((entry) => entry.id)).toEqual([raw.id])
+    expect(subjectsOf(entries, [])).toEqual([subject])
+    expect(digestTranscript(entries, { result: 1000, total: 1000 })).toBe("Tool lookup: FOUND row")
+    expect(rawTranscript(entries)).toEqual(rawTranscript([raw]))
+  })
+
+  test("an explicit empty media selection clears the raw images, and presentation metadata never repeats their bytes", () => {
+    const slot = mediaSlotsOf(png)[0]!
+    const imageRaw: LogEntry = { ...raw, body: { ...raw.body as Extract<LogBody, { _tag: "ToolResult" }>, encoded: png, view: "raw image", media: [slot] } }
+    const shown: LogEntry = { ...presentation, body: { ...presentation.body as Extract<LogBody, { _tag: "ToolPresentation" }>, view: "selected text", artifacts: [], media: [] } }
+    const imageBefore = renderLog([imageRaw], options(1, { mode: "inline", maxImages: 8, maxChars: 1_000_000 }))[0]
+    const imageAfter = renderLog([imageRaw, shown], options(1, { mode: "inline", maxImages: 8, maxChars: 1_000_000 }))[0]
+    expect(imageBefore?.role === "tool" ? imageBefore.content[0]?.media : []).toEqual([png])
+    expect(imageAfter?.role === "tool" ? imageAfter.content[0] : "missing").toEqual({ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "lookup", output: "selected text", isError: false })
+    expect(canonicalJson(Schema.encodeSync(Schema.Array(LogEntry))([imageRaw, shown])).split(pixelPng).length - 1).toBe(1)
+  })
+})
+
+describe("rendering interleaved run exchanges", () => {
+  const request = (index: number, run: number): LogEntry => ({
+    id: entryId(runOf(1), index), runId: runOf(1), turn: 1, step: 0, at: index,
+    body: { _tag: "Message", run: RunOrdinal.make(run), message: { role: "assistant", content: [
+      { type: "tool-call", toolCallId: ToolCallId.make("shared"), toolName: "lookup", input: { run } },
+    ] } },
+  })
+  const result = (index: number, run: number): LogEntry => ({
+    id: entryId(runOf(1), index), runId: runOf(1), turn: 1, step: 0, at: index,
+    body: { _tag: "ToolResult", run: RunOrdinal.make(run), toolCallId: ToolCallId.make("shared"), toolName: "lookup", isError: false,
+      encoded: `result ${run}`, view: `result ${run}`, viewVersion: "1", subjects: [], artifacts: [], pinned: false },
+  })
+  const rendered = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, options(1, { mode: "none", maxImages: 0, maxChars: 0 }))
+
+  test("completed calls in interleaved runs reuse a provider id without a synthetic failure or orphan result", () => {
+    const entries = [request(0, 0), request(1, 1), result(2, 0), result(3, 1)]
+    expect(rendered(entries)).toEqual([
+      (entries[0]!.body as Extract<LogBody, { _tag: "Message" }>).message,
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("shared"), toolName: "lookup", isError: false, output: "result 0" }] },
+      (entries[1]!.body as Extract<LogBody, { _tag: "Message" }>).message,
+      { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("shared"), toolName: "lookup", isError: false, output: "result 1" }] },
+    ])
+    expect(rendered([entries[0]!, entries[2]!, entries[1]!, entries[3]!])).toEqual(rendered(entries))
+  })
+
+  test("a prefix repairs only the other run's absent result", () => {
+    const shown = rendered([request(0, 0), request(1, 1), result(2, 0)])
+    expect(shown.flatMap((message) => message.role === "tool" ? message.content.map((part) => part.output) : [])).toEqual([
+      "result 0", { error: "ToolInterrupted", message: "This call has no recorded result. It may have run before the turn stopped. Check the current state before deciding whether to call it again." },
+    ])
   })
 })

@@ -17,7 +17,7 @@ import {
   pendingCompaction,
   rewrittenBy,
   RunContext,
-  toolInputsOf,
+  toolInputOf,
 } from "@xandreed/core"
 import type { CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
 
@@ -78,13 +78,12 @@ export const windowPolicy = (config: MemoryWindowConfig): MemoryPolicy => ({
 
 const decide = (config: MemoryWindowConfig, { entries, signal, turn, render }: Parameters<MemoryPolicy["maintain"]>[0]) => Effect.gen(function* () {
     const rewritten = rewrittenBy(entries, WINDOW_STRATEGY.id)
-    const inputs = toolInputsOf(entries, [])
     const results = entries.flatMap((entry) => entry.body._tag === "ToolResult" ? [{ entry, result: entry.body }] : [])
     const older = signal.phase === "turn-start" && config.compactPreviousTurn
       ? results.filter(({ entry, result }) => entry.turn < turn && !result.pinned && !rewritten.has(entry.id))
       : []
     const compacted = yield* Effect.forEach(older, ({ entry, result }) =>
-      signal.views.compact(result.toolName, result.encoded, inputs.get(String(result.toolCallId)) ?? {}).pipe(
+      signal.views.compact(result.toolName, result.encoded, toolInputOf(entries, entry)).pipe(
         Effect.map((text) => Option.toArray(Option.filter(text, (value) => value !== result.view)).map((value) => ({ id: entry.id, text: value }))),
       ), { concurrency: 1 }).pipe(Effect.map((all) => all.flat()))
     const views: ReadonlyArray<CompactionAction> = compacted.length === 0 ? [] : [{

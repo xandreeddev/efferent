@@ -24,24 +24,24 @@
         "decision.recorded",
         "step.started",
         "context.built",
+        "assistant.message",
         "tool.started",
         "tool.completed",
-        "assistant.message",
         "step.ended",
         "completion.evaluated",
         "step.started",
         "context.built",
+        "assistant.message",
         "tool.started",
         "skills.activated",
         "tool.completed",
-        "assistant.message",
         "step.ended",
         "completion.evaluated",
         "step.started",
         "context.built",
+        "assistant.message",
         "tool.started",
         "tool.completed",
-        "assistant.message",
         "step.ended",
         "completion.evaluated",
         "turn.ended"
@@ -106,7 +106,7 @@
           ]
         }
       ],
-      "entries": 17
+      "entries": 19
     },
     {
       "runId": "run-2",
@@ -115,7 +115,7 @@
         "reply": {
           "_id": "Option",
           "_tag": "Some",
-          "value": "layer saw turn 1 with 18 entries | written in order | turn 2"
+          "value": "layer saw turn 1 with 20 entries | written in order | turn 2"
         },
         "usage": {
           "inputTokens": 0,
@@ -132,7 +132,7 @@
         "turn.ended"
       ],
       "contextBuilt": [],
-      "entries": 19
+      "entries": 21
     },
     {
       "runId": "run-3",
@@ -143,7 +143,7 @@
         "turn.ended"
       ],
       "contextBuilt": [],
-      "entries": 22
+      "entries": 24
     },
     {
       "runId": "run-4",
@@ -168,23 +168,23 @@
         "skills.activated",
         "decision.recorded",
         "step.started",
+        "assistant.message",
         "tool.started",
         "tool.completed",
-        "assistant.message",
         "step.ended",
         "completion.evaluated",
         "step.started",
         "context.built",
+        "assistant.message",
         "tool.started",
         "tool.completed",
-        "assistant.message",
         "step.ended",
         "completion.evaluated",
         "step.started",
         "context.built",
+        "assistant.message",
         "tool.started",
         "tool.completed",
-        "assistant.message",
         "step.ended",
         "completion.evaluated",
         "turn.ended"
@@ -197,7 +197,7 @@
           "run": 0,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "5ed25de1b0d",
+          "fingerprint": "fc3faf1ab0d",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 942,
           "reservedTokens": 481,
@@ -218,7 +218,7 @@
           "run": 0,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "1fea5a56ca2",
+          "fingerprint": "3ea0ef47ca2",
           "systemFingerprint": "eb326f7eed",
           "estimatedTokens": 1077,
           "reservedTokens": 481,
@@ -233,7 +233,7 @@
           ]
         }
       ],
-      "entries": 36
+      "entries": 40
     }
   ],
   "requests": [
@@ -767,7 +767,7 @@
           {
             "options": {},
             "role": "assistant",
-            "content": "layer saw turn 1 with 18 entries | written in order | turn 2"
+            "content": "layer saw turn 1 with 20 entries | written in order | turn 2"
           },
           {
             "options": {},
@@ -1074,7 +1074,7 @@
           {
             "options": {},
             "role": "assistant",
-            "content": "layer saw turn 1 with 18 entries | written in order | turn 2"
+            "content": "layer saw turn 1 with 20 entries | written in order | turn 2"
           },
           {
             "options": {},
@@ -1425,7 +1425,8 @@
               "totalTokens": 110
             }
           }
-        }
+        },
+        "run": 0
       }
     },
     {
@@ -1437,6 +1438,7 @@
       "body": {
         "_tag": "ToolResult",
         "toolCallId": "c1",
+        "run": 0,
         "toolName": "lookup",
         "isError": false,
         "encoded": {
@@ -1455,6 +1457,22 @@
             }
           ]
         },
+        "view": "{\"items\":[{\"detail\":\"alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a \",\"id\":\"record-alpha-a\"},{\"detail\":\"alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b \",\"id\":\"record-alpha-b\"},{\"detail\":\"alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c \",\"id\":\"record-alpha-c\"}]}",
+        "viewVersion": "raw",
+        "subjects": [],
+        "artifacts": [],
+        "pinned": false
+      }
+    },
+    {
+      "id": "run-1:8",
+      "runId": "run-1",
+      "turn": 1,
+      "step": 0,
+      "at": 1767225600000,
+      "body": {
+        "_tag": "ToolPresentation",
+        "entry": "run-1:7",
         "view": "FOUND record-alpha-a: alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a \nFOUND record-alpha-b: alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b \nFOUND record-alpha-c: alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c ",
         "viewVersion": "1",
         "subjects": [
@@ -1478,11 +1496,13 @@
           }
         ],
         "artifacts": [],
-        "pinned": false
+        "pinned": false,
+        "media": [],
+        "mediaNotes": []
       }
     },
     {
-      "id": "run-1:8",
+      "id": "run-1:9",
       "runId": "run-1",
       "turn": 1,
       "step": 0,
@@ -1501,7 +1521,7 @@
       }
     },
     {
-      "id": "run-1:9",
+      "id": "run-1:10",
       "runId": "run-1",
       "turn": 1,
       "step": 1,
@@ -1511,24 +1531,6 @@
         "step": 1,
         "run": 0,
         "text": "STEP 1"
-      }
-    },
-    {
-      "id": "run-1:10",
-      "runId": "run-1",
-      "turn": 1,
-      "step": 0,
-      "at": 1767225600000,
-      "body": {
-        "_tag": "ToolsActivated",
-        "skills": [
-          "delivery"
-        ],
-        "tools": [
-          "deliver"
-        ],
-        "source": "load_skill",
-        "decision": null
       }
     },
     {
@@ -1564,11 +1566,30 @@
               "totalTokens": 110
             }
           }
-        }
+        },
+        "run": 0
       }
     },
     {
       "id": "run-1:12",
+      "runId": "run-1",
+      "turn": 1,
+      "step": 0,
+      "at": 1767225600000,
+      "body": {
+        "_tag": "ToolsActivated",
+        "skills": [
+          "delivery"
+        ],
+        "tools": [
+          "deliver"
+        ],
+        "source": "load_skill",
+        "decision": null
+      }
+    },
+    {
+      "id": "run-1:13",
       "runId": "run-1",
       "turn": 1,
       "step": 1,
@@ -1576,6 +1597,7 @@
       "body": {
         "_tag": "ToolResult",
         "toolCallId": "c2",
+        "run": 0,
         "toolName": "load_skill",
         "isError": false,
         "encoded": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
@@ -1583,11 +1605,29 @@
         "viewVersion": "raw",
         "subjects": [],
         "artifacts": [],
-        "pinned": true
+        "pinned": false
       }
     },
     {
-      "id": "run-1:13",
+      "id": "run-1:14",
+      "runId": "run-1",
+      "turn": 1,
+      "step": 1,
+      "at": 1767225600000,
+      "body": {
+        "_tag": "ToolPresentation",
+        "entry": "run-1:13",
+        "view": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
+        "viewVersion": "raw",
+        "subjects": [],
+        "artifacts": [],
+        "pinned": true,
+        "media": [],
+        "mediaNotes": []
+      }
+    },
+    {
+      "id": "run-1:15",
       "runId": "run-1",
       "turn": 1,
       "step": 0,
@@ -1621,7 +1661,7 @@
       }
     },
     {
-      "id": "run-1:14",
+      "id": "run-1:16",
       "runId": "run-1",
       "turn": 1,
       "step": 2,
@@ -1634,7 +1674,7 @@
       }
     },
     {
-      "id": "run-1:15",
+      "id": "run-1:17",
       "runId": "run-1",
       "turn": 1,
       "step": 2,
@@ -1664,11 +1704,12 @@
               "totalTokens": 110
             }
           }
-        }
+        },
+        "run": 0
       }
     },
     {
-      "id": "run-1:16",
+      "id": "run-1:18",
       "runId": "run-1",
       "turn": 1,
       "step": 2,
@@ -1676,6 +1717,7 @@
       "body": {
         "_tag": "ToolResult",
         "toolCallId": "c3",
+        "run": 0,
         "toolName": "deliver",
         "isError": false,
         "encoded": true,
@@ -1687,7 +1729,7 @@
       }
     },
     {
-      "id": "run-1:17",
+      "id": "run-1:19",
       "runId": "run-1",
       "turn": 1,
       "step": 0,
@@ -1718,7 +1760,7 @@
       "body": {
         "_tag": "TurnEnded",
         "outcome": "completed",
-        "reply": "layer saw turn 1 with 18 entries | written in order | turn 2"
+        "reply": "layer saw turn 1 with 20 entries | written in order | turn 2"
       }
     },
     {
@@ -1827,11 +1869,29 @@
         "viewVersion": "raw",
         "subjects": [],
         "artifacts": [],
-        "pinned": true
+        "pinned": false
       }
     },
     {
       "id": "run-4:4",
+      "runId": "run-4",
+      "turn": 4,
+      "step": 0,
+      "at": 1767225600000,
+      "body": {
+        "_tag": "ToolPresentation",
+        "entry": "run-4:3",
+        "view": "## notes\nNote what the user asks to keep.\nTools: note",
+        "viewVersion": "raw",
+        "subjects": [],
+        "artifacts": [],
+        "pinned": true,
+        "media": [],
+        "mediaNotes": []
+      }
+    },
+    {
+      "id": "run-4:5",
       "runId": "run-4",
       "turn": 4,
       "step": 0,
@@ -1844,7 +1904,7 @@
       }
     },
     {
-      "id": "run-4:5",
+      "id": "run-4:6",
       "runId": "run-4",
       "turn": 4,
       "step": 0,
@@ -1865,7 +1925,7 @@
       }
     },
     {
-      "id": "run-4:6",
+      "id": "run-4:7",
       "runId": "run-4",
       "turn": 4,
       "step": 0,
@@ -1885,11 +1945,12 @@
               "providerExecuted": false
             }
           ]
-        }
+        },
+        "run": 0
       }
     },
     {
-      "id": "run-4:7",
+      "id": "run-4:8",
       "runId": "run-4",
       "turn": 4,
       "step": 0,
@@ -1897,6 +1958,7 @@
       "body": {
         "_tag": "ToolResult",
         "toolCallId": "4.0.planned:0",
+        "run": 0,
         "toolName": "lookup",
         "isError": false,
         "encoded": {
@@ -1915,6 +1977,22 @@
             }
           ]
         },
+        "view": "{\"items\":[{\"detail\":\"gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \",\"id\":\"record-gamma-a\"},{\"detail\":\"gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \",\"id\":\"record-gamma-b\"},{\"detail\":\"gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c \",\"id\":\"record-gamma-c\"}]}",
+        "viewVersion": "raw",
+        "subjects": [],
+        "artifacts": [],
+        "pinned": false
+      }
+    },
+    {
+      "id": "run-4:9",
+      "runId": "run-4",
+      "turn": 4,
+      "step": 0,
+      "at": 1767225600000,
+      "body": {
+        "_tag": "ToolPresentation",
+        "entry": "run-4:8",
         "view": "FOUND record-gamma-a: gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \nFOUND record-gamma-b: gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \nFOUND record-gamma-c: gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c ",
         "viewVersion": "1",
         "subjects": [
@@ -1938,11 +2016,13 @@
           }
         ],
         "artifacts": [],
-        "pinned": false
+        "pinned": false,
+        "media": [],
+        "mediaNotes": []
       }
     },
     {
-      "id": "run-4:8",
+      "id": "run-4:10",
       "runId": "run-4",
       "turn": 4,
       "step": 0,
@@ -1976,7 +2056,7 @@
       }
     },
     {
-      "id": "run-4:9",
+      "id": "run-4:11",
       "runId": "run-4",
       "turn": 4,
       "step": 1,
@@ -2006,11 +2086,12 @@
               "totalTokens": 110
             }
           }
-        }
+        },
+        "run": 0
       }
     },
     {
-      "id": "run-4:10",
+      "id": "run-4:12",
       "runId": "run-4",
       "turn": 4,
       "step": 1,
@@ -2018,6 +2099,7 @@
       "body": {
         "_tag": "ToolResult",
         "toolCallId": "e1",
+        "run": 0,
         "toolName": "note",
         "isError": false,
         "encoded": true,
@@ -2029,7 +2111,7 @@
       }
     },
     {
-      "id": "run-4:11",
+      "id": "run-4:13",
       "runId": "run-4",
       "turn": 4,
       "step": 2,
@@ -2059,11 +2141,12 @@
               "totalTokens": 110
             }
           }
-        }
+        },
+        "run": 0
       }
     },
     {
-      "id": "run-4:12",
+      "id": "run-4:14",
       "runId": "run-4",
       "turn": 4,
       "step": 2,
@@ -2071,6 +2154,7 @@
       "body": {
         "_tag": "ToolResult",
         "toolCallId": "e2",
+        "run": 0,
         "toolName": "deliver",
         "isError": false,
         "encoded": true,
@@ -2082,7 +2166,7 @@
       }
     },
     {
-      "id": "run-4:13",
+      "id": "run-4:15",
       "runId": "run-4",
       "turn": 4,
       "step": 0,

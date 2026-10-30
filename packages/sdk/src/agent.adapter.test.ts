@@ -777,8 +777,8 @@ describe("Agent.turn", () => {
       const second = (yield* journal.stored).filter((event) => Option.contains(event.turn, 2))
       return { reads: yield* Ref.get(reads), started: second[0]?.seq ?? 0, stored: second.length }
     })))
-    // One read per step: the first from the turn's start (memory has the history), then after the last event seen.
-    expect(reads).toHaveLength(3)
+    // One read before dispatch and one at settlement per step, always after the last event seen.
+    expect(reads).toHaveLength(6)
     expect(reads[0]?.after).toBe(started - 1)
     expect(reads.every((read, index) => index === 0 || read.after >= reads[index - 1]!.after + reads[index - 1]!.count)).toBe(true)
     expect(reads.reduce((sum, read) => sum + read.count, 0)).toBeLessThanOrEqual(stored)

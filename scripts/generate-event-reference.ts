@@ -30,6 +30,7 @@ const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensi
   "memory.step": { writer: "Memory: the step policy's step context", sensitive: "Step context text." },
   "memory.message": { writer: "Memory: the step loop's recorded messages", sensitive: "User and assistant text, reasoning, tool call inputs." },
   "memory.tool-result": { writer: "Memory: the step loop's recorded tool results", sensitive: "Tool output, encoded (a tool's images, inline as base64, included) and as the model saw it." },
+  "memory.tool-presentation": { writer: "Memory, after a durable raw tool result's view is prepared", sensitive: "Tool output rendered as text, subjects and artifact references; encoded output and image bytes stay only in memory.tool-result." },
   "memory.digest": { writer: "Memory: a digester (`plugin-memory-digest`)", sensitive: "Tool output, digested." },
   "memory.skills": { writer: "Memory: the tool registry's skill activations", sensitive: "None: skill and tool names." },
   "memory.compaction": { writer: "Memory: the memory strategy's compactions (window, summary); the turn, when a provider refuses an image (`OmitMedia`)", sensitive: "Conversation text: summaries and compact views; an `OmitMedia`'s `reason` quotes the provider's error (up to 500 characters)." },

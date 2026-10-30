@@ -10,6 +10,7 @@
     "memory.skills",
     "memory.compaction",
     "turn.reply",
+    "memory.tool-presentation",
     "step.started",
     "step.ended",
     "step.usage",
@@ -1257,7 +1258,7 @@
     },
     {
       "name": "assistant.message",
-      "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`.",
+      "description": "Published by the step loop once per provider response, after its assistant content is durably recorded and before any of its tool handlers runs: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -1494,7 +1495,7 @@
           "finishReason"
         ],
         "additionalProperties": true,
-        "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`."
+        "description": "Published by the step loop once per provider response, after its assistant content is durably recorded and before any of its tool handlers runs: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`."
       }
     },
     {
@@ -2465,7 +2466,7 @@
         },
         {
           "name": "body",
-          "type": "{ message }",
+          "type": "{ message, run }",
           "required": true
         }
       ],
@@ -2474,6 +2475,11 @@
           "name": "message",
           "type": "{ role, content, providerOptions }",
           "required": true
+        },
+        {
+          "name": "run",
+          "type": "integer",
+          "required": false
         }
       ],
       "schema": {
@@ -2931,6 +2937,11 @@
                     "additionalProperties": true
                   }
                 ]
+              },
+              "run": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
               }
             },
             "required": [
@@ -2976,7 +2987,7 @@
         },
         {
           "name": "body",
-          "type": "{ toolCallId, toolName, isError, encoded, view, viewVersion, subjects, artifacts, pinned, media, mediaNotes }",
+          "type": "{ toolCallId, run, toolName, isError, encoded, view, viewVersion, subjects, artifacts, pinned, media, mediaNotes }",
           "required": true
         }
       ],
@@ -2985,6 +2996,11 @@
           "name": "toolCallId",
           "type": "string",
           "required": true
+        },
+        {
+          "name": "run",
+          "type": "integer",
+          "required": false
         },
         {
           "name": "toolName",
@@ -3074,6 +3090,11 @@
             "properties": {
               "toolCallId": {
                 "type": "string"
+              },
+              "run": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
               },
               "toolName": {
                 "type": "string"
@@ -3905,6 +3926,294 @@
             "required": [
               "outcome",
               "reply"
+            ],
+            "additionalProperties": true
+          }
+        },
+        "required": [
+          "entry",
+          "runId",
+          "step",
+          "at",
+          "body"
+        ],
+        "additionalProperties": true
+      }
+    },
+    {
+      "kind": "memory.tool-presentation",
+      "writer": "Memory, after a durable raw tool result's view is prepared",
+      "sensitive": "Tool output rendered as text, subjects and artifact references; encoded output and image bytes stay only in memory.tool-result.",
+      "fields": [
+        {
+          "name": "entry",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "runId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "step",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "at",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "body",
+          "type": "{ entry, view, viewVersion, subjects, artifacts, pinned, media, mediaNotes }",
+          "required": true
+        }
+      ],
+      "body": [
+        {
+          "name": "entry",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "view",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "viewVersion",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "subjects",
+          "type": "Array<{ kind, id, label, data }>",
+          "required": true
+        },
+        {
+          "name": "artifacts",
+          "type": "Array<{ id, kind, mediaType, url, alt }>",
+          "required": true
+        },
+        {
+          "name": "pinned",
+          "type": "boolean",
+          "required": true
+        },
+        {
+          "name": "media",
+          "type": "Array<{ path, fingerprint, mediaType, bytes }>",
+          "required": true
+        },
+        {
+          "name": "mediaNotes",
+          "type": "Array<string>",
+          "required": true
+        }
+      ],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "entry": {
+            "type": "string",
+            "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+            "minLength": 1
+          },
+          "runId": {
+            "type": "string"
+          },
+          "step": {
+            "type": "integer",
+            "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "at": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "string",
+                "enum": [
+                  "Infinity",
+                  "-Infinity",
+                  "NaN"
+                ]
+              }
+            ]
+          },
+          "body": {
+            "type": "object",
+            "properties": {
+              "entry": {
+                "type": "string",
+                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                "minLength": 1
+              },
+              "view": {
+                "type": "string"
+              },
+              "viewVersion": {
+                "type": "string"
+              },
+              "subjects": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                      "minLength": 1
+                    },
+                    "id": {
+                      "type": "string",
+                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                      "minLength": 1
+                    },
+                    "label": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "data": {
+                      "anyOf": [
+                        {},
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "id",
+                    "label",
+                    "data"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "artifacts": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "image",
+                        "file"
+                      ]
+                    },
+                    "mediaType": {
+                      "type": "string",
+                      "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                      "minLength": 1
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "alt": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "mediaType",
+                    "url",
+                    "alt"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "pinned": {
+                "type": "boolean"
+              },
+              "media": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "array",
+                      "items": {
+                        "anyOf": [
+                          {
+                            "type": "string"
+                          },
+                          {
+                            "type": "integer",
+                            "minimum": -9007199254740991,
+                            "maximum": 9007199254740991
+                          }
+                        ]
+                      }
+                    },
+                    "fingerprint": {
+                      "type": "string"
+                    },
+                    "mediaType": {
+                      "type": "string",
+                      "enum": [
+                        "image/png",
+                        "image/jpeg",
+                        "image/gif",
+                        "image/webp"
+                      ]
+                    },
+                    "bytes": {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "fingerprint",
+                    "mediaType",
+                    "bytes"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "mediaNotes": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "entry",
+              "view",
+              "viewVersion",
+              "subjects",
+              "artifacts",
+              "pinned",
+              "media",
+              "mediaNotes"
             ],
             "additionalProperties": true
           }

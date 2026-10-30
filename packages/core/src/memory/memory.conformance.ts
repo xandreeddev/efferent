@@ -1,4 +1,4 @@
-import { Array as Arr, Context, Effect, Option, Ref, Schema } from "effect"
+import { Array as Arr, Context, Deferred, Effect, Fiber, Option, Ref, Schema } from "effect"
 import type { Scope } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
@@ -126,9 +126,33 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       const session = yield* open(log, "run-1")
       yield* recordTurn(session, "find alpha", "found record-alpha")
       const reopened = yield* open(log, "run-1")
-      const result = (yield* reopened.entries).find((entry) => entry.body._tag === "ToolResult")
+      const raw = (yield* reopened.entries).find((entry) => entry.body._tag === "ToolResult")
+      const result = raw === undefined ? undefined : Option.getOrUndefined(yield* reopened.resolve(raw.id))
       yield* expect("views", result?.body._tag === "ToolResult" && result.body.view.startsWith("VIEW ") && result.body.artifacts[0]?.id === artifact.id,
         "the tool result lost its view or artifacts")
+    })),
+    check("a tool's encoded result is durable while its view is still pending", "raw-result-durable", (open, log) => Effect.gen(function* () {
+      const session = yield* open(log, "run-1")
+      const viewing = yield* Deferred.make<void>()
+      const held: ToolViews = { ...views, view: () => Deferred.succeed(viewing, undefined).pipe(Effect.andThen(Effect.never)) }
+      const recording = yield* session.recordTail(toolTail, held, 0).pipe(Effect.forkChild)
+      const entered = yield* Deferred.await(viewing).pipe(Effect.timeoutOption("1 second"))
+      const stored = yield* log.read
+      yield* Fiber.interrupt(recording)
+      yield* expect("raw-result-durable", Option.isSome(entered), "the result's view was not called")
+      const result = stored.find((entry) => entry.body._tag === "ToolResult")
+      yield* expect("raw-result-durable", result?.body._tag === "ToolResult" && canonicalJson(result.body.encoded) === canonicalJson({ id: "record-alpha" }), "the encoded result was not durable before its view ran")
+      const reopened = yield* open(log, "run-1")
+      const built = yield* reopened.build({ stepContext: "tail", run: firstRun })
+      yield* expect("raw-result-durable", !canonicalJson(built.messages).includes("ToolInterrupted") && canonicalJson(built.messages).includes("record-alpha"), "the reopened result was replaced by an interrupted call")
+    })),
+    check("recordTail keeps an explicit run ordinal on requests and raw results through reopening", "run-ordinal", (open, log) => Effect.gen(function* () {
+      const session = yield* open(log, "run-1")
+      yield* session.recordTail(toolTail, views, 0, firstRun)
+      yield* session.recordTail(toolTail, views, 0, secondRun)
+      const reopened = yield* open(log, "run-1")
+      const runs = (yield* reopened.entries).flatMap((entry) => entry.body._tag === "Message" || entry.body._tag === "ToolResult" ? [entry.body.run] : [])
+      yield* expect("run-ordinal", runs.length === 4 && runs.every((run, index) => run === (index < 2 ? firstRun : secondRun)), "the reopened calls lost or mixed their explicit run ordinals")
     })),
     check("build is a pure fold of the log", "pure", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")

@@ -37,9 +37,10 @@ const notRun = (call: Response.ToolCallPart<string, unknown>): Response.AnyPart 
  * as at a stop; `uncapped` answers every reply cut at the output limit
  * with a corrective, however many come in a row; `unreset` counts the
  * replies cut at the output limit over the run, not in a row: a malformed
- * or a whole step between them restarts nothing.
+ * or a whole step between them restarts nothing. `batch-tail` records the
+ * response and all results only after every handler returns.
  */
-type Carelessness = "careful" | "streamed" | "settled" | "cuts-with-calls" | "ends-at-pause" | "uncapped" | "unreset"
+type Carelessness = "careful" | "streamed" | "settled" | "cuts-with-calls" | "ends-at-pause" | "uncapped" | "unreset" | "batch-tail"
 
 /**
  * The smallest loop that honours the StepLoop contract, written directly on
@@ -59,9 +60,19 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
     const model = yield* Effect.orDie(Effect.fromOption(Context.getOption(request.handlers, LanguageModel.LanguageModel)))
     const toolkit = yield* request.tools.toolkit.pipe(Effect.provide(request.handlers))
     const run = request.run.ordinal
+    const ended = yield* Ref.make<ReadonlySet<number>>(new Set())
+    const record = request.record
+    const end = (step: number, status: StepStatus) => Ref.modify(ended, (all): readonly [boolean, ReadonlySet<number>] =>
+      [!all.has(step), new Set([...all, step])]).pipe(Effect.flatMap((publish) => !publish ? Effect.void : request.recorded(step).pipe(
+      Effect.flatMap((entries) => request.events.publish({
+        _tag: "step.ended", step, run, status,
+        results: entries.flatMap((entry) => entry.step === step && entry.body._tag === "ToolResult"
+          ? [{ entry: entry.id, toolCallId: entry.body.toolCallId, tool: entry.body.toolName, ok: !entry.body.isError }] : []),
+      })),
+    )))
     const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, TurnError> => request.completion(info).pipe(
       Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, run, verdict })))
-    /** A whole reply's calls, run one at a time at step `index`, each answered by its last result. */
+    /** A whole reply's calls at step `index`, each last result recorded as it returns. */
     const runCalls = (calls: ReadonlyArray<Response.ToolCallPart<string, unknown>>, index: number) => Effect.forEach(calls, (call) =>
       (toolkit.handle(call.name as never, call.params as never, call.id) as Effect.Effect<Stream.Stream<Tool.HandlerResult<Tool.Any>, unknown>, unknown>).pipe(
         Effect.flatMap((results) => Stream.runLast(Stream.filter(results, (result) => !result.preliminary))),
@@ -70,7 +81,8 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
           id: call.id, name: call.name, providerExecuted: false, preliminary: false,
           result: result.result, encodedResult: result.encodedResult, isFailure: result.isFailure,
         })),
-      ), { concurrency: 1 }).pipe(
+        Effect.tap((result) => careless === "batch-tail" ? Effect.void : record(index, responseToAgentMessages([result]))),
+      ), { concurrency: request.limits.toolConcurrency }).pipe(
       Effect.provideService(CurrentAgentStep, Option.some(index)),
       // The turn's services outermost: the caller's step in them must not win.
       Effect.provide(request.handlers),
@@ -136,7 +148,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
       )
       // A malformed step ends as such, without a verdict; its corrective is the next step's, when there is one.
       if (Option.isNone(answered)) {
-        yield* request.events.publish({ _tag: "step.ended", step: index, run, status: "malformed", results: [] })
+        yield* end(index, "malformed")
         if (index + 1 >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text: joined(text, carried, ""), steps: index + 1, usage } satisfies RunResult
         yield* request.record(index + 1, [{ role: "user", content: "Your reply could not be parsed: call a tool that exists, or answer in text." }])
         return yield* step(index + 1, text, carried, usage, toolCalled, careless === "unreset" ? cuts : 0)
@@ -147,21 +159,27 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
       const calls = parts.flatMap((part) => part.type === "tool-call" && part.providerExecuted !== true ? [part] : [])
       const cut = !WHOLE.includes(response.finishReason)
         && (careless === "cuts-with-calls" ? calls.length > 0 : response.finishReason !== "unknown" || calls.length > 0)
-      const answers = resolvedThrough ? [] : cut ? calls.map(notRun) : yield* runCalls(calls, index)
-      const content: ReadonlyArray<Response.AnyPart> = [...parts, ...answers]
-      const entries = yield* request.record(index, responseToAgentMessages(content))
-      const used = extractUsage(undefined, content)
+      const used = extractUsage(undefined, parts)
       const total = addUsage(usage, used)
-      yield* request.events.publish({
-        _tag: "assistant.message", step: index, run, text: responseText(content), reasoning: "", model: Option.none(),
-        toolCalls: responseToolCalls(content).map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })), usage: used, finishReason: response.finishReason,
+      const publishAssistant = request.events.publish({
+        _tag: "assistant.message", step: index, run, text: responseText(parts), reasoning: "", model: Option.none(),
+        toolCalls: responseToolCalls(parts).map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })), usage: used, finishReason: response.finishReason,
       })
-      const results = entries.flatMap((entry) =>
-        entry.body._tag === "ToolResult" ? [{ entry: entry.id, toolCallId: entry.body.toolCallId, tool: entry.body.toolName, ok: !entry.body.isError }] : [])
+      if (careless !== "batch-tail") {
+        yield* record(index, responseToAgentMessages(parts))
+        yield* publishAssistant
+      }
+      const answers = resolvedThrough ? [] : cut ? calls.map(notRun) : yield* runCalls(calls, index)
+      if (cut && careless !== "batch-tail") yield* Effect.forEach(answers, (answer) => record(index, responseToAgentMessages([answer])), { concurrency: 1 })
+      const content: ReadonlyArray<Response.AnyPart> = [...parts, ...answers]
+      if (careless === "batch-tail") {
+        yield* record(index, responseToAgentMessages(content))
+        yield* publishAssistant
+      }
       const reply = responseText(content)
       // A reply cut short: its calls were answered, not run, and it gets no verdict.
       if (cut) {
-        yield* request.events.publish({ _tag: "step.ended", step: index, run, status: "truncated", results })
+        yield* end(index, "truncated")
         if (response.finishReason !== "length" || (cuts >= 2 && careless !== "uncapped")) return yield* Effect.fail(harnessError("loop.truncated", `the reply at step ${index} was cut short (${response.finishReason})`))
         // A reply of text alone is gone on from, its text carried to the next reply's; one with calls is replied anew.
         const [nextText, nextCarried] = calls.length === 0 ? [text, carried + reply] : [joined(text, carried, reply), ""]
@@ -174,7 +192,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
         }])
         return yield* step(index + 1, nextText, nextCarried, total, toolCalled, cuts + 1)
       }
-      yield* request.events.publish({ _tag: "step.ended", step: index, run, status: "completed", results })
+      yield* end(index, "completed")
       const first = yield* evaluate(info)
       const verdict = first.complete || first.awaiting.length === 0 ? first : yield* request.tasks.await(first.awaiting).pipe(Effect.andThen(evaluate(info)))
       const paused = response.finishReason === "pause" && careless !== "ends-at-pause"
@@ -185,7 +203,8 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
       return yield* (paused
         ? step(index + 1, text, carried + reply, total, toolCalled || calls.length > 0, counted)
         : step(index + 1, joined(text, carried, reply), "", total, toolCalled || calls.length > 0, counted))
-    })
+    }).pipe(Effect.onExit((exit) => Exit.isFailure(exit)
+      ? end(index, Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed").pipe(Effect.orDie) : Effect.void))
     // The request's cache key and call policy, for the dispatch check and the model calls to read.
     return yield* step(0, "", "", zeroUsage, false, 0).pipe(
       Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
@@ -216,6 +235,10 @@ const republishing = (rewrite: (event: TurnEvent) => TurnEvent) => StepLoop.of({
 })
 
 describe("a loop careless with a reply cut short", () => {
+  test("one that records the whole tail after all tools return fails every per-call durability check", async () => {
+    expect(await failedChecks(minimalLoopOf("batch-tail"))).toEqual(["assistant-first", "incremental-results", "record-failure"])
+  })
+
   test("one that publishes every assistant.message as finished with stop fails the finish reason's checks", async () => {
     expect(await failedChecks(republishing((event) => event._tag === "assistant.message" ? { ...event, finishReason: "stop" } : event)))
       .toEqual(["cut", "cut-stream", "cut-text", "cut-unknown", "finish"])
@@ -226,12 +249,12 @@ describe("a loop careless with a reply cut short", () => {
       .toEqual(["cut", "cut-fail", "cut-reset", "cut-stream", "cut-text", "cut-unknown"])
   })
 
-  test("one that streams through effect/ai's own tool call resolution, which starts a call before the finish arrives, fails cut-stream", async () => {
-    expect(await failedChecks(minimalLoopOf("streamed"))).toEqual(["cut-stream"])
+  test("one that streams through effect/ai's own tool call resolution starts a call before it records the response and before the finish arrives", async () => {
+    expect(await failedChecks(minimalLoopOf("streamed"))).toEqual(["assistant-first", "cut-stream"])
   })
 
-  test("one that settles through effect/ai's own tool call resolution, which runs the calls of a reply with no finish part, fails cut-unknown", async () => {
-    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["cut-unknown"])
+  test("one that settles through effect/ai's own tool call resolution runs unrecorded calls, including a reply with no finish part", async () => {
+    expect(await failedChecks(minimalLoopOf("settled"))).toEqual(["assistant-first", "cut-unknown", "incremental-results", "record-failure"])
   })
 
   test("one that gates a cut only when the reply has tool calls fails the checks of a reply of text alone cut short", async () => {
@@ -360,6 +383,7 @@ const runWith = (model: LanguageModel.LanguageModel, options: {
     plan: () => Effect.succeed({ model: Option.none(), system: "sys", messages: [{ role: "user", content: "go" }], toolChoice: Option.none() }),
     dispatch: () => Effect.void,
     record: () => Effect.succeed([]),
+    recorded: () => Effect.succeed([]),
     onMediaRejected: () => Effect.succeed(false),
     // Complete after `steps` steps; a model stop ends the run earlier.
     completion: (info) => Effect.succeed({ complete: info.stepIndex + 1 >= steps, awaiting: [], facts: {} }),
@@ -445,4 +469,12 @@ describe("runSteps trace content", () => {
     }))
     expect(reads).toEqual([capture])
   })
+})
+
+test("the recorded-results check catches a loop that drops the durable snapshot after a presentation failure", async () => {
+  const forgetful = StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps({ ...request, recorded: () => Effect.succeed([]) }) })
+  const check = stepLoopConformance(forgetful).find((candidate) => candidate.name === "a failed result presentation leaves its raw result listed on the failed step by durable entry id")
+  expect(check).toBeDefined()
+  const result = await Effect.runPromise(Effect.result(check?.run ?? Effect.void))
+  expect(result._tag === "Failure" ? result.failure.check : "passed").toBe("recorded-results")
 })

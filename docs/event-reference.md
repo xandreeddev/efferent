@@ -169,7 +169,7 @@ Published by `recordDecision`, for example when `turn.tools.select` or `apply` r
 
 ### `assistant.message`
 
-Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`.
+Published by the step loop once per provider response, after its assistant content is durably recorded and before any of its tool handlers runs: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`.
 
 | Field | Type |
 | --- | --- |
@@ -240,6 +240,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `memory.skills` | Memory: the tool registry's skill activations | None: skill and tool names. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.compaction` | Memory: the memory strategy's compactions (window, summary); the turn, when a provider refuses an image (`OmitMedia`) | Conversation text: summaries and compact views; an `OmitMedia`'s `reason` quotes the provider's error (up to 500 characters). | `entry`, `runId`, `step`, `at`, `body` |
 | `turn.reply` | Memory, when the turn's reply is recorded (`TurnMemory.persistReply`), held for the turn's closing commit: stored with its `turn.ended`, right before it | The assistant's reply. | `entry`, `runId`, `step`, `at`, `body` |
+| `memory.tool-presentation` | Memory, after a durable raw tool result's view is prepared | Tool output rendered as text, subjects and artifact references; encoded output and image bytes stay only in memory.tool-result. | `entry`, `runId`, `step`, `at`, `body` |
 | `step.started` | The turn's bus (stored from `step.started`) | None: tool names. | `step`, `run`, `planned`, `activeTools` |
 | `step.ended` | The turn's bus (stored from `step.ended`) | None: entry ids and tool names. | `step`, `run`, `status`, `results` |
 | `step.usage` | The turn's bus (stored from `assistant.message`) | None: model name, token counts and finish reason. | `step`, `run`, `model`, `usage`, `finishReason` |
@@ -262,12 +263,13 @@ A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's
 | `memory.system` | `fingerprint`: `string`, `text`: `string`, `sections`: `Array<{ id, version, fingerprint }>` |
 | `memory.section` | `sectionId`: `string`, `version`: `string`, `text`: `string` |
 | `memory.step` | `step`: `integer`, `run`: `integer`, `text`: `string` |
-| `memory.message` | `message`: `{ role, content, providerOptions }` |
-| `memory.tool-result` | `toolCallId`: `string`, `toolName`: `string`, `isError`: `boolean`, `encoded`: `unknown`, `view`: `string`, `viewVersion`: `string`, `subjects`: `Array<{ kind, id, label, data }>`, `artifacts`: `Array<{ id, kind, mediaType, url, alt }>`, `pinned`: `boolean`, `media`: `Array<{ path, fingerprint, mediaType, bytes }>`, `mediaNotes`: `Array<string>` |
+| `memory.message` | `message`: `{ role, content, providerOptions }`, `run`: `integer` |
+| `memory.tool-result` | `toolCallId`: `string`, `run`: `integer`, `toolName`: `string`, `isError`: `boolean`, `encoded`: `unknown`, `view`: `string`, `viewVersion`: `string`, `subjects`: `Array<{ kind, id, label, data }>`, `artifacts`: `Array<{ id, kind, mediaType, url, alt }>`, `pinned`: `boolean`, `media`: `Array<{ path, fingerprint, mediaType, bytes }>`, `mediaNotes`: `Array<string>` |
 | `memory.digest` | `entry`: `string`, `version`: `string`, `mode`: `"select" \| "summarize"`, `keep`: `Array<string>`, `text`: `string`, `digester`: `string`, `trigger`: `"write" \| "compaction"` |
 | `memory.skills` | `skills`: `Array<string>`, `tools`: `Array<string>`, `source`: `"always" \| "matcher" \| "load_skill" \| "host"`, `decision`: `string \| null` |
 | `memory.compaction` | `strategy`: `string`, `version`: `string`, `action`: `{ _tag, entries, texts } \| { _tag, entry, preview } \| { _tag, throughTurn, ledger } \| { _tag, keepFromTurn, summary } \| { _tag, entries, reason }` |
 | `turn.reply` | `outcome`: `"completed" \| "partial" \| "failed"`, `reply`: `string \| null` |
+| `memory.tool-presentation` | `entry`: `string`, `view`: `string`, `viewVersion`: `string`, `subjects`: `Array<{ kind, id, label, data }>`, `artifacts`: `Array<{ id, kind, mediaType, url, alt }>`, `pinned`: `boolean`, `media`: `Array<{ path, fingerprint, mediaType, bytes }>`, `mediaNotes`: `Array<string>` |
 
 Any other kind is a host's or a plugin's own record (`defineHostEvent`, `Sessions.transact`, the tasks plugin's `task.*`).
 
@@ -286,6 +288,7 @@ memory.digest
 memory.skills
 memory.compaction
 turn.reply
+memory.tool-presentation
 step.started
 step.ended
 step.usage

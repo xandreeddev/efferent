@@ -68,7 +68,7 @@ describe("telemetryPlugin over a scripted turn", () => {
     expect([turn.attributes.get("efferent.session.id"), turn.attributes.get("efferent.run.id"), turn.attributes.get("efferent.turn")])
       .toEqual(["00000000-0000-4000-8000-000000000016", "run-1", 1])
     expect(turn.attributes.get("efferent.cost")).toBeCloseTo(costOf(result.usage, PRICE), 12)
-    expect(turn.events.map(([name]) => name)).toEqual(["efferent.step.usage", "efferent.tool.refused", "efferent.step.usage", "efferent.step.usage"])
+    expect(turn.events.map(([name]) => name)).toEqual(["efferent.step.usage", "efferent.step.usage", "efferent.tool.refused", "efferent.step.usage"])
     const usages = turn.events.filter(([name]) => name === "efferent.step.usage").map(([, , attributes]) => attributes)
     expect(usages.map((attributes) => [attributes["efferent.step"], attributes["efferent.model"], attributes["efferent.usage.cache_write_tokens"], attributes["efferent.usage.total_tokens"]]))
       .toEqual([[0, MODEL, 10, 120], [1, MODEL, 10, 120], [2, MODEL, 10, 120]])

@@ -237,7 +237,10 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
         callPolicy: yield* Effect.service(CurrentModelCallPolicy),
       })
     }),
-    record: (step, tail) => session.recordTail(tail, tools.views, step),
+    record: (step, tail) => session.recordTail(tail, tools.views, step, run.ordinal),
+    recorded: (step) => memory.requestSnapshot.pipe(Effect.map(({ entries }) => entries.filter((entry) =>
+      entry.runId === run.id && entry.turn === run.turn && entry.step === step
+      && (entry.body._tag === "Message" || entry.body._tag === "ToolResult") && entry.body.run === run.ordinal))),
     onMediaRejected: Effect.fnUntraced(function* (reason) {
       const last = yield* Ref.get(planned)
       if (Option.isNone(last)) return false

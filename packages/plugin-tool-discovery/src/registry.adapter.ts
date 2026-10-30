@@ -332,6 +332,8 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       const stage = entry.annotations.stage
       // A subscriber failure fails the turn, never the tool call (which the model would see).
       yield* run.events.publish({ _tag: "tool.started", step, invocationId, ...toolCall, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
+      // The call is durable before its handler can perform any externally visible action.
+      yield* run.flush.pipe(Effect.orDie)
       const started = yield* Clock.currentTimeMillis
       const lane = entry.annotations.readOnly ? readLane : writeLane
       // The invocation innermost: a handler sees its own call even when the run's services carry an outer one.

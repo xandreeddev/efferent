@@ -1,6 +1,6 @@
 import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
-import { Context, Effect, Option, Ref, Result, Schema, Stream } from "effect"
+import { Context, Deferred, Effect, Option, Ref, Result, Schema, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { sameUsage } from "../conformance.functions.js"
@@ -129,6 +129,13 @@ interface Scenario {
   readonly before?: (tasks: TurnTasksService) => Effect.Effect<void>
   readonly dispatch?: (step: number) => Effect.Effect<void, HarnessError>
   readonly providerCall?: Effect.Effect<void>
+  /** Runs inside each probe handler, before it returns its result. */
+  readonly handle?: (n: number) => Effect.Effect<void>
+  /** Reject a record before it is stored, as a durable writer can. */
+  readonly recording?: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<void, TurnError>
+  /** Runs after each record is stored. */
+  readonly recorded?: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<void, TurnError>
+  readonly toolConcurrency?: number
   /** The request's `captureTraceContent` (off by default). */
   readonly captureTraceContent?: boolean
   /** `CurrentTraceContent` where the loop runs and in the request's services (off by default). */
@@ -180,6 +187,8 @@ interface Observed {
   /** The prompt of each provider call. */
   readonly prompts: ReadonlyArray<Prompt.Prompt>
   readonly recorded: ReadonlyArray<LogEntry>
+  /** The durable log when each tool handler began. */
+  readonly atHandlers: ReadonlyArray<ReadonlyArray<LogEntry>>
   readonly dispatches: ReadonlyArray<number>
   /** `CurrentTraceContent` as each provider call read it. */
   readonly traceContent: ReadonlyArray<boolean>
@@ -216,6 +225,8 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const tolerance = yield* Ref.make<ReadonlyArray<boolean>>([])
   const handledSteps = yield* Ref.make<ReadonlyArray<Option.Option<number>>>([])
   const calledSteps = yield* Ref.make<ReadonlyArray<Option.Option<number>>>([])
+  const recorded = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+  const atHandlers = yield* Ref.make<ReadonlyArray<ReadonlyArray<LogEntry>>>([])
   /** Append what `reference` reads where this runs. */
   const read = <A>(reference: Context.Reference<A>, into: Ref.Ref<ReadonlyArray<A>>) =>
     Effect.service(reference).pipe(Effect.flatMap((value) => Ref.update(into, (all) => [...all, value])))
@@ -247,12 +258,14 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const invocations = yield* Ref.make(0)
   const handlers = yield* typed.toHandlers({
     probe: ({ n }) => Effect.gen(function* () {
+      yield* Ref.get(recorded).pipe(Effect.flatMap((entries) => Ref.update(atHandlers, (all) => [...all, entries])))
       const current = yield* Effect.service(CurrentAgentStep)
       yield* Ref.update(handledSteps, (all) => [...all, current])
       const step = Option.getOrElse(current, () => -1)
       const invocationId = InvocationId.make(`probe:${yield* Ref.getAndUpdate(invocations, (value) => value + 1)}`)
       const base = { step, invocationId, tool: Probe.name, input: { n }, labels: {}, stage: Option.none() }
       yield* events.publish({ _tag: "tool.started", ...base }).pipe(Effect.orDie)
+      yield* scenario.handle?.(n) ?? Effect.void
       yield* events.publish({ _tag: "tool.completed", ...base, ok: true, result: n, encoded: n, durationMs: 0 }).pipe(Effect.orDie)
       return n
     }),
@@ -273,11 +286,10 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     pollable: [],
     skills: [],
   }
-  const recorded = yield* Ref.make<ReadonlyArray<LogEntry>>([])
   const records = yield* Ref.make<ReadonlyArray<{ readonly step: number; readonly after: number }>>([])
   const history = yield* Ref.make<ReadonlyArray<AgentMessage>>([{ role: "user", content: "go" }])
   const steers = yield* Ref.make(scenario.steering ?? [])
-  const record = (step: number, tail: ReadonlyArray<AgentMessage>) => Ref.get(seen).pipe(
+  const record = (step: number, tail: ReadonlyArray<AgentMessage>) => (scenario.recording?.(step, tail) ?? Effect.void).pipe(Effect.andThen(Ref.get(seen)),
     Effect.flatMap((published) => Ref.update(records, (all) => [...all, { step, after: published.length }])),
     Effect.andThen(Ref.update(history, (all) => [...all, ...tail])),
   ).pipe(Effect.andThen(Ref.modify(recorded, (all): [ReadonlyArray<LogEntry>, ReadonlyArray<LogEntry>] => {
@@ -288,7 +300,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
         encoded: part.output, view: String(part.output), viewVersion: "1", subjects: [], artifacts: [], pinned: false,
       }))).map((body, index): LogEntry => ({ id: entryId(RUN, all.length + index), runId: RUN, turn: 1, step, at: 0, body }))
     return [entries, [...all, ...entries]]
-  })))
+  })), Effect.tap(() => scenario.recorded?.(step, tail) ?? Effect.void))
   yield* scenario.before?.(tasks) ?? Effect.void
   const request: StepRequest = {
     run: scenario.run ?? FIRST_RUN,
@@ -302,7 +314,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
       Context.add(CurrentEmptyResponseTolerance, scenario.ambientTolerance ?? false),
       Context.add(CurrentAgentStep, scenario.ambientStep ?? Option.none()),
     ),
-    limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: scenario.streaming ?? false, requireCompletion: scenario.requireCompletion ?? false },
+    limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: scenario.toolConcurrency ?? 1, streaming: scenario.streaming ?? false, requireCompletion: scenario.requireCompletion ?? false },
     initial: Option.fromNullishOr(scenario.initial),
     plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(
       Effect.andThen(scenario.replay === true ? Ref.get(history) : Effect.succeed([{ role: "user" as const, content: "go" }])),
@@ -314,6 +326,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
       Effect.andThen(scenario.dispatch?.(step) ?? Effect.void),
     ),
     record,
+    recorded: (step) => Ref.get(recorded).pipe(Effect.map((all) => all.filter((entry) => entry.step === step))),
     onMediaRejected: scenario.onMediaRejected ?? (() => Effect.succeed(false)),
     completion: (info) => scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete),
     steering: Ref.modify(steers, (texts): [Option.Option<string>, ReadonlyArray<string>] => [Option.fromNullishOr(texts[0]), texts.slice(1)]),
@@ -334,7 +347,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     Effect.provideService(CurrentAgentStep, scenario.ambientStep ?? Option.none()),
   ))
   return {
-    result, events: yield* Ref.get(seen), records: yield* Ref.get(records), providerCalls: yield* Ref.get(calls), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded),
+    result, events: yield* Ref.get(seen), records: yield* Ref.get(records), providerCalls: yield* Ref.get(calls), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded), atHandlers: yield* Ref.get(atHandlers),
     dispatches: yield* Ref.get(dispatches), traceContent: yield* Ref.get(traceContent),
     cacheKeys: { dispatched: yield* Ref.get(dispatchedKeys), called: yield* Ref.get(calledKeys) },
     callPolicies: { dispatched: yield* Ref.get(dispatchedPolicies), called: yield* Ref.get(calledPolicies) },
@@ -410,7 +423,10 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
 /**
  * The `StepLoop` contract, as checks any implementation must pass:
  * per-step event order, recorded results on `step.ended`, each step ended
- * once with nothing recorded under it after its `step.ended` (the loop's
+ * once, with its assistant response durable and usage published before any
+ * handler runs, and each result durable as it returns while a sibling may
+ * still be held; a failed record stops the execution and fails the step;
+ * nothing recorded under it after its `step.ended` (the loop's
  * correctives, nudges and steers are the next step's, the corrective after
  * a reply cut at the output limit among them), nothing recorded under a
  * step that never starts (the step cap or a complete verdict ending the run
@@ -479,6 +495,97 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
         dispatch: () => Effect.fail(new HarnessError({ code: "request.diverged", message: "fixture request changed" })),
       }))
       yield* expect("dispatch", result._tag === "Failure" && (yield* Ref.get(calls)) === 0, "a rejected request reached the provider")
+    }),
+  },
+  {
+    name: "records the assistant response and publishes its usage before any handler runs, for settled, streamed and planned calls",
+    run: Effect.gen(function* () {
+      yield* Effect.forEach([
+        { script: [probeCall("c1", 1), textReply("done")] },
+        { streaming: true, script: [thinkingProbeCall("c1", 1), textReply("done")], stream: [streamedThinkingProbeCall("c1", 1), streamedText("done")] },
+        { initial: { calls: [{ name: Probe.name, params: { n: 1 } }], skills: [] }, script: [textReply("done")] },
+      ] satisfies ReadonlyArray<Scenario>, (scenario) => Effect.gen(function* () {
+        const observed = yield* observe(loop, scenario)
+        const before = observed.atHandlers[0] ?? []
+        const calls = before.flatMap((entry) => entry.body._tag === "Message" && entry.body.message.role === "assistant"
+          ? entry.body.message.content.filter((part) => part.type === "tool-call") : [])
+        yield* expect("assistant-first", observed.atHandlers.length === 1 && calls.length === 1,
+          "the handler began before its assistant tool call was recorded")
+        const assistant = indexOf(observed.events, "assistant.message", 0)
+        const started = indexOf(observed.events, "tool.started", 0)
+        yield* expect("assistant-first", assistant >= 0 && started > assistant,
+          "the handler began before the assistant usage event was published")
+        const allCalls = observed.recorded.flatMap((entry) => entry.body._tag === "Message" && entry.body.message.role === "assistant"
+          ? entry.body.message.content.filter((part) => part.type === "tool-call") : [])
+        yield* expect("assistant-first", allCalls.length === 1, "the assistant tool call was recorded more than once")
+      }), { concurrency: 1, discard: true })
+      const provided = yield* observe(loop, {
+        script: [[
+          { type: "tool-call", id: "provided", name: Probe.name, params: { n: 9 }, providerExecuted: true },
+          { type: "tool-result", id: "provided", name: Probe.name, result: 9, isFailure: false, providerExecuted: true },
+          ...probeCall("c1", 1),
+        ], textReply("done")],
+      })
+      const embedded = (provided.atHandlers[0] ?? []).flatMap((entry) => entry.body._tag === "Message" && entry.body.message.role === "assistant"
+        ? entry.body.message.content.filter((part) => part.type === "tool-result" && part.providerExecuted && part.toolCallId === "provided") : [])
+      yield* expect("assistant-first", embedded.length === 1 && embedded[0]?.type === "tool-result" && embedded[0].output === 9,
+        "the provider's own result was not recorded in its assistant message before the local handler ran")
+    }),
+  },
+  {
+    name: "records each tool result as it returns while a sibling call is still held, in completion order",
+    run: Effect.gen(function* () {
+      const secondRecorded = yield* Deferred.make<void>()
+      const firstSawSecond = yield* Ref.make(false)
+      const batches = yield* Ref.make<ReadonlyArray<string>>([])
+      const observed = yield* observe(loop, {
+        script: [[...probeCall("c1", 1).slice(0, -1), ...probeCall("c2", 2)], textReply("done")],
+        toolConcurrency: 2,
+        handle: (n) => n !== 1 ? Effect.void : Deferred.await(secondRecorded).pipe(
+          Effect.timeoutOption("1 second"), Effect.flatMap((done) => Ref.set(firstSawSecond, Option.isSome(done))),
+        ),
+        recorded: (_step, tail) => {
+          const ids = tail.flatMap((message) => message.role === "tool" ? message.content.map((part) => String(part.toolCallId)) : [])
+          return Ref.update(batches, (all) => ids.length === 0 ? all : [...all, ids.join()]).pipe(
+            Effect.andThen(ids.includes("c2") ? Deferred.succeed(secondRecorded, undefined).pipe(Effect.asVoid) : Effect.void),
+          )
+        },
+      })
+      const order = yield* Ref.get(batches)
+      yield* expect("incremental-results", (yield* Ref.get(firstSawSecond)) && order.join("|") === "c2|c1",
+        `result records were ${order.join("|")}; the held sibling ${(yield* Ref.get(firstSawSecond)) ? "saw" : "did not see"} its sibling's durable result`)
+      const results = observed.recorded.filter((entry) => entry.body._tag === "ToolResult")
+      yield* expect("incremental-results", results.length === 2, "a tool result was recorded more than once")
+    }),
+  },
+  {
+    name: "a failed assistant record prevents every handler, and a failed result record stops ordered calls; each step ends failed",
+    run: Effect.forEach([false, true], (failResult) => Effect.gen(function* () {
+      const observed = yield* observeRun(loop, {
+        script: [[...probeCall("c1", 1).slice(0, -1), ...probeCall("c2", 2)]],
+        recording: (_step, tail) => tail.some((message) => message.role === (failResult ? "tool" : "assistant"))
+          ? Effect.fail(new HarnessError({ code: "conformance.record", message: "the durable record failed" })) : Effect.void,
+      })
+      const expected = failResult ? 1 : 0
+      yield* expect("record-failure", failedWith(observed.result, "conformance.record") && observed.steps.handled.length === expected,
+        `after a ${failResult ? "result" : "response"} record failed, ${observed.steps.handled.length} handlers ran (expected ${expected}) and the run ${endingOf(observed.result)}`)
+      yield* expect("record-failure", statusesOf(observed.events).join() === "failed", "a step whose durable record failed did not end once as failed")
+    }), { concurrency: 1, discard: true }),
+  },
+  {
+    name: "a failed result presentation leaves its raw result listed on the failed step by durable entry id",
+    run: Effect.gen(function* () {
+      const observed = yield* observeRun(loop, {
+        script: [probeCall("c1", 1)],
+        recorded: (_step, tail) => tail.some((message) => message.role === "tool")
+          ? Effect.fail(new HarnessError({ code: "conformance.presentation", message: "the result presentation failed after its raw commit" })) : Effect.void,
+      })
+      const result = observed.recorded.find((entry) => entry.body._tag === "ToolResult")
+      const ended = observed.events.find((event) => event._tag === "step.ended")
+      yield* expect("recorded-results", failedWith(observed.result, "conformance.presentation") && result?.body._tag === "ToolResult", "the fixture did not leave a durable raw result after its presentation failed")
+      yield* expect("recorded-results", ended?._tag === "step.ended" && ended.status === "failed" && ended.results.length === 1
+        && ended.results[0]?.entry === result?.id && ended.results[0]?.toolCallId === "c1" && ended.results[0]?.ok === true,
+        "the failed step did not list its durable raw result with its entry id and successful outcome")
     }),
   },
   {

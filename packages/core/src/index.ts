@@ -138,6 +138,8 @@ export { turnUsageOf } from "./session/session-event.entity.functions.js"
 // stored records read by their fields: decoded whole, or by their keys alone for a lookup
 export { readStored, readStoredKeys, RequestPreparedKeys, StoredData, StoredKeys, TurnStartedKeys } from "./session/session-event.entity.functions.js"
 export type { KeyedKind, Stored, StoredKeysOf, StoredKind } from "./session/session-event.entity.functions.js"
+export { ToolCallState } from "./session/tool-call-state.entity.js"
+export { toolCallStatesOf } from "./session/tool-call-state.entity.functions.js"
 export {
   AdmittedTurn,
   BeginTurn,
@@ -234,6 +236,7 @@ export {
   queryLog,
   renderLog,
   rewrittenBy,
+  toolInputOf,
   toolInputsOf,
 } from "./memory/memory-log.entity.functions.js"
 export type { RenderOptions } from "./memory/memory-log.entity.functions.js"

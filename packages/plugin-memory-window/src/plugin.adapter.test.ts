@@ -110,3 +110,25 @@ describe("spans", () => {
     expect(Option.map(spans[1]!.parent, (parent) => parent.spanId)).toEqual(Option.some(spans[0]!.spanId))
   })
 })
+
+describe("compact-view input correlation", () => {
+  test.each([true, false])("reused provider ids keep their own request input (explicit runs: %s)", async (explicitRuns) => {
+    const request = (index: number, value: string, run: number): LogEntry => ({
+      ...at(index, 1, { _tag: "Message", ...(explicitRuns ? { run: RunOrdinal.make(run) } : {}), message: {
+        role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("shared"), toolName: "lookup", input: { value } }],
+      } }), step: explicitRuns ? 0 : run,
+    })
+    const answer = (index: number, value: string, run: number): LogEntry => ({
+      ...at(index, 1, { _tag: "ToolResult", ...(explicitRuns ? { run: RunOrdinal.make(run) } : {}), toolCallId: ToolCallId.make("shared"), toolName: "lookup",
+        isError: false, encoded: value, view: value, viewVersion: "1", subjects: [], artifacts: [], pinned: false,
+      }), step: explicitRuns ? 0 : run,
+    })
+    const entries = [request(0, "first", 0), request(1, "second", 1), answer(2, "first result", 0), answer(3, "second result", 1)]
+    const decided = await Effect.runPromise(policy.maintain({
+      entries, signal: { phase: "turn-start", lastUsage: Option.none(), budgetTokens: 100_000, views: {
+        ...views, compact: (_tool, _encoded, params) => Effect.succeed(Option.some(JSON.stringify(params))),
+      } }, turn: 2, runId: RunId.make("run-2"), render,
+    }))
+    expect(decided).toEqual({ actions: [{ _tag: "CompactViews", entries: [entryId(RunId.make("run-1"), 2), entryId(RunId.make("run-1"), 3)], texts: ['{"value":"first"}', '{"value":"second"}'] }], digest: [] })
+  })
+})

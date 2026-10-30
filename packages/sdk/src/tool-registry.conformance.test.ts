@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
 import type { Tool, Toolkit } from "effect/ai"
-import { Capabilities, SessionEnvironment, ToolRegistry } from "@xandreed/core"
+import { Capabilities, RunContext, SessionEnvironment, ToolRegistry } from "@xandreed/core"
 import type { Capability } from "@xandreed/core"
 import type { ConformanceCheck } from "@xandreed/core/conformance"
 import { makeRegistry, toolDiscoveryDefaults, ToolDiscoveryLive } from "@xandreed/plugin-tool-discovery"
@@ -24,6 +24,17 @@ describe("the tool discovery plugin's registry conforms to the ToolRegistry cont
 })
 
 describe("the ToolRegistry kit catches careless registries", () => {
+  test("one that ignores the writer's flush fails only the started-durable check", async () => {
+    const unflushed = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities, limits).pipe(Effect.map((registry) => ToolRegistry.of({
+      ...registry,
+      open: (session) => Effect.gen(function* () {
+        const run = yield* RunContext
+        return yield* registry.open(session).pipe(Effect.provideService(RunContext, { ...run, flush: Effect.void }))
+      }),
+    })))
+    expect(await failedChecks(toolRegistryConformance(unflushed))).toEqual(["started-durable"])
+  })
+
   test("one that drops the provider call id fails only the provider-call-id check", async () => {
     const forgetful = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities, limits).pipe(Effect.map((registry) => ToolRegistry.of({
       ...registry,
