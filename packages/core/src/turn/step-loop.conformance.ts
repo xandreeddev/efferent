@@ -5,12 +5,14 @@ import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { sameUsage } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
+import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
 import type { RunRef } from "../domain/run.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
+import { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "../loop/modelPolicy.js"
 import { CurrentAgentStep } from "../loop/stepContext.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
 import { canonicalJson, entryId } from "../memory/memory-log.entity.functions.js"
@@ -98,6 +100,16 @@ interface Scenario {
   readonly ambientTraceContent?: boolean
   /** The request's `cacheKey` (none by default). */
   readonly cacheKey?: Option.Option<string>
+  /** `CurrentPromptCacheKey` where the loop runs (none by default). */
+  readonly ambientCacheKey?: Option.Option<string>
+  /** The request's `callPolicy` (none by default). */
+  readonly callPolicy?: Option.Option<ModelCallPolicy>
+  /** `CurrentModelCallPolicy` where the loop runs (none by default). */
+  readonly ambientCallPolicy?: Option.Option<ModelCallPolicy>
+  /** `CurrentEmptyResponseTolerance` where the loop runs (off by default). */
+  readonly ambientTolerance?: boolean
+  /** `CurrentAgentStep` where the loop runs (none by default). */
+  readonly ambientStep?: Option.Option<number>
   /** The provider refuses its first request over an image (an `InvalidRequestError` naming one). */
   readonly refuseFirst?: boolean
   /** The request's `onMediaRejected` (answers false by default). */
@@ -138,6 +150,12 @@ interface Observed {
   readonly traceContent: ReadonlyArray<boolean>
   /** `CurrentPromptCacheKey` as each dispatch check, then each provider call, read it. */
   readonly cacheKeys: { readonly dispatched: ReadonlyArray<Option.Option<string>>; readonly called: ReadonlyArray<Option.Option<string>> }
+  /** `CurrentModelCallPolicy` as each dispatch check, then each provider call, read it. */
+  readonly callPolicies: { readonly dispatched: ReadonlyArray<Option.Option<ModelCallPolicy>>; readonly called: ReadonlyArray<Option.Option<ModelCallPolicy>> }
+  /** `CurrentEmptyResponseTolerance` as each provider call read it. */
+  readonly tolerance: ReadonlyArray<boolean>
+  /** `CurrentAgentStep` as each `probe` handler, then each provider call, read it. */
+  readonly steps: { readonly handled: ReadonlyArray<Option.Option<number>>; readonly called: ReadonlyArray<Option.Option<number>> }
 }
 
 const incomplete: CompletionVerdict = { complete: false, awaiting: [], facts: {} }
@@ -158,14 +176,23 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const traceContent = yield* Ref.make<ReadonlyArray<boolean>>([])
   const dispatchedKeys = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
   const calledKeys = yield* Ref.make<ReadonlyArray<Option.Option<string>>>([])
-  const readKey = (into: Ref.Ref<ReadonlyArray<Option.Option<string>>>) =>
-    Effect.service(CurrentPromptCacheKey).pipe(Effect.flatMap((key) => Ref.update(into, (all) => [...all, key])))
+  const dispatchedPolicies = yield* Ref.make<ReadonlyArray<Option.Option<ModelCallPolicy>>>([])
+  const calledPolicies = yield* Ref.make<ReadonlyArray<Option.Option<ModelCallPolicy>>>([])
+  const tolerance = yield* Ref.make<ReadonlyArray<boolean>>([])
+  const handledSteps = yield* Ref.make<ReadonlyArray<Option.Option<number>>>([])
+  const calledSteps = yield* Ref.make<ReadonlyArray<Option.Option<number>>>([])
+  /** Append what `reference` reads where this runs. */
+  const read = <A>(reference: Context.Reference<A>, into: Ref.Ref<ReadonlyArray<A>>) =>
+    Effect.service(reference).pipe(Effect.flatMap((value) => Ref.update(into, (all) => [...all, value])))
   /** One provider call, streamed or not: its index, after it is recorded. */
   const called = (options: LanguageModel.ProviderOptions) => Ref.modify(calls, (all): [number, ReadonlyArray<unknown>] => [all.length, [...all, options.toolChoice]]).pipe(
     Effect.tap(() => Ref.update(prompts, (all) => [...all, options.prompt])),
     Effect.tap(() => scenario.providerCall ?? Effect.void),
-    Effect.tap(() => Effect.service(CurrentTraceContent).pipe(Effect.flatMap((capture) => Ref.update(traceContent, (all) => [...all, capture])))),
-    Effect.tap(() => readKey(calledKeys)),
+    Effect.tap(() => read(CurrentTraceContent, traceContent)),
+    Effect.tap(() => read(CurrentPromptCacheKey, calledKeys)),
+    Effect.tap(() => read(CurrentModelCallPolicy, calledPolicies)),
+    Effect.tap(() => read(CurrentEmptyResponseTolerance, tolerance)),
+    Effect.tap(() => read(CurrentAgentStep, calledSteps)),
   )
   const stream = scenario.stream
   const model = yield* LanguageModel.make({
@@ -181,7 +208,9 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const invocations = yield* Ref.make(0)
   const handlers = yield* typed.toHandlers({
     probe: ({ n }) => Effect.gen(function* () {
-      const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => -1)
+      const current = yield* Effect.service(CurrentAgentStep)
+      yield* Ref.update(handledSteps, (all) => [...all, current])
+      const step = Option.getOrElse(current, () => -1)
       const invocationId = InvocationId.make(`probe:${yield* Ref.getAndUpdate(invocations, (value) => value + 1)}`)
       const base = { step, invocationId, tool: Probe.name, input: { n }, labels: {}, stage: Option.none() }
       yield* events.publish({ _tag: "tool.started", ...base }).pipe(Effect.orDie)
@@ -232,7 +261,11 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
       Effect.andThen(scenario.replay === true ? Ref.get(history) : Effect.succeed([{ role: "user" as const, content: "go" }])),
       Effect.map((messages) => ({ model: Option.none(), system: "conformance", messages, toolChoice: Option.fromNullishOr(scenario.toolChoice) })),
     ),
-    dispatch: (step) => Ref.update(dispatches, (all) => [...all, step]).pipe(Effect.andThen(readKey(dispatchedKeys)), Effect.andThen(scenario.dispatch?.(step) ?? Effect.void)),
+    dispatch: (step) => Ref.update(dispatches, (all) => [...all, step]).pipe(
+      Effect.andThen(read(CurrentPromptCacheKey, dispatchedKeys)),
+      Effect.andThen(read(CurrentModelCallPolicy, dispatchedPolicies)),
+      Effect.andThen(scenario.dispatch?.(step) ?? Effect.void),
+    ),
     record,
     onMediaRejected: scenario.onMediaRejected ?? (() => Effect.succeed(false)),
     completion: (info) => scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete),
@@ -241,13 +274,25 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     events,
     tasks,
     cacheKey: scenario.cacheKey ?? Option.none(),
+    callPolicy: scenario.callPolicy ?? Option.none(),
     captureTraceContent: scenario.captureTraceContent ?? false,
   }
-  const result = yield* Effect.result(loop.run(request).pipe(Effect.provideService(CurrentTraceContent, scenario.ambientTraceContent ?? false)))
+  // The caller's values of the references the loop provides (`StepLoopReferences`), set even when they are the
+  // defaults: the loop's own win, also in the callbacks it runs with the caller's services.
+  const result = yield* Effect.result(loop.run(request).pipe(
+    Effect.provideService(CurrentPromptCacheKey, scenario.ambientCacheKey ?? Option.none()),
+    Effect.provideService(CurrentTraceContent, scenario.ambientTraceContent ?? false),
+    Effect.provideService(CurrentModelCallPolicy, scenario.ambientCallPolicy ?? Option.none()),
+    Effect.provideService(CurrentEmptyResponseTolerance, scenario.ambientTolerance ?? false),
+    Effect.provideService(CurrentAgentStep, scenario.ambientStep ?? Option.none()),
+  ))
   return {
     result, events: yield* Ref.get(seen), records: yield* Ref.get(records), providerCalls: yield* Ref.get(calls), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded),
     dispatches: yield* Ref.get(dispatches), traceContent: yield* Ref.get(traceContent),
     cacheKeys: { dispatched: yield* Ref.get(dispatchedKeys), called: yield* Ref.get(calledKeys) },
+    callPolicies: { dispatched: yield* Ref.get(dispatchedPolicies), called: yield* Ref.get(calledPolicies) },
+    tolerance: yield* Ref.get(tolerance),
+    steps: { handled: yield* Ref.get(handledSteps), called: yield* Ref.get(calledSteps) },
   }
 }))
 
@@ -275,12 +320,17 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * completion fails afterwards still `completed`, a malformed step ended
  * `malformed` with no `completion.evaluated`, planned batches
  * without a provider call, forced tool choices, awaiting verdicts, no call
- * after completion, the run's usage, the step cap, the request's
- * `captureTraceContent` provided to its model calls as `CurrentTraceContent`,
- * the request's `cacheKey` provided to its dispatch checks and model calls as
- * `CurrentPromptCacheKey` (the dispatch check compares it with the request's
- * header), a request refused over an image planned again and sent once more
- * when `onMediaRejected` answers true, failing the step when it answers false,
+ * after completion, the run's usage, the step cap, each of
+ * `StepLoopReferences` provided whatever the caller's (the request's
+ * `captureTraceContent` to its model calls as `CurrentTraceContent`, its
+ * `cacheKey` and `callPolicy` to its dispatch checks and model calls as
+ * `CurrentPromptCacheKey` and `CurrentModelCallPolicy`, which the dispatch
+ * check compares with the request's header, `CurrentEmptyResponseTolerance`
+ * false to its model calls until the run has executed a tool call and true
+ * after, the current step to its tool handlers and model calls as
+ * `CurrentAgentStep`, its step events numbered alike), a request refused
+ * over an image planned again and sent once more when `onMediaRejected`
+ * answers true, failing the step when it answers false,
  * a streamed step's reasoning reaching the next request with its provider
  * metadata (Anthropic's signed and redacted thinking), as a non-streamed one's
  * does, and the ids of planned and id-less tool calls distinct across the runs
@@ -459,13 +509,54 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
     }),
   },
   {
-    name: "provides the request's cacheKey to its dispatch checks and model calls as CurrentPromptCacheKey",
+    name: "provides the request's cacheKey to its dispatch checks and model calls as CurrentPromptCacheKey, whatever the caller's",
     run: Effect.gen(function* () {
       const key = Option.some("conformance:cache-key")
-      const { cacheKeys } = yield* observe(loop, { script: [probeCall("c1", 1), textReply("done")], cacheKey: key })
+      const { cacheKeys } = yield* observe(loop, { script: [probeCall("c1", 1), textReply("done")], cacheKey: key, ambientCacheKey: Option.some("conformance:caller") })
       const all = [...cacheKeys.dispatched, ...cacheKeys.called]
       yield* expect("cache-key", cacheKeys.dispatched.length === 2 && cacheKeys.called.length === 2 && all.every((read) => Option.getOrNull(read) === "conformance:cache-key"),
         `with the request's cacheKey ${Option.getOrNull(key)}, the dispatch checks read ${JSON.stringify(cacheKeys.dispatched.map(Option.getOrNull))} and the model calls ${JSON.stringify(cacheKeys.called.map(Option.getOrNull))}`)
+    }),
+  },
+  {
+    name: "provides the request's callPolicy to its dispatch checks and model calls as CurrentModelCallPolicy, whatever the caller's",
+    run: Effect.gen(function* () {
+      const script = [probeCall("c1", 1), textReply("done")]
+      const caller = Option.some<ModelCallPolicy>({ effort: "low" })
+      yield* Effect.forEach([Option.some<ModelCallPolicy>({ effort: "high", maxOutputTokens: 64 }), Option.none<ModelCallPolicy>()], (policy) => Effect.gen(function* () {
+        const { callPolicies } = yield* observe(loop, { script, callPolicy: policy, ambientCallPolicy: caller })
+        const json = (read: Option.Option<ModelCallPolicy>) => canonicalJson(Option.getOrNull(read))
+        yield* expect("call-policy", callPolicies.dispatched.length === 2 && callPolicies.called.length === 2
+          && [...callPolicies.dispatched, ...callPolicies.called].every((read) => json(read) === json(policy)),
+          `with the request's callPolicy ${json(policy)} under a caller's ${json(caller)}, the dispatch checks read ${JSON.stringify(callPolicies.dispatched.map(Option.getOrNull))} and the model calls ${JSON.stringify(callPolicies.called.map(Option.getOrNull))}`)
+      }), { concurrency: 1 })
+    }),
+  },
+  {
+    name: "provides CurrentEmptyResponseTolerance to its model calls: false until the run has executed a tool call, true after, whatever the caller's",
+    run: Effect.gen(function* () {
+      // A malformed step executes no tool call; the probe's step does, and so does a planned batch.
+      const { tolerance } = yield* observe(loop, { script: [malformedCall("m1"), probeCall("c1", 1), textReply("done")], ambientTolerance: true })
+      yield* expect("tolerance", tolerance.join() === "false,false,true",
+        `under a caller's tolerance, a malformed step, a probe call and a reply read ${JSON.stringify(tolerance)}, not [false,false,true]`)
+      const planned = yield* observe(loop, { initial: { calls: [{ name: Probe.name, params: { n: 0 } }], skills: [] }, script: [textReply("done")] })
+      yield* expect("tolerance", planned.tolerance.join() === "true",
+        `the reply after a planned batch read ${JSON.stringify(planned.tolerance)}, not [true]`)
+    }),
+  },
+  {
+    name: "provides the current step to its tool handlers and model calls as CurrentAgentStep, its step events numbered alike, whatever the caller's",
+    run: Effect.gen(function* () {
+      // A planned batch as step 0, then a probe call and a reply, under an outer run's step.
+      const { events, steps } = yield* observe(loop, {
+        initial: { calls: [{ name: Probe.name, params: { n: 0 } }], skills: [] }, script: [probeCall("c1", 1), textReply("done")],
+        ambientStep: Option.some(41),
+      })
+      const [handled, called] = [steps.handled.map(Option.getOrNull), steps.called.map(Option.getOrNull)]
+      yield* expect("step", handled.join() === "0,1" && called.join() === "1,2",
+        `under a caller's step 41, the handlers read the steps ${JSON.stringify(handled)} (not [0,1]) and the model calls ${JSON.stringify(called)} (not [1,2])`)
+      const started = events.flatMap((event) => event._tag === "step.started" ? [event.step] : [])
+      yield* expect("step", started.join() === "0,1,2", `under a caller's step 41, the steps started were ${JSON.stringify(started)}, not [0,1,2]`)
     }),
   },
   {

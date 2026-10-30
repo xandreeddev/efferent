@@ -2,9 +2,14 @@ import { Context } from "effect"
 import type { Effect, Option } from "effect"
 import type { LanguageModel, Prompt, Tool } from "effect/ai"
 import type { AgentMessage } from "../domain/message.entity.js"
+import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import type { RunRef } from "../domain/run.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
+import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
+import { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "../loop/modelPolicy.js"
+import { CurrentAgentStep } from "../loop/stepContext.js"
+import { CurrentTraceContent } from "../loop/traceContent.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { TurnError } from "../session/sessions.entity.js"
 import type { CompletionVerdict } from "../turn/turn-event.entity.js"
@@ -85,16 +90,40 @@ export interface StepRequest {
   readonly correctives: Option.Option<Correctives>
   readonly events: TurnEventsService
   readonly tasks: TurnTasksService
+  /** The turn's prompt-cache key: the loop provides it as `CurrentPromptCacheKey` (`StepLoopReferences`). */
   readonly cacheKey: Option.Option<string>
   /**
+   * The call policy of the run's model calls: `CurrentModelCallPolicy`
+   * where the run was prepared, read once; the loop provides it as
+   * `CurrentModelCallPolicy` (`StepLoopReferences`), and the request headers
+   * record it.
+   */
+  readonly callPolicy: Option.Option<ModelCallPolicy>
+  /**
    * Whether the run's spans may carry prompt and response content: the loop
-   * must provide it as `CurrentTraceContent` to the model calls it makes,
-   * whatever the caller's (`stepLoopConformance` checks it), so they read it
-   * too. The policy's `captureTraceContent`, else the agent's, else
-   * `CurrentTraceContent` where the run starts (off by default).
+   * must provide it as `CurrentTraceContent` to the model calls it makes
+   * (`StepLoopReferences`), so they read it too. The policy's
+   * `captureTraceContent`, else the agent's, else `CurrentTraceContent`
+   * where the run starts (off by default).
    */
   readonly captureTraceContent: boolean
 }
+
+/**
+ * The references a step loop provides, whatever the caller's: a custom
+ * `StepLoop` provides each of them, and `stepLoopConformance` checks each.
+ * - `CurrentPromptCacheKey`: the request's `cacheKey`, to its dispatch
+ *   checks and its model calls;
+ * - `CurrentModelCallPolicy`: the request's `callPolicy`, to its dispatch
+ *   checks and its model calls;
+ * - `CurrentTraceContent`: the request's `captureTraceContent`, to its
+ *   model calls;
+ * - `CurrentEmptyResponseTolerance`, to its model calls: false until the
+ *   run has executed a tool call (a planned batch's included), true after;
+ * - `CurrentAgentStep`: the current step, to its tool handlers and its
+ *   model calls.
+ */
+export const StepLoopReferences = [CurrentPromptCacheKey, CurrentModelCallPolicy, CurrentTraceContent, CurrentEmptyResponseTolerance, CurrentAgentStep] as const
 
 export interface ModelDispatch {
   readonly prompt: Prompt.Prompt
@@ -134,8 +163,9 @@ export type RunResult = {
  * makes no provider call; a forced tool choice is honoured; a verdict
  * awaiting tasks joins them and is evaluated once more; no provider call
  * follows a complete verdict; `RunResult.usage` is the sum of the usage
- * the run's `assistant.message` events carried; the model calls read the
- * request's `captureTraceContent` as `CurrentTraceContent`; a streamed
+ * the run's `assistant.message` events carried; the loop provides each of
+ * `StepLoopReferences` (the request's `cacheKey`, `callPolicy` and
+ * `captureTraceContent`, the empty-response tolerance, the step); a streamed
  * step's reasoning reaches the next request with its provider metadata, as
  * a non-streamed one's does; the step events carry the request's run
  * ordinal, and id-less tool calls get ids distinct across runs and turns. A loop that streams and falls back to a

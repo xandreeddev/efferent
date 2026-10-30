@@ -1,7 +1,7 @@
 import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Option, Ref, Schema } from "effect"
-import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, reasonOf, StepLoop, StreamPartId, ToolCallId } from "@xandreed/core"
+import { CurrentAgentStep, CurrentModelCallPolicy, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, reasonOf, StepLoop, StreamPartId, ToolCallId } from "@xandreed/core"
 import type { AgentMessage, CompletionVerdict, LoopEvent, RunResult, StepInfo, StepRequest, StepStatus, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopToolChoice } from "./loop.js"
@@ -26,10 +26,11 @@ export const STEP_LOOP = { id: "steps", version: "1" } as const
  * model, the messages and the tool choice; a host-planned first batch runs
  * without a provider call or a plan. A stream that fails before its first
  * part publishes `stream.fallback` once, and the run goes on without
- * streaming. The run's `captureTraceContent` is `CurrentTraceContent` for
- * its model calls. A request a provider refuses over an image goes to
- * `request.onMediaRejected`; when it records an `OmitMedia`, the step is
- * planned again and sent once more. Every step event carries the request's
+ * streaming. It provides `StepLoopReferences`: the request's `cacheKey`
+ * and `callPolicy` here, `captureTraceContent`, the empty-response
+ * tolerance and the step through `runLoop`. A request a provider refuses
+ * over an image goes to `request.onMediaRejected`; when it records an
+ * `OmitMedia`, the step is planned again and sent once more. Every step event carries the request's
  * run ordinal, and the ids of a provider's id-less tool calls are minted
  * from its run (`toolCallIdOf`). What it keeps across steps is one
  * `StepLedger`.
@@ -144,6 +145,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     Effect.provide(request.handlers),
     Effect.provideService(LanguageModel.LanguageModel, model),
     Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
+    Effect.provideService(CurrentModelCallPolicy, request.callPolicy),
     // A turn's failure (a HarnessError, the writer's TurnClosed and the other TurnError tags) keeps its tag; what else
     // failed underneath (a provider's `AiError`) is `loop.failed`, with it as the cause and its text, never its stack, as the message.
     Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),

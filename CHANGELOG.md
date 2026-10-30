@@ -182,6 +182,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `SessionEnvironment`) with `definePromptSection` and list those services
   in `requires`; a section that reads none can stay a plain `PromptSection`
   value.
+- A custom `StepLoop` provides `request.callPolicy` as
+  `CurrentModelCallPolicy` next to `request.cacheKey`; a hand-built
+  `StepRequest` adds `callPolicy` (`Option.none()` when there is no
+  policy).
 
 ### Breaking
 
@@ -482,6 +486,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   render missing a declared service fails with `requires.missing`, naming
   the section and the service, instead of dying mid-turn. `inCaller` is
   removed.
+- `@xandreed/core`: `StepRequest` gains a required `callPolicy`
+  (`Option<ModelCallPolicy>`): the `CurrentModelCallPolicy` where the run
+  was prepared, which the step loop provides to its dispatch checks and
+  model calls.
+- A custom `StepLoop` must provide all of `StepLoopReferences`
+  (prompt-cache key, call policy, trace content, empty-response tolerance,
+  current step), whatever its caller's; `stepLoopConformance` checks each.
 
 ### Added
 
@@ -893,6 +904,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   that started them: a task's own `start_task` is refused for depth, and the
   parent's reaction to a result may start another task. Before, the turns
   had no `Tasks`, so a call to a task tool died mid-turn.
+- A step loop run under a caller's `CurrentAgentStep` (a run inside a tool)
+  published its step events with the caller's step; the loop's callbacks
+  now read its own step and empty-response tolerance.
 
 ### Repository
 

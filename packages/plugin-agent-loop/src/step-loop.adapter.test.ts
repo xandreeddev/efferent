@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Response, Tool } from "effect/ai"
 import { Cause, Context, Effect, Exit, Option, Ref, Stream } from "effect"
-import { addUsage, ConversationId, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, plannedCallIdOf, reasonOf, responseText, responseToAgentMessages, responseToolCalls, RunId, RunOrdinal, StepLoop, stepLoopConformance, ToolCallId, toPromptMessages, TurnClosed, withToolCallIds, zeroUsage } from "@xandreed/core"
+import { addUsage, ConversationId, CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, plannedCallIdOf, reasonOf, responseText, responseToAgentMessages, responseToolCalls, RunId, RunOrdinal, StepLoop, stepLoopConformance, StepLoopReferences, ToolCallId, toPromptMessages, TurnClosed, withToolCallIds, zeroUsage } from "@xandreed/core"
 import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, StepStatus, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
@@ -22,7 +22,8 @@ const minimalLoop = StepLoop.of({
     const run = request.run.ordinal
     const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, TurnError> => request.completion(info).pipe(
       Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, run, verdict })))
-    const step = (index: number, text: string, usage: TokenUsage): Effect.Effect<RunResult, TurnError> => Effect.gen(function* () {
+    // `toolCalled`: whether the run has executed a tool call, the empty-response tolerance of its model calls.
+    const step = (index: number, text: string, usage: TokenUsage, toolCalled: boolean): Effect.Effect<RunResult, TurnError> => Effect.gen(function* () {
       if (index >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text, steps: index, usage } satisfies RunResult
       const activeTools = yield* request.tools.active
       const info: StepInfo = { stepIndex: index, activeTools, lastUsage: Option.none() }
@@ -56,6 +57,7 @@ const minimalLoop = StepLoop.of({
           Effect.provideService(CurrentTraceContent, request.captureTraceContent),
           Effect.provide(request.handlers),
           Effect.provideService(CurrentAgentStep, Option.some(index)),
+          Effect.provideService(CurrentEmptyResponseTolerance, toolCalled),
         )
       })
       const answered = yield* attempt.pipe(
@@ -71,7 +73,7 @@ const minimalLoop = StepLoop.of({
         yield* request.events.publish({ _tag: "step.ended", step: index, run, status: "malformed", results: [] })
         if (index + 1 >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text, steps: index + 1, usage } satisfies RunResult
         yield* request.record(index + 1, [{ role: "user", content: "Your reply could not be parsed: call a tool that exists, or answer in text." }])
-        return yield* step(index + 1, text, usage)
+        return yield* step(index + 1, text, usage, toolCalled)
       }
       const response = answered.value
       // A provider's id-less calls get ids of this run's own.
@@ -89,10 +91,13 @@ const minimalLoop = StepLoop.of({
       const verdict = first.complete || first.awaiting.length === 0 ? first : yield* request.tasks.await(first.awaiting).pipe(Effect.andThen(evaluate(info)))
       const reply = responseText(content).length > 0 ? responseText(content) : text
       if (verdict.complete || responseToolCalls(content).length === 0) return { outcome: "completed", reason: "completed", text: reply, steps: index + 1, usage: total } satisfies RunResult
-      return yield* step(index + 1, reply, total)
+      return yield* step(index + 1, reply, total, toolCalled || responseToolCalls(content).length > 0)
     })
-    // The request's cache key, for the dispatch check and the model calls to read.
-    return yield* step(0, "", zeroUsage).pipe(Effect.provideService(CurrentPromptCacheKey, request.cacheKey))
+    // The request's cache key and call policy, for the dispatch check and the model calls to read.
+    return yield* step(0, "", zeroUsage, false).pipe(
+      Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
+      Effect.provideService(CurrentModelCallPolicy, request.callPolicy),
+    )
   }),
 })
 
@@ -146,6 +151,40 @@ describe("a careless loop", () => {
   })
 })
 
+/** `runSteps` with a wrong value of one of `StepLoopReferences` provided to its model calls, as a careless loop would. */
+const misproviding = <A>(reference: Context.Reference<A>, wrong: A) => ({
+  key: reference.key,
+  loop: StepLoop.of({
+    id: "misproviding", version: "1",
+    run: (request) => Effect.orDie(Effect.fromOption(Context.getOption(request.handlers, LanguageModel.LanguageModel))).pipe(Effect.flatMap((model) => runSteps({
+      ...request,
+      handlers: Context.add(request.handlers, LanguageModel.LanguageModel, {
+        ...model,
+        generateText: ((options: never) => model.generateText(options).pipe(Effect.provideService(reference, wrong))) as never,
+      }),
+    }))),
+  }),
+})
+
+describe("a loop that provides a wrong value of one of StepLoopReferences", () => {
+  const careless = [
+    misproviding(CurrentPromptCacheKey, Option.some("careless")),
+    misproviding(CurrentModelCallPolicy, Option.some({ effort: "none" as const })),
+    misproviding(CurrentTraceContent, true),
+    misproviding(CurrentEmptyResponseTolerance, true),
+    misproviding(CurrentAgentStep, Option.none()),
+  ]
+  test.each(StepLoopReferences.map((reference) => reference.key))("fails the kit's check of %s", async (key) => {
+    const loop = careless.find((candidate) => candidate.key === key)?.loop
+    expect(loop).toBeDefined()
+    // The kit's check of a reference names it.
+    const checks = loop === undefined ? [] : stepLoopConformance(loop).filter((check) => check.name.includes(key.slice(key.lastIndexOf("/") + 1)))
+    expect(checks.length).toBe(1)
+    const exits = await Promise.all(checks.map((check) => Effect.runPromise(Effect.result(check.run))))
+    expect(exits.map((exit) => exit._tag)).toEqual(["Failure"])
+  })
+})
+
 /** One run of `runSteps` over a model, no tools, a record that keeps nothing: the bus events and the trace content switch the model saw. */
 const runWith = (model: LanguageModel.LanguageModel, options: {
   readonly streaming: boolean
@@ -189,6 +228,7 @@ const runWith = (model: LanguageModel.LanguageModel, options: {
     events,
     tasks,
     cacheKey: Option.none(),
+    callPolicy: Option.none(),
     captureTraceContent: options.captureTraceContent,
   })
   return { result, events: yield* Ref.get(seen) }

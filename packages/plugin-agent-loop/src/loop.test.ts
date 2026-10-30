@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Effect, Layer, Option, Ref, Schema, Stream, Tracer } from "effect"
-import { CurrentTraceContent, Failure, mediaFromBase64 } from "@xandreed/core"
+import { CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, Failure, mediaFromBase64 } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import { DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
 
@@ -928,6 +928,25 @@ test("the run's model calls and callbacks read the run's trace content switch", 
     return yield* Ref.get(reads)
   }))
   expect(seen).toEqual(["event:true", "model:true"])
+})
+
+test("the run's callbacks read its own step and empty-response tolerance, never an outer run's", async () => {
+  const seen = await Effect.runPromise(Effect.gen(function* () {
+    const reads = yield* Ref.make<ReadonlyArray<string>>([])
+    const read = Effect.all([Effect.service(CurrentAgentStep), Effect.service(CurrentEmptyResponseTolerance)], { concurrency: 1 }).pipe(
+      Effect.flatMap(([step, tolerant]) => Ref.update(reads, (all) => [...all, `${Option.getOrElse(step, () => -1)}:${tolerant}`])))
+    yield* runLoop({ system: "sys", messages: [user("go")], toolkit: kit, render: () => read.pipe(Effect.as([user("go")])) }).pipe(
+      Effect.provide(handlers),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((call) => call === 0
+        ? [{ type: "tool-call", id: "c1", name: "echo", params: { value: "ping" } }, finish("tool-calls")]
+        : [{ type: "text", text: "done" }, finish("stop")])),
+      // An outer run's step and tolerance, where this run starts.
+      Effect.provideService(CurrentAgentStep, Option.some(7)),
+      Effect.provideService(CurrentEmptyResponseTolerance, true),
+    )
+    return yield* Ref.get(reads)
+  }))
+  expect(seen).toEqual(["0:false", "1:true"])
 })
 
 test("a caller's span does not capture the loop's callbacks: they run under the step that calls them", async () => {

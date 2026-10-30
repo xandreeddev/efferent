@@ -3,7 +3,6 @@ import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Logger, Option, Ref, References, Schema, Scope, Stream } from "effect"
 import {
   ConversationId,
-  CurrentModelCallPolicy,
   CurrentPromptCacheKey,
   DecisionRecord,
   defineCapability,
@@ -715,8 +714,9 @@ describe("Agent.turn", () => {
         layer: () => Layer.succeed(StepLoop, {
           id: "altered", version: "1", run: (request) => runSteps({
             ...request,
-            // The loop stamps the request's cache key on its calls: another one is not what the header recorded.
+            // The loop provides the request's cache key and call policy to its calls: others are not what the header recorded.
             ...(changed === "cacheKey" ? { cacheKey: Option.some("unrecorded:key") } : {}),
+            ...(changed === "callPolicy" ? { callPolicy: Option.some({ effort: "high" as const }) } : {}),
             ...(changed === "tools" ? { tools: { ...request.tools, toolkit: Toolkit.make(...Object.values(request.tools.toolkit.tools).map((tool) =>
               tool.name === "lookup" ? tool.setParameters(Schema.Struct({ query: Schema.Int })) : tool)) } } : {}),
             plan: (info) => request.plan(info).pipe(Effect.map((plan) => ({
@@ -726,7 +726,7 @@ describe("Agent.turn", () => {
               ...(changed === "system" ? { system: "unrecorded system" } : {}),
               ...(changed === "toolChoice" ? { toolChoice: Option.some({ tool: "lookup" }) } : {}),
             }))),
-          }).pipe(changed === "callPolicy" ? Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "high" as const })) : (run) => run),
+          }),
         }),
       })
       const agent = yield* Agent.define({

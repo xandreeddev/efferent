@@ -14,6 +14,7 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 - A request refused over an image is sent again only before any part arrived, and only when `onMediaRejected` dealt with the images.
 - Step spans carry a call's usage under the GenAI names and the run span the sum under `engine.usage.*`; content only with `captureTraceContent`, images by size.
 - `runSteps` computes a step's plan once and serves the model, the messages and the tool choice from it.
+- The loop provides core's `StepLoopReferences`, whatever the caller's: `runSteps` the request's `cacheKey` and `callPolicy` for the run, `runLoop` its `captureTraceContent` for the run and the step and the empty-response tolerance per step. Its callbacks run with the caller's services, never with the caller's step or tolerance (an outer run's).
 - `runSteps` fails with a turn's `TurnError` as it is (`isTurnError`: the writer's `TurnClosed` keeps its tag, typed or carried as a defect), and with anything else (a provider's `AiError`) as `loop.failed`, that failure its `cause`.
 - The default corrective texts are model-facing: a host's `correctives` replaces them, and a change to them updates their pins.
 
@@ -52,7 +53,7 @@ Steering text (`pendingInput`) is the host's; the fold's summary message is core
 
 ## Tests
 
-- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:100`), its self-test (`runSteps` made careless, ending its steps in its completion check and recording a corrective under a step the cap stops it from taking, must fail the settle checks), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
+- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:105`), its self-tests (`runSteps` made careless, ending its steps in its completion check and recording a corrective under a step the cap stops it from taking, must fail the settle checks; and providing a wrong value of one of `StepLoopReferences` to its model calls, which must fail that reference's check), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
 - `src/loop.test.ts`: scripted-model runs (correctives, breaker, cap, settling each step once, nothing recorded under a step that never runs, the compact seam, steering, streaming parity and fallback, image refusals, a host's initial batch, spans) and the pure decisions (`:785`).
 - `src/step-ledger.entity.functions.test.ts`: the ledger's updates.
 - The sdk golden composes `stepLoopPlugin`.
