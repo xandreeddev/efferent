@@ -1,5 +1,6 @@
 import { Effect, Fiber, Option, PubSub, Ref, Stream } from "effect"
-import { canonicalJson, ConformanceFailure } from "@xandreed/core"
+import { canonicalJson } from "@xandreed/core"
+import { ConformanceFailure } from "@xandreed/core/conformance"
 import { FeedHeartbeat, FeedReady, FeedRecord } from "./domain/feed-frame.entity.js"
 import type { FeedFrame, FeedOptions, JournalRecord } from "./domain/feed-frame.entity.js"
 import { decodeSocketFrame, decodeSse } from "./domain/feed-frame.entity.functions.js"

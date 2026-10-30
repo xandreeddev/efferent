@@ -1198,6 +1198,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The boundaries gate restricts `@xandreed/core/internal` to the agent loop,
   the models plugin and the sdk, `@xandreed/core/engine` to the sdk and
   `@xandreed/core/models` to the models plugin.
+- `@xandreed/plugin-render` imports and re-exports `ConformanceFailure` from
+  `@xandreed/core/conformance` instead of core's deprecated root name.
 
 ### Deprecated
 
