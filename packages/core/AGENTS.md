@@ -7,7 +7,13 @@ No provider SDKs, filesystem IO, runtime graph, terminal, or host imports.
 Plugin and configuration contracts live in `src/harness`; service tags live in
 `src/ports`. Entity files contain schemas and derived types. Behavior belongs
 in paired `.functions.ts` modules. `definePlugin` bridges typed Layers at the
-explicit `plugin.adapter.ts` boundary.
+explicit `plugin.adapter.ts` boundary: a layer may need only what its
+`requires` lists, and `build` hands it the graph's untyped services through
+`provideDeclared` (`src/harness/plugin.entity.functions.ts`), which checks
+each declared key by key (`requires.missing`) and runs the work in the
+caller's own context, never a captured one. A plugin that does not compile
+against its declaration declares the service; never widen the layer's type
+or cast it through.
 
 Tell a `HarnessError` (or another tagged error) by its tag and fields, with
 `isHarnessError` (`src/harness/plugin.entity.functions.ts`), never with

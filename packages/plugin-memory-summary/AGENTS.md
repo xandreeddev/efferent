@@ -19,7 +19,7 @@ Summarizing conversation memory: a `ConversationMemory` with the window strategy
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
-| `memorySummaryPlugin` | `@xandreed/plugin-memory-summary` | runtime | `efferent/ConversationMemory` | none | none (reads `UtilityLlm` from each turn's services) |
+| `memorySummaryPlugin` | `@xandreed/plugin-memory-summary` | runtime | `efferent/ConversationMemory` | none | none; optional: `@xandreed/core/UtilityLlm` (read from each turn's services) |
 
 ## Model-facing text
 

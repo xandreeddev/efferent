@@ -918,7 +918,9 @@
     "apiVersion": 3,
     "scope": "runtime",
     "requires": [],
-    "optional": [],
+    "optional": [
+      "@xandreed/core/UtilityLlm"
+    ],
     "provides": [
       "efferent/ConversationMemory"
     ],

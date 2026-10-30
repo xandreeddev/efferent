@@ -104,6 +104,7 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "config.options", where: "`Agent.define`, activating a plugin", meaning: "A plugin's options did not decode with its schema." },
   { code: "plugin.activation", where: "activating a plugin (a session plugin's, every turn)", meaning: "The plugin's layer failed to build with an error that is not a `HarnessError` (one that is keeps its own code: `skills.duplicate`, `skills.root`, ...)." },
   { code: "plugin.defect", where: "activating a plugin (a session plugin's, every turn)", meaning: "The plugin's layer died with a defect that is not a `HarnessError` while it was built (one that is keeps its own code)." },
+  { code: "requires.missing", where: "activating a plugin (`definePlugin`'s `build`)", meaning: "A service the plugin lists in `requires` is not among the services the activation gives it; the message names the plugin and each missing service. The layer is not built." },
   { code: "module.closed", where: "`makeLiveLayer` (`@xandreed/runtime`)", meaning: "A replaceable module was used or replaced after its scope closed." },
   { code: "tools.duplicate", where: "building the tool registry", meaning: "Two capabilities define a tool of the same name." },
   { code: "skills.duplicate", where: "building the tool registry", meaning: "Two capabilities define a skill with the same id (a host's and a skills directory's: set the directory's `idPrefix`)." },

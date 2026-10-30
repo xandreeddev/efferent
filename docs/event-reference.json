@@ -5529,6 +5529,11 @@
       "meaning": "The plugin's layer died with a defect that is not a `HarnessError` while it was built (one that is keeps its own code)."
     },
     {
+      "code": "requires.missing",
+      "where": "activating a plugin (`definePlugin`'s `build`)",
+      "meaning": "A service the plugin lists in `requires` is not among the services the activation gives it; the message names the plugin and each missing service. The layer is not built."
+    },
+    {
       "code": "module.closed",
       "where": "`makeLiveLayer` (`@xandreed/runtime`)",
       "meaning": "A replaceable module was used or replaced after its scope closed."

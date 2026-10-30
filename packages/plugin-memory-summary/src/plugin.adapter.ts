@@ -137,6 +137,7 @@ const missingUtility = new HarnessError({ code: "memory.summary", message: "The 
 export const memorySummaryPlugin = definePlugin({
   id: "@xandreed/plugin-memory-summary", version: "0.14.0", scope: "runtime",
   config: MemorySummaryConfig, defaults: memorySummaryDefaults,
+  optional: [UtilityLlm],
   provides: [ConversationMemory],
   layer: (config) => Layer.succeed(ConversationMemory, ConversationMemory.of({
       strategy: SUMMARY_STRATEGY,

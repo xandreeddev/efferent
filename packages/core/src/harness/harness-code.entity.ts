@@ -41,6 +41,7 @@ export const HARNESS_CODES = [
   "request.memory",
   "request.missing",
   "request.model",
+  "requires.missing",
   "service.missing",
   "session.begin",
   "session.busy",
