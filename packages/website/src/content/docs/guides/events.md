@@ -496,8 +496,9 @@ Three places say how a turn ended; two of them carry the failure's code:
   minutes (a long model call, a slow tool) keeps its turn. Keep lease
   ownership when several instances share the log, as on a serverless
   platform.
-- **Busy.** `agent.activity` says what this process has in flight: open
-  turns, turns beginning, background tasks. `awaitIdle({ timeout })` waits
+- **Busy.** `agent.activity` says what this process has in flight (open
+  turns, turns beginning, background tasks) and whether it is stopping,
+  which the ping below answers with a 503. `awaitIdle({ timeout })` waits
   for nothing to be in flight, for a graceful shutdown. It reads the
   activity probes from the services it runs with, and without them finds
   none and reports idle at once: with the host
@@ -508,6 +509,10 @@ Three places say how a turn ended; two of them carry the failure's code:
   deadline end interrupted with `turn.shutdown`, resumable. See [busy
   signal and graceful shutdown](https://github.com/xandreeddev/efferent/blob/main/docs/framework.md#busy-signal-and-graceful-shutdown)
   for the whole shutdown.
+- **Time limit.** A turn may run 6 hours by default (`turns.timeLimitMs`
+  of the sessions plugin), or the `timeLimitMs` its begin gives; past it,
+  it is stored as interrupted with `turn.time-limit` (resumable) and
+  `Agent.turn` fails with `TurnClosed` of reason `timed-out`.
 - **Traces.** Every turn `Agent.turn` runs is an `agent.turn` span carrying
   the session, run and turn ids (see [traces and
   metrics](https://github.com/xandreeddev/efferent/blob/main/docs/framework.md#traces-and-metrics)).
@@ -822,9 +827,9 @@ And a `/ping` for a load balancer, or a deploy waiting to stop the instance:
 ```ts
 import { Effect } from "effect"
 
-/** GET /ping: what this instance has in flight, for a load balancer, or a deploy waiting to stop it. */
+/** GET /ping: what this instance has in flight, for a deploy waiting to stop it; 503 once it is stopping, so a load balancer sends it no more turns. */
 export const pingRoute = (host: Host): Promise<Response> => Effect.runPromise(host.agent.activity.pipe(Effect.map((now) =>
-  Response.json({ busy: now.busy, openTurns: now.openTurns.length, beginningTurns: now.beginningTurns, runningTasks: now.runningTasks }))))
+  Response.json({ busy: now.busy, stopping: now.stopping, openTurns: now.openTurns.length, beginningTurns: now.beginningTurns, runningTasks: now.runningTasks }, { status: now.stopping ? 503 : 200 }))))
 ```
 
 In a Next.js App Router project, the routes are a few lines each.

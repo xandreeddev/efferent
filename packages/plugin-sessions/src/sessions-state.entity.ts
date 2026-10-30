@@ -117,14 +117,23 @@ export const SessionsConfig = Schema.Struct({
   }),
   /** Compare-and-swap attempts before a write gives up as contended. */
   retries: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 64 })),
+  turns: Schema.Struct({
+    /**
+     * How long a turn may run, from when its writer is handed over, unless
+     * its begin gives its own (`timeLimitMs`): past it, the turn is closed
+     * as interrupted with `turn.time-limit`. At most a week.
+     */
+    timeLimitMs: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 604_800_000 })),
+  }),
 })
 export type SessionsConfig = typeof SessionsConfig.Type
 
-/** By default a turn is leased for 60 s, renewed by every write and by a keep-alive every 20 s. */
+/** By default a turn is leased for 60 s, renewed by every write and by a keep-alive every 20 s, and may run for 6 hours. */
 export const sessionsDefaults: SessionsConfig = {
   ownership: { mode: "lease", ttlMs: 60_000, renew: { everyMs: 20_000 } },
   titleChars: 80,
   inbox: { maxPending: 20, attempts: 2 },
   writer: { capacity: 1_024, batch: 64 },
   retries: 8,
+  turns: { timeLimitMs: 21_600_000 },
 }

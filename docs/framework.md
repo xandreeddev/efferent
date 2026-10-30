@@ -1985,8 +1985,9 @@ answers what its contract rules out is a defect.
 
 The writer's methods fail with `TurnError` (`@xandreed/core`): `TurnClosed`
 once it takes no more writes (its `reason`: `cancelled`, `interrupted` for a
-reaped lease or a stopped holder, `removed`, or `ended` once its own end is
-stored or under way, or its scope closed), `ReservedKind`,
+reaped lease, a stopped holder or a shutdown, `removed`, `timed-out` past
+its time limit, or `ended` once its own end is stored or under way, or its
+scope closed), `ReservedKind`,
 `SessionContended` (`retries` conflicting commits in a row), the store's
 `SessionLogError`, or a `HarnessError` (`session.defect`, and
 `session.encode` or `session.state` for the writer's own state). So do the
@@ -2038,7 +2039,8 @@ load.
   `list` orders by it: a session with an open turn moves up every
   `everyMs`) and, on SQLite, costs a write. A turn whose process hangs
   stays held while the keep-alive runs: the lease protects against a
-  holder that stopped, not one that stalled; `Sessions.cancel` closes it.
+  holder that stopped, not one that stalled; `Sessions.cancel` closes it,
+  and its time limit does at the latest (below).
   `renew: "on-commit"` restores the behaviour before the keep-alive was the
   default.
 - `{ mode: "process" }`: a turn is held without expiry for as long as the
@@ -2055,6 +2057,18 @@ load.
   counts as running), so another live process reusing a holder's pid can keep
   the turn held. Hosts needing stronger identity checks can supply `liveness`
   or use lease ownership.
+
+**A turn's time limit.** Whatever its ownership, a turn may run for
+`turns.timeLimitMs` (6 hours by default, at most a week) from when its
+writer is handed over, or for the `timeLimitMs` its begin gives
+(`BeginTurn`, `NewTurn` for `agent.turn`, the `drain` options). Past it,
+the instance that holds the turn closes it: its end is stored as
+interrupted with the code `turn.time-limit` (resumable; its inbox items
+wait again, an attempt counted), and its writer is closed with
+`TurnClosed` of reason `timed-out`, so `Agent.turn` interrupts the turn's
+body and fails with that `TurnClosed`. The limit is the holder's: a turn
+whose holder stopped is reaped by its lease or its process as before, and
+a hung turn the keep-alive keeps held ends at its limit at the latest.
 
 **A turn is judged as it was taken.** It keeps how it was held, a lease end
 or none and its holder's process, and every instance judges it by that,
@@ -2306,9 +2320,11 @@ what this process has in flight and stop it:
   interrupt is closed the same way as soon as its writer is handed over.
   `SessionsLive` and `SessionsPluginLive` provide it.
 
-`processActivity` reads the first two from the current services into a
-`ProcessActivity`: `{ openTurns, beginningTurns, runningTasks, busy }` (a
-port that is not there counts nothing). `awaitIdle({ timeout })` waits
+`processActivity` reads them from the current services into a
+`ProcessActivity`: `{ openTurns, beginningTurns, runningTasks, busy,
+stopping }` (a port that is not there counts nothing, and is not stopping):
+`stopping` once a shutdown began, for a `/ping` to answer 503 so a load
+balancer sends the process no more turns. `awaitIdle({ timeout })` waits
 until nothing is open, beginning or running at the same moment (a task that
 opens its parent's inbox turn before it ends is waited for too) and returns
 that activity; with a `timeout` it stops waiting then and returns what is

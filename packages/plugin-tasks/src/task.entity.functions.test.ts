@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Exit, Option } from "effect"
-import { ConversationId, HarnessError, SessionContended } from "@xandreed/core"
+import { ConversationId, HarnessError, SessionContended, TurnClosed } from "@xandreed/core"
 import type { JsonObject, SessionLogEvent, TaskView, TurnError, TurnOutcome } from "@xandreed/core"
 import { deliveredOf, noticeOf, resultOf } from "./task.entity.functions.js"
 import { tasksDefaults } from "./task-records.entity.js"
@@ -40,6 +40,7 @@ describe("the notice of a task that ends without a reply", () => {
       noticeAfter(Exit.die(new Error("disk on fire"))),
       noticeAfter(Exit.fail(new SessionContended({ session, attempts: 3 }))),
       noticeAfter(Exit.fail(new HarnessError({ code: "model.down", message: "the model is unavailable" }))),
+      noticeAfter(Exit.fail(new TurnClosed({ session, turn: 1, reason: "timed-out" }))),
     ]).toEqual([
       frame("completed", "(no reply)"),
       frame("was interrupted", "(no reply: the task ran out of time)"),
@@ -47,6 +48,7 @@ describe("the notice of a task that ends without a reply", () => {
       frame("failed", "(no reply: the task's turn failed)"),
       frame("failed", "(no reply: the task's session was too busy: its writes kept conflicting with others)"),
       frame("failed", "(no reply: the model is unavailable)"),
+      frame("failed", "(no reply: the task's turn ran past its time limit)"),
     ])
   })
 

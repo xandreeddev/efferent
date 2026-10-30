@@ -5694,6 +5694,11 @@
       "meaning": "The process shut down before the turn ended: the host's shutdown deadline passed (`shutdownGracefully`, `Agent.shutdown`, `AgentConfig.shutdown`) with the turn still running, and its end was stored while the log was still open. The turn is resumable, and its inbox items wait again with no attempt counted."
     },
     {
+      "code": "turn.time-limit",
+      "where": "a stored `turn.ended` failure (reason `interrupted`), written by plugin-sessions' `Sessions`",
+      "meaning": "The turn ran past its time limit (the begin's `timeLimitMs`, else the Sessions' `turns.timeLimitMs`): its holder closed it, and its writer refuses every later write with `TurnClosed` of reason `timed-out`. The turn is resumable; its inbox items wait again, an attempt counted."
+    },
+    {
       "code": "turn.takeover",
       "where": "a stored `turn.ended` failure (reason `interrupted`), written by plugin-sessions' `Sessions`",
       "meaning": "A begin with `takeOver` closed the session's open turn, still held by another holder, which the host says is gone (a restarted process). The turn is resumable, and its inbox items wait again with no attempt counted."

@@ -521,6 +521,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         held: new Map([...now.held, [heldKey(address.id, turn), { session: address.id, turn, since }]]),
         beginning: now.beginning - 1,
       }))
+      // The turn's time limit runs in its scope, from now: the scope's close stops it.
+      const limitMs = input.timeLimitMs ?? config.turns.timeLimitMs
+      yield* Effect.forkIn(Effect.sleep(limitMs).pipe(
+        Effect.andThen(closeForTimeLimit(address, turn, limitMs)),
+        Effect.annotateLogs(turnAttributes(begun.result.admitted)),
+      ), scope)
       // Its opening commit landed before a shutdown that is now interrupting: it is closed as the others were.
       if ((yield* Ref.get(stopping)) === "interrupting") yield* closeForShutdown(address, turn)
       return open
@@ -559,9 +565,10 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * done (cancelled) or waiting again (interrupted; an attempt counted when
    * `tried`). A turn nobody holds any more is reaped instead, as by any
    * commit (interrupted, `turn.lease`): it is not open, so nothing is closed
-   * and the outcome does not depend on which came first.
+   * and the outcome does not depend on which came first. The writer's
+   * `TurnClosed` gives `closedBy`.
    */
-  const closeOpen = (address: SessionAddress, turn: number, ending: { readonly reason: "cancelled" | "interrupted"; readonly failure: Option.Option<TurnFailure>; readonly tried: boolean }) => guarded(address, (head, stored) => Effect.gen(function* () {
+  const closeOpen = (address: SessionAddress, turn: number, ending: { readonly reason: "cancelled" | "interrupted"; readonly failure: Option.Option<TurnFailure>; readonly tried: boolean; readonly closedBy: ClosedBy }) => guarded(address, (head, stored) => Effect.gen(function* () {
     const reap = yield* reaped(head, stored)
     const state = reap.state
     if (Option.isSome(reap.closed)) return { drafts: reap.drafts, next: Option.some(state), result: { closed: false, pending: pendingOf(state).length } }
@@ -570,28 +577,37 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const closing = yield* turnEndedDraft(turn, { reason: ending.reason, failure: ending.failure }).pipe(Effect.orDie)
     const dropped = yield* droppedDrafts(after.dropped, turn)
     return { drafts: [closing, ...dropped], next: Option.some(after.state), result: { closed: true, pending: pendingOf(after.state).length } }
-  })).pipe(Effect.tap((done) => done.result.closed ? closeLocal(address.id, ending.reason, Option.some(turn)) : Effect.void), Effect.map((done) => done.result))
+  })).pipe(Effect.tap((done) => done.result.closed ? closeLocal(address.id, ending.closedBy, Option.some(turn)) : Effect.void), Effect.map((done) => done.result))
 
   /**
-   * Close a turn this instance holds for a shutdown: stored as interrupted
-   * with `turn.shutdown`, no attempt counted (the items it took were not why
-   * it stopped). Its writer is closed whatever the store answers, so its
-   * body stops; an end not stored is logged, and the turn is let go of, for
-   * the next process to reap.
+   * Close a turn this instance holds as interrupted with `failure`, an
+   * attempt counted when `tried`, its writer closed with `closedBy` whatever
+   * the store answers, so its body stops; an end not stored is logged, and
+   * the turn is let go of, for the next begin or process to reap.
    */
-  const closeForShutdown = (address: SessionAddress, turn: number) => closeOpen(address, turn, {
-    reason: "interrupted",
-    failure: Option.some({ code: "turn.shutdown", message: "the process shut down before the turn ended" }),
-    tried: false,
-  }).pipe(
-    Effect.asVoid,
-    Effect.tapError(() => letGo(address.id, turn).pipe(Effect.andThen(closeLocal(address.id, "interrupted", Option.some(turn))))),
-    Effect.ignore({ log: "Warn", message: "a turn the shutdown closed did not store its end; this instance lets it go, for the next process to reap" }),
-    Effect.annotateLogs(sessionAttributes(address.id)),
-  )
+  const interruptHeld = (address: SessionAddress, turn: number, failure: TurnFailure, tried: boolean, closedBy: ClosedBy) =>
+    closeOpen(address, turn, { reason: "interrupted", failure: Option.some(failure), tried, closedBy }).pipe(
+      Effect.asVoid,
+      Effect.tapError(() => letGo(address.id, turn).pipe(Effect.andThen(closeLocal(address.id, closedBy, Option.some(turn))))),
+      Effect.ignore({ log: "Warn", message: `a turn closed with ${failure.code} did not store its end; this instance lets it go, for the next begin or process to reap` }),
+      Effect.annotateLogs(sessionAttributes(address.id)),
+    )
+
+  /** Close a turn this instance holds for a shutdown: `turn.shutdown`, no attempt counted (the items it took were not why it stopped). */
+  const closeForShutdown = (address: SessionAddress, turn: number) =>
+    interruptHeld(address, turn, { code: "turn.shutdown", message: "the process shut down before the turn ended" }, false, "interrupted")
+
+  /**
+   * Close a turn this instance holds once it ran `limitMs`: `turn.time-limit`,
+   * an attempt counted (the items it took may be why it ran so long), its
+   * writer's `TurnClosed` `timed-out`.
+   */
+  const closeForTimeLimit = (address: SessionAddress, turn: number, limitMs: number) =>
+    interruptHeld(address, turn, { code: "turn.time-limit", message: `the turn ran past its time limit of ${limitMs} ms` }, true, "timed-out")
 
   const shutdown = TurnShutdown.of({
     refuse: Ref.update(stopping, (now) => now === "running" ? "refusing" : now),
+    stopping: Ref.get(stopping).pipe(Effect.map((now) => now !== "running")),
     interrupt: Effect.gen(function* () {
       yield* Ref.set(stopping, "interrupting")
       const held = [...(yield* SubscriptionRef.get(inFlight)).held.values()].sort((left, right) => left.since - right.since)
@@ -604,14 +620,18 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     }),
   })
 
-  const drain = Effect.fn("sessions.drain")(function* <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean }): Effect.fn.Return<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R> {
+  const drain = Effect.fn("sessions.drain")(function* <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean; readonly timeLimitMs?: number }): Effect.fn.Return<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R> {
     const maxTurns = options?.maxTurns ?? 3
     const meta = options?.meta
-    const takeOver = options?.takeOver === true ? { takeOver: true } : {}
+    /** What each inbox turn is begun with besides its run id and `meta`: written only when given. */
+    const begun = {
+      ...(options?.takeOver === true ? { takeOver: true } : {}),
+      ...(options?.timeLimitMs === undefined ? {} : { timeLimitMs: options.timeLimitMs }),
+    }
     /** One inbox turn, if one opens: then whether items still wait after it. */
     const once: Effect.Effect<Option.Option<boolean>, SessionMissing | SessionContended | SessionLogError, R> = Effect.scoped(Effect.gen(function* () {
       const runId = RunId.make(yield* Effect.sync(() => crypto.randomUUID()))
-      const open = yield* openTurn(address, meta === undefined ? { _tag: "Inbox", runId, ...takeOver } : { _tag: "Inbox", runId, meta, ...takeOver })
+      const open = yield* openTurn(address, meta === undefined ? { _tag: "Inbox", runId, ...begun } : { _tag: "Inbox", runId, meta, ...begun })
       // A TurnError carried as a defect keeps its own tag and code, as in `Agent.turn`.
       const exit = yield* Effect.exit(harnessDefectsAsFailures(run(open.writer)))
       // The turn ends with what ended `run`: its error's code, `turn.defect` or `turn.interrupted`.
@@ -724,7 +744,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     })).pipe(Effect.map((done): Decided<A> => ({ result: done.result, events: Option.match(done.committed, { onNone: () => [], onSome: (committed) => committed.events }) }))), onSession),
     // A turn nobody holds any more is reaped, as by a begin or a delivery, whichever comes first: it is not open, so the
     // cancel cancels nothing, and the outcome (interrupted, its items waiting again) does not depend on the order.
-    cancel: Effect.fn("sessions.cancel")((address, turn) => closeOpen(address, turn, { reason: "cancelled", failure: Option.none(), tried: true }).pipe(
+    cancel: Effect.fn("sessions.cancel")((address, turn) => closeOpen(address, turn, { reason: "cancelled", failure: Option.none(), tried: true, closedBy: "cancelled" }).pipe(
       Effect.map((done) => ({ cancelled: done.closed, pending: done.pending })),
     ), onSession),
     begin,

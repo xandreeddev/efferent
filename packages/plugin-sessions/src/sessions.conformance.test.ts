@@ -88,7 +88,7 @@ describe("the Sessions kit catches careless backends", () => {
       sessions: Sessions.of({
         ...instance.sessions,
         begin: (address, input) => instance.sessions.begin(address, Match.valueTags(input, {
-          User: (user): BeginTurn => ({ _tag: "User", userMessage: user.userMessage, runId: user.runId, key: user.key, command: user.command, ...(user.resumes === undefined ? {} : { resumes: user.resumes }), ...(user.takeOver === undefined ? {} : { takeOver: user.takeOver }) }),
+          User: (user): BeginTurn => ({ _tag: "User", userMessage: user.userMessage, runId: user.runId, key: user.key, command: user.command, ...(user.resumes === undefined ? {} : { resumes: user.resumes }), ...(user.takeOver === undefined ? {} : { takeOver: user.takeOver }), ...(user.timeLimitMs === undefined ? {} : { timeLimitMs: user.timeLimitMs }) }),
           Inbox: (inbox): BeginTurn => ({ _tag: "Inbox", runId: inbox.runId, ...(inbox.takeOver === undefined ? {} : { takeOver: inbox.takeOver }) }),
           Task: (task): BeginTurn => ({ _tag: "Task", task: task.task, userMessage: task.userMessage, runId: task.runId, key: task.key }),
         })),
@@ -143,7 +143,7 @@ describe("the Sessions kit catches careless backends", () => {
         }))),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "shutdown", "takeover", "transact", "writer"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "shutdown", "takeover", "time-limit", "transact", "writer"])
   })
 
   test("one whose turn writers store the closing drafts at once, as a write before the end, fails only the closing check", async () => {
@@ -207,7 +207,7 @@ describe("the Sessions kit catches careless backends", () => {
   test("one whose shutdown refuses but never closes the turns it holds fails only the shutdown check", async () => {
     const lingering = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,
-      shutdown: Option.map(instance.shutdown, (shutdown) => TurnShutdown.of({ refuse: shutdown.refuse, interrupt: shutdown.refuse.pipe(Effect.as([])) })),
+      shutdown: Option.map(instance.shutdown, (shutdown) => TurnShutdown.of({ refuse: shutdown.refuse, interrupt: shutdown.refuse.pipe(Effect.as([])), stopping: shutdown.stopping })),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lingering)))).toEqual(["shutdown"])
   })
@@ -215,7 +215,7 @@ describe("the Sessions kit catches careless backends", () => {
   test("one whose shutdown refuses nothing fails only the shutdown check", async () => {
     const open = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,
-      shutdown: Option.some(TurnShutdown.of({ refuse: Effect.void, interrupt: Effect.succeed([]) })),
+      shutdown: Option.some(TurnShutdown.of({ refuse: Effect.void, interrupt: Effect.succeed([]), stopping: Effect.succeed(false) })),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, open)))).toEqual(["shutdown"])
   })
@@ -231,6 +231,14 @@ describe("the Sessions kit catches careless backends", () => {
       sessions: Sessions.of({ ...instance.sessions, begin: (address, input) => instance.sessions.begin(address, { ...input, takeOver: false }) }),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, waiting)))).toEqual(["takeover"])
+  })
+
+  test("one whose begin ignores the turn's own time limit fails only the time-limit check", async () => {
+    const unbounded = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({ ...instance.sessions, begin: (address, input) => instance.sessions.begin(address, { ...input, timeLimitMs: 86_400_000 }) }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, unbounded)))).toEqual(["time-limit"])
   })
 
   test("the dead-holder and tenure checks run only for a backend with process ownership", () => {

@@ -9,7 +9,7 @@ import type { ActiveTurn, TurnsInFlight } from "./activity.entity.js"
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000a1")
 const turn = (number: number, since: number): ActiveTurn => ({ session, turn: number, since })
 const opened = (...open: ReadonlyArray<ActiveTurn>): TurnsInFlight => ({ open, beginning: 0 })
-const idle = { openTurns: [], beginningTurns: 0, runningTasks: 0, busy: false }
+const idle = { openTurns: [], beginningTurns: 0, runningTasks: 0, busy: false, stopping: false }
 
 /** Probes over two refs the test sets: the turns in flight, and the work running. */
 const probes = Effect.gen(function* () {
@@ -107,6 +107,7 @@ describe("shutdownGracefully", () => {
     const calls = yield* Ref.make<ReadonlyArray<string>>([])
     const shutdown = TurnShutdown.of({
       refuse: Ref.update(calls, (all) => [...all, "refuse"]),
+      stopping: Ref.get(calls).pipe(Effect.map((all) => all.length > 0)),
       interrupt: Effect.gen(function* () {
         yield* Ref.update(calls, (all) => [...all, "interrupt"])
         const open = (yield* SubscriptionRef.get(turns)).open
@@ -125,7 +126,7 @@ describe("shutdownGracefully", () => {
     yield* Effect.yieldNow
     expect(yield* Ref.get(calls)).toEqual(["refuse"])
     yield* SubscriptionRef.set(turns, opened())
-    expect(yield* Fiber.join(shutting)).toEqual({ idle: true, interrupted: [], left: idle })
+    expect(yield* Fiber.join(shutting)).toEqual({ idle: true, interrupted: [], left: { ...idle, stopping: true } })
     expect(yield* Ref.get(calls)).toEqual(["refuse"])
   })))
 
@@ -141,7 +142,7 @@ describe("shutdownGracefully", () => {
     expect(yield* Ref.get(calls)).toEqual(["refuse", "interrupt"])
     // The task its interrupted turn ran ends within the reserve.
     yield* SubscriptionRef.set(tasks, 0)
-    expect(yield* Fiber.join(shutting)).toEqual({ idle: false, interrupted: [turn(1, 0), turn(2, 5)], left: idle })
+    expect(yield* Fiber.join(shutting)).toEqual({ idle: false, interrupted: [turn(1, 0), turn(2, 5)], left: { ...idle, stopping: true } })
   })))
 
   test("what is still in flight after the reserve is reported busy; without a TurnShutdown nothing is interrupted", () => run(Effect.gen(function* () {

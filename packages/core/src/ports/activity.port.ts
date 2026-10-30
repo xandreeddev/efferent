@@ -43,9 +43,11 @@ export class TaskActivity extends Context.Service<TaskActivity, {
  * (`Agent.turn` races `TurnWriter.closed`) and its writes fail with
  * `TurnClosed`; it returns the turns it closed. A turn whose begin was past
  * its opening commit is closed so as soon as its writer is handed over. Both
- * may be called more than once. `shutdownGracefully` calls them.
+ * may be called more than once. `shutdownGracefully` calls them; `stopping`
+ * says whether either was (what `processActivity` reports).
  */
 export class TurnShutdown extends Context.Service<TurnShutdown, {
   readonly refuse: Effect.Effect<void>
   readonly interrupt: Effect.Effect<ReadonlyArray<ActiveTurn>>
+  readonly stopping: Effect.Effect<boolean>
 }>()("@xandreed/core/TurnShutdown") {}

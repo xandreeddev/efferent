@@ -171,6 +171,13 @@ export interface NewTurn {
    * be the one resumed.
    */
   readonly takeOver?: boolean
+  /**
+   * How long the turn may run, in milliseconds from its begin, instead of
+   * the Sessions' own limit (`BeginTurn`'s `timeLimitMs`): past it the turn
+   * is closed, stored as interrupted with `turn.time-limit` (resumable), and
+   * `Agent.turn` fails with `TurnClosed` of reason `timed-out`.
+   */
+  readonly timeLimitMs?: number
 }
 
 /**

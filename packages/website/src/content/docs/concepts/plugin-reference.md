@@ -183,7 +183,10 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
     "capacity": 1024,
     "batch": 64
   },
-  "retries": 8
+  "retries": 8,
+  "turns": {
+    "timeLimitMs": 21600000
+  }
 }
 ```
 
@@ -310,6 +313,20 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
       "type": "integer",
       "minimum": 1,
       "maximum": 64
+    },
+    "turns": {
+      "type": "object",
+      "properties": {
+        "timeLimitMs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 604800000
+        }
+      },
+      "required": [
+        "timeLimitMs"
+      ],
+      "additionalProperties": true
     }
   },
   "required": [
@@ -317,7 +334,8 @@ Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
     "titleChars",
     "inbox",
     "writer",
-    "retries"
+    "retries",
+    "turns"
   ],
   "additionalProperties": true
 }
