@@ -59,10 +59,13 @@ export class Thing extends Context.Service<Thing, {
   with `check`, `expect`, `fail`, `freshId` and `eventually` from
   `packages/core/src/conformance.functions.ts`; checks fail with
   `ConformanceFailure` (`@xandreed/core/conformance`, which exports `check`
-  too, for a kit outside core).
+  too, for a kit outside core; such a kit writes its own `expect` and
+  `fail`, as the sdk's `src/turn/tool-registry.conformance.ts` does).
 - Export the kit from the package's entry, core's from
-  `src/conformance/index.ts` (`@xandreed/core/conformance`): kits ship, so
-  hosts can prove their own adapters. Never import a module whose name ends in `testing.ts` from a kit:
+  `src/conformance/index.ts` (`@xandreed/core/conformance`); a kit that runs
+  turns needs the sdk's `TurnLive`, so it is the sdk's
+  (`packages/sdk/src/conformance/index.ts`, `@xandreed/sdk/conformance`).
+  Kits ship, so hosts can prove their own adapters. Never import a module whose name ends in `testing.ts` from a kit:
   the build drops those files.
 - A contract change starts as a new or changed check in the kit.
 - Self-test it with careless stubs: fakes that must fail every check, plus a

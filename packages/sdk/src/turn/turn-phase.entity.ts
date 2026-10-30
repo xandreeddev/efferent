@@ -1,9 +1,7 @@
 import { Schema } from "effect"
-import { RunOrdinal } from "../domain/run.entity.js"
-import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
-import { LogEntry, TurnContextBody } from "../memory/memory-log.entity.js"
+import { LogEntry, RunOrdinal, TurnContextBody, TurnOutcomeKind } from "@xandreed/core"
+import type { UserMessage } from "@xandreed/core"
 // The declarations this module emits name the user message through this import, not another package.
-import type { UserMessage } from "./user-message.entity.js"
 
 /** The TurnContext entries given before memory took the message, in order: recorded right after it. */
 const Early = Schema.Array(TurnContextBody)

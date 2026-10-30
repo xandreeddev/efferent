@@ -4,22 +4,26 @@ import type { Tool } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Result, Tracer } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { failureCode } from "../conformance.functions.js"
-import { RunId } from "../domain/run.entity.js"
-import { HarnessError } from "../harness/plugin.entity.js"
-import { openLogSession } from "../memory/memory-session.js"
-import type { MemoryPolicy } from "../memory/memory-session.js"
-import { ConversationMemory } from "../ports/memory.port.js"
-import type { ToolViews } from "../ports/memory.port.js"
-import { RunContext } from "../ports/run-context.port.js"
-import { ToolRegistry } from "../ports/tool-registry.port.js"
-import type { RunTools } from "../ports/tool-registry.port.js"
-import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
-import { TurnMemory, TurnToolbox } from "../ports/turn-scope.port.js"
-import type { TurnOutcome } from "../ports/turn.port.js"
-import { recordingTurnWriter } from "../turn/testing.js"
+import {
+  ConversationMemory,
+  harnessCodeOf,
+  HarnessError,
+  openLogSession,
+  RunContext,
+  RunId,
+  ToolRegistry,
+  TurnEvents,
+  TurnMemory,
+  TurnTasks,
+  TurnToolbox,
+} from "@xandreed/core"
+import type { MemoryPolicy, RunTools, ToolViews, TurnOutcome } from "@xandreed/core"
+import { recordingTurnWriter } from "./testing.js"
 import { TurnLive } from "./turn.adapter.js"
 import { guardTurn, openTurnTools, traceTurn } from "./turn-lifecycle.usecase.functions.js"
+
+/** A failure's framework code, else its tag. */
+const failureCode = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
 
 const policy: MemoryPolicy = {
   strategy: { id: "test", version: "1" },

@@ -1,0 +1,2 @@
+const toolRegistryConformance
+interface ToolRegistryLimits

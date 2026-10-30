@@ -115,7 +115,8 @@ a handle whose scope never closed) for a session store,
 `sessionsConformance` (one open turn per session, keys, resume, the inbox,
 leases and dead holders reaped, `TurnActivity`) for a `Sessions` backend,
 `taskRunnerConformance` and `tasksConformance` for background work and
-tasks, `toolRegistryConformance` (activation, concurrent `load_skill`
+tasks, `toolRegistryConformance` (from `@xandreed/sdk/conformance`, since it
+runs turns over the sdk's `TurnLive`: activation, concurrent `load_skill`
 calls, invocation ids, the services tools declare, every `tool.refused`
 reason) for a tool registry,
 `memoryConformance`, `stepLoopConformance` and `turnConformance`, and
@@ -162,8 +163,9 @@ host process can. See [Workspace tools](docs/framework.md#workspace-tools).
 
 Each plugin is also a typed layer (`MemoryWindowLive`, `ToolDiscoveryLive`, …)
 that `stackPlugins` composes the way the graph does. A turn is public steps
-over typed services (`TurnLive`, `persistMessage`, `openTurnTools`,
-`runTurnLoop`, `guardTurn`): `Agent.turn` is one composition of them, and
+over typed services (`@xandreed/sdk`'s `TurnLive`, `persistMessage`,
+`openTurnTools`, `runTurnLoop`, `guardTurn`): `Agent.turn` is one
+composition of them, and
 `turnConformance` checks any other. A composable agent's conversations are
 sessions: one event log each, in storage the host provides (`SessionLog`),
 read and written through `@xandreed/plugin-sessions`, with an inbox and

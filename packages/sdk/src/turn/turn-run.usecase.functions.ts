@@ -1,32 +1,48 @@
 import { Context, Effect, Option, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
-import { toolParametersSchema } from "../internal/tool-schema.entity.functions.js"
-import { isBudgetTokens } from "../domain/token-usage.entity.functions.js"
-import { HarnessError } from "../harness/plugin.entity.js"
-import { canonicalJson, entriesSendingMedia, estimateTokens, fingerprintOf } from "../memory/memory-log.entity.functions.js"
-import type { EntryId } from "../memory/memory-log.entity.js"
-import type { ModelChoice, StepDirective, StepInfo } from "../ports/capability.port.js"
-import { StepLoop } from "../ports/step-loop.port.js"
-import type { LoopLimits, RunResult, StepPlan, StepRequest } from "../ports/step-loop.port.js"
-import type { RunTools } from "../ports/tool-registry.port.js"
-import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
-import type { TurnPolicy } from "../ports/turn.port.js"
-import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js"
-import type { TurnRunOptions } from "../ports/turn-scope.port.js"
-import type { TurnError } from "../session/sessions.entity.js"
-import type { CompletionVerdict } from "../turn/turn-event.entity.js"
-import type { MemoryRenderRecipe } from "../turn/model-request.entity.js"
-import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
-import { CurrentModelCallPolicy } from "../loop/modelPolicy.js"
-import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
+import {
+  canonicalJson,
+  CurrentModelCallPolicy,
+  CurrentPromptCacheKey,
+  CurrentTraceContent,
+  fingerprintOf,
+  HarnessError,
+  isBudgetTokens,
+  modelRequestDescriptorOf,
+  replayableContext,
+  resolveModelRequest,
+  StepLoop,
+  TurnEvents,
+  TurnMemory,
+  TurnPrompt,
+  TurnTasks,
+  TurnToolbox,
+} from "@xandreed/core"
+import type {
+  CompletionVerdict,
+  EntryId,
+  LoopLimits,
+  MemoryRenderRecipe,
+  ModelChoice,
+  RunResult,
+  RunTools,
+  StepDirective,
+  StepInfo,
+  StepPlan,
+  StepRequest,
+  TurnError,
+  TurnPolicy,
+  TurnRunOptions,
+} from "@xandreed/core"
 import {
   checkModelRequest,
-  modelRequestDescriptorOf,
+  entriesSendingMedia,
+  estimateTokens,
   modelRequestHeaderOf,
   modelRequestTools,
   reconstructModelRequest,
-  resolveModelRequest,
-} from "../turn/model-request.entity.functions.js"
+  toolParametersSchema,
+} from "@xandreed/core/internal"
 
 /** What a step's plan decided before it built the context: the model choice, the system prompt, the directive. */
 interface StepDecision {

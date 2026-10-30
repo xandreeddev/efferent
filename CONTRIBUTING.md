@@ -93,8 +93,8 @@ The lists the check reads are the `registration` data in
   type-only one, run `bun run api:update` (it runs `build:packages`, then
   rewrites `api/`) and commit the diff; `verify:packages` fails while `api/`
   differs from the build. A package's root entry may not export a name
-  declared in a package's `src/internal/` or `src/engine/` folder: those
-  modules are published through entries of their own, outside semver.
+  declared in a package's `src/internal/` folder: those modules are
+  published through an entry of their own, outside semver.
 - Every release's journal fixture stays readable
   (`packages/sdk/src/journal-compat.test.ts` reads each
   `packages/sdk/fixtures/journal-<version>.json`). A fixture records what a

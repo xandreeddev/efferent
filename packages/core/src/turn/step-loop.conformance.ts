@@ -22,7 +22,7 @@ import type { RunResult, StepLoop, StepRequest } from "../ports/step-loop.port.j
 import type { RunTools } from "../ports/tool-registry.port.js"
 import type { TurnTasksService } from "../ports/turn-events.port.js"
 import type { TurnError } from "../session/sessions.entity.js"
-import { makeTurnEvents, makeTurnTasks } from "../engine/turn-bus.adapter.js"
+import { makeTurnEvents, makeTurnTasks } from "./turn-bus.adapter.js"
 import type { CompletionVerdict, TurnEvent } from "./turn-event.entity.js"
 
 const Probe = Tool.make("probe", {

@@ -34,9 +34,6 @@
       "@xandreed/core/internal": [
         "packages/core/src/internal/index.ts"
       ],
-      "@xandreed/core/engine": [
-        "packages/core/src/engine/index.ts"
-      ],
       "@xandreed/foundry": [
         "packages/foundry/src/index.ts"
       ],
@@ -63,6 +60,9 @@
       ],
       "@xandreed/sdk": [
         "packages/sdk/src/index.ts"
+      ],
+      "@xandreed/sdk/conformance": [
+        "packages/sdk/src/conformance/index.ts"
       ],
       "@xandreed/plugin-models": [
         "packages/plugin-models/src/index.ts"

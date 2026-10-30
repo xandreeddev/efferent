@@ -26,7 +26,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 
 - `core`: shared schemas, ports, conformance kits and protocol helpers.
 - `runtime` → core: the plugin dependency graph and scoped plugin activation.
-- `sdk` → runtime, core: `Agent.define` and `Agent.turn`, the composable agent over sessions.
+- `sdk` → runtime, core: `Agent.define` and `Agent.turn`, the composable agent over sessions, and the turn engine they run on (`TurnLive` and the turn's lifecycle), with the `ToolRegistry` kit that runs turns over it (`@xandreed/sdk/conformance`).
 - `plugin-*` → core: independently configurable capabilities, the agent loop included.
 - `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24.
 - `foundry` runs the gates (development tooling); `website` is the docs site. Neither is published.

@@ -8,7 +8,9 @@ description: The port contracts as runnable checks, to run against your own adap
 A port says what its methods take and return; a conformance kit says what an
 implementation must do. `@xandreed/core/conformance` ships each contract as a
 list of checks (the models plugin's credential and settings stores' from
-`@xandreed/plugin-models/conformance`), so a host that writes its own
+`@xandreed/plugin-models/conformance`, the tool registry's from
+`@xandreed/sdk/conformance`, since it runs turns over the sdk's
+`TurnLive`), so a host that writes its own
 session store, sessions backend, task runner, tasks backend, tool registry,
 memory strategy, step loop, turn composition, file system, shell or model
 credential and settings store can prove it behaves like the first-party
@@ -38,7 +40,7 @@ transports (see [render kits](#render-kits)).
 | `settingsStoreConformance(store, { writable, corrupt? })` | `load` is stable; writable: each role and key reads back typed, `None` clears back to the value before the set, a value that does not parse (through `set` or `setRole`) fails with a `SettingsError` and changes nothing; read-only: every write is refused and changes nothing; with `corrupt`, damaged backing data fails `load` and every write with `settings.corrupt` | a `SettingsStore` |
 | `modelCatalogConformance(catalog, { includes? })` | entries decode, each selection is `"<provider>:<modelId>"` of its own provider, no selection twice, two lists agree, the expected selections are listed | a `ModelCatalog` |
 
-Every core kit returns `ReadonlyArray<ConformanceCheck>`. A check has a `name` and
+Every kit returns `ReadonlyArray<ConformanceCheck>`. A check has a `name` and
 a `run` effect that succeeds, or fails with a `ConformanceFailure` whose
 `check` names the broken part of the contract and whose `message` says what
 happened. The session log, Sessions and Tasks kits use fresh session ids and
@@ -441,14 +443,14 @@ over the kit's capabilities (five tools and three skills: an always-on one,
 one needing the `kit.vault` permission, one loaded on demand; one tool
 declares the `SessionEnvironment` it reads) with at most `maxCallsPerRun`
 calls per turn and no permission granted by default. Each check runs a turn
-over core's `TurnLive`, with a writer that keeps the turn's events in
+over the sdk's `TurnLive`, with a writer that keeps the turn's events in
 memory, opens the tools with a `SessionEnvironment` and calls them through
 the open toolkit's handlers with another:
 
 ```ts
 import { Context, Effect, Layer } from "effect"
 import { Capabilities, ToolRegistry } from "@xandreed/core"
-import { toolRegistryConformance } from "@xandreed/core/conformance"
+import { toolRegistryConformance } from "@xandreed/sdk/conformance"
 import { toolDiscoveryDefaults, ToolDiscoveryLive } from "@xandreed/plugin-tool-discovery"
 
 const checks = toolRegistryConformance((capabilities, limits) =>

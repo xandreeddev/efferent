@@ -111,7 +111,6 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/core/src/index.ts",
   "packages/core/src/conformance/index.ts",
   "packages/core/src/internal/index.ts",
-  "packages/core/src/engine/index.ts",
   "packages/runtime/src/index.ts",
   "packages/evals-langfuse/src/index.ts",
   "packages/evals-langsmith/src/index.ts",
@@ -122,6 +121,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/plugin-render/src/output.ts",
   "packages/plugin-agent-loop/src/index.ts",
   "packages/plugin-models/src/conformance/index.ts",
+  "packages/sdk/src/conformance/index.ts",
 ]
 
 /**
@@ -383,25 +383,22 @@ const config: typeof GateSuiteConfig.Encoded = {
       // alternatives, so a layer may need several entries. From the bottom:
       // the model (entities, and the References in `loop/`) imports nothing of
       // core; the ports, the model; the logic (entity functions, `internal/`,
-      // the model-text frames), both; `core` (adapters, harness, the memory
-      // session, prompt sections), those three; the turn engine (`engine/`),
-      // those four; the kits, the engine too, since two of them run turns over
-      // it. The entries (`index.ts`, `conformance/`, `internal/` and
-      // `engine/`) are `core` too, what `@xandreed/core` reaches, and
-      // re-export every layer. `./conformance` is open to every package;
-      // `./internal` only to the agent loop, the models plugin and the sdk,
-      // and `./engine` to the sdk, each granted as `core/<subpath>` in its
-      // importer's `canImport`.
-      { name: "core-tests", path: "packages/core/src/**/*.test.ts", canImport: ["core-model", "core-ports", "core-logic", "core", "core-engine", "core-kits"], externals: ["effect", "effect/ai", "fast-check", "bun:test"] },
-      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-engine", "core-kits"], externals: ["effect", "effect/ai"], restricted: ["internal", "engine"] },
+      // the model-text frames), both; `core` (adapters, the turn's bus,
+      // harness, the memory session, prompt sections), those three; the kits,
+      // those four. The entries (`index.ts`, `conformance/` and `internal/`)
+      // are `core` too, what `@xandreed/core` reaches, and re-export every
+      // layer. `./conformance` is open to every package; `./internal` only to
+      // the agent loop, the models plugin and the sdk, each granted as
+      // `core/internal` in its importer's `canImport`.
+      { name: "core-tests", path: "packages/core/src/**/*.test.ts", canImport: ["core-model", "core-ports", "core-logic", "core", "core-kits"], externals: ["effect", "effect/ai", "fast-check", "bun:test"] },
+      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-kits"], externals: ["effect", "effect/ai"], restricted: ["internal"] },
       { name: "core-model", path: "packages/core/src/**/*.entity.ts", canImport: [], externals: ["effect", "effect/ai"] },
       { name: "core-model", path: "packages/core/src/loop/*.ts", canImport: [], externals: ["effect", "effect/ai"] },
       { name: "core-ports", path: "packages/core/src/ports/**", canImport: ["core-model"], externals: ["effect", "effect/ai"] },
       { name: "core-logic", path: "packages/core/src/**/*.entity.functions.ts", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
       { name: "core-logic", path: "packages/core/src/internal/**", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
       { name: "core-logic", path: "packages/core/src/turn/model-text.ts", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
-      { name: "core-engine", path: "packages/core/src/engine/**", canImport: ["core-model", "core-ports", "core-logic", "core"], externals: ["effect", "effect/ai"] },
-      { name: "core-kits", path: "packages/core/src/**/*.conformance.ts", canImport: ["core-model", "core-ports", "core-logic", "core", "core-engine"], externals: ["effect", "effect/ai"] },
+      { name: "core-kits", path: "packages/core/src/**/*.conformance.ts", canImport: ["core-model", "core-ports", "core-logic", "core"], externals: ["effect", "effect/ai"] },
       { name: "core", path: "packages/core/src/**", canImport: ["core-model", "core-ports", "core-logic"], externals: ["effect", "effect/ai"] },
       {
             "name": "foundry",
@@ -412,25 +409,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "typescript",
                   "node:",
                   "bun:test"
-            ]
-      },
-      // The step loop's tests build a turn's bus and tasks from the engine (`makeTurnEvents`, `makeTurnTasks`).
-      {
-            "name": "plugin-agent-loop-tests",
-            "path": "packages/plugin-agent-loop/src/**/*.test.ts",
-            "canImport": [
-                  "plugin-agent-loop",
-                  "core",
-                  "core/internal",
-                  "core/engine"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
             ]
       },
       {
@@ -496,22 +474,6 @@ const config: typeof GateSuiteConfig.Encoded = {
             "path": "packages/plugin-memory-digest/src/**",
             "canImport": [
                   "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
-            ]
-      },
-      // The registry's tests open its tools in a turn built over the engine (`TurnLive`).
-      {
-            "name": "plugin-tool-discovery-tests",
-            "path": "packages/plugin-tool-discovery/src/**/*.test.ts",
-            "canImport": [
-                  "plugin-tool-discovery",
-                  "core",
-                  "core/engine"
             ],
             "externals": [
                   "effect",
@@ -603,22 +565,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun",
                   "bun:",
                   "ws"
-            ]
-      },
-      // The tests trace a begin as `Agent.turn` does, with the engine's `traceTurnBegin`.
-      {
-            "name": "plugin-sessions-tests",
-            "path": "packages/plugin-sessions/src/**/*.test.ts",
-            "canImport": [
-                  "plugin-sessions",
-                  "core",
-                  "core/engine"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
             ]
       },
       {
@@ -715,8 +661,7 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "plugin-agent-loop",
                   "plugin-memory-window",
                   "plugin-tool-discovery",
-                  "plugin-sessions",
-                  "core/engine"
+                  "plugin-sessions"
             ],
             "externals": [
                   "effect",
@@ -762,7 +707,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "sdk",
                   "core",
                   "core/internal",
-                  "core/engine",
                   "runtime",
                   "plugin-session-sqlite",
                   "plugin-agent-loop",
@@ -790,11 +734,11 @@ const config: typeof GateSuiteConfig.Encoded = {
             "canImport": [
                   "core",
                   "core/internal",
-                  "core/engine",
                   "runtime"
             ],
             "externals": [
                   "effect",
+                  "effect/ai",
                   "bun:test"
             ]
       },

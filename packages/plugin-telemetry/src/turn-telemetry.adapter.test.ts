@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Duration, Effect, Exit, Layer, Metric, Option, Tracer } from "effect"
-import { costOf, InvocationId, RunContext, RunOrdinal, sumUsage, tokenUsage, TurnEvents, usageBreakdown } from "@xandreed/core"
-import { makeTurnEvents } from "@xandreed/core/engine"
+import { costOf, InvocationId, makeTurnEvents, RunContext, RunOrdinal, sumUsage, tokenUsage, TurnEvents, usageBreakdown } from "@xandreed/core"
 import type { TurnEvent } from "@xandreed/core"
 import { capturingTracer, MODEL, PRICE, RESPONSES, scriptedTurn, valueIn } from "./scripted-turn.testing.js"
 import { TelemetryMetrics } from "./telemetry-metrics.js"

@@ -34,7 +34,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 | Text | Source | Pinned by |
 |---|---|---|
 | An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:419` | exact, `src/sessions.adapter.test.ts:1304` (one item, `:1134`) |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:325` | exact, `src/sessions.adapter.test.ts:1286` |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:325` | exact, `src/sessions.adapter.test.ts:1285` |
 
 ## Erasure files
 
@@ -59,6 +59,7 @@ None.
 - `src/sessions.adapter.test.ts`: one turn at a time, leases, activity, cancel and removal, check then append, contention and a broken log, the inbox, resuming, forks, admission, and the spans and log annotations, over the in-memory log.
 - `src/turn-writer.entity.functions.test.ts`: the writer's transitions, as tables, phase by phase.
 - `src/sessions.conformance.test.ts`: core's `sessionsConformance` over the in-memory log, and the kit's self-tests (careless instances that must fail the named checks, a writer raising its refusals as `HarnessError` codes and one storing its closing drafts at once among them).
+- `packages/sdk/src/sessions-begin-trace.test.ts`: under a begin traced as `Agent.turn` traces it (the sdk's `traceTurnBegin`), the begin holds only its own work and the writer's commits nest under the calls that asked for them, with the turn's ids.
 - Elsewhere: plugin-session-sqlite runs the same kit and its crash tests over SQLite; the sdk journeys and golden (`packages/sdk/src/resume.journey.test.ts`, `agent.golden.test.ts`) compose `SessionsLive`; `verify:packages` runs the kit on Node over the packed package.
 - Run: `bun test packages/plugin-sessions packages/plugin-session-sqlite`.
 
