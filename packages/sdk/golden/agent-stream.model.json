@@ -483,7 +483,8 @@
               "totalTokens": 110
             }
           }
-        }
+        },
+        "run": 0
       }
     },
     {
@@ -495,6 +496,7 @@
       "body": {
         "_tag": "ToolResult",
         "toolCallId": "toolu_1",
+        "run": 0,
         "toolName": "lookup",
         "isError": false,
         "encoded": "FOUND record-alpha",
@@ -531,7 +533,8 @@
               "totalTokens": 110
             }
           }
-        }
+        },
+        "run": 0
       }
     },
     {
@@ -583,7 +586,8 @@
               "totalTokens": 110
             }
           }
-        }
+        },
+        "run": 0
       }
     },
     {

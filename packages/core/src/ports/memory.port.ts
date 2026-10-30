@@ -14,6 +14,8 @@ import type { MemoryRenderRecipe } from "../turn/model-request.entity.js"
 export interface LogHandle {
   readonly read: Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   readonly append: (entries: ReadonlyArray<LogEntry>) => Effect.Effect<void, TurnError>
+  /** Fresh durable entries after a write's outcome is uncertain; `read` supplies this for logs whose initial read is already current. */
+  readonly snapshot?: Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
 }
 
 /** One tool result as the model sees it, supplied by whoever owns the tools. */
@@ -84,6 +86,7 @@ export class ResultDigester extends Context.Service<ResultDigester, {
  */
 export interface MemoryReader {
   readonly turn: Effect.Effect<number>
+  /** The append-only raw log; query and resolve apply any later ToolPresentation metadata. */
   readonly entries: Effect.Effect<ReadonlyArray<LogEntry>>
   readonly query: (query: LogQuery) => Effect.Effect<ReadonlyArray<LogEntry>>
   readonly subjects: (kinds: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<Subject>>
@@ -113,8 +116,8 @@ export interface MemorySession extends MemoryReader {
    */
   readonly renderRecipe: (stepContext: "tail" | "none", run: RunOrdinal) => Effect.Effect<MemoryRenderRecipe>
   readonly record: (bodies: ReadonlyArray<LogBody>, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
-  /** The loop's appended messages → Message and ToolResult entries (views, and digests the strategy asks for, at write time). */
-  readonly recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
+  /** Store raw messages/results before host views, then append presentation metadata and optional digests. The optional run ordinal disambiguates concurrent runs. */
+  readonly recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /** The only place compaction is decided; the decision is recorded before it applies. */
   readonly maintain: (signal: MaintainSignal) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /**

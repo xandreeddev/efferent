@@ -124,6 +124,7 @@ export const MemoryKindOf = {
   ToolsActivated: "memory.skills",
   Compaction: "memory.compaction",
   TurnEnded: "turn.reply",
+  ToolPresentation: "memory.tool-presentation",
 } as const satisfies Record<Exclude<LogBody["_tag"], "TurnStarted">, string>
 
 /** Every kind a memory session is rebuilt from. */

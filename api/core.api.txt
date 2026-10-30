@@ -220,6 +220,7 @@ const TokenUsage
 const ToolAnnotations
 const ToolCallId
 const ToolCallPart
+const ToolCallState
 const ToolCompletedEvent
 const ToolMessage
 const ToolProgressEvent
@@ -347,6 +348,8 @@ const subscribeAll
 const sumUsage
 const tokenUsage
 const toolCallIdOf
+const toolCallStatesOf
+const toolInputOf
 const toolInputsOf
 const toolResultMedia
 const turnAttributes
@@ -560,6 +563,7 @@ type TokenUsage
 type ToolAnnotations
 type ToolCallId
 type ToolCallPart
+type ToolCallState
 type ToolChoice
 type ToolHandlers
 type ToolMessage

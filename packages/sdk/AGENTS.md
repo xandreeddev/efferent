@@ -10,6 +10,7 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 - Fail at define time, not at the first turn: no `ConversationMemory`, `ToolRegistry` or `StepLoop` is `config.graph`, a bad `budgetTokens` is `config.budget`.
 - A turn that cannot begin fails with its `TurnBeginError` as it is (a `Sessions.begin` refusal, or `AttachmentRejected`), never a `HarnessError` made from it: hosts match it by tag, and core's `turnBeginCodes` (checked against `TurnBeginError` there) gives its code.
 - Any change to what the model or the journal sees shows in `golden/`: re-record only on purpose (`EFFERENT_UPDATE_MODEL_GOLDEN=1`, `EFFERENT_UPDATE_GOLDEN=1`) and review the diff in the PR.
+- Normal memory appends flush before returning, so a tool result is durable before its optional digest runs. Closing drafts (the reply and later memory) stay held for the turn's end. The loop stores the assistant before handlers and each result on return; pending calls render as `ToolInterrupted` on resume, with exact state available through core's `toolCallStatesOf`.
 - `src/turn-composition.test.ts` rebuilds the golden agent by hand from the typed layers: a composition change keeps both it and `Agent.turn` byte-identical to the golden.
 - Every `fixtures/journal-<version>.json` keeps decoding (`src/journal-compat.test.ts`); record one per release with `bun scripts/record-journal-fixture.ts`, never over a released one.
 - `docs/events.md` quotes regions of `src/events-guide.test.ts`: edit the snippet there, then run `bun run docs:generate`.

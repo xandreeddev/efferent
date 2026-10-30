@@ -66,6 +66,8 @@ const RUN = RunId.make("conformance-run")
 
 /** A service of whoever opens the tools, which the handlers must see (and not the caller's). */
 const Opener = Context.Reference<string>("efferent/conformance/ToolRegistryOpener", { defaultValue: () => "none" })
+/** What a handler can prove was flushed before it ran. */
+const DurableStarted = Context.Reference<Effect.Effect<boolean>>("efferent/conformance/ToolRegistryDurableStarted", { defaultValue: () => Effect.succeed(false) })
 
 const Ping = Tool.make("kit_ping", {
   description: "Answer pong, at most twice per turn.",
@@ -80,6 +82,10 @@ const Report = Tool.make("kit_report", {
   success: Schema.String,
   failure: Failure,
   failureMode: "return",
+})
+const Durability = Tool.make("kit_durability", {
+  description: "Say whether this call's start was durably flushed before the handler ran.",
+  parameters: Schema.Struct({}), success: Schema.Boolean, failure: Failure, failureMode: "return",
 })
 const Where = Tool.make("kit_where", {
   description: "Say which workspace the call runs in.",
@@ -102,7 +108,7 @@ const Archive = Tool.make("kit_archive", {
   failure: Failure,
   failureMode: "return",
 })
-const TOOLS = [Ping.name, Report.name, Where.name, Vault.name, Archive.name]
+const TOOLS = [Ping.name, Report.name, Durability.name, Where.name, Vault.name, Archive.name]
 const SKILLS = ["kit.basics", "kit.vault", "kit.archiving"]
 
 /**
@@ -116,6 +122,7 @@ const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>): Capability => {
     id: "conformance.tools",
     version: "1",
     tools: [
+      defineTool({ tool: Durability, handler: () => Effect.service(DurableStarted).pipe(Effect.flatten) }),
       defineTool({ tool: Ping, handler: ({ n }) => note(Ping.name).pipe(Effect.as(`pong ${n}`)), annotations: { maxCallsPerRun: Option.some(2) } }),
       defineTool({
         tool: Report,
@@ -138,7 +145,7 @@ const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>): Capability => {
       defineTool({ tool: Archive, handler: ({ id }) => note(Archive.name).pipe(Effect.as(`archived ${id}`)) }),
     ],
     skills: [
-      defineSkill({ id: "kit.basics", summary: "Ping, report and say where.", tools: [Ping.name, Report.name, Where.name], always: true }),
+      defineSkill({ id: "kit.basics", summary: "Ping, report and say where.", tools: [Ping.name, Report.name, Durability.name, Where.name], always: true }),
       defineSkill({ id: "kit.vault", summary: "Read the vault.", tools: [Vault.name], permissions: ["kit.vault"] }),
       defineSkill({ id: "kit.archiving", summary: "Archive records.", tools: [Archive.name] }),
     ],
@@ -168,6 +175,7 @@ const memoryWriter = Effect.gen(function* () {
   }).pipe(Effect.orDie)
   const started: SessionLogEvent = { session, seq: 1, turn: draft.turn, kind: draft.kind, at: 0, data: draft.data }
   const stored = yield* Ref.make<ReadonlyArray<SessionLogEvent>>([started])
+  const flushed = yield* Ref.make<ReadonlyArray<SessionLogEvent>>([started])
   const append = (drafts: ReadonlyArray<TurnDraft>) => Effect.yieldNow.pipe(
     Effect.andThen(Effect.forEach(drafts, (next) => storedJson(next.data), { concurrency: 1 })),
     Effect.mapError((error) => new HarnessError({ code: "session.encode", message: error.message })),
@@ -185,12 +193,12 @@ const memoryWriter = Effect.gen(function* () {
     append,
     write: (op) => op,
     transact: (decide) => decide([]).pipe(Effect.flatMap((decision) => append(decision.drafts).pipe(Effect.as({ result: decision.result, events: [] })))),
-    flush: Effect.void,
+    flush: Ref.get(stored).pipe(Effect.flatMap((events) => Ref.set(flushed, events))),
     closing: (drafts) => Ref.set(held, drafts),
     end: () => Ref.getAndSet(held, []).pipe(Effect.flatMap(append), Effect.as({ pending: 0 })),
     closed: Effect.never,
   }
-  return { writer, stored: Ref.get(stored) }
+  return { writer, stored: Ref.get(stored), flushed: Ref.get(flushed) }
 })
 
 /** How a call ended, as the model would read it. */
@@ -305,6 +313,7 @@ export const toolRegistryConformance = (
       yield* memory.persistMessage
       if (setup.vaultActive === true) yield* memory.session.record([{ _tag: "ToolsActivated", skills: ["kit.vault"], tools: [Vault.name], source: "host", decision: Option.none() }], 0)
       const opening = (yield* TurnToolbox).open.pipe(
+        Effect.provideService(DurableStarted, recorded.flushed.pipe(Effect.map((events) => events.some((event) => event.kind === "tool.started" && event.data.tool === Durability.name)))),
         Effect.provideService(Opener, "the opener's"),
         (open) => setup.withoutEnvironment === true ? open.pipe(Effect.updateContext((context: Context.Context<never>) => Context.omit(SessionEnvironment)(context)))
           : open.pipe(Effect.provideService(SessionEnvironment, { workspace: "the opener's" })),
@@ -471,6 +480,11 @@ export const toolRegistryConformance = (
       yield* turn.call(Report.name, {})
       const direct = (yield* turn.published).filter((event) => event._tag.startsWith("tool.")).slice(before)
       yield* expect("provider-call-id", direct.length === 4 && direct.every((event) => !("toolCallId" in event)), "a direct call inherited another call's provider id")
+    }))),
+
+    check("a handler starts only after its tool.started record was flushed", "started-durable", () => inTurn({}, (turn) => Effect.gen(function* () {
+      const outcome = yield* turn.call(Durability.name, {})
+      yield* expect("started-durable", !outcome.isFailure && outcome.result === true, "the handler ran before its tool.started record was flushed")
     }))),
 
     check("a run lacking a service a tool declares fails to open its tools, with requires.missing naming the tool and the service", "requires-missing", () => Effect.gen(function* () {

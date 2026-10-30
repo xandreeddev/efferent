@@ -27,6 +27,7 @@ export type CutReason = Exclude<FinishReason, typeof WholeReason.Type>
 export type MalformedCall =
   | { readonly _tag: "NotFound"; readonly toolName: string }
   | { readonly _tag: "Invalid"; readonly toolName: string; readonly description: string }
+  | { readonly _tag: "DuplicateId"; readonly toolName: string }
 
 /** What a response is worth running: whole (its calls run), or cut short for `reason` (none of them runs). */
 export type ResponseVerdict =

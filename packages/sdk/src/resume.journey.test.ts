@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Tool } from "effect/ai"
-import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Context, Deferred, Effect, Exit, Fiber, Layer, Option, Ref, Schema, SchemaGetter, Stream } from "effect"
 import {
   ConversationId,
   defineCapability,
@@ -14,6 +14,7 @@ import {
   SessionLogMemoryLive,
   Sessions,
   subscribeAll,
+  toolCallStatesOf,
   TurnAdmissionOpen,
   UserMessage,
 } from "@xandreed/core"
@@ -130,7 +131,7 @@ const cancelledMidToolCall = Effect.gen(function* () {
   const asked = yield* Fiber.await(asking)
   const afterCancel = yield* sessions.read(session)
   yield* Ref.set(slow, false)
-  return { agent, sessions, services, fetched, cancelled, asked, afterCancel }
+  return { agent, sessions, services, fetched, cancelled, asked, afterCancel, states: yield* toolCallStatesOf(afterCancel) }
 })
 
 /** A provider that is down: every request fails. */
@@ -142,7 +143,7 @@ const down = LanguageModel.make({
 describe("journey: resume a turn cancelled mid-tool-call", () => {
   test("ask, cancel while a tool runs, resume with the same message, retry the resume, resume a finished turn", async () => {
     const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const { agent, sessions, services, fetched, cancelled, asked, afterCancel } = yield* cancelledMidToolCall
+      const { agent, sessions, services, fetched, cancelled, asked, afterCancel, states } = yield* cancelledMidToolCall
 
       // 3. resume turn 1 with the same message: memory keeps turn 1's whole steps.
       const second = yield* scripted([call("c3", "fetch_page", { id: "record-alpha-a" }), call("c4", "deliver", { text: "PAGE of record-alpha-a" })])
@@ -156,7 +157,7 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
       const refused = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-4"), resumes: 2 }, services: services(second.model) }, deliverAnswer))
 
       return {
-        cancelled, asked, afterCancel, resumed, retried, refused,
+        cancelled, asked, afterCancel, states, resumed, retried, refused,
         resumedPrompt: (yield* Ref.get(second.prompts))[0] ?? "",
         fetched: yield* Ref.get(fetched),
         all: yield* sessions.read(session),
@@ -168,18 +169,18 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
     expect(observed.cancelled.cancelled).toBe(true)
     expect(Option.map(Exit.findErrorOption(observed.asked), (error) => [error._tag, error._tag === "TurnClosed" ? error.reason : null, codeOf(error)]))
       .toEqual(Option.some(["TurnClosed", "cancelled", "turn.closed"]))
-    // What is durable after the cancel: the turn's start, its whole first step, the turn's end as cancelled,
-    // and no reply. Of the step in flight, only events its writer stored before the cancel remain (here at most
-    // fetch_page's tool.started, depending on whether its commit won the race): never its call or result in memory.
+    // The in-flight call and its start were flushed before the handler ran. It has no recorded result.
     const turnOne = ofTurn(observed.afterCancel, 1)
     expect(turnOne.filter((event) => event.kind === "memory.tool-result").map((event) => (event.data.body as { readonly toolName: string }).toolName)).toEqual(["lookup"])
-    expect(turnOne.filter((event) => event.kind === "tool.started").map((event) => event.data.tool).filter((tool) => tool !== "fetch_page")).toEqual(["lookup"])
+    expect(turnOne.filter((event) => event.kind === "tool.started").map((event) => event.data.tool)).toEqual(["lookup", "fetch_page"])
+    expect(observed.states.map((state) => [String(state.toolCallId), state._tag])).toEqual([["c1", "Completed"], ["c2", "Started"]])
+    expect(turnOne.filter((event) => event.kind === "step.usage")).toHaveLength(2)
     expect(turnOne.filter((event) => event.kind === "tool.completed").map((event) => event.data.tool)).toEqual(["lookup"])
     expect(turnOne.some((event) => event.kind === "turn.reply")).toBe(false)
     expect(turnOne.filter((event) => event.kind === "turn.ended").map((event) => [event.data.reason, event.data.failure ?? null])).toEqual([["cancelled", null]])
     expect(turnOne.at(-1)?.kind).toBe("turn.ended")
 
-    // 3. The resuming turn sees turn 1's message and whole step, not the call that was in flight, then the message again.
+    // 3. The resumed model sees the unfinished call answered as interrupted, then the new user's message.
     expect(observed.resumed.outcome).toBe("completed")
     expect(Option.getOrNull(observed.resumed.reply)).toBe("PAGE of record-alpha-a (turn 2 resumes 1)")
     const prompt = observed.resumedPrompt
@@ -187,7 +188,8 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
     expect(firstAsk).toBeGreaterThan(-1)
     expect(prompt.indexOf("FOUND record-alpha-a")).toBeGreaterThan(firstAsk)
     expect(prompt.indexOf("find alpha and fetch its page", firstAsk + 1)).toBeGreaterThan(prompt.indexOf("FOUND record-alpha-a"))
-    expect(prompt).not.toContain("\"c2\"")
+    expect(prompt).toContain("\"c2\"")
+    expect(prompt).toContain("ToolInterrupted")
     // The tool already run is not undone: fetch_page ran once in the cancelled turn and once in the resumed one.
     expect(observed.fetched).toBe(2)
     const turnTwo = ofTurn(observed.all, 2)
@@ -285,4 +287,42 @@ describe("journey: a new process takes over a turn its stopped holder left open"
     const takeover = observed.all.findIndex((event) => event.kind === "turn.ended")
     expect(observed.all.slice(takeover + 1).filter((event) => turnOf(event) === 1)).toEqual([])
   })
+})
+
+test("a view that dies after a handler returned keeps its raw result and the failed step's result identity", async () => {
+  const Rendered = Tool.make("rendered", {
+    parameters: Schema.Struct({}),
+    success: Schema.Number.pipe(Schema.decodeTo(Schema.Number, {
+      decode: SchemaGetter.transformEffect(() => Effect.die(new Error("the host view's decoder failed"))),
+      encode: SchemaGetter.transform((number: number) => number),
+    })),
+    failure: Failure, failureMode: "return",
+  })
+  const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
+    const address = { owner: "durable-view", id: ConversationId.make("00000000-0000-4000-8000-00000000f111") }
+    yield* sessions.create(address)
+    const agent = yield* Agent.define({
+      plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin],
+      capabilities: [defineCapability({ id: "view-host", version: "1", tools: [defineTool({
+        tool: Rendered, handler: () => Effect.succeed(9), view: { version: "1", render: (number) => `N ${number}` },
+      })], skills: [defineSkill({ id: "rendered", summary: "Read a number.", tools: [Rendered.name], always: true })] })],
+      turnServices: [LanguageModel.LanguageModel], limits: { streaming: false },
+    })
+    const model = yield* scripted([call("c1", Rendered.name, {})])
+    const outcome = yield* agent.turn({
+      turn: { session: address, userMessage: new UserMessage({ text: "read it" }), runId: RunId.make("view-run") },
+      services: Context.merge(Context.make(Sessions, sessions), Context.make(LanguageModel.LanguageModel, model.model)),
+    }, (turn) => turn.tools.select(turn.userMessage).pipe(Effect.andThen(turn.run({})), Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })))).pipe(Effect.exit)
+    const stored = yield* sessions.read(address)
+    return { outcome, stored, states: yield* toolCallStatesOf(stored) }
+  })))
+  expect(observed.outcome._tag).toBe("Failure")
+  const result = observed.stored.find((event) => event.kind === "memory.tool-result")
+  expect(result?.data.body).toMatchObject({ toolCallId: "c1", encoded: 9, view: "9", viewVersion: "raw" })
+  const ended = observed.stored.find((event) => event.kind === "step.ended")
+  expect(ended?.data.status).toBe("failed")
+  expect(ended?.data.results).toEqual([{ entry: result?.data.entry ?? "missing", toolCallId: "c1", tool: Rendered.name, ok: true }])
+  expect(observed.states).toMatchObject([{ _tag: "Completed", result: { encoded: 9, isError: false } }])
+  expect(observed.stored.some((event) => event.kind === "memory.tool-presentation")).toBe(false)
 })

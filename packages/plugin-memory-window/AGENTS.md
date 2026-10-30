@@ -26,11 +26,11 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `recall_context` description | `src/plugin.adapter.ts:114` | exact, `src/plugin.adapter.test.ts:63`; sdk golden; sdk compaction golden |
-| `locator` and `offset` descriptions | `src/plugin.adapter.ts:116-117` | exact, `src/plugin.adapter.test.ts:64`; sdk golden; sdk compaction golden |
+| `recall_context` description | `src/plugin.adapter.ts:113` | exact, `src/plugin.adapter.test.ts:63`; sdk golden; sdk compaction golden |
+| `locator` and `offset` descriptions | `src/plugin.adapter.ts:115-116` | exact, `src/plugin.adapter.test.ts:64`; sdk golden; sdk compaction golden |
 | Spill preview (`[… N more characters kept out of context; call recall_context …]`) | `src/plugin.adapter.ts:65` | exact, `src/plugin.adapter.test.ts:58`; sdk compaction golden |
-| Page continuation (`[… N more characters; call recall_context …]`) | `src/plugin.adapter.ts:129` | exact, `src/plugin.adapter.test.ts:75` |
-| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:150`, `:152` | exact, `src/plugin.adapter.test.ts:78`, `:77` |
+| Page continuation (`[… N more characters; call recall_context …]`) | `src/plugin.adapter.ts:128` | exact, `src/plugin.adapter.test.ts:75` |
+| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:149`, `:151` | exact, `src/plugin.adapter.test.ts:78`, `:77` |
 
 ## Erasure files
 

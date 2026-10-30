@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option } from "effect"
 import { ConversationId, ConversationMemory, harnessCodeOf, MEDIA_LIMITS, openLogSession, RunId, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 import { inMemoryLog, memoryConformance } from "@xandreed/core/conformance"
-import type { MemoryPolicy, Plugin } from "@xandreed/core"
+import type { AgentMessage, MemoryPolicy, Plugin, RunOrdinal, ToolViews } from "@xandreed/core"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 
@@ -71,4 +71,34 @@ describe("the attachments check", () => {
     const exit = check === undefined ? undefined : await Effect.runPromise(Effect.result(check.run))
     expect(exit?._tag === "Failure" ? exit.failure.message : "passed").toContain("the current turn's as label")
   })
+})
+
+test("the memory kit rejects a session that runs a tool view before storing the raw result", async () => {
+  const premature = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => openLogSession(log, rollingPolicy, { runId }).pipe(Effect.map((session) => ({
+      ...session,
+      recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => Effect.forEach(
+        tail.flatMap((message) => message.role === "tool" ? message.content : []),
+        (part) => views.view(part.toolName, part.output, {}, part.isError ?? false),
+        { concurrency: 1, discard: true },
+      ).pipe(Effect.andThen(session.recordTail(tail, views, step, run))),
+    }))),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(premature), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["raw-result-durable"])
+})
+
+test("the memory kit rejects a session that drops the run ordinal from recorded responses and results", async () => {
+  const forgetful = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => openLogSession(log, rollingPolicy, { runId }).pipe(Effect.map((session) => ({
+      ...session,
+      recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number) => session.recordTail(tail, views, step),
+    }))),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(forgetful), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["run-ordinal"])
 })

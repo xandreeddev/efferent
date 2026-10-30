@@ -197,7 +197,7 @@ export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
   usage: TokenUsage,
   finishReason: FinishReason,
 }).annotate({
-  description: "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`.",
+  description: "Published by the step loop once per provider response, after its assistant content is durably recorded and before any of its tool handlers runs: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`.",
 })
 
 /** The id that groups the streamed increments of one content part (a text, a reasoning, a tool call's params), as the provider's stream names it. */

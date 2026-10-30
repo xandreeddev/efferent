@@ -2,7 +2,7 @@ import { Schema, SchemaTransformation } from "effect"
 import type { Option } from "effect"
 import { Media, MediaSlot } from "../domain/media.entity.js"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
-import { RunId, RunKey } from "../domain/run.entity.js"
+import { RunId, RunKey, RunOrdinal } from "../domain/run.entity.js"
 import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { DecisionId } from "../decision-record.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -126,9 +126,10 @@ export const LogBody = Schema.Union(
     }),
   )),
   TurnContextBody,
-  Schema.TaggedStruct("Message", { message: AgentMessage }),
+  Schema.TaggedStruct("Message", { message: AgentMessage, run: Schema.optionalKey(RunOrdinal) }),
   Schema.TaggedStruct("ToolResult", {
     toolCallId: ToolCallId,
+    run: Schema.optionalKey(RunOrdinal),
     toolName: Schema.String,
     isError: Schema.Boolean,
     /** Full fidelity: the tool's encoded result. */
@@ -182,6 +183,17 @@ export const LogBody = Schema.Union(
   Schema.TaggedStruct("TurnEnded", {
     outcome: TurnOutcomeKind,
     reply: Schema.OptionFromNullOr(Schema.String),
+  }),
+  /** A tool result's view, recorded after its raw encoded value is durable. Contains no result or media bytes. */
+  Schema.TaggedStruct("ToolPresentation", {
+    entry: EntryId,
+    view: Schema.String,
+    viewVersion: Schema.String,
+    subjects: Schema.Array(Subject),
+    artifacts: Schema.Array(ArtifactRef),
+    pinned: Schema.Boolean,
+    media: Schema.Array(MediaSlot),
+    mediaNotes: Schema.Array(Schema.String),
   })],
 ).pipe(Schema.toTaggedUnion("_tag"))
 export type LogBody = typeof LogBody.Type

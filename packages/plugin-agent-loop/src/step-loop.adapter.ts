@@ -7,7 +7,7 @@ import { runLoop } from "./loop.js"
 import type { LoopEvent } from "./loop-event.entity.js"
 import type { LoopToolChoice } from "./loop.js"
 import { emptyLedger } from "./step-ledger.entity.js"
-import { cachedPlan, planned, recorded, replanned, resultsOf, started, used } from "./step-ledger.entity.functions.js"
+import { cachedPlan, planned, replanned, started, stepResultsOf, used } from "./step-ledger.entity.functions.js"
 
 /** @public */
 export const STEP_LOOP = { id: "steps", version: "1" } as const
@@ -59,8 +59,10 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
 
   // Once per step, from `runLoop`: a step that already failed must not fail again on its way out.
   const settle = (step: number, status: StepStatus) => {
-    const ending = Ref.get(ledger).pipe(Effect.flatMap((current) =>
-      request.events.publish({ _tag: "step.ended", step, run, status, results: resultsOf(current, step) })))
+    // A raw result can be durable before its view returns or fails. Read the actual stored order,
+    // not callback completion order, and keep those results on a failed or cancelled step too.
+    const ending = request.recorded(step).pipe(Effect.flatMap((entries) =>
+      request.events.publish({ _tag: "step.ended", step, run, status, results: stepResultsOf(entries) })))
     return status === "failed" || status === "cancelled"
       ? ending.pipe(Effect.ignoreCause({ log: "Warn", message: `the end of failed step ${step} was not recorded` }))
       : ending
@@ -139,10 +141,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     isComplete,
     onStepSettled: settle,
     pendingInput: () => request.steering,
-    onTail: (messages, step) => request.record(step, messages).pipe(
-      Effect.flatMap((entries) => Ref.update(ledger, recorded(step, entries))),
-      Effect.as([]),
-    ),
+    onTail: (messages, step) => request.record(step, messages).pipe(Effect.as([])),
     onEvent,
   })
   const result = yield* harnessDefectsAsFailures(loop.pipe(

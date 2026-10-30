@@ -3,7 +3,7 @@ import { Option } from "effect"
 import { EntryId, RunId, tokenUsage, ToolCallId } from "@xandreed/core"
 import type { LogEntry, StepPlan } from "@xandreed/core"
 import { emptyLedger } from "./step-ledger.entity.js"
-import { cachedPlan, planned, recorded, replanned, resultsOf, started, used } from "./step-ledger.entity.functions.js"
+import { cachedPlan, planned, replanned, started, stepResultsOf, used } from "./step-ledger.entity.functions.js"
 
 const plan = (system: string): StepPlan => ({ model: Option.none(), system, messages: [], toolChoice: Option.none() })
 const entry = (n: number, body: LogEntry["body"]): LogEntry => ({ id: EntryId.make(`run-1:${n}`), runId: RunId.make("run-1"), turn: 1, step: 0, at: 0, body })
@@ -29,16 +29,9 @@ describe("the step ledger", () => {
     expect(used(usage)(emptyLedger).lastUsage).toEqual(Option.some(usage))
   })
 
-  test("keeps each step's tool results in log order, and nothing for entries without one", () => {
-    const ledger = [
-      recorded(0, [entry(0, { _tag: "Message", message: { role: "user", content: "go" } })]),
-      recorded(0, [result(1, false)]),
-      recorded(1, [result(2, true)]),
-      recorded(0, [result(3, false)]),
-    ].reduce((current, update) => update(current), emptyLedger)
-    expect(resultsOf(ledger, 0).map((stepResult) => [String(stepResult.entry), String(stepResult.toolCallId), stepResult.ok])).toEqual([["run-1:1", "c1", true], ["run-1:3", "c3", true]])
-    expect(resultsOf(ledger, 1).map((stepResult) => stepResult.ok)).toEqual([false])
-    expect(resultsOf(ledger, 2)).toEqual([])
-    expect(recorded(0, [])(emptyLedger)).toBe(emptyLedger)
+  test("projects recorded tool results in journal order and leaves non-result entries out", () => {
+    const entries = [entry(0, { _tag: "Message", message: { role: "user", content: "go" } }), result(2, true), result(1, false)]
+    expect(stepResultsOf(entries).map((stepResult) => [String(stepResult.entry), String(stepResult.toolCallId), stepResult.ok])).toEqual([["run-1:2", "c2", false], ["run-1:1", "c1", true]])
+    expect(stepResultsOf([])).toEqual([])
   })
 })

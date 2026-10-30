@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { Data, Duration, Effect, Layer, Match, Option, Ref, Result, Schema, SchemaGetter, Stream, Tracer } from "effect"
+import { Data, Deferred, Duration, Effect, Fiber, Layer, Match, Option, Ref, Result, Schema, SchemaGetter, Stream, Tracer } from "effect"
 import { CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, Failure, HarnessError, hostNote, mediaFromBase64, ToolCallId } from "@xandreed/core"
 import type { AgentMessage, FinishReason, TokenUsage } from "@xandreed/core"
 import type { LoopEvent } from "./loop-event.entity.js"
@@ -413,7 +413,8 @@ describe("runLoop settles each step once", () => {
       // The completion nudge, then the steer: both read by step 2.
       "tail 2: user",
       "tail 2: user",
-      "tail 2: assistant,tool",
+      "tail 2: assistant",
+      "tail 2: tool",
       "settled 2: completed",
       "complete? 2",
       "tail 3: assistant",
@@ -1357,7 +1358,8 @@ describe("runLoop gates each response on its finish reason", () => {
         AiError: (ai) => ({ aiError: ai.message }),
       }),
     })
-    return { end, ran, log, settled, events, prompts, roles: log.map(([step, message]) => [step, message.role] as const) }
+    const tail = Result.match(result, { onFailure: (): ReadonlyArray<AgentMessage> => [], onSuccess: (done) => done.newTail })
+    return { end, ran, log, tail, settled, events, prompts, roles: log.map(([step, message]) => [step, message.role] as const) }
   }))
 
   const echoCall = (id: string, params: unknown) => ({ type: "tool-call", id, name: "echo", params })
@@ -1376,9 +1378,10 @@ describe("runLoop gates each response on its finish reason", () => {
     expect(gate.ran).toEqual([])
     expect(toolStarts(gate.events)).toEqual([])
     expect(gate.settled).toEqual(["0:truncated", "1:completed"])
-    expect(gate.roles).toEqual([[0, "assistant"], [0, "tool"], [1, "user"], [1, "assistant"]])
+    expect(gate.roles).toEqual([[0, "assistant"], [0, "tool"], [0, "tool"], [1, "user"], [1, "assistant"]])
     expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
       echoResult("c1", { error: "ReplyCut", message: "Your reply reached the output limit, so this call was not run. Call it again if you still need it." }, true),
+    ] }], [0, { role: "tool", content: [
       echoResult("c2", { error: "ReplyCut", message: "Your reply reached the output limit, so this call was not run. Call it again if you still need it." }, true),
     ] }]])
     expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: "[Host note: your previous reply reached the output limit and was cut short, so the tool calls it made were not run: their results say so. Call the tools you still need again, fewer in one reply and with less text before them.]" }]])
@@ -1528,6 +1531,7 @@ describe("runLoop gates each response on its finish reason", () => {
     expect(gate.settled).toEqual(["0:truncated", "1:completed"])
     expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
       echoResult("c1", replyCutFailure("length"), true),
+    ] }], [0, { role: "tool", content: [
       echoResult("c2", replyCutFailure("length"), true),
     ] }]])
     expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: lengthCorrective(true) }]])
@@ -1596,7 +1600,7 @@ describe("runLoop gates each response on its finish reason", () => {
     })
     expect(inFlight.most).toBe(atOnce)
     expect(gate.ran).toEqual(values)
-    expect(toolMessages(gate.log).flatMap(([, message]) => message.role === "tool" ? message.content.map((part) => [part.toolCallId, part.output]) : [])).toEqual(
+    expect(gate.tail.flatMap((message) => message.role === "tool" ? message.content.map((part) => [part.toolCallId, part.output]) : [])).toEqual(
       values.map((value, n) => [`c${n}`, { echoed: value }]),
     )
     expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
@@ -1651,4 +1655,86 @@ describe("the loop checks a call's parameters as the toolkit decodes them", () =
     expect(result.finalText).toBe("done")
     expect(result.newTail.some((message) => message.role === "tool")).toBe(true)
   })
+})
+
+describe("durable tool-call boundaries", () => {
+  test("records the response before handlers and each result while another call is still held", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const release = yield* Deferred.make<void>()
+      const slowStarted = yield* Deferred.make<void>()
+      const fastStored = yield* Deferred.make<void>()
+      const persisted = yield* Ref.make<ReadonlyArray<AgentMessage>>([])
+      const sawAssistant = yield* Ref.make<ReadonlyArray<boolean>>([])
+      const own = kit.toLayer({ echo: ({ value }) => Effect.gen(function* () {
+        const stored = yield* Ref.get(persisted)
+        yield* Ref.update(sawAssistant, (all) => [...all, stored.some((message) => message.role === "assistant")])
+        if (value === "slow") {
+          yield* Deferred.succeed(slowStarted, undefined)
+          yield* Deferred.await(release)
+        } else yield* Deferred.await(slowStarted)
+        return { echoed: value }
+      }) })
+      const running = yield* runLoop({
+        system: "sys", messages: [user("go")], toolkit: kit, toolConcurrency: 2,
+        onTail: (messages) => Ref.update(persisted, (all) => [...all, ...messages]).pipe(
+          Effect.andThen(messages.some((message) => message.role === "tool" && message.content.some((part) => part.toolCallId === "fast"))
+            ? Deferred.succeed(fastStored, undefined) : Effect.void), Effect.as([]),
+        ),
+      }).pipe(
+        Effect.provide(own),
+        Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((n) => n === 0 ? [
+          { type: "tool-call", id: "slow", name: "echo", params: { value: "slow" } },
+          { type: "tool-call", id: "fast", name: "echo", params: { value: "fast" } },
+          finish("tool-calls"),
+        ] : [{ type: "text", text: "done" }, finish("stop")])), Effect.forkChild,
+      )
+      const early = yield* Deferred.await(fastStored).pipe(Effect.timeoutOption("1 second"))
+      const before = yield* Ref.get(persisted)
+      yield* Deferred.succeed(release, undefined)
+      const result = yield* Fiber.join(running)
+      return { early, before, saw: yield* Ref.get(sawAssistant), persisted: yield* Ref.get(persisted), result }
+    })))
+    expect(Option.isSome(observed.early)).toBe(true)
+    expect(observed.saw).toEqual([true, true])
+    expect(observed.before.flatMap((message) => message.role === "tool" ? message.content.map((part) => String(part.toolCallId)) : [])).toEqual(["fast"])
+    expect(observed.persisted.flatMap((message) => message.role === "tool" ? message.content.map((part) => String(part.toolCallId)) : [])).toEqual(["fast", "slow"])
+    expect(observed.result.newTail.flatMap((message) => message.role === "tool" ? message.content.map((part) => String(part.toolCallId)) : [])).toEqual(["slow", "fast"])
+  })
+
+  test("a response persistence failure prevents every handler and settles the step failed", async () => {
+    const ran: Array<string> = []
+    const settled: Array<string> = []
+    const result = await Effect.runPromise(runLoop({
+      system: "sys", messages: [user("go")], toolkit: kit,
+      onTail: () => Effect.fail("the store refused the response"),
+      onStepSettled: (_, status) => Effect.sync(() => { settled.push(status) }),
+    }).pipe(
+      Effect.provide(kit.toLayer({ echo: ({ value }) => Effect.sync(() => { ran.push(value); return { echoed: value } }) })),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel(() => [
+        { type: "tool-call", id: "c1", name: "echo", params: { value: "a" } }, finish("tool-calls"),
+      ])), Effect.result,
+    ))
+    expect(result).toEqual(Result.fail("the store refused the response"))
+    expect(ran).toEqual([])
+    expect(settled).toEqual(["failed"])
+  })
+})
+
+test("a whole response with duplicate tool-call ids runs none of its calls and asks for unambiguous calls", async () => {
+  const ran: Array<string> = []
+  const recorded: Array<AgentMessage> = []
+  const result = await Effect.runPromise(runLoop({
+    system: "sys", messages: [user("go")], toolkit: kit,
+    onTail: (tail) => Effect.sync(() => { recorded.push(...tail); return [] }),
+  }).pipe(
+    Effect.provide(kit.toLayer({ echo: ({ value }) => Effect.sync(() => { ran.push(value); return { echoed: value } }) })),
+    Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((n) => n === 0 ? [
+      { type: "tool-call", id: "same", name: "echo", params: { value: "a" } },
+      { type: "tool-call", id: "same", name: "echo", params: { value: "b" } },
+      finish("tool-calls"),
+    ] : [{ type: "text", text: "done" }, finish("stop")])),
+  ))
+  expect(ran).toEqual([])
+  expect(recorded[0]).toEqual({ role: "user", content: "[Host note: your previous reply reused one id for multiple tool calls, so none ran. Reply again with a separate call for each action. The tools you can call are: echo.]" })
+  expect(result.finalText).toBe("done")
 })

@@ -7,6 +7,12 @@ import type { CutReason, MalformedCall, ResponseVerdict } from "./response-gate.
 
 const isWhole = Schema.is(WholeReason)
 
+/** The loop's own failure description, distinguished from provider decoder reports. */
+export const DUPLICATE_CALL_IDS = "multiple tool calls have the same pairing id"
+
+/** No call with an ambiguous pairing key ran. */
+export const duplicateCallCorrective = (tools: ReadonlyArray<string>): string => hostNote(`your previous reply reused one id for multiple tool calls, so none ran. Reply again with a separate call for each action.${tools.length === 0 ? "" : ` The tools you can call are: ${tools.join(", ")}.`}`)
+
 /**
  * The gate: a response whose finish reason cuts it short runs none of its
  * tool calls. `unknown` (the provider gave no finish reason) cuts a response
@@ -63,9 +69,11 @@ const toolNamed = (tools: Readonly<Record<string, Tool.Any>>, name: string): Opt
  * service, is checked like any other.
  */
 export const malformedCall = (
-  calls: ReadonlyArray<{ readonly name: string; readonly params: unknown }>,
+  calls: ReadonlyArray<{ readonly id?: string; readonly name: string; readonly params: unknown }>,
   tools: Readonly<Record<string, Tool.Any>>,
-): Effect.Effect<Option.Option<MalformedCall>> => Effect.forEach(calls, (call): Effect.Effect<Option.Option<MalformedCall>> => Option.match(toolNamed(tools, call.name), {
+): Effect.Effect<Option.Option<MalformedCall>> => Effect.forEach(calls, (call, index): Effect.Effect<Option.Option<MalformedCall>> => call.id !== undefined && calls.slice(0, index).some((earlier) => earlier.id === call.id)
+  ? Effect.succeed(Option.some({ _tag: "DuplicateId", toolName: call.name }))
+  : Option.match(toolNamed(tools, call.name), {
   onNone: () => Effect.succeed(Option.some({ _tag: "NotFound", toolName: call.name })),
   onSome: (tool) => Option.match(Option.liftPredicate(tool.parametersSchema, Schema.isSchema), {
     onNone: () => Effect.succeedNone,

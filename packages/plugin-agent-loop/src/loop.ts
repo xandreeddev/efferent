@@ -13,7 +13,7 @@ import { plannedCallIdOf, responseModelOf } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
 import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
 import type { LoopEvent } from "./loop-event.entity.js"
-import { lengthCorrective, malformedCall, MAX_CUT_CORRECTIVES, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
+import { DUPLICATE_CALL_IDS, duplicateCallCorrective, lengthCorrective, malformedCall, MAX_CUT_CORRECTIVES, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
 import type { CutReason } from "./response-gate.entity.js"
 
 /**
@@ -144,9 +144,10 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
   /** The single event sink — see `LoopEvent`. */
   readonly onEvent?: (event: LoopEvent) => Effect.Effect<void, E, R>
   /**
-   * Incremental persistence: called with each turn's appended messages
-   * (model responses AND synthetic correctives) the moment they land, so a
-   * session is restorable to its last completed turn after a crash, with
+   * Incremental persistence: called with the assistant response before any
+   * tool handler runs, then each final tool result as it returns (completion
+   * order, without waiting for siblings), and synthetic correctives. A
+   * durable implementation stores each batch before returning, with
    * the step they belong to: a step's response and tool results are its
    * own, recorded before it settles; the loop's own messages (a malformed
    * or a length corrective, a nudge, a steer) belong to the next step, which reads
@@ -339,7 +340,8 @@ const replyAgain = (tools: ReadonlyArray<string>): string => tools.length === 0
 const malformedCorrective = (reason: MalformedResponse["reason"], tools: ReadonlyArray<string>): string => Match.valueTags(reason, {
   ToolNotFoundError: (notFound) => `${hostNote(`your previous reply called a tool you do not have; its name follows, as you wrote it. ${replyAgain(tools)}`)}\n\n${framed("tool-name", clipTo(notFound.toolName, CORRECTIVE_QUOTE_CHARS))}`,
   ToolParameterValidationError: (invalid) => `${hostNote(`your previous reply called ${invalid.toolName} with parameters that do not match its schema; what did not match follows, and it may quote your reply. ${replyAgain(tools)}`)}\n\n${framed("parameter-errors", clipTo(invalid.description, CORRECTIVE_QUOTE_CHARS))}`,
-  InvalidOutputError: () => hostNote(`your previous reply could not be decoded, which usually means a tool call's arguments were not valid JSON. ${replyAgain(tools)}`),
+  InvalidOutputError: (invalid) => invalid.description === DUPLICATE_CALL_IDS ? duplicateCallCorrective(tools)
+    : hostNote(`your previous reply could not be decoded, which usually means a tool call's arguments were not valid JSON. ${replyAgain(tools)}`),
 })
 
 /** The loop's own note after a stop that left the host's required work undone. */
@@ -751,18 +753,36 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           const reason = Match.valueTags(malformed.value, {
             NotFound: (missing) => new AiError.ToolNotFoundError({ toolName: missing.toolName, availableTools: toolNames }),
             Invalid: (invalid) => new AiError.ToolParameterValidationError({ toolName: invalid.toolName, description: invalid.description }),
+            DuplicateId: () => new AiError.InvalidOutputError({ description: DUPLICATE_CALL_IDS }),
           })
           return { _tag: "Malformed" as const, err: AiError.make({ module: "AgentLoop", method: "resolveToolCalls", reason }) as MalformedResponse, toolNames }
         }
-        // Each call's last result, in call order, as the toolkit's resolution would part it: a whole
-        // response's calls run (bounded); a cut one's are answered as cut, and none of them runs.
+        // Store the assistant's complete request before any handler can run. Provider-executed
+        // results stay inside that message. A killed process leaves the exact pending calls.
+        const usage = extractUsage(outcome.usage, response)
+        const model = responseModelOf(response)
+        const responseTail = planned ? responseToAgentMessages(response) : withUsageOnAssistant(responseToAgentMessages(response), usage, model)
+        const positions = yield* options.onTail?.(responseTail, state.turnIndex) ?? Effect.succeed([])
+        const assistantAt = responseTail.findIndex((message) => message.role === "assistant")
+        const assistantPosition = assistantAt >= 0 ? Option.fromNullishOr(positions[assistantAt]) : Option.none<number>()
+        const text = responseText(response)
+        const toolCalls = responseToolCalls(response)
+        yield* onEvent({
+          type: "assistant_message", turnIndex: state.turnIndex, text, reasoning: responseReasoning(response),
+          toolCalls, usage, finishReason: outcome.finishReason,
+          ...Option.match(model, { onNone: () => ({}), onSome: (id) => ({ model: id }) }),
+          ...Option.match(assistantPosition, { onNone: () => ({}), onSome: (position) => ({ position }) }),
+        })
+        // Persist each final result as soon as it returns, while sibling calls may still be running.
+        // The returned array keeps call order for the standalone loop's buffer and decisions.
+        const recordResult = (part: Response.AnyPart) =>
+          (options.onTail?.(responseToAgentMessages([part]), state.turnIndex) ?? Effect.succeed([])).pipe(Effect.as(part))
         const results = yield* Match.valueTags(verdict, {
-          Whole: () => Effect.forEach(calls, (call) => runCall(instrumented, call), { concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY }),
-          Cut: (cut) => Effect.succeed(calls.map((call) => cutResult(call, cut.reason))),
+          Whole: () => Effect.forEach(calls, (call) => runCall(instrumented, call).pipe(Effect.flatMap(recordResult)), { concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY }),
+          Cut: (cut) => Effect.forEach(calls, (call) => recordResult(cutResult(call, cut.reason)), { concurrency: 1 }),
         })
         const cut = verdict._tag === "Cut" ? Option.some(verdict.reason) : Option.none<CutReason>()
         const content: ReadonlyArray<Response.AnyPart> = [...response, ...results]
-        const usage = extractUsage(outcome.usage, content)
         yield* Effect.annotateCurrentSpan({
           "engine.step.finish_reason": outcome.finishReason,
           "engine.step.usage_available": !planned,
@@ -771,31 +791,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
             ? { "engine.step.output": tracedJson({ content, usage, finishReason: outcome.finishReason }) }
             : {}),
         })
-        const model = responseModelOf(content)
         const tail = planned ? responseToAgentMessages(content) : withUsageOnAssistant(responseToAgentMessages(content), usage, model)
-        // Persist BEFORE the events fire so the assistant message's durable
-        // position is known when its event is emitted (UIs key on it).
-        const positions = yield* options.onTail?.(tail, state.turnIndex) ?? Effect.succeed([])
-        const assistantAt = tail.findIndex((m) => m.role === "assistant")
-        const assistantPosition =
-          assistantAt >= 0 ? Option.fromNullishOr(positions[assistantAt]) : Option.none<number>()
-
-        const text = responseText(content)
-        const toolCalls = responseToolCalls(content)
-        yield* onEvent({
-          type: "assistant_message",
-          turnIndex: state.turnIndex,
-          text,
-          reasoning: responseReasoning(content),
-          toolCalls,
-          usage,
-          finishReason: outcome.finishReason,
-          ...Option.match(model, { onNone: () => ({}), onSome: (id) => ({ model: id }) }),
-          ...Option.match(assistantPosition, {
-            onNone: () => ({}),
-            onSome: (position) => ({ position }),
-          }),
-        })
         const toolResults = responseToolResults(content)
         // Calls that ran: a cut response's were answered, not run.
         yield* Option.isSome(cut) ? Effect.void : Effect.forEach(toolResults, (tr) => Metric.update(tagged(engineToolCalls, {

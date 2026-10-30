@@ -452,6 +452,18 @@ await filesFs.rm(filesRoot, { recursive: true, force: true })
 const fileSystem = await runKit("FileSystem", fileSystemConformance({ open: makeMemoryFileSystem().pipe(Effect.tap((fs) => fs.mkdir("/work")), Effect.map((fs) => ({ fs, root: "/work", symlink: fs.symlink }))) }))
 // The StepLoop and TurnRunner contracts (their usage totals among them) hold on Node too.
 const stepLoop = await runKit("StepLoop", stepLoopConformance(StepLoop.of({ ...STEP_LOOP, run: runSteps })))
+// Raw-result durability, run ordinals and presentation overlays hold over both packed memory strategies.
+const { ConversationMemory, UtilityCompletion, UtilityLlm } = await import("@xandreed/core")
+const { memoryConformance } = await import("@xandreed/core/conformance")
+const { memorySummaryPlugin } = await import("@xandreed/plugin-memory-summary")
+const memoryUtility = Context.make(UtilityLlm, UtilityLlm.of({ complete: () => Effect.succeed(new UtilityCompletion({
+  text: "SUMMARY", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 },
+})) }))
+const memoryChecks = await Effect.runPromise(Effect.scoped(Effect.forEach([memoryWindowPlugin, memorySummaryPlugin], (plugin) =>
+  plugin.build(plugin.defaults, Context.empty()).pipe(Effect.map((built) => memoryConformance(Context.get(built, ConversationMemory), memoryUtility).map((check) => ({ ...check, name: plugin.id + ": " + check.name })))),
+  { concurrency: 1 })))
+const memories = await runKit("ConversationMemory", memoryChecks.flat())
+console.log("The packed window and summary memory strategies pass " + memories + " checks on Node, including raw-result durability and run ordinals")
 // The turn kit brings its own model where it runs the loop; the one here is never called.
 const turnServices = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const model = yield* LanguageModel.make({ generateText: () => Effect.die("not called"), streamText: () => Stream.die("not called") })

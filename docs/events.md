@@ -61,7 +61,7 @@ export interface Frame {
   readonly data: Readonly<Record<string, unknown>>
 }
 
-/** The bus events a client is shown, as frames; `None` skips one. Tool input and output stay on the server. */
+/** The response's message frame precedes its tools: its assistant content is durable before any handler runs. Tool input and output stay on the server; `None` skips an event. */
 export const progressOf = (event: TurnEvent): Option.Option<Frame> => Match.value(event).pipe(
   Match.tag("step.started", (e) => Option.some({ event: "step", data: { step: e.step, state: "started" } })),
   Match.tag("assistant.delta", (e) => e.channel === "text" ? Option.some({ event: "delta", data: { step: e.step, id: e.id, text: e.delta } }) : Option.none()),

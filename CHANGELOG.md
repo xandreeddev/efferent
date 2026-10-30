@@ -10,6 +10,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A custom `StepLoop` persists each assistant response before running its
+  calls, then each final result as it returns, and reruns
+  `stepLoopConformance` (`assistant-first`, `incremental-results`,
+  `record-failure`, `recorded-results`). `StepRequest.record` stores durably before returning;
+  its `recorded(step)` reads fresh durable entries, including raw results
+  whose presentation did not finish, so failed steps still name them.
+  `runLoop.onTail` now receives the response and individual results as
+  separate batches, with concurrent results in completion order. A custom
+  `ToolRegistry` flushes `tool.started` before entering a handler and
+  reruns its kit (`started-durable`).
+- A custom `MemorySession.recordTail` accepts the run ordinal and stores
+  it on messages and raw results. Raw results are committed before views
+  and digests; view metadata follows in `memory.tool-presentation`.
+  `LogHandle.snapshot` can supply a fresh durable read after an uncertain
+  append, so memory can recover allocated ids without acknowledging a
+  failed write as successful. Rerun `memoryConformance`.
 - A host writing a whole `LocalSystemConfig` adds `parentEnv: null` (or
   spreads `localSystemDefaults`). A whole `WorkspaceToolsConfig` adds
   `workspaceAccess: "write"` and `roots: []` (or spreads its defaults).
@@ -927,6 +943,22 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- Tool-call durability: the assistant's calls and each admitted call's
+  `tool.started` are stored before handlers run, and final results are
+  stored individually as they return, before host views and optional digest-on-write
+  work. A process stopped mid-step keeps the pending calls and results
+  already returned. `toolCallStatesOf` and `ToolCallState` in
+  `@xandreed/core` report what the journal proves: requested, started,
+  returned without a stored result, completed, or refused. Resumed memory
+  answers a call lacking a result with `ToolInterrupted`: it may have run,
+  so check the current state before calling it again. That repair is
+  rendered only. `assistant.message` and its usage now precede handlers.
+  Presentation metadata is appended as `memory.tool-presentation` after
+  the raw result, without copying its encoded value or image bytes. The
+  renderer keeps interleaved runs' results with their own requests, and
+  `toolInputOf` gives views, digests and compact views the matching input
+  when a provider call id is reused. The
+  goldens reflect the new event and journal order; stored format is 4.
 - `@xandreed/plugin-workspace`: `localSystemPlugin.parentEnv` sets the
   host's base environment for shell lookup and per-command inheritance.
   `workspaceToolsPlugin` gains `workspaceAccess` and extra `roots`, each

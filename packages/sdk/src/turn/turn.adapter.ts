@@ -148,6 +148,11 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   // (`TurnWriter.closing`). Its TurnStarted is the turn's own `turn.started`, stored when the turn began.
   const log: LogHandle = {
     read: readHistory.pipe(Effect.tap((entries) => Ref.set(history, Option.some(entries)))),
+    snapshot: writer.snapshot(MEMORY_KINDS).pipe(Effect.flatMap(decoded), Effect.flatMap((entries) => Ref.get(phase).pipe(
+      Effect.map((current) => Option.isNone(numberOf(current))
+        ? entries.filter((entry) => entry.body._tag !== "TurnStarted" || entry.runId !== admitted.runId)
+        : entries),
+    ))),
     append: Effect.fnUntraced(function* (entries) {
       // Nothing of the turn precedes its message: an entry recorded before it would take the message's number.
       if (Option.isNone(numberOf(yield* Ref.get(phase))) && entries.some((entry) => entry.body._tag !== "TurnStarted")) {
@@ -161,7 +166,8 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
           `memory took the message as ${started.map((entry) => `${entry.id} of turn ${entry.turn}`).join()}, the session stored ${stored.join()} of turn ${admitted.turn}`))
       }
       yield* holding.withPermits(1)(Ref.get(phase).pipe(Effect.flatMap((current) => Option.match(heldWith(entries)(current), {
-        onNone: () => draftsOf(entries).pipe(Effect.flatMap(writer.append)),
+        // Raw results reach durable storage before recordTail starts optional digest-on-write work.
+        onNone: () => draftsOf(entries).pipe(Effect.flatMap(writer.append), Effect.andThen(writer.flush)),
         onSome: holdNow,
       }))))
     }),

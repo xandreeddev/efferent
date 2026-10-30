@@ -27,15 +27,6 @@ export const started = (step: number) => (ledger: StepLedger): StepLedger =>
 export const used = (usage: TokenUsage) => (ledger: StepLedger): StepLedger =>
   ({ ...ledger, lastUsage: Option.some(usage) })
 
-/** The tool results of entries recorded under `step`, after its earlier ones. */
-export const recorded = (step: number, entries: ReadonlyArray<LogEntry>) => (ledger: StepLedger): StepLedger => {
-  const results = stepResultsOf(entries)
-  return results.length === 0 ? ledger : { ...ledger, results: new Map([...ledger.results, [step, [...resultsOf(ledger, step), ...results]]]) }
-}
-
-/** `step`'s recorded tool results, in log order. */
-export const resultsOf = (ledger: StepLedger, step: number): ReadonlyArray<StepResult> => ledger.results.get(step) ?? []
-
 /** The tool results among recorded log entries, as `step.ended` lists them. */
 export const stepResultsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<StepResult> => entries.flatMap((entry) =>
   entry.body._tag === "ToolResult" ? [{ entry: entry.id, toolCallId: entry.body.toolCallId, tool: entry.body.toolName, ok: !entry.body.isError }] : [])
