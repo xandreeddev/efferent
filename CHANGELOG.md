@@ -1204,6 +1204,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   sessions kits from `@xandreed/core/conformance`.
 - `@xandreed/plugin-tasks`'s tests import the task kits from
   `@xandreed/core/conformance`.
+- `@xandreed/plugin-sessions`'s tests import the sessions kit from
+  `@xandreed/core/conformance` and `traceTurnBegin` from
+  `@xandreed/core/engine`, which a `plugin-sessions-tests` boundaries layer
+  grants to its tests only.
 
 ### Deprecated
 
