@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Match, Option } from "effect"
+import { Context, Effect, Layer, Match, Option, PubSub, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
 import type { BeginTurn, ConformanceCheck, SessionsInstance, SessionsSubject, TurnError, TurnWriter } from "@xandreed/core"
@@ -156,6 +156,29 @@ describe("the Sessions kit catches careless backends", () => {
       }),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, renaming)))).toEqual(["run-id"])
+  })
+
+  /**
+   * An instance whose `changes` come from a hub of its own, fed by `transact`
+   * with the session's id: `perSession` follows only that session's commits.
+   */
+  const signalledBy = (hub: PubSub.PubSub<string>, perSession: boolean) => (instance: SessionsInstance): SessionsInstance => ({
+    ...instance,
+    sessions: Sessions.of({
+      ...instance.sessions,
+      transact: (address, decide) => instance.sessions.transact(address, decide).pipe(Effect.tap(() => PubSub.publish(hub, address.id))),
+      changes: (address) => Stream.fromPubSub(hub).pipe(Stream.filter((id) => !perSession || id === address.id), Stream.map(() => undefined)),
+    }),
+  })
+
+  test("one that keeps a signal per commit for a follower that does not pull fails only the changes check", async () => {
+    const hub = Effect.runSync(PubSub.unbounded<string>())
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, signalledBy(hub, true))))).toEqual(["changes"])
+  })
+
+  test("one whose commits wake the followers of every session fails only the changes check", async () => {
+    const hub = Effect.runSync(PubSub.sliding<string>(1))
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, signalledBy(hub, false))))).toEqual(["changes"])
   })
 
   test("one whose writes do not renew the lease fails only the lease-renewal check", async () => {

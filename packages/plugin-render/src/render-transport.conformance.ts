@@ -37,10 +37,14 @@ export const renderTransportConformance = (transports: {
   }),
 }]
 
-/** An appendable journal for feed checks: `tail` polls only, `wakingTail` also signals each append. */
+/**
+ * An appendable journal for feed checks: `tail` polls only, `wakingTail` also
+ * signals after each append (the signals a feed has not taken merge into one,
+ * as `Sessions.changes` does).
+ */
 export const makeMemoryJournal = Effect.fnUntraced(function* (initial: ReadonlyArray<JournalRecord>) {
   const records = yield* Ref.make(initial)
-  const appended = yield* PubSub.unbounded<void>()
+  const appended = yield* PubSub.sliding<void>(1)
   const tail: typeof JournalTail.Service = {
     read: (_feed, after) => Ref.get(records).pipe(Effect.map((all) => all.filter((record) => record.sequence > after))),
   }

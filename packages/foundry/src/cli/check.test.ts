@@ -46,7 +46,7 @@ const seedViolations = (dir: string): void => {
   writeFileSync(
     path.join(dir, "src", "violations.ts"),
     [
-      'import { Cause, Effect, Option, Schema, Stream } from "effect"',
+      'import { Cause, Effect, Option, PubSub, Schema, Stream } from "effect"',
       'import { StoreError } from "./errors.js"',
       "export const f = (): number => {",
       "  let x = 1",
@@ -69,6 +69,7 @@ const seedViolations = (dir: string): void => {
       "export const pretty = { detail: Cause.pretty(Cause.fail(1)) }",
       "export const unchecked = Effect.promise(() => Promise.resolve(1))",
       "export const unbounded = Stream.callback<number>(() => Effect.void)",
+      "export const hub = PubSub.unbounded<number>()",
       'export const ordered = ["b", "a"].sort((a, b) => a.localeCompare(b))',
       "export const Item = Schema.Struct({ id: Schema.String })",
       "const LocalId = Schema.Trimmed.check(Schema.isNonEmpty())",

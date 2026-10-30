@@ -698,6 +698,31 @@ export const callbackBufferSize = {
     }),
 }
 
+const isInfiniteCapacity = (capacity: ts.Expression): boolean =>
+  ts.isObjectLiteralExpression(capacity)
+    ? capacity.properties.some((property) =>
+        ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === "capacity" && isInfiniteCapacity(property.initializer))
+    : (ts.isIdentifier(capacity) && capacity.text === "Infinity") || isMemberOf(capacity, "Number", ["POSITIVE_INFINITY"])
+
+export const boundedPubSub = {
+  id: "effect/bounded-pubsub",
+  defaultSeverity: "error",
+  description: "a `PubSub` states a finite capacity: `bounded`, `sliding` or `dropping`, never `unbounded`",
+  fixHint:
+    "create it with a capacity: `PubSub.sliding(n)` when only the latest messages matter (a wake-up signal: `sliding(1)`), `PubSub.bounded(n)` when the publisher may wait for the slowest subscriber, `PubSub.dropping(n)` when the newest may be lost",
+  check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
+    matchesIn(sourceFile, (node) => {
+      if (isMemberOf(node, "PubSub", ["unbounded"])) {
+        return [{ node, message: "`PubSub.unbounded` keeps every message a slow subscriber has not taken" }]
+      }
+      if (!ts.isCallExpression(node) || !isMemberOf(node.expression, "PubSub", ["bounded", "sliding", "dropping"])) return []
+      const capacity = node.arguments[0]
+      return capacity !== undefined && isInfiniteCapacity(capacity)
+        ? [{ node, message: `\`PubSub.${node.expression.name.text}\` with an infinite capacity keeps every message a slow subscriber has not taken` }]
+        : []
+    }),
+}
+
 export const noProcessEnv = {
   id: "effect/no-process-env",
   defaultSeverity: "error",
@@ -1088,6 +1113,7 @@ export const rules = [
   noEffectPromise,
   noPromiseAll,
   callbackBufferSize,
+  boundedPubSub,
   noProcessEnv,
   noAmbientTimeRandom,
   noLocaleCompare,

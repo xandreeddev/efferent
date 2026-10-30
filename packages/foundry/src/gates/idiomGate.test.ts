@@ -215,6 +215,17 @@ describe("effect-idioms gate over fixtures", () => {
     ])
   })
 
+  test("effect/bounded-pubsub flags PubSub.unbounded and an infinite capacity, not a finite bounded, sliding or dropping one", async () => {
+    const findings = await findingsFor(["effect/bounded-pubsub"], ["boundedPubSub.ts"])
+    expect(at(findings)).toEqual([3, 4, 5, 6].map((line) => ({ rule: "effect/bounded-pubsub", file: "boundedPubSub.ts", line })))
+    expect(findings.map((f) => f.message)).toEqual([
+      "`PubSub.unbounded` keeps every message a slow subscriber has not taken",
+      "`PubSub.unbounded` keeps every message a slow subscriber has not taken",
+      "`PubSub.bounded` with an infinite capacity keeps every message a slow subscriber has not taken",
+      "`PubSub.dropping` with an infinite capacity keeps every message a slow subscriber has not taken",
+    ])
+  })
+
   test("effect/no-process-env flags process.env in code, not in comments", async () => {
     const findings = await findingsFor(["effect/no-process-env"], ["processEnv.ts"])
     expect(at(findings)).toEqual([

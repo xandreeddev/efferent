@@ -156,6 +156,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `provider`: pass a larger `timeoutMs` to the exporter.
 - Hosts that relied on the long retry ladder of a routed call: the call's
   600 s budget is a constant for now.
+- `Sessions.changes` merges the signals a follower has not taken into one:
+  a follower that counted signals to count commits reads from its cursor
+  after each signal instead.
 
 ### Breaking
 
@@ -821,6 +824,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A streamed call's retries share the call's 600 s budget: no attempt
   starts after it, and an attempt that has sent no content by then is cut,
   with a message naming the budget and the attempts made.
+- `@xandreed/plugin-sessions`: `Sessions.changes` wakes only the followers
+  of the session that was committed to, not every follower of every
+  session, and a follower that stops reading holds one signal instead of
+  one per commit. A session's signal hub exists only while someone follows
+  it, and follower streams end when the Sessions layer closes.
 
 ### Repository
 
@@ -1005,6 +1013,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `effect/branded-id-fields` runs over every package's `*.entity.ts` files
   (and core's `src/spec`); the per-package list is gone, and a test checks
   that the rule covers every checked package.
+- New gate rule `effect/bounded-pubsub`, also in the vendored `effect`
+  pack: `PubSub.unbounded`, or a `bounded`, `sliding` or `dropping` PubSub
+  with an infinite capacity, fails outside test code.
+- The sessions kit adds a `changes` check; plugin-render's
+  `makeMemoryJournal` signals through `PubSub.sliding(1)`.
 
 ## 0.14.0 — 2026-10-29
 

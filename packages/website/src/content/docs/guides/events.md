@@ -440,7 +440,9 @@ Across requests, instances and processes:
   `sessionLogRecoveryConformance` (see [the sessions
   section](https://github.com/xandreeddev/efferent/blob/main/docs/framework.md#sessions-one-log-per-session)).
 - `Sessions.changes(address)` signals only the commits made through that
-  `Sessions` instance. Everyone else polls `read` from their cursor;
+  `Sessions` instance, to that session's followers. A signal means "read
+  again": the signals a follower has not taken merge into one, so count
+  reads, never signals. Everyone else polls `read` from their cursor;
   plugin-render's journal feed does both (it wakes on `changes`, and polls
   every 200 ms to 1 s otherwise).
 - The writer stores what a turn queues behind it: a process that dies loses
