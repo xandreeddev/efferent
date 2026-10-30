@@ -19,6 +19,8 @@ Exports a saved `EvaluationRun` to LangSmith through its official client (`langs
 - `langsmithExporter(options)`: an `ExporterRegistration` with id `langsmith`, for an app's `exporters` (the CLI's `--exporter langsmith`).
 - `EvaluationExportLangSmithLive(options)`: the `EvaluationExport` layer itself; `LangSmithExportOptions` (`apiUrl`, `apiKey`, `project`, optional `timeoutMs`; `webUrl`, else `apiUrl`, is the receipt's `url`).
 
+The root names each export, and `quality/exports-have-consumers` checks each one: the packed consumer imports `langsmithExporter`, and `EvaluationExportLangSmithLive` and `LangSmithExportOptions`, which no first-party code imports, are tagged `@public`.
+
 ## Model-facing text
 
 None.

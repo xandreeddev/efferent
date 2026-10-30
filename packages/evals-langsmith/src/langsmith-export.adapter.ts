@@ -10,6 +10,7 @@ import {
   type ExporterRegistration
 } from "@xandreed/evals"
 
+/** @public */
 export interface LangSmithExportOptions {
   readonly apiUrl: string
   readonly apiKey: string
@@ -180,6 +181,7 @@ const exportService = (options: LangSmithExportOptions) => ({
     bounded(options.timeoutMs ?? EXPORT_TIMEOUT_MS)
   )
 })
+/** @public */
 export const EvaluationExportLangSmithLive = (
   options: LangSmithExportOptions
 ) => Layer.succeed(EvaluationExport, exportService(options))
