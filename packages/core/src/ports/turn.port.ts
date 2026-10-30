@@ -122,7 +122,7 @@ export interface Turn {
   readonly run: <R = never>(policy: TurnPolicy<R>) => Effect.Effect<RunResult, TurnError, R>
   /** The turn's usage so far, every run of it included (`RunContext.usage`). */
   readonly usage: Effect.Effect<TokenUsage>
-  /** Wait until every journal write queued so far is stored (e.g. before delivering an answer). */
+  /** Wait until every journal write queued so far is stored (e.g. before delivering an answer); the turn's reply waits for its end. */
   readonly flush: Effect.Effect<void, TurnError>
   /** Run a host store write in journal order and return its result. */
   readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | TurnError>

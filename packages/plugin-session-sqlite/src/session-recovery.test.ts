@@ -212,6 +212,17 @@ describe("a turn whose holder process was killed", () => {
     yield* reaped(sessions, id)
   })), 30_000)
 
+  test("after it held its reply for its end, leaves no reply: the reaped turn holds what it stored, and its interrupted end", () => run(Effect.gen(function* () {
+    const path = databasePath()
+    const id = freshId()
+    const turnHolder = yield* holder("hold-turn", path, id, owner, "process", "closing")
+    const sessions = yield* sessionsOver(path, { ...sessionsDefaults, ownership: { mode: "process" } })
+    expect(yield* killed(turnHolder)).toBe("SIGKILL")
+    yield* reaped(sessions, id)
+    const first = (yield* sessions.read({ id, owner })).filter((event) => Option.contains(event.turn, 1)).map((event) => event.kind)
+    expect(first).toEqual(["turn.started", "progress", "turn.ended"])
+  })), 30_000)
+
   test("under lease ownership, stays held until the lease runs out, then is reaped", () => run(Effect.gen(function* () {
     const path = databasePath()
     const id = freshId()

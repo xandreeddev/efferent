@@ -129,7 +129,9 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * `NothingPending`, opening nothing; the writer storing in order and its
  * end storing how the turn ended (completed, failed with a code, a scope
  * closed unended or interrupted), a write after its own end refused as
- * `TurnClosed` (`ended`); writing outside a turn and the reserved kinds,
+ * `TurnClosed` (`ended`); the closing drafts a turn holds stored only by
+ * its end's commit, right before `turn.ended` (by its scope's end too,
+ * ending as a held reply implies; dropped by a cancel); writing outside a turn and the reserved kinds,
  * refused as `ReservedKind` there and to a turn's writer unless the
  * framework's turn wrote them (`frameworkDraft`); cancel and removal closing
  * the writer, a write after a cancel, a reap or a stopped holder refused as
@@ -411,6 +413,55 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("writer", first === "turn.started@1,conformance.a@1,conformance.b@1,conformance.c@1,turn.ended@1", `turn 1 stored ${first}`)
       const view = yield* sessions.get(address)
       yield* expect("writer", view.turns === 4 && Option.isNone(view.open), `after four ended turns the session shows ${view.turns} turns${Option.isSome(view.open) ? " and one open" : ""}`)
+    })),
+
+    scoped("a turn's closing drafts are stored only by its end, in its commit right before turn.ended: the last hold's, none by a flush; its scope's end stores them, ending as a held reply implies; a cancel drops them", "closing", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      const held = (n: number) => [{ kind: "conformance.reply", data: { n } }]
+      const ofTurn = (turn: number) => sessions.read(address).pipe(Effect.map((all) => all.filter((event) => turnOf(event) === turn)))
+      const late = (writer: TurnWriter) => writer.closing(held(0)).pipe(Effect.match({ onFailure: refusalOf, onSuccess: () => "held" }))
+      // Turn 1, ended: the drafts of its last hold, stored by the end alone.
+      const first = yield* Effect.scoped(Effect.gen(function* () {
+        const writer = yield* sessions.begin(address, say("one"))
+        yield* writer.append([{ kind: "conformance.a", data: {} }])
+        yield* writer.closing(held(1))
+        yield* writer.closing(held(2))
+        const reserved = yield* writer.closing([{ kind: "turn.reply", data: {} }]).pipe(Effect.match({ onFailure: refusalOf, onSuccess: () => "held" }))
+        yield* writer.append([{ kind: "conformance.b", data: {} }])
+        yield* writer.flush
+        const flushed = kindsOf(yield* ofTurn(1))
+        yield* writer.end(completed)
+        return { reserved, flushed, late: yield* late(writer) }
+      }))
+      yield* expect("closing", first.reserved === "ReservedKind", `holding a turn.reply the framework did not write gave ${first.reserved}`)
+      yield* expect("closing", first.flushed === "turn.started@1,conformance.a@1,conformance.b@1", `after a flush turn 1 stored ${first.flushed}: held drafts are stored by the end only`)
+      const ended = yield* ofTurn(1)
+      const reply = ended.find((event) => event.kind === "conformance.reply")
+      const closing = ended.find((event) => event.kind === "turn.ended")
+      yield* expect("closing", kindsOf(ended) === "turn.started@1,conformance.a@1,conformance.b@1,conformance.reply@1,turn.ended@1" && reply?.data.n === 2,
+        `the end stored ${kindsOf(ended)}, the reply held last ${reply === undefined ? "missing" : `as n ${String(reply.data.n)}`}`)
+      yield* expect("closing", reply !== undefined && closing !== undefined && closing.seq === reply.seq + 1, "the held reply is not stored right before turn.ended")
+      yield* expect("closing", first.late === "TurnClosed:ended", `a hold after the end gave ${first.late}`)
+      // Turns 2 and 3, their scope closed unended: its end stores the drafts held, ending as a reply among them implies.
+      yield* Effect.scoped(sessions.begin(address, say("two")).pipe(Effect.tap((writer) => writer.closing(held(3)))))
+      const answer = say("three")
+      yield* Effect.scoped(sessions.begin(address, answer).pipe(Effect.tap((writer) => writer.closing([frameworkDraft("turn.reply", {
+        entry: `${answer.runId}:1`, runId: answer.runId, step: 0, at: 0, body: { outcome: "completed", reply: "done" },
+      })]))))
+      const scoped = [kindsOf(yield* ofTurn(2)), kindsOf(yield* ofTurn(3)), endings(yield* sessions.read(address, { kinds: ["turn.ended"] }))]
+      yield* expect("closing", scoped.join(" | ") === "turn.started@2,conformance.reply@2,turn.ended@2 | turn.started@3,turn.reply@3,turn.ended@3 | 1:completed:none,2:failed:turn.unended,3:completed:none",
+        `the scopes' ends stored ${scoped.join(" | ")}`)
+      // Turn 4, cancelled: its held drafts are dropped, and the writer holds no more.
+      const cancelled = yield* Effect.scoped(Effect.gen(function* () {
+        const writer = yield* sessions.begin(address, say("four"))
+        yield* writer.closing(held(4))
+        yield* sessions.cancel(address, 4)
+        return yield* late(writer)
+      }))
+      const fourth = kindsOf(yield* ofTurn(4))
+      yield* expect("closing", fourth === "turn.started@4,turn.ended@4" && cancelled === "TurnClosed:cancelled",
+        `a cancelled turn stored ${fourth}, and a hold after the cancel gave ${cancelled}`)
     })),
 
     scoped("transact records outside a turn, and the framework's kinds are refused: as ReservedKind there, and to a turn's writer unless the framework's turn wrote them", "transact", (owner) => Effect.gen(function* () {

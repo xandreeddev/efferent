@@ -14,8 +14,9 @@
  *     says ready, waits for a `go` line on stdin, adds one to the state's
  *     `count` <count> times by compare-and-swap, reading the head again after
  *     each conflict, and says `done <conflicts>`
- *   bun session-holder.testing.ts hold-turn <db> <session> <owner> <process|lease>
- *     creates the session through plugin-sessions, begins a turn, says ready, waits
+ *   bun session-holder.testing.ts hold-turn <db> <session> <owner> <process|lease> [closing]
+ *     creates the session through plugin-sessions, begins a turn, says ready, waits;
+ *     with `closing`, the turn first stores a write and holds its reply for its end
  *
  * Every mode stops when its stdin closes, so a holder dies with the test
  * process that spawned it with a piped stdin, even one killed before it could
@@ -23,7 +24,7 @@
  */
 import { Database } from "bun:sqlite"
 import { Cause, Context, Deferred, Effect, Exit, Layer, Option, Ref, Stream } from "effect"
-import { ConversationId, RunId, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { ConversationId, frameworkDraft, RunId, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { SessionLog } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { SessionsConfig } from "@xandreed/plugin-sessions"
@@ -86,13 +87,19 @@ const casIncrements = (session: ConversationId, count: number, label: string, go
   yield* say(`done ${yield* Ref.get(conflicts)}`)
 }))
 
-const holdTurn = (session: ConversationId, owner: string, ownership: string) => Effect.scoped(Effect.gen(function* () {
+const holdTurn = (session: ConversationId, owner: string, ownership: string, closing: boolean) => Effect.scoped(Effect.gen(function* () {
   const config: SessionsConfig = { ...sessionsDefaults, ownership: ownership === "process" ? { mode: "process" } : { mode: "lease", ttlMs: 60_000, renew: "on-commit" } }
   const sessions = Context.get(yield* Layer.build(SessionsLive(config).pipe(Layer.provide(Layer.merge(SessionLogSqliteLive(path), TurnAdmissionOpen)))), Sessions)
   yield* sessions.create({ owner, id: session })
-  yield* sessions.begin({ id: session, owner }, {
+  const writer = yield* sessions.begin({ id: session, owner }, {
     _tag: "User", userMessage: new UserMessage({ text: "held by a process that is about to stop" }), runId: RunId.make("run-held"), key: "held", command: {},
   })
+  if (closing) {
+    // As the turn holds its reply: stored only by its end, which the crash never reaches.
+    yield* writer.append([{ kind: "progress", data: {} }])
+    yield* writer.closing([frameworkDraft("turn.reply", { entry: "run-held:1", runId: "run-held", step: 0, at: 0, body: { outcome: "completed", reply: "done" } })])
+    yield* writer.flush
+  }
   yield* say("ready")
   // A pending timer keeps the process alive (Effect.never alone would let it exit) until it is killed.
   return yield* Effect.forever(Effect.sleep("1 minute"))
@@ -103,7 +110,7 @@ const modes: Record<string, (go: Deferred.Deferred<void>) => Effect.Effect<unkno
   "hold-lock": () => holdLock(Number(argument(0))),
   "commit-loop": () => commitLoop(ConversationId.make(argument(0)), Number(argument(1))),
   "cas-increments": (go) => casIncrements(ConversationId.make(argument(0)), Number(argument(1)), argument(2), go),
-  "hold-turn": () => holdTurn(ConversationId.make(argument(0)), argument(1), argument(2)),
+  "hold-turn": () => holdTurn(ConversationId.make(argument(0)), argument(1), argument(2), argument(3) === "closing"),
 }
 
 /** The lines the test process writes; the stream ends when it closes stdin or dies. */

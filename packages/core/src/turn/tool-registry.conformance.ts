@@ -114,8 +114,9 @@ const policy: MemoryPolicy = {
 /**
  * The writer of the kit's turn (turn 1 of a session of its own): it keeps
  * what the turn stores in memory, writes at once but yields first, as
- * storage does (so concurrent calls interleave at their writes), and is
- * never closed from outside.
+ * storage does (so concurrent calls interleave at their writes), stores the
+ * closing drafts it holds when the turn ends, and is never closed from
+ * outside.
  */
 const memoryWriter = Effect.gen(function* () {
   const session = yield* freshId
@@ -132,6 +133,7 @@ const memoryWriter = Effect.gen(function* () {
       session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: json,
     }))])),
   )
+  const held = yield* Ref.make<ReadonlyArray<TurnDraft>>([])
   const writer: TurnWriter = {
     admitted: { session: { id: session, owner: "conformance" }, turn: 1, runId: RUN, key: RUN, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
@@ -142,7 +144,8 @@ const memoryWriter = Effect.gen(function* () {
     write: (op) => op,
     transact: (decide) => decide([]).pipe(Effect.flatMap((decision) => append(decision.drafts).pipe(Effect.as({ result: decision.result, events: [] })))),
     flush: Effect.void,
-    end: () => Effect.succeed({ pending: 0 }),
+    closing: (drafts) => Ref.set(held, drafts),
+    end: () => Ref.getAndSet(held, []).pipe(Effect.flatMap(append), Effect.as({ pending: 0 })),
     closed: Effect.never,
   }
   return { writer, stored: Ref.get(stored) }

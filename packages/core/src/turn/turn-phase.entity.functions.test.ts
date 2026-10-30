@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
-import type { TurnContextBody } from "../memory/memory-log.entity.js"
+import { EntryId } from "../memory/memory-log.entity.js"
+import type { LogBody, LogEntry, TurnContextBody } from "../memory/memory-log.entity.js"
 import type { TurnPhase } from "./turn-phase.entity.js"
-import { addContext, claim, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
+import { addContext, claim, heldWith, hold, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
 import type { Transition } from "./turn-phase.entity.functions.js"
 
 const note = (text: string): TurnContextBody => ({ _tag: "TurnContext", sectionId: "note", version: "1", text })
@@ -13,7 +14,12 @@ const [first, second, third] = [RunOrdinal.make(0), RunOrdinal.make(1), RunOrdin
 const taken: TurnPhase = { _tag: "Taken", number: 3, sectioned: false, runs: first }
 const sectioned: TurnPhase = { _tag: "Taken", number: 3, sectioned: true, runs: first }
 const secondRun: TurnPhase = { _tag: "Taken", number: 3, sectioned: true, runs: second }
-const replied: TurnPhase = { _tag: "Replied", number: 3, outcome: "completed" }
+const entryOf = (n: number, body: LogBody): LogEntry => ({ id: EntryId.make(`run-1:${n}`), runId: RunId.make("run-1"), turn: 3, step: 0, at: 0, body })
+const answer = entryOf(4, { _tag: "TurnEnded", outcome: "completed", reply: Option.some("done") })
+const later = entryOf(5, note("after the reply"))
+const replied: TurnPhase = { _tag: "Replied", number: 3, outcome: "completed", held: [answer, later] }
+const unheld: TurnPhase = { _tag: "Replied", number: 3, outcome: "completed", held: [] }
+const failedAnswer = entryOf(4, { _tag: "TurnEnded", outcome: "failed", reply: Option.some("done") })
 
 /** A transition's result as data: what it returns and where it moves, or the code it is refused with. */
 const outcome = <A>(transition: Transition<A>) => Result.match(transition, {
@@ -69,12 +75,32 @@ describe("TurnPhase transitions", () => {
   })
 
   test.each([
-    ["Waiting", waiting, { value: Option.none(), next: waiting }],
-    ["Taking", taking, { value: Option.none(), next: taking }],
-    ["Taken", sectioned, { value: Option.some(3), next: { _tag: "Replied", number: 3, outcome: "failed" } }],
-    ["Replied", replied, { value: Option.none(), next: replied }],
-  ] as const)("reply from %s", (_, phase, expected) => {
-    expect(outcome(reply("failed")(phase))).toEqual(expected)
+    ["Waiting", waiting, "failed", { value: { _tag: "Nothing" }, next: waiting }],
+    ["Taking", taking, "failed", { value: { _tag: "Nothing" }, next: taking }],
+    ["Taken", sectioned, "failed", { value: { _tag: "Record", number: 3 }, next: { _tag: "Replied", number: 3, outcome: "failed", held: [] } }],
+    ["Replied, again", replied, "completed", { value: { _tag: "Nothing" }, next: replied }],
+    // A failed reply after a completed one downgrades it: held again under its own id and text, failed.
+    ["Replied, failed after completed", replied, "failed", {
+      value: { _tag: "Hold", held: [failedAnswer, later] }, next: { _tag: "Replied", number: 3, outcome: "failed", held: [failedAnswer, later] },
+    }],
+    ["Replied, failed after completed, never held", unheld, "failed", { value: { _tag: "Record", number: 3 }, next: { ...unheld, outcome: "failed" } }],
+    ["Replied, never upgraded", { ...unheld, outcome: "failed" }, "completed", { value: { _tag: "Nothing" }, next: { ...unheld, outcome: "failed" } }],
+  ] as const)("reply from %s", (_, phase, kind, expected) => {
+    expect(outcome(reply(kind)(phase))).toEqual(expected)
+  })
+
+  const context = entryOf(6, note("c"))
+  test.each([
+    ["Taken, an entry", taken, [context], Option.none()],
+    ["Taken, a reply on its own", taken, [answer], Option.some([answer])],
+    ["Replied", replied, [context], Option.some([answer, later, context])],
+    ["Replied, nothing held yet", unheld, [answer], Option.some([answer])],
+  ] as const)("heldWith from %s", (_, phase, entries, expected) => {
+    expect(heldWith(entries)(phase)).toEqual(expected)
+  })
+
+  test("hold keeps what the writer took for the closing commit, in a replied turn only", () => {
+    expect([unheld, taken].map(hold([answer, context]))).toEqual([{ ...unheld, held: [answer, context] }, taken])
   })
 
   const runId = RunId.make("run-1")

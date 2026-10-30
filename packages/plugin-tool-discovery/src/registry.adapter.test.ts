@@ -95,6 +95,7 @@ const recordingWriter = (refuses: Option.Option<string> = Option.none()) => Effe
     write: (op) => op,
     transact: (decide) => decide([]).pipe(Effect.flatMap((decision) => append(decision.drafts).pipe(Effect.as({ result: decision.result, events: [] })))),
     flush: Effect.void,
+    closing: () => Effect.void,
     end: () => Effect.succeed({ pending: 0 }),
     closed: Effect.never,
   }

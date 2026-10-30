@@ -24,8 +24,9 @@ import { renderSections } from "./prompt-sections.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
 import type { TurnEvent } from "./turn-event.entity.js"
 import { ModelRequestHeader } from "./model-request.entity.js"
+import { ReplyStep } from "./turn-phase.entity.js"
 import type { TurnPhase } from "./turn-phase.entity.js"
-import { addContext, claim, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
+import { addContext, claim, heldWith, hold, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
 import type { Transition } from "./turn-phase.entity.functions.js"
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
@@ -68,8 +69,11 @@ type ToolSlot =
  * pure transitions of `turn-phase.entity.functions.ts`; what a transition
  * plans (a record, a publish) runs after it. The message was stored when
  * the turn began; memory takes it at `TurnMemory.persistMessage`, and
- * records nothing before it (`TurnMemory.context` waits for it). Tasks
- * run in the layer's scope: they are interrupted when it closes.
+ * records nothing before it (`TurnMemory.context` waits for it). Its
+ * reply, and what memory records after it, the writer holds for the turn's
+ * closing commit (`TurnWriter.closing`), stored with `turn.ended`; a failed
+ * reply after a completed one holds it again, failed, under its own id.
+ * Tasks run in the layer's scope: they are interrupted when it closes.
  * `TurnMemory.persistReply` runs under its span, `turn.persist_reply`
  * (inline `turn.ended` subscribers' spans nest under it).
  */
@@ -115,8 +119,18 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     Effect.map((starts) => starts.map((started) => started.keys.entry)),
     Effect.mapError((error) => failure("memory.log", `undecodable turn.started: ${error.message}`)),
   )
+  const draftsOf = (entries: ReadonlyArray<LogEntry>) => draftsOfEntries(entries).pipe(
+    Effect.mapError((error) => failure("memory.log", error.message)),
+    Effect.map((drafts) => drafts.map((draft): TurnDraft => frameworkDraft(draft.kind, draft.data))),
+  )
+  /** Orders what the writer holds for the closing commit: the phase keeps what `closing` took last. */
+  const holding = yield* Semaphore.make(1)
+  /** Hand the writer these entries as the turn's closing drafts (they replace what it held), then keep them. */
+  const holdNow = (held: ReadonlyArray<LogEntry>) =>
+    draftsOf(held).pipe(Effect.flatMap(writer.closing), Effect.andThen(Ref.update(phase, hold(held))))
   // Memory's log is the session's memory events before this turn; what it records goes to the
-  // same queue. Its TurnStarted is the turn's own `turn.started`, stored when the turn began.
+  // same queue, but its reply, and what it records after it, waits for the turn's closing commit
+  // (`TurnWriter.closing`). Its TurnStarted is the turn's own `turn.started`, stored when the turn began.
   const log: LogHandle = {
     read: readHistory.pipe(Effect.tap((entries) => Ref.set(history, Option.some(entries)))),
     append: Effect.fnUntraced(function* (entries) {
@@ -131,8 +145,10 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
         return yield* Effect.fail(failure("turn.numbering",
           `memory took the message as ${started.map((entry) => `${entry.id} of turn ${entry.turn}`).join()}, the session stored ${stored.join()} of turn ${admitted.turn}`))
       }
-      const drafts = yield* draftsOfEntries(entries).pipe(Effect.mapError((error) => failure("memory.log", error.message)))
-      yield* writer.append(drafts.map((draft): TurnDraft => frameworkDraft(draft.kind, draft.data)))
+      yield* holding.withPermits(1)(Ref.get(phase).pipe(Effect.flatMap((current) => Option.match(heldWith(entries)(current), {
+        onNone: () => draftsOf(entries).pipe(Effect.flatMap(writer.append)),
+        onSome: holdNow,
+      }))))
     }),
   }
   const session = yield* memory.open({ conversation: admitted.session.id, runId: admitted.runId, log })
@@ -215,10 +231,13 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     }),
     context: (entry) => transition(addContext(contextBody(entry))).pipe(Effect.flatMap(recordContext)),
     persistReply: Effect.fn("turn.persist_reply")(function* (outcome) {
-      const number = yield* transition(reply(outcome.outcome))
-      if (Option.isNone(number)) return
+      // A downgrade holds the entries again under the same permit as memory's records, so neither replaces the other's.
+      const step = yield* holding.withPermits(1)(transition(reply(outcome.outcome)).pipe(
+        Effect.tap((next) => ReplyStep.guards.Hold(next) ? holdNow(next.held) : Effect.void),
+      ))
+      if (!ReplyStep.guards.Record(step)) return
       yield* session.record([{ _tag: "TurnEnded", outcome: outcome.outcome, reply: outcome.reply }], 0)
-      yield* events.publish({ _tag: "turn.ended", runId: admitted.runId, turn: number.value, outcome: outcome.outcome, reply: outcome.reply, usage: yield* Ref.get(usage) })
+      yield* events.publish({ _tag: "turn.ended", runId: admitted.runId, turn: step.number, outcome: outcome.outcome, reply: outcome.reply, usage: yield* Ref.get(usage) })
     }),
   })
 

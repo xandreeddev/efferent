@@ -169,13 +169,18 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
       Effect.as({ delivered: false, pending: full.pending }),
     )))
 
-  /** The writer, noting when the reaction records its answer (the turn's `turn.reply`, as memory writes it). */
+  /**
+   * The writer, noting when the reaction records its answer (the turn's
+   * `turn.reply`, as memory writes it: held for the turn's closing commit,
+   * which the reaction's end then stores).
+   */
   const noting = (writer: TurnWriter, answered: Ref.Ref<boolean>): TurnWriter => {
     const note = (drafts: ReadonlyArray<{ readonly kind: string }>) => drafts.some((draft) => draft.kind === MemoryKindOf.TurnEnded) ? Ref.set(answered, true) : Effect.void
     return {
       ...writer,
       append: (drafts) => note(drafts).pipe(Effect.andThen(writer.append(drafts))),
       transact: (decide) => writer.transact((foreign) => decide(foreign).pipe(Effect.tap((decision) => note(decision.drafts)))),
+      closing: (drafts) => writer.closing(drafts).pipe(Effect.andThen(note(drafts))),
     }
   }
 

@@ -131,6 +131,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `isComplete`, and record under the `step` that `onTail` passes. Code that
   builds a `RunResult` returns one of the two shapes; a `match` on step
   status adds `malformed`.
+- Add `closing` to a hand-written `TurnWriter`: hold the drafts and store
+  them in the end's commit before `turn.ended`; then rerun
+  `sessionsConformance` and `turnConformance`, which both gain a `closing`
+  check.
 
 ### Breaking
 
@@ -371,6 +375,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   corrective, nudges and steers are recorded under the next step.
 - `@xandreed/core`: `RunResult` is a union: `completed`/`completed`, or
   `partial` with `step-cap` or `degenerate-loop`.
+- `@xandreed/core`: `TurnWriter` gains `closing(drafts)`: drafts held for
+  the turn's end and stored only in the end's commit, right before
+  `turn.ended`. A later call replaces them, `flush` does not store them, and
+  a cancel, reap or removal drops them.
+- A turn's `turn.reply` (and what memory records after it) is stored with
+  its `turn.ended`, not before: journal readers see no reply until the turn
+  ends, and a cancelled or reaped turn stores none.
 
 ### Added
 
@@ -725,6 +736,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   session's runs and turns: `<turn>.<ordinal>.<step>:<tool>:<n>`, and
   `<turn>.<ordinal>.planned:<n>` for a planned batch. Earlier sessions keep
   their stored ids.
+- A process that stops between a turn's reply and its end no longer leaves
+  an interrupted turn holding a completed reply.
+- A turn whose reactions to its reply fail, or whose drain is cut, stores
+  its reply as failed (text kept), not completed beside a failed end.
+- A writer whose scope closes holding a completed or partial reply ends the
+  turn with that outcome instead of `turn.unended`.
 
 ### Repository
 

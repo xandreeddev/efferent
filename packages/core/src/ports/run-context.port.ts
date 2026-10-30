@@ -22,7 +22,7 @@ export class RunContext extends Context.Service<RunContext, {
   readonly tasks: TurnTasksService
   /** Host-initiated skill activation (e.g. a handler that needs another skill next step). */
   readonly activate: (skills: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<string>, TurnError>
-  /** Wait until every journal write queued so far is stored (before an externally visible action). */
+  /** Wait until every journal write queued so far is stored (before an externally visible action); the turn's reply waits for its end. */
   readonly flush: Effect.Effect<void, TurnError>
   /** Run a host store write in journal order (after everything queued before it). */
   readonly write: <A, E>(op: Effect.Effect<A, E>) => Effect.Effect<A, E | TurnError>

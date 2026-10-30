@@ -46,8 +46,8 @@ export interface Decided<A> {
  * append the store fails (`SessionLogError`, or `SessionContended` after
  * too many conflicts in a row), or whose commit dies with a defect
  * (`HarnessError` `session.defect`, logged with its cause), fails every
- * later write and flush with that error. `append` and `transact` refuse a
- * draft under one of the framework's kinds (`RESERVED_KINDS`) with
+ * later write and flush with that error. `append`, `transact` and `closing`
+ * refuse a draft under one of the framework's kinds (`RESERVED_KINDS`) with
  * `ReservedKind`, storing nothing of that call, unless the framework's turn
  * wrote it (`frameworkDraft`): only the turn records memory, the bus's
  * events and `request.prepared`. Every method fails with a `TurnError`:
@@ -80,18 +80,29 @@ export interface TurnWriter {
    * before the commit, it decides again with their events.
    */
   readonly transact: <A, E>(decide: (foreign: ReadonlyArray<SessionLogEvent>) => Effect.Effect<Decision<A>, E>) => Effect.Effect<Decided<A>, E | TurnError>
-  /** Wait until everything queued so far is stored. */
+  /** Wait until everything queued so far is stored (never the closing drafts: the end stores them). */
   readonly flush: Effect.Effect<void, TurnError>
   /**
-   * Close the turn: `turn.ended` is committed after every write queued
-   * before it. It is admitted like a write (so it waits while one waits for
-   * room in a full queue); from then on `append`, `write` and `transact` are
-   * refused, and `flush` still waits for what is queued. Calls while it runs
-   * share its result. A stored end, or a turn closed elsewhere, is final;
-   * after any other failure (a store error) writes are admitted again and a
-   * later end, the scope's own at the latest, tries again: the scope's with
-   * the last ending whose commit was tried. Returns how many inbox items
-   * wait.
+   * Hold the turn's closing drafts (the framework's turn holds its reply,
+   * `turn.reply`, and what memory records after it): they are stored only in
+   * the end's own commit, directly before `turn.ended`, so a turn is never
+   * stored replied but not ended. A later call replaces them; `flush` does
+   * not store them; a close from elsewhere (a cancel, a reap, a removal)
+   * discards them. Refused as `append` is (`ReservedKind`, `TurnClosed`
+   * once the end is under way), and, held, counts as a write of the turn.
+   */
+  readonly closing: (drafts: ReadonlyArray<TurnDraft>) => Effect.Effect<void, TurnError>
+  /**
+   * Close the turn: one commit stores the held closing drafts (`closing`),
+   * then `turn.ended`, after every write queued before it. It is admitted
+   * like a write (so it waits while one waits for room in a full queue);
+   * from then on `append`, `write`, `transact` and `closing` are refused,
+   * and `flush` still waits for what is queued. Calls while it runs share
+   * its result. A stored end, or a turn closed elsewhere, is final; after
+   * any other failure (a store error) writes are admitted again, the
+   * closing drafts still held, and a later end, the scope's own at the
+   * latest, tries again: the scope's with the last ending whose commit was
+   * tried. Returns how many inbox items wait.
    */
   readonly end: (ending: TurnEnding) => Effect.Effect<{ readonly pending: number }, TurnError>
   /** Completes when someone else closed the turn (never with `ended`); never when it ends by `end`. */
@@ -161,9 +172,11 @@ export class Sessions extends Context.Service<Sessions, {
     Effect.Effect<{ readonly cancelled: boolean; readonly pending: number }, SessionMissing | SessionContended | SessionLogError>
   /**
    * Open a turn, through the host's TurnAdmission. Its writer lives in the
-   * scope; a writer the scope closes unended ends with the last ending it
-   * tried to store, or, when none was tried, as failed (`turn.unended`), or
-   * as interrupted (`turn.interrupted`) when the scope was interrupted.
+   * scope; a writer the scope closes unended ends, its closing drafts stored
+   * with it, with the last ending it tried to store, or, when none was
+   * tried, the one its held reply implies (`replyEndingOf`: completed or
+   * partial), else as failed (`turn.unended`), or as interrupted
+   * (`turn.interrupted`) when the scope was interrupted.
    * The input's `meta` is stored in `turn.started` and shown on the writer's
    * `admitted`; it is not part of the key's fingerprint.
    * A user's turn with `resumes: n` resumes turn `n`: it must be the

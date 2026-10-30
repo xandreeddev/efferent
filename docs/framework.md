@@ -506,7 +506,11 @@ session admitted it, the host's `meta` included), `memory` (read-only), `events`
 `write(op)`. The turn is scoped: subscriptions and tasks end with it. On
 success, tasks and background subscriptions settle before the reply is
 recorded. The reply is recorded exactly once, with a `failed` outcome when
-`use` fails, is interrupted, or finalizer work fails. On failure or
+`use` fails, is interrupted, or finalizer work fails. It is stored with the
+turn's end, in one commit right before `turn.ended` (`TurnWriter.closing`),
+so the journal never holds a reply without its end: a reaction to the reply
+that fails, or a drain an interruption cuts, fails the turn and stores the
+reply failed, its text kept. On failure or
 interruption, the original cause is preserved and pending tasks are
 interrupted when the turn's scope closes. Once `use` has returned, its reply
 is recorded even when the turn is interrupted then; a cancelled turn does
@@ -1364,8 +1368,11 @@ and `RunContext` (which carries the turn's `session`). It provides:
   memory records nothing of the turn before its message, `turn.unstarted`),
   `persistReply(outcome)` (`turn.reply`, then `turn.ended` is published
   with the turn's usage; once, and a no-op when the message was never
-  persisted). The stored `turn.ended` is the writer's `end`, the turn's
-  closing commit;
+  persisted; a failed outcome after a completed one downgrades the reply,
+  publishing nothing again). The stored `turn.ended` is the writer's `end`,
+  the turn's closing commit: the reply, and what memory records after it,
+  are held for it (`TurnWriter.closing`) and stored in that one commit,
+  right before `turn.ended`, never by a `flush`;
 - `TurnToolbox`: `open` (once, but an open that failed can be retried; the
   handlers run with the opener's services) and `tools` (fails with
   `tools.unavailable` before `open`);
@@ -1380,7 +1387,9 @@ The lifecycle is functions over them: `openTurnTools`, `turnTools` (the
 host's view), `settleTurn` (join the tasks, drain the reactions, until quiet),
 `finishTurn(outcome)` (persist the reply, drain, flush; the reply and the
 flush happen even when the fiber is interrupted meanwhile, only the drain is
-cut), `guardTurn(body)` (settle on success, else finish as failed keeping
+cut; when the drain or the flush fails, or the drain is cut, the reply is
+downgraded to failed before the failure goes on), `guardTurn(body)` (settle
+on success, then `finishTurn`'s steps, else finish as failed keeping
 the cause: the failed reply recorded, its reactions drained interruptibly
 and for ten seconds at most, a failure of that finishing logged; on success
 it returns the `TurnResult`, the outcome with `RunContext.usage`; on failure
@@ -1434,7 +1443,9 @@ dependency scope closes; work forked by its finalizers settles before the next
 scope closes. The outer `guardTurn` includes that teardown before recording
 one final reply: a finalizer task failure produces a failed reply, rather than
 following a completed reply. `TurnLive` remains open for that settlement and
-flush, then closes; an agent-owned writer ends afterward.
+flush, then closes; an agent-owned writer ends afterward, its end storing the
+reply and `turn.ended` in one commit (a host that ends the writer itself
+stores them the same way, and a scope closed without an end stores them too).
 
 Subscriptions owned by the body, host or turn-dependent plugin scopes have
 already closed when the final `turn.ended` event is published. An observer that
@@ -1746,10 +1757,15 @@ turn of the session, or of the history a fork inherits, was begun with is
 and opens nothing. The writer (`TurnWriter`) is the turn's one
 way to write: `append`, `write(op)` in queue order, `transact(decide)`
 (check, then append: decided again with the events others wrote when
-someone commits first), `flush` (committed to storage), `end` (the closing
+someone commits first), `flush` (committed to storage), `closing(drafts)`
+(drafts held for the end: stored only by its commit, right before
+`turn.ended`, a later call replacing them; a flush stores none, a close
+from elsewhere drops them; the framework's turn holds its reply there),
+`end` (the closing
 commit; it returns how many inbox items wait, and after a store failure a
-later end tries again) and `closed` (completes when someone else closed the
-turn). A writer whose scope closes unended ends the turn as failed
+later end tries again, the drafts still held) and `closed` (completes when someone else closed the
+turn). A writer whose scope closes unended ends the turn, its held drafts
+stored, as its held reply implies (completed or partial), else as failed
 (`turn.unended`), or as interrupted (`turn.interrupted`) when the scope was
 interrupted; a begin interrupted after its opening commit ends it as
 interrupted (`turn.interrupted`) too. An append the store fails, or whose
@@ -1895,7 +1911,7 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 | Kind | Written by |
 | --- | --- |
 | `turn.started` (`runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, and `meta` and `resumes` when given) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
-| `turn.reply` | memory (`persistReply`) |
+| `turn.reply` | memory (`persistReply`), held for the turn's closing commit: stored right before its `turn.ended` |
 | `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`: the failing error's code; otherwise one of the framework's codes, `turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`, or a code the closer passes to `end` itself, such as plugin-tasks' `task.turn` and `task.deadline`) | the writer's `end` (`turnEndingOf` the turn's exit), its scope, a cancel or a reap |
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
 | `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.refused`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded`, `stream.fallback` | the turn's bus |
@@ -1929,7 +1945,7 @@ and fails with `NothingPending` when there are none. An item is done when its
 turn ends completed, partial or cancelled; a failed or interrupted claim
 returns it, up to `inbox.attempts` (2), and then it is dropped
 (`inbox.dropped`). A turn interrupted before it wrote anything through its
-writer (no `append`, `write` or `transact`) never tried its items: they wait
+writer (no `append`, `write`, `transact` or `closing`) never tried its items: they wait
 again and no attempt is counted. A turn reaped because its holder stopped
 counts. User messages never queue. `drain(address, run, { maxTurns, meta })` runs
 inbox turns while items wait, the session is free and the host admits them,
@@ -1989,7 +2005,7 @@ child's result and ending, deliver it and close the parent's turn; work the
 deadline itself cuts is logged with the task and how long it ran. A
 finite-budget runner admits at most one parent reaction and interrupts it at
 the execution cutoff: a reaction cut after it recorded its answer
-(`turn.reply`) ends partial, so its notice is done and never answered twice,
+(`turn.reply`, held for the reaction's end, which stores it) ends partial, so its notice is done and never answered twice,
 and one cut before ends interrupted, so the notice waits again. A parent turn
 admitted past the cutoff ends interrupted without reacting, and its notices
 wait with no attempt counted. A notice whose reaction cannot begin stays in
@@ -2184,9 +2200,10 @@ writer committed before the turn was closed:
 - `turn.ended`: `cancelled` with no failure after a cancel; `interrupted`
   with `turn.interrupted` after an interruption, or `turn.lease` when reaped.
 
-A cancelled turn has no `turn.reply`: its writes are refused once it is
-closed. An interrupted turn may keep a failed `turn.reply` with no text (the
-turn recorded its reply as failed before its end), which the model never
+A cancelled or reaped turn has no `turn.reply`: the reply is stored only
+with the turn's own end, and a close from elsewhere drops it. An interrupted
+turn may keep a failed `turn.reply` with no text (the turn recorded its
+reply as failed before its end), which the model never
 sees. What a tool did in the step in flight is not undone, and the resuming
 turn may call it again: a tool with side effects makes them safe to repeat,
 for example keyed by its input.
