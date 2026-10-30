@@ -256,7 +256,7 @@ describe("result views", () => {
 
   test("grep: no match with what was passed by, a view cut to its lines, a search stopped at its limit, files it could not read; the compact view", () => {
     const hit = (path: string, line: number) => ({ path, line, text: `hit ${line}`, match: true })
-    const searched: GrepResult = { pattern: "hit", path: ".", lines: [hit("a.txt", 1), hit("a.txt", 2), hit("b.txt", 1)], matches: 3, files: 2, truncated: false, skipped: 0, unreadable: [] }
+    const searched: GrepResult = { pattern: "hit", path: ".", lines: [hit("a.txt", 1), hit("a.txt", 2), hit("b.txt", 1)], matches: 3, files: 2, truncated: false, skipped: 0, unreadable: [], timedOut: false }
     expect(renderGrep({ ...searched, lines: [], matches: 0, files: 0 }, false, 10, 1_024)).toBe("No matches for hit in the workspace root.")
     expect(renderGrep({ ...searched, lines: [], matches: 0, files: 0, skipped: 2, unreadable: [{ path: "x.txt", reason: "Io" }] }, false, 10, 1_024)).toBe([
       "No matches for hit in the workspace root.",

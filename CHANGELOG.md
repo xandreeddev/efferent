@@ -26,6 +26,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `LogHandle.snapshot` can supply a fresh durable read after an uncertain
   append, so memory can recover allocated ids without acknowledging a
   failed write as successful. Rerun `memoryConformance`.
+- A whole `WorkspaceToolsConfig` adds `grepEngine: "auto"`,
+  `grepTimeoutMs: 30_000` and `grepIgnoreFiles: false` (or spreads defaults).
+  Auto uses ripgrep syntax when rg is available; select `"builtin"` to retain
+  JavaScript matching. `GrepResult.timedOut` decodes as false for older results.
+
 - A host writing a whole `LocalSystemConfig` adds `parentEnv: null` (or
   spreads `localSystemDefaults`). A whole `WorkspaceToolsConfig` adds
   `workspaceAccess: "write"` and `roots: []` (or spreads its defaults).
@@ -959,6 +964,12 @@ stays inside its package, with nothing deprecated first:
   `toolInputOf` gives views, digests and compact views the matching input
   when a provider call id is reused. The
   goldens reflect the new event and journal order; stored format is 4.
+- Workspace grep probes once for ripgrep through the Bash port, with a
+  bounded search, patterns on stdin, optional ignore-file handling and the
+  builtin fallback. Its description states the chosen syntax and line-width
+  behavior; grep view 4 reports partial timeout results and the environment
+  section states when ignore files are honoured.
+
 - `@xandreed/plugin-workspace`: `localSystemPlugin.parentEnv` sets the
   host's base environment for shell lookup and per-command inheritance.
   `workspaceToolsPlugin` gains `workspaceAccess` and extra `roots`, each

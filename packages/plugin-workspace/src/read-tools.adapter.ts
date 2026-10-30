@@ -1,8 +1,9 @@
 import { Tool } from "effect/ai"
 import { Effect, Option, Result } from "effect"
 import type { Path, RcMap, Semaphore } from "effect"
-import { defineTool, Failure, FileSystem, SessionEnvironment, SubjectId } from "@xandreed/core"
+import { Bash, defineTool, Failure, FileSystem, SessionEnvironment, SubjectId } from "@xandreed/core"
 import type { RegisteredTool, Subject } from "@xandreed/core"
+import { searchRipgrep } from "./ripgrep.adapter.js"
 import { compilePattern, searchText } from "./text-search.entity.functions.js"
 import { decodeText, formatBytes, lineWindow, looksBinary, mediaTypeOf } from "./text-window.entity.functions.js"
 import { displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget, withinAnyRoot } from "./workspace-path.entity.functions.js"
@@ -128,13 +129,15 @@ interface Searched {
  */
 export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: GrepTool(config),
-  requires: WORKSPACE_SERVICES,
+  requires: config.grepEngine === "ripgrep" ? [...WORKSPACE_SERVICES, Bash] : WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path, config)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
-    const pattern = yield* Effect.fromResult(compilePattern(params.pattern, { literal: params.literal ?? false, ignoreCase: params.ignoreCase ?? false }))
+    const pattern = config.grepEngine === "ripgrep" ? Option.none<RegExp>()
+      : Option.some(yield* Effect.fromResult(compilePattern(params.pattern, { literal: params.literal ?? false, ignoreCase: params.ignoreCase ?? false })))
     const info = yield* access.fs.stat(target.path).pipe(Effect.mapError(fsFailure(target.display)))
     if (info.kind !== "file" && info.kind !== "directory") return yield* Effect.fail(notAFile(target.display, "grep"))
+    if (config.grepEngine === "ripgrep") return yield* searchRipgrep(access, target, info.kind === "directory", params, config)
     const glob = params.glob === undefined ? "**/*" : params.glob.includes("/") ? params.glob : `**/${params.glob}`
     const files = info.kind === "file" ? [{ path: target.path, display: target.display }]
       : yield* access.fs.glob(glob, { cwd: target.path, exclude: walkExcludes(access, target, config.exclude), dot: true, onlyFiles: true }).pipe(
@@ -161,7 +164,7 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
         Effect.map(Option.match({
           onNone: () => skip(state),
           onSome: (content): Searched => {
-            const found = searchText(decodeText(content).text, pattern, { lineChars: config.grepLineChars, context, cap: Math.min(perFile, limit - state.matches) })
+            const found = searchText(decodeText(content).text, Option.getOrThrow(pattern), { lineChars: config.grepLineChars, context, cap: Math.min(perFile, limit - state.matches) })
             return {
               ...state,
               lines: [...state.lines, ...found.lines.map((line) => ({ path: file.display, ...line }))],
@@ -174,8 +177,8 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
         Effect.catch((error) => Effect.succeed({ ...state, unreadable: [...state.unreadable, { path: file.display, reason: error.reason }] })),
       )
     })
-    return { pattern: params.pattern, path: target.display, ...searched }
+    return { pattern: params.pattern, path: target.display, ...searched, timedOut: false }
   }),
-  view: { version: "3", render: (result, params) => renderGrep(result, (params.context ?? 0) > 0, config.maxLines, config.maxBytes), compact: compactGrep },
+  view: { version: "4", render: (result, params) => renderGrep(result, (params.context ?? 0) > 0, config.maxLines, config.maxBytes), compact: compactGrep },
   annotations: { readOnly: true },
 })

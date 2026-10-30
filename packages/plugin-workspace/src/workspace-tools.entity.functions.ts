@@ -54,7 +54,7 @@ export const toolDescriptions = (config: WorkspaceToolsConfig): Readonly<Record<
   edit: "Change part of a file by replacing exact text. Each edit's oldText must appear exactly once in the file: copy it from read (without the notice lines), with enough surrounding lines to be unique. All edits are matched against the file as it was before this call and must not overlap; newText replaces oldText (empty to delete it). Line endings and a byte-order mark are kept.",
   ls: `List a directory (by default the workspace root): one entry per line, directories ending in /, symbolic links in @. At most ${config.lsEntries} entries; limit (1 to ${config.lsEntries}) asks for fewer.`,
   find: `Find files whose path matches a glob pattern, relative to path (by default the workspace root): * and ? match within a name, ** any number of directories, {a,b} either; e.g. **/*.ts or src/**/test_*.py. Never looks inside ${inWords([...config.exclude, "symbolic links"], "or")}. At most ${config.findResults} paths; limit (1 to ${config.findResults}) asks for fewer.`,
-  grep: `Search file contents for a regular expression (JavaScript syntax), or for plain text with literal: true. path is a file or a directory (by default the workspace root); glob limits the files searched (*.ts searches every directory). Shows path:line:text for each matching line, and context lines around each match when asked. Lines are cut to ${config.grepLineChars} characters before matching. At most ${config.grepMatches} matching lines; limit (1 to ${config.grepMatches}) asks for fewer. ${inWords(["Binary files", ...config.exclude, "symbolic links"], "and")} are skipped, and files that cannot be read are named.`,
+  grep: `Search file contents for a regular expression (${config.grepEngine === "ripgrep" ? "ripgrep syntax: no lookaround or backreferences" : "JavaScript syntax"}), or for plain text with literal: true. path is a file or a directory (by default the workspace root); glob limits the files searched (*.ts searches every directory). Shows path:line:text for each matching line, and context lines around each match when asked. ${config.grepEngine === "ripgrep" ? `Lines longer than ${config.grepLineChars} characters are shown cut. The search stops after ${seconds(config.grepTimeoutMs)}.` : `Lines are cut to ${config.grepLineChars} characters before matching.`} At most ${config.grepMatches} matching lines; limit (1 to ${config.grepMatches}) asks for fewer. ${inWords(["Binary files", ...config.exclude, "symbolic links"], "and")} are skipped, and files that cannot be read are named.`,
   bash: `Run a shell command with bash -c in the workspace root. timeout is in seconds (default ${seconds(config.bashTimeoutMs)}, at most ${seconds(config.bashMaxTimeoutMs)}); stdin is written to the command's standard input. Returns the exit code and the output, stdout and stderr in the order they came. Output longer than ${config.maxLines} lines or ${formatBytes(config.maxBytes)} is cut to its end${config.spillDir === null ? "" : `, and the whole of it (up to ${formatBytes(config.maxFileBytes)}) is saved to a file you can read`}. A non-zero exit code is a result to read, not a failure. Anything the command leaves running may be stopped when it returns.`,
 })
 
@@ -76,6 +76,7 @@ export const environmentText = (root: string, config: WorkspaceToolsConfig, tool
     ...(config.confine && config.workspaceAccess === "read" && (has("write") || has("edit")) ? ["write and edit change nothing in the workspace unless a writable extra root permits it."] : []),
     ...(has("read") ? [`read shows a file ${config.maxLines} lines or ${formatBytes(config.maxBytes)} at a time; continue with the offset it gives.`] : []),
     ...((has("find") || has("grep")) && config.exclude.length > 0 ? [`find and grep never look inside ${config.exclude.join(", ")}.`] : []),
+    ...(has("grep") && config.grepEngine === "ripgrep" && config.grepIgnoreFiles ? ["grep honours .gitignore, .ignore and other ripgrep ignore files."] : []),
     ...(has("edit") ? ["edit replaces exact text: read the file first and copy the text to change from it."] : []),
     ...(has("write") || has("edit") ? [config.protect.length === 0 ? "" : `write and edit leave ${config.protect.join(", ")} alone in the workspace.`] : []),
     ...(has("bash") ? [`bash runs commands in the workspace root with a ${seconds(config.bashTimeoutMs)} timeout.${config.spillDir === null ? "" : " When their output is cut, the whole of it is saved to a file under " + config.spillDir + " that read can open."} Shell commands are not confined by the file tools' roots or read-only access.`] : []),
@@ -233,6 +234,7 @@ const unreadableLines = (result: GrepResult): ReadonlyArray<string> =>
 
 export const renderGrep = (result: GrepResult, withContext: boolean, maxLines: number, maxBytes: number): string => {
   const skipped = [
+    ...(result.timedOut ? ["[Search timed out; these are partial results. Narrow the pattern or the path and search again.]"] : []),
     ...(result.skipped === 0 ? [] : [`[${result.skipped} file${result.skipped === 1 ? "" : "s"} skipped: binary, larger than the read limit, or leading outside the workspace.]`]),
     ...unreadableLines(result),
   ]
@@ -247,7 +249,7 @@ export const renderGrep = (result: GrepResult, withContext: boolean, maxLines: n
 }
 
 export const compactGrep = (result: GrepResult): string =>
-  `(grep ${result.pattern} in ${result.path}: ${result.truncated ? `${result.matches}+ matching lines` : counted(result.matches, "matching line", "matching lines")} in ${counted(result.files, "file", "files")})`
+  `(grep ${result.pattern} in ${result.path}: ${result.truncated ? `${result.matches}+ matching lines` : counted(result.matches, "matching line", "matching lines")} in ${counted(result.files, "file", "files")}${result.timedOut ? "; timed out, partial results" : ""})`
 
 /** How a command ended, in a sentence. */
 const endOf = (result: BashToolResult): string =>

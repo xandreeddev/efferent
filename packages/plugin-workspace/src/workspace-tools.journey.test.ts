@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { LanguageModel } from "effect/ai"
@@ -223,4 +224,18 @@ test("journey: a host's read-only extra root is readable and its write refusal r
   expect(seen.requests[3]?.prompt).toContain(`${seen.file} is under ${seen.references}, which the workspace tools may read but not change`)
   const completed = seen.stored.filter((event) => event.kind === "tool.completed")
   expect(completed.some((event) => event.data.tool === "write" && event.data.ok === false)).toBe(true)
+})
+
+
+test.skipIf(spawnSync("rg", ["--version"]).status !== 0)("journey: rg search output reaches the next model request and the journal through grep view4", async () => {
+  const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const root = yield* workspace
+    yield* Effect.promise(() => writeFile(join(root, "notes.txt"), "before\nneedle\nafter\n"))
+    return yield* turnOver(root, [], [call("g1", "grep", { pattern: "needle", context: 1 }), stop("Found it.")], "find needle", undefined, { grepEngine: "ripgrep" })
+  })))
+  expect(seen.outcome.reply).toEqual(Option.some("Found it."))
+  expect(seen.requests[1]?.prompt).toContain("notes.txt-1-before\\nnotes.txt:2:needle\\nnotes.txt-3-after")
+  expect(seen.stored.filter((event) => event.kind === "tool.completed").map((event) => event.data)).toMatchObject([{ tool: "grep", ok: true }])
+  expect(seen.stored.filter((event) => event.kind === "memory.tool-presentation").map((event) => event.data)).toMatchObject([{ body: { viewVersion: "4", view: "notes.txt-1-before\nnotes.txt:2:needle\nnotes.txt-3-after" } }])
+  expect(seen.stored.filter((event) => event.kind === "turn.ended")).toHaveLength(1)
 })

@@ -558,6 +558,9 @@ Optional: `@xandreed/core/Bash`
   "findResults": 1000,
   "grepMatches": 100,
   "grepLineChars": 500,
+  "grepEngine": "auto",
+  "grepTimeoutMs": 30000,
+  "grepIgnoreFiles": false,
   "maxFileBytes": 33554432,
   "readImages": true,
   "fuzzyEdit": true,
@@ -695,6 +698,22 @@ Optional: `@xandreed/core/Bash`
       "minimum": 16,
       "maximum": 100000
     },
+    "grepEngine": {
+      "type": "string",
+      "enum": [
+        "auto",
+        "ripgrep",
+        "builtin"
+      ]
+    },
+    "grepTimeoutMs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "grepIgnoreFiles": {
+      "type": "boolean"
+    },
     "maxFileBytes": {
       "type": "integer",
       "minimum": 1024,
@@ -777,6 +796,9 @@ Optional: `@xandreed/core/Bash`
     "findResults",
     "grepMatches",
     "grepLineChars",
+    "grepEngine",
+    "grepTimeoutMs",
+    "grepIgnoreFiles",
     "maxFileBytes",
     "readImages",
     "fuzzyEdit",

@@ -175,6 +175,25 @@ const workspaceTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function*
  return yield* agent.turn({ turn: { session: { id: view.header.id, owner: "consumer" }, userMessage: new UserMessage({ text: "make it oat milk" }), runId: RunId.make("workspace-1") }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
   (turn) => turn.tools.select(turn.userMessage).pipe(Effect.andThen(turn.run({})), Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
 })))
+const workspaceRg = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+ const rgCalls = JSON.parse("[]")
+ const rgBash = Bash.of({
+  exec: () => Effect.succeed({ stdout: "ripgrep 15", stderr: "", exitCode: Option.some(0), signal: Option.none(), termination: "exit", durationMs: 1 }),
+  stream: (command, options) => {
+   rgCalls.push({ command, options })
+   return Stream.make(
+    { _tag: "BashChunk", stream: "stdout", text: JSON.stringify({ type: "match", data: { path: { text: "notes.md" }, lines: { text: "needle" }, line_number: 1 } }) + "\\n" },
+    { _tag: "BashExit", exitCode: Option.some(0), signal: Option.none(), termination: "exit", durationMs: 1 },
+   )
+  },
+ })
+ const fs = yield* makeMemoryFileSystem({ "/work/notes.md": "needle" })
+ const capability = yield* workspaceTools({ ...workspaceToolsDefaults, tools: ["grep"], grepEngine: "ripgrep" }).pipe(Effect.provideService(Bash, rgBash))
+ const services = Context.make(FileSystem, fs).pipe(Context.add(SessionEnvironment, { workspace: "/work" }), Context.add(Bash, rgBash))
+ const value = yield* capability.tools[0].handler({ pattern: "needle" }).pipe(Effect.provide(services), Effect.flatMap(Schema.decodeUnknownEffect(GrepResult)))
+ return value.matches === 1 && value.files === 1 && value.timedOut === false && rgCalls.length === 1 && rgCalls[0].options.stdin === "needle" && !rgCalls[0].command.includes("needle")
+})))
+if (!workspaceRg) { console.error("The packed ripgrep adapter failed"); process.exit(1) }
 const workspaceNotes = await readFile(join(workspaceRoot, "notes.md"), "utf8")
 const workspaceReferenceAfter = await readFile(workspaceReference, "utf8")
 await rm(workspaceRoot, { recursive: true, force: true })
@@ -203,7 +222,7 @@ import { Bash, Capabilities, FileSystem, makeMemoryFileSystem, TaskActivity, Tas
 import { bashConformance, fileSystemConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import type { TurnWriter } from "@xandreed/core"
 import { modelsPlugin } from "@xandreed/plugin-models"
-import { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
+import { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceTools, workspaceToolsDefaults, GrepResult, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
 import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
@@ -421,7 +440,7 @@ if (deepImport !== "ERR_PACKAGE_PATH_NOT_EXPORTED") { console.error("A deep impo
 console.log("${nodeReady.length} published entries load on Node, and core refuses a deep import")
 const { encodeSse, FeedReady, renderSurfacePlugin } = await import("@xandreed/plugin-render")
 if (renderSurfacePlugin.id !== "@xandreed/plugin-render/surface" || encodeSse(FeedReady.make({})) !== "event: ready\\ndata: {}\\n\\n") process.exit(1)
-const { Context, Effect, Layer, Option, Stream } = await import("effect")
+const { Context, Effect, Layer, Option, Schema, Stream } = await import("effect")
 const { LanguageModel } = await import("effect/ai")
 const { makeMemoryFileSystem, StepLoop } = await import("@xandreed/core")
 const { fileSystemConformance, sessionLogRecoveryConformance, stepLoopConformance, turnConformance } = await import("@xandreed/core/conformance")
@@ -477,7 +496,7 @@ const { tmpdir } = await import("node:os")
 const { join } = await import("node:path")
 const { Bash, Capabilities, FileSystem, RunId, SessionEnvironment, UserMessage } = await import("@xandreed/core")
 const { bashConformance } = await import("@xandreed/core/conformance")
-const { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } = await import("@xandreed/plugin-workspace")
+const { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceTools, workspaceToolsDefaults, GrepResult, workspaceToolsPlugin } = await import("@xandreed/plugin-workspace")
 // The busy signal on Node: an open turn and a running task count, and awaitIdle sees both settle.
 const { awaitIdle, processActivity, TaskRunner } = await import("@xandreed/core")
 const { InProcessTaskRunnerLive } = await import("@xandreed/plugin-tasks")
