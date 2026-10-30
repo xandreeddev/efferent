@@ -1,6 +1,6 @@
 import { Effect, Option } from "effect"
-import { canonicalJson, defineCapability, fingerprintOf, HarnessError, SkillId, skillIssuesText } from "@xandreed/core"
-import type { Capability, PromptSection, SkillDefinition, SkillFileIssue } from "@xandreed/core"
+import { canonicalJson, defineCapability, definePromptSection, fingerprintOf, HarnessError, SkillId, skillIssuesText } from "@xandreed/core"
+import type { Capability, SkillDefinition, SkillFileIssue } from "@xandreed/core"
 import type { SkillRoot, SkillsDirectoryConfig, SkillsFound } from "./skills-directory.entity.js"
 
 /**
@@ -73,7 +73,8 @@ export const alwaysSkillsText = (skills: ReadonlyArray<SkillDefinition>): Option
 
 /** The skills as one capability, with the always-on section when `alwaysSection` is set and some skill is always on. */
 export const skillsCapability = (skills: ReadonlyArray<SkillDefinition>, config: Pick<SkillsDirectoryConfig, "alwaysSection" | "sectionOrder">): Capability => {
-  const section = Option.filter(alwaysSkillsText(skills), () => config.alwaysSection).pipe(Option.map((text): PromptSection => ({
+  // The text is the skills', made here: the section reads no service when it renders.
+  const section = Option.filter(alwaysSkillsText(skills), () => config.alwaysSection).pipe(Option.map((text) => definePromptSection({
     id: ALWAYS_SECTION_ID, version: fingerprintOf(text), tier: "static", order: config.sectionOrder, render: () => Effect.succeed(Option.some(text)),
   })))
   return defineCapability({

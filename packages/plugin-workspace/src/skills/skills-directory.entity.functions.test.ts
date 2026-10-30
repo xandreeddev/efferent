@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Exit, Option, Tracer } from "effect"
 import { defineSkill, readSkillFiles } from "@xandreed/core"
-import type { HarnessError } from "@xandreed/core"
 import { alwaysSkillsText, mergeSkillRoots, settleSkills, skillsCapability } from "./skills-directory.entity.functions.js"
 
 const skillFile = (path: string, name: string, description: string) => ({ path, text: `---\nname: ${name}\ndescription: ${description}\n---\n` })
@@ -56,8 +55,9 @@ describe("the always-on section", () => {
   test("is a static section of the capability unless alwaysSection is off; the capability's version follows the skills'", async () => {
     const on = skillsCapability(skills, { alwaysSection: true, sectionOrder: 850 })
     expect(on.promptSections.map((section) => [section.id, section.tier, section.order])).toEqual([["workspace.skills.always", "static", 850]])
-    const rendered = on.promptSections[0]!.render({ variant: Option.none(), active: [], skills }) as Effect.Effect<Option.Option<string>, HarnessError>
-    expect(await Effect.runPromise(rendered)).toEqual(alwaysSkillsText(skills))
+    // It reads no service: it renders with none provided.
+    expect(on.promptSections[0]!.requires).toEqual([])
+    expect(await Effect.runPromise(on.promptSections[0]!.render({ variant: Option.none(), active: [], skills }))).toEqual(alwaysSkillsText(skills))
     expect(skillsCapability(skills, { alwaysSection: false, sectionOrder: 850 }).promptSections).toEqual([])
     expect(skillsCapability(skills.slice(1), { alwaysSection: true, sectionOrder: 1 }).version).not.toBe(on.version)
   })

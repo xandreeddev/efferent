@@ -165,7 +165,10 @@ is refused by `Agent.define` (`config.graph`, naming the missing service).
 A tool declares the services its handler reads too (`defineTool`'s
 `requires`; a handler that reads another does not compile), and a turn whose
 services lack one fails to open its tools with `requires.missing`, naming
-the tool and the service, before its first step.
+the tool and the service, before its first step. A prompt section that reads
+services is built with `definePromptSection` and lists them the same way; a
+turn that renders it without one fails with `requires.missing`, naming the
+section and the service.
 
 Options are given as `{ plugin, options }` entries in `Agent.define({ plugins })`.
 They merge over the plugin's defaults, nested objects key by key (an array,

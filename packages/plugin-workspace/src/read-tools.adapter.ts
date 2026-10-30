@@ -20,7 +20,7 @@ export interface WorkspaceToolContext {
   readonly locks: RcMap.RcMap<string, Semaphore.Semaphore>
 }
 
-/** The services every workspace tool reads on each call: the file system, and the session's workspace on it (`bash` reads `Bash` too). */
+/** The services every workspace tool reads on each call, and the `workspace.environment` section on each render: the file system, and the session's workspace on it (`bash` reads `Bash` too). */
 export const WORKSPACE_SERVICES = [FileSystem, SessionEnvironment] as const
 
 export const failure = (error: string, message: string): Failure => ({ error, message })

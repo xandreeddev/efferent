@@ -1,9 +1,10 @@
 import { test, expect } from "bun:test"
-import { Context, Effect, Schema } from "effect"
+import { Context, Effect, Option, Schema } from "effect"
 import { Tool } from "effect/ai"
 import { strictJsonSchema, toolParametersSchema } from "../loop/toolSchema.js"
+import type { PromptContext, PromptSection } from "../ports/capability.port.js"
 import { SessionEnvironment } from "../ports/harness.port.js"
-import { catalogOf, defineCapability, defineSkill, defineTool, resolveCapabilities } from "./capability.entity.functions.js"
+import { catalogOf, defineCapability, definePromptSection, defineSkill, defineTool, resolveCapabilities } from "./capability.entity.functions.js"
 import { CapabilityToolId, SkillId } from "./capability.entity.js"
 
 const tool = { id: CapabilityToolId.make("account"), version: "1", description: "Read account", returns: "Account", permissions: ["account.read"], inputSchema: {}, outputSchema: {} }
@@ -48,4 +49,19 @@ test("a tool's handler may read only the services it declares, and gets them whe
   const at = (name: string) => Effect.runPromise(Effect.provideService(declared.handler({}), SessionEnvironment, { workspace: name }))
   expect([await at("a"), await at("b")]).toEqual(["in a", "in b"])
   expect(await Effect.runPromise(Effect.flip(declared.handler({})))).toMatchObject({ code: "requires.missing", message: `where requires ${SessionEnvironment.key}` })
+})
+test("a prompt section may read only the services it declares, and gets them where it renders, once each is there", async () => {
+  const Prefix = Context.Reference<string>("test/Prefix", { defaultValue: () => "in" })
+  const workspace = SessionEnvironment.pipe(Effect.map((environment) => Option.some(environment.workspace)))
+  const context: PromptContext = { variant: Option.none(), active: [], skills: [] }
+  const declared = definePromptSection({ id: "where", version: "1", tier: "session", order: 0, requires: [SessionEnvironment, Prefix], render: () => Effect.all([Prefix, workspace], { concurrency: 1 }).pipe(Effect.map(([prefix, root]) => Option.map(root, (name) => `${prefix} ${name}`))) })
+  // @ts-expect-error -- the section reads SessionEnvironment, which `requires` does not list.
+  const undeclared = definePromptSection({ id: "where", version: "1", tier: "session", order: 0, render: () => workspace })
+  // @ts-expect-error -- a section written as a plain value reads no service.
+  const plain: PromptSection = { id: "where", version: "1", tier: "session", order: 0, render: () => workspace }
+  // A Reference has a default, so there is nothing to check for it.
+  expect([declared.requires, undeclared.requires, plain.requires]).toEqual([[SessionEnvironment.key], [], undefined])
+  const at = (name: string) => Effect.runPromise(Effect.provideService(declared.render(context), SessionEnvironment, { workspace: name }))
+  expect([await at("a"), await at("b")]).toEqual([Option.some("in a"), Option.some("in b")])
+  expect(await Effect.runPromise(Effect.flip(declared.render(context)))).toMatchObject({ code: "requires.missing", message: `where requires ${SessionEnvironment.key}` })
 })

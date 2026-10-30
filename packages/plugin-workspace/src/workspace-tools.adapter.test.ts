@@ -613,6 +613,24 @@ describe("workspaceToolsPlugin", () => {
     ])
   })
 
+  test("the environment section declares the same services: it renders the workspace where they are, and fails with requires.missing where they are not", async () => {
+    const seen = await scoped(Effect.gen(function* () {
+      const { root, capability } = yield* bench()
+      const [section] = capability.promptSections
+      const render = section!.render({ variant: Option.none(), active: [], skills: [] })
+      const services = Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: root }))
+      return {
+        root,
+        requires: section!.requires,
+        text: Option.getOrElse(yield* render.pipe(Effect.provide(services)), () => ""),
+        missing: yield* Effect.flip(render.pipe(Effect.provideService(FileSystem, localFileSystem))),
+      }
+    }))
+    expect(seen.requires).toEqual([FileSystem.key, SessionEnvironment.key])
+    expect(seen.text).toContain(seen.root)
+    expect(seen.missing).toMatchObject({ code: "requires.missing", message: `workspace.environment requires ${SessionEnvironment.key}` })
+  })
+
   test("resolves in a graph after the local system, with Bash, and refuses bad options", async () => {
     const tools = await scoped(Effect.gen(function* () {
       const graph = yield* resolveGraph({ version: 1, plugins: [

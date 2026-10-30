@@ -82,7 +82,9 @@ export default tasksPlugin
   `optional` a service the plugin reads that way per turn too. A tool lists
   the services its handler reads in `defineTool`'s `requires` (one it reads
   without listing does not compile); a run lacking one fails to open its
-  tools with `requires.missing`.
+  tools with `requires.missing`. A prompt section that reads services is
+  built with `definePromptSection` and lists them in its `requires` the same
+  way (a plain `PromptSection` reads none).
 - Export `<thing>Plugin`, `<Thing>PluginLive = <thing>Plugin.live`, the
   config schema and the defaults; `export default` the package's main plugin.
 - A plugin builds only its own services from what it requires. Agents are

@@ -178,6 +178,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   with `sessions.drain(address, executor.react)`, provides its `Tasks`:
   `.pipe(Effect.provideService(Tasks, tasks))`. Custom executors need no
   change.
+- Rebuild a prompt section that reads services (for example
+  `SessionEnvironment`) with `definePromptSection` and list those services
+  in `requires`; a section that reads none can stay a plain `PromptSection`
+  value.
 
 ### Breaking
 
@@ -471,6 +475,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   tasks plugin provides its own around the turns it hands over, and
   `agentTaskExecutor` adds it to the turn's services. `tasksConformance`
   checks it (`executor-tasks`).
+- `@xandreed/core`: a prompt section's `render` can no longer read services
+  it does not declare: `PromptSection.render` needs no services, and a
+  section that reads services is built with the new
+  `definePromptSection({ id, version, tier, order, requires, render })`. A
+  render missing a declared service fails with `requires.missing`, naming
+  the section and the service, instead of dying mid-turn. `inCaller` is
+  removed.
 
 ### Added
 
@@ -1082,6 +1093,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   tolerates there, fails the gate.
 - The tool registry and the MCP bridge build their handlers without type
   erasure and leave the declared erasure boundary.
+- `effect/no-unknown-requirements`' allow list keeps only the turn's host
+  layer (`turn.port.ts`) and the sdk code that provides it: tools and
+  prompt sections no longer erase their requirements.
 
 ## 0.14.0 — 2026-10-29
 

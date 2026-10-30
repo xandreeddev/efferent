@@ -93,13 +93,20 @@ export interface PromptContext {
   readonly skills: ReadonlyArray<SkillDefinition>
 }
 
-/** One section of the system prompt (static/session) or of the turn context (turn). */
+/**
+ * One section of the system prompt (static/session) or of the turn context
+ * (turn). `render` reads only the services `requires` names, from where the
+ * turn renders it (the run's services); `definePromptSection` checks them by
+ * key on each render. A section that reads none is a plain value.
+ */
 export interface PromptSection {
   readonly id: string
   readonly version: string
   readonly tier: PromptTier
   readonly order: number
-  readonly render: (context: PromptContext) => Effect.Effect<Option.Option<string>, HarnessError, unknown>
+  /** The keys of the services `render` reads; a Reference, which has a default, is not among them. */
+  readonly requires?: ReadonlyArray<string>
+  readonly render: (context: PromptContext) => Effect.Effect<Option.Option<string>, HarnessError>
 }
 
 export interface StepInfo {

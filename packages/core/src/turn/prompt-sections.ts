@@ -16,11 +16,14 @@ const bySection: Order.Order<PromptSection> = Order.combineAll([
 export const orderSections = (sections: ReadonlyArray<PromptSection>): ReadonlyArray<PromptSection> =>
   Arr.sort(sections, bySection)
 
-/** Render sections in order; a section that renders None is left out. Their requirements are the caller's. */
+/**
+ * Render sections in order; a section that renders None is left out. Each
+ * reads the services it declares where this runs, and needs nothing else.
+ */
 export const renderSections = (
   sections: ReadonlyArray<PromptSection>,
   context: PromptContext,
-): Effect.Effect<ReadonlyArray<{ readonly section: PromptSection; readonly text: string }>, HarnessError, unknown> =>
+): Effect.Effect<ReadonlyArray<{ readonly section: PromptSection; readonly text: string }>, HarnessError> =>
   Effect.forEach(orderSections(sections), (section) => section.render(context).pipe(
     Effect.map((text) => Option.map(text, (value) => ({ section, text: value }))),
   ), { concurrency: 1 }).pipe(Effect.map((rendered) => rendered.flatMap(Option.toArray)))

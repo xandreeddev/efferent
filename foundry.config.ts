@@ -148,22 +148,15 @@ const PROVIDER_NAMESPACE_EDGES = ["packages/core/src/domain/engine-stamp.entity.
 /**
  * Effect, Stream and Layer types whose requirements are `unknown`
  * (`effect/no-unknown-requirements`), so a service they read compiles
- * whether anything provides it or not. A registered tool's handler and a
- * prompt section's render are typed so (`capability.port.ts`): `defineTool`
- * casts a typed handler to it, the tool registry wraps those handlers,
- * `renderSections` hands the sections' requirements to its caller and the
- * turn meets them with the caller's own context; each goes once a
- * capability declares the services it reads, checked by key when a run
- * opens. A turn's host layer (`NewTurn.layer`) and the sdk code that
- * provides it and the turn's plugins stay: a JSON config picks those
- * services at run time, and the plugin graph checks them by key. FROZEN
- * like NULLABLE_EDGES: the list only shrinks.
+ * whether anything provides it or not. Tools and prompt sections declare
+ * the services they read (`defineTool`, `definePromptSection`), checked by
+ * key where they run. What stays: a turn's host layer (`NewTurn.layer`) and
+ * the sdk code that provides it and the turn's plugins: a JSON config picks
+ * those services at run time, and the plugin graph checks them by key.
+ * FROZEN like NULLABLE_EDGES: the list only shrinks.
  */
 const UNKNOWN_REQUIREMENT_EDGES = [
-  "packages/core/src/ports/capability.port.ts",
   "packages/core/src/ports/turn.port.ts",
-  "packages/core/src/turn/prompt-sections.ts",
-  "packages/core/src/turn/turn.adapter.ts",
   "packages/sdk/src/agent.adapter.ts",
 ]
 

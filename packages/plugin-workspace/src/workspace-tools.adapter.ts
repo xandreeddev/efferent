@@ -1,9 +1,9 @@
 import { Effect, Option, Path, RcMap, Result, Semaphore } from "effect"
 import type { Scope } from "effect"
-import { Bash, compileGlob, defineCapability, defineSkill, HarnessError, SessionEnvironment } from "@xandreed/core"
-import type { Capability, PromptSection, RegisteredTool } from "@xandreed/core"
+import { Bash, compileGlob, defineCapability, definePromptSection, defineSkill, HarnessError, SessionEnvironment } from "@xandreed/core"
+import type { Capability, RegisteredTool } from "@xandreed/core"
 import { bashTool } from "./bash-tool.adapter.js"
-import { findTool, grepTool, lsTool, readTool } from "./read-tools.adapter.js"
+import { findTool, grepTool, lsTool, readTool, WORKSPACE_SERVICES } from "./read-tools.adapter.js"
 import type { WorkspaceToolContext } from "./read-tools.adapter.js"
 import { compileProtect, openWorkspace } from "./workspace-path.entity.functions.js"
 import { WORKSPACE_PERMISSIONS } from "./workspace-tools.entity.js"
@@ -32,7 +32,8 @@ const invalid = (message: string) => new HarnessError({ code: "config.options", 
  * `ls`, `find` and `grep` (skill `workspace.read`, read-only), `write` and
  * `edit` (`workspace.edit`, needing `fs.write`) and `bash`
  * (`workspace.shell`, needing `shell.exec`), plus the
- * `workspace.environment` prompt section. Built once (in a scope, which
+ * `workspace.environment` prompt section, which reads the same services as
+ * the tools, where the turn renders it. Built once (in a scope, which
  * holds the per-file write locks): `bash` and its skill are left out, with
  * a warning, when there is no `Bash` service here; `protect` and `exclude`
  * globs that do not compile fail with `config.options` (through the plugin,
@@ -54,14 +55,16 @@ export const workspaceTools = Effect.fnUntraced(function* (config: WorkspaceTool
   }
   const enabled = wanted.filter((tool) => tool !== "bash" || hasBash)
   const context: WorkspaceToolContext = { config, path, protect, locks }
-  const section: PromptSection = {
+  // The section reads the turn's workspace as the tools do, so it declares the same services.
+  const section = definePromptSection({
     id: "workspace.environment", version: "1", tier: "session", order: config.sectionOrder,
+    requires: WORKSPACE_SERVICES,
     render: () => openWorkspace(path).pipe(
       Effect.map((access) => access.root),
       Effect.catch(() => SessionEnvironment.pipe(Effect.map((environment) => path.resolve(environment.workspace)))),
       Effect.map((root) => Option.some(environmentText(root, config, enabled))),
     ),
-  }
+  })
   return defineCapability({
     id: "@xandreed/plugin-workspace/tools",
     version: "1",

@@ -1,12 +1,13 @@
 import type { Tool } from "effect/ai"
 import { Context, Effect, Option } from "effect"
 import { strictJsonSchema, toolParametersSchema } from "../loop/toolSchema.js"
-import type { Capability, RegisteredTool, ToolDefinition, ToolViewInput } from "../ports/capability.port.js"
+import type { Capability, PromptContext, PromptSection, RegisteredTool, ToolDefinition, ToolViewInput } from "../ports/capability.port.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
 import { CapabilityId, CapabilityToolId, SkillId, SkillReferenceId } from "./capability.entity.js"
 import type {
   CapabilityCatalog,
   CapabilitySelection,
+  PromptTier,
   ResolvedCapabilities,
   SkillDefinition,
   ToolAnnotations,
@@ -18,6 +19,10 @@ import type { ServiceKeys } from "./plugin.entity.functions.js"
 export const defaultAnnotations: ToolAnnotations = {
   readOnly: false, pollable: false, pinned: false, permissions: [], maxCallsPerRun: Option.none(), labels: {}, stage: Option.none(),
 }
+
+/** The declared keys that must be there: every service but the References, which have defaults. */
+const checkedKeys = (requires: ServiceKeys): ReadonlyArray<string> =>
+  requires.filter((key) => !Context.isReference(key)).map((key) => key.key)
 
 /**
  * Author a tool with its handler, model view and annotations; the registry
@@ -39,7 +44,7 @@ export const defineTool = <T extends Tool.Any, const Req extends ServiceKeys = r
   const declared = provideDeclared(definition.tool.name, requires)
   return {
     tool: definition.tool,
-    requires: requires.filter((key) => !Context.isReference(key)).map((key) => key.key),
+    requires: checkedKeys(requires),
     // The toolkit decodes the params against the tool's own schema before it calls the handler.
     handler: (params) => declared(definition.handler(params as Tool.Parameters<T>)),
     view: Option.map(Option.fromNullishOr(definition.view), (view) => ({
@@ -52,6 +57,35 @@ export const defineTool = <T extends Tool.Any, const Req extends ServiceKeys = r
       media: Option.fromNullishOr(view.media),
     })) as RegisteredTool["view"],
     annotations: { ...defaultAnnotations, ...definition.annotations },
+  }
+}
+
+/**
+ * Author a prompt section that reads services. `render` may read only the
+ * services `requires` lists (a Reference needs no entry): one that reads
+ * another does not compile. It gets them where the turn renders it (the
+ * run's services), through `provideDeclared`, which fails the render with
+ * `requires.missing`, naming the section and each missing service, when one
+ * is not there; the declared keys, References aside, are kept as
+ * `PromptSection.requires`.
+ */
+export const definePromptSection = <const Req extends ServiceKeys = readonly []>(section: {
+  readonly id: string
+  readonly version: string
+  readonly tier: PromptTier
+  readonly order: number
+  readonly requires?: Req
+  readonly render: (context: PromptContext) => Effect.Effect<Option.Option<string>, HarnessError, Context.Service.Identifier<Req[number]>>
+}): PromptSection => {
+  const requires = section.requires ?? ([] as const)
+  const declared = provideDeclared(section.id, requires)
+  return {
+    id: section.id,
+    version: section.version,
+    tier: section.tier,
+    order: section.order,
+    requires: checkedKeys(requires),
+    render: (context) => declared(section.render(context)),
   }
 }
 

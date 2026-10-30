@@ -1,5 +1,5 @@
 import { Effect, Layer, Schema } from "effect"
-import { Capabilities, defineCapability, definePlugin, ToolRegistry } from "@xandreed/core"
+import { Capabilities, defineCapability, definePlugin, definePromptSection, ToolRegistry } from "@xandreed/core"
 import { catalogText, makeRegistry } from "./registry.adapter.js"
 
 export const ToolDiscoveryConfig = Schema.Struct({
@@ -45,10 +45,11 @@ export const toolDiscoveryPlugin = definePlugin({
     const catalogue = defineCapability({
       id: "@xandreed/plugin-tool-discovery/catalogue",
       version: "1",
-      promptSections: config.loadSkill ? [{
+      // Built from the registry's skills, here: the section reads no service when it renders.
+      promptSections: config.loadSkill ? [definePromptSection({
         id: "tool-discovery.catalogue", version: "1", tier: "static", order: config.catalogOrder,
         render: () => Effect.succeed(catalogText(registry.skills)),
-      }] : [],
+      })] : [],
     })
     return Layer.mergeAll(
       Layer.succeed(ToolRegistry, ToolRegistry.of({ catalog: registry.catalog, open: registry.open })),
