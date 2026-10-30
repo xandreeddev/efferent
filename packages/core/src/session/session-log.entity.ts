@@ -20,7 +20,12 @@ const Name = Schema.Trimmed.check(Schema.isNonEmpty())
 export const JsonObject = Schema.JsonObject
 export type JsonObject = Schema.JsonObject
 
-/** Where a forked session starts: the parent, the last parent event it inherits, and the parent's turns at that point. */
+/**
+ * Where a forked session starts: the parent, the last parent event it
+ * inherits, and the parent's turns at that point.
+ *
+ * @public
+ */
 export const SessionLineage = Schema.Struct({
   id: ConversationId,
   through: Schema.Int,
@@ -105,7 +110,11 @@ export const SessionReadQuery = Schema.Struct({
 })
 export type SessionReadQuery = typeof SessionReadQuery.Type
 
-/** A position in a listing: strictly older sessions come after it. */
+/**
+ * A position in a listing: strictly older sessions come after it.
+ *
+ * @public
+ */
 export const SessionListCursor = Schema.Struct({ updatedAt: Schema.Number, id: ConversationId })
 export type SessionListCursor = typeof SessionListCursor.Type
 

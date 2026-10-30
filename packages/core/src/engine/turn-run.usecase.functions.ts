@@ -47,7 +47,11 @@ interface PlannedStep {
 /** The longest provider message an `OmitMedia` compaction keeps as its reason. */
 const MEDIA_REJECTION_CHARS = 500
 
-/** The turn services one run reads. */
+/**
+ * The turn services one run reads.
+ *
+ * @public
+ */
 export type TurnRunServices = TurnMemory | TurnToolbox | TurnPrompt | TurnEvents | TurnTasks
 
 const defaultLimits: LoopLimits = { maxSteps: 50, toolConcurrency: 1, streaming: true, requireCompletion: false }
@@ -101,6 +105,8 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  * where the loop dispatches, so a loop that does not provide the request's
  * `cacheKey` and `callPolicy` (`StepLoopReferences`) fails with
  * `request.diverged` before the provider is called.
+ *
+ * @public
  */
 export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.fn.Return<StepRequest, TurnError, P | TurnRunServices> {
   const runServices = replayableContext(yield* Effect.context<P>())
@@ -238,6 +244,10 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
   } satisfies StepRequest
 })
 
-/** One run of the turn: `stepRequestOf`, then the StepLoop. */
+/**
+ * One run of the turn: `stepRequestOf`, then the StepLoop.
+ *
+ * @public
+ */
 export const runTurnLoop = <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<RunResult, TurnError, P | TurnRunServices | StepLoop> =>
   stepRequestOf(policy, options).pipe(Effect.flatMap((request) => StepLoop.pipe(Effect.flatMap((loop) => loop.run(request)))))

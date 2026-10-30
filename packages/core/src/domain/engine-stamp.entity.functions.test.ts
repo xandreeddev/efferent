@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { Response } from "effect/ai"
 import { ENGINE_KEY } from "./engine-stamp.entity.js"
-import { extractModel, responseModelOf, stampPartModel, stampResponseModel } from "./engine-stamp.entity.functions.js"
+import { extractModel, responseModelOf, responseModelOrLegacyOf, stampPartModel, stampResponseModel } from "./engine-stamp.entity.functions.js"
 
 const usage = new Response.Usage({ inputTokens: { total: 5 }, outputTokens: { total: 3 } })
 const text = Response.makePart("text", { text: "hi", metadata: { scripted: { itemId: "msg_1" } } })
@@ -31,11 +31,12 @@ describe("the engine's response stamp", () => {
     expect(Option.isNone(responseModelOf(stampResponseModel([text, finish()], "")))).toBe(true)
   })
 
-  test("the deprecated extractModel reads the engine's stamp, then the key a router stamped before it", () => {
+  test("responseModelOrLegacyOf, and the deprecated extractModel, read the engine's stamp, then the key a router stamped before it", () => {
     const legacy = finish({ router: { model: "opencode:kimi-k2.7-code" } })
-    expect(Option.getOrNull(extractModel([legacy]))).toBe("opencode:kimi-k2.7-code")
+    expect(Option.getOrNull(responseModelOrLegacyOf([legacy]))).toBe("opencode:kimi-k2.7-code")
     expect(Option.isNone(responseModelOf([legacy]))).toBe(true)
-    expect(Option.getOrNull(extractModel(stampResponseModel([legacy], "openai:gpt-5")))).toBe("openai:gpt-5")
-    expect(Option.isNone(extractModel([finish()]))).toBe(true)
+    expect(Option.getOrNull(responseModelOrLegacyOf(stampResponseModel([legacy], "openai:gpt-5")))).toBe("openai:gpt-5")
+    expect(Option.isNone(responseModelOrLegacyOf([finish()]))).toBe(true)
+    expect(extractModel).toBe(responseModelOrLegacyOf)
   })
 })

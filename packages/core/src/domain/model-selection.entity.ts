@@ -9,6 +9,7 @@ import { Schema } from "effect"
 export const ProviderId = Schema.String.pipe(Schema.brand("ProviderId"))
 export type ProviderId = typeof ProviderId.Type
 
+/** @public */
 export const ModelId = Schema.String.pipe(Schema.brand("ModelId"))
 export type ModelId = typeof ModelId.Type
 

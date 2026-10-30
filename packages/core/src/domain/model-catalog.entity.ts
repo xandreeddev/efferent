@@ -1,6 +1,10 @@
 import { Schema } from "effect"
 
-/** A selectable model exposed by one configured provider adapter. */
+/**
+ * A selectable model exposed by one configured provider adapter.
+ *
+ * @public
+ */
 export const ModelCatalogEntry = Schema.Struct({
   selection: Schema.String,
   /** Human-facing route name. `selection` remains the stable persisted id. */

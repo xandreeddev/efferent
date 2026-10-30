@@ -43,11 +43,16 @@ const usage = { inputTokens: { total: 10 }, outputTokens: { total: 2 } }
 const RUN = RunId.make("conformance")
 /** The run a scenario is, unless it names another: the first of turn 1. */
 const FIRST_RUN: RunRef = { id: RUN, turn: 1, ordinal: RunOrdinal.make(0) }
-/** A scripted provider reply calling `probe`. */
+/**
+ * A scripted provider reply calling `probe`.
+ *
+ * @public
+ */
 export const probeCall = (id: string, n: number): ReadonlyArray<Part> => [
   { type: "tool-call", id, name: Probe.name, params: { n }, providerExecuted: false },
   { type: "finish", reason: "tool-calls", usage },
 ]
+/** @public */
 export const textReply = (text: string): ReadonlyArray<Part> => [{ type: "text", text }, { type: "finish", reason: "stop", usage }]
 /** A scripted provider reply the model could not form: a call to a tool that does not exist. */
 const malformedCall = (id: string): ReadonlyArray<Part> => [

@@ -4,7 +4,12 @@ import { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import { RunId, RunKey } from "../domain/run.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 
-/** Public provider options only, as JSON. Credentials and endpoint authorization never belong here. */
+/**
+ * Public provider options only, as JSON. Credentials and endpoint
+ * authorization never belong here.
+ *
+ * @public
+ */
 export const ModelRequestDescriptor = Schema.Struct({
   provider: Schema.String,
   model: Schema.String,
@@ -12,7 +17,12 @@ export const ModelRequestDescriptor = Schema.Struct({
 })
 export type ModelRequestDescriptor = typeof ModelRequestDescriptor.Type
 
-/** A provider-defined tool's id (`<provider>.<tool>`, effect/ai's `Tool.ProviderDefined.id`), as a header stores it, with no checks. */
+/**
+ * A provider-defined tool's id (`<provider>.<tool>`, effect/ai's
+ * `Tool.ProviderDefined.id`), as a header stores it, with no checks.
+ *
+ * @public
+ */
 export const ProviderToolId = Schema.String.pipe(Schema.brand("ProviderToolId"))
 export type ProviderToolId = typeof ProviderToolId.Type
 
@@ -22,6 +32,8 @@ export type ProviderToolId = typeof ProviderToolId.Type
  * SHA-256 of their canonical JSON: args can carry credentials (a remote tool
  * server's authorization), so their values are never stored. A dispatch
  * compares the digests, so any change of a value still diverges.
+ *
+ * @public
  */
 export const ModelRequestTool = Schema.Struct({
   name: Schema.String,
@@ -36,7 +48,12 @@ export const ModelRequestTool = Schema.Struct({
 })
 export type ModelRequestTool = typeof ModelRequestTool.Type
 
-/** A saved pure-render recipe: replay uses these options even after a memory plugin upgrade. */
+/**
+ * A saved pure-render recipe: replay uses these options even after a memory
+ * plugin upgrade.
+ *
+ * @public
+ */
 export const MemoryRenderRecipe = Schema.Struct({
   strategy: Schema.String,
   currentTurn: Schema.Int,
@@ -65,6 +82,8 @@ export type MemoryRenderRecipe = typeof MemoryRenderRecipe.Type
  * repeats the full system text and every active tool's declaration, a
  * deliberate storage trade-off so one event (and the memory before it)
  * rebuilds a request without reading other headers.
+ *
+ * @public
  */
 export const ModelRequestHeader = Schema.Struct({
   version: Schema.Literal(1),

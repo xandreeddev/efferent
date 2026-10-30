@@ -17,6 +17,8 @@ export type ActiveTurn = typeof ActiveTurn.Type
  * The turns a `Sessions` holds open and the begins it is still working on
  * (waiting for the host's admission, committing, starting the writer),
  * read at one moment.
+ *
+ * @public
  */
 export const TurnsInFlight = Schema.Struct({
   open: Schema.Array(ActiveTurn),

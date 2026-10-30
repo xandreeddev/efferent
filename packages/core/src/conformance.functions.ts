@@ -57,6 +57,8 @@ export const headerOf = (id: ConversationId, owner: string, parent: Option.Optio
  * One check run under a fresh owner. A failure the body did not raise as a
  * `ConformanceFailure` (a port's own error, a defect-free typed failure) is
  * reported under `id` as unexpected, with its tag.
+ *
+ * @public
  */
 export const check = (name: string, id: string, body: (owner: string) => Effect.Effect<void, unknown>): ConformanceCheck => ({
   name,

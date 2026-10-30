@@ -3,7 +3,12 @@ import { Base64 } from "effect/encoding"
 import { AttachmentRejected, ImageMediaType, MEDIA_LIMITS, MediaFingerprint } from "./media.entity.js"
 import type { AttachmentRejectedReason, Media, MediaSlot } from "./media.entity.js"
 
-/** What one image is counted as in a token estimate: its base64 is never counted as text. */
+/**
+ * What one image is counted as in a token estimate: its base64 is never
+ * counted as text.
+ *
+ * @public
+ */
 export const IMAGE_TOKEN_ESTIMATE = 1_600
 
 /** The base64 characters `bytes` decoded bytes take, padded. */
@@ -15,7 +20,11 @@ export interface ImageSize {
   readonly height: number
 }
 
-/** What a caller may say about an image besides its bytes. */
+/**
+ * What a caller may say about an image besides its bytes.
+ *
+ * @public
+ */
 export interface MediaDescription {
   readonly name?: string
   readonly alt?: string
@@ -186,7 +195,12 @@ export const mediaAt = (value: unknown, slot: MediaSlot): Option.Option<Media> =
     Option.filter((media) => media.fingerprint === slot.fingerprint && media.mediaType === slot.mediaType && media.bytes === slot.bytes),
   )
 
-/** A tool result's images as memory records them: the slots it sends, and a label line for each image it does not. */
+/**
+ * A tool result's images as memory records them: the slots it sends, and a
+ * label line for each image it does not.
+ *
+ * @public
+ */
 export interface ToolResultMedia {
   readonly slots: ReadonlyArray<MediaSlot>
   readonly labels: ReadonlyArray<string>

@@ -86,6 +86,13 @@ const failures = await Effect.runPromise(Effect.forEach(sessionLogConformance(lo
 if (failures.flat().length > 0) throw new Error(failures.flat().join("\n"))
 ```
 
+A kit of your own is a list of `ConformanceCheck`s too: `check(name, id, body)`
+runs `body` under a fresh owner and reports a failure the body did not raise
+as a `ConformanceFailure` under `id`. The step-loop kit's scripted provider
+replies are exported with it: `textReply(text)` answers with text and stops,
+and `probeCall(id, n)` calls the kit's `probe` tool, for a test that scripts
+a model the way the kit does.
+
 ## The SessionLog recovery kit
 
 `sessionLogConformance` checks one handle on a store. A real store is opened

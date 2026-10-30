@@ -7,6 +7,7 @@ import { Schema } from "effect"
 export const ReasoningEffort = Schema.Literals(["none", "low", "medium", "high", "xhigh", "max"])
 export type ReasoningEffort = typeof ReasoningEffort.Type
 
+/** @public */
 export const ModelCallPolicy = Schema.Struct({
   effort: ReasoningEffort,
   maxOutputTokens: Schema.optional(Schema.Number),

@@ -21,6 +21,8 @@ export const onEvent = <Name extends TurnEventName, R>(
 /**
  * React to one tool's successful calls, typed by the tool's own schemas:
  * the input and result are narrowed with `Schema.is`, never cast.
+ *
+ * @public
  */
 export interface ToolCall<Input, Result> {
   readonly step: number

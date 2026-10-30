@@ -18,6 +18,10 @@ service `requires` does not list does not compile (a Reference needs no
 entry), a service in `optional` is read with `Effect.serviceOption`, and an
 activation that lacks a required service fails with `requires.missing`,
 naming the plugin and the service, before the layer is built.
+`provideDeclared(owner, requires)` is that check for a host's own extension
+point: it runs an effect where it is called once every service in
+`requires` (a `ServiceKeys`) is there, so its type needs only those, and
+fails with `requires.missing`, naming `owner`, when one is missing.
 Two providers of a service require a `bindings` entry selecting the instance
 id. Runtime plugins cannot require session services. Dependencies are checked
 before activation. An agent whose turns would have no `ConversationMemory`,
@@ -199,8 +203,9 @@ refusal's code as `harnessCodeOf` gives it (`session.busy`,
 `turn.duplicate`, `session.missing`…), the code `agent.turn` would have
 ended with (`turn.defect` or `turn.interrupted` otherwise). A host
 composing its own turn wraps its begin in
-`traceTurnBegin({ session, runId, origin })`; the work it wraps returns the
-writer, or a value holding the admitted turn under `admitted`.
+`traceTurnBegin({ session, runId, origin })` (a `TurnBeginTrace`); the work it
+wraps returns the writer, or a value holding the admitted turn under
+`admitted`.
 
 **Ids in logs.** Logs carry the ids as annotations, under the span
 attributes' names (`turnAttributes(admitted)`, `sessionAttributes(session)`):
@@ -1495,9 +1500,10 @@ and for ten seconds at most, a failure of that finishing logged; on success
 it returns the `TurnResult`, the outcome with `RunContext.usage`; on failure
 it puts the usage so far on the current span), `turnOf(options)`
 (the `Turn` a host's code gets), `stepRequestOf(policy, options)` and
-`runTurnLoop(policy, options)` for one run of the step loop, and
-`traceTurn(writer, { spanMeta })` (the turn's `agent.turn` span around
-everything after the begin, see traces and metrics). `cacheKeyOf(prefix,
+`runTurnLoop(policy, options)` for one run of the step loop (over the
+`TurnRunServices`), and `traceTurn(writer, { spanMeta })` (its options a
+`TurnTraceOptions`; the turn's `agent.turn` span around everything after the
+begin, see traces and metrics). `cacheKeyOf(prefix,
 conversation)` builds the prompt-cache key. `@xandreed/core/engine` has no
 semver: it moves into `@xandreed/sdk` in the next minor release, and the
 root's names for it are deprecated until then.

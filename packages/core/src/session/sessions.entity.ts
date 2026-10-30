@@ -64,7 +64,11 @@ export const SessionView = Schema.Struct({
 })
 export type SessionView = typeof SessionView.Type
 
-/** A page of an owner's sessions and where the next page starts. */
+/**
+ * A page of an owner's sessions and where the next page starts.
+ *
+ * @public
+ */
 export const SessionPage = Schema.Struct({
   sessions: Schema.Array(SessionView),
   next: Schema.OptionFromNullOr(SessionListCursor),

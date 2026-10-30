@@ -97,6 +97,8 @@ export const definePromptSection = <const Req extends ServiceKeys = readonly []>
  * (`instructions` does not compile with `always: true`). Give the model
  * what such a skill's tools need in their descriptions or in a prompt
  * section.
+ *
+ * @public
  */
 export type SkillInput = {
   readonly id: string

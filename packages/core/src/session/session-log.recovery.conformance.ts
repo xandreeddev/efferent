@@ -16,6 +16,8 @@ type Log = Context.Service.Shape<typeof SessionLog>
  * again after closing. An in-memory backend passes only when every `open`
  * returns a log over the same store (build it once and `Effect.succeed` it):
  * a fresh `SessionLogMemoryLive` per open starts empty.
+ *
+ * @public
  */
 export interface SessionLogSubject {
   readonly open: Effect.Effect<Log, SessionLogError, Scope.Scope>

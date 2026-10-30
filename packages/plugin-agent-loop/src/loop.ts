@@ -12,7 +12,7 @@ import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
 import { plannedCallIdOf } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
-import { extractModel } from "@xandreed/core"
+import { responseModelOrLegacyOf } from "@xandreed/core/internal"
 import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
 
 /**
@@ -619,7 +619,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
             ? { "engine.step.output": tracedJson({ content, usage, finishReason: outcome.finishReason }) }
             : {}),
         })
-        const model = extractModel(content)
+        const model = responseModelOrLegacyOf(content)
         const tail = planned ? responseToAgentMessages(content) : withUsageOnAssistant(responseToAgentMessages(content), usage, model)
         // Persist BEFORE the events fire so the assistant message's durable
         // position is known when its event is emitted (UIs key on it).

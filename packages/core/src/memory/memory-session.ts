@@ -22,13 +22,18 @@ import {
   toolInputsOf,
 } from "./memory-log.entity.functions.js"
 
-/** What a strategy decides at one maintain point. */
+/**
+ * What a strategy decides at one maintain point.
+ *
+ * @public
+ */
 export interface MaintainDecision {
   readonly actions: ReadonlyArray<CompactionAction>
   /** Tool-result entries to digest now (recorded with trigger "compaction"). */
   readonly digest: ReadonlyArray<EntryId>
 }
 
+/** @public */
 export const noMaintenance: MaintainDecision = { actions: [], digest: [] }
 
 /** What distinguishes one memory strategy from another. */

@@ -26,7 +26,11 @@ const within = <A, E, R>(id: string, message: string) => (effect: Effect.Effect<
 /** A service the caller of `run` has and the work must not see. */
 const CallerProbe = Context.Reference<string>("efferent/conformance/TaskRunnerCaller", { defaultValue: () => "none" })
 
-/** A task runner as the kit builds one. */
+/**
+ * A task runner as the kit builds one.
+ *
+ * @public
+ */
 export interface TaskRunnerFixture {
   readonly runner: Runner
   /** Its `TaskActivity`, when it provides one: then checked against the work it runs. */

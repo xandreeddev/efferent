@@ -20,14 +20,23 @@ import type { TurnError } from "../session/sessions.entity.js"
  * `Agent.turn` is one such composition.
  */
 
-/** A turn-context message the model sees this turn (e.g. the user's intent). */
+/**
+ * A turn-context message the model sees this turn (e.g. the user's intent).
+ *
+ * @public
+ */
 export interface TurnContextEntry {
   readonly id: string
   readonly version: string
   readonly text: string
 }
 
-/** What storage holds of a turn's requests: what a dispatch is checked against. */
+/**
+ * What storage holds of a turn's requests: what a dispatch is checked
+ * against.
+ *
+ * @public
+ */
 export interface RequestSnapshot {
   /** The memory entries, in log order (a fork's inherited history first), decoded from the stored memory events. */
   readonly entries: ReadonlyArray<LogEntry>

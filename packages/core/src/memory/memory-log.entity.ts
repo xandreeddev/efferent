@@ -31,7 +31,11 @@ export const Subject = Schema.Struct({
 })
 export type Subject = typeof Subject.Type
 
-/** A file or image's id, as the tool result that points to it names it. */
+/**
+ * A file or image's id, as the tool result that points to it names it.
+ *
+ * @public
+ */
 export const ArtifactId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("ArtifactId"))
 export type ArtifactId = typeof ArtifactId.Type
 
@@ -40,6 +44,8 @@ export type ArtifactId = typeof ArtifactId.Type
  * reference, never the content, and every render shows it as a reference
  * line, whatever the media mode. An image the model is to see is a `Media`
  * value, stored inline.
+ *
+ * @public
  */
 export const ArtifactRef = Schema.Struct({
   id: ArtifactId,
@@ -75,11 +81,18 @@ export type ActivationSource = typeof ActivationSource.Type
 /**
  * A prompt section's id (`PromptSection.id`), or a turn-context entry's
  * (`TurnContextEntry.id`), as the log stores it, with no checks.
+ *
+ * @public
  */
 export const SectionId = Schema.String.pipe(Schema.brand("SectionId"))
 export type SectionId = typeof SectionId.Type
 
-/** A turn-context message the model sees this turn: a turn-tier prompt section, or an entry the host adds (`TurnMemory.context`). */
+/**
+ * A turn-context message the model sees this turn: a turn-tier prompt
+ * section, or an entry the host adds (`TurnMemory.context`).
+ *
+ * @public
+ */
 export const TurnContextBody = Schema.TaggedStruct("TurnContext", { sectionId: SectionId, version: Schema.String, text: Schema.String })
 export type TurnContextBody = typeof TurnContextBody.Type
 
@@ -183,7 +196,11 @@ export const LogEntry = Schema.Struct({
 })
 export type LogEntry = typeof LogEntry.Type
 
-/** The model-visible rebuild of the log for one request. */
+/**
+ * The model-visible rebuild of the log for one request.
+ *
+ * @public
+ */
 export const BuiltContext = Schema.Struct({
   messages: Schema.Array(AgentMessage),
   fingerprint: Schema.String,
@@ -194,7 +211,12 @@ export const BuiltContext = Schema.Struct({
 })
 export type BuiltContext = typeof BuiltContext.Type
 
-/** What `MemoryReader.query` selects from a log (`queryLog`); `emptyQuery` selects every entry. */
+/**
+ * What `MemoryReader.query` selects from a log (`queryLog`); `emptyQuery`
+ * selects every entry.
+ *
+ * @public
+ */
 export interface LogQuery {
   readonly kinds: ReadonlyArray<LogBody["_tag"]>
   readonly turns: Option.Option<{ readonly from: number; readonly to: number }>

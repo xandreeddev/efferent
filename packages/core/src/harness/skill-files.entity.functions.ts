@@ -303,6 +303,8 @@ export const skillIssuesText = (issues: ReadonlyArray<SkillFileIssue>): string =
 /**
  * `readSkillFiles`, strict: any issue, error or warning, fails with
  * `skills.files` naming each one, so nothing is left out silently.
+ *
+ * @public
  */
 export const skillsFromFiles = (files: ReadonlyArray<SkillFile>, options: SkillFilesOptions = {}): Effect.Effect<ReadonlyArray<SkillDefinition>, HarnessError> => {
   const tree = readSkillFiles(files, options)

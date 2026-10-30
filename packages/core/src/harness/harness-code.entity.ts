@@ -96,7 +96,11 @@ export const HARNESS_CODES = [
   "turn.unstarted",
 ] as const
 
-/** One of the framework's published codes (`HARNESS_CODES`). */
+/**
+ * One of the framework's published codes (`HARNESS_CODES`).
+ *
+ * @public
+ */
 export const HarnessCode = Schema.Literals(HARNESS_CODES)
 export type HarnessCode = typeof HarnessCode.Type
 
@@ -105,6 +109,8 @@ export type HarnessCode = typeof HarnessCode.Type
  * tag: the begin refusals (`turnBeginCodes`), `TurnClosed` and
  * `ReservedKind`. `harnessCodeOf` reads it, so a refusal stores the code a
  * `HarnessError` in its place would have.
+ *
+ * @public
  */
 export const TAGGED_CODES = {
   ...turnBeginCodes,

@@ -33,10 +33,13 @@ export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
  * A provider's private fields, by provider: effect/ai's response part
  * `metadata`, replayed as its prompt part `options`. The `engine` key is
  * core's own (the turn's usage stamp), never sent to a provider.
+ *
+ * @public
  */
 export const ProviderOptions = Schema.Record(Schema.String, Schema.Json)
 export type ProviderOptions = typeof ProviderOptions.Type
 
+/** @public */
 export const TextPart = Schema.Struct({
   type: Schema.Literal("text"),
   text: Schema.String,
@@ -44,6 +47,7 @@ export const TextPart = Schema.Struct({
 })
 export type TextPart = typeof TextPart.Type
 
+/** @public */
 export const ReasoningPart = Schema.Struct({
   type: Schema.Literal("reasoning"),
   text: Schema.String,
@@ -51,6 +55,7 @@ export const ReasoningPart = Schema.Struct({
 })
 export type ReasoningPart = typeof ReasoningPart.Type
 
+/** @public */
 export const ToolCallPart = Schema.Struct({
   type: Schema.Literal("tool-call"),
   toolCallId: ToolCallId,
@@ -61,6 +66,7 @@ export const ToolCallPart = Schema.Struct({
 })
 export type ToolCallPart = typeof ToolCallPart.Type
 
+/** @public */
 export const ToolResultPart = Schema.Struct({
   type: Schema.Literal("tool-result"),
   toolCallId: ToolCallId,
@@ -80,7 +86,11 @@ export const ToolResultPart = Schema.Struct({
 })
 export type ToolResultPart = typeof ToolResultPart.Type
 
-/** One part of a multi-part user message: text, or an image sent inline. */
+/**
+ * One part of a multi-part user message: text, or an image sent inline.
+ *
+ * @public
+ */
 export const UserContentPart = Schema.Union([TextPart, Media])
 export type UserContentPart = typeof UserContentPart.Type
 
@@ -89,6 +99,8 @@ export type UserContentPart = typeof UserContentPart.Type
  * context, host notes): text, or parts when it carries images (a user's
  * attachments). Narrow with `typeof content === "string"` before reading it
  * as text.
+ *
+ * @public
  */
 export const UserRoleMessage = Schema.Struct({
   role: Schema.Literal("user"),
@@ -97,7 +109,12 @@ export const UserRoleMessage = Schema.Struct({
 })
 export type UserRoleMessage = typeof UserRoleMessage.Type
 
-/** What a model said in one step, in arrival order: a result of a tool the provider ran is among its parts. */
+/**
+ * What a model said in one step, in arrival order: a result of a tool the
+ * provider ran is among its parts.
+ *
+ * @public
+ */
 export const AssistantMessage = Schema.Struct({
   role: Schema.Literal("assistant"),
   content: Schema.Array(Schema.Union([TextPart, ReasoningPart, ToolCallPart, ToolResultPart])),
@@ -105,6 +122,7 @@ export const AssistantMessage = Schema.Struct({
 })
 export type AssistantMessage = typeof AssistantMessage.Type
 
+/** @public */
 export const ToolMessage = Schema.Struct({
   role: Schema.Literal("tool"),
   content: Schema.Array(ToolResultPart),

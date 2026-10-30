@@ -30,6 +30,8 @@ export interface SkillMatch {
  * needs to handle a call. Provided to the toolkit, it meets the toolkit's
  * requirement as it is, without a cast. A context of typed handlers
  * (`Toolkit.make(A, B).toHandlers(...)`) is one.
+ *
+ * @public
  */
 export type ToolHandlers = Tool.HandlersFor<Record<string, Tool.Any>>
 

@@ -8,6 +8,8 @@ import { SkillDefinition } from "./capability.entity.js"
  * that was not read because it is too large (`collectSkillFiles`'
  * `maxFileBytes`): its size in bytes, with an empty `text`;
  * `readSkillFiles` leaves such a file out with a warning.
+ *
+ * @public
  */
 export const SkillFile = Schema.Struct({
   path: Schema.String,
@@ -30,7 +32,12 @@ export const SkillFileIssue = Schema.Struct({
 })
 export type SkillFileIssue = typeof SkillFileIssue.Type
 
-/** One skill of a tree: the directory its `SKILL.md` is in, relative to the tree's root (`""` for the root itself), and the skill. */
+/**
+ * One skill of a tree: the directory its `SKILL.md` is in, relative to the
+ * tree's root (`""` for the root itself), and the skill.
+ *
+ * @public
+ */
 export const SkillTreeEntry = Schema.Struct({
   directory: Schema.String,
   skill: SkillDefinition,
@@ -51,6 +58,8 @@ export type SkillTree = typeof SkillTree.Type
  * than this (UTF-8 bytes) is left out with a warning; no limit when absent.
  * `rootName`: the id of a `SKILL.md` at the tree's root that names none; a
  * root `SKILL.md` without an id is an error when absent.
+ *
+ * @public
  */
 export const SkillFilesOptions = Schema.Struct({
   tools: Schema.optionalKey(Schema.Literals(["declared", "ignore"])),
@@ -66,6 +75,8 @@ export type SkillFilesOptions = typeof SkillFilesOptions.Type
  * read and does not count toward `maxBytes`; it is collected with its
  * `size` (give `readSkillFiles` the same `maxReferenceBytes`). No limit when
  * absent.
+ *
+ * @public
  */
 export const CollectSkillFilesOptions = Schema.Struct({
   maxFiles: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
