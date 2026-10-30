@@ -6,12 +6,14 @@ import {
   HarnessError,
   harnessDefectsAsFailures,
   InboxFull,
+  InputConflict,
   isRevisionConflict,
   KeyConflict,
   normalizeUserMessage,
   NothingPending,
   NotResumable,
   reasonOf,
+  RevisionConflict,
   readStored,
   readStoredKeys,
   RESERVED_KINDS,
@@ -51,8 +53,8 @@ import type {
   InboxItem,
   InboxItemId,
   JsonObject,
+  QueuedInput,
   ResumableTurn,
-  RevisionConflict,
   SessionAddress,
   SessionCommitted,
   SessionDraft,
@@ -66,7 +68,7 @@ import type {
   TurnWriter,
 } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
-import { closedState, droppedData, heldTurn, isNewerFormat, pendingOf, queuedData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, withFormat } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, heldTurn, isNewerFormat, pendingOf, queuedData, queuedInputData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, withFormat } from "./sessions-state.entity.functions.js"
 import type { Holder } from "./sessions-state.entity.functions.js"
 import { Ownership } from "./sessions-state.entity.js"
 import type { HeldTurn, ProcessLiveness, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
@@ -79,6 +81,8 @@ interface GuardedPlan<A> {
   readonly drafts: ReadonlyArray<SessionDraft>
   readonly next: Option.Option<SessionsState>
   readonly result: A
+  /** A no-write decision used later journal evidence: verify its head before answering. */
+  readonly validateRead?: boolean
 }
 
 interface Guarded<A> {
@@ -117,17 +121,19 @@ interface Asked {
   readonly command: JsonObject
   readonly resumes: Option.Option<number>
   readonly task: Option.Option<TaskRef>
+  readonly input: Option.Option<QueuedInput>
 }
 
 /** A begin as `Asked`: a user's and a task's turn are keyed by their caller, an inbox turn by its run id. */
 const askedOf = (input: BeginTurn): Asked => Match.valueTags(input, {
   User: (user): Asked => ({
     origin: "user", key: user.key, userMessage: Option.some(user.userMessage), command: user.command,
-    resumes: Option.fromNullishOr(user.resumes), task: Option.none(),
+    resumes: Option.fromNullishOr(user.resumes), task: Option.none(), input: Option.none(),
   }),
-  Inbox: (inbox): Asked => ({ origin: "inbox", key: inbox.runId, userMessage: Option.none(), command: {}, resumes: Option.none(), task: Option.none() }),
+  Inbox: (inbox): Asked => ({ origin: "inbox", key: inbox.runId, userMessage: Option.none(), command: {}, resumes: Option.none(), task: Option.none(), input: Option.none() }),
+  Queued: (queued): Asked => ({ origin: "user", key: `input:${queued.input}`, userMessage: Option.none(), command: {}, resumes: Option.none(), task: Option.none(), input: Option.none() }),
   Task: (task): Asked => ({
-    origin: "task", key: task.key, userMessage: Option.some(task.userMessage), command: {}, resumes: Option.none(), task: Option.some(task.task),
+    origin: "task", key: task.key, userMessage: Option.some(task.userMessage), command: {}, resumes: Option.none(), task: Option.some(task.task), input: Option.none(),
   }),
 })
 
@@ -247,7 +253,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       const held = yield* stateFrom(head)
       const current = withFormat(held)
       const planned = yield* plan(head, current)
-      if (planned.drafts.length === 0 && Option.isNone(planned.next)) return { result: planned.result, head, committed: Option.none() }
+      if (planned.drafts.length === 0 && Option.isNone(planned.next)) {
+        if (planned.validateRead === true) {
+          const actual = yield* owned(address)
+          if (actual.revision !== head.revision) return yield* Effect.fail(new RevisionConflict({ session: address.id, expected: head.revision, actual: actual.revision }))
+        }
+        return { result: planned.result, head, committed: Option.none() }
+      }
       const next = Option.orElse(planned.next, () => current === held ? Option.none() : Option.some(current))
       const state = yield* Option.match(next, {
         onNone: () => Effect.succeedNone,
@@ -355,9 +367,42 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     Effect.flatMap((events) => readStored("inbox.queued", events).pipe(Effect.mapError(storage("session.decode")))),
   )
 
+  /** Immutable user input, decoded separately from legacy notice deliveries. */
+  const queuedInputOf = (id: ConversationId, wanted: InboxItemId) => queuedIn(id).pipe(Effect.map((queued) =>
+    Option.fromNullishOr(queued.flatMap(({ data }): ReadonlyArray<QueuedInput> => data.id === wanted && data.input !== undefined
+      ? [{ id: data.id, source: data.source, ...data.input }] : []).at(0))))
+
+  /** Input provenance without decoding the earlier messages and their images. */
+  const inputStartsOf = (starts: ReadonlyArray<SessionLogEvent>) => readStoredKeys("turn.started", starts).pipe(Effect.mapError(storage("session.decode")))
+  const attemptKey = (id: InboxItemId, last: Option.Option<number>, runId: RunId): string => Option.match(last, {
+    onNone: () => `input:${id}`,
+    onSome: (turn) => `input-retry:${canonicalJson([id, turn, runId])}`,
+  })
+  const lastInputTurn = (starts: Effect.Success<ReturnType<typeof inputStartsOf>>, id: InboxItemId): Option.Option<number> =>
+    Option.fromNullishOr(starts.filter((started) => started.keys.input === id).map(({ event }) => Option.getOrElse(event.turn, () => 0)).at(-1))
+
+  /** Resolve the real input and attempt key before the host's admission sees them. */
+  const prepareAsked = (address: SessionAddress, input: BeginTurn, asked: Asked) => Effect.gen(function* () {
+    if (input._tag === "Queued") {
+      yield* owned(address)
+      const queued = yield* queuedInputOf(address.id, input.input)
+      if (Option.isNone(queued)) return yield* Effect.fail(new NothingPending({ session: address.id }))
+      const starts = yield* inputStartsOf(yield* startsOf(address.id))
+      const retry = starts.find((started) => started.keys.input === input.input && started.keys.runId === input.runId)
+      return { ...asked, input: queued, userMessage: Option.some(queued.value.userMessage), key: retry?.keys.key ?? attemptKey(input.input, lastInputTurn(starts, input.input), input.runId) }
+    }
+    if (Option.isNone(asked.resumes)) return asked
+    const resumed = asked.resumes.value
+    yield* owned(address)
+    const starts = yield* inputStartsOf(yield* startsOf(address.id))
+    const target = starts.find(({ event }) => Option.contains(event.turn, resumed))
+    if (target?.keys.input === undefined) return asked
+    return { ...asked, input: yield* queuedInputOf(address.id, target.keys.input) }
+  })
+
   /** The inbox items with these ids, as delivered. */
   const inboxItems = (id: ConversationId, ids: ReadonlyArray<InboxItemId>) => queuedIn(id).pipe(
-    Effect.map((queued) => ids.flatMap((wanted): ReadonlyArray<InboxItem> => Option.toArray(Option.fromNullishOr(queued.find((item) => item.data.id === wanted))).map(({ data }) => ({
+    Effect.map((queued) => ids.flatMap((wanted): ReadonlyArray<InboxItem> => Option.toArray(Option.fromNullishOr(queued.find((item) => item.data.id === wanted && item.data.input === undefined))).map(({ data }) => ({
       id: wanted,
       source: data.source,
       content: data.content.length > 0 ? data.content : `(inbox item ${wanted})`,
@@ -404,15 +449,10 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const scope = yield* Effect.scope
     const at = yield* Clock.currentTimeMillis
     const meta = input.meta ?? {}
-    const asked = askedOf(input)
-    const { key, origin, resumes } = asked
+    const initial = askedOf(input)
     // `resumes` is typed only as a number: one that is not a whole number of at least 1 names no turn, refused before the host's admission sees it.
-    const unnumbered = Option.filter(resumes, (turn) => !(Number.isSafeInteger(turn) && turn >= 1))
+    const unnumbered = Option.filter(initial.resumes, (turn) => !(Number.isSafeInteger(turn) && turn >= 1))
     if (Option.isSome(unnumbered)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: unnumbered.value, reason: "missing" }))
-    // Written only when given, like `meta`: a turn that resumes nothing, or runs no task, is stored and admitted as before.
-    const resuming = Option.match(resumes, { onNone: () => ({}), onSome: (turn) => ({ resumes: turn }) })
-    const tasked = Option.match(asked.task, { onNone: () => ({}), onSome: (task) => ({ task }) })
-    const toAdmit = { session: address, origin, runId: input.runId, key, meta, ...resuming, ...tasked }
     /** The turn the opening commit stored, until its writer is handed over. */
     const unowned = yield* Ref.make(Option.none<AdmittedTurn>())
     yield* SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, beginning: now.beginning + 1 }))
@@ -423,6 +463,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     return yield* Effect.gen(function* () {
       // Refused before the host's admission is asked, and again in the plan: a begin past this check while a shutdown starts opens nothing.
       yield* refuseIfStopping(address)
+      const asked = yield* restore(prepareAsked(address, input, initial))
+      const { key, origin, resumes } = asked
+      const resuming = Option.match(resumes, { onNone: () => ({}), onSome: (turn) => ({ resumes: turn }) })
+      const tasked = Option.match(asked.task, { onNone: () => ({}), onSome: (task) => ({ task }) })
+      const linked = Option.match(asked.input, { onNone: () => ({}), onSome: (queued) => ({ input: queued.id }) })
+      const inputData = Option.match(asked.input, { onNone: () => ({}), onSome: (queued) => ({ input: queued }) })
+      const toAdmit = { session: address, origin, runId: input.runId, key, meta, ...resuming, ...tasked, ...linked }
       // Only the opening commit is admitted: the writer's later commits run outside the host's admission.
       const begun = yield* restore(admission.admit(toAdmit, guarded(address, (head, stored) => Effect.gen(function* () {
         yield* refuseIfStopping(address)
@@ -439,6 +486,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
             const same = sameUserMessage(started.userMessage, brought) && canonicalJson(started.command) === canonicalJson(asked.command)
               && Equal.equals(Option.fromNullishOr(started.resumes), resumes)
               && canonicalJson(started.task ?? null) === canonicalJson(Option.getOrNull(asked.task))
+              && (started.input ?? null) === Option.match(asked.input, { onNone: () => null, onSome: (queued) => queued.id })
             return yield* Effect.fail(same
               ? new TurnDuplicate({ session: address.id, turn: previous.value.turn, open: Option.exists(state.open, (open) => open.turn === previous.value.turn) })
               : new KeyConflict({ session: address.id, key, turn: previous.value.turn }))
@@ -448,15 +496,25 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         const reused = yield* runOf(head.header, starts, input.runId)
         if (Option.isSome(reused)) return yield* Effect.fail(new RunIdReused({ session: address.id, runId: input.runId, turn: reused.value }))
         if (Option.isSome(state.open)) return yield* Effect.fail(new SessionBusy({ session: address.id, turn: state.open.value.turn }))
+        if (input._tag === "Queued") {
+          const last = lastInputTurn(yield* inputStartsOf(starts), input.input)
+          const waiting = pendingOf(state).some((slot) => slot.id === input.input && slot.delivery !== undefined)
+          if (!waiting || key !== attemptKey(input.input, last, input.runId)) return yield* Option.match(last, {
+            onNone: () => Effect.fail(new NothingPending({ session: address.id })),
+            onSome: (turn) => Effect.fail(new TurnDuplicate({ session: address.id, turn, open: false })),
+          })
+        }
         // A resume is checked in the commit that opens it, against the turns as stored (a turn reaped by this commit is interrupted).
         if (Option.isSome(resumes)) {
           const refusal = resumeRefusal(resumes.value, yield* turnsOf(address.id, reap.closed))
           if (Option.isSome(refusal)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: resumes.value, reason: refusal.value }))
         }
         // An inbox turn takes every item waiting, and its message is theirs.
-        const waiting = origin === "inbox" ? pendingOf(state).map((slot) => slot.id) : []
+        const waiting = origin === "inbox" ? pendingOf(state).filter((slot) => slot.delivery === undefined).map((slot) => slot.id) : []
         if (origin === "inbox" && waiting.length === 0) return yield* Effect.fail(new NothingPending({ session: address.id }))
         const claimed = yield* inboxItems(address.id, waiting)
+        const inputWaiting = Option.toArray(asked.input).flatMap((queued) => pendingOf(state).some((slot) => slot.id === queued.id && slot.delivery !== undefined) ? [queued.id] : [])
+        const taking = [...waiting, ...inputWaiting]
         const userMessage = Option.getOrElse(asked.userMessage, () => new UserMessage({ text: claimed.map((item) => item.content).join("\n\n") }))
         const turn = state.turns + 1
         const open: HeldTurn = {
@@ -470,7 +528,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           open: Option.some(open),
           // A session is titled by the first message a user or a task brought.
           title: Option.orElse(state.title, () => Option.map(Option.filter(asked.userMessage, (brought) => brought.text.length > 0), (brought) => titleOf(brought.text, config.titleChars))),
-          inbox: state.inbox.map((slot) => waiting.includes(slot.id) ? { ...slot, claimedBy: Option.some(turn) } : slot),
+          inbox: state.inbox.map((slot) => taking.includes(slot.id) ? { ...slot, claimedBy: Option.some(turn) } : slot),
         }
         const starting = yield* turnStartedDraft(turn, {
           runId: input.runId, key, origin, userMessage, command: asked.command,
@@ -479,10 +537,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           ...(input.meta === undefined ? {} : { meta: input.meta }),
           ...resuming,
           ...tasked,
+          ...linked,
         }).pipe(Effect.orDie)
         const admitted: AdmittedTurn = {
           session: address, turn, runId: input.runId, key, origin, userMessage,
-          command: asked.command, claimed, meta, ...resuming, ...tasked,
+          command: asked.command, claimed, meta, ...resuming, ...tasked, ...inputData,
         }
         return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next, tookOver: reap.closed } }
       }), (opened) => Ref.set(unowned, Option.some(opened.admitted)))))
@@ -545,6 +604,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     User: (user) => normalizeUserMessage(user.userMessage).pipe(Effect.map((userMessage): BeginTurn => ({ ...user, userMessage }))),
     Task: (task) => normalizeUserMessage(task.userMessage).pipe(Effect.map((userMessage): BeginTurn => ({ ...task, userMessage }))),
     Inbox: (inbox) => Effect.succeed(inbox),
+    Queued: (queued) => Effect.succeed(queued),
   })
 
   const begin = Effect.fn("sessions.begin")((address: SessionAddress, input: BeginTurn) => normalized(input).pipe(
@@ -620,9 +680,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     }),
   })
 
-  const drain = Effect.fn("sessions.drain")(function* <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean; readonly timeLimitMs?: number }): Effect.fn.Return<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R> {
+  const drain = Effect.fn("sessions.drain")(function* <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean; readonly timeLimitMs?: number; readonly take?: "all" | "inputs" | "notices" }): Effect.fn.Return<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R> {
     const maxTurns = options?.maxTurns ?? 3
     const meta = options?.meta
+    const take = options?.take ?? "all"
+    const selected = (slot: SessionsState["inbox"][number]): boolean => take === "all" || (take === "inputs" ? slot.delivery !== undefined : slot.delivery === undefined)
+    const hasWaiting = owned(address).pipe(Effect.flatMap((head) => stateOf(head).pipe(Effect.mapError(storage("session.state")))),
+      Effect.map((state) => pendingOf(state).some(selected)))
     /** What each inbox turn is begun with besides its run id and `meta`: written only when given. */
     const begun = {
       ...(options?.takeOver === true ? { takeOver: true } : {}),
@@ -631,11 +695,20 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     /** One inbox turn, if one opens: then whether items still wait after it. */
     const once: Effect.Effect<Option.Option<boolean>, SessionMissing | SessionContended | SessionLogError, R> = Effect.scoped(Effect.gen(function* () {
       const runId = RunId.make(yield* Effect.sync(() => crypto.randomUUID()))
-      const open = yield* openTurn(address, meta === undefined ? { _tag: "Inbox", runId, ...begun } : { _tag: "Inbox", runId, meta, ...begun })
+      const head = yield* owned(address)
+      const state = yield* stateOf(head).pipe(Effect.mapError(storage("session.state")))
+      const held = yield* heldTurn(head, state, holder)
+      const available = Option.isNone(held) || options?.takeOver === true ? state.inbox : pendingOf(state)
+      const candidate = available.find(selected)
+      if (candidate === undefined) return Option.none<boolean>()
+      const input: BeginTurn = candidate.delivery === undefined ? { _tag: "Inbox", runId, ...begun, ...(meta === undefined ? {} : { meta }) }
+        : { _tag: "Queued", input: candidate.id, runId, ...begun, ...(meta === undefined ? {} : { meta }) }
+      const open = yield* openTurn(address, input)
       // A TurnError carried as a defect keeps its own tag and code, as in `Agent.turn`.
       const exit = yield* Effect.exit(harnessDefectsAsFailures(run(open.writer)))
       // The turn ends with what ended `run`: its error's code, `turn.defect` or `turn.interrupted`.
-      const ending = turnEndingOf(Exit.map(exit, () => ({ outcome: "completed" as const })))
+      const callbackEnding = turnEndingOf(Exit.map(exit, () => ({ outcome: "completed" as const })))
+      const ending = Exit.isSuccess(exit) ? Option.getOrElse(yield* open.replyEnding, () => callbackEnding) : callbackEnding
       // A drain interrupted from outside stops before this line, so an interruption here is `run`'s own: it counts
       // an attempt even when `run` wrote nothing, so an item whose run keeps interrupting itself is still dropped.
       if (ending.reason === "interrupted") yield* open.markTried
@@ -649,7 +722,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       // again, and lets the turn go when that fails too, so the next begin reaps it and takes its items again.
       const unstored = "an inbox turn did not store its end"
       return yield* open.writer.end(ending).pipe(
-        Effect.map((ended) => Option.some(ended.pending > 0)),
+        Effect.andThen(hasWaiting),
+        Effect.map(Option.some),
         Effect.catchTag("TurnClosed", (closed) => Effect.logDebug(`${unstored}: the turn was ${closed.reason}`).pipe(Effect.as(Option.some(true)))),
         Effect.catch((error) => Effect.logWarning(`${unstored}: ${reasonOf(Cause.fail(error))}`).pipe(Effect.as(Option.some(true)))),
         Effect.annotateLogs(ids),
@@ -748,6 +822,34 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       Effect.map((done) => ({ cancelled: done.closed, pending: done.pending })),
     ), onSession),
     begin,
+    enqueue: Effect.fn("sessions.enqueue")(function* (address, input) {
+      const userMessage = yield* normalizeUserMessage(input.userMessage)
+      const ready: QueuedInput = { ...input, userMessage }
+      return yield* guarded(address, (head, stored) => Effect.gen(function* () {
+        const reap = yield* reaped(head, stored)
+        const state = reap.state
+        const earlier = (yield* queuedIn(address.id)).find(({ data }) => data.id === ready.id)
+        if (earlier !== undefined) {
+          const previous = earlier.data
+          if (previous.input === undefined || !sameUserMessage(previous.input.userMessage, ready.userMessage)
+            || previous.input.delivery !== ready.delivery || canonicalJson(previous.source) !== canonicalJson(ready.source)) {
+            return yield* Effect.fail(new InputConflict({ session: address.id, id: ready.id }))
+          }
+          return {
+            drafts: reap.drafts, next: reap.drafts.length === 0 ? Option.none<SessionsState>() : Option.some(state),
+            result: { enqueued: false, pending: pendingOf(state).length },
+            validateRead: true,
+          }
+        }
+        if (pendingOf(state).length >= config.inbox.maxPending) return yield* Effect.fail(new InboxFull({ session: address.id, pending: pendingOf(state).length }))
+        const next: SessionsState = { ...state, inbox: [...state.inbox, { id: ready.id, delivery: ready.delivery, attempts: 0, claimedBy: Option.none() }] }
+        const data = yield* queuedInputData(ready).pipe(Effect.orDie)
+        return {
+          drafts: [...reap.drafts, { kind: "inbox.queued", turn: Option.none(), data }], next: Option.some(next),
+          result: { enqueued: true, pending: pendingOf(next).length },
+        }
+      })).pipe(Effect.map((done) => done.result))
+    }, onSession),
     deliver: Effect.fn("sessions.deliver")((address, item) => guarded(address, (head, stored) => Effect.gen(function* () {
       const reap = yield* reaped(head, stored)
       const state = reap.state

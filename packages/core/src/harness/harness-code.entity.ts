@@ -26,6 +26,7 @@ export const HARNESS_CODES = [
   "events.depth",
   "events.encode",
   "events.reserved",
+  "inbox.input-conflict",
   "loop.failed",
   "loop.model",
   "loop.truncated",
@@ -122,6 +123,7 @@ export type HarnessCode = typeof HarnessCode.Type
  */
 export const TAGGED_CODES = {
   ...turnBeginCodes,
+  InputConflict: "inbox.input-conflict",
   TurnClosed: "turn.closed",
   ReservedKind: "events.reserved",
 } as const satisfies Readonly<Record<string, HarnessCode>>

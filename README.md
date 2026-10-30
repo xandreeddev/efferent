@@ -121,7 +121,7 @@ Core ships the port contracts as conformance kits (`@xandreed/core/conformance`)
 checks any test runner can run against your own implementation: `sessionLogConformance` and
 `sessionLogRecoveryConformance` (reopening, two handles, interrupted commits,
 a handle whose scope never closed) for a session store,
-`sessionsConformance` (one open turn per session, keys, resume, the inbox,
+`sessionsConformance` (one open turn per session, keys, resume, queued input and the inbox,
 leases and dead holders reaped, `TurnActivity`) for a `Sessions` backend,
 `taskRunnerConformance` and `tasksConformance` for background work and
 tasks, `toolRegistryConformance` (from `@xandreed/sdk/conformance`, since it

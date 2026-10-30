@@ -226,7 +226,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     const now = yield* Clock.currentTimeMillis
     const remaining = Option.map(deadline, (at) => at - now)
     if (delivered.pending === 0 || (Option.isSome(remaining) && remaining.value <= 0)) return
-    yield* sessions.drain(parent, (writer) => reaction(writer, deadline), Option.isSome(deadline) ? { maxTurns: 1, meta } : { meta })
+    yield* sessions.drain(parent, (writer) => reaction(writer, deadline), Option.isSome(deadline) ? { maxTurns: 1, meta, take: "notices" } : { meta, take: "notices" })
   })
 
   /**

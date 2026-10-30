@@ -47,7 +47,7 @@ const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensi
   "stream.fallback": { writer: "The turn's bus (stored from `stream.fallback`)", sensitive: "The stream's error text, which may quote the provider's error." },
   "request.prepared": { writer: "The turn, before each provider call (`TurnMemory.prepareRequest`)", sensitive: "The full system prompt text and every active tool declaration (and step context in `system` mode)." },
   "turn.ended": { writer: "plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap", sensitive: "Failure messages, which may quote errors." },
-  "inbox.queued": { writer: "plugin-sessions: `Sessions.deliver` (a task's result, a host's item)", sensitive: "The item's content and source." },
+  "inbox.queued": { writer: "plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input)", sensitive: "The item's content, user message, attachments and source." },
   "inbox.dropped": { writer: "plugin-sessions: the end of the last turn that took the item and failed", sensitive: "None: the item id." },
 }
 
@@ -135,6 +135,7 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "context.budget", where: "each step of a run; `@xandreed/plugin-memory-window`", meaning: "At a step, the system prompt and the active tools' schemas leave nothing of the context budget (`budgetTokens`); with the window strategy, also when the current turn alone does not fit the budget memory is given: the whole budget at the turn's start, what they leave at each step." },
   { code: "session.log", where: "the turn writer, a turn failing with a `SessionLogError`", meaning: "The session store failed during the turn. A turn that fails with a `SessionLogError` stores this code; the error's own `code` (`store.io`, ...) says what failed." },
   { code: "session.contended", where: "the turn writer, plugin-sessions' `Sessions` and the `Tasks` over it (`SessionContended`)", meaning: "Too many conflicting writes to the session in a row: nothing was written, and a retry may succeed." },
+  { code: "inbox.input-conflict", where: "`Sessions.enqueue` (`InputConflict`)", meaning: "The input id already names another normalized message, delivery or source, or a legacy notice. Nothing was replaced or queued; retry with the original input or a new id." },
   { code: "session.state", where: "the turn writer (a `HarnessError`); plugin-sessions' `Sessions` (a `SessionLogError`)", meaning: "The session's state, kept in its head, did not decode." },
   { code: "session.encode", where: "the turn writer", meaning: "The writer's closing `turn.ended` did not encode. plugin-sessions' `Sessions` no longer raises it for a record or a state of its own since `SessionLogError` became storage only (it is a defect now); older journals may hold it." },
   { code: "session.decode", where: "`Sessions.begin` (a `SessionLogError`)", meaning: "A stored `turn.started` or `turn.ended` did not decode when the begin checked its key or the turn it resumes." },

@@ -38,6 +38,20 @@ export const InboxItem = Schema.Struct({
 })
 export type InboxItem = typeof InboxItem.Type
 
+/** How a durable user input reaches its session: during a turn when possible, or in the next user turn. */
+export const InputDelivery = Schema.Literals(["steer", "next"])
+export type InputDelivery = typeof InputDelivery.Type
+
+/** A durable user input. Its stable id names one normalized message, delivery and source for its lifetime. */
+export const QueuedInput = Schema.Struct({
+  id: InboxItemId,
+  userMessage: UserMessage,
+  delivery: InputDelivery,
+  /** Who sent it and why; host metadata, never added to the model's message. */
+  source: JsonObject,
+})
+export type QueuedInput = typeof QueuedInput.Type
+
 /** The turn a session has open. */
 export const OpenTurn = Schema.Struct({
   turn: Schema.Int,
@@ -128,7 +142,7 @@ const TakeOver = Schema.optionalKey(Schema.Boolean)
 const TimeLimit = Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)))
 
 /**
- * How a turn begins: a user's message, the inbox's pending items, or a
+ * How a turn begins: a user's message, one queued input, the inbox's pending notices, or a
  * background task's instructions (the one turn of its child session, begun
  * by the tasks plugin; origin `task`, which cannot be resumed).
  */
@@ -146,6 +160,14 @@ export const BeginTurn = Schema.Union([
     timeLimitMs: TimeLimit,
   }),
   Schema.TaggedStruct("Inbox", { runId: RunId, meta: TurnMeta, takeOver: TakeOver, timeLimitMs: TimeLimit }),
+  Schema.TaggedStruct("Queued", {
+    /** The immutable input to claim. Its first turn is keyed `input:<id>`; failed attempts use fresh keys. */
+    input: InboxItemId,
+    runId: RunId,
+    meta: TurnMeta,
+    takeOver: TakeOver,
+    timeLimitMs: TimeLimit,
+  }),
   Schema.TaggedStruct("Task", {
     task: TaskRef,
     /** The task's instructions, as the model is given them. */
@@ -169,7 +191,10 @@ export const AdmittedTurn = Schema.Struct({
   origin: TurnOrigin,
   userMessage: UserMessage,
   command: JsonObject,
+  /** Legacy notices only; a queued user's input has its own identity below. */
   claimed: Schema.Array(InboxItem),
+  /** The queued input this user turn answers, including an explicit resume of it. */
+  input: Schema.optionalKey(QueuedInput),
   /** The host's metadata the turn was begun with (`{}` when none was given). */
   meta: JsonObject,
   /** The turn this one resumes, when it resumes one. */
@@ -185,14 +210,14 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy"
   turn: Schema.Int,
 }) {}
 
-/** The key was begun before with the same message, command, `resumes` and task: that turn is the answer. */
+/** The key was begun before with the same message, command, `resumes`, task and queued input: that turn is the answer. */
 export class TurnDuplicate extends Schema.TaggedError<TurnDuplicate>()("TurnDuplicate", {
   session: ConversationId,
   turn: Schema.Int,
   open: Schema.Boolean,
 }) {}
 
-/** The key was begun before with another message, command, `resumes` or task. */
+/** The key was begun before with another message, command, `resumes`, task or queued input. */
 export class KeyConflict extends Schema.TaggedError<KeyConflict>()("KeyConflict", {
   session: ConversationId,
   key: Schema.String,
@@ -229,7 +254,7 @@ export class RunIdReused extends Schema.TaggedError<RunIdReused>()("RunIdReused"
   turn: Schema.Int,
 }) {}
 
-/** An inbox turn found nothing to take. */
+/** An inbox or queued turn found no eligible input to take. */
 export class NothingPending extends Schema.TaggedError<NothingPending>()("NothingPending", {
   session: ConversationId,
 }) {}
@@ -238,6 +263,12 @@ export class NothingPending extends Schema.TaggedError<NothingPending>()("Nothin
 export class InboxFull extends Schema.TaggedError<InboxFull>()("InboxFull", {
   session: ConversationId,
   pending: Schema.Int,
+}) {}
+
+/** An input id already names a different normalized message, delivery or source, or a legacy notice. */
+export class InputConflict extends Schema.TaggedError<InputConflict>()("InputConflict", {
+  session: ConversationId,
+  id: InboxItemId,
 }) {}
 
 /** A host tried to record under a kind only the framework writes. */

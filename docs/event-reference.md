@@ -230,7 +230,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 
 | Kind | Written by | Sensitive content | Fields |
 | --- | --- | --- | --- |
-| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message (its images, inline as base64, included), the host's command and the host's metadata (`meta`), when given. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `entry`, `at`, `meta`, `resumes`, `task` |
+| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message (its images, inline as base64, included), the host's command and the host's metadata (`meta`), when given. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `input`, `entry`, `at`, `meta`, `resumes`, `task` |
 | `memory.system` | Memory, when the turn's system prompt (or a variant) changes | The full system prompt text. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.section` | Memory: `turn.context(…)` and turn-tier prompt sections | Turn sections: the host's context for this turn, as the model sees it. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.step` | Memory: the step policy's step context | Step context text. | `entry`, `runId`, `step`, `at`, `body` |
@@ -253,7 +253,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `stream.fallback` | The turn's bus (stored from `stream.fallback`) | The stream's error text, which may quote the provider's error. | `step`, `run`, `message` |
 | `request.prepared` | The turn, before each provider call (`TurnMemory.prepareRequest`) | The full system prompt text and every active tool declaration (and step context in `system` mode). | `version`, `runId`, `run`, `step`, `strategyVersion`, `system`, `render`, `through`, `contextFingerprint`, `tools`, `toolChoice`, `model`, `cacheKey`, `callPolicy` |
 | `turn.ended` | plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap | Failure messages, which may quote errors. | `reason`, `failure` |
-| `inbox.queued` | plugin-sessions: `Sessions.deliver` (a task's result, a host's item) | The item's content and source. | `id`, `source`, `content` |
+| `inbox.queued` | plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input) | The item's content, user message, attachments and source. | `id`, `source`, `content`, `input` |
 | `inbox.dropped` | plugin-sessions: the end of the last turn that took the item and failed | None: the item id. | `id`, `reason` |
 
 A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's id, run, step and time, and its body without the `_tag` (the kind names it). Memory is rebuilt from these events by `entriesOfEvents`.
@@ -387,6 +387,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `context.budget` | each step of a run; `@xandreed/plugin-memory-window` | At a step, the system prompt and the active tools' schemas leave nothing of the context budget (`budgetTokens`); with the window strategy, also when the current turn alone does not fit the budget memory is given: the whole budget at the turn's start, what they leave at each step. |
 | `session.log` | the turn writer, a turn failing with a `SessionLogError` | The session store failed during the turn. A turn that fails with a `SessionLogError` stores this code; the error's own `code` (`store.io`, ...) says what failed. |
 | `session.contended` | the turn writer, plugin-sessions' `Sessions` and the `Tasks` over it (`SessionContended`) | Too many conflicting writes to the session in a row: nothing was written, and a retry may succeed. |
+| `inbox.input-conflict` | `Sessions.enqueue` (`InputConflict`) | The input id already names another normalized message, delivery or source, or a legacy notice. Nothing was replaced or queued; retry with the original input or a new id. |
 | `session.state` | the turn writer (a `HarnessError`); plugin-sessions' `Sessions` (a `SessionLogError`) | The session's state, kept in its head, did not decode. |
 | `session.encode` | the turn writer | The writer's closing `turn.ended` did not encode. plugin-sessions' `Sessions` no longer raises it for a record or a state of its own since `SessionLogError` became storage only (it is a defect now); older journals may hold it. |
 | `session.decode` | `Sessions.begin` (a `SessionLogError`) | A stored `turn.started` or `turn.ended` did not decode when the begin checked its key or the turn it resumes. |
