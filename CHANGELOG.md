@@ -197,6 +197,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Foundry profiles: drop workspace packages from `externals` and name them
   in `canImport`; a test that imports another package's testing module
   needs a `<name>-tests` layer.
+- List `@xandreed/core` beside `effect` in your dependencies: every package
+  that uses core declares it a peer dependency (`^<version>`), like
+  `effect`, so a host installs exactly one copy, and dependencies that cannot
+  share one fail the install with a peer conflict instead of loading a
+  second copy. npm 7+, pnpm and Bun install a missing peer themselves.
 
 ### Breaking
 
@@ -1152,6 +1157,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `export *`, and first-party code may not import an export marked
   `@deprecated`. It ships enabled for no entry; entries join
   `CURATED_ENTRIES` in `foundry.config.ts` as their surface is curated.
+- `api/` records what each published entry exports (`kind name` lines);
+  `bun run api:update` rewrites it from a fresh build. `verify:packages`
+  fails when it differs from the build, or when a package's root exports a
+  name declared under `src/internal/` or `src/engine/`.
+- `verify:packages` checks that the packed consumer installed exactly one
+  copy of `@xandreed/core` and of `effect`.
 
 ## 0.14.0 — 2026-10-29
 

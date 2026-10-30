@@ -16,13 +16,15 @@ configurable plugins. The SDK composes them into one validated graph.
 Install the SDK and the plugins your application uses:
 
 ```sh
-npm install effect @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
+npm install effect @xandreed/core @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
 ```
 
-Install `effect` (4.0.7 or a later 4.x) beside them: the packages and your
-code share one copy. Releases after 0.14.0 declare it a peer dependency and
-each other by caret ranges, so other patch versions still install one copy of
-`effect` and of `@xandreed/core`.
+Install `effect` (4.0.7 or a later 4.x) and `@xandreed/core` beside them: the
+packages and your code share one copy of each. Releases after 0.14.0 declare
+both peer dependencies and the other packages by caret ranges, so other patch
+versions still install one copy of `effect` and of `@xandreed/core`, and
+versions that cannot share one are a peer conflict when you install, not a
+second copy.
 
 All framework packages are published at `0.14.0` under npm's `latest` tag.
 `@xandreed/plugin-models` needs Node 24.5 or newer.

@@ -106,8 +106,10 @@ See [evaluation-domain.md](evaluation-domain.md) for interfaces, lifecycle, comm
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
 under `.artifacts/packages`, leaving test code out (`*.test.*`, `testing` modules and
 folders). `bun run verify:packages` refuses a build that is not of `HEAD`, was made
-from a tree with changes (unless `--allow-dirty`) or holds test code; it packs them, installs them
-in a temporary external project through a temporary local npm registry, and exercises
+from a tree with changes (unless `--allow-dirty`), holds test code, or whose published
+entries export other names than `api/` records (`bun run api:update` rewrites it); it
+packs them, installs them in a temporary external project through a temporary local npm
+registry, checks it holds one copy of `@xandreed/core` and of `effect`, and exercises
 SDK sessions, replacement plugins, persistence, forks and custom evals on Bun,
 then imports every Node-capable package on Node; it also runs the `FileSystem`
 and `Bash` kits over the packed `@xandreed/plugin-workspace` adapters, loads a

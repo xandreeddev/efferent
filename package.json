@@ -19,6 +19,7 @@
     "prepare": "bun scripts/installHooks.ts",
     "build:packages": "bun scripts/build-packages.ts",
     "verify:packages": "bun scripts/verify-packages.ts",
+    "api:update": "bun run build:packages && bun scripts/api-snapshot.ts",
     "publish:packages": "bun scripts/publish-packages.ts",
     "docs:generate": "bun scripts/generate-plugin-reference.ts && bun scripts/generate-event-reference.ts && bun scripts/sync-guides.ts",
     "eval:cli": "bun packages/evals-cli/src/main.ts"
