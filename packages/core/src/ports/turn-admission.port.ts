@@ -3,7 +3,7 @@ import type { Effect } from "effect"
 import type { RunId } from "../domain/run.entity.js"
 import type { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import type { JsonObject } from "../session/session-log.entity.js"
-import type { SessionAddress, TurnRefused } from "../session/sessions.entity.js"
+import type { InboxItemId, SessionAddress, TurnRefused } from "../session/sessions.entity.js"
 import type { TaskRef } from "../session/tasks.entity.js"
 
 /**
@@ -18,6 +18,8 @@ export interface TurnToAdmit {
   readonly key: string
   /** The host's metadata the turn is begun with (`{}` when none was given): a tenant or a quota key to count by. */
   readonly meta: JsonObject
+  /** The queued input this user turn answers, including an explicit resume, when it has one. */
+  readonly input?: InboxItemId
   /** The earlier turn a user's turn resumes (a whole number of at least 1), only when it resumes one. */
   readonly resumes?: number
   /** The task a task's turn runs (origin `task`), only on such a turn: a host counts it as the task's parent's. */

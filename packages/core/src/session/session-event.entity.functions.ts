@@ -134,12 +134,12 @@ export const readStored = <K extends StoredKind>(kind: K, events: ReadonlyArray<
     decodeStored(kind, event).pipe(Effect.map((data): Stored<K> => ({ event, data }))), { concurrency: 1 })
 
 /**
- * What a lookup of a `turn.started` decodes: its run, key and entry, never
- * the user's message (its images are base64).
+ * What a lookup of a `turn.started` decodes: its run, key, entry and optional
+ * queued input and resumed turn, never the user's message (its images are base64).
  *
  * @public
  */
-export const TurnStartedKeys = TurnStartedData.mapFields(Struct.pick(["runId", "key", "entry"]))
+export const TurnStartedKeys = TurnStartedData.mapFields(Struct.pick(["runId", "key", "entry", "input", "resumes"]))
 /**
  * What a lookup of a `request.prepared` decodes: its run id, run and step,
  * never its system text and tools.

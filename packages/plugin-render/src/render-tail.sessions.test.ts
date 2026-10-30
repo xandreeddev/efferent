@@ -19,7 +19,7 @@ const sessionsOf = (owner: string, asked: Array<SessionAddress>) => {
   const unused = () => Effect.die("unused")
   return Sessions.of({
     create: unused, fork: unused, get: unused, list: unused, remove: unused, lookup: unused, transact: unused,
-    cancel: unused, begin: unused, deliver: unused, drain: unused,
+    cancel: unused, begin: unused, enqueue: unused, deliver: unused, drain: unused,
     read: (address, query) => {
       asked.push(address)
       return address.owner === owner && address.id === id

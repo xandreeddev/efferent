@@ -9,6 +9,7 @@ import type { TurnEventName } from "../turn/turn-event.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { JsonObject } from "./session-log.entity.js"
 import { TaskRef } from "./tasks.entity.js"
+import { InputDelivery } from "./sessions.entity.js"
 
 /**
  * An inbox item's id as stored: `InboxItemId`'s brand without its checks,
@@ -48,6 +49,8 @@ export const TurnStartedData = Schema.Struct({
   command: JsonObject,
   /** The inbox items this turn answers (an inbox turn only). */
   claimed: Schema.Array(StoredInboxItemId),
+  /** The queued input this user turn answers; absent in older records and direct user turns. */
+  input: Schema.optionalKey(StoredInboxItemId),
   /** The memory entry the message is to the model, and when memory took it. */
   entry: EntryId,
   at: Schema.Number,
@@ -81,11 +84,13 @@ export type TurnStartedData = typeof TurnStartedData.Type
 export const TurnEndedData = TurnEnding
 export type TurnEndedData = TurnEnding
 
-/** An inbox item as delivered (`inbox.queued`): its stable id, who sent it and the text a turn shows the model. */
+/** An inbox item as delivered (`inbox.queued`): a notice's content or one queued user message, its stable id and source. */
 export const InboxQueuedData = Schema.Struct({
   id: StoredInboxItemId,
   source: JsonObject,
   content: Schema.String,
+  /** Queued user input; legacy notices have only content. Input writes content empty so its bytes occur once. */
+  input: Schema.optionalKey(Schema.Struct({ userMessage: UserMessage, delivery: InputDelivery })),
 })
 export type InboxQueuedData = typeof InboxQueuedData.Type
 

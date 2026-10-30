@@ -1,5 +1,5 @@
 import { Cause, Clock, Deferred, Effect, Exit, HashSet, Match, Option, Queue, Ref, Result, Scope, Semaphore, Tracer } from "effect"
-import { harnessError, isRevisionConflict, readStored, reasonOf, ReservedKind, SessionContended, turnAttributes, turnEndedDraft, TurnClosed, unmarkedReservedDraft } from "@xandreed/core"
+import { harnessError, isRevisionConflict, readStored, reasonOf, replyEndingOf, ReservedKind, SessionContended, turnAttributes, turnEndedDraft, TurnClosed, unmarkedReservedDraft } from "@xandreed/core"
 import type {
   AdmittedTurn,
   Decided,
@@ -106,6 +106,8 @@ export interface OpenWriter {
   readonly ended: Effect.Effect<boolean>
   /** Count the inbox items the turn took as tried, though it wrote nothing (a drain `run` that interrupted itself). */
   readonly markTried: Effect.Effect<void>
+  /** A held reply's outcome, before the closing commit; a drain preserves a partial reply. */
+  readonly replyEnding: Effect.Effect<Option.Option<TurnEnding>>
 }
 
 /**
@@ -475,6 +477,10 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
     close: closeBy,
     ended: phaseNow.pipe(Effect.map(WriterPhase.guards.Ended)),
     markTried: Ref.update(phase, (current) => ({ ...current, phase: markTried(current.phase) })),
+    replyEnding: phaseNow.pipe(Effect.map((current) => WriterPhase.match(current, {
+      Open: (open) => replyEndingOf(open.closing), Ending: (ending) => Option.some(ending.ending),
+      Failed: () => Option.none(), Closed: () => Option.none(), Ended: () => Option.none(),
+    }))),
   }
 })
 

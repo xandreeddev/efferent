@@ -8,6 +8,7 @@ class FileSystem
 class FsError
 class HarnessError
 class InboxFull
+class InputConflict
 class IntentMatcher
 class KeyConflict
 class LeaseExpired
@@ -122,6 +123,7 @@ const InboxDroppedData
 const InboxItem
 const InboxItemId
 const InboxQueuedData
+const InputDelivery
 const InvocationId
 const JOURNAL_KINDS
 const JsonObject
@@ -152,6 +154,7 @@ const PromptTier
 const ProviderId
 const ProviderOptions
 const ProviderToolId
+const QueuedInput
 const RECORDED_ELSEWHERE
 const RESERVED_KINDS
 const ReadRange
@@ -478,6 +481,7 @@ type InboxDroppedData
 type InboxItem
 type InboxItemId
 type InboxQueuedData
+type InputDelivery
 type InvocationId
 type JsonObject
 type KeyedKind
@@ -508,6 +512,7 @@ type PromptTier
 type ProviderId
 type ProviderOptions
 type ProviderToolId
+type QueuedInput
 type ReadRange
 type ReasoningEffort
 type ReasoningEffortType

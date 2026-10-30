@@ -27,7 +27,7 @@ transports (see [render kits](#render-kits)).
 | --- | --- | --- |
 | `sessionLogConformance(log)` | dense sequence numbers, one revision per commit, compare-and-swap, the `notAfter` clock check, JSON kept by value (an `undefined` field dropped, not refused), an event as large as a message's images at their limit (`MEDIA_LIMITS.requestChars` base64 characters), reads by position and kind, listing order, children and their removal | a `SessionLog` |
 | `sessionLogRecoveryConformance(subject)` | reopening, several open handles, interrupted commits, a handle whose scope never closed, the exact `notAfter` boundary | a way to open a `SessionLog` |
-| `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; a reused run id (`RunIdReused`) opening nothing; `meta` stored and admitted; every `NotResumable` reason; a task's turn (origin `task`, its `TaskRef`) admitted, stored, keyed and never resumed; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds, refused to a turn's writer too unless the framework's turn wrote them; cancel and removal, and a turn nobody holds reaped alike by a cancel or a delivery; the inbox; a write renewing a lease, a lease that ran out and a dead process holder reaped; a turn judged as it was taken, not by the reader's ownership; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
+| `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; a reused run id (`RunIdReused`) opening nothing; `meta` stored and admitted; every `NotResumable` reason; a task's turn (origin `task`, its `TaskRef`) admitted, stored, keyed and never resumed; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds, refused to a turn's writer too unless the framework's turn wrote them; cancel and removal, and a turn nobody holds reaped alike by a cancel or a delivery; the inbox; queued input stored once with immutable ids and exact messages, indefinite retries, resume reclamation, selected drains, concurrent claims and actual admission keys; a write renewing a lease, a lease that ran out and a dead process holder reaped; a turn judged as it was taken, not by the reader's ownership; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
 | `taskRunnerConformance(make, { interruptsOnClose? })` | `run` hands the work over and returns, the work runs once, outlives its caller, is told a deadline not in the past and runs without the caller's services; `TaskActivity` counts it from the hand-over; closing the runner's scope interrupts it | a way to make a `TaskRunner` (and its `TaskActivity`) |
 | `tasksConformance(make)` | a task runs as one turn of a child session (spawn empty, fork with the parent's closed turns), its result reaches the parent's inbox once and the parent reacts once, after the turn in flight; `task.started` once per task, a second start runs nothing, the same id with other instructions `TaskConflict` and an id naming another session `SessionExists`; the child's turn a task's (origin `task`); a failed task says why; cancel; the executor's turns run with the backend's `Tasks` (the child finds its task running, the reaction finds it finished); no task starts tasks, a host's fork may; `reconcile` starting a task that never ran and delivering a result whose delivery was lost | a way to build `Sessions` and `Tasks` over the kit's runner and executor |
 | `toolRegistryConformance(make)` | the catalog, activation (always-on, on demand, unknown, ungranted, only growing), `load_skill`'s refusals under PascalCase names, concurrent `load_skill` calls each leaving their tools active, activated once, one invocation id per call minted before the checks, `CurrentToolInvocation` and the opener's services in the handler, the services a tool declares (`requires.missing` when the run lacks one, the opener's when it has them), events published on the run's bus only (never written to the journal by the registry), `PermissionGrants`, a `tool.refused` for each reason (`inactive`, `forbidden`, `denied`, `call-limit`, `tool-call-limit`), its result under a PascalCase name | a way to build a `ToolRegistry` over the kit's capabilities |
@@ -291,6 +291,32 @@ The checks:
   by one inbox turn whose message frames it, waits for an open turn (whose
   end reports it), comes back when its turn is interrupted from outside, and
   is done when its turn is cancelled (a later drain takes nothing).
+- **queued-input**: enqueue stores one normalized user message with its
+  attachment, repeats acknowledge the same id, a queued begin has origin
+  `user` and exact provenance, an Inbox begin leaves it alone, and
+  completion acknowledges it once. Retrying the same input and run id
+  returns `TurnDuplicate` after completion too.
+- **input-conflict**: changing an input's message, delivery or source,
+  including after completion, or colliding with a notice id raises
+  `InputConflict` and writes nothing; a notice cannot replace input.
+- **queued-retry**: input survives twelve failed attempts and a new
+  instance without `inbox.dropped`; partial remains pending, including a
+  successful drain callback's held partial reply. A callback failure wins
+  over that held reply. Completion
+  and explicit cancellation acknowledge it, and manually resuming a
+  cancellation does not recreate a slot. A careless drain that drops a
+  held partial reply fails this check.
+- **queued-resume**: an explicit user resume reclaims its interrupted
+  queued input, a failed resume retains it, and successful completion
+  leaves no input to drain a second time.
+- **drain-take**: inputs and notices are selected separately, queued
+  messages stay separate and in order, input delivered during a turn is
+  drained next, and a busy session or unknown input consumes nothing.
+- **queued-race**: separate instances enqueue an id once, preserve
+  distinct concurrent inputs, and claim one input to at most one turn.
+- **queued-admission**: the host sees the actual initial and retry keys
+  and input id; changing turn metadata preserves input identity, and
+  refused admission leaves it pending.
 - **lease**: a turn within its lease is open and busy; past it, it is shown
   closed, a drain with nothing waiting stores nothing (only a turn that
   opens reaps), the next begin reaps it (`interrupted`, `turn.lease`) and the
@@ -315,14 +341,18 @@ The checks:
 
 The kit's own tests run it against careless wrappers of `SessionsLive`: a
 `begin` that cancels the open turn instead of refusing it fails `busy`,
-`duplicate`, `lease`, `lease-renewal`, `process`, `race`, `resume` and
-`tenure`; a
+`duplicate`, `lease`, `lease-renewal`, `process`, `queued-race`, `race`,
+`resume`, `takeover` and `tenure`; a
 `TurnActivity` that always reads idle fails `activity`; a `begin` that drops
-`meta` fails `meta`; leases that writes do not renew (`renew: "none"`) fail
-`lease-renewal`; writers that take the framework's kinds from anyone fail
+`meta` fails `meta` and `queued-admission`; leases that writes do not renew
+(`renew: "none"`) fail `lease-renewal`; writers that take the framework's kinds from anyone fail
 `transact`; a `begin` that opens a reused run id's turn under a new one
 fails `run-id`; a `begin` that opens a task's turn as a user's fails
-`task`.
+`task`. An enqueue that acknowledges without storing fails all seven
+queued-input checks. Silently accepting conflicting payloads fails
+`input-conflict`; losing admitted input provenance fails `queued-input`,
+`queued-resume` and `queued-retry` (losing it only on explicit user resumes
+fails `queued-resume`); ignoring the drain selection fails `drain-take`.
 
 ## The task kits
 

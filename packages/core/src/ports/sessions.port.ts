@@ -1,5 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope, Stream } from "effect"
+import type { AttachmentRejected } from "../domain/media.entity.js"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
 import type { JsonObject, SessionExists, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "../session/session-log.entity.js"
@@ -8,6 +9,8 @@ import type {
   BeginTurn,
   InboxFull,
   InboxItem,
+  InputConflict,
+  QueuedInput,
   ReservedKind,
   SessionAddress,
   SessionContended,
@@ -203,6 +206,12 @@ export class Sessions extends Context.Service<Sessions, {
    * session (or of the history a fork inherits) was begun with fails with
    * `RunIdReused` and opens nothing, checked in the opening commit right
    * after the key's (a retry under the same key is `TurnDuplicate`).
+   * A queued turn (`Queued`) atomically claims exactly the named queued
+   * input as a user's turn: its first key is `input:<id>`, later attempts
+   * use fresh keys. No eligible input is `NothingPending`; an acknowledged
+   * input is `TurnDuplicate`. The queued identity is stored and admitted;
+   * an explicit user resume of it reclaims the same pending input so a
+   * successful resume cannot leave it to run again.
    * A user message is normalised first (`normalizeUserMessage`), before
    * anything else: an image its bytes do not support fails with
    * `AttachmentRejected`, and the normalised message is what is stored,
@@ -210,15 +219,29 @@ export class Sessions extends Context.Service<Sessions, {
    */
   readonly begin: (address: SessionAddress, input: BeginTurn) =>
     Effect.Effect<TurnWriter, TurnBeginError, Scope.Scope>
-  /** Put an item in the inbox (once per id); `pending` counts what waits after it. */
+  /**
+   * Store a normalized user input once per id, including its attachments.
+   * An id with another message, delivery or source is InputConflict; a
+   * repeated identical input is acknowledged even after its turn completed.
+   * Queued inputs survive failed, partial and interrupted turns without an
+   * attempt ceiling. Completion or explicit cancellation acknowledges them.
+   */
+  readonly enqueue: (address: SessionAddress, input: QueuedInput) =>
+    Effect.Effect<{ readonly enqueued: boolean; readonly pending: number }, AttachmentRejected | InputConflict | InboxFull | SessionMissing | SessionContended | SessionLogError>
+  /** Put a legacy notice in the inbox (once per id); `pending` counts every kind of input waiting after it. */
   readonly deliver: (address: SessionAddress, item: InboxItem) =>
     Effect.Effect<{ readonly delivered: boolean; readonly pending: number }, InboxFull | SessionMissing | SessionContended | SessionLogError>
   /**
-   * Run inbox turns while items wait, the session is free and the host
-   * admits them, at most `maxTurns` (3), each begun with `meta`: it goes on
-   * while the end of its last turn counts items waiting (ones delivered
-   * during that turn included) and stops once one counts none. A turn whose
-   * `run` succeeds ends completed; one whose `run` fails ends with its
+   * Run selected pending work while the session is free and the host
+   * admits it, at most `maxTurns` (3), each turn begun with `meta`. `take`
+   * is all by default, inputs for queued user input only, or notices for
+   * legacy notices only. Every queued input starts its own user turn with
+   * its exact message and attachments; an inbox turn takes notices only.
+   * A queued input is also reclaimed by an explicit user resume and
+   * acknowledged once that resume completes. The drain continues while
+   * selected items wait, including ones delivered during its last turn.
+   * A successful `run` preserves the outcome of its held reply (completed
+   * or partial), and ends completed when it held none. A failed `run` ends with its
    * error's code (`turnEndingOf`, a `TurnError` carried as a defect
    * included): `turn.failed`, `turn.defect` or `turn.interrupted` when it has
    * none. A `run` that interrupts itself counts an attempt for the items it
@@ -228,6 +251,6 @@ export class Sessions extends Context.Service<Sessions, {
    * for its lease. With `timeLimitMs`, each turn may run that long
    * (`BeginTurn`'s `timeLimitMs`), its `run` interrupted past it.
    */
-  readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean; readonly timeLimitMs?: number }) =>
+  readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean; readonly timeLimitMs?: number; readonly take?: "all" | "inputs" | "notices" }) =>
     Effect.Effect<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R>
 }>()("efferent/Sessions") {}

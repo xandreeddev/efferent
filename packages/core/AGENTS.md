@@ -109,8 +109,8 @@ Tell a `HarnessError` (or another tagged error) by its tag and fields, with
 `instanceof`: a host can load two copies of core, each with its own class,
 and the other copy's errors would lose their codes. A failure's framework
 code comes from `harnessCodeOf` (`src/harness/harness-code.entity.functions.ts`):
-a `HarnessError`'s own, the code a begin refusal, `TurnClosed` or
-`ReservedKind` stands for (`TAGGED_CODES`), a tagged error's own `code`,
+a `HarnessError`'s own, the code a begin refusal, `InputConflict`,
+`TurnClosed` or `ReservedKind` stands for (`TAGGED_CODES`), a tagged error's own `code`,
 never an untagged value's (a Node or SQLite error's `code` is `errorCodeOf`).
 `HARNESS_CODES` is the published list of the codes the packages raise or
 store: add a new one there, with its meaning in the event reference's
@@ -129,6 +129,25 @@ rather than wrap it. `PLUGIN_API_VERSION` is 3 since the writer raises the
 tags; versions 1 and 2 still load. A `TurnRunner` (`Agent.turn`) fails a
 turn that cannot begin with its `TurnBeginError` as it is, never a
 `HarnessError` made from it (`turnConformance` checks `SessionBusy`).
+
+Session input contracts live in `src/session/sessions.entity.ts` and
+`src/ports/sessions.port.ts`: `QueuedInput` holds one normalized
+`UserMessage`, a stable `InboxItemId`, `InputDelivery` (`steer` or `next`)
+and host-only source metadata. `Sessions.enqueue` stores work separately
+from `begin`, which refuses a busy session. An input id is immutable across completion;
+`InputConflict` is an enqueue failure, mapped by `TAGGED_CODES` to
+`inbox.input-conflict`, not a `TurnBeginError`. Notice ids share its
+namespace. `BeginTurn.Queued` claims one input as a user turn; its
+`AdmittedTurn.input` retains the full input while `turn.started.input`
+and `TurnToAdmit.input` carry only its id. `claimed` stays notice-only.
+A queued input survives failed, partial and interrupted turns without an
+attempt ceiling; completion or explicit cancellation acknowledges it.
+An explicit user resume reclaims its pending input in the opening commit.
+`drain.take` selects all work, inputs or notices; the tasks plugin's
+reaction executor selects notices. Keep these distinctions in
+`sessionsConformance`, including careless wrappers that lose provenance,
+accept conflicting ids or ignore the selection. `steer` is stored but
+currently drains as its own queued user turn.
 
 The step loop and its event vocabulary (`LoopEvent`) live in
 `@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,

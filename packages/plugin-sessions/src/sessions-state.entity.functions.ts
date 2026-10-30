@@ -1,6 +1,6 @@
 import { Effect, Option, Schema } from "effect"
 import { InboxDroppedData, InboxQueuedData, STORED_FORMAT } from "@xandreed/core"
-import type { InboxItem, InboxItemId, JsonObject, OpenTurn, SessionHead, SessionView, TurnEndReason } from "@xandreed/core"
+import type { InboxItem, InboxItemId, JsonObject, OpenTurn, QueuedInput, SessionHead, SessionView, TurnEndReason } from "@xandreed/core"
 import { SessionsState } from "./sessions-state.entity.js"
 import type { HeldTurn, HolderProcess, InboxSlot, ProcessLiveness, SessionsState as State } from "./sessions-state.entity.js"
 
@@ -48,6 +48,10 @@ const encodeDropped = Schema.encodeEffect(InboxDroppedData)
 /** What `inbox.queued` stores of a delivered item. */
 export const queuedData = (item: InboxItem): Effect.Effect<JsonObject, Schema.SchemaError> =>
   Effect.map(encodeQueued({ id: item.id, source: item.source, content: item.content }), (encoded) => ({ ...encoded }))
+
+/** User input keeps its normalized message once, separate from a legacy notice's content. */
+export const queuedInputData = (input: QueuedInput): Effect.Effect<JsonObject, Schema.SchemaError> =>
+  Effect.map(encodeQueued({ id: input.id, source: input.source, content: "", input: { userMessage: input.userMessage, delivery: input.delivery } }), (encoded) => ({ ...encoded }))
 
 /** What `inbox.dropped` stores of an item as many turns took and failed as the inbox allows. */
 export const droppedData = (id: InboxItemId): Effect.Effect<JsonObject, Schema.SchemaError> =>
@@ -120,12 +124,13 @@ const openTurnOf = (held: HeldTurn): OpenTurn => ({
 /** Inbox items waiting for a turn. */
 export const pendingOf = (state: State): ReadonlyArray<InboxSlot> => state.inbox.filter((slot) => Option.isNone(slot.claimedBy))
 
-/** A turn's end leaves the items it took done (completed, partial, cancelled) or waiting again, until too many attempts drop them. */
+/** Legacy notices acknowledge partial replies too; queued input needs completion or an explicit cancellation. */
 const finished = (reason: TurnEndReason): boolean => reason === "completed" || reason === "partial" || reason === "cancelled"
 
 /**
- * Close the open turn. Returns the state after it and the inbox items it
- * dropped (taken by too many turns that did not finish them). A turn that
+ * Close the open turn. Returns the state after it and the legacy notices it
+ * dropped (taken by too many turns that did not finish them). Queued input
+ * waits after failed, partial or interrupted turns without a drop limit. A turn that
  * did not try its items — interrupted before it wrote anything — returns
  * them to wait without counting an attempt.
  */
@@ -133,15 +138,16 @@ export const closedState = (state: State, reason: TurnEndReason, maxAttempts: nu
   const turn = Option.map(state.open, (open) => open.turn)
   const taken = (slot: InboxSlot): boolean => Option.isSome(slot.claimedBy) && Option.contains(turn, slot.claimedBy.value)
   const counted = tried || reason !== "interrupted"
-  const exhausted = (slot: InboxSlot): boolean => counted && slot.attempts + 1 >= maxAttempts
+  const done = (slot: InboxSlot): boolean => slot.delivery === undefined ? finished(reason) : reason === "completed" || reason === "cancelled"
+  const exhausted = (slot: InboxSlot): boolean => slot.delivery === undefined && counted && slot.attempts + 1 >= maxAttempts
   return {
     state: {
       ...state,
       open: Option.none(),
       inbox: state.inbox.flatMap((slot): ReadonlyArray<InboxSlot> => !taken(slot) ? [slot]
-        : finished(reason) || exhausted(slot) ? [] : [{ ...slot, attempts: counted ? slot.attempts + 1 : slot.attempts, claimedBy: Option.none() }]),
+        : done(slot) || exhausted(slot) ? [] : [{ ...slot, attempts: counted ? slot.attempts + 1 : slot.attempts, claimedBy: Option.none() }]),
     },
-    dropped: finished(reason) ? [] : state.inbox.filter((slot) => taken(slot) && exhausted(slot)).map((slot) => slot.id),
+    dropped: state.inbox.filter((slot) => taken(slot) && !done(slot) && exhausted(slot)).map((slot) => slot.id),
   }
 }
 

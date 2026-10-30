@@ -1,15 +1,15 @@
 {
-  "format": 4,
-  "fingerprint": "98450bdaa0ac81ef693e02ae0541b2a82483ff1f4373cfb47e45b5d39774be28",
+  "format": 5,
+  "fingerprint": "009974ddb44048fc77f4de0df8d1cf46bbce541c184f5c986cc7f31b882f16f6",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
-    "SessionsState": "2b24b39838e188ba7c7581bb57b4eee82f6cbc51cafd07d965265106cfa540d3",
+    "SessionsState": "58428a85532aed0617e3750893b1f1b3b1744b175aaf606c656ab32f8398261e",
     "journal completion.evaluated": "bb3fe8c6dcb0036767aa034056b0397adc718ea360eeb42b760e822bbe262447",
     "journal context.built": "620a71f94f3e10ae5142bf03cfd9f0e30f0ad7d30560b16e378a1966d6293d6c",
     "journal decision.recorded": "cb5c1383205a5ff82649c2feb3061298ac4dc7c86d6a1a5b2b2e93d448a5e7fd",
     "journal inbox.dropped": "a978ad98a9ec5ce4bb8bae2e4315682a2058e3cdfce1c43a6080db46998cf398",
-    "journal inbox.queued": "fbba783fe7bb6ff1df29f9d71d856ee8e4b7cebe25d5dbdaea08401a2d30b9b6",
+    "journal inbox.queued": "28777d157e0d7641de3c94e3a2bd4bf54491805a0b3777f94b4907e97080b905",
     "journal memory.compaction": "f76a6744cb3f8ffe39cb4c80bc79935f680a983f8f8263093083a6a459d71e0f",
     "journal memory.digest": "f093ad0e88b6cc38c6ce00e082bab192b7972d8626f557d1824e51e2e056edaf",
     "journal memory.message": "07ef402ba54b98836027eaf2ca148fd758f6dbb4061c4494c59d7415a5a12067",
@@ -29,7 +29,7 @@
     "journal tool.started": "b3bbc328f2086dc498e3066e2a09005784fdf6ecde6fd69915d812e176af8bd6",
     "journal turn.ended": "9ad790e35056a849ed7121f0d005e0312633732ac43f651e152ff00a71227c3e",
     "journal turn.reply": "e1cc10fb802d4c6169b1bd494f3777f5f9c506519a75faf36bcd307cd8fbe194",
-    "journal turn.started": "6b6fa1513a84520541b303f038d7a47176d2d434d244e92367afcdb4adecc221",
+    "journal turn.started": "4a1677b02831623bf526e85353c9882181e926a26cd32b3ea99c9340fbcc2b52",
     "record task.cancelled": "14149c0a6d2408fae8b6439ffca20b0b153bea6d0e29b253b8122dec3c1cbcc5",
     "record task.result": "ef9239abd9d58e33ef8efb660c5d318af28154314cd89da15e5e318897a388b1",
     "record task.started": "c698122a42b8efd9873f168212a61ec5fb4c2ff46d2065a212f49954e0b34d59"
@@ -50,6 +50,10 @@
     {
       "format": 4,
       "fingerprint": "98450bdaa0ac81ef693e02ae0541b2a82483ff1f4373cfb47e45b5d39774be28"
+    },
+    {
+      "format": 5,
+      "fingerprint": "009974ddb44048fc77f4de0df8d1cf46bbce541c184f5c986cc7f31b882f16f6"
     }
   ]
 }

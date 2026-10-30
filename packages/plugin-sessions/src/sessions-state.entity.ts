@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { Effect, Option } from "effect"
-import { InboxQueuedData, OpenTurn } from "@xandreed/core"
+import { InboxQueuedData, InputDelivery, OpenTurn } from "@xandreed/core"
 
 /*
  * The sessions plugin's own state, kept in the session head's `state` under
@@ -16,6 +16,8 @@ export const InboxSlot = Schema.Struct({
   /** Turns that took it and did not finish it. */
   attempts: Schema.Int,
   claimedBy: Schema.OptionFromNullOr(Schema.Int),
+  /** Absent for a legacy notice; user input is never dropped after failed attempts. */
+  delivery: Schema.optionalKey(InputDelivery),
 })
 export type InboxSlot = typeof InboxSlot.Type
 
@@ -107,7 +109,7 @@ export const SessionsConfig = Schema.Struct({
   inbox: Schema.Struct({
     /** Items that may wait at once. */
     maxPending: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 1_000 })),
-    /** Turns that may take an item and fail before it is dropped. */
+    /** Turns that may take a legacy notice and fail before it is dropped; queued user input is retained. */
     attempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10 })),
   }),
   /** The turn's write-behind queue: items before a writer waits, items taken per commit. */

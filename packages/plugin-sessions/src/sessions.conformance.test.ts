@@ -71,7 +71,7 @@ describe("the Sessions kit catches careless backends", () => {
         ),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "race", "resume", "takeover", "tenure"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "queued-race", "race", "resume", "takeover", "tenure"])
   })
 
   test("one whose TurnActivity always reads idle fails only the activity check", async () => {
@@ -82,7 +82,7 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, blind)))).toEqual(["activity"])
   })
 
-  test("one that drops the turn's meta fails only the meta check", async () => {
+  test("one that drops the turn's meta fails the checks that read it", async () => {
     const forgetful = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,
       sessions: Sessions.of({
@@ -90,11 +90,12 @@ describe("the Sessions kit catches careless backends", () => {
         begin: (address, input) => instance.sessions.begin(address, Match.valueTags(input, {
           User: (user): BeginTurn => ({ _tag: "User", userMessage: user.userMessage, runId: user.runId, key: user.key, command: user.command, ...(user.resumes === undefined ? {} : { resumes: user.resumes }), ...(user.takeOver === undefined ? {} : { takeOver: user.takeOver }), ...(user.timeLimitMs === undefined ? {} : { timeLimitMs: user.timeLimitMs }) }),
           Inbox: (inbox): BeginTurn => ({ _tag: "Inbox", runId: inbox.runId, ...(inbox.takeOver === undefined ? {} : { takeOver: inbox.takeOver }) }),
+          Queued: (queued): BeginTurn => ({ _tag: "Queued", input: queued.input, runId: queued.runId, ...(queued.takeOver === undefined ? {} : { takeOver: queued.takeOver }), ...(queued.timeLimitMs === undefined ? {} : { timeLimitMs: queued.timeLimitMs }) }),
           Task: (task): BeginTurn => ({ _tag: "Task", task: task.task, userMessage: task.userMessage, runId: task.runId, key: task.key }),
         })),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, forgetful)))).toEqual(["meta"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, forgetful)))).toEqual(["meta", "queued-admission"])
   })
 
   test("one that begins a task's turn as a user's, its task in the command, fails only the task check", async () => {
@@ -239,6 +240,84 @@ describe("the Sessions kit catches careless backends", () => {
       sessions: Sessions.of({ ...instance.sessions, begin: (address, input) => instance.sessions.begin(address, { ...input, timeLimitMs: 86_400_000 }) }),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, unbounded)))).toEqual(["time-limit"])
+  })
+
+  test("one whose enqueue acknowledges without storing fails every queued-input check", async () => {
+    const empty = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({ ...instance.sessions, enqueue: () => Effect.succeed({ enqueued: false, pending: 0 }) }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, empty)))).toEqual(["drain-take", "input-conflict", "queued-admission", "queued-input", "queued-race", "queued-resume", "queued-retry"])
+  })
+
+  test("one that silently accepts another payload under an input id fails only input-conflict", async () => {
+    const accepting = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        enqueue: (address, input) => instance.sessions.enqueue(address, input).pipe(Effect.catchTag("InputConflict", () =>
+          instance.sessions.get(address).pipe(Effect.map((view) => ({ enqueued: false, pending: view.pending }))),
+        )),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, accepting)))).toEqual(["input-conflict"])
+  })
+
+  test("one whose admitted turns lose queued input provenance fails the checks that read it", async () => {
+    const forgetful = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer) => {
+          const { input: _, ...admitted } = writer.admitted
+          return { ...writer, admitted }
+        })),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, forgetful)))).toEqual(["queued-input", "queued-resume", "queued-retry"])
+  })
+
+  test("one whose explicit user resumes lose input provenance fails only queued-resume", async () => {
+    const forgetful = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer) => {
+          if (input._tag !== "User" || input.resumes === undefined) return writer
+          const { input: _, ...admitted } = writer.admitted
+          return { ...writer, admitted }
+        })),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, forgetful)))).toEqual(["queued-resume"])
+  })
+
+  test("one whose drain ignores the selected kind fails only drain-take", async () => {
+    const indiscriminate = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        drain: (address, run, options) => {
+          const { take: _, ...rest } = options ?? {}
+          return instance.sessions.drain(address, run, rest)
+        },
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, indiscriminate)))).toEqual(["drain-take"])
+  })
+
+  test("one whose drain drops the held reply fails only queued-retry", async () => {
+    const losingReply = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        drain: (address, run, options) => instance.sessions.drain(address, (writer) => run({
+          ...writer,
+          closing: (drafts) => writer.closing(drafts.filter((draft) => draft.kind !== "turn.reply")),
+        }), options),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, losingReply)))).toEqual(["queued-retry"])
   })
 
   test("the dead-holder and tenure checks run only for a backend with process ownership", () => {

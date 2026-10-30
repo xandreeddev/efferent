@@ -10,6 +10,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A custom `Sessions` implements `enqueue`, `BeginTurn.Queued` and
+  `drain({ take })`, and reruns `sessionsConformance`. A queued input runs
+  as its own user turn; `AdmittedTurn.input` holds its provenance while
+  `claimed` remains notice-only. Reaction-only drains use `take: "notices"`;
+  the default `"all"` also runs queued inputs. Queued input survives failed,
+  interrupted and partial turns without an attempt limit; completed or
+  explicitly cancelled turns acknowledge it. Stored format 5 adds optional
+  input provenance and delivery fields; earlier journals still decode.
 - A custom `StepLoop` persists each assistant response before running its
   calls, then each final result as it returns, and reruns
   `stepLoopConformance` (`assistant-first`, `incremental-results`,
@@ -948,6 +956,14 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- `QueuedInput` and `Sessions.enqueue` persist normalized user messages,
+  attachments, source metadata and delivery (`steer` or `next`) once per
+  input id. A changed payload under that id fails with `InputConflict`
+  (`inbox.input-conflict`). `BeginTurn.Queued` atomically claims one input
+  with an initial `input:<id>` key; later attempts use distinct keys. A
+  manual resume reclaims the original pending input, so completing it
+  prevents a second queued execution. `drain` can select inputs, notices
+  or both. Task reactions drain notices only.
 - Tool-call durability: the assistant's calls and each admitted call's
   `tool.started` are stored before handlers run, and final results are
   stored individually as they return, before host views and optional digest-on-write

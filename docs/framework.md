@@ -2250,8 +2250,8 @@ one (a feed polls for the others' commits), and `lookup(address, key)` finds
 a key's turn.
 
 **Admission.** `TurnAdmission.admit(turn, open)` runs around the one commit
-that opens every turn (a user's, the inbox's, a task's), never around the
-turn's later writes, so a host can count and open in one transaction: a
+that opens every turn (a direct or queued user's, the inbox's, a task's),
+never around the turn's later writes, so a host can count and open in one transaction: a
 duplicate, a key conflict, a busy session or a turn that cannot be resumed
 (`NotResumable`) fails inside it and counts nothing, and a refusal
 (`TurnRefused`) opens nothing. `TurnAdmissionOpen` admits all.
@@ -2267,13 +2267,13 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 
 | Kind | Written by |
 | --- | --- |
-| `turn.started` (`runId`, `key`, `origin`: user, inbox or task; `userMessage`, `command`, `claimed`, and `meta`, `resumes` and a task's `task` when given) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
+| `turn.started` (`runId`, `key`, `origin`: user, inbox or task; `userMessage`, `command`, `claimed`, and `meta`, `resumes`, queued `input` and a task's `task` when given) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
 | `turn.reply` | memory (`persistReply`), held for the turn's closing commit: stored right before its `turn.ended` |
 | `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`: the failing error's code; otherwise one of the framework's codes, `turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`, or a code the closer passes to `end` itself, such as plugin-tasks' `task.turn` and `task.deadline`) | the writer's `end` (`turnEndingOf` the turn's exit), its scope, a cancel or a reap |
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.tool-presentation`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
 | `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.refused`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded`, `stream.fallback` | the turn's bus |
 | `request.prepared` (the request's header: system text, tool declarations, model, cache key) | the turn, before each provider call (`TurnMemory.prepareRequest`) |
-| `inbox.queued`, `inbox.dropped` | `deliver`; a claim that failed too often |
+| `inbox.queued`, `inbox.dropped` | `deliver` or `enqueue`; a notice claim that failed too often |
 | `task.started`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |
 | anything else | the host, through the writer or `transact` |
 
@@ -2288,41 +2288,105 @@ decodes the events of one of the kinds in `StoredData` (`turn.started`,
 `turn.ended`, `inbox.queued`, `inbox.dropped`, `step.usage`,
 `request.prepared`) with that kind's schema and fails with the first
 `SchemaError`; a lookup by key goes through `readStoredKeys`, which decodes
-a `turn.started`'s `runId`, `key` and `entry` (`TurnStartedKeys`) or a
-`request.prepared`'s `runId`, `run` and `step` (`RequestPreparedKeys`), never a
+a `turn.started`'s `runId`, `key`, `entry` and optional `input` and `resumes`
+(`TurnStartedKeys`) or a `request.prepared`'s `runId`, `run` and `step` (`RequestPreparedKeys`), never a
 user's message and its images. The framework's readers fail on a row that
 does not decode (plugin-sessions and plugin-tasks with `session.decode`, a
 turn with `memory.log` or `request.decode`) rather than skip it or read it
 as something else.
 
-**The inbox.** `deliver(address, { id, source, content })` puts an item in
-the session's inbox, once per id, up to `inbox.maxPending` (20). Items wait
-for the next inbox turn: `begin(address, { _tag: "Inbox", runId })` claims
-every waiting item in its start commit (its `userMessage` is their contents)
-and fails with `NothingPending` when there are none. An item is done when its
-turn ends completed, partial or cancelled; a failed or interrupted claim
-returns it, up to `inbox.attempts` (2), and then it is dropped
-(`inbox.dropped`). A turn interrupted before it wrote anything through its
-writer (no `append`, `write`, `transact` or `closing`) never tried its items: they wait
-again and no attempt is counted. A turn reaped because its holder stopped
-counts. User messages never queue. `drain(address, run, { maxTurns, meta })` runs
-inbox turns while items wait, the session is free and the host admits them,
-at most `maxTurns` (three), each begun with `meta`. Each ends completed
-when `run` succeeds, and otherwise as `turnEndingOf` gives for its failure:
-the error's own code (a `TurnError` carried as a defect included),
-`turn.failed`, `turn.defect` or `turn.interrupted`. A `run` that interrupts
-itself (an `Effect.interrupt`, or joining an interrupted fiber) ends
-`interrupted` but counts an attempt even when it wrote nothing, so an item
-whose run keeps interrupting itself is still dropped after
-`inbox.attempts`; a drain interrupted from outside ends its turn through
-the writer's scope, and counts one only if the turn wrote something.
-Whoever closes a turn and whoever delivers drains: the
-delivery either commits before the turn's closing commit (whose `pending`
-counts it) or after it (and finds the session free), so nothing waits
-unnoticed. `Agent.turn` ends a turn it began and hands that count to its
-caller as `TurnResult.pending`; a drain ends its own inbox turns, and goes
-on while the end of its last one counts items waiting (ones delivered
-during it included), stopping at the end that counts none.
+**The inbox.** `deliver(address, { id, source, content })` stores a legacy
+notice once per id, up to `inbox.maxPending` (20 pending notices and queued
+inputs together). `begin(address, { _tag: "Inbox", runId })` claims every
+waiting notice in its opening commit. Its `userMessage` joins their
+contents, and `admitted.claimed` holds the notices; queued user input is
+left for its own turn. With no notices, this begin fails with
+`NothingPending`.
+
+A notice is done when its turn ends completed, partial or cancelled. A
+failed or interrupted claim returns it until `inbox.attempts` (2) turns
+have tried and failed, then records `inbox.dropped`. A turn interrupted
+before it wrote anything through its writer (`append`, `write`, `transact`
+or `closing`) never tried its notices: they wait again with no attempt
+counted. A turn reaped because its holder stopped counts as an attempt;
+a takeover or shutdown does not.
+
+**Queued user input.** `Sessions.enqueue(address, { id, userMessage,
+delivery, source })` stores one `QueuedInput` for a later user turn.
+`userMessage` is a `UserMessage`, including attachments, normalized before
+storage exactly as for a direct begin. Each input keeps its own message;
+inputs are never joined into one message. `source` is host metadata and is
+never added to the model's message. `delivery` is `next` or `steer`; both
+are eligible for an input drain. In this release a `steer` waits for a
+queued user turn too; consumption inside a running turn is a separate
+capability.
+
+Enqueue returns `{ enqueued, pending }`. Repeating the same id with the
+same normalized message, delivery and source returns `enqueued: false`,
+even after completion. Another payload under that id, or an id already
+used by a notice, fails with `InputConflict` (`inbox.input-conflict`) and
+writes nothing. An invalid attachment fails with `AttachmentRejected`;
+a full pending queue fails with `InboxFull`. An identical repeat is still
+acknowledged when the queue is full. Notice and input ids share the
+session's namespace; a notice delivered under an existing input id changes
+nothing.
+
+`begin(address, { _tag: "Queued", input: id, runId })` atomically claims
+that input and starts one turn with origin `user`, its exact stored
+message and `claimed: []`. `admitted.input` holds the full queued input;
+`turn.started.input` stores its id. The first attempt is keyed `input:<id>`;
+a later attempt uses `input-retry:` followed by canonical JSON of the array
+`[id, previousAttemptTurn, newRunId]`. Every attempt
+needs a fresh run id. A missing input is `NothingPending`; an input already
+acknowledged is `TurnDuplicate`. A direct `User` begin still refuses a
+busy session; enqueue is the explicit way to save work while a turn runs.
+
+Queued input remains pending after failed, partial or interrupted turns,
+across reopenings and regardless of the notice attempt ceiling. A
+completed turn acknowledges it. Explicit cancellation also acknowledges
+it, so a later drain does not undo the user's stop request. A user turn
+that explicitly resumes an interrupted queued turn (`User` with
+`resumes: n`) reclaims the same pending input in its opening commit.
+Successful completion acknowledges it once, so a later drain cannot run
+it again. Failed resumes leave it pending. A manual resume after an
+explicit cancellation does not recreate an acknowledged queue slot.
+The ordinary [resume rules](#resuming-a-turn) still apply; a queued retry
+after failure or a partial reply starts a fresh user turn.
+
+Every enqueue and begin uses the owner's `SessionAddress`; another owner
+gets `SessionMissing`. The host's `TurnAdmission` sees the actual attempt
+key and input id before the opening commit. A refusal leaves the input
+pending. Queue claims obey the same one-open-turn rule and explicit
+`takeOver` option as direct user turns.
+
+**Draining selected work.** `drain(address, run, { take, maxTurns, meta })`
+executes pending work while the session is free and the host admits it,
+at most `maxTurns` (three) turns, each begun with `meta`. `take` defaults
+to `all`; `inputs` selects queued user inputs, and `notices` selects legacy
+notices. Each input starts a separate user turn, in enqueue order. With
+`all`, the oldest waiting item's kind chooses the next turn: one queued
+input, or a batch of all waiting notices. Notice batches preserve notice
+order; they can include notices delivered after a queued input.
+
+A successful `run` preserves its held reply's completed or partial
+outcome, and ends completed when it held no reply. A failed one ends as
+`turnEndingOf` gives: its error's code (a `TurnError` carried as a defect
+included), else `turn.failed`, `turn.defect` or `turn.interrupted`.
+A callback that interrupts itself counts a notice attempt even without a
+write; a drain interrupted from outside counts one only if its turn wrote
+something. Queued input is retained under either interruption. The drain
+continues while selected work waits, including deliveries during a turn,
+until no selected work remains, the session becomes busy, admission
+refuses or its turn limit is reached.
+
+Hosts arrange execution after enqueue or after the active turn closes,
+using `drain` or a queued begin followed by `Agent.turn` with that writer.
+`TurnResult.pending` and each writer's end report all waiting notices and
+inputs, even when a drain selects only one kind. A delivery commits before
+the active turn's closing commit and is included in its pending count, or
+after it and finds the session free. Task result reactions use
+`take: "notices"`; hosts whose reaction callback handles notices only
+should select it too.
 
 **Background tasks** (`@xandreed/plugin-tasks`). A task is one turn of a
 child session, a fork of the conversation or an empty spawn, whose id is the

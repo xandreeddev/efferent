@@ -5,7 +5,7 @@ Background tasks: core's `Tasks` port over `Sessions`, where a task is one turn 
 ## Rules
 
 - Decide from the log alone (the parent's `task.started`, the child's `task.result` or `task.cancelled`, the parent's inbox), so any instance or a later `reconcile` can finish what another left.
-- Write `task.result` in the child before its turn closes (the first of the result and the cancellation ends the task); deliver it once, under `deliveryId` (`task:<id>`), then drain the parent so it reacts after the answer in flight.
+- Write `task.result` in the child before its turn closes (the first of the result and the cancellation ends the task); deliver it once, under `deliveryId` (`task:<id>`), then drain the parent with `take: "notices"` so it reacts after the answer in flight. A custom `TaskExecutor.react` receives notice turns only; queued user input remains for the host's input runner.
 - Record only this plugin's kinds (`TASK_STARTED`, `TASK_RESULT`, `TASK_CANCELLED`); a refusal of one as reserved is a defect, as is a record that does not encode or a stored start the parent no longer shows: `SessionLogError` is the store's alone.
 - A failed child turn stores its error's code (`harnessCodeOf`, so a tag such as `SessionContended` keeps the code its `HarnessError` form had), else `task.turn`; once the child's turn is begun, its writer's `TurnClosed` (cancelled, removed) stops the task, matched by tag, and any other writer failure is logged as one.
 - Begin the child's turn as a task's (`BeginTurn.Task`: origin `task`, its `TaskRef`), never as a user's.
@@ -22,6 +22,7 @@ Background tasks: core's `Tasks` port over `Sessions`, where a task is one turn 
 ## Public surface
 
 - `tasksPlugin` (also the default export) and `TasksPluginLive` (its `.live` layer); `TasksLive(config)`, `InProcessTaskRunnerLive({ maxMs })`, `tasksCapability`.
+- Parent reactions use core's `Sessions.drain` with `take: "notices"`; hosts separately select and run queued user input through core's `Sessions` and an agent.
 - Records and config: `TASK_STARTED`, `TASK_RESULT`, `TASK_CANCELLED`, `TaskStarted`, `TaskStarter`, `TaskResult`, `TaskCancelled`, `TaskOutcome`, `TasksConfig`, `tasksDefaults` (`maxRunning: 2`, `tools: false`, `replyChars: 12_000`); `deliveryId`. The notice text (`noticeOf`) stays inside the package.
 
 The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests and the scripts import the plugin, the adapters, the records and `deliveryId`, and the rest are tagged `@public` at their declarations (`tasksPlugin`'s tag covers the default export).
