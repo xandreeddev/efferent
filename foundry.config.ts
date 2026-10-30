@@ -112,31 +112,12 @@ const UNKNOWN_JSON_EDGES = [
   "packages/core/src/util/json.ts",
 ]
 
-/** A package's entity files, where its stored and published schemas live. */
-const entities = (name: string): string => `packages/${name}/src/**/*.entity.ts`
-
-/** `effect/branded-id-fields` judges entity files only. Core enters by its
- *  `src/domain` and `src/spec` folders, named in the rule's entry, until
- *  all of its entity files are clean. */
-const BRANDED_IDS_CLEAN = [
-  "sdk",
-  "evals-cli",
-  "evals-langfuse",
-  "evals-langsmith",
-  "plugin-agent-loop",
-  "runtime",
-  "plugin-memory-window",
-  "plugin-memory-summary",
-  "plugin-memory-digest",
-  "plugin-tool-discovery",
-  "plugin-tasks",
-  "plugin-workspace",
-  "plugin-telemetry",
-  "plugin-session-sqlite",
-  "plugin-sessions",
-  "plugin-render",
-  "foundry",
-].map(entities)
+/**
+ * What `effect/branded-id-fields` judges: every package's entity files,
+ * where its stored and published schemas live, and core's `src/spec`, whose
+ * schemas live in older modules without that role.
+ */
+const ENTITY_FILES = [...CHECKED.map((glob) => `${glob}/*.entity.ts`), "packages/core/src/spec/**"]
 
 /**
  * Casts to an object type (`effect/no-record-cast`) not yet replaced by a
@@ -363,11 +344,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "architecture/context-tags-live-in-ports", include: CHECKED },
     { rule: "architecture/layers-live-at-edges", include: CHECKED },
     { rule: "architecture/role-suffix-required", include: CHECKED, exclude: ["packages/foundry/**"], allow: ROLELESS_FILES },
-    // One package at a time (BRANDED_IDS_CLEAN).
-    {
-      rule: "effect/branded-id-fields",
-      include: ["packages/core/src/domain/**", "packages/core/src/spec/**", ...BRANDED_IDS_CLEAN],
-    },
+    { rule: "effect/branded-id-fields", include: ENTITY_FILES },
   ],
   checks: [],
   boundaries: {

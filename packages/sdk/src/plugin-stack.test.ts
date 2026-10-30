@@ -10,6 +10,7 @@ import {
   defineSkill,
   defineTool,
   Failure,
+  PluginInstanceId,
   stackPlugins,
   StepLoop,
   ToolRegistry,
@@ -37,7 +38,7 @@ const hostPlugin = definePlugin({
 /** What a composition provides: its service keys, the capabilities in order, and what the services are. */
 const shapeOf = (context: Context.Context<never>) => ({
   keys: [...context.mapUnsafe.keys()].sort(),
-  capabilities: Context.getUnsafe(context, Capabilities).map((bundle) => bundle.id),
+  capabilities: Context.getUnsafe(context, Capabilities).map((bundle): string => bundle.id),
   sections: Context.getUnsafe(context, Capabilities).flatMap((bundle) => bundle.promptSections.map((section) => section.id)),
   catalog: Context.getUnsafe(context, ToolRegistry).catalog,
   strategy: Context.getUnsafe(context, ConversationMemory).strategy,
@@ -49,7 +50,7 @@ describe("plugin stacks", () => {
     const { graph, stack } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       // The host's capabilities come first, as Agent.define places them.
       const plugins: ReadonlyArray<Plugin> = [hostPlugin, memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin]
-      const config: HarnessConfig = { version: 1, plugins: plugins.map((plugin) => ({ id: plugin.id, use: plugin.id, options: {} })), system: "" }
+      const config: HarnessConfig = { version: 1, plugins: plugins.map((plugin) => ({ id: PluginInstanceId.make(plugin.id), use: plugin.id, options: {} })), system: "" }
       const resolved = yield* resolveGraph(config, plugins)
       const graph = yield* activateGraph(resolved, "runtime", Context.empty(), yield* Effect.scope)
       const stack = yield* Layer.build(CapabilitiesLive(host).pipe(
@@ -62,6 +63,6 @@ describe("plugin stacks", () => {
     })))
     expect(stack).toEqual(graph)
     expect(stack.capabilities).toEqual(["stack-host", "@xandreed/plugin-memory-window/recall", "@xandreed/plugin-tool-discovery/catalogue"])
-    expect(stack.catalog.tools.map((tool) => tool.id)).toEqual(["lookup", "recall_context", "load_skill"])
+    expect(stack.catalog.tools.map((tool): string => tool.id)).toEqual(["lookup", "recall_context", "load_skill"])
   })
 })

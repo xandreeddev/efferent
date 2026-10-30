@@ -1,7 +1,8 @@
 import { expect, test } from "bun:test"
 import { compareDecisionTrials, selectionMetrics } from "./decision-comparison.entity.functions.js"
+import { DecisionCaseId } from "./decision-comparison.entity.js"
 import type { DecisionTrial } from "./decision-comparison.entity.js"
-const row = (candidate: string, caseId: string, values: Partial<DecisionTrial> = {}): DecisionTrial => ({ candidate, caseId, group: caseId, sample: 1, status: "completed", passed: true, quality: 1, latencyMs: 100, costUsd: 0.01, ...values })
+const row = (candidate: string, caseId: string, values: Partial<DecisionTrial> = {}): DecisionTrial => ({ candidate, caseId: DecisionCaseId.make(caseId), group: caseId, sample: 1, status: "completed", passed: true, quality: 1, latencyMs: 100, costUsd: 0.01, ...values })
 test("missing costs and pairs cannot become free wins", () => {
   const report = compareDecisionTrials([row("base", "a"), row("base", "b"), row("next", "a", { costUsd: null })], "base")[1]!
   expect(report.missingPairs).toBe(1)
@@ -12,7 +13,7 @@ test("missing costs and pairs cannot become free wins", () => {
 test("failed costs count and infrastructure is distinct", () => {
   const report = compareDecisionTrials([row("base", "a"), row("base", "b"), row("next", "a", { passed: false, status: "failed" }), row("next", "b", { status: "infrastructure", passed: false })], "base")[1]!
   expect(report.infrastructure).toBe(1)
-  expect(report.regressions).toEqual(["a"])
+  expect<ReadonlyArray<string>>(report.regressions).toEqual(["a"])
   expect(report.costPerSuccess).toBeNull()
 })
 test("bootstrap keeps translations and repetitions in their scenario group", () => {

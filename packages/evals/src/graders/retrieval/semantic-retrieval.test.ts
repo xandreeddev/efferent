@@ -4,6 +4,7 @@ import { Effect, Schema, Ref } from "effect"
 import {
   EvalId,
   gradingContext,
+  RetrievalDocumentId,
   retrievalItems,
   semanticRetrievalGraders,
   RetrievalContext
@@ -14,11 +15,11 @@ const input: RetrievalContext = {
   query: "When does it start?",
   documents: [
     {
-      id: "a",
+      id: RetrievalDocumentId.make("a"),
       text: "Starts at eight. Bring water.",
       statements: ["Starts at eight.", "Bring water."]
     },
-    { id: "b", text: "Starts at nine.", statements: ["Starts at nine."] }
+    { id: RetrievalDocumentId.make("b"), text: "Starts at nine.", statements: ["Starts at nine."] }
   ],
   expectedClaims: ["Starts at eight."]
 }
@@ -148,12 +149,12 @@ test("the judge is given the ids its verdicts must carry, with their text, and c
   const grades = await Effect.runPromise(Effect.forEach(graders, (grader) =>
     Effect.flatMap(GraderAssessment, (port) => port.assess(projected, candidate)).pipe(Effect.provide(grader.layer))))
   expect(grades.map((grade) => grade.metrics[0]?.value)).toEqual([1, 1, 1 / 3])
-  expect(seen).toEqual([
+  expect<unknown>(seen).toEqual([
     ["contextual-precision", [{ id: "a", text: "Starts at eight. Bring water." }, { id: "b", text: "Starts at nine." }]],
     ["contextual-recall", [{ id: "claim:0", text: "Starts at eight." }]],
     ["contextual-relevancy", [{ id: "a/statement:0", text: "Starts at eight." }, { id: "a/statement:1", text: "Bring water." }, { id: "b/statement:0", text: "Starts at nine." }]],
   ])
-  expect(retrievalItems("contextual-recall", input)).toEqual([{ id: "claim:0", text: "Starts at eight." }])
+  expect<unknown>(retrievalItems("contextual-recall", input)).toEqual([{ id: "claim:0", text: "Starts at eight." }])
 })
 test("the rubric fingerprint follows the rubric the judge works from", () => {
   const judge = () => Effect.succeed({ verdicts: [] })

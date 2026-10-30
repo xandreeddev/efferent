@@ -1,8 +1,12 @@
 import { Schema } from "effect"
 import type { Plugin } from "./plugin.entity.js"
 
+/** Names one instance of a plugin in a graph (a binding names its provider by it); by default the plugin's own id. */
+export const PluginInstanceId = Schema.NonEmptyString.pipe(Schema.brand("PluginInstanceId"))
+export type PluginInstanceId = typeof PluginInstanceId.Type
+
 export const PluginEntry = Schema.Struct({
-  id: Schema.NonEmptyString,
+  id: PluginInstanceId,
   use: Schema.NonEmptyString,
   enabled: Schema.optional(Schema.Boolean),
   options: Schema.optional(Schema.Record(Schema.String, Schema.Unknown)),

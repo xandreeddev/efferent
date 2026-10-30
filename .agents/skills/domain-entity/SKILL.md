@@ -72,9 +72,8 @@ see a file by its suffix, so the suffix decides which rules apply.
 - A field named `id` or `<x>Id` is a branded schema, never a bare
   `Schema.String`, a `.check(…)` chain or a local const without a brand.
   `effect/branded-id-fields` checks it through `optionalKey`,
-  `OptionFromNullOr`, `Array` and the other wrappers, in core's
-  `src/domain` and `src/spec` and in the entity files of the packages
-  `BRANDED_IDS_CLEAN` names; follow it everywhere.
+  `OptionFromNullOr`, `Array` and the other wrappers, in every package's
+  entity files; follow it everywhere.
 - Mint a value with `EntryId.make(…)` where it is created; decode it where it
   arrives.
 - A brand adds no runtime check. Branding a field that is already stored

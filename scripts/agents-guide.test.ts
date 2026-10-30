@@ -24,6 +24,12 @@ test("the gate table lists every rule the repo profile runs, and only those", ()
   expect([...listed].sort()).toEqual([...configured].sort())
 })
 
+test("effect/branded-id-fields judges the entity files of every package the profile checks", () => {
+  const includeOf = (rule: string): ReadonlyArray<string> => config.rules.find((entry) => entry.rule === rule)?.include ?? []
+  const judged = includeOf("effect/branded-id-fields")
+  expect(includeOf("effect/no-let").filter((checked) => !judged.includes(`${checked}/*.entity.ts`))).toEqual([])
+})
+
 test("the definition of done runs every command of the CI workflow", async () => {
   const lines = (await readFile(join(root, ".github/workflows/ci.yml"), "utf8")).split("\n")
   const commands = lines.flatMap((line, index) => {

@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Stream } from "effect"
+import { ToolCallId } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel } from "./compat.js"
 import { sseStreamParts } from "./sse.js"
 
@@ -302,7 +303,7 @@ describe("sseStreamParts", () => {
             message: {
               content: "ok",
               reasoning_content: "because…",
-              tool_calls: [{ id: "c1", function: { name: "echo", arguments: `{"value":"hi"}` } }],
+              tool_calls: [{ id: ToolCallId.make("c1"), function: { name: "echo", arguments: `{"value":"hi"}` } }],
             },
           },
         ],

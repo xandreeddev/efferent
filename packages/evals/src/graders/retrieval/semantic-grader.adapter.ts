@@ -18,13 +18,14 @@ import { contextualRelevancy } from "./contextual-relevancy.functions.js"
 /**
  * A measure's judge: the projected context (for contextual relevancy without
  * the expected claims) and the units to rule on (`retrievalItems`), each
- * with the id its verdict must carry, one verdict per id.
+ * with the id its verdict must carry, one verdict per id. Its answer is
+ * decoded (`RetrievalJudgement`), so its ids may be plain strings.
  */
 export type RetrievalJudge = (
   measure: RetrievalMeasure,
   input: RetrievalContext,
   items: ReadonlyArray<RetrievalItem>
-) => Effect.Effect<RetrievalJudgement, EvaluationError>
+) => Effect.Effect<typeof RetrievalJudgement.Encoded, EvaluationError>
 
 /**
  * `rubric`: what each measure's judge works from, its prompt or the template

@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { LanguageModel, Prompt, Tool } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
 import { join } from "node:path"
-import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, isHarnessError, LogEntry, onTool, RunContext, RunId, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, toolParametersSchema, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, isHarnessError, LogEntry, onTool, RunContext, RunId, SessionLog, SessionLogMemoryLive, Sessions, SubjectId, subscribeAll, toolParametersSchema, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 import type { Turn, TurnError, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
@@ -65,7 +65,7 @@ export const goldenHost = defineCapability({
         version: "1",
         render: (result) => found(result.items),
         compact: (result) => `(earlier lookup found ${result.items.map((item) => item.id).join(", ")})`,
-        subjects: (result) => result.items.map((item) => ({ kind: "record", id: item.id, label: Option.none(), data: Option.none() })),
+        subjects: (result) => result.items.map((item) => ({ kind: "record", id: SubjectId.make(item.id), label: Option.none(), data: Option.none() })),
         digest: {
           _tag: "Select", version: "1", instructions: "Keep the records the request needs.",
           items: (result) => result.items.map((item) => ({ key: item.id, text: item.detail })),

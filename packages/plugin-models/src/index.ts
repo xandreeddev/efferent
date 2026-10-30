@@ -23,7 +23,7 @@ export type { OpenAiCodexOAuthBegin, OpenAiCodexTokens } from "./auth/openAiCode
 export { authPaths, LocalAuthStoreLive } from "./auth/localAuth.js"
 export { MemoryAuthStoreLive } from "./auth/memory-auth.adapter.js"
 export type { MemoryAuthOptions } from "./auth/memory-auth.adapter.js"
-export { CredentialInput, CredentialInputs } from "./auth/credential-input.entity.js"
+export { AccountId, CredentialInput, CredentialInputs, InstallationId } from "./auth/credential-input.entity.js"
 export { credentialsOf, toCredential, toCredentialInput } from "./auth/credential-input.entity.functions.js"
 export { RefreshableProvider } from "./auth/credential-refresh.entity.js"
 export type { OAuthCredential } from "./auth/credential-refresh.entity.js"

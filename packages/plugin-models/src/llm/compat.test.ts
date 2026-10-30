@@ -233,7 +233,7 @@ describe("makeCompatLanguageModel", () => {
             message: {
               content: null,
               tool_calls: [
-                { id: "c1", function: { name: "echo", arguments: `{"value":"hi"}` } },
+                { id: ToolCallId.make("c1"), function: { name: "echo", arguments: `{"value":"hi"}` } },
               ],
             },
           },
@@ -377,7 +377,7 @@ describe("makeCompatLanguageModel", () => {
           {
             finish_reason: "tool_calls",
             message: {
-              tool_calls: [{ id: "c1", function: { name: "echo", arguments: "{nope" } }],
+              tool_calls: [{ id: ToolCallId.make("c1"), function: { name: "echo", arguments: "{nope" } }],
             },
           },
         ],

@@ -16,7 +16,7 @@ const reader = Layer.merge(
 const read = <E>(layer: Layer.Layer<Capabilities | SessionEnvironment, E>) => Effect.runPromise(Effect.gen(function* () {
   const capabilities = yield* Capabilities
   const environment = yield* SessionEnvironment
-  return { capabilities: capabilities.map((bundle) => bundle.id), workspace: environment.workspace }
+  return { capabilities: capabilities.map((bundle): string => bundle.id), workspace: environment.workspace }
 }).pipe(Effect.provide(layer)))
 
 describe("stackPlugins", () => {

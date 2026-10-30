@@ -2,6 +2,9 @@ import { Schema } from "effect"
 import { RunId } from "./domain/run.entity.js"
 
 export const DecisionId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("DecisionId"))
+/** One option a decision chose among (a skill, for `skill-selection`), as its record stores it, with no checks. */
+export const CandidateId = Schema.String.pipe(Schema.brand("CandidateId"))
+export type CandidateId = typeof CandidateId.Type
 export const DecisionRecord = Schema.Struct({
   version: Schema.Literal(1),
   id: DecisionId,
@@ -9,7 +12,7 @@ export const DecisionRecord = Schema.Struct({
   contextHash: Schema.String,
   candidateHash: Schema.String,
   policyVersion: Schema.String,
-  candidates: Schema.Array(Schema.Struct({ id: Schema.String, description: Schema.String })),
+  candidates: Schema.Array(Schema.Struct({ id: CandidateId, description: Schema.String })),
   attempts: Schema.Array(Schema.String),
   selection: Schema.OptionFromNullOr(Schema.String),
   validation: Schema.Literals(["accepted", "rejected", "abstained", "failed", "cancelled", "bypassed"]),

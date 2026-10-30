@@ -10,6 +10,14 @@ const secret = Schema.Redacted(Schema.String).annotate({
   message: "a secret must be a Redacted value (Redacted.make(...)); JSON configuration names an environment variable in credentialEnv instead",
 })
 
+/** The provider account an OAuth credential is for (the ChatGPT account of an `openai-codex` subscription). */
+export const AccountId = Schema.String.pipe(Schema.brand("AccountId"))
+export type AccountId = typeof AccountId.Type
+
+/** The installation an OAuth credential was issued to, when its provider names one. */
+export const InstallationId = Schema.String.pipe(Schema.brand("InstallationId"))
+export type InstallationId = typeof InstallationId.Type
+
 // An unknown key is named, never its value: a misspelt `key` (`apiKey`) or an extra token holds a secret.
 const unexpectedKey = { messageUnexpectedKey: "not a field of a credential" } as const
 
@@ -21,8 +29,8 @@ export const CredentialInput = Schema.Union([
     refresh: secret,
     /** Absolute expiry, epoch ms. */
     expires: Schema.Number.annotate({ message: "expires is the access token's expiry, in epoch ms" }).check(Schema.isFinite()),
-    accountId: Schema.optionalKey(Schema.String),
-    installationId: Schema.optionalKey(Schema.String),
+    accountId: Schema.optionalKey(AccountId),
+    installationId: Schema.optionalKey(InstallationId),
   }).annotate(unexpectedKey),
   Schema.Struct({ type: Schema.Literal("local"), baseUrl: Schema.optionalKey(Schema.String) }).annotate(unexpectedKey),
 ]).annotate({

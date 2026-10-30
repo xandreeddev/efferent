@@ -6,7 +6,7 @@ import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
 import { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
-import { TransientTurnEvents, TURN_EVENT_NAMES, TurnEvent } from "../turn/turn-event.entity.js"
+import { StreamPartId, TransientTurnEvents, TURN_EVENT_NAMES, TurnEvent } from "../turn/turn-event.entity.js"
 import { zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, readStored, readStoredKeys, replyEndingOf, StoredData, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
@@ -115,7 +115,7 @@ describe("the turn's bus events as stored", () => {
     const stored = Option.getOrThrow(storedOf(1, completed))
     expect(Object.keys(stored.data).sort()).toEqual(["durationMs", "invocationId", "labels", "ok", "stage", "step", "tool"])
     const skipped: ReadonlyArray<TurnEvent> = [
-      { _tag: "assistant.delta", step: 0, channel: "text", id: "d", delta: "x" },
+      { _tag: "assistant.delta", step: 0, channel: "text", id: StreamPartId.make("d"), delta: "x" },
       { _tag: "tool.progress", step: 0, invocationId: InvocationId.make("i"), tool: "build", channel: "stdout", text: "compiling" },
       { _tag: "tool.progress", step: 0, invocationId: InvocationId.make("i"), tool: "build", channel: "status", text: "3 of 7" },
       { _tag: "skills.activated", skills: [], tools: [], source: "always" },

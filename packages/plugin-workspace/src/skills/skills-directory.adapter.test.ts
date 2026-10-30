@@ -5,7 +5,7 @@ import { dirname, join, relative } from "node:path"
 import { LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
-import { Capabilities, defineCapability, defineSkill, FileSystem, RunId, SessionEnvironment, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { Capabilities, defineCapability, defineSkill, FileSystem, PluginInstanceId, RunId, SessionEnvironment, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { Capability, SessionLogEvent, SkillDefinition } from "@xandreed/core"
 import { Journey } from "@xandreed/evals"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
@@ -49,7 +49,7 @@ const projectSkills: Tree = {
 
 /** The skills the plugin contributes over the local disk, as the graph activates it. */
 const contributed = (workspace: string, options: Partial<SkillsDirectoryConfig> = {}) => Effect.gen(function* () {
-  const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "skills", use: skillsDirectoryPlugin.id, options }] }, [skillsDirectoryPlugin], [FileSystem.key, SessionEnvironment.key])
+  const graph = yield* resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("skills"), use: skillsDirectoryPlugin.id, options }] }, [skillsDirectoryPlugin], [FileSystem.key, SessionEnvironment.key])
   const seed = Context.make(FileSystem, yield* FileSystem.pipe(Effect.provide(FileSystemLive))).pipe(Context.add(SessionEnvironment, { workspace }))
   const context = yield* activateGraph(graph, "runtime", Context.makeUnsafe<never>(seed.mapUnsafe), yield* Effect.scope)
   return Option.getOrElse(Context.getOption(context, Capabilities), (): ReadonlyArray<Capability> => [])
@@ -61,7 +61,7 @@ const failureOf = <A, E>(effect: Effect.Effect<A, E, Scope.Scope>) => Effect.run
 describe("skillsDirectoryPlugin over the local disk", () => {
   test("reads every SKILL.md under the workspace's .agents/skills, nested ones too, by the id rule", async () => {
     const skills = await run(workspaceWith(projectSkills).pipe(Effect.flatMap((workspace) => contributed(workspace)), Effect.map(skillsIn)))
-    expect(skills.map((skill) => [skill.id, skill.summary, skill.always, skill.references.map((reference) => reference.id)])).toEqual([
+    expect<unknown>(skills.map((skill) => [skill.id, skill.summary, skill.always, skill.references.map((reference) => reference.id)])).toEqual([
       ["commit-style", "How to write a commit message here.", false, ["references/examples.md"]],
       ["release", "Cutting a release.", true, []],
       ["release/checklist", "The release checklist.", false, ["steps.md"]],
@@ -74,7 +74,7 @@ describe("skillsDirectoryPlugin over the local disk", () => {
       const workspace = yield* workspaceWith(projectSkills)
       return skillsIn(yield* contributed(workspace, { roots: [join(other, "team-notes"), ".agents/skills/release"], idPrefix: "ws." }))
     }))
-    expect(skills.map((skill) => skill.id)).toEqual(["ws.team-notes", "ws.release", "ws.checklist"])
+    expect<unknown>(skills.map((skill) => skill.id)).toEqual(["ws.team-notes", "ws.release", "ws.checklist"])
   })
 
   test("a missing root is skipped unless required (skills.root); declared tools are dropped unless tools: declared", async () => {
@@ -87,7 +87,7 @@ describe("skillsDirectoryPlugin over the local disk", () => {
         ignored: skillsIn(yield* contributed(workspace, { roots: ["skills"] }))[0]?.tools,
       }
     }))
-    expect(skipped).toEqual(["a"])
+    expect<unknown>(skipped).toEqual(["a"])
     expect([missing.code, missing.message.endsWith("nowhere does not exist (required)")]).toEqual(["skills.root", true])
     expect([declared, ignored]).toEqual([["lookup"], []])
   })
@@ -99,7 +99,7 @@ describe("skillsDirectoryPlugin over the local disk", () => {
       lenient: contributed(workspace, { roots: ["skills"] }).pipe(Effect.map(skillsIn)),
     }))))
     expect([strict.code, strict.message.includes("bad/SKILL.md: no frontmatter")]).toEqual(["skills.files", true])
-    expect(lenient.map((skill) => skill.id)).toEqual(["good"])
+    expect<unknown>(lenient.map((skill) => skill.id)).toEqual(["good"])
   })
 
   test("limits fail the plugin's activation with skills.limit, naming the limit; a reference over maxReferenceBytes is not counted", async () => {
@@ -110,7 +110,7 @@ describe("skillsDirectoryPlugin over the local disk", () => {
       uncounted: contributed(workspace, { roots: ["skills"], maxBytes: 300, maxReferenceBytes: 100 }).pipe(Effect.map(skillsIn)),
     }))))
     expect(codes).toEqual([["skills.limit", "maxFiles"], ["skills.limit", "maxBytes"], ["skills.limit", "maxSkills"]])
-    expect(uncounted.map((skill) => [skill.id, skill.references.length])).toEqual([["a", 0], ["b", 0]])
+    expect<unknown>(uncounted.map((skill) => [skill.id, skill.references.length])).toEqual([["a", 0], ["b", 0]])
   })
 
   test("a limit fails Agent.define with skills.limit as it is, not plugin.activation", async () => {
@@ -130,7 +130,7 @@ describe("skillsDirectoryPlugin over the local disk", () => {
           Layer.provide(FileSystemLive))),
       }
     }))
-    expect([withEnvironment, withoutEnvironment]).toEqual([["commit-style"], ["release", "checklist"]])
+    expect<unknown>([withEnvironment, withoutEnvironment]).toEqual([["commit-style"], ["release", "checklist"]])
   })
 })
 

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Response, Tool } from "effect/ai"
 import { Cause, Context, Effect, Exit, Option, Ref, Stream } from "effect"
-import { addUsage, ConversationId, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, plannedCallIdOf, reasonOf, responseText, responseToAgentMessages, responseToolCalls, RunId, RunOrdinal, StepLoop, stepLoopConformance, toPromptMessages, TurnClosed, withToolCallIds, zeroUsage } from "@xandreed/core"
+import { addUsage, ConversationId, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, plannedCallIdOf, reasonOf, responseText, responseToAgentMessages, responseToolCalls, RunId, RunOrdinal, StepLoop, stepLoopConformance, ToolCallId, toPromptMessages, TurnClosed, withToolCallIds, zeroUsage } from "@xandreed/core"
 import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, StepStatus, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
@@ -82,7 +82,7 @@ const minimalLoop = StepLoop.of({
       const total = addUsage(usage, used)
       yield* request.events.publish({
         _tag: "assistant.message", step: index, run, text: responseText(content), reasoning: "", model: Option.none(),
-        toolCalls: responseToolCalls(content).map((call) => ({ id: call.id, tool: call.toolName, input: call.args })), usage: used,
+        toolCalls: responseToolCalls(content).map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })), usage: used,
       })
       yield* request.events.publish({ _tag: "step.ended", step: index, run, status: "completed", results: entries.flatMap((entry) =>
         entry.body._tag === "ToolResult" ? [{ entry: entry.id, toolCallId: entry.body.toolCallId, tool: entry.body.toolName, ok: !entry.body.isError }] : []) })

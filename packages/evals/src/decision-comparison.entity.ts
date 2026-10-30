@@ -1,7 +1,10 @@
 import { Schema } from "effect"
+/** Names one case of a decision comparison: a candidate's trial pairs with the baseline's of the same case and sample. */
+export const DecisionCaseId = Schema.String.pipe(Schema.brand("DecisionCaseId"))
+export type DecisionCaseId = typeof DecisionCaseId.Type
 const Measurement = Schema.NullOr(Schema.Number.pipe(Schema.check(Schema.isFinite()), Schema.check(Schema.isGreaterThanOrEqualTo(0))))
 export const DecisionTrial = Schema.Struct({
-  candidate: Schema.String, caseId: Schema.String, group: Schema.String, sample: Schema.Int,
+  candidate: Schema.String, caseId: DecisionCaseId, group: Schema.String, sample: Schema.Int,
   status: Schema.Literals(["completed", "failed", "infrastructure"]),
   passed: Schema.Boolean, quality: Measurement, latencyMs: Measurement, costUsd: Measurement,
 })

@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Option } from "effect"
-import { Bash, FileSystem } from "@xandreed/core"
+import { Bash, FileSystem, PluginInstanceId } from "@xandreed/core"
 import { activateGraph, resolveGraph } from "@xandreed/runtime"
 import { localSystemPlugin, LocalSystemPluginLive } from "./plugin.adapter.js"
 
@@ -15,7 +15,7 @@ const temporary = Effect.acquireRelease(
 describe("localSystemPlugin", () => {
   test("activates at runtime scope and provides FileSystem and Bash over the same disk", async () => {
     const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "local", use: localSystemPlugin.id, options: { exitGraceMs: 200 } }] }, [localSystemPlugin])
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("local"), use: localSystemPlugin.id, options: { exitGraceMs: 200 } }] }, [localSystemPlugin])
       const context = yield* activateGraph(graph, "runtime", Context.empty(), yield* Effect.scope)
       const root = yield* temporary
       const result = yield* Option.getOrThrow(Context.getOption(context, Bash)).exec("printf from-bash > made.txt; printf done", { cwd: root })
@@ -36,10 +36,10 @@ describe("localSystemPlugin", () => {
       { shell: "bash", extra: true },
       { exitGraceMs: -1 },
       { shell: "" },
-    ].map((options) => Effect.runPromise(Effect.flip(resolveGraph({ version: 1, plugins: [{ id: "local", use: localSystemPlugin.id, options }] }, [localSystemPlugin]))).then((error) => error.code)))
+    ].map((options) => Effect.runPromise(Effect.flip(resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("local"), use: localSystemPlugin.id, options }] }, [localSystemPlugin]))).then((error) => error.code)))
     expect(refused).toEqual(["config.options", "config.options", "config.options"])
     const missing = await Effect.runPromise(Effect.flip(Effect.scoped(Effect.gen(function* () {
-      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "local", use: localSystemPlugin.id, options: { shell: "efferent-no-such-shell" } }] }, [localSystemPlugin])
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("local"), use: localSystemPlugin.id, options: { shell: "efferent-no-such-shell" } }] }, [localSystemPlugin])
       return yield* activateGraph(graph, "runtime", Context.empty(), yield* Effect.scope)
     }))))
     expect([missing.code, missing.message.includes("no executable efferent-no-such-shell")]).toEqual(["plugin.activation", true])

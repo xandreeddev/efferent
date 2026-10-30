@@ -12,6 +12,10 @@ export const ModelRequestDescriptor = Schema.Struct({
 })
 export type ModelRequestDescriptor = typeof ModelRequestDescriptor.Type
 
+/** A provider-defined tool's id (`<provider>.<tool>`, effect/ai's `Tool.ProviderDefined.id`), as a header stores it, with no checks. */
+export const ProviderToolId = Schema.String.pipe(Schema.brand("ProviderToolId"))
+export type ProviderToolId = typeof ProviderToolId.Type
+
 /**
  * The model-visible declaration. A provider-defined tool (one the provider
  * runs) keeps its id and name, and its args only as their key names and the
@@ -24,7 +28,7 @@ export const ModelRequestTool = Schema.Struct({
   description: Schema.String,
   parameters: Schema.Unknown,
   provider: Schema.OptionFromNullOr(Schema.Struct({
-    id: Schema.String,
+    id: ProviderToolId,
     name: Schema.String,
     argKeys: Schema.Array(Schema.String),
     argsDigest: Schema.String,

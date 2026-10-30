@@ -1,7 +1,7 @@
 import { Tool } from "effect/ai"
 import { Effect, Option, Result } from "effect"
 import type { Path, RcMap, Semaphore } from "effect"
-import { defineTool, Failure } from "@xandreed/core"
+import { defineTool, Failure, SubjectId } from "@xandreed/core"
 import type { RegisteredTool, Subject } from "@xandreed/core"
 import { compilePattern, searchText } from "./text-search.entity.functions.js"
 import { decodeText, formatBytes, lineWindow, looksBinary, mediaTypeOf } from "./text-window.entity.functions.js"
@@ -32,7 +32,7 @@ const walkExcludes = (access: WorkspaceAccess, target: WorkspaceTarget, excludes
 
 /** A file the result names, for memory to keep track of; none for a name memory could not store as an id. */
 export const fileSubjects = (path: string): ReadonlyArray<Subject> =>
-  path.length > 0 && path.trim() === path ? [{ kind: "file", id: path, label: Option.none(), data: Option.none() }] : []
+  path.length > 0 && path.trim() === path ? [{ kind: "file", id: SubjectId.make(path), label: Option.none(), data: Option.none() }] : []
 
 const ReadTool = (config: WorkspaceToolsConfig) =>
   Tool.make("read", { description: toolDescriptions(config).read, parameters: toolParameters(config).read, success: ReadResult, failure: Failure, failureMode: "return" })

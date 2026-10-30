@@ -1,5 +1,5 @@
 import { Effect, Option } from "effect"
-import { canonicalJson, defineCapability, fingerprintOf, HarnessError, skillIssuesText } from "@xandreed/core"
+import { canonicalJson, defineCapability, fingerprintOf, HarnessError, SkillId, skillIssuesText } from "@xandreed/core"
 import type { Capability, PromptSection, SkillDefinition, SkillFileIssue } from "@xandreed/core"
 import type { SkillRoot, SkillsDirectoryConfig, SkillsFound } from "./skills-directory.entity.js"
 
@@ -28,7 +28,7 @@ interface Merged {
  */
 export const mergeSkillRoots = (roots: ReadonlyArray<SkillRoot>, idPrefix: string): SkillsFound => {
   const merged = roots.reduce<Merged>((sofar, { root, tree }) => tree.skills.reduce<Merged>((state, entry) => {
-    const skill = { ...entry.skill, id: `${idPrefix}${entry.skill.id}` }
+    const skill = { ...entry.skill, id: SkillId.make(`${idPrefix}${entry.skill.id}`) }
     const from = skillFileOf(root, entry.directory)
     const taken = state.skills.find((other) => other.skill.id === skill.id)
     return taken === undefined
