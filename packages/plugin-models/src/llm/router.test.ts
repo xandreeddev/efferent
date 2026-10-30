@@ -5,7 +5,7 @@ import { Cause, ConfigProvider, Deferred, Duration, Effect, Exit, Fiber, Layer, 
 import { TestClock } from "effect/testing"
 import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, responseModelOf, SettingsStore } from "@xandreed/core"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
-import { makeCallBudget, retryableLlm } from "./retry.js"
+import { makeCallBudget, retryableLlm, retryableLlmStream } from "./retry.js"
 import type { CallBudget } from "./retry.js"
 import { generateWith, LanguageModelLive, LanguageModelSelectionLive, stampResponse, tapStreamTelemetry, withFallbackRung, withHandOff } from "./router.js"
 
@@ -771,6 +771,42 @@ describe("a routed call's budget and hand-off", () => {
     expect(result.elapsed).toBe(600_000)
     expect(result.error).toContain("the budget:primary call reached its 600s budget after 2 attempts and was cut off")
   })
+
+  test("a stream idle for 300 s once its tool's result is in is cut: the handler's time left the bound, and its end resumed it", async () => {
+    const result = await counted((counts) => Effect.gen(function* () {
+      // The tool call, then a part that moves the stream past it (its handler
+      // starts then), then nothing.
+      const parts: ReadonlyArray<AiResponse.StreamPartEncoded> = [
+        { type: "tool-call", id: "c1", name: "probe", params: {}, providerExecuted: false },
+        { type: "text-delta", id: "t1", delta: "checking" },
+      ]
+      const model = yield* LanguageModel.make({
+        generateText: () => Effect.die("not settled"),
+        streamText: () => Stream.unwrap(Ref.update(counts.primary, (n) => n + 1).pipe(
+          Effect.as(Stream.fromArrays(...parts.map((part) => [part])).pipe(Stream.concat(Stream.never))),
+        )),
+      })
+      const toolkit = yield* kit.pipe(Effect.provide(kit.toLayer({ probe: handler(counts, Effect.sleep("100 seconds").pipe(Effect.as("slept"))) })))
+      const streamed = makeCallBudget().pipe(Effect.flatMap((budget) => Effect.timed(Effect.exit(Stream.runCollect(
+        (model.streamText(withHandOff({ prompt: "hi", toolkit }, budget) as never) as Stream.Stream<AiResponse.AnyPart, AiError.AiError>).pipe(
+          retryableLlmStream("budget:primary", budget),
+        ),
+      )))))
+      // Started from a woken sleep, so the clock waits for every fiber the stream forks.
+      const fiber = yield* Effect.forkChild(Effect.sleep("1 millis").pipe(Effect.andThen(streamed)))
+      yield* TestClock.adjust("1 hour")
+      const [elapsed, exit] = yield* Fiber.join(fiber)
+      return {
+        elapsed: Duration.toMillis(elapsed),
+        outcome: Exit.isSuccess(exit) ? "completed" : String(Cause.squash(exit.cause)),
+        calls: [yield* Ref.get(counts.primary), yield* Ref.get(counts.runs)],
+      }
+    }))
+    // The result at 100 s, then 300 s idle.
+    expect(result.elapsed).toBe(400_000)
+    expect(result.outcome).toContain("the budget:primary request exceeded 300s and was cut off")
+    expect(result.calls).toEqual([1, 1])
+  })
 })
 
 describe("the routed model's hand-off", () => {
@@ -801,6 +837,44 @@ describe("the routed model's hand-off", () => {
       return yield* Effect.flip(model.generateText({ prompt: "hi", toolkit }))
     })).finally(() => server.stop(true))
     expect(error).toBe(unavailable)
+    expect(bodies).toEqual(["primary"])
+    expect(Ref.getUnsafe(runs)).toBe(1)
+  })
+
+  test("a streamed tool that runs 400 s, past the idle bound, does not cut the stream: it completes, one request, the tool ran once", async () => {
+    const bodies: Array<string> = []
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: async (request) => {
+        const { model } = await request.json() as { readonly model: string }
+        bodies.push(model)
+        return new Response([
+          `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"probe","arguments":"{}"}}]}}]}`,
+          `data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+          "data: [DONE]",
+          "",
+        ].join("\n\n"), { headers: { "content-type": "text/event-stream" } })
+      },
+    })
+    const Probe = Tool.make("probe", { parameters: Schema.Struct({}), success: Schema.String, failureMode: "error" })
+    const kit = Toolkit.make(Probe)
+    const runs = Ref.makeUnsafe(0)
+    const types = await Effect.runPromise(Effect.gen(function* () {
+      const started = yield* Deferred.make<void>()
+      const selection = yield* Effect.fromOption(parseModelSelection("hand-local:primary"))
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelSelectionLive(selection, Option.none()).pipe(Layer.provide(localAuth(Option.some(`http://127.0.0.1:${server.port}/v1`))))),
+      )
+      const toolkit = yield* kit.pipe(Effect.provide(kit.toLayer({
+        probe: () => Ref.update(runs, (n) => n + 1).pipe(Effect.andThen(Deferred.succeed(started, undefined)), Effect.andThen(Effect.sleep("400 seconds")), Effect.as("slept")),
+      })))
+      const fiber = yield* Effect.forkChild(Stream.runCollect(model.streamText({ prompt: "hi", toolkit })))
+      // The response has been read once the tool runs: only then is the clock moved.
+      yield* Deferred.await(started)
+      yield* TestClock.adjust("1 hour")
+      return Array.from(yield* Fiber.join(fiber), (part) => part.type)
+    }).pipe(Effect.provide(TestClock.layer()))).finally(() => server.stop(true))
+    expect(types.filter((type) => type === "tool-call" || type === "tool-result" || type === "finish")).toEqual(["tool-call", "tool-result", "finish"])
     expect(bodies).toEqual(["primary"])
     expect(Ref.getUnsafe(runs)).toBe(1)
   })

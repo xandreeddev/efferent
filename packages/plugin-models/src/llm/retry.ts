@@ -10,10 +10,11 @@ import { CurrentEmptyResponseTolerance } from "@xandreed/core"
  * - Retry ONLY transients (429 / 5xx / transport / timeout / empty body) —
  *   never a 4xx client error or a decode failure, which are permanent.
  * - Every attempt is bounded by a {@link LLM_REQUEST_TIMEOUT_MS} fiber-level
- *   timeout (official provider clients ship none), classified transient, and
- *   a routed call's attempts, backoff and fallback rung by its
- *   {@link CallBudget}. Tool time counts against neither: once a tool
- *   handler has started the call is final, never retried, never cut.
+ *   timeout (official provider clients ship none; a stream's is idle time),
+ *   classified transient, and a routed call's attempts, backoff and fallback
+ *   rung by its {@link CallBudget}. Tool time counts against neither: once a
+ *   tool handler has started the call is final, never retried, never cut,
+ *   and a stream's idle bound stops while a handler runs.
  * - An HTTP 200 with no text/tool-call/reasoning content is rejected as a
  *   transient failure (the "empty response that fake-completes a turn
  *   mid-thought" class) and rides the same retries.
@@ -49,6 +50,8 @@ export const MAX_HONORED_RETRY_AFTER_MS = 60_000
  * first tool call to the toolkit: from then on the call is final, with no
  * retry, no fallback and no bound, since a second attempt would run the
  * tools again; a handler that never ends is bounded by the tool itself.
+ * `inFlight` counts the handlers running, whose time a stream's idle bound
+ * leaves out.
  */
 export interface CallBudget {
   /** Clock millis. */
@@ -56,12 +59,14 @@ export interface CallBudget {
   /** The budget the deadline was set with, for the message of a call it cuts. */
   readonly budgetMs: number
   readonly handedOff: Deferred.Deferred<void>
+  /** The call's tool handlers running now. */
+  readonly inFlight: Ref.Ref<number>
 }
 
 /** A call's budget, its deadline `budgetMs` from now on the `Clock`. */
 export const makeCallBudget = (budgetMs: number = LLM_CALL_BUDGET_MS): Effect.Effect<CallBudget> =>
-  Effect.all([Clock.currentTimeMillis, Deferred.make<void>()], { concurrency: 1 }).pipe(
-    Effect.map(([now, handedOff]) => ({ deadline: now + budgetMs, budgetMs, handedOff })),
+  Effect.all([Clock.currentTimeMillis, Deferred.make<void>(), Ref.make(0)], { concurrency: 1 }).pipe(
+    Effect.map(([now, handedOff, inFlight]) => ({ deadline: now + budgetMs, budgetMs, handedOff, inFlight })),
   )
 
 export type ErrorClass = "transient" | "permanent"
@@ -138,9 +143,9 @@ const routerError = (method: string, description: string): AiError.AiError =>
 const timeoutError = (label: string, method: string, timeoutMs: number): AiError.AiError =>
   routerError(method, `the ${label} request exceeded ${timeoutMs / 1000}s and was cut off`)
 
-const budgetError = (label: string, budget: CallBudget, attempts: number): AiError.AiError =>
+const budgetError = (label: string, method: string, budget: CallBudget, attempts: number): AiError.AiError =>
   routerError(
-    "generateText",
+    method,
     `the ${label} call reached its ${budget.budgetMs / 1000}s budget after ${attempts} ${attempts === 1 ? "attempt" : "attempts"} and was cut off`,
   )
 
@@ -185,12 +190,12 @@ export const rejectEmptyResponse =
     )
 
 /**
- * Fails the attempt it races with `cut` when `ms` pass before the call hands
- * a tool call off; once the call has, it never ends, so the call runs on
- * without a bound.
+ * Fails the attempt it races with `cut` when `ms` pass before `final` is
+ * done (the call handed a tool call off, or a stream's content began); once
+ * it is, it never ends, so the attempt runs on without this bound.
  */
-const watchdog = (handedOff: Deferred.Deferred<void>, ms: number, cut: AiError.AiError): Effect.Effect<never, AiError.AiError> =>
-  Deferred.await(handedOff).pipe(
+const watchdog = (final: Effect.Effect<void>, ms: number, cut: AiError.AiError): Effect.Effect<never, AiError.AiError> =>
+  final.pipe(
     Effect.timeoutOrElse({ duration: Duration.millis(ms), orElse: () => Effect.fail(cut) }),
     Effect.andThen(Effect.never),
   )
@@ -215,12 +220,12 @@ export const retryableLlm =
       const attempt = Effect.all([Clock.currentTimeMillis, Ref.get(attempts)], { concurrency: 1 }).pipe(
         Effect.flatMap(([now, made]) => {
           const left = bound.deadline - now
-          if (left <= 0) return Effect.fail(budgetError(label, bound, made))
+          if (left <= 0) return Effect.fail(budgetError(label, "generateText", bound, made))
           const cut = left < LLM_REQUEST_TIMEOUT_MS
-            ? budgetError(label, bound, made + 1)
+            ? budgetError(label, "generateText", bound, made + 1)
             : timeoutError(label, "generateText", LLM_REQUEST_TIMEOUT_MS)
           return Ref.set(attempts, made + 1).pipe(
-            Effect.andThen(Effect.raceFirst(call, watchdog(bound.handedOff, Math.min(LLM_REQUEST_TIMEOUT_MS, left), cut))),
+            Effect.andThen(Effect.raceFirst(call, watchdog(Deferred.await(bound.handedOff), Math.min(LLM_REQUEST_TIMEOUT_MS, left), cut))),
           )
         }),
       )
@@ -256,49 +261,89 @@ const isStreamContentPart = (part: unknown): boolean => {
 
 const isFinishPart = (part: unknown): boolean => partType(part) === "finish"
 
+/** What {@link handlerTicks} emit: never a part, dropped once past the idle bound. */
+const handlerTick = Symbol("handlerTick")
+
 /**
- * The STREAM twin of {@link retryableLlm}, with semantics a settled call
- * doesn't need:
+ * A tick every quarter of the idle bound, emitted only while one of the
+ * call's tool handlers runs. Merged into the parts before the idle bound, it
+ * keeps a running handler's time out of it: the bound counts only the time
+ * no handler runs, to within a quarter of it.
+ */
+const handlerTicks = (budget: CallBudget, timeoutMs: number): Stream.Stream<typeof handlerTick> =>
+  Stream.tick(Duration.millis(timeoutMs / 4)).pipe(
+    Stream.filterEffect(() => Effect.map(Ref.get(budget.inFlight), (running) => running > 0)),
+    Stream.map(() => handlerTick),
+  )
+
+/**
+ * The STREAM twin of {@link retryableLlm}, within the call's budget (a fresh
+ * one when none is given, whose hand-off and handlers then nothing marks),
+ * with semantics a settled call doesn't need:
  *
  * - Retry covers connection + PRE-first-content failures only. Once a
  *   content part has flowed to the consumer, a replayed stream would emit
- *   duplicates — so after content, failures are final (a `Ref`-armed gate on
- *   the retry schedule).
+ *   duplicates — so after content, failures are final (a gate armed by the
+ *   first content part on the retry schedule). Before it, a failure is
+ *   retried only while {@link canTryAgain} holds.
  * - The empty guard WITHHOLDS the finish part: a finish with zero content
  *   parts fails as the transient empty-response error instead of
  *   fake-completing the turn — and, being pre-content by definition, it
  *   rides the same retries.
  * - The timeout is per-PART idle time (bounds time-to-first-part AND a
  *   mid-stream hang), not whole-request — a long healthy stream never trips
- *   it while tokens flow.
+ *   it while tokens flow. The time a tool handler runs does not count
+ *   ({@link handlerTicks}): the step loop's tools run mid-stream, and the
+ *   finish part waits for them.
+ * - No attempt starts at or after the budget's deadline, and one is cut at
+ *   it until its first content part or the hand-off, failing with a message
+ *   that names the budget and the attempts.
  */
 export const retryableLlmStream =
-  (label: string, timeoutMs: number = LLM_REQUEST_TIMEOUT_MS) =>
+  (label: string, budget?: CallBudget, timeoutMs: number = LLM_REQUEST_TIMEOUT_MS) =>
   <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E | AiError.AiError, R> =>
     Stream.unwrap(
       Effect.gen(function* () {
-        const contentSeen = yield* Ref.make(false)
-        return stream.pipe(
+        const bound = budget ?? (yield* makeCallBudget())
+        const contentSeen = yield* Deferred.make<void>()
+        const attempts = yield* Ref.make(0)
+        const guarded = stream.pipe(
           Stream.mapEffect((part) =>
             isStreamContentPart(part)
-              ? Ref.set(contentSeen, true).pipe(Effect.as(part))
+              ? Deferred.succeed(contentSeen, undefined).pipe(Effect.as(part))
               : isFinishPart(part)
-                ? Ref.get(contentSeen).pipe(
+                ? Deferred.isDone(contentSeen).pipe(
                     Effect.flatMap((seen) =>
                       seen ? Effect.succeed(part) : Effect.fail(emptyError(label, "streamText")),
                     ),
                   )
                 : Effect.succeed(part),
           ),
+          Stream.merge(handlerTicks(bound, timeoutMs), { haltStrategy: "left" }),
           Stream.timeoutOrElse({
             duration: Duration.millis(timeoutMs),
             orElse: () => Stream.fail(timeoutError(label, "streamText", timeoutMs)),
           }),
+          Stream.filter((part): part is A => part !== handlerTick),
+        )
+        const attempt = Stream.unwrap(
+          Effect.all([Clock.currentTimeMillis, Ref.get(attempts)], { concurrency: 1 }).pipe(
+            Effect.flatMap(([now, made]) => {
+              const left = bound.deadline - now
+              if (left <= 0) return Effect.fail(budgetError(label, "streamText", bound, made))
+              const final = Effect.race(Deferred.await(contentSeen), Deferred.await(bound.handedOff))
+              return Ref.set(attempts, made + 1).pipe(
+                Effect.as(guarded.pipe(Stream.mergeEffect(watchdog(final, left, budgetError(label, "streamText", bound, made + 1))))),
+              )
+            }),
+          ),
+        )
+        return attempt.pipe(
           Stream.retry(
             fastRetries.pipe(
               Schedule.while(({ input }: { readonly input: E | AiError.AiError }) =>
-                Ref.get(contentSeen).pipe(
-                  Effect.flatMap((seen) => seen ? Effect.succeed(false) : isTransientLlmError(input)),
+                Deferred.isDone(contentSeen).pipe(
+                  Effect.flatMap((seen) => seen ? Effect.succeed(false) : canTryAgain(bound)(input)),
                 ),
               ),
             ),

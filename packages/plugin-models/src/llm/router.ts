@@ -29,8 +29,9 @@ import type { CallBudget } from "./retry.js"
  * and every attempt of the step, a stream's fallback included, use that
  * selection, and a switch applies from the next step. Each call rides the
  * timeout + transient-retry + empty-response guards from `retry.ts`; a
- * settled call's attempts and fallback rung share one `CallBudget`, and the
- * call is final once it hands a tool call to its toolkit.
+ * call's attempts (a settled call's fallback rung too) share one
+ * `CallBudget`, and the call is final once it hands a tool call to its
+ * toolkit.
  */
 
 const configError = (message: string): AiError.AiError =>
@@ -278,29 +279,42 @@ const providerStream = (selection: ModelSelection) =>
 const isToolkitWithHandler = (value: unknown): value is Toolkit.WithHandler<Record<string, Tool.Any>> =>
   Predicate.hasProperty(value, "tools") && Predicate.hasProperty(value, "handle") && Predicate.isFunction(value.handle)
 
-/** The toolkit, its every call first marking the routed call handed off. */
+/**
+ * The toolkit, its every call first marking the routed call handed off, and
+ * counted in `budget.inFlight` from then until its results end.
+ */
 const handingOff = <Tools extends Record<string, Tool.Any>>(
   toolkit: Toolkit.WithHandler<Tools>,
-  handedOff: Deferred.Deferred<void>,
+  budget: CallBudget,
 ): Toolkit.WithHandler<Tools> => ({
   tools: toolkit.tools,
-  handle: (name, params, toolCallId, parseOptions) =>
-    Deferred.succeed(handedOff, undefined).pipe(Effect.andThen(toolkit.handle(name, params, toolCallId, parseOptions))),
+  handle: (name, params, toolCallId, parseOptions) => {
+    const ended = Ref.update(budget.inFlight, (running) => running - 1)
+    // Counted and uncounted as a pair: interruption waits until the count
+    // has its release attached, on the call or on its results.
+    return Effect.uninterruptibleMask((restore) =>
+      Deferred.succeed(budget.handedOff, undefined).pipe(
+        Effect.andThen(Ref.update(budget.inFlight, (running) => running + 1)),
+        Effect.andThen(restore(toolkit.handle(name, params, toolCallId, parseOptions)).pipe(Effect.onError(() => ended))),
+        Effect.map(Stream.ensuring(ended)),
+      ))
+  },
 })
 
 /**
  * A call's options with its toolkit watched for the hand-off: the first tool
  * call it hands to the toolkit, which starts that tool's handler, completes
  * `budget.handedOff`, and the call is final from then on (`retryableLlm`,
- * {@link withFallbackRung}). A yieldable `Toolkit` is watched once it
+ * `retryableLlmStream`, {@link withFallbackRung}); each handler counts in
+ * `budget.inFlight` while it runs. A yieldable `Toolkit` is watched once it
  * resolves; options without a toolkit are returned as they are.
  */
 export const withHandOff = <O extends PromptOptions>(options: O, budget: CallBudget): O => {
   if (!Predicate.hasProperty(options, "toolkit")) return options
   const toolkit = options.toolkit
   const watched = Effect.isEffect(toolkit)
-    ? Effect.map(toolkit, (resolved) => isToolkitWithHandler(resolved) ? handingOff(resolved, budget.handedOff) : resolved)
-    : isToolkitWithHandler(toolkit) ? handingOff(toolkit, budget.handedOff) : toolkit
+    ? Effect.map(toolkit, (resolved) => isToolkitWithHandler(resolved) ? handingOff(resolved, budget) : resolved)
+    : isToolkitWithHandler(toolkit) ? handingOff(toolkit, budget) : toolkit
   return { ...options, toolkit: watched }
 }
 
@@ -519,22 +533,25 @@ export const tapStreamTelemetry =
 
 /** Build + call one provider streamText for an explicit selection — the
  *  stream twin of {@link generateWith}: same resolution, same option
- *  shaping (anthropic cache breakpoints inherit for free), same stamp, the
- *  stream-aware retry, and finish-part telemetry. */
+ *  shaping (anthropic cache breakpoints inherit for free), same budget and
+ *  hand-off, same stamp, the stream-aware retry, and finish-part telemetry.
+ *  A call made without a budget gets its own. */
 export const streamWith = <O extends PromptOptions>(
   selection: ModelSelection,
   options: O,
+  budget?: CallBudget,
 ): Stream.Stream<unknown, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Stream.unwrap(
     Effect.gen(function* () {
       const label = formatModelSelection(selection)
+      const bound = budget ?? (yield* makeCallBudget())
       const built = yield* providerFor(selection)
       return (
         built.svc.streamText(
-          shapeOptions(built, options) as never,
+          shapeOptions(built, withHandOff(options, bound)) as never,
         ) as Stream.Stream<Response.AnyPart, AiError.AiError>
       ).pipe(
-        retryableLlmStream(label),
+        retryableLlmStream(label, bound),
         Stream.map((part) => stampPartModel(part, label)),
         tapStreamTelemetry(label),
       )
@@ -587,6 +604,7 @@ const selectionModel = (
   fetch: Option.Option<typeof globalThis.fetch>,
 ): LanguageModel.LanguageModel => {
   // One budget per routed call, shared by its attempts and its fallback rung.
+  // A stream's is made when it starts.
   const service = {
     [LanguageModel.TypeId]: LanguageModel.TypeId,
     generateText: (options: PromptOptions) =>
@@ -613,7 +631,7 @@ const selectionModel = (
     // already falls back to generateText in the engine loop, and THAT
     // call rides this router's fallback — one rung, no double-hop.
     streamText: ((options: PromptOptions) =>
-      withConfiguredEffortStream(streamWith(primary, options), effort).pipe(
+      withConfiguredEffortStream(Stream.unwrap(Effect.map(makeCallBudget(), (budget) => streamWith(primary, options, budget))), effort).pipe(
         withFetchStream(fetch),
         Stream.provideContext(context),
         Stream.provideService(HttpClient.HttpClient, http),

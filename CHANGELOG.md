@@ -815,6 +815,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   twice and a long tool no longer fails its step.
 - A routed call's attempts, backoff and fallback share a 600 s budget; a
   hung provider fails after 600 s, naming the budget and the attempts.
+- A streamed model call no longer fails while one of its tools runs: the
+  stream's 300 s idle bound counts only the time no tool runs, so a tool
+  that runs longer mid-stream completes its step.
+- A streamed call's retries share the call's 600 s budget: no attempt
+  starts after it, and an attempt that has sent no content by then is cut,
+  with a message naming the budget and the attempts made.
 
 ### Repository
 

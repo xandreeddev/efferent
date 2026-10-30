@@ -393,6 +393,15 @@ and once it has started a tool the call is final: it is not retried, does not
 fall back, and neither bound applies, since another attempt would run the
 tools again; a tool bounds itself (a bash timeout, a task's deadline).
 
+A `streamText` call is cut after 300 s without a part instead, and the time
+a tool runs does not count: the step loop's tools run mid-stream, and the
+finish part waits for them (the bound counts the time no tool runs, to
+within a quarter of it). A stream is retried only before its first content
+part, within the same 600 s: no attempt starts after that, and one that has
+sent no content by then is cut. It has no fallback of its own: when a stream
+fails before any part arrives, the step loop falls back to `generateText`,
+a call with a budget of its own.
+
 - An exhausted balance or quota is a `QuotaExhaustedError`: a 402, or an
   error whose type or code names one (OpenCode's `CreditsError`, OpenAI's
   `insufficient_quota`), at any status. It is not retried and does not fall
