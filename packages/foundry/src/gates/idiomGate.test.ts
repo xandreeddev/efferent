@@ -127,6 +127,39 @@ describe("effect-idioms gate over fixtures", () => {
     expect(at(findings)).toEqual([{ rule: "effect/no-as-never", file: "asNever.ts", line: 4 }])
   })
 
+  test("a boundary entry that excuses nothing fails: one naming no file the rule checks, or whose files it tolerates nothing in", async () => {
+    const config = [
+      Schema.decodeUnknownSync(RuleConfig)({
+        rule: "effect/no-as-never",
+        include: ["asNever.ts", "clean.ts"],
+        boundary: ["asNever.ts", "clean.ts", "gone.ts"],
+      }),
+    ]
+    const findings = await Effect.runPromise(
+      makeIdiomGate(allBuiltinRules, config, "tsconfig.json").run(ws).pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    expect(findings.map((f) => [String(f.rule), f.message, Option.isNone(f.location)])).toEqual([
+      ["effect/no-as-never", "`as never as T` launders the type like `as unknown as T`", false],
+      ["effect/no-as-never", 'the boundary list entry "clean.ts" tolerates nothing now: no file it names has a match the rule drops there', true],
+      ["effect/no-as-never", 'the boundary list entry "gone.ts" names no file this rule checks (renamed, deleted or outside its include)', true],
+    ])
+  })
+
+  test("a boundary glob counts every file it names, but those the allow list skips", async () => {
+    const run = (allow: ReadonlyArray<string>) =>
+      Effect.runPromise(
+        makeIdiomGate(
+          allBuiltinRules,
+          [Schema.decodeUnknownSync(RuleConfig)({ rule: "effect/no-as-never", include: ["asNever.ts", "clean.ts"], boundary: ["*.ts"], allow })],
+          "tsconfig.json",
+        ).run(ws).pipe(Effect.provide(TsProjectCachedLive)),
+      )
+    expect(at(await run([]))).toEqual([{ rule: "effect/no-as-never", file: "asNever.ts", line: 4 }])
+    expect((await run(["asNever.ts"])).map((f) => f.message)).toEqual([
+      'the boundary list entry "*.ts" tolerates nothing now: no file it names has a match the rule drops there',
+    ])
+  })
+
   test("effect/no-json-parse flags JSON.parse, called or passed, and not the Schema decode", async () => {
     const findings = await findingsFor(["effect/no-json-parse"], ["jsonParse.ts"])
     expect(at(findings)).toEqual([
@@ -293,6 +326,16 @@ describe("effect-idioms gate over fixtures", () => {
     expect(at(findings)).toEqual([4, 5, 6].map((line) => ({ rule: "effect/no-option-unwrap", file: "optionUnwrap.ts", line })))
   })
 
+  test("effect/no-unknown-requirements is type-aware: unknown or an alias of it as an effect's R, not never, a type parameter or a local type", async () => {
+    const findings = await findingsFor(["effect/no-unknown-requirements"], ["unknownRequirements.ts"])
+    expect(at(findings)).toEqual([4, 5, 6].map((line) => ({ rule: "effect/no-unknown-requirements", file: "unknownRequirements.ts", line })))
+    expect(findings.map((f) => f.message)).toEqual(
+      ["Effect.Effect", "Stream.Stream", "Layer.Layer"].map(
+        (type) => `\`${type}<…, unknown>\` hides what it requires: a service it reads compiles whether anything provides it or not`,
+      ),
+    )
+  })
+
   test("effect/match-over-tag-switch flags ternary chains and the type, role and mode discriminants, not a single guard", async () => {
     const findings = await findingsFor(["effect/match-over-tag-switch"], ["discriminantChains.ts"])
     expect(at(findings)).toEqual([5, 7, 9].map((line) => ({ rule: "effect/match-over-tag-switch", file: "discriminantChains.ts", line })))
@@ -303,7 +346,7 @@ describe("effect-idioms gate over fixtures", () => {
       Schema.decodeUnknownSync(RuleConfig)({
         rule: "effect/match-over-tag-switch",
         include: ["tagSwitch.ts", "discriminantChains.ts"],
-        boundary: ["tagSwitch.ts", "discriminantChains.ts"],
+        boundary: ["*.ts"],
       }),
     ]
     const findings = await Effect.runPromise(

@@ -25,6 +25,7 @@ import { preferEffectFn } from "./effectFn.js"
 import { noOptionUnwrap } from "./optionUnwrap.js"
 import { noProviderNamespace } from "./providerNamespace.js"
 import { noSilentIgnore } from "./silentFailures.js"
+import { noUnknownRequirements } from "./unknownRequirements.js"
 import { effectArchitectureRules } from "./effectArchitecture.js"
 
 /**
@@ -40,9 +41,10 @@ export interface RulePack {
 }
 
 /** The Effect.ts house style — errors are values (kept, logged when
- *  dropped, told apart by tag), state is a fold, concurrency is stated, and
- *  what crosses a boundary (text, the environment, time, randomness,
- *  foreign promises) is decoded or comes from a service. */
+ *  dropped, told apart by tag), state is a fold, concurrency is stated,
+ *  what an effect requires is in its type, and what crosses a boundary
+ *  (text, the environment, time, randomness, foreign promises) is decoded
+ *  or comes from a service. */
 export const effectPack: RulePack = {
   name: "effect",
   rules: [
@@ -53,6 +55,7 @@ export const effectPack: RulePack = {
     matchOverTagSwitch,
     noAsAny,
     noAsNever,
+    noUnknownRequirements,
     brandedIdFields,
     noParallelInterface,
     noJsonParse,

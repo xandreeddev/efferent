@@ -110,6 +110,8 @@ would judge attempt N against attempt N-1's source).
    are fine), `effect/no-as-any` (incl. `as unknown as T` laundering),
    `effect/no-as-never` (`as never` outside
    the rule's `boundary` files, `as never as T` everywhere),
+   `effect/no-unknown-requirements` (type-aware: an `Effect`, `Stream` or
+   `Layer` type whose R is `unknown`),
    `effect/no-loop-statements`, `effect/branded-id-fields`,
    `effect/no-parallel-interface`, and the rules for what crosses a
    boundary: `effect/no-json-parse`, `effect/no-sync-codec`,
@@ -141,7 +143,8 @@ would judge attempt N against attempt N-1's source).
    `architecture/role-suffix-required`: every file names its role). A
    rule's `boundary` globs name the files where the matches it marks as
    tolerated (an `as never` where type erasure is the design) are dropped;
-   its other matches still report there. A rule's `allow` names exact
+   its other matches still report there, and a glob that drops nothing
+   any more is itself a finding. A rule's `allow` names exact
    files it skips, a frozen list of today's exceptions: an entry naming a
    file the rule does not check, or no longer flags, is itself a finding,
    so the list only shrinks. A rule with findings enters a profile through

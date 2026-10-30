@@ -22,7 +22,8 @@ export interface RuleMatch {
   /** Dropped in the files the rule's config declares a `boundary`, where
    *  the profile tolerates this kind of match (an `as never` where type
    *  erasure is the design; a discriminant ternary in code not yet
-   *  converted to `Match`); reported elsewhere. */
+   *  converted to `Match`); reported elsewhere. A boundary glob whose
+   *  files hold none is stale and fails. */
   readonly toleratedAtBoundary?: boolean
 }
 
@@ -103,67 +104,83 @@ export const makeIdiomGate = (
           ),
         )
       const sourceFiles = projectSourceFiles(project, workspace.rootDir)
-      const matchesOf = (a: ActiveRule, sourceFile: ts.SourceFile, rel: string): ReadonlyArray<RuleMatch> => {
-        const atBoundary = a.boundary.some((glob) => matchesGlob(glob, rel))
-        return a.rule
-          .check({ sourceFile, checker: project.checker })
-          .filter((match) => !(atBoundary && match.toleratedAtBoundary === true))
-      }
-      const findings = sourceFiles.flatMap((sourceFile) => {
+      // Every file each rule covers, checked once: the findings, and the
+      // allow and boundary entries that no longer excuse anything, read it.
+      const checked = sourceFiles.flatMap((sourceFile) => {
         const rel = toWorkspacePath(workspace.rootDir, sourceFile.fileName)
         return active
-          .filter((a) => includedBy(a.include, a.exclude, rel) && !a.allow.includes(rel))
-          .flatMap((a) =>
-            matchesOf(a, sourceFile, rel).map(
-              (match) =>
-                new Finding({
-                  rule: a.rule.id,
-                  severity: a.severity,
-                  message: match.message,
-                  location: Option.some(
-                    locationOf(sourceFile, match.node, workspace.rootDir),
-                  ),
-                  fixHint: Option.some(a.rule.fixHint),
-                }),
-            ),
-          )
+          .filter((a) => includedBy(a.include, a.exclude, rel))
+          .map((a): Checked => ({ active: a, sourceFile, rel, matches: a.rule.check({ sourceFile, checker: project.checker }) }))
       })
-      return [...findings, ...active.flatMap((a) => staleAllowances(a, sourceFiles, workspace.rootDir, matchesOf))]
+      const findings = checked
+        .filter((c) => !c.active.allow.includes(c.rel))
+        .flatMap((c) =>
+          reported(c).map(
+            (match) =>
+              new Finding({
+                rule: c.active.rule.id,
+                severity: c.active.severity,
+                message: match.message,
+                location: Option.some(locationOf(c.sourceFile, match.node, workspace.rootDir)),
+                fixHint: Option.some(c.active.rule.fixHint),
+              }),
+          ),
+        )
+      return [
+        ...findings,
+        ...active.flatMap((a) => {
+          const covered = checked.filter((c) => c.active === a)
+          return [...staleAllowances(a, covered), ...staleBoundaries(a, covered)]
+        }),
+      ]
     },
   ),
 })
 
+/** One file a rule covers, and every match its check found there. */
+interface Checked {
+  readonly active: ActiveRule
+  readonly sourceFile: ts.SourceFile
+  readonly rel: string
+  readonly matches: ReadonlyArray<RuleMatch>
+}
+
+const atBoundary = (c: Checked): boolean => c.active.boundary.some((glob) => matchesGlob(glob, c.rel))
+
+/** The matches that report: in a boundary file, less those the rule tolerates there. */
+const reported = (c: Checked): ReadonlyArray<RuleMatch> =>
+  atBoundary(c) ? c.matches.filter((match) => match.toleratedAtBoundary !== true) : c.matches
+
+const staleEntry = (a: ActiveRule, list: "allow" | "boundary", entry: string, why: string): Finding =>
+  new Finding({
+    rule: a.rule.id,
+    severity: a.severity,
+    message: `the ${list} list entry "${entry}" ${why}`,
+    location: Option.none(),
+    fixHint: Option.some(`remove the entry from the rule's \`${list}\` list in the profile; the list only shrinks`),
+  })
+
 /** The `allow` entries that no longer excuse anything: a path that is not
  *  a file the rule covers (renamed, deleted, outside its globs), or a file
  *  the rule no longer flags. Each one fails, so the list only shrinks. */
-const staleAllowances = (
-  a: ActiveRule,
-  sourceFiles: ReadonlyArray<ts.SourceFile>,
-  rootDir: string,
-  matchesOf: (a: ActiveRule, sourceFile: ts.SourceFile, rel: string) => ReadonlyArray<RuleMatch>,
-): ReadonlyArray<Finding> =>
-  a.allow.flatMap((entry) => {
-    const covered = Option.fromNullishOr(
-      sourceFiles.find((sourceFile) => {
-        const rel = toWorkspacePath(rootDir, sourceFile.fileName)
-        return rel === entry && includedBy(a.include, a.exclude, rel)
-      }),
-    )
-    const reason = Option.match(covered, {
-      onNone: () => Option.some("names no file this rule checks (renamed, deleted or outside its include)"),
-      onSome: (sourceFile) =>
-        matchesOf(a, sourceFile, entry).length === 0 ? Option.some("passes this rule now") : Option.none(),
-    })
-    return Option.match(reason, {
-      onNone: () => [],
-      onSome: (why) => [
-        new Finding({
-          rule: a.rule.id,
-          severity: a.severity,
-          message: `the allow list entry "${entry}" ${why}`,
-          location: Option.none(),
-          fixHint: Option.some("remove the entry from the rule's `allow` list in the profile; the list only shrinks"),
-        }),
-      ],
-    })
+const staleAllowances = (a: ActiveRule, covered: ReadonlyArray<Checked>): ReadonlyArray<Finding> =>
+  a.allow.flatMap((entry) =>
+    Option.match(Option.fromNullishOr(covered.find((c) => c.rel === entry)), {
+      onNone: () => [staleEntry(a, "allow", entry, "names no file this rule checks (renamed, deleted or outside its include)")],
+      onSome: (c) => (reported(c).length === 0 ? [staleEntry(a, "allow", entry, "passes this rule now")] : []),
+    }),
+  )
+
+/** The `boundary` globs that no longer excuse anything: one that names no
+ *  file the rule covers (less its `allow` files, which it skips), or whose
+ *  files hold no match the rule tolerates there. Each one fails, so a
+ *  boundary, like an allow list, only shrinks. */
+const staleBoundaries = (a: ActiveRule, covered: ReadonlyArray<Checked>): ReadonlyArray<Finding> =>
+  a.boundary.flatMap((glob) => {
+    const files = covered.filter((c) => !a.allow.includes(c.rel) && matchesGlob(glob, c.rel))
+    return files.length === 0
+      ? [staleEntry(a, "boundary", glob, "names no file this rule checks (renamed, deleted or outside its include)")]
+      : files.some((c) => c.matches.some((match) => match.toleratedAtBoundary === true))
+        ? []
+        : [staleEntry(a, "boundary", glob, "tolerates nothing now: no file it names has a match the rule drops there")]
   })

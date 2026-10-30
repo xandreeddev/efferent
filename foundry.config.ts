@@ -58,7 +58,9 @@ const CHECKED = [
  * global fetch types' shape but are distinct classes, so nothing downstream
  * may rely on `instanceof Response` / `Headers`). `as never`
  * is the design there and nowhere else — a new one anywhere else fails.
- * Test scaffolding (scripted providers, stubbed ports) is out of scope.
+ * Test scaffolding (scripted providers, stubbed ports) is out of scope. An
+ * entry whose file holds no `as never` any more fails too: the boundary
+ * only shrinks.
  */
 const ERASURE_BOUNDARY = [
   "packages/plugin-models/src/llm/router.ts",
@@ -143,6 +145,30 @@ const RECORD_CAST_EDGES = [
  */
 const PROVIDER_NEUTRAL = [src("core"), src("plugin-agent-loop")]
 const PROVIDER_NAMESPACE_EDGES = ["packages/core/src/domain/engine-stamp.entity.functions.ts"]
+
+/**
+ * Effect, Stream and Layer types whose requirements are `unknown`
+ * (`effect/no-unknown-requirements`), so a service they read compiles
+ * whether anything provides it or not. A registered tool's handler and a
+ * prompt section's render are typed so (`capability.port.ts`): `defineTool`
+ * casts a typed handler to it, the tool registry wraps those handlers,
+ * `renderSections` hands the sections' requirements to its caller and the
+ * turn meets them with the caller's own context; each goes once a
+ * capability declares the services it reads, checked by key when a run
+ * opens. A turn's host layer (`NewTurn.layer`) and the sdk code that
+ * provides it and the turn's plugins stay: a JSON config picks those
+ * services at run time, and the plugin graph checks them by key. FROZEN
+ * like NULLABLE_EDGES: the list only shrinks.
+ */
+const UNKNOWN_REQUIREMENT_EDGES = [
+  "packages/core/src/ports/capability.port.ts",
+  "packages/core/src/ports/turn.port.ts",
+  "packages/core/src/harness/capability.entity.functions.ts",
+  "packages/core/src/turn/prompt-sections.ts",
+  "packages/core/src/turn/turn.adapter.ts",
+  "packages/plugin-tool-discovery/src/registry.adapter.ts",
+  "packages/sdk/src/agent.adapter.ts",
+]
 
 /**
  * The files that had no role suffix when `architecture/role-suffix-required`
@@ -337,6 +363,8 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
     { rule: "effect/prefer-effect-fn", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/require-concurrency-option", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    // What an effect requires is in its type (the list above aside).
+    { rule: "effect/no-unknown-requirements", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_REQUIREMENT_EDGES },
     { rule: "quality/no-skipped-tests", include: CHECKED },
     { rule: "quality/no-empty-catch", include: CHECKED },
     { rule: "architecture/no-raw-promise-core", include: CHECKED },

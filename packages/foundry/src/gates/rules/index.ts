@@ -19,6 +19,7 @@ import { preferEffectFn } from "./effectFn.js"
 import { noOptionUnwrap } from "./optionUnwrap.js"
 import { noProviderNamespace } from "./providerNamespace.js"
 import { noSilentIgnore } from "./silentFailures.js"
+import { noUnknownRequirements } from "./unknownRequirements.js"
 import {
   contextTagsLiveInPorts,
   contractsContainNoBehavior,
@@ -67,6 +68,7 @@ export {
   preferEffectFn,
   requireConcurrencyOption,
   noOptionUnwrap,
+  noUnknownRequirements,
   contextTagsLiveInPorts,
   contractsContainNoBehavior,
   effectArchitectureRules,

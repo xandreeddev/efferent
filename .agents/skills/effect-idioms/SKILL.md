@@ -118,6 +118,10 @@ before using it; do not trust Effect 3 memory.
   No `process.env` in package code; only a `main.ts` edge reads it.
 - Secrets stay `Redacted` (`Schema.Redacted(Schema.String)` in a config)
   until the one call that sends them unwraps with `Redacted.value`.
+- What an effect reads from its context is in its type: name the services
+  in R (`Effect<A, E, SessionLog>`, `never` for none) or keep R a type
+  parameter. Never `unknown`: a service nothing provides then compiles and
+  fails mid-run (`effect/no-unknown-requirements`).
 
 ## 7. Spans and functions
 

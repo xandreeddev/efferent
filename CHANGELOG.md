@@ -1018,6 +1018,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   with an infinite capacity, fails outside test code.
 - The sessions kit adds a `changes` check; plugin-render's
   `makeMemoryJournal` signals through `PubSub.sliding(1)`.
+- A new gate rule, `effect/no-unknown-requirements`, fails an `Effect`,
+  `Stream` or `Layer` type whose requirements are `unknown` (or an alias of
+  it), under which a service nothing provides compiles unseen. It runs in
+  every package, test code aside; the seven files that erase requirements
+  today sit on a frozen `UNKNOWN_REQUIREMENT_EDGES` allow list that only
+  shrinks. The vendored `effect` pack carries the rule too.
+- A rule's `boundary` globs only shrink, like its `allow` list: a glob that
+  names no file the rule checks, or whose files hold no match the rule
+  tolerates there, fails the gate.
 
 ## 0.14.0 — 2026-10-29
 

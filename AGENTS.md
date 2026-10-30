@@ -42,7 +42,7 @@ Build output goes under `.artifacts`.
 `bun run typecheck` runs the repo profile (`foundry.config.ts`) over every
 file under `packages/*/src`, tests included (tsc errors are `ts/<code>`), then
 tsc over `scripts/`; `fixtures/` are outside it. The baseline stays empty.
-`no-as-never` and the rules from `no-json-parse` to
+`no-as-never`, `no-unknown-requirements` and the rules from `no-json-parse` to
 `require-concurrency-option`, but `no-instanceof-tagged-error`, skip test
 code (`*.test.ts`, `*.bench.ts`, `testing.ts`, `*.testing.ts`,
 `testing.port.ts`, `testing/`); `no-error-code-compare` and
@@ -51,7 +51,8 @@ with findings enters one package at a time, through a list in
 `foundry.config.ts` of the packages it runs in: to add a package, fix its
 findings and add its line, never the baseline; once the list names every
 package, the rule takes `CHECKED` and the list is deleted. An `allow` list
-(`ROLELESS_FILES`, `NULLABLE_EDGES`, `RECORD_CAST_EDGES`, `PROVIDER_NAMESPACE_EDGES`) only shrinks: an entry that excuses
+(`ROLELESS_FILES`, `NULLABLE_EDGES`, `RECORD_CAST_EDGES`, `PROVIDER_NAMESPACE_EDGES`, `UNKNOWN_REQUIREMENT_EDGES`)
+or a `boundary` (`ERASURE_BOUNDARY`) only shrinks: an entry that excuses
 nothing fails.
 
 | Rule | Bans | Fix |
@@ -63,6 +64,7 @@ nothing fails.
 | `effect/match-over-tag-switch` | a `switch`, an else-if ladder or a ternary chain on `_tag`, `.type`, `.role` or `.mode` | `Match.valueTags(x, { … })`, `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Match.discriminators("type")`, `Option.match`, `Result.match`, `Exit.match` |
 | `effect/no-as-any` | `as any`, `as unknown as T` | decode with Schema, or fix the type |
 | `effect/no-as-never` | `as never` outside the `ERASURE_BOUNDARY` files; `as never as T` everywhere, those files included | fix the type; a file added to `ERASURE_BOUNDARY` states its reason in the PR |
+| `effect/no-unknown-requirements` | an `Effect`, `Stream` or `Layer` type with `unknown` as its requirements (`UNKNOWN_REQUIREMENT_EDGES` aside) | name the services in R (`never` for none) or keep R a type parameter; services a config picks at run time are declared by key and checked where they are provided |
 | `effect/no-parallel-interface` | an interface shadowing a same-named schema | `type X = typeof X.Type` |
 | `effect/no-json-parse` | `JSON.parse` | decode with `Schema.fromJsonString(S)` (`decodeUnknownEffect`, `decodeUnknownResult`, `decodeUnknownOption`); `S` is `Schema.Json` when the shape is open |
 | `effect/no-sync-codec` | `decodeSync`, `decodeUnknownSync`, `encodeSync`, `encodeUnknownSync` | the Effect, Result or Option codec, its failure handled |
@@ -114,7 +116,7 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 | `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-ambient-time-random` and `no-option-unwrap` |
 | `x.conformance.ts` | a port's kit, exported and shipped | base except `no-option-unwrap`, `no-error-code-compare` and `no-provider-namespace` |
 | `index.ts`, `main.ts` | the public surface, as explicit named exports; a command line's entry | base (`main.ts` may read `process.env`) |
-| `x.test.ts`, `testing.ts`, `x.testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never` and the rules from `no-json-parse` to `require-concurrency-option` but `no-instanceof-tagged-error` |
+| `x.test.ts`, `testing.ts`, `x.testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never`, `no-unknown-requirements` and the rules from `no-json-parse` to `require-concurrency-option` but `no-instanceof-tagged-error` |
 | any other name (`loop.ts`) | older modules, listed in `ROLELESS_FILES` | base; `role-suffix-required` refuses a new one: give it one of the roles above |
 
 ## Ports, adapters and composition
