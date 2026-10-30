@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test"
-import { Effect, Option, Schema } from "effect"
+import { afterAll, describe, expect, test } from "bun:test"
+import { Effect, ManagedRuntime, Option, Schema } from "effect"
 import * as path from "node:path"
 import { LayerConfig } from "../domain/Rules.js"
 import type { Workspace } from "../ports/Gate.js"
@@ -65,5 +65,74 @@ describe("boundaries gate", () => {
     expect(refused[0]!.message).toContain("effect/ai")
     expect(await run(["effect", "effect/ai"])).toEqual([])
     expect(await run(["effect", "effect/"])).toEqual([])
+  })
+})
+
+const workspace: Workspace = { rootDir: path.resolve(import.meta.dir, "../../fixtures/boundaries-workspace"), files: [] }
+
+/** Three packages: `app` may import `base`, whose `internal` subpath is restricted; `other` is not
+ *  granted. No layer lists a `@fixture/*` external: a workspace package is reached by its layer. */
+const workspaceLayers = (appCanImport: ReadonlyArray<string>) => Schema.decodeUnknownSync(LayerConfig)({
+  layers: [
+    { name: "base", path: "packages/base/src/**", canImport: [], externals: [], restricted: ["internal"] },
+    { name: "other", path: "packages/other/src/**", canImport: [], externals: [] },
+    { name: "app-tests", path: "packages/app/src/checks/**", canImport: ["app", "base"], externals: [] },
+    { name: "app", path: "packages/app/src/**", canImport: appCanImport, externals: [] },
+  ],
+})
+
+/** One program for every run over the workspace fixture. */
+const workspaceRuntime = ManagedRuntime.make(TsProjectCachedLive)
+afterAll(() => workspaceRuntime.dispose())
+
+const runWorkspace = (appCanImport: ReadonlyArray<string>) =>
+  workspaceRuntime.runPromise(makeBoundariesGate(workspaceLayers(appCanImport), "tsconfig.json").run(workspace))
+
+const where = (finding: { readonly location: Option.Option<{ readonly file: string; readonly line: number }> }): string =>
+  Option.match(finding.location, { onNone: () => "?", onSome: (l) => `${l.file}:${l.line}` })
+
+const findingsIn = async (appCanImport: ReadonlyArray<string>, file: string) =>
+  (await runWorkspace(appCanImport)).filter((finding) => where(finding).startsWith(`packages/app/src/${file}:`))
+
+describe("boundaries gate over workspace packages", () => {
+  test("the legal imports pass and each refused one is reported once, at its line", async () => {
+    const findings = await runWorkspace(["base"])
+    expect(findings.map((finding) => `${where(finding)} ${String(finding.rule)}`).toSorted()).toEqual([
+      "packages/app/src/escape.ts:1 boundaries/illegal-import",
+      "packages/app/src/restricted.ts:1 boundaries/illegal-import",
+      "packages/app/src/scaffolding.ts:1 boundaries/illegal-import",
+      "packages/app/src/undeclared.ts:1 boundaries/illegal-import",
+      "packages/app/src/unexported.ts:1 boundaries/illegal-import",
+    ])
+  })
+
+  test("an undeclared bare import: a workspace package whose layer canImport does not name", async () => {
+    const [finding, ...rest] = await findingsIn(["base"], "undeclared.ts")
+    expect(rest).toEqual([])
+    expect(finding!.message).toBe('layer "app" must not import layer "other" (@fixture/other)')
+    expect(await findingsIn(["base", "other"], "undeclared.ts")).toEqual([])
+  })
+
+  test("an unexported subpath fails, and a testing module is reachable from a -tests layer only", async () => {
+    const [unexported] = await findingsIn(["base"], "unexported.ts")
+    expect(unexported!.message).toBe('"@fixture/base/hidden": @fixture/base does not export "./hidden"')
+    const [scaffolding] = await findingsIn(["base"], "scaffolding.ts")
+    expect(scaffolding!.message).toContain('does not export "./testing/fixture.testing"')
+    expect(await findingsIn(["base"], "checks/")).toEqual([])
+  })
+
+  test("a restricted subpath needs <layer>/<subpath> in canImport", async () => {
+    const [restricted] = await findingsIn(["base"], "restricted.ts")
+    expect(restricted!.message).toBe(
+      'layer "app" must not import "@fixture/base/internal": "internal" is a restricted subpath of layer "base"',
+    )
+    expect(Option.getOrElse(restricted!.fixHint, () => "")).toContain('grant "base/internal"')
+    expect(await findingsIn(["base", "base/internal"], "restricted.ts")).toEqual([])
+  })
+
+  test("a relative import that leaves its package fails, whatever its layers allow", async () => {
+    const [escape, ...rest] = await findingsIn(["base"], "escape.ts")
+    expect(rest).toEqual([])
+    expect(escape!.message).toBe('relative import "../../base/src/index.js" leaves its package (packages/app)')
   })
 })

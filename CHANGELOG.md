@@ -194,6 +194,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   R>` (`never` for callbacks that cannot fail); a `runLoop<Tools>(…)` call
   whose callbacks fail names the error, `runLoop<Tools, E>(…)`, or lets it
   be inferred. Callbacks no longer need `Effect.orDie`.
+- Foundry profiles: drop workspace packages from `externals` and name them
+  in `canImport`; a test that imports another package's testing module
+  needs a `<name>-tests` layer.
 
 ### Breaking
 
@@ -1131,6 +1134,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `effect/no-unknown-requirements`' allow list keeps only the turn's host
   layer (`turn.port.ts`) and the sdk code that provides it: tools and
   prompt sections no longer erase their requirements.
+- The boundaries gate checks cross-package imports by package name:
+  `@xandreed/<pkg>[/<sub>]` must reach a layer `canImport` names, through a
+  subpath the package's `exports` lists (`-tests` layers may also reach
+  `testing` modules). A layer can mark subpaths `restricted`, reachable only
+  when `canImport` names `<layer>/<subpath>`. A relative import that leaves
+  its package fails, and `externals` lists third-party modules only.
+- `tsconfig.base.json` maps each subpath the repo imports explicitly; the
+  wildcard aliases are gone, so in-repo code can no longer deep-import what
+  the published packages refuse.
 
 ## 0.14.0 — 2026-10-29
 

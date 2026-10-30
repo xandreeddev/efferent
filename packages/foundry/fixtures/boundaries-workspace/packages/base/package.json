@@ -1,0 +1,10 @@
+{
+  "name": "@fixture/base",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./public": "./src/public.ts",
+    "./internal": "./src/internal.ts",
+    "./kits/*": "./src/kits/*.ts"
+  }
+}

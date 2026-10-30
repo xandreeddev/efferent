@@ -28,20 +28,20 @@
       "@xandreed/core": [
         "packages/core/src/index.ts"
       ],
-      "@xandreed/core/*": [
-        "packages/core/src/*"
-      ],
       "@xandreed/foundry": [
         "packages/foundry/src/index.ts"
       ],
-      "@xandreed/foundry/*": [
-        "packages/foundry/src/*"
+      "@xandreed/foundry/domain/Rules.js": [
+        "packages/foundry/src/domain/Rules.ts"
+      ],
+      "@xandreed/foundry/gates/rules/packs.js": [
+        "packages/foundry/src/gates/rules/packs.ts"
       ],
       "@xandreed/plugin-render": [
         "packages/plugin-render/src/index.ts"
       ],
-      "@xandreed/plugin-render/*": [
-        "packages/plugin-render/src/*"
+      "@xandreed/plugin-render/output": [
+        "packages/plugin-render/src/output.ts"
       ],
       "@xandreed/plugin-agent-loop": [
         "packages/plugin-agent-loop/src/index.ts"
@@ -67,14 +67,14 @@
       "@xandreed/evals": [
         "packages/evals/src/index.ts"
       ],
-      "@xandreed/evals/*": [
-        "packages/evals/src/*.ts"
+      "@xandreed/evals/stats": [
+        "packages/evals/src/stats.ts"
+      ],
+      "@xandreed/evals/testing/fixture.testing": [
+        "packages/evals/src/testing/fixture.testing.ts"
       ],
       "@xandreed/evals-cli": [
         "packages/evals-cli/src/index.ts"
-      ],
-      "@xandreed/evals-cli/*": [
-        "packages/evals-cli/src/*.ts"
       ],
       "@xandreed/evals-langfuse": [
         "packages/evals-langfuse/src/index.ts"

@@ -23,8 +23,9 @@ data in `foundry.config.ts`.
 3. `foundry.config.ts`:
    - add `"packages/<name>/src/**"` to `CHECKED`;
    - add a `boundaries.layers` entry: `canImport` names only packages beneath
-     it (`["core"]` for a plugin), `externals` is the exact allowlist of
-     every other import;
+     it (`["core"]` for a plugin; an `@xandreed/*` import is checked against
+     it and the target's `exports`), `externals` is the exact allowlist of
+     the third-party imports;
    - if its tests import more (sdk, runtime, other plugins), add a
      `<name>-tests` layer BEFORE the package's entry (the first match wins; see
      `plugin-tasks-tests`) and the matching `devDependencies`. Read the

@@ -96,8 +96,8 @@ nothing fails.
 | `architecture/context-tags-live-in-ports` | `Context.Service` outside `.port.ts` files and `ports/` folders | move the contract to a port file |
 | `architecture/layers-live-at-edges` | `Layer.*` in entity and use-case files | build the Layer in a `.adapter.ts` |
 | `architecture/role-suffix-required` | a file under `packages/*/src` (foundry aside) whose name has none of the roles below and is not on the frozen `ROLELESS_FILES` | name it for its role; a renamed or split file leaves the list in the same change |
-| `boundaries/illegal-import` | a relative import into a layer that `canImport` does not list | invert the dependency or move the code |
-| `boundaries/illegal-external` | a bare import, `@xandreed/*` included, missing from the layer's `externals` | depend downward; widening `externals` is a reviewed change |
+| `boundaries/illegal-import` | an import into a layer that `canImport` does not list, relative or by package name (`@xandreed/<pkg>[/<sub>]` reaches the layer of the package's entry); a subpath the package's `exports` lacks (a `-tests` layer may reach a `testing` module); a `restricted` subpath not granted as `<layer>/<sub>`; a relative import that leaves its package | invert the dependency or move the code; import what the package exports |
+| `boundaries/illegal-external` | a bare import that names no workspace package, missing from the layer's `externals` | depend downward; widening `externals` is a reviewed change |
 | `quality/package-registered` | a package missing from a list the gates or the build read | add it where the message says (skill `add-plugin`) |
 | `quality/baseline-empty` | any fingerprint in `.foundry/baseline.json` | fix the finding; never `--update-baseline --allow-grow` |
 | `quality/no-private-text` | in any file git tracks: a home path (`/home/<name>/`, `/Users/<name>/`, `C:\Users\<name>\`) but a placeholder one, or a term of the git-ignored local denylist `.foundry/private-terms.txt` | a relative path or a placeholder home (`/home/user/`); remove the term |

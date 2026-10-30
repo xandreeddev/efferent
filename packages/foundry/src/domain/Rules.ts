@@ -30,14 +30,32 @@ export class RuleConfig extends Schema.Class<RuleConfig>("RuleConfig")({
   allow: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
 }) {}
 
+/**
+ * One layer of the boundaries gate; a file belongs to the first layer whose
+ * `path` matches it. A relative import never leaves its package (the nearest
+ * directory with a `package.json`). A bare import that names a package of the
+ * workspace by its `package.json` name reaches the layer holding that
+ * package's entry (what its `exports` maps `.` to), and only a subpath its
+ * `exports` lists; a layer whose name ends in `-tests` may also reach the
+ * package's testing modules (`testing`, `<name>.testing`, `testing/…`),
+ * which no `exports` lists. Every other bare import is an external.
+ */
 export class LayerSpec extends Schema.Class<LayerSpec>("LayerSpec")({
   name: Schema.NonEmptyString,
   /** Glob (workspace-relative) locating this layer's files. */
   path: Schema.NonEmptyString,
-  /** Names of layers this one may import (itself is always allowed). */
+  /** Names of layers this one may import (itself is always allowed), by a
+   *  relative import or by a workspace package's name. `<layer>/<subpath>`
+   *  grants one of that layer's `restricted` subpaths. */
   canImport: Schema.Array(Schema.NonEmptyString),
-  /** Allowed external module prefixes (e.g. `effect`, `typescript`, `node:`). */
+  /** Allowed external module prefixes (e.g. `effect`, `typescript`, `node:`),
+   *  for bare imports that name no workspace package. */
   externals: Schema.Array(Schema.NonEmptyString),
+  /** Subpaths of the package whose entry is in this layer (`internal`) that
+   *  another layer reaches only when its `canImport` names
+   *  `<layer>/<subpath>`; `canImport: ["<layer>"]` reaches the root and the
+   *  other exported subpaths. */
+  restricted: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
 }) {}
 
 export class LayerConfig extends Schema.Class<LayerConfig>("LayerConfig")({
