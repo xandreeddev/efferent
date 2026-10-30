@@ -117,6 +117,20 @@ describe("the Sessions kit catches careless backends", () => {
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "transact", "writer"])
   })
 
+  test("one whose turn writers store the closing drafts at once, as a write before the end, fails only the closing check", async () => {
+    const eager = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer): TurnWriter => ({
+          ...writer,
+          closing: (drafts) => writer.append(drafts),
+        }))),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, eager)))).toEqual(["closing"])
+  })
+
   test("one that begins a reused run id's turn under a new one fails only the run-id check", async () => {
     const renaming = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,

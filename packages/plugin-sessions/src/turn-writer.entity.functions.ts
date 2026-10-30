@@ -1,7 +1,8 @@
 import { Exit, Option, Result } from "effect"
+import { replyEndingOf } from "@xandreed/core"
 import type { TurnClosed, TurnEnding, TurnError } from "@xandreed/core"
 import { WriterPhase } from "./turn-writer.entity.js"
-import type { ClosedBy, EndStep, WriterStopped } from "./turn-writer.entity.js"
+import type { ClosedBy, ClosingDrafts, EndStep, WriterStopped } from "./turn-writer.entity.js"
 
 /*
  * The writer's transitions: pure decisions over its phase. Each returns the
@@ -13,8 +14,8 @@ import type { ClosedBy, EndStep, WriterStopped } from "./turn-writer.entity.js"
 /** The writer's own refusal once its end is under way or stored, or its scope closed: `TurnClosed`, `ended`. */
 const sealed: WriterStopped = { _tag: "Closed", reason: "ended" }
 
-/** A writer as its turn begins: open, nothing written, no end attempted. */
-export const opened: WriterPhase = { _tag: "Open", tried: false, attempted: Option.none() }
+/** A writer as its turn begins: open, nothing written, no end attempted, nothing held for its end. */
+export const opened: WriterPhase = { _tag: "Open", tried: false, attempted: Option.none(), closing: [] }
 
 const isStopped = WriterPhase.isAnyOf(["Failed", "Closed"])
 const isLive = WriterPhase.isAnyOf(["Open", "Ending"])
@@ -41,12 +42,27 @@ export const admit = (phase: WriterPhase, tries: boolean): Result.Result<WriterP
 })
 
 /**
+ * The turn holds its closing drafts (`TurnWriter.closing`), replacing what it
+ * held: only while the writer is open, as having tried the inbox items it
+ * took when it holds any (the end stores them). An ending or ended writer
+ * refuses them as `ended`, a stopped one with its own refusal.
+ */
+export const hold = (phase: WriterPhase, closing: ClosingDrafts): Result.Result<WriterPhase, WriterStopped> => WriterPhase.match(phase, {
+  Open: (open) => Result.succeed({ ...open, tried: open.tried || closing.length > 0, closing }),
+  Ending: () => Result.fail(sealed),
+  Failed: (failed) => Result.fail(failed),
+  Closed: (closed) => Result.fail(closed),
+  Ended: () => Result.fail(sealed),
+})
+
+/**
  * An end asks to begin. An open writer starts one with `ending`, sealing
- * admission until it settles; an end under way is shared; a stored one
- * answers with what it left pending; a stopped writer refuses it.
+ * admission until it settles, its commit to store the drafts held; an end
+ * under way is shared; a stored one answers with what it left pending; a
+ * stopped writer refuses it.
  */
 export const beginEnd = (phase: WriterPhase, ending: TurnEnding): Result.Result<EndStep, WriterStopped> => WriterPhase.match(phase, {
-  Open: (open) => Result.succeed<EndStep>({ _tag: "Start", phase: { _tag: "Ending", tried: open.tried, ending, attempted: open.attempted } }),
+  Open: (open) => Result.succeed<EndStep>({ _tag: "Start", phase: { _tag: "Ending", tried: open.tried, ending, attempted: open.attempted, closing: open.closing } }),
   Ending: () => Result.succeed<EndStep>({ _tag: "Share" }),
   Failed: (failed) => Result.fail(failed),
   Closed: (closed) => Result.fail(closed),
@@ -55,20 +71,26 @@ export const beginEnd = (phase: WriterPhase, ending: TurnEnding): Result.Result<
 
 /**
  * An end withdrawn before it was queued (its caller interrupted while it
- * waited for room): admission reopens, and the attempt before it stays the
- * one the scope's own end tries again.
+ * waited for room): admission reopens, the closing drafts still held, and
+ * the attempt before it stays the one the scope's own end tries again.
  */
 export const withdrawEnd = (phase: WriterPhase): WriterPhase =>
-  WriterPhase.guards.Ending(phase) ? { _tag: "Open", tried: phase.tried, attempted: phase.attempted } : phase
+  WriterPhase.guards.Ending(phase) ? { _tag: "Open", tried: phase.tried, attempted: phase.attempted, closing: phase.closing } : phase
+
+/** What an end's commit plans from: whether the turn tried the inbox items it took, and the drafts it stores before `turn.ended`. */
+export interface EndPlan {
+  readonly tried: boolean
+  readonly closing: ClosingDrafts
+}
 
 /**
  * An end's commit plans the turn's close only while the writer is open or
- * ending, from whether the turn tried the inbox items it took; a stopped or
- * ended writer refuses it.
+ * ending, from whether the turn tried the inbox items it took and with the
+ * closing drafts held; a stopped or ended writer refuses it.
  */
-export const triedAtEnd = (phase: WriterPhase): Result.Result<boolean, WriterStopped> => WriterPhase.match(phase, {
-  Open: (open) => Result.succeed(open.tried),
-  Ending: (ending) => Result.succeed(ending.tried),
+export const endPlanOf = (phase: WriterPhase): Result.Result<EndPlan, WriterStopped> => WriterPhase.match(phase, {
+  Open: (open) => Result.succeed({ tried: open.tried, closing: open.closing }),
+  Ending: (ending) => Result.succeed({ tried: ending.tried, closing: ending.closing }),
   Failed: (failed) => Result.fail(failed),
   Closed: (closed) => Result.fail(closed),
   Ended: () => Result.fail(sealed),
@@ -76,17 +98,17 @@ export const triedAtEnd = (phase: WriterPhase): Result.Result<boolean, WriterSto
 
 /**
  * An end's commit settled. Stored, the writer has ended. Refused as closed,
- * it is closed so. Refused otherwise (the store, contention, a defect), it is
- * open again with that ending attempted, so a later end (the scope's own, at
- * the latest) tries it again. A writer that stopped meanwhile stays stopped;
- * an open one (its end withdrawn just as it was queued) ends when that end is
- * stored.
+ * it is closed so (its closing drafts dropped). Refused otherwise (the store,
+ * contention, a defect), it is open again with that ending attempted and its
+ * closing drafts still held, so a later end (the scope's own, at the latest)
+ * tries them again. A writer that stopped meanwhile stays stopped; an open
+ * one (its end withdrawn just as it was queued) ends when that end is stored.
  */
 export const endSettled = (phase: WriterPhase, exit: Exit.Exit<{ readonly pending: number }, TurnError>): WriterPhase => WriterPhase.match(phase, {
   Open: (open): WriterPhase => Exit.isSuccess(exit) ? { _tag: "Ended", pending: exit.value.pending } : open,
   Ending: (ending): WriterPhase => Exit.isSuccess(exit) ? { _tag: "Ended", pending: exit.value.pending } : Option.match(Option.filter(Exit.findErrorOption(exit), isClosed), {
     onSome: (closed) => ({ _tag: "Closed", reason: closed.reason }),
-    onNone: () => ({ _tag: "Open", tried: ending.tried, attempted: Option.some(ending.ending) }),
+    onNone: () => ({ _tag: "Open", tried: ending.tried, attempted: Option.some(ending.ending), closing: ending.closing }),
   }),
   Failed: (failed) => failed,
   Closed: (closed) => closed,
@@ -115,12 +137,13 @@ export const unended = (exit: Exit.Exit<unknown, unknown>): TurnEnding => Exit.h
 
 /**
  * What the scope's own end stores when the scope closes: an open writer's
- * last attempted ending (one not stored is stored again), else `unended`'s;
- * an ending writer's ending under way. A stopped or ended writer has none:
- * the first refuses its end, the second stored it.
+ * last attempted ending (one not stored is stored again), else the ending
+ * its held reply implies (`replyEndingOf`: completed or partial), else
+ * `unended`'s; an ending writer's ending under way. A stopped or ended
+ * writer has none: the first refuses its end, the second stored it.
  */
 export const scopeEnding = (phase: WriterPhase, exit: Exit.Exit<unknown, unknown>): Option.Option<TurnEnding> => WriterPhase.match(phase, {
-  Open: (open) => Option.some(Option.getOrElse(open.attempted, () => unended(exit))),
+  Open: (open) => Option.some(open.attempted.pipe(Option.orElse(() => replyEndingOf(open.closing)), Option.getOrElse(() => unended(exit)))),
   Ending: (ending) => Option.some(ending.ending),
   Failed: () => Option.none(),
   Closed: () => Option.none(),

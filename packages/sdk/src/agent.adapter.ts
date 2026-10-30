@@ -336,9 +336,10 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
    *    still open: on success, what their finalizers publish or fork is
    *    settled and stored before TurnLive closes;
    * 8. on success finalizer work settled, then the final reply recorded (failed when
-   *    the body or its finalizer work failed) and the turn's usage read,
-   *    before TurnLive closes;
-   * 9. a turn begun here is ended here, with `turnEndingOf` the turn's exit:
+   *    the body, its finalizer work or the reactions to the reply failed),
+   *    held for the turn's end, and the turn's usage read, before TurnLive closes;
+   * 9. a turn begun here is ended here, its reply stored in the end's own
+   *    commit right before `turn.ended`, with `turnEndingOf` the turn's exit:
    *    on success its outcome (a failed end fails the turn; the inbox items
    *    the end counts waiting are returned as `pending`), on failure the
    *    error's code (the end's own failure is logged, the turn's cause kept);

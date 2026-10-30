@@ -9,7 +9,7 @@ import { UserMessage } from "../turn/user-message.entity.js"
 import { TransientTurnEvents, TURN_EVENT_NAMES, TurnEvent } from "../turn/turn-event.entity.js"
 import { zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
-import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, readStored, readStoredKeys, StoredData, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
+import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, readStored, readStoredKeys, replyEndingOf, StoredData, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
 import { JOURNAL_KINDS, MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
 import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.entity.js"
 import { InboxItemId } from "./sessions.entity.js"
@@ -233,6 +233,30 @@ describe("the journal's schemas", () => {
     ]
     expect(recordedElsewhere.map((event) => event._tag)).toEqual([...RECORDED_ELSEWHERE])
     expect(recordedElsewhere.map((event) => storedOf(1, event)).every(Option.isNone)).toBe(true)
+  })
+})
+
+describe("the ending a held reply implies", () => {
+  const replyDraft = (outcome: "completed" | "partial" | "failed") => Effect.runSync(draftOfEntry({
+    id: EntryId.make("run-1:4"), runId: RunId.make("run-1"), turn: 1, step: 0, at: 0, body: { _tag: "TurnEnded", outcome, reply: Option.some("done") },
+  }).pipe(Effect.map(Option.toArray)))
+
+  test("a completed or partial reply implies its own ending, the last reply wins; a failed one, one that does not decode, or none implies nothing", () => {
+    const [completed, partial, failed] = [replyDraft("completed"), replyDraft("partial"), replyDraft("failed")]
+    const note = { kind: "memory.section", data: {} }
+    expect([
+      [...completed, note],
+      [...completed, ...partial],
+      [...completed, ...failed],
+      [{ kind: "turn.reply", data: { body: { outcome: "done" } } }],
+      [note],
+    ].map(replyEndingOf)).toEqual([
+      Option.some({ reason: "completed", failure: Option.none() }),
+      Option.some({ reason: "partial", failure: Option.none() }),
+      Option.none(),
+      Option.none(),
+      Option.none(),
+    ])
   })
 })
 

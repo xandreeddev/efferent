@@ -52,22 +52,42 @@ export const settleTurn: Effect.Effect<void, TurnError, TurnEvents | TurnTasks> 
 
 type Restore = <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
 
+/** A secondary failure while a failed turn ends: logged, never replacing the turn's own cause (an interruption is not logged). */
+const logFailure = (message: string) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<void, never, R> => effect.pipe(
+  Effect.exit,
+  Effect.flatMap(Exit.match({
+    onSuccess: () => Effect.void,
+    onFailure: (cause) => Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.logWarning(message, cause),
+  })),
+)
+
 /**
  * Record the reply, then drain the reactions to it with `restore`'s
- * interruptibility, then flush the journal whatever the drain did (a cut
- * drain still leaves the reply stored). Runs where interruption is masked.
+ * interruptibility, then flush the journal whatever the drain did. The
+ * reply waits for the turn's closing commit, so when any of it fails (or
+ * the drain is cut) the reply is downgraded to failed before the failure
+ * goes on: the end stores a failed reply, never a completed one beside a
+ * failed or interrupted end. Runs where interruption is masked.
  */
 const finishing = (restore: Restore, outcome: TurnOutcome): Effect.Effect<void, TurnError, TurnMemory | TurnEvents | RunContext> => Effect.gen(function* () {
-  yield* (yield* TurnMemory).persistReply(outcome)
-  const drained = yield* Effect.exit(restore((yield* TurnEvents).drain))
-  yield* (yield* RunContext).flush
-  return yield* drained
+  const memory = yield* TurnMemory
+  const finished = yield* Effect.exit(Effect.gen(function* () {
+    yield* memory.persistReply(outcome)
+    const drained = yield* Effect.exit(restore((yield* TurnEvents).drain))
+    yield* (yield* RunContext).flush
+    return yield* drained
+  }))
+  if (Exit.isSuccess(finished)) return
+  yield* memory.persistReply(failed).pipe(logFailure("the turn's reply was not downgraded to failed"))
+  return yield* Effect.failCause(finished.cause)
 })
 
 /**
  * Record the reply (`persistReply`), drain the reactions to it, and flush
  * the journal. The reply is recorded and the journal flushed even when the
- * fiber is interrupted meanwhile; only the drain can be cut.
+ * fiber is interrupted meanwhile; only the drain can be cut. The reply is
+ * stored with the turn's end; when the drain or the flush fails, or the
+ * drain is cut, it is downgraded to failed first.
  */
 export const finishTurn = (outcome: TurnOutcome): Effect.Effect<void, TurnError, TurnMemory | TurnEvents | RunContext> =>
   Effect.uninterruptibleMask((restore) => finishing(restore, outcome))
@@ -78,15 +98,6 @@ export const finishTurn = (outcome: TurnOutcome): Effect.Effect<void, TurnError,
  * cannot hold up the end. A turn that was interrupted does not wait for them.
  */
 const failedReactionsWait = "10 seconds"
-
-/** A secondary failure while a failed turn ends: logged, never replacing the turn's own cause (an interruption is not logged). */
-const logFailure = (message: string) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<void, never, R> => effect.pipe(
-  Effect.exit,
-  Effect.flatMap(Exit.match({
-    onSuccess: () => Effect.void,
-    onFailure: (cause) => Cause.hasInterruptsOnly(cause) ? Effect.void : Effect.logWarning(message, cause),
-  })),
-)
 
 /**
  * The end of a turn that failed or was interrupted: its reply recorded as
@@ -117,7 +128,10 @@ const finishFailed: Effect.Effect<void, never, TurnMemory | TurnEvents | RunCont
  * the turn's usage (`RunContext.usage`, the same total `turn.ended`
  * carries). Once the body has returned, its reply is recorded and the
  * journal flushed even when the turn is interrupted then; an interruption
- * cuts only the drain of the reactions to the reply. When the body fails or
+ * cuts only the drain of the reactions to the reply. The reply is stored
+ * with the turn's end (`TurnWriter.closing`): when that finishing fails or
+ * is cut, the turn fails with its cause and the reply is downgraded to
+ * failed, so the end never stores a completed reply. When the body fails or
  * is interrupted, the turn finishes as failed and keeps the body's cause:
  * the failed reply is recorded, the reactions to it are waited for at most
  * ten seconds (not at all once interrupted), a failure of that finishing is

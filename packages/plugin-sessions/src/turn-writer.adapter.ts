@@ -18,7 +18,7 @@ import type {
 import type { Context } from "effect"
 import { closedState, droppedData, pendingOf, stateJson, stateOf } from "./sessions-state.entity.functions.js"
 import type { SessionsConfig, SessionsState } from "./sessions-state.entity.js"
-import { admit, beginEnd, close, endSettled, latch, markTried, opened, scopeEnding, stopped, triedAtEnd, unended, withdrawEnd } from "./turn-writer.entity.functions.js"
+import { admit, beginEnd, close, endPlanOf, endSettled, hold, latch, markTried, opened, scopeEnding, stopped, unended, withdrawEnd } from "./turn-writer.entity.functions.js"
 import { EndStep, WriterPhase } from "./turn-writer.entity.js"
 import type { ClosedBy, WriterStopped } from "./turn-writer.entity.js"
 
@@ -109,7 +109,9 @@ export interface OpenWriter {
 
 /**
  * The open turn's writer. Items are stored strictly in queue order by one
- * fiber forked in `scope`; consecutive appends share one commit. Every
+ * fiber forked in `scope`; consecutive appends share one commit, and the
+ * closing drafts the turn holds (`closing`) are stored only by the end's
+ * own commit, right before its `turn.ended`. Every
  * commit expects the revision the writer last saw and, under a lease, is
  * refused by the store once the lease has run out. On a revision conflict
  * the writer reads the head again: while the turn is still its own it takes
@@ -342,16 +344,20 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
   const flush: Effect.Effect<void, TurnError> = Deferred.make<void, TurnError>().pipe(Effect.flatMap((done) =>
     admission.withPermits(1)(refuseIfStopped.pipe(Effect.andThen(enqueue(done, { _tag: "Marker", done })))).pipe(Effect.andThen(Deferred.await(done)))))
 
-  /** The end's commit: the turn's close, planned while the writer is open or ending, from whether the turn tried the items it took. */
+  /**
+   * The end's commit: the turn's close, planned while the writer is open or
+   * ending, from whether the turn tried the items it took. One commit stores
+   * the closing drafts held, then `turn.ended`, then the items it dropped.
+   */
   const endNow = (ending: TurnEnding): Effect.Effect<Stored, TurnError> => commitPlan((at) => Effect.gen(function* () {
-    const tried = yield* phaseNow.pipe(Effect.flatMap((now) => Result.match(triedAtEnd(now), { onFailure: (stop) => Effect.fail(refusal(stop)), onSuccess: Effect.succeed })))
-    const after = closedState(at.state, ending.reason, config.inbox.attempts, tried)
-    const closing = yield* turnEndedDraft(admitted.turn, ending).pipe(Effect.mapError((error) => harnessError("session.encode", error.message, error)))
+    const plan = yield* phaseNow.pipe(Effect.flatMap((now) => Result.match(endPlanOf(now), { onFailure: (stop) => Effect.fail(refusal(stop)), onSuccess: Effect.succeed })))
+    const after = closedState(at.state, ending.reason, config.inbox.attempts, plan.tried)
+    const ended = yield* turnEndedDraft(admitted.turn, ending).pipe(Effect.mapError((error) => harnessError("session.encode", error.message, error)))
     const dropped = yield* Effect.forEach(after.dropped, (item) => droppedData(item).pipe(
       Effect.map((data): TurnDraft => ({ kind: "inbox.dropped", data })),
       Effect.mapError((error) => harnessError("session.encode", error.message, error)),
     ), { concurrency: 1 })
-    return { drafts: [{ kind: closing.kind, data: closing.data }, ...dropped], next: after.state, result: { pending: pendingOf(after.state).length } }
+    return { drafts: [...plan.closing, { kind: ended.kind, data: ended.data }, ...dropped], next: after.state, result: { pending: pendingOf(after.state).length } }
   }), { renew: false }).pipe(Effect.map((done) => done.result))
 
   /** Whether `done` is the end begun last: only its own settling, or its withdrawal, moves the phase. */
@@ -407,12 +413,12 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
     yield* Effect.forkIn(Effect.sleep(every).pipe(Effect.andThen(renew), Effect.forever, Effect.asVoid, asTheTurn), scope)
   }
 
-  // Runs first when the scope closes (finalizers run last-added first). A turn whose end could not be
-  // stored is ended again with that same ending; a turn never ended ends as interrupted
-  // (`turn.interrupted`) when its scope was interrupted, as failed (`turn.unended`) otherwise
-  // (`scopeEnding`); a writer that stopped has no ending of its own, and its end is refused as any
-  // other. An end still not stored within 10 s is logged (the writer has not ended: the sessions
-  // service lets the turn go).
+  // Runs first when the scope closes (finalizers run last-added first), storing the closing drafts held.
+  // A turn whose end could not be stored is ended again with that same ending; a turn never ended ends
+  // as its held reply implies (completed or partial), else as interrupted (`turn.interrupted`) when its
+  // scope was interrupted, as failed (`turn.unended`) otherwise (`scopeEnding`); a writer that stopped
+  // has no ending of its own, and its end is refused as any other. An end still not stored within 10 s
+  // is logged (the writer has not ended: the sessions service lets the turn go).
   yield* Scope.addFinalizerExit(scope, (exit) => phaseNow.pipe(Effect.flatMap((now) => WriterPhase.guards.Ended(now) ? Effect.void
     : end(Option.getOrElse(scopeEnding(now, exit), () => unended(exit))).pipe(
       Effect.timeoutOption("10 seconds"),
@@ -455,6 +461,8 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
         Effect.map((decision): Plan<A> => ({ drafts: decision.drafts, next: at.state, result: decision.result })),
       ), { renew: true }), true),
     flush: flush.pipe(Effect.withSpan("turn_writer.flush", { attributes: ids })),
+    closing: (drafts) => refuseIfReserved(drafts).pipe(Effect.andThen(transition((current) =>
+      Result.map(hold(current.phase, drafts), (next) => [undefined, { ...current, phase: next }] as const)))),
     end,
     closed: Deferred.await(closed),
   }

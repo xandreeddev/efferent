@@ -63,6 +63,8 @@ const registry = ToolRegistry.of({
 
 type Recorded = Effect.Success<ReturnType<typeof recordingTurnWriter>>
 const services = Layer.merge(Layer.succeed(ConversationMemory, memory), Layer.succeed(ToolRegistry, registry))
+/** End the recorded turn (its closing drafts stored, then `turn.ended`), and read what it stored. */
+const endedKinds = (recorded: Recorded) => recorded.writer.end({ reason: "completed", failure: Option.none() }).pipe(Effect.andThen(recorded.kinds))
 const begun = (runId = "run-1", turn = 1) => recordingTurnWriter({ runId: RunId.make(runId), text: `message of ${runId}`, turn })
 const inTurn = <A, E>(recorded: Recorded, body: Effect.Effect<A, E, TurnMemory | TurnToolbox | TurnEvents | TurnTasks | RunContext | Scope.Scope>) =>
   Effect.scoped(body).pipe(Effect.provide(TurnLive({ turn: recorded.writer })), Effect.provide(services))
@@ -162,21 +164,24 @@ describe("TurnLive", () => {
     expect(seen).toEqual({ before: "tools.unavailable", activateBefore: "tools.unavailable", again: "tools.opened", active: ["notes@host:run-1"] })
   })
 
-  test("persistReply is a no-op before the message is persisted, and once after", async () => {
-    const journalNames = await Effect.runPromise(Effect.gen(function* () {
+  test("persistReply is a no-op before the message is persisted, and once after; the reply, and what memory records after it, wait for the turn's end", async () => {
+    const { flushed, ended } = await Effect.runPromise(Effect.gen(function* () {
       const recorded = yield* begun()
-      yield* inTurn(recorded, Effect.gen(function* () {
+      const flushed = yield* inTurn(recorded, Effect.gen(function* () {
         const turn = yield* TurnMemory
         const outcome: TurnOutcome = { outcome: "completed", reply: Option.some("hi") }
         yield* turn.persistReply(outcome)
         yield* turn.persistMessage
         yield* turn.persistReply(outcome)
         yield* turn.persistReply(outcome)
+        yield* turn.context({ id: "after", version: "1", text: "noted after the reply" })
         yield* (yield* RunContext).flush
+        return yield* recorded.kinds
       }))
-      return yield* recorded.kinds
+      return { flushed, ended: yield* endedKinds(recorded) }
     }))
-    expect(journalNames.filter((name) => name.startsWith("turn."))).toEqual(["turn.started", "turn.reply"])
+    expect(flushed.filter((name) => name.startsWith("turn.") || name.startsWith("memory."))).toEqual(["turn.started"])
+    expect(ended.filter((name) => name.startsWith("turn.") || name.startsWith("memory."))).toEqual(["turn.started", "turn.reply", "memory.section", "turn.ended"])
   })
 
   test("a message memory failed to record can be taken again, with the context entries that waited for it", async () => {
@@ -238,8 +243,13 @@ describe("guardTurn", () => {
       yield* (yield* TurnMemory).persistMessage
       return yield* body
     })))
-  const endings = (recorded: Recorded) => Ref.get(recorded.stored).pipe(
-    Effect.map((all) => all.filter((event) => event.kind === "turn.reply").map((event) => (event.data.body as { readonly outcome: string }).outcome)),
+  /** The turn's replies as its end stores them: `outcome`, and `outcome:text` with `withText`. */
+  const endings = (recorded: Recorded, withText = false) => recorded.writer.end({ reason: "completed", failure: Option.none() }).pipe(
+    Effect.andThen(Ref.get(recorded.stored)),
+    Effect.map((all) => all.filter((event) => event.kind === "turn.reply").map((event) => {
+      const body = event.data.body as { readonly outcome: string; readonly reply: string | null }
+      return withText ? `${body.outcome}:${body.reply}` : body.outcome
+    })),
   )
 
   test("a success joins the tasks, then records the reply with the outcome", async () => {
@@ -250,9 +260,23 @@ describe("guardTurn", () => {
         yield* run.tasks.fork("late", Effect.sleep("5 millis").pipe(Effect.andThen(run.events.publish({ _tag: "host", name: "task.done", data: {} }))))
         return { outcome: "completed", reply: Option.some("done") } satisfies TurnOutcome
       }))
-      return yield* recorded.kinds
+      return yield* endedKinds(recorded)
     }))
-    expect(journalNames.slice(-2)).toEqual(["task.done", "turn.reply"])
+    expect(journalNames.slice(-3)).toEqual(["task.done", "turn.reply", "turn.ended"])
+  })
+
+  test("a reaction to the reply that fails fails the turn and downgrades the reply held for the end: it is stored failed, its text kept", async () => {
+    const { exit, ended } = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      const exit = yield* Effect.result(guarded(recorded, Effect.gen(function* () {
+        yield* (yield* TurnEvents).subscribe((event) => event._tag === "turn.ended" ? Option.some(event) : Option.none(),
+          () => Effect.fail(new HarnessError({ code: "reaction.failed", message: "the reaction failed" })), { mode: "background" })
+        return { outcome: "completed", reply: Option.some("done") } satisfies TurnOutcome
+      })))
+      return { exit, ended: yield* endings(recorded, true) }
+    }))
+    expect(exit).toMatchObject({ _tag: "Failure", failure: { code: "reaction.failed" } })
+    expect(ended).toEqual(["failed:done"])
   })
 
   test("a failure keeps its cause and records the reply failed, once", async () => {
@@ -315,24 +339,23 @@ describe("guardTurn", () => {
     expect(ended).toEqual(["failed"])
   })
 
-  test("once the body has returned, its reply is recorded even when the turn is interrupted meanwhile", async () => {
+  test("once the body has returned, its reply is recorded even when the turn is interrupted meanwhile; the drain the interrupt cuts downgrades it to failed", async () => {
     const ended = await Effect.runPromise(Effect.gen(function* () {
       const recorded = yield* begun()
       const entered = yield* Deferred.make<void>()
       const release = yield* Deferred.make<void>()
-      // The reply's write waits: an interrupt arrives while the reply is being recorded.
-      const slow: Recorded = { ...recorded, writer: { ...recorded.writer, append: (drafts) => drafts.some((draft) => draft.kind === "turn.reply")
-        ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(recorded.writer.append(drafts)))
-        : recorded.writer.append(drafts) } }
+      // The reply's hold waits: an interrupt arrives while the reply is being recorded.
+      const slow: Recorded = { ...recorded, writer: { ...recorded.writer, closing: (drafts) => Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)), Effect.andThen(recorded.writer.closing(drafts))) } }
       const fiber = yield* Effect.forkChild(guarded(slow, Effect.succeed<TurnOutcome>({ outcome: "completed", reply: Option.some("done") })))
       yield* Deferred.await(entered)
       const interrupting = yield* Effect.forkChild(Fiber.interrupt(fiber))
       yield* Effect.yieldNow
       yield* Deferred.succeed(release, undefined)
       yield* Fiber.join(interrupting)
-      return yield* endings(recorded)
+      return yield* endings(recorded, true)
     }))
-    expect(ended).toEqual(["completed"])
+    expect(ended).toEqual(["failed:done"])
   })
 
   test("a HarnessError carried as a defect fails the turn, typed", async () => {

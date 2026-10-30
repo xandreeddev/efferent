@@ -73,7 +73,14 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
    * message: the turn's entries follow its TurnStarted.
    */
   readonly context: (entry: TurnContextEntry) => Effect.Effect<void, TurnError>
-  /** Record TurnEnded, then publish `turn.ended`. Once; a no-op when the message was never persisted. */
+  /**
+   * Record TurnEnded, then publish `turn.ended`. Once; a no-op when the
+   * message was never persisted. The reply, and what memory records after
+   * it, wait for the turn's closing commit (`TurnWriter.closing`): stored
+   * with `turn.ended`, never before. A failed outcome after a completed or
+   * partial one downgrades the reply held (its id and text kept, nothing
+   * published again); any other later call does nothing.
+   */
   readonly persistReply: (outcome: TurnOutcome) => Effect.Effect<void, TurnError>
 }>()("efferent/TurnMemory") {}
 

@@ -27,6 +27,7 @@ const writerWith = (meta: JsonObject, resumes?: number): TurnWriter => ({
   write: () => Effect.die("unused"),
   transact: () => Effect.die("unused"),
   flush: Effect.void,
+  closing: () => Effect.die("unused"),
   end: () => Effect.die("unused"),
   closed: Effect.never,
 })

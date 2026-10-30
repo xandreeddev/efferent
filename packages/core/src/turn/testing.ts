@@ -10,8 +10,9 @@ import { UserMessage } from "./user-message.entity.js"
 /**
  * A turn writer that keeps the session's events in memory, for testing the
  * turn's pieces without a sessions plugin: the turn is begun (its
- * `turn.started` stored) over `history`, writes are stored at once, and the
- * turn is never closed from outside.
+ * `turn.started` stored) over `history`, writes are stored at once, the
+ * closing drafts are held (`held`) and stored by `end`, before its
+ * `turn.ended`, and the turn is never closed from outside.
  */
 export const recordingTurnWriter = (input: {
   readonly runId: RunId
@@ -32,6 +33,7 @@ export const recordingTurnWriter = (input: {
   const append = (drafts: ReadonlyArray<TurnDraft>) => Ref.update(stored, (all) => [...all, ...drafts.map((next, index): SessionLogEvent => ({
     session, seq: all.length + index + 1, turn: Option.some(turn), kind: next.kind, at: 0, data: JSON.parse(JSON.stringify(next.data)),
   }))])
+  const held = yield* Ref.make<ReadonlyArray<TurnDraft>>([])
   const writer: TurnWriter = {
     admitted: { session: { id: session, owner: "test" }, turn, runId: input.runId, key: input.runId, origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
@@ -42,8 +44,12 @@ export const recordingTurnWriter = (input: {
     write: (op) => op,
     transact: (decide) => decide([]).pipe(Effect.flatMap((decision) => append(decision.drafts).pipe(Effect.as({ result: decision.result, events: [] })))),
     flush: Effect.void,
-    end: (ending) => append([{ kind: "turn.ended", data: { reason: ending.reason, failure: Option.getOrNull(ending.failure) } }]).pipe(Effect.as({ pending: 0 })),
+    closing: (drafts) => Ref.set(held, drafts),
+    end: (ending) => Ref.getAndSet(held, []).pipe(
+      Effect.flatMap((closing) => append([...closing, { kind: "turn.ended", data: { reason: ending.reason, failure: Option.getOrNull(ending.failure) } }])),
+      Effect.as({ pending: 0 }),
+    ),
     closed: Effect.never,
   }
-  return { writer, stored, kinds: Ref.get(stored).pipe(Effect.map((all) => all.map((event) => event.kind))) }
+  return { writer, stored, held: Ref.get(held), kinds: Ref.get(stored).pipe(Effect.map((all) => all.map((event) => event.kind))) }
 })

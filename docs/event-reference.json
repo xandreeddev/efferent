@@ -1576,7 +1576,7 @@
     },
     {
       "name": "turn.ended",
-      "description": "Published once when the turn's reply is recorded (`TurnMemory.persistReply`, from `guardTurn`), also when the turn fails, with outcome failed; `usage` is the turn's usage, the usage of its `assistant.message` events summed (`RunContext.usage`). Under `Agent.turn` it is published after `use`, the host's per-turn layer and the turn-dependent plugins have closed, and their subscriptions with them: only a subscription whose scope is still open sees it, such as one made with `Scope.provide(observerScope)` over the caller's outer scope, or one registered around `TurnLive` by a host composing the turn itself. Otherwise read the `TurnResult` `Agent.turn` returns (its `usage` is the same total), or the stored `turn.reply` and `turn.ended`, and `turnUsageOf` over the stored events. Not journaled from the bus: memory stores `turn.reply` and the session its own `turn.ended` (reason and failure, no usage).",
+      "description": "Published once when the turn's reply is recorded (`TurnMemory.persistReply`, from `guardTurn`), also when the turn fails, with outcome failed; `usage` is the turn's usage, the usage of its `assistant.message` events summed (`RunContext.usage`). Under `Agent.turn` it is published after `use`, the host's per-turn layer and the turn-dependent plugins have closed, and their subscriptions with them: only a subscription whose scope is still open sees it, such as one made with `Scope.provide(observerScope)` over the caller's outer scope, or one registered around `TurnLive` by a host composing the turn itself. Otherwise read the `TurnResult` `Agent.turn` returns (its `usage` is the same total), or the stored `turn.reply` and `turn.ended`, and `turnUsageOf` over the stored events. Not journaled from the bus: memory stores `turn.reply` and the session its own `turn.ended` (reason and failure, no usage), both in the turn's closing commit, after its reactions: a reaction that fails fails the turn, its stored reply then failed (this event is not published again).",
       "transient": false,
       "stored": {
         "as": "recorded-elsewhere",
@@ -1757,7 +1757,7 @@
           "usage"
         ],
         "additionalProperties": true,
-        "description": "Published once when the turn's reply is recorded (`TurnMemory.persistReply`, from `guardTurn`), also when the turn fails, with outcome failed; `usage` is the turn's usage, the usage of its `assistant.message` events summed (`RunContext.usage`). Under `Agent.turn` it is published after `use`, the host's per-turn layer and the turn-dependent plugins have closed, and their subscriptions with them: only a subscription whose scope is still open sees it, such as one made with `Scope.provide(observerScope)` over the caller's outer scope, or one registered around `TurnLive` by a host composing the turn itself. Otherwise read the `TurnResult` `Agent.turn` returns (its `usage` is the same total), or the stored `turn.reply` and `turn.ended`, and `turnUsageOf` over the stored events. Not journaled from the bus: memory stores `turn.reply` and the session its own `turn.ended` (reason and failure, no usage)."
+        "description": "Published once when the turn's reply is recorded (`TurnMemory.persistReply`, from `guardTurn`), also when the turn fails, with outcome failed; `usage` is the turn's usage, the usage of its `assistant.message` events summed (`RunContext.usage`). Under `Agent.turn` it is published after `use`, the host's per-turn layer and the turn-dependent plugins have closed, and their subscriptions with them: only a subscription whose scope is still open sees it, such as one made with `Scope.provide(observerScope)` over the caller's outer scope, or one registered around `TurnLive` by a host composing the turn itself. Otherwise read the `TurnResult` `Agent.turn` returns (its `usage` is the same total), or the stored `turn.reply` and `turn.ended`, and `turnUsageOf` over the stored events. Not journaled from the bus: memory stores `turn.reply` and the session its own `turn.ended` (reason and failure, no usage), both in the turn's closing commit, after its reactions: a reaction that fails fails the turn, its stored reply then failed (this event is not published again)."
       }
     },
     {
@@ -3729,7 +3729,7 @@
     },
     {
       "kind": "turn.reply",
-      "writer": "Memory, when the turn's reply is recorded (`TurnMemory.persistReply`)",
+      "writer": "Memory, when the turn's reply is recorded (`TurnMemory.persistReply`), held for the turn's closing commit: stored with its `turn.ended`, right before it",
       "sensitive": "The assistant's reply.",
       "fields": [
         {
@@ -5420,7 +5420,7 @@
     {
       "code": "turn.unended",
       "where": "stored `turn.ended` failure",
-      "meaning": "The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, not this code."
+      "meaning": "The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, and a turn that held a completed or partial reply ends as that reply implies, not with this code."
     },
     {
       "code": "turn.lease",

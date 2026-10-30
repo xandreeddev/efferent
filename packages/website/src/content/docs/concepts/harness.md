@@ -262,7 +262,9 @@ default.
 depend on turn services. On success, tasks and background reactions settle
 between these dependency boundaries while `TurnLive` remains open. A completed
 reply is recorded only after finalizer work settles; a finalizer task failure
-produces a failed reply. Failure or interruption preserves the cause, and
+produces a failed reply. The reply is stored with the turn's end, in one
+commit right before `turn.ended`, so a reaction to it that fails stores it
+failed. Failure or interruption preserves the cause, and
 closing the turn's scope interrupts pending tasks; a cancelled turn does not
 wait for the background reactions to its failed reply, and a failed one
 waits for them ten seconds at most. A turn `Agent.turn` begins returns, as

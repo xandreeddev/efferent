@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { HarnessError, ReservedKind, SessionContended, SessionLogError, TurnClosed, TurnEnding } from "@xandreed/core"
+import { HarnessError, JsonObject, ReservedKind, SessionContended, SessionLogError, TurnClosed, TurnEnding } from "@xandreed/core"
 
 /*
  * The open turn's writer as one phase: what it admits, whether its end is
@@ -21,21 +21,28 @@ export type ClosedBy = typeof ClosedBy.Type
 export const WriterFailure = Schema.Union([HarnessError, ReservedKind, SessionContended, SessionLogError])
 export type WriterFailure = typeof WriterFailure.Type
 
+/** The drafts a turn holds for its closing commit (`TurnWriter.closing`), stored right before its `turn.ended`. */
+export const ClosingDrafts = Schema.Array(Schema.Struct({ kind: Schema.String, data: JsonObject }))
+export type ClosingDrafts = typeof ClosingDrafts.Type
+
 /**
  * - `Open`: admits writes; `tried` once the turn wrote anything (only then has
  *   it tried the inbox items it took), `attempted` the last ending whose commit
- *   ran and was not stored (the scope's own end tries it again).
+ *   ran and was not stored (the scope's own end tries it again), `closing`
+ *   the drafts held for the end's commit.
  * - `Ending`: an end is under way, and admission is sealed; `attempted` is the
- *   one before it, kept for when this end is never queued.
+ *   one before it, kept for when this end is never queued; `closing` what its
+ *   commit stores before `turn.ended`.
  * - `Failed`: a write failed (the store, contention, a defect): every later one
- *   fails with that `error`.
+ *   fails with that `error`, and the closing drafts are dropped.
  * - `Closed`: closed elsewhere (`cancelled`, `interrupted`, `removed`), or its
- *   scope closed (`ended`): every later write fails with that `TurnClosed`.
+ *   scope closed (`ended`): every later write fails with that `TurnClosed`, and
+ *   the closing drafts are dropped.
  * - `Ended`: its end is stored, and left `pending` inbox items waiting.
  */
 export const WriterPhase = Schema.Union([
-  Schema.TaggedStruct("Open", { tried: Schema.Boolean, attempted: Schema.OptionFromNullOr(TurnEnding) }),
-  Schema.TaggedStruct("Ending", { tried: Schema.Boolean, ending: TurnEnding, attempted: Schema.OptionFromNullOr(TurnEnding) }),
+  Schema.TaggedStruct("Open", { tried: Schema.Boolean, attempted: Schema.OptionFromNullOr(TurnEnding), closing: ClosingDrafts }),
+  Schema.TaggedStruct("Ending", { tried: Schema.Boolean, ending: TurnEnding, attempted: Schema.OptionFromNullOr(TurnEnding), closing: ClosingDrafts }),
   Schema.TaggedStruct("Failed", { error: WriterFailure }),
   Schema.TaggedStruct("Closed", { reason: TurnClosedReason }),
   Schema.TaggedStruct("Ended", { pending: Schema.Int }),

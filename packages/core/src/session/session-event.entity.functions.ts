@@ -2,6 +2,7 @@ import { Effect, Option, Schema, Struct } from "effect"
 import { RunId } from "../domain/run.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
+import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { EntryId, LogBody, LogEntry } from "../memory/memory-log.entity.js"
 import { ModelRequestHeader } from "../turn/model-request.entity.js"
@@ -164,6 +165,21 @@ export const turnStartedOf = (event: SessionLogEvent): Effect.Effect<TurnStarted
 
 /** A stored `turn.ended`, decoded. */
 export const turnEndedOf = (event: SessionLogEvent): Effect.Effect<TurnEnded, Schema.SchemaError> => decodeStored("turn.ended", event)
+
+/** What of a `turn.reply` tells how its turn came out: its body's outcome. */
+const decodeReplyOutcome = Schema.decodeUnknownOption(Schema.Struct({ body: Schema.Struct({ outcome: TurnOutcomeKind }) }))
+
+/**
+ * The ending the turn's reply among these drafts implies (the last
+ * `turn.reply`, as the turn holds it for its closing commit): its outcome,
+ * completed or partial, with no failure. None for a failed reply, one that
+ * does not decode, or no reply: how such a turn ended is told by its failure.
+ */
+export const replyEndingOf = (drafts: ReadonlyArray<{ readonly kind: string; readonly data: JsonObject }>): Option.Option<TurnEnded> =>
+  Option.fromNullishOr(drafts.filter((draft) => draft.kind === MemoryKindOf.TurnEnded).at(-1)).pipe(
+    Option.flatMap((draft) => decodeReplyOutcome(draft.data)),
+    Option.flatMap((stored) => stored.body.outcome === "failed" ? Option.none() : Option.some<TurnEnded>({ reason: stored.body.outcome, failure: Option.none() })),
+  )
 
 /**
  * The stored form of a memory entry (`memory.*`, `turn.reply`): the entry's

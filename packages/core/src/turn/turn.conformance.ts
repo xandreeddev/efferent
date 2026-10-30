@@ -88,7 +88,11 @@ const billedTotal = (count: number) => Array.from({ length: count }, (_, index) 
  * `Agent`, or a host's own composition of `TurnLive` and the lifecycle):
  * the session's writer is the bus's first subscriber; the user's message
  * is in memory before the matcher reads the history; the reply is recorded
- * and the turn ended exactly once on success, failure and interrupt; tasks
+ * and the turn ended exactly once on success, failure and interrupt; the
+ * reply is stored in the turn's closing commit, right before its
+ * `turn.ended`, with a reason its outcome allows (completed and partial
+ * their own, failed a failed or interrupted one), stored failed when a
+ * reaction to it fails; tasks
  * are joined before the reply; a model-driven turn's `TurnResult.usage` is
  * what its stored `step.usage` records sum to (`turnUsageOf`); the user's
  * attachments reach the first request as image parts; two runs of one
@@ -194,6 +198,37 @@ export const turnConformance = (
       const endings = runs.map((run) => run.ending)
       yield* expect("ended-once", replies.join() === "run-1:completed,run-2:failed,run-3:failed", `the replies were ${replies.join()}`)
       yield* expect("ended-once", endings.join() === "run-1:completed,run-2:failed,run-3:interrupted", `the turns ended ${endings.join()}`)
+    })),
+    check("the reply is stored in the turn's closing commit, right before turn.ended, with a reason its outcome allows: one whose reactions fail is stored failed", "closing", (turns, session) => Effect.gen(function* () {
+      const outer = yield* Effect.scope
+      yield* turns.turn(input(session, "run-1"), () => reply("done"))
+      // Subscribed in the check's scope, so the reaction takes the turn's reply, then fails the drain after it.
+      yield* Effect.result(turns.turn(input(session, "run-2"), (turn) => turn.events.subscribe(
+        (event) => event._tag === "turn.ended" ? Option.some(event) : Option.none(),
+        () => Effect.fail(new HarnessError({ code: "conformance.reaction", message: "a reaction to the reply failed" })),
+        { mode: "background" },
+      ).pipe(Scope.provide(outer), Effect.andThen(reply("answered")))))
+      const started = yield* Deferred.make<void>()
+      const fiber = yield* Effect.forkChild(turns.turn(input(session, "run-3"), () => Deferred.succeed(started, undefined).pipe(Effect.andThen(Effect.never))))
+      yield* Deferred.await(started)
+      yield* Fiber.interrupt(fiber)
+      const all = yield* stored(session)
+      const closings = yield* Effect.forEach(["run-1", "run-2", "run-3"], (runId) => ofRun(all, runId).pipe(Effect.flatMap((own) => {
+        const replies = own.filter((event) => event.kind === "turn.reply")
+        const ends = own.filter((event) => event.kind === "turn.ended")
+        return Effect.all([entriesOfEvents(replies), readStored("turn.ended", ends)], { concurrency: 1 }).pipe(
+          Effect.mapError(undecodable),
+          Effect.map(([entries, ended]) => {
+            const outcome = entries.flatMap((entry) => entry.body._tag === "TurnEnded" ? [entry.body.outcome] : []).join("+")
+            const reason = ended.map((end) => end.data.reason).join("+")
+            const adjacent = replies.length === 1 && ends.length === 1 && ends[0]!.seq === replies[0]!.seq + 1
+            const allowed = outcome === "failed" ? reason === "failed" || reason === "interrupted" : reason === outcome
+            return `${runId}:${outcome}/${reason}${adjacent ? "" : " (not stored right before turn.ended)"}${allowed ? "" : " (a reason its outcome does not allow)"}`
+          }),
+        )
+      })), { concurrency: 1 })
+      yield* expect("closing", closings.join() === "run-1:completed/completed,run-2:failed/failed,run-3:failed/interrupted",
+        `the turns stored their reply and end as ${closings.join()}`)
     })),
     check("tasks are joined before the reply", "tasks-joined", (turns, session) => Effect.gen(function* () {
       yield* turns.turn(input(session, "run-1"), (turn) => turn.tasks.fork("late", Effect.sleep("10 millis").pipe(

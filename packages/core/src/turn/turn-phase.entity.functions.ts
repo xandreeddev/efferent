@@ -4,8 +4,8 @@ import type { RunId, RunRef } from "../domain/run.entity.js"
 import type { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { harnessError } from "../harness/harness-code.entity.functions.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
-import type { TurnContextBody } from "../memory/memory-log.entity.js"
-import type { TurnPhase } from "./turn-phase.entity.js"
+import type { LogEntry, TurnContextBody } from "../memory/memory-log.entity.js"
+import type { ReplyStep, TurnPhase } from "./turn-phase.entity.js"
 
 /*
  * The transitions of a turn's phase (`TurnPhase`), pure: `TurnLive` applies
@@ -71,13 +71,55 @@ export const startRun = (id: RunId) => (phase: TurnPhase): Transition<RunRef> =>
   Replied: () => Result.fail(harnessError("turn.closed", "The turn's reply is recorded: no run starts after it")),
 })
 
-/** The reply, with its outcome: once, after the message is taken, returning the turn's number; none (nothing to record) otherwise. */
-export const reply = (outcome: TurnOutcomeKind) => (phase: TurnPhase): Transition<Option.Option<number>> => Match.valueTags(phase, {
-  Waiting: () => moved(Option.none(), phase),
-  Taking: () => moved(Option.none(), phase),
-  Taken: ({ number }) => moved(Option.some(number), { _tag: "Replied", number, outcome }),
-  Replied: () => moved(Option.none(), phase),
+const nothing: ReplyStep = { _tag: "Nothing" }
+
+const isReply = (entry: LogEntry): boolean => entry.body._tag === "TurnEnded"
+
+/** The held entries with the reply's outcome failed, its id and text kept. */
+const downgraded = (held: ReadonlyArray<LogEntry>): ReadonlyArray<LogEntry> =>
+  held.map((entry): LogEntry => entry.body._tag === "TurnEnded" ? { ...entry, body: { ...entry.body, outcome: "failed" } } : entry)
+
+/** A failed reply after a completed or partial one: its held entries again, the reply failed; recorded again when memory never held it. */
+const downgrade = (replied: Extract<TurnPhase, { readonly _tag: "Replied" }>): Transition<ReplyStep> => replied.held.some(isReply)
+  ? moved({ _tag: "Hold", held: downgraded(replied.held) }, { ...replied, outcome: "failed", held: downgraded(replied.held) })
+  : moved({ _tag: "Record", number: replied.number }, { ...replied, outcome: "failed" })
+
+/**
+ * The reply, with its outcome: recorded once, after the message is taken
+ * (`Record`, the turn's number); nothing before. Once replied, a failed
+ * reply downgrades a completed or partial one (a finish that failed after
+ * it): the entries held for the closing commit are held again, the reply
+ * failed under its own id (`Hold`), or, when memory never held it, the reply
+ * is recorded again, failed. Anything else does nothing: a reply is never
+ * upgraded.
+ */
+export const reply = (outcome: TurnOutcomeKind) => (phase: TurnPhase): Transition<ReplyStep> => Match.valueTags(phase, {
+  Waiting: () => moved(nothing, phase),
+  Taking: () => moved(nothing, phase),
+  Taken: ({ number }) => moved<ReplyStep>({ _tag: "Record", number }, { _tag: "Replied", number, outcome, held: [] }),
+  Replied: (replied) => outcome === "failed" && replied.outcome !== "failed" ? downgrade(replied) : moved(nothing, phase),
 })
+
+/**
+ * Where entries memory records now go: once the turn replied, they are held
+ * for its closing commit after everything held before them (returned: the
+ * writer's `closing` takes them all, and `hold` keeps them once it did);
+ * before it, a reply (TurnEnded) recorded on its own is held alone, and
+ * anything else is stored as it is recorded (none).
+ */
+export const heldWith = (entries: ReadonlyArray<LogEntry>) => (phase: TurnPhase): Option.Option<ReadonlyArray<LogEntry>> => {
+  const alone = () => Option.liftPredicate(entries, (all) => all.some(isReply))
+  return Match.valueTags(phase, {
+    Waiting: alone,
+    Taking: alone,
+    Taken: alone,
+    Replied: ({ held }) => Option.some([...held, ...entries]),
+  })
+}
+
+/** The entries the writer now holds for the closing commit (`heldWith`'s), kept by a replied turn. */
+export const hold = (held: ReadonlyArray<LogEntry>) => (phase: TurnPhase): TurnPhase =>
+  phase._tag === "Replied" ? { ...phase, held } : phase
 
 /** The turn's number, once the message is taken. */
 export const numberOf = (phase: TurnPhase): Option.Option<number> => Match.valueTags(phase, {

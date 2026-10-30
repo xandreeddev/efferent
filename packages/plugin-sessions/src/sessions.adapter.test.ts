@@ -234,6 +234,39 @@ describe("one turn at a time", () => {
     expect(yield* all(sessions!, address)).toContain("after.refusal@1")
   })))
 
+  test("the closing drafts are stored in the end's own commit; an end the store refuses keeps them held for the next end, or the scope's own", () => withLog((inner) => Effect.gen(function* () {
+    const refusals = yield* Ref.make(0)
+    const commits = yield* Ref.make<ReadonlyArray<string>>([])
+    const log = SessionLog.of({
+      ...inner,
+      commit: (id, commit) => Ref.modify(refusals, (left) => commit.events.some((event) => event.kind === "turn.ended") && left > 0 ? [true, left - 1] : [false, left]).pipe(
+        Effect.flatMap((refused) => refused ? Effect.fail(new SessionLogError({ code: "store.busy", message: "try again" }))
+          : Ref.update(commits, (all) => [...all, commit.events.map((event) => event.kind).join("+")]).pipe(Effect.andThen(inner.commit(id, commit))))),
+    })
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    const completed: TurnEnding = { reason: "completed", failure: Option.none() }
+    yield* Effect.scoped(Effect.gen(function* () {
+      const writer = yield* sessions!.begin(address, say("one"))
+      yield* writer.append([{ kind: "progress", data: {} }])
+      yield* writer.closing([{ kind: "answer", data: { n: 1 } }])
+      yield* Ref.set(refusals, 1)
+      expect(codeOf(yield* Effect.flip(writer.end(completed)))).toBe("session.log")
+      expect(yield* writer.end(completed)).toEqual({ pending: 0 })
+    }))
+    // Refused, then the scope closes: its end stores the drafts still held, with the ending the turn tried.
+    const scope = yield* Scope.make()
+    const writer = yield* sessions!.begin(address, say("two")).pipe(Scope.provide(scope))
+    yield* writer.closing([{ kind: "answer", data: { n: 2 } }])
+    yield* Ref.set(refusals, 1)
+    expect(codeOf(yield* Effect.flip(writer.end(completed)))).toBe("session.log")
+    yield* Scope.close(scope, Exit.interrupt())
+    expect((yield* Ref.get(commits)).filter((kinds) => kinds.includes("turn.ended") || kinds.includes("answer")))
+      .toEqual(["answer+turn.ended", "answer+turn.ended"])
+    expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "progress@1", "answer@1", "turn.ended@1", "turn.started@2", "answer@2", "turn.ended@2"])
+    expect((yield* sessions!.read(address, { kinds: ["turn.ended"] })).map((event) => event.data.reason)).toEqual(["completed", "completed"])
+  })))
+
   test("an end interrupted while it waits for room in the queue leaves the writer open to a later end", () => withLog((log) => Effect.gen(function* () {
     const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, writer: { capacity: 1, batch: 1 } })
     const address = yield* created(sessions!)

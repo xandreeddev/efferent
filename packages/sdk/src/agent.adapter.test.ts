@@ -336,7 +336,7 @@ describe("Agent.turn", () => {
     expect(named(events, "turn.ended").map((event) => event.data.failure)).toEqual([{ code: "reaction.failed", message: "broken" }])
   })
 
-  test("a successful turn whose end the store refuses fails, and is not reported completed", async () => {
+  test("a successful turn whose end the store refuses fails, is not reported completed, and stores no reply: the reply is stored with the end", async () => {
     const { exit, events } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* sessionOver(slowLog(Option.some("turn.ended")))
@@ -345,7 +345,7 @@ describe("Agent.turn", () => {
       return { exit, events: yield* journal.stored }
     })))
     expect(exit._tag === "Failure" ? codeOf(exit.failure) : "none").toBe("session.log")
-    expect(named(events, "turn.reply").map((event) => body(event)?.outcome)).toEqual(["completed"])
+    expect(named(events, "turn.reply")).toHaveLength(0)
     expect(named(events, "turn.ended")).toHaveLength(0)
   })
 

@@ -39,19 +39,20 @@ import { expectGolden, goldenConfig, goldenHost, goldenTexts, runGolden } from "
  * host's layer and the body; the turn is ended with `turnEndingOf` its exit
  * (the outcome, or the failure's code), taken after `harnessDefectsAsFailures`,
  * as `Agent.turn` ends it. Everything after the begin runs under the turn's
- * span (`traceTurn`), as in `Agent.turn`.
+ * span (`traceTurn`), as in `Agent.turn`. `change` stands in for a careless
+ * host's writer (the kit's self-test); by default the session's own.
  */
-const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = Effect.gen(function* () {
+const composedWith = (change: (writer: TurnWriter) => TurnWriter = (writer) => writer): Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> => Effect.gen(function* () {
   const runtime = yield* Layer.build(CapabilitiesLive(goldenHost).pipe(
     stackPlugins(MemoryWindowLive({ digestOnWriteChars: 1 })),
     stackPlugins(ToolDiscoveryLive()),
     stackPlugins(StepLoopLive),
   ))
   const turn = <A = never, E = never, R = never>(input: TurnInput<A, E>, use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, R>) => Effect.scoped(Effect.gen(function* () {
-    const writer: TurnWriter = "admitted" in input.turn ? input.turn : yield* Effect.flatMap(Effect.service(Sessions), (sessions) => {
+    const writer: TurnWriter = "admitted" in input.turn ? input.turn : change(yield* Effect.flatMap(Effect.service(Sessions), (sessions) => {
       const next = input.turn as Exclude<typeof input.turn, TurnWriter>
       return sessions.begin(next.session, { _tag: "User", userMessage: next.userMessage, runId: next.runId, key: next.key ?? next.runId, command: next.command ?? {} })
-    }).pipe(Effect.provide(input.services)) // a refusal is the turn's failure as it is, as under `Agent.turn`
+    }).pipe(Effect.provide(input.services))) // a refusal is the turn's failure as it is, as under `Agent.turn`
     const body = Effect.gen(function* () {
       yield* (yield* TurnMemory).persistMessage
       yield* openTurnTools
@@ -80,6 +81,7 @@ const composed: Effect.Effect<Pick<Agent, "turn">, HarnessError, Scope.Scope> = 
   })) as Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
   return { turn }
 })
+const composed = composedWith()
 
 describe("a turn composed by hand", () => {
   test("from the typed layers and the turn's steps, it reproduces the golden conversation", async () => {
@@ -140,3 +142,14 @@ runners.map(([name, runner]) => describe(`${name} conforms to the turn contract`
     expect(exit._tag === "Failure" ? exit.failure.message : "ok").toBe("ok")
   }))
 }))
+
+describe("the turn kit catches careless compositions", () => {
+  test("one whose writer stores the reply at once, before the turn's end, fails only the closing check", async () => {
+    const eager = composedWith((writer) => ({ ...writer, closing: (drafts) => writer.append(drafts) }))
+    const failed = await Promise.all(turnConformance(eager, Effect.runSync(Effect.scoped(services))).map(async (check) => {
+      const exit = await Effect.runPromise(Effect.result(check.run))
+      return exit._tag === "Failure" ? [exit.failure.check] : []
+    }))
+    expect(failed.flat()).toEqual(["closing"])
+  })
+})

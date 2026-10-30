@@ -266,8 +266,10 @@ What settles, and when:
   result as well.
 - A `turn.ended` handler runs after the turn's own scopes have closed: it may
   use only what is still open in the caller's scope. It must not fail: on a
-  turn that succeeded, its failure fails the turn after the reply was
-  recorded as completed.
+  turn that succeeded, its failure fails the turn, and the reply, held for
+  the turn's end, is stored as failed (its text kept). The stored reply is
+  written with the turn's `turn.ended`, in one commit: a handler that reads
+  the journal does not find it yet.
 
 ## Tools: results, refusals and progress
 

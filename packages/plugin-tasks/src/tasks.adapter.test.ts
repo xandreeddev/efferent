@@ -474,6 +474,23 @@ describe("limits, failures and budgets", () => {
     expect((yield* h.reactions).length).toBe(1)
   })))
 
+  test("a reaction cut after it held its answer for the turn's end is done too: the end stores the answer, partial, in its own commit", () => scenario(Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>()
+    // As memory holds a turn's reply: for the closing commit, stored only with the end.
+    const h = yield* harness({ maxMs: 1_000, react: (writer) => writer.closing([frameworkDraft("turn.reply", { body: { outcome: "completed", reply: "noted" } })]).pipe(
+      Effect.andThen(Deferred.succeed(entered, undefined)), Effect.andThen(Effect.never),
+    ) })
+    yield* h.tasks.start(h.parent, { instructions: "answered and held, then cut", mode: "spawn" })
+    yield* Deferred.await(entered)
+    yield* TestClock.adjust("500 millis")
+    yield* h.idle
+    const closed = (yield* h.sessions.read(h.parent, { kinds: ["turn.reply", "turn.ended"] })).map((event) => [event.seq, event.kind, event.data.reason ?? null] as const)
+    expect(closed.map(([, kind, reason]) => [kind, reason])).toEqual([["turn.reply", null], ["turn.ended", "partial"]])
+    expect(closed[1]![0]).toBe(closed[0]![0] + 1)
+    expect((yield* h.sessions.get(h.parent)).pending).toBe(0)
+    expect((yield* h.drain(h.parent)).turns).toBe(0)
+  })))
+
   test("a parent admission that returns past the cutoff releases its turn: the notices wait with no attempt used", () => scenario(Effect.gen(function* () {
     const admitting = yield* Queue.unbounded<void>()
     const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
