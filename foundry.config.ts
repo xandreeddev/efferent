@@ -431,6 +431,22 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun:",
             ]
       },
+      // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
+      {
+            "name": "plugin-memory-window-tests",
+            "path": "packages/plugin-memory-window/src/**/*.test.ts",
+            "canImport": [
+                  "plugin-memory-window",
+                  "core",
+                  "core/internal"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "bun:test"
+            ]
+      },
       {
             "name": "plugin-memory-window",
             "path": "packages/plugin-memory-window/src/**",
