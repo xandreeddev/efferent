@@ -699,7 +699,8 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "plugin-agent-loop",
                   "plugin-memory-window",
                   "plugin-tool-discovery",
-                  "plugin-sessions"
+                  "plugin-sessions",
+                  "core/engine"
             ],
             "externals": [
                   "effect",

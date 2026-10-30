@@ -1218,6 +1218,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/plugin-workspace`'s tests import the file-system and shell kits
   from `@xandreed/core/conformance` and `toolParametersSchema` from
   `@xandreed/core/internal`, granted to its tests only.
+- `@xandreed/plugin-telemetry`'s tests build their bus with `makeTurnEvents`
+  from `@xandreed/core/engine`, granted to its tests only.
 
 ### Deprecated
 
