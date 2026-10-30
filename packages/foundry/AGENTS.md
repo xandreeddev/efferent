@@ -113,14 +113,17 @@ globs drop the matches the rule marks `toleratedAtBoundary`:
 design), and `effect/match-over-tag-switch`'s ternary chains and
 `type`/`role`/`mode` discriminants (its `switch` and ladder on `_tag`
 report everywhere; the root config names no boundary for it, every
-package being converted). A rule entry's
+package being converted). A boundary only shrinks too: a glob that
+names no file the rule checks, or whose files hold no match the rule
+drops there, is itself a finding under the rule's id. A rule entry's
 `allow` names exact files the rule skips, a frozen list that only
 shrinks: an entry naming a file the rule does not check, or one it no
 longer flags, is itself a finding under the rule's id
 (`architecture/role-suffix-required`'s `ROLELESS_FILES`,
 `effect/no-option-unwrap`'s `NULLABLE_EDGES`, `effect/no-unknown-json`'s
 `UNKNOWN_JSON_EDGES`, `effect/no-record-cast`'s `RECORD_CAST_EDGES`,
-`effect/no-provider-namespace`'s `PROVIDER_NAMESPACE_EDGES`). A
+`effect/no-provider-namespace`'s `PROVIDER_NAMESPACE_EDGES`,
+`effect/no-unknown-requirements`'s `UNKNOWN_REQUIREMENT_EDGES`). A
 new rule that needs a per-file exemption uses `exclude`, `allow` for
 today's exceptions, or a boundary when only part of what it flags is the
 design there. A rule with
@@ -146,9 +149,12 @@ crosses a boundary instead of trusting it: `effect/no-unknown-json`
 `effect/no-provider-namespace` keeps provider-neutral code opaque to the
 providers: an `anthropic`, `openai`, `google` or `router` key, written in
 an object or a type, destructured or read (`x.openai`, `x["router"]`).
-In the root profile each runs over every package (`CHECKED`), less the
-files its entry excludes, but `no-provider-namespace`, which runs in the two
-provider-neutral packages, core and the agent loop (`PROVIDER_NEUTRAL`).
+`effect/no-unknown-requirements` (type-aware: an `Effect`, `Stream` or
+`Layer` type whose R is `unknown`, or an alias of it) keeps what an effect
+requires in its type. In the root profile each runs over every package
+(`CHECKED`), less the files its entry excludes, but `no-provider-namespace`,
+which runs in the two provider-neutral packages, core and the agent loop
+(`PROVIDER_NEUTRAL`).
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

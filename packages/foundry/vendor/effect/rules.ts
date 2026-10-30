@@ -324,6 +324,45 @@ export const noAsNever = {
   },
 }
 
+/** The effect types whose third parameter is what they require. */
+const REQUIRING = ["Effect", "Stream", "Layer"]
+
+/** `Name` or `Namespace.Name`: the identifier that names the type. */
+const nameOf = (typeName: ts.EntityName): ts.Identifier => (ts.isQualifiedName(typeName) ? typeName.right : typeName)
+
+/** Whether `name` resolves to an interface the `effect` package declares. */
+const isEffectInterface = (checker: ts.TypeChecker, name: ts.Identifier): boolean => {
+  const symbol = checker.getSymbolAtLocation(name)
+  const resolved = symbol !== undefined && (symbol.flags & ts.SymbolFlags.Alias) !== 0 ? checker.getAliasedSymbol(symbol) : symbol
+  return (resolved?.declarations ?? []).some((declaration) =>
+    ts.isInterfaceDeclaration(declaration) && /[\\/]node_modules[\\/]effect[\\/]/.test(declaration.getSourceFile().fileName))
+}
+
+export const noUnknownRequirements = {
+  id: "effect/no-unknown-requirements",
+  defaultSeverity: "error",
+  description: "an `Effect`, `Stream` or `Layer` type names what it requires: never `unknown` as its R",
+  fixHint:
+    "name the services in R (their identifiers, `never` for none) or keep R a type parameter; where a JSON config picks the services at run time, declare their keys and check them by key where they are provided",
+  check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
+    const matches: Array<VendoredMatch> = []
+    walk(sourceFile, (node) => {
+      if (!ts.isTypeReferenceNode(node)) return
+      const name = nameOf(node.typeName)
+      const requirements = node.typeArguments?.[2]
+      if (
+        REQUIRING.includes(name.text) &&
+        requirements !== undefined &&
+        (checker.getTypeFromTypeNode(requirements).flags & ts.TypeFlags.Unknown) !== 0 &&
+        isEffectInterface(checker, name)
+      ) {
+        matches.push({ node, message: `\`${node.typeName.getText(sourceFile)}<…, unknown>\` hides what it requires: a service it reads compiles whether anything provides it or not` })
+      }
+    })
+    return matches
+  },
+}
+
 const ID_SHAPED = /^(id|[a-zA-Z]*Id)$/
 
 /** Combinators that hold a field's schema without changing it: the id
@@ -1102,6 +1141,7 @@ export const rules = [
   matchOverTagSwitch,
   noAsAny,
   noAsNever,
+  noUnknownRequirements,
   brandedIdFields,
   noParallelInterface,
   noJsonParse,

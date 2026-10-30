@@ -18,7 +18,9 @@ export class RuleConfig extends Schema.Class<RuleConfig>("RuleConfig")({
   /** Globs of the files the profile declares a boundary for this rule
    *  (`effect/no-as-never`'s type-erasure files): a match the rule marks as
    *  tolerated at a boundary is dropped there; every other match still
-   *  reports. */
+   *  reports. A glob that names no file the rule covers, or whose files
+   *  hold no tolerated match, is itself a finding, so the list only
+   *  shrinks. */
   boundary: Schema.Array(Schema.NonEmptyString).pipe(Schema.withDecodingDefaultType(Effect.sync(() => [])), Schema.withConstructorDefault(Effect.sync(() => []))),
   /** Workspace-relative paths (exact, not globs) of the files the rule
    *  skips: a frozen list of today's exceptions that may only shrink. An
