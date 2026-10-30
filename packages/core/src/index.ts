@@ -81,26 +81,14 @@ export { BASH_ENV_ALLOWLIST, BashChunk, BashError, BashErrorReason, BashEvent, B
 export { collectBashResult, resolveBashEnv } from "./domain/bash.entity.functions.js"
 
 // ports
-export {
-  EngineSettings,
-  SETTINGS_KEYS,
-  SettingsError,
-  SettingsStore,
-} from "./ports/settings-store.port.js"
-export type { ModelRole, SettingsKey } from "./ports/settings-store.port.js"
-export { AuthError, AuthStore, Credential } from "./ports/auth-store.port.js"
 export { ModelCatalog } from "./ports/model-catalog.port.js"
 export { FileSystem } from "./ports/file-system.port.js"
 export { Bash } from "./ports/bash.port.js"
 export { UtilityCompletion, UtilityError, UtilityLlm } from "./ports/utility-llm.port.js"
 
-// workspace: the in-memory FileSystem backend and the FileSystem and Bash contracts
+// workspace: the in-memory FileSystem backend
 export { FileSystemMemoryLive, makeMemoryFileSystem } from "./workspace/file-system.memory.adapter.js"
 export type { MemoryFileSystem, MemorySeed } from "./workspace/file-system.memory.adapter.js"
-export { fileSystemConformance } from "./workspace/file-system.conformance.js"
-export type { FileSystemFixture, FileSystemSubject } from "./workspace/file-system.conformance.js"
-export { bashConformance } from "./workspace/bash.conformance.js"
-export type { BashFixture, BashSubject } from "./workspace/bash.conformance.js"
 
 // loop
 export { CurrentPromptCacheKey } from "./loop/cacheKey.js"
@@ -114,37 +102,107 @@ export { makeSession } from "./session/chassis.js"
 export type { SeqEvent, Session } from "./session/chassis.js"
 
 // the session log: the storage a host provides, its in-memory backend and its contract
-export * from "./session/session-log.entity.js"
+export {
+  JsonObject,
+  LeaseExpired,
+  RevisionConflict,
+  SessionCommit,
+  SessionCommitted,
+  SessionDraft,
+  SessionExists,
+  SessionHead,
+  SessionHeader,
+  SessionLineage,
+  SessionListCursor,
+  SessionListQuery,
+  SessionLogError,
+  SessionLogEvent,
+  SessionMissing,
+  SessionReadQuery,
+} from "./session/session-log.entity.js"
 export { isStoreBusy, storedJson } from "./session/session-log.entity.functions.js"
-export * from "./ports/session-log.port.js"
+export { SessionLog } from "./ports/session-log.port.js"
 export { SessionLogMemoryLive } from "./session/session-log.memory.adapter.js"
-export { sessionLogConformance } from "./session/session-log.conformance.js"
-export { sessionLogRecoveryConformance } from "./session/session-log.recovery.conformance.js"
-export type { SessionLogSubject } from "./session/session-log.recovery.conformance.js"
-export * from "./session/session-event.entity.js"
+export {
+  InboxDroppedData,
+  InboxQueuedData,
+  MEMORY_KINDS,
+  MemoryKindOf,
+  RECORDED_ELSEWHERE,
+  RESERVED_KINDS,
+  SESSION_KINDS,
+  StepUsageData,
+  TURN_EVENT_KINDS,
+  TurnEndedData,
+  TurnStartedData,
+} from "./session/session-event.entity.js"
 export { JOURNAL_KINDS } from "./session/session-event.entity.js"
-export * from "./session/session-event.entity.functions.js"
+export {
+  draftOfEntry,
+  draftOfTurnEvent,
+  draftsOfEntries,
+  entriesOfEvents,
+  entryOfEvent,
+  frameworkDraft,
+  isFrameworkDraft,
+  journalSchemaOf,
+  replyEndingOf,
+  StoredMemoryData,
+  turnEndedDraft,
+  turnEndedOf,
+  turnStartedDraft,
+  turnStartedOf,
+  unmarkedReservedDraft,
+} from "./session/session-event.entity.functions.js"
 export { turnUsageOf } from "./session/session-event.entity.functions.js"
 // stored records read by their fields: decoded whole, or by their keys alone for a lookup
 export { readStored, readStoredKeys, RequestPreparedKeys, StoredData, StoredKeys, TurnStartedKeys } from "./session/session-event.entity.functions.js"
 export type { KeyedKind, Stored, StoredKeysOf, StoredKind } from "./session/session-event.entity.functions.js"
-export * from "./session/sessions.entity.js"
+export {
+  AdmittedTurn,
+  BeginTurn,
+  InboxFull,
+  InboxItem,
+  InboxItemId,
+  KeyConflict,
+  NothingPending,
+  NotResumable,
+  OpenTurn,
+  ReservedKind,
+  RunIdReused,
+  SessionAddress,
+  SessionBusy,
+  SessionContended,
+  SessionPage,
+  SessionView,
+  turnBeginCodes,
+  TurnBeginError,
+  TurnClosed,
+  TurnDuplicate,
+  TurnRefused,
+} from "./session/sessions.entity.js"
+export type { TurnError } from "./session/sessions.entity.js"
 export { isTurnError, resumeRefusal, sessionAttributes, turnAttributes, turnEndingOf } from "./session/sessions.entity.functions.js"
 export type { ResumableTurn } from "./session/sessions.entity.functions.js"
-export * from "./ports/sessions.port.js"
-export * from "./ports/turn-admission.port.js"
+export { Sessions } from "./ports/sessions.port.js"
+export type { Decided, Decision, TurnDraft, TurnWriter } from "./ports/sessions.port.js"
+export { TurnAdmission } from "./ports/turn-admission.port.js"
+export type { TurnToAdmit } from "./ports/turn-admission.port.js"
 export { TurnAdmissionOpen } from "./session/turn-admission.open.adapter.js"
-export * from "./session/tasks.entity.js"
-export * from "./ports/tasks.port.js"
+export {
+  TaskConflict,
+  TaskMissing,
+  TaskMode,
+  TaskRef,
+  TaskRefused,
+  TaskStatus,
+  TaskView,
+} from "./session/tasks.entity.js"
+export { TaskExecutor, TaskRunner, Tasks } from "./ports/tasks.port.js"
 // what this process is busy with: open turns and running background work, for a `/ping` or a drain
 export { ActiveTurn, ProcessActivity, TurnsInFlight } from "./session/activity.entity.js"
 export { awaitIdle, processActivity } from "./session/activity.entity.functions.js"
 export { TaskActivity, TurnActivity } from "./ports/activity.port.js"
-// the Sessions, TaskRunner and Tasks contracts as conformance kits
-export { sessionsConformance } from "./session/sessions.conformance.js"
-export type { SessionsInstance, SessionsProcess, SessionsSubject } from "./session/sessions.conformance.js"
-export { taskRunnerConformance, tasksConformance } from "./session/tasks.conformance.js"
-export type { TaskRunnerFixture, TasksDependencies, TasksFixture } from "./session/tasks.conformance.js"
 
 // spec (the spec-driven pipeline's shared vocabulary — re-homed from the old line)
 export {
@@ -165,132 +223,422 @@ export {
   uniqueSlug,
 } from "./spec/codec.js"
 export { parseFrontmatter } from "./spec/frontmatter.js"
-export * from "./harness/plugin.entity.js"
+export { HarnessError, PLUGIN_API_VERSION, SUPPORTED_PLUGIN_API_VERSIONS } from "./harness/plugin.entity.js"
+export type { PartialOptions, Plugin, TypedPlugin } from "./harness/plugin.entity.js"
 export { isHarnessError, mergeOptions, provideDeclared } from "./harness/plugin.entity.functions.js"
 export type { ServiceKeys } from "./harness/plugin.entity.functions.js"
 export { HARNESS_CODES, HarnessCode, TAGGED_CODES } from "./harness/harness-code.entity.js"
 export { harnessCodeOf, harnessError } from "./harness/harness-code.entity.functions.js"
-export * from "./harness/plugin.adapter.js"
-export * from "./harness/plugin-stack.adapter.js"
-export * from "./harness/config.entity.js"
-export * from "./ports/harness.port.js"
+export { definePlugin } from "./harness/plugin.adapter.js"
+export { CapabilitiesLive, stackPlugins } from "./harness/plugin-stack.adapter.js"
+export { HarnessConfig, PluginEntry, PluginInstanceId, Profile } from "./harness/config.entity.js"
+export type { AgentDefinition } from "./harness/config.entity.js"
+export { ActionPolicy, SessionEnvironment } from "./ports/harness.port.js"
 
 export { defineAgent, defineConfig } from "./harness/config.entity.functions.js"
 
-export * from "./domain/prompt-provenance.entity.js"
+export { PromptId, PromptProvenance } from "./domain/prompt-provenance.entity.js"
 
-export * from "./loop/promptProvenance.js"
+export { CurrentPromptProvenance } from "./loop/promptProvenance.js"
 
 export { CurrentAgentStep, CurrentToolInvocation } from "./loop/stepContext.js"
 export type { ToolInvocation } from "./loop/stepContext.js"
 
-export * from "./decision-record.entity.js"
+export { CandidateId, DecisionId, DecisionOutcome, DecisionRecord } from "./decision-record.entity.js"
 
 // memory: the append-only log, its ports and the pure rebuild
-export * from "./memory/memory-log.entity.js"
-export * from "./memory/memory-log.entity.functions.js"
-export * from "./memory/memory-session.js"
-export * from "./ports/memory.port.js"
+export {
+  ActivationSource,
+  ArtifactId,
+  ArtifactRef,
+  BuiltContext,
+  CompactionAction,
+  EntryId,
+  LogBody,
+  LogEntry,
+  SectionId,
+  Subject,
+  SubjectId,
+  TurnContextBody,
+} from "./memory/memory-log.entity.js"
+export type { LogQuery } from "./memory/memory-log.entity.js"
+export {
+  activationsOf,
+  artifactLines,
+  buildContext,
+  canonicalJson,
+  currentTurnOf,
+  digestTranscript,
+  emptyQuery,
+  entriesSendingMedia,
+  entryId,
+  estimateMessageTokens,
+  estimateTokens,
+  fingerprintOf,
+  latestRunOf,
+  ledgerOf,
+  pendingCompaction,
+  queryLog,
+  rawTranscript,
+  referenceTranscript,
+  renderLog,
+  rewrittenBy,
+  stepContextOf,
+  subjectsOf,
+  toolInputsOf,
+} from "./memory/memory-log.entity.functions.js"
+export type { RenderOptions } from "./memory/memory-log.entity.functions.js"
+export { noMaintenance, openLogSession, readerOf } from "./memory/memory-session.js"
+export type { MaintainDecision, MemoryPolicy } from "./memory/memory-session.js"
+export { ConversationMemory, ResultDigester } from "./ports/memory.port.js"
+export type {
+  DigestOutcome,
+  DigestTask,
+  LogHandle,
+  MaintainSignal,
+  MemoryReader,
+  MemorySession,
+  ToolView,
+  ToolViews,
+} from "./ports/memory.port.js"
 
 // capabilities: host-defined tools, skills and prompt sections, and the permissions a run holds
-export * from "./harness/capability.entity.js"
-export * from "./harness/capability.entity.functions.js"
-export * from "./ports/capability.port.js"
-export * from "./ports/permission.port.js"
-export * from "./ports/run-context.port.js"
-export * from "./ports/tool-registry.port.js"
+export {
+  CapabilityCatalog,
+  CapabilityId,
+  CapabilityRecipe,
+  CapabilitySelection,
+  CapabilityTool,
+  CapabilityToolId,
+  PromptTier,
+  ResolvedCapabilities,
+  SkillDefinition,
+  SkillId,
+  SkillReference,
+  SkillReferenceId,
+  ToolAnnotations,
+} from "./harness/capability.entity.js"
+export {
+  catalogOf,
+  defaultAnnotations,
+  defineCapability,
+  definePromptSection,
+  defineSkill,
+  defineTool,
+  resolveCapabilities,
+} from "./harness/capability.entity.functions.js"
+export type { SkillInput } from "./harness/capability.entity.functions.js"
+export { Capabilities, IntentMatcher } from "./ports/capability.port.js"
+export type {
+  Capability,
+  DigestDefinition,
+  InitialBatch,
+  IntentMatch,
+  ModelChoice,
+  PromptContext,
+  PromptSection,
+  RegisteredTool,
+  StepDirective,
+  StepInfo,
+  ToolChoice,
+  ToolDefinition,
+  ToolViewDefinition,
+  ToolViewInput,
+} from "./ports/capability.port.js"
+export { PermissionGrants } from "./ports/permission.port.js"
+export { RunContext } from "./ports/run-context.port.js"
+export { ToolRegistry } from "./ports/tool-registry.port.js"
+export type { RunTools, SkillMatch, ToolHandlers } from "./ports/tool-registry.port.js"
 
 // the host-composed turn: the user's message, typed events, background tasks, the step loop and the turn
-export * from "./turn/user-message.entity.js"
+export { UserMessage } from "./turn/user-message.entity.js"
 export { attachmentsOf, normalizeUserMessage, sameUserMessage, userMessageText } from "./turn/user-message.entity.functions.js"
-export * from "./turn/turn-event.entity.js"
+export {
+  AssistantDeltaEvent,
+  AssistantMessageEvent,
+  CompletionEvaluatedEvent,
+  CompletionVerdict,
+  ContextBuiltEvent,
+  DecisionRecordedEvent,
+  HostEvent,
+  SkillsActivatedEvent,
+  StepEndedEvent,
+  StepResult,
+  StepStartedEvent,
+  StreamPartId,
+  ToolCompletedEvent,
+  ToolProgressEvent,
+  ToolStartedEvent,
+  TransientTurnEvents,
+  TurnEndedEvent,
+  TurnEvent,
+  TurnStartedEvent,
+} from "./turn/turn-event.entity.js"
+export type { TurnEventName, TurnEventOf } from "./turn/turn-event.entity.js"
 export { StreamFallbackEvent, ToolRefusalReason, ToolRefusedEvent, TURN_EVENT_NAMES } from "./turn/turn-event.entity.js"
-export * from "./turn/turn-event.entity.functions.js"
-export * from "./turn/model-request.entity.js"
-export * from "./turn/model-request.entity.functions.js"
-export * from "./ports/turn-events.port.js"
-export * from "./ports/step-loop.port.js"
-export * from "./ports/turn.port.js"
+export {
+  defineHostEvent,
+  onEvent,
+  onTool,
+  publishToolProgress,
+  subscribeAll,
+} from "./turn/turn-event.entity.functions.js"
+export type { ToolCall } from "./turn/turn-event.entity.functions.js"
+export {
+  MemoryRenderRecipe,
+  ModelRequestDescriptor,
+  ModelRequestHeader,
+  ModelRequestTool,
+  ProviderToolId,
+} from "./turn/model-request.entity.js"
+export {
+  checkModelRequest,
+  describeModel,
+  freezeModelRequest,
+  modelRequestDescriptorOf,
+  modelRequestHeaderOf,
+  modelRequestTools,
+  reconstructModelRequest,
+  replayModelRequest,
+  resolveModelRequest,
+  resolvingModel,
+} from "./turn/model-request.entity.functions.js"
+export type { ComparedModelRequest } from "./turn/model-request.entity.functions.js"
+export { TurnEvents, TurnTasks } from "./ports/turn-events.port.js"
+export type { SubscribeOptions, Subscription, TurnEventsService, TurnTasksService } from "./ports/turn-events.port.js"
+export { StepLoop, StepLoopReferences } from "./ports/step-loop.port.js"
+export type {
+  Correctives,
+  LoopLimits,
+  ModelDispatch,
+  RunResult,
+  StepPlan,
+  StepRequest,
+} from "./ports/step-loop.port.js"
+export type {
+  NewTurn,
+  Turn,
+  TurnInput,
+  TurnOutcome,
+  TurnPolicy,
+  TurnRunner,
+  TurnServices,
+  TurnTools,
+} from "./ports/turn.port.js"
 export type { TurnResult } from "./ports/turn.port.js"
-export * from "./ports/turn-scope.port.js"
-export * from "./turn/prompt-sections.js"
+export { TurnMemory, TurnPrompt, TurnToolbox } from "./ports/turn-scope.port.js"
+export type { RequestSnapshot, TurnContextEntry, TurnLiveInput, TurnRunOptions } from "./ports/turn-scope.port.js"
+export { orderSections, renderSections } from "./turn/prompt-sections.js"
 export { clippedMarker, clipTo, escapeFrame, framed, hostNote } from "./turn/model-text.js"
-export * from "./decision-record.entity.functions.js"
+export { recordDecision } from "./decision-record.entity.functions.js"
 export { CollectSkillFilesOptions, SkillFile, SkillFileIssue, SkillFilesOptions, SkillTree, SkillTreeEntry } from "./harness/skill-files.entity.js"
 export { collectSkillFiles, readSkillFiles, skillIssuesText, skillsFromFiles } from "./harness/skill-files.entity.functions.js"
-export { ConformanceFailure } from "./conformance.entity.js"
-export type { ConformanceCheck } from "./conformance.entity.js"
-export { probeCall, stepLoopConformance, textReply } from "./turn/step-loop.conformance.js"
-export { inMemoryLog, memoryConformance } from "./memory/memory.conformance.js"
-export { turnConformance } from "./turn/turn.conformance.js"
-export { toolRegistryConformance } from "./turn/tool-registry.conformance.js"
-export type { ToolRegistryLimits } from "./turn/tool-registry.conformance.js"
-export { authStoreConformance } from "./models/auth-store.conformance.js"
-export type { AuthStoreConformanceOptions, AuthStoreRefreshProbe } from "./models/auth-store.conformance.js"
-export { settingsStoreConformance } from "./models/settings-store.conformance.js"
-export type { SettingsStoreConformanceOptions } from "./models/settings-store.conformance.js"
-export { modelCatalogConformance } from "./models/model-catalog.conformance.js"
 
-// The provider mapping, stream fold, tool schemas and JSON, glob and id helpers
-// (`internal/`), and the turn engine (`engine/`), under the names the root has
-// always exported. A root entry may not re-export what those folders declare
-// (`scripts/api-snapshot.ts`), so each name is declared here: the same value,
-// or a type of the same shape.
+// Declared in `internal/` or `engine/` and still a root name, as the same
+// value or a type of the same shape: a root entry may not re-export what
+// those folders declare (`scripts/api-snapshot.ts`).
+import * as engine from "./engine/index.js"
 import * as glob from "./internal/glob.entity.functions.js"
+import * as internal from "./internal/index.js"
 import * as json from "./internal/json.entity.functions.js"
 import * as mapping from "./internal/mapping.entity.functions.js"
-import * as streamFold from "./internal/stream-fold.entity.functions.js"
-import * as toolSchema from "./internal/tool-schema.entity.functions.js"
 import * as turnBus from "./engine/turn-bus.adapter.js"
-import * as turnLifecycle from "./engine/turn-lifecycle.usecase.functions.js"
-import * as turnRun from "./engine/turn-run.usecase.functions.js"
-import * as turnAdapter from "./engine/turn.adapter.js"
 
-export const asJsonRecord: typeof json.asJsonRecord = json.asJsonRecord
-export const decodeJsonLines: typeof json.decodeJsonLines = json.decodeJsonLines
-export const parseJsonOption: typeof json.parseJsonOption = json.parseJsonOption
-export const parseJsonWarn: typeof json.parseJsonWarn = json.parseJsonWarn
 export const compileGlob: typeof glob.compileGlob = glob.compileGlob
 export const globMatcher: typeof glob.globMatcher = glob.globMatcher
 export interface GlobMatcher extends glob.GlobMatcher {}
 export interface GlobMatchOptions extends glob.GlobMatchOptions {}
-
 export const assistantModel: typeof mapping.assistantModel = mapping.assistantModel
 export const assistantUsage: typeof mapping.assistantUsage = mapping.assistantUsage
-export const extractUsage: typeof mapping.extractUsage = mapping.extractUsage
-export const handoffToMessage: typeof mapping.handoffToMessage = mapping.handoffToMessage
-export const safeKeepFrom: typeof mapping.safeKeepFrom = mapping.safeKeepFrom
-export const responseReasoning: typeof mapping.responseReasoning = mapping.responseReasoning
-export const responseText: typeof mapping.responseText = mapping.responseText
-export const responseToAgentMessages: typeof mapping.responseToAgentMessages = mapping.responseToAgentMessages
-export const responseToolCalls: typeof mapping.responseToolCalls = mapping.responseToolCalls
-export const responseToolResults: typeof mapping.responseToolResults = mapping.responseToolResults
-export const toPromptMessages: typeof mapping.toPromptMessages = mapping.toPromptMessages
-export const withToolCallIds: typeof mapping.withToolCallIds = mapping.withToolCallIds
-export const withUsageOnAssistant: typeof mapping.withUsageOnAssistant = mapping.withUsageOnAssistant
-export interface ToolResultSummary extends mapping.ToolResultSummary {}
-export const foldStreamParts: typeof streamFold.foldStreamParts = streamFold.foldStreamParts
-export interface FoldedTurn extends streamFold.FoldedTurn {}
-export interface StreamDelta extends streamFold.StreamDelta {}
-export const strictJsonSchema: typeof toolSchema.strictJsonSchema = toolSchema.strictJsonSchema
-export const toolParametersSchema: typeof toolSchema.toolParametersSchema = toolSchema.toolParametersSchema
-
 export const harnessDefectsAsFailures: typeof turnBus.harnessDefectsAsFailures = turnBus.harnessDefectsAsFailures
-export const makeTurnEvents: typeof turnBus.makeTurnEvents = turnBus.makeTurnEvents
-export const makeTurnTasks: typeof turnBus.makeTurnTasks = turnBus.makeTurnTasks
-export const TurnLive: typeof turnAdapter.TurnLive = turnAdapter.TurnLive
-export type TurnRunServices = turnRun.TurnRunServices
-export const cacheKeyOf: typeof turnRun.cacheKeyOf = turnRun.cacheKeyOf
-export const runTurnLoop: typeof turnRun.runTurnLoop = turnRun.runTurnLoop
-export const schemaTokens: typeof turnRun.schemaTokens = turnRun.schemaTokens
-export const stepRequestOf: typeof turnRun.stepRequestOf = turnRun.stepRequestOf
-export const finishTurn: typeof turnLifecycle.finishTurn = turnLifecycle.finishTurn
-export const guardTurn: typeof turnLifecycle.guardTurn = turnLifecycle.guardTurn
-export const openTurnTools: typeof turnLifecycle.openTurnTools = turnLifecycle.openTurnTools
-export const settleTurn: typeof turnLifecycle.settleTurn = turnLifecycle.settleTurn
-export const traceTurn: typeof turnLifecycle.traceTurn = turnLifecycle.traceTurn
-export const traceTurnBegin: typeof turnLifecycle.traceTurnBegin = turnLifecycle.traceTurnBegin
-export const turnOf: typeof turnLifecycle.turnOf = turnLifecycle.turnOf
-export const turnTools: typeof turnLifecycle.turnTools = turnLifecycle.turnTools
-export interface TurnBeginTrace extends turnLifecycle.TurnBeginTrace {}
-export interface TurnTraceOptions extends turnLifecycle.TurnTraceOptions {}
+/**
+ * @deprecated Decode the object with `Schema.fromJsonString(S)` instead
+ * (`Schema.JsonObject` when it stays open). Removed in a later release.
+ */
+export const asJsonRecord: typeof json.asJsonRecord = json.asJsonRecord
+/**
+ * @deprecated Decode each line with
+ * `Schema.decodeUnknownResult(Schema.fromJsonString(S))` where the file is
+ * read. Removed in a later release.
+ */
+export const decodeJsonLines: typeof json.decodeJsonLines = json.decodeJsonLines
+/**
+ * @deprecated Decode with
+ * `Schema.decodeUnknownOption(Schema.fromJsonString(S))` instead
+ * (`Schema.Json` when the shape stays open). Removed in a later release.
+ */
+export const parseJsonOption: typeof json.parseJsonOption = json.parseJsonOption
+/**
+ * @deprecated Decode the shape that is read with
+ * `Schema.decodeUnknownEffect(Schema.fromJsonString(S))` (`Schema.Json` or
+ * `Schema.JsonObject` when it stays open), and log the failure where it is
+ * handled. Removed in a later release.
+ */
+export const parseJsonWarn: typeof json.parseJsonWarn = json.parseJsonWarn
+
+// Deprecated: each name below is exported by the subpath its tag names, and
+// the root keeps it until the next minor release.
+export {
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  bashConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  ConformanceFailure,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  fileSystemConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  inMemoryLog,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  memoryConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  modelCatalogConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  probeCall,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  sessionLogConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  sessionLogRecoveryConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  sessionsConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  stepLoopConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  taskRunnerConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  tasksConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  textReply,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  toolRegistryConformance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  turnConformance,
+} from "./conformance/index.js"
+export type {
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  BashFixture,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  BashSubject,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  ConformanceCheck,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  FileSystemFixture,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  FileSystemSubject,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  SessionLogSubject,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  SessionsInstance,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  SessionsProcess,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  SessionsSubject,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  TaskRunnerFixture,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  TasksDependencies,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  TasksFixture,
+  /** @deprecated Import from "@xandreed/core/conformance". */
+  ToolRegistryLimits,
+} from "./conformance/index.js"
+export {
+  /** @deprecated Import from "@xandreed/core/models". */
+  AuthError,
+  /** @deprecated Import from "@xandreed/core/models". */
+  AuthStore,
+  /** @deprecated Import from "@xandreed/core/models". */
+  authStoreConformance,
+  /** @deprecated Import from "@xandreed/core/models". */
+  Credential,
+  /** @deprecated Import from "@xandreed/core/models". */
+  EngineSettings,
+  /** @deprecated Import from "@xandreed/core/models". */
+  SETTINGS_KEYS,
+  /** @deprecated Import from "@xandreed/core/models". */
+  SettingsError,
+  /** @deprecated Import from "@xandreed/core/models". */
+  SettingsStore,
+  /** @deprecated Import from "@xandreed/core/models". */
+  settingsStoreConformance,
+} from "./models/index.js"
+export type {
+  /** @deprecated Import from "@xandreed/core/models". */
+  AuthStoreConformanceOptions,
+  /** @deprecated Import from "@xandreed/core/models". */
+  AuthStoreRefreshProbe,
+  /** @deprecated Import from "@xandreed/core/models". */
+  ModelRole,
+  /** @deprecated Import from "@xandreed/core/models". */
+  SettingsKey,
+  /** @deprecated Import from "@xandreed/core/models". */
+  SettingsStoreConformanceOptions,
+} from "./models/index.js"
+/** @deprecated Import from "@xandreed/core/internal". */
+export const extractUsage: typeof internal.extractUsage = internal.extractUsage
+/** @deprecated Import from "@xandreed/core/internal". */
+export const foldStreamParts: typeof internal.foldStreamParts = internal.foldStreamParts
+/** @deprecated Import from "@xandreed/core/internal". */
+export const handoffToMessage: typeof internal.handoffToMessage = internal.handoffToMessage
+/** @deprecated Import from "@xandreed/core/internal". */
+export const responseReasoning: typeof internal.responseReasoning = internal.responseReasoning
+/** @deprecated Import from "@xandreed/core/internal". */
+export const responseText: typeof internal.responseText = internal.responseText
+/** @deprecated Import from "@xandreed/core/internal". */
+export const responseToAgentMessages: typeof internal.responseToAgentMessages = internal.responseToAgentMessages
+/** @deprecated Import from "@xandreed/core/internal". */
+export const responseToolCalls: typeof internal.responseToolCalls = internal.responseToolCalls
+/** @deprecated Import from "@xandreed/core/internal". */
+export const responseToolResults: typeof internal.responseToolResults = internal.responseToolResults
+/** @deprecated Import from "@xandreed/core/internal". */
+export const safeKeepFrom: typeof internal.safeKeepFrom = internal.safeKeepFrom
+/** @deprecated Import from "@xandreed/core/internal". */
+export const strictJsonSchema: typeof internal.strictJsonSchema = internal.strictJsonSchema
+/** @deprecated Import from "@xandreed/core/internal". */
+export const toolParametersSchema: typeof internal.toolParametersSchema = internal.toolParametersSchema
+/** @deprecated Import from "@xandreed/core/internal". */
+export const toPromptMessages: typeof internal.toPromptMessages = internal.toPromptMessages
+/** @deprecated Import from "@xandreed/core/internal". */
+export const withToolCallIds: typeof internal.withToolCallIds = internal.withToolCallIds
+/** @deprecated Import from "@xandreed/core/internal". */
+export const withUsageOnAssistant: typeof internal.withUsageOnAssistant = internal.withUsageOnAssistant
+/** @deprecated Import from "@xandreed/core/internal". */
+export interface FoldedTurn extends internal.FoldedTurn {}
+/** @deprecated Import from "@xandreed/core/internal". */
+export interface StreamDelta extends internal.StreamDelta {}
+/** @deprecated Import from "@xandreed/core/internal". */
+export interface ToolResultSummary extends internal.ToolResultSummary {}
+/** @deprecated Import from "@xandreed/core/engine". */
+export const cacheKeyOf: typeof engine.cacheKeyOf = engine.cacheKeyOf
+/** @deprecated Import from "@xandreed/core/engine". */
+export const finishTurn: typeof engine.finishTurn = engine.finishTurn
+/** @deprecated Import from "@xandreed/core/engine". */
+export const guardTurn: typeof engine.guardTurn = engine.guardTurn
+/** @deprecated Import from "@xandreed/core/engine". */
+export const makeTurnEvents: typeof engine.makeTurnEvents = engine.makeTurnEvents
+/** @deprecated Import from "@xandreed/core/engine". */
+export const makeTurnTasks: typeof engine.makeTurnTasks = engine.makeTurnTasks
+/** @deprecated Import from "@xandreed/core/engine". */
+export const openTurnTools: typeof engine.openTurnTools = engine.openTurnTools
+/** @deprecated Import from "@xandreed/core/engine". */
+export const runTurnLoop: typeof engine.runTurnLoop = engine.runTurnLoop
+/** @deprecated Import from "@xandreed/core/engine". */
+export const schemaTokens: typeof engine.schemaTokens = engine.schemaTokens
+/** @deprecated Import from "@xandreed/core/engine". */
+export const settleTurn: typeof engine.settleTurn = engine.settleTurn
+/** @deprecated Import from "@xandreed/core/engine". */
+export const stepRequestOf: typeof engine.stepRequestOf = engine.stepRequestOf
+/** @deprecated Import from "@xandreed/core/engine". */
+export const traceTurn: typeof engine.traceTurn = engine.traceTurn
+/** @deprecated Import from "@xandreed/core/engine". */
+export const traceTurnBegin: typeof engine.traceTurnBegin = engine.traceTurnBegin
+/** @deprecated Import from "@xandreed/core/engine". */
+export const TurnLive: typeof engine.TurnLive = engine.TurnLive
+/** @deprecated Import from "@xandreed/core/engine". */
+export const turnOf: typeof engine.turnOf = engine.turnOf
+/** @deprecated Import from "@xandreed/core/engine". */
+export const turnTools: typeof engine.turnTools = engine.turnTools
+/** @deprecated Import from "@xandreed/core/engine". */
+export type TurnRunServices = engine.TurnRunServices
+/** @deprecated Import from "@xandreed/core/engine". */
+export interface TurnBeginTrace extends engine.TurnBeginTrace {}
+/** @deprecated Import from "@xandreed/core/engine". */
+export interface TurnTraceOptions extends engine.TurnTraceOptions {}

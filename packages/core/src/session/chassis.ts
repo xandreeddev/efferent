@@ -24,11 +24,19 @@ import { replayableContext } from "../loop/traceContent.js"
  * Deprecated: see `makeSession`.
  */
 
+/**
+ * @deprecated The session chassis's types (see `makeSession`). Removed in the
+ * next minor release.
+ */
 export interface SeqEvent<E> {
   readonly seq: number
   readonly event: E
 }
 
+/**
+ * @deprecated The session chassis's types (see `makeSession`). Removed in the
+ * next minor release.
+ */
 export interface Session<E> {
   readonly conversationId: ConversationId
   /** Run one agent turn (serialized with any in-flight turn). */
@@ -58,8 +66,8 @@ export interface Session<E> {
  * `Agent.turn` (`@xandreed/sdk`) over `Sessions` (`@xandreed/plugin-sessions`):
  * turns are journaled, serialized by the session and replayed from its
  * stored events. This chassis keeps its ledger in memory only, and its live
- * tail drops events for a subscriber that falls behind; it will be removed
- * in a later release.
+ * tail drops events for a subscriber that falls behind. Removed in the next
+ * minor release.
  */
 export const makeSession = Effect.fnUntraced(function* <E, RS = never>(args: {
   readonly conversationId: ConversationId

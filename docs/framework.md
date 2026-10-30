@@ -103,6 +103,18 @@ See [evaluation-domain.md](evaluation-domain.md) for interfaces, lifecycle, comm
 
 ## Distribution
 
+`@xandreed/core` publishes five entries. The root holds the entities, ports,
+events, journal kinds, `define*` helpers, errors, model-text frames,
+References and in-memory adapters; `@xandreed/core/conformance` the port
+kits (`check` builds a kit's check); `@xandreed/core/models` the credential
+and settings stores and their kits; `@xandreed/core/internal` the provider
+mapping, stream fold and tool schemas the first-party packages share; and
+`@xandreed/core/engine` the turn engine. The root and `./conformance` are
+semver; `./internal`, `./engine` and `./models` are not (`./engine` moves
+into `@xandreed/sdk` and `./models` into `@xandreed/plugin-models` in the
+next minor release). The root still exports every name it did, those with
+a subpath home marked `@deprecated` with the path to import instead.
+
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
 under `.artifacts/packages`, leaving test code out (`*.test.*`, `testing` modules and
 folders). `bun run verify:packages` refuses a build that is not of `HEAD`, was made
@@ -111,7 +123,10 @@ entries export other names than `api/` records (`bun run api:update` rewrites it
 packs them, installs them in a temporary external project through a temporary local npm
 registry, checks it holds one copy of `@xandreed/core` and of `effect`, and exercises
 SDK sessions, replacement plugins, persistence, forks and custom evals on Bun,
-then imports every Node-capable package on Node; it also runs the `FileSystem`
+then imports every published entry of every Node-capable package on Node
+(and checks a deep import of core is refused); before packing it checks that
+each package's declarations import only itself, its dependencies and peers
+and the runtime's modules. It also runs the `FileSystem`
 and `Bash` kits over the packed `@xandreed/plugin-workspace` adapters, loads a
 `SKILL.md` tree through the packed skills directory plugin, and runs an agent
 turn in which a scripted model reads, edits and runs a command through the
@@ -402,7 +417,8 @@ attempt IDs, selection, host validation, applied fallback and optional reported
 probabilities. The outcome links the decision to a run's tool invocations, model
 attempts and delivered journal sequences. Downstream links describe chronology;
 they do not prove that a selector caused an improvement. Hosts own capture,
-redaction, storage, candidate eligibility and validation.
+redaction, storage, candidate eligibility and validation. `DecisionOutcome` is
+deprecated (no package records it) and is removed in the next minor release.
 
 `runLoop` accepts an optional `prepareModel` hook (a turn exposes it as the
 `model` function of its `TurnPolicy`):
@@ -929,7 +945,8 @@ model calls. `stepLoopConformance` checks each.
 `fileSystemConformance(subject)`,
 `bashConformance(subject)`, `authStoreConformance(store, { refresh?, corrupt? })`,
 `settingsStoreConformance(store, { writable, corrupt? })` and
-`modelCatalogConformance(catalog, { includes? })` (from `@xandreed/core`) are
+`modelCatalogConformance(catalog, { includes? })` (from `@xandreed/core/conformance`;
+the credential and settings store kits from `@xandreed/core/models`) are
 the port contracts as runnable checks: each returns `ConformanceCheck`s
 (`name`, and a `run` effect that fails with a `ConformanceFailure` naming the
 broken check) that any test runner can run. Run them against a new strategy,
@@ -1434,7 +1451,7 @@ the other's tools, skills and sections, and neither layer sees the other's.
 
 The steps of a turn are public, over typed services, so a host composes the
 turn it needs; `Agent.turn` is one such composition. `TurnLive(input)` (from
-`@xandreed/core`, requiring `ConversationMemory` and `ToolRegistry`) builds,
+`@xandreed/core/engine`, requiring `ConversationMemory` and `ToolRegistry`) builds,
 over the admitted turn's `TurnWriter`, in this order, the event bus and the
 tasks, with the writer as the bus's first subscriber, then the memory
 session (opened where the layer is built, over the session's earlier turns)
@@ -1465,7 +1482,8 @@ and `RunContext` (which carries the turn's `session`). It provides:
   `admitted` is the writer's admitted turn, the host's `meta` included),
   `TurnEvents` and `TurnTasks`.
 
-The lifecycle is functions over them: `openTurnTools`, `turnTools` (the
+The lifecycle is functions over them, from `@xandreed/core/engine` too:
+`openTurnTools`, `turnTools` (the
 host's view), `settleTurn` (join the tasks, drain the reactions, until quiet),
 `finishTurn(outcome)` (persist the reply, drain, flush; the reply and the
 flush happen even when the fiber is interrupted meanwhile, only the drain is
@@ -1480,7 +1498,9 @@ it puts the usage so far on the current span), `turnOf(options)`
 `runTurnLoop(policy, options)` for one run of the step loop, and
 `traceTurn(writer, { spanMeta })` (the turn's `agent.turn` span around
 everything after the begin, see traces and metrics). `cacheKeyOf(prefix,
-conversation)` builds the prompt-cache key.
+conversation)` builds the prompt-cache key. `@xandreed/core/engine` has no
+semver: it moves into `@xandreed/sdk` in the next minor release, and the
+root's names for it are deprecated until then.
 
 `Agent.turn` is, in order:
 

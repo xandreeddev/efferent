@@ -15,30 +15,58 @@ import { Option, Schema, Effect } from "effect"
  * `usecases/specCodec.ts` and round-trips deterministically.
  */
 
-/** Kebab-case spec identity — the file's basename, minted once. */
+/**
+ * Kebab-case spec identity — the file's basename, minted once.
+ *
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
+ */
 export const SpecSlug = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/)),
   Schema.brand("SpecSlug"),
 )
+/**
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
+ */
 export type SpecSlug = typeof SpecSlug.Type
 
+/**
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
+ */
 export const SpecStatus = Schema.Literals(["draft", "locked"])
+/**
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
+ */
 export type SpecStatus = typeof SpecStatus.Type
 
 /** A machine-checkable acceptance criterion: a named shell command that must
+ *
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
  *  exit 0. Drivers append one rank-2 command gate per check (`accept:<name>`). */
 export class SpecCheck extends Schema.Class<SpecCheck>("SpecCheck")({
   name: Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-z0-9][a-z0-9-]*$/))),
   command: Schema.NonEmptyString,
 }) {}
 
-/** Forge-loop bounds (mirrors foundry's ForgeLimits, in human units). */
+/**
+ * Forge-loop bounds (mirrors foundry's ForgeLimits, in human units).
+ *
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
+ */
 export class SpecLimits extends Schema.Class<SpecLimits>("SpecLimits")({
   maxAttempts: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 10 }))),
   budgetMinutes: Schema.Number.check(Schema.isGreaterThan(0)),
 }) {}
 
 /** Gate-suite selection overrides; absent fields fall through to the driver's
+ *
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
  *  workspace discovery (precedence: CLI flags > these > discovery). */
 export class SpecGates extends Schema.Class<SpecGates>("SpecGates")({
   config: Schema.OptionFromOptional(Schema.NonEmptyString),
@@ -48,6 +76,10 @@ export class SpecGates extends Schema.Class<SpecGates>("SpecGates")({
   judge: Schema.Boolean.pipe(Schema.withDecodingDefaultType(Effect.sync(() => true)), Schema.withConstructorDefault(Effect.sync(() => true))),
 }) {}
 
+/**
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
+ */
 export class SpecDoc extends Schema.Class<SpecDoc>("SpecDoc")({
   slug: SpecSlug,
   status: SpecStatus,
@@ -67,6 +99,10 @@ export class SpecDoc extends Schema.Class<SpecDoc>("SpecDoc")({
   gates: SpecGates,
 }) {}
 
+/**
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
+ */
 export const DEFAULT_SPEC_LIMITS = new SpecLimits({ maxAttempts: 3, budgetMinutes: 15 })
 
 /**
@@ -74,6 +110,9 @@ export const DEFAULT_SPEC_LIMITS = new SpecLimits({ maxAttempts: 3, budgetMinute
  * deterministic successor of the old Directive section: the agent works TO
  * the acceptance criteria, and deterministic gates (not an LLM judge) decide
  * whether the work is done.
+ *
+ * @deprecated No package uses the spec pipeline's vocabulary any more.
+ * Removed in the next minor release.
  */
 export const renderSpecSection = (doc: SpecDoc): string => {
   const bullets = (items: ReadonlyArray<string>): string =>

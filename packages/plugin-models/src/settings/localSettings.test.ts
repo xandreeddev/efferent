@@ -54,6 +54,15 @@ describe("LocalSettingsStoreLive", () => {
     expect(codes).toEqual(["settings.corrupt", true, "settings.corrupt", true])
   })
 
+  test("a 0.14.0 settings file, which may hold the deprecated sandbox and viMode keys, still decodes", async () => {
+    const written = JSON.parse(readFileSync(join(import.meta.dir, "../../fixtures/config-0.14.0.json"), "utf8")) as Record<string, unknown>
+    const { layer } = setup(written)
+    const settings = await Effect.runPromise(Effect.flatMap(Effect.service(SettingsStore), (store) => store.load).pipe(Effect.provide(layer)))
+    expect([settings.model, settings.fastModel, settings.sandbox, settings.viMode, settings.maxAttempts, settings.reasoningEffort]
+      .map((value: Option.Option<unknown>) => Option.getOrNull(value)))
+      .toEqual(["anthropic:claude-sonnet-5", "anthropic:claude-haiku-5", true, true, 3, "high"])
+  })
+
   test("a key of the wrong type reads as unset, and the others still decode", async () => {
     const { layer } = setup(
       { model: "opencode:kimi-k2.6", maxAttempts: "three", sandbox: true, reasoningEffort: "extreme", budgetMillis: 60000 },

@@ -101,13 +101,23 @@ const foreignFailure = (error: unknown, stage: string): AgentFailure => {
  * `ModelUnavailable` and `ModelUnsupported` from a refusal's wording.
  * Anything else by its `_tag`, name and `status`, its message read only
  * where those say nothing.
+ *
+ * @deprecated Tell a failure apart by `harnessCodeOf` and describe it with
+ * `reasonOf`; a tool's returned failure is the `Failure` struct. Removed in
+ * the next minor release.
  */
 export const toAgentFailure = (error: unknown, stage: string): AgentFailure =>
   AiError.isAiError(error) ? reasonFailure(error.reason, error.message, stage)
     : AiError.isAiErrorReason(error) ? reasonFailure(error, error.message, stage)
     : foreignFailure(error, stage)
 
-/** Preserve a returned tool failure as structured context for hosts/evals. */
+/**
+ * Preserve a returned tool failure as structured context for hosts/evals.
+ *
+ * @deprecated Tell a failure apart by `harnessCodeOf` and describe it with
+ * `reasonOf`; a tool's returned failure is the `Failure` struct. Removed in
+ * the next minor release.
+ */
 export const toolResultFailure = (
   result: unknown,
   toolName: string,

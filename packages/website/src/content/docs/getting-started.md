@@ -85,7 +85,7 @@ point the models plugin at any OpenAI-compatible endpoint.
 
 | Package | Responsibility |
 | --- | --- |
-| `@xandreed/core` | Shared schemas, ports, messages and protocol helpers |
+| `@xandreed/core` | Shared schemas, ports, messages and protocol helpers; the conformance kits in `@xandreed/core/conformance` |
 | `@xandreed/runtime` | Plugin graph validation and scoped activation |
 | `@xandreed/sdk` | `Agent.define` and `Agent.turn`: the agent's plugin graph and its turns, over durable sessions |
 | `@xandreed/plugin-agent-loop` | The agent step loop |

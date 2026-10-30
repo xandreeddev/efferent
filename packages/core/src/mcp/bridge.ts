@@ -40,6 +40,10 @@ const clipResult = (value: unknown): unknown => {
     : `${text.slice(0, OUTPUT_CAP_CHARS)}\n[…clipped ${text.length - OUTPUT_CAP_CHARS} chars…]`
 }
 
+/**
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
+ */
 export const McpDescribe = Tool.make("mcp_describe", {
   description:
     "Reveal ONE external MCP tool's parameters. Pass the server + tool exactly as listed under 'External MCP tools'. Returns {server, tool, description, inputSchema} — the JSON Schema of the arguments mcp_call expects. Call this BEFORE mcp_call the first time you use a tool.",
@@ -57,6 +61,10 @@ export const McpDescribe = Tool.make("mcp_describe", {
   failureMode: "return",
 })
 
+/**
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
+ */
 export const McpCall = Tool.make("mcp_call", {
   description:
     "Invoke an external MCP tool. Pass server + tool (as listed) and args as a JSON object matching the schema mcp_describe returned. A tool-level failure comes back as data (read it and adapt), not a dead turn. Returns the tool's result (clipped past 16k chars).",
@@ -73,9 +81,16 @@ export const McpCall = Tool.make("mcp_call", {
 })
 
 /** The bridge's toolkit is the fixed describe/call pair, but typed loosely
+ *
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
  *  (`Tool.Any`) so the populated toolkit and the empty one share one shape. */
 export type McpBridgedTool = Tool.Any
 
+/**
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
+ */
 export interface McpBridge {
   readonly toolkit: Toolkit.Toolkit<Record<string, McpBridgedTool>>
   /** The two tools' handlers, closed over the client + descriptor snapshot. */
@@ -84,6 +99,10 @@ export interface McpBridge {
   readonly descriptors: ReadonlyArray<McpToolDescriptor>
 }
 
+/**
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
+ */
 export const emptyMcpBridge: McpBridge = {
   toolkit: Toolkit.make(),
   // No tool, so no call: the empty toolkit never looks a handler up.
@@ -95,6 +114,9 @@ export const emptyMcpBridge: McpBridge = {
  * Snapshot the configured servers' tools into the fixed describe/call toolkit
  * (taken once per run — no `tools/list_changed` handling in v1). No servers,
  * or no tools across them, yields the empty bridge (no tool cost at all).
+ *
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
  */
 export const buildMcpBridge: Effect.Effect<McpBridge, never, McpClient> =
   Effect.gen(function* () {

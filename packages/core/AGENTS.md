@@ -12,10 +12,38 @@ mapping (`mapping.entity.functions.ts`), the stream fold, tool schemas, and
 the JSON, glob and id helpers. `src/engine` holds the turn engine:
 `TurnLive` (`turn.adapter.ts`), a turn's run and lifecycle
 (`turn-run.usecase.functions.ts`, `turn-lifecycle.usecase.functions.ts`) and
-its bus (`turn-bus.adapter.ts`). `src/index.ts` exports every name the root
-always has; a root entry may not re-export what `internal/` or `engine/`
-declares (`scripts/api-snapshot.ts`), so the block at its end declares each
-of those names again: the same value, or a type of the same shape.
+its bus (`turn-bus.adapter.ts`).
+
+The package has five entries, each an `index.ts` of explicit named exports:
+
+| Entry | Holds | Semver | Who imports it (boundaries) |
+|---|---|---|---|
+| `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
+| `./conformance` (`src/conformance/index.ts`) | every kit but the models plugin's, `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
+| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold and tool schemas | none | plugin-agent-loop, plugin-models, sdk |
+| `./engine` (`src/engine/index.ts`) | `TurnLive`, a turn's run and lifecycle, its bus | none; it moves into `@xandreed/sdk` in the next minor release | sdk |
+| `./models` (`src/models/index.ts`) | `AuthStore`, `Credential`, `AuthError`, `SettingsStore`, `EngineSettings` and their kits | none; it moves into `@xandreed/plugin-models` in the next minor release | plugin-models |
+
+A package reaches `./internal`, `./engine` or `./models` only when its
+boundaries layer grants `core/<subpath>` (the core entry layer's
+`restricted`). The root keeps each name these entries hold, deprecated
+(`@deprecated Import from "@xandreed/core/<entry>".`), in the block at the
+end of `src/index.ts`, until the next minor release: the conformance and
+models names as re-exports, the `internal/` and `engine/` names declared
+again (the same value, or a type of the same shape), since a root entry may
+not re-export what those folders declare (`scripts/api-snapshot.ts`). A few
+names declared there stay root API, not deprecated, because packages without
+a grant use them: `compileGlob`, `globMatcher` and their types (the
+workspace plugin), `harnessDefectsAsFailures` (the sessions plugin and the
+agent loop), and `assistantModel` and `assistantUsage`.
+
+Deprecated in this release and removed in the next minor one, each with an
+`@deprecated` tag on its declaration: the session chassis (`makeSession`),
+`src/spec`, `src/mcp` and `McpClient`, `AgentFailure` with its functions,
+`Checkpoint`, `DecisionOutcome`, `defineAgent`, `defineConfig` and
+`AgentDefinition`, `HarnessConfig.profile`, `profiles` and `Profile`, and
+`EngineSettings.sandbox` and `viMode` (a settings file that holds them still
+decodes). Behaviour does not change until they go.
 
 The boundaries gate (`foundry.config.ts`) layers core by a file's role; a
 file is in the first layer whose glob matches it:
@@ -25,7 +53,7 @@ file is in the first layer whose glob matches it:
 | `core-model` | `*.entity.ts`; the References in `loop/` | nothing of core |
 | `core-ports` | `ports/**` | model |
 | `core-logic` | `*.entity.functions.ts`, `internal/**`, `turn/model-text.ts` | model, ports |
-| `core` | everything else: adapters, harness, the memory session, prompt sections; and the entry, `index.ts`, which re-exports every layer | model, ports, logic |
+| `core` | everything else: adapters, harness, the memory session, prompt sections; and the entries (`**/index.ts`), which re-export every layer | model, ports, logic |
 | `core-engine` | `engine/**` | model, ports, logic, core |
 | `core-kits` | `*.conformance.ts` | model, ports, logic, core, engine: the step-loop and registry kits run turns over the engine |
 | `core-tests` | `*.test.ts` | every layer, and `fast-check` and `bun:test`, which no other layer imports |
@@ -87,13 +115,15 @@ composable agent (`Agent.define`, `Agent.turn`) in `@xandreed/sdk`. Foundry
 is independent and supplies deterministic verification when a host chooses it.
 
 Port contracts ship as conformance kits (`*.conformance.ts`, each exported
-from `src/index.ts`). Run a port's kit against every adapter of it, and when
-the port changes, on Node too (`verify:packages`). The kits share
-the private helpers in `src/conformance.functions.ts` (`check`, `expect`,
+from `src/conformance/index.ts`, the models plugin's from
+`src/models/index.ts`). Run a port's kit against every adapter of it, and
+when the port changes, on Node too (`verify:packages`). The kits share
+the helpers in `src/conformance.functions.ts` (`check`, `expect`,
 `fail`, `freshId`, `headerOf`, `atTime`), the step-loop and turn kits
 `sameUsage`, the turn, sessions and memory kits the one-pixel image
 `pixelPng`, and the sessions and task kits `kindsOf`, `settles` and
-`eventually`; they are not exported, and new kits use them too. That file is test support for the kits, not an entity's behaviour,
+`eventually`; new kits use them too, and only `check` is exported
+(`./conformance`). That file is test support for the kits, not an entity's behaviour,
 so it is not paired with `conformance.entity.ts`.
 Core has no adapter of `Sessions`, `Tasks` or `ToolRegistry`: their kits
 (`sessionsConformance`, `tasksConformance`, `toolRegistryConformance`) run

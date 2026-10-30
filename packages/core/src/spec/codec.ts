@@ -5,6 +5,9 @@ import { SpecSlug as SpecSlugSchema } from "./SpecDoc.js"
 import { parseFrontmatter } from "./frontmatter.js"
 
 /** A SpecDoc file that doesn't decode — names the exact violation. `cause`
+ *
+ * @deprecated No package uses the spec pipeline's codec any more. Removed in
+ * the next minor release.
  *  is the schema's own failure, when the fields were refused by `SpecDoc`. */
 export class SpecDocParseError extends Data.TaggedError("SpecDocParseError")<{
   readonly message: string
@@ -119,6 +122,9 @@ const parseCheckBullet = (bullet: string): Effect.Effect<{ name: string; command
  * Decode a SpecDoc file's text. The slug comes from the FILE NAME (the file
  * owns identity — it is not repeated in the frontmatter). Round-trip law:
  * `decodeSpecDocText(slug, encodeSpecDocText(doc)) ≡ doc`.
+ *
+ * @deprecated No package uses the spec pipeline's codec any more. Removed in
+ * the next minor release.
  */
 export const decodeSpecDocText = Effect.fnUntraced(function* (
   slug: string,
@@ -173,11 +179,17 @@ export const decodeSpecDocText = Effect.fnUntraced(function* (
 
 /** Prose bullets are single-line BY GRAMMAR — collapse any whitespace runs
  *  (incl. newlines) a model slipped in. Safe for prose; NEVER applied to
+ *
+ * @deprecated No package uses the spec pipeline's codec any more. Removed in
+ * the next minor release.
  *  check commands (semantics — the propose handler rejects those instead). */
 export const normalizeBullet = (text: string): string => text.replace(/\s+/g, " ").trim()
 
 /** Deterministic inverse of {@link decodeSpecDocText}: stable key order,
  *  canonical section order, absent options omitted. Prose bullets are
+ *
+ * @deprecated No package uses the spec pipeline's codec any more. Removed in
+ * the next minor release.
  *  normalized to keep the encode inside its own grammar (round-trip law). */
 export const encodeSpecDocText = (doc: SpecDoc): string => {
   const frontmatter = [
@@ -213,7 +225,12 @@ ${doc.goal}${section("Acceptance", doc.acceptance.map(normalizeBullet))}${sectio
 `
 }
 
-/** Deterministic kebab slug from a goal/idea (mint once; the file owns it). */
+/**
+ * Deterministic kebab slug from a goal/idea (mint once; the file owns it).
+ *
+ * @deprecated No package uses the spec pipeline's codec any more. Removed in
+ * the next minor release.
+ */
 export const specSlug = (goal: string): SpecSlug => {
   const kebab = goal
     .toLowerCase()
@@ -228,6 +245,12 @@ export const specSlug = (goal: string): SpecSlug => {
 const firstFree = (base: SpecSlug, taken: (slug: string) => boolean, n: number): string =>
   taken(`${base}-${n}`) ? firstFree(base, taken, n + 1) : `${base}-${n}`
 
-/** First-wins collision suffixing over an existing-name predicate: `<base>`, then `<base>-2`, `<base>-3`… */
+/**
+ * First-wins collision suffixing over an existing-name predicate: `<base>`,
+ * then `<base>-2`, `<base>-3`…
+ *
+ * @deprecated No package uses the spec pipeline's codec any more. Removed in
+ * the next minor release.
+ */
 export const uniqueSlug = (base: SpecSlug, taken: (slug: string) => boolean): SpecSlug =>
   taken(base) ? SpecSlugSchema.make(firstFree(base, taken, 2)) : base

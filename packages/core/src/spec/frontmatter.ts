@@ -1,4 +1,9 @@
 import { Option } from "effect"
+/**
+ * @deprecated No package uses the spec pipeline's frontmatter parser any more
+ * (skills have their own, `readSkillFiles`). Removed in the next minor
+ * release.
+ */
 export interface Frontmatter {
   /** Flat `key: value` pairs from the fence. No arrays / nested YAML. */
   readonly fields: Record<string, string>
@@ -13,6 +18,10 @@ export interface Frontmatter {
  * stripped; comment (`#`) and blank lines are skipped. No arrays, no nested
  * YAML, no multi-line values. Returns `None` when the fence is missing or
  * unterminated. Callers decide which `fields` are required.
+ *
+ * @deprecated No package uses the spec pipeline's frontmatter parser any more
+ * (skills have their own, `readSkillFiles`). Removed in the next minor
+ * release.
  */
 export const parseFrontmatter = (content: string): Option.Option<Frontmatter> => {
   if (!content.startsWith("---")) return Option.none()

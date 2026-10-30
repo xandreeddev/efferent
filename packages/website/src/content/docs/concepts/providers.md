@@ -132,7 +132,7 @@ Secrets cross the port `Redacted`.
 
 ```ts
 import { Context, Effect, Option } from "effect"
-import { AuthError } from "@xandreed/core"
+import { AuthError } from "@xandreed/core/models"
 import type { ProviderId } from "@xandreed/core"
 import { HostCredentials } from "@xandreed/plugin-models"
 import type { CredentialInput } from "@xandreed/plugin-models"

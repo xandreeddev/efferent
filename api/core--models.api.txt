@@ -1,0 +1,15 @@
+class AuthError
+class AuthStore
+class EngineSettings
+class SettingsError
+class SettingsStore
+const Credential
+const SETTINGS_KEYS
+const authStoreConformance
+const settingsStoreConformance
+interface AuthStoreConformanceOptions
+interface AuthStoreRefreshProbe
+interface SettingsStoreConformanceOptions
+type Credential
+type ModelRole
+type SettingsKey

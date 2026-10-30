@@ -387,10 +387,14 @@ const config: typeof GateSuiteConfig.Encoded = {
       // the model-text frames), both; `core` (adapters, harness, the memory
       // session, prompt sections), those three; the turn engine (`engine/`),
       // those four; the kits, the engine too, since two of them run turns over
-      // it. The entry, `index.ts`, is `core` too (what `@xandreed/core`
-      // reaches), and re-exports every layer.
+      // it. The entries (`index.ts`, `conformance/`, `internal/`, `engine/`
+      // and `models/index.ts`) are `core` too, what `@xandreed/core` reaches,
+      // and re-export every layer. `./conformance` is open to every package;
+      // `./internal` only to the agent loop, the models plugin and the sdk,
+      // `./engine` to the sdk and `./models` to the models plugin, each
+      // granted as `core/<subpath>` in its importer's `canImport`.
       { name: "core-tests", path: "packages/core/src/**/*.test.ts", canImport: ["core-model", "core-ports", "core-logic", "core", "core-engine", "core-kits"], externals: ["effect", "effect/ai", "fast-check", "bun:test"] },
-      { name: "core", path: "packages/core/src/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-engine", "core-kits"], externals: ["effect", "effect/ai"] },
+      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-engine", "core-kits"], externals: ["effect", "effect/ai"], restricted: ["internal", "engine", "models"] },
       { name: "core-model", path: "packages/core/src/**/*.entity.ts", canImport: [], externals: ["effect", "effect/ai"] },
       { name: "core-model", path: "packages/core/src/loop/*.ts", canImport: [], externals: ["effect", "effect/ai"] },
       { name: "core-ports", path: "packages/core/src/ports/**", canImport: ["core-model"], externals: ["effect", "effect/ai"] },
@@ -415,7 +419,8 @@ const config: typeof GateSuiteConfig.Encoded = {
             "name": "plugin-agent-loop",
             "path": "packages/plugin-agent-loop/src/**",
             "canImport": [
-                  "core"
+                  "core",
+                  "core/internal"
             ],
             "externals": [
                   "effect",
@@ -483,7 +488,9 @@ const config: typeof GateSuiteConfig.Encoded = {
             "path": "packages/plugin-models/src/**/*.test.ts",
             "canImport": [
                   "plugin-models",
-                  "core"
+                  "core",
+                  "core/internal",
+                  "core/models"
             ],
             "externals": [
                   "effect",
@@ -501,7 +508,9 @@ const config: typeof GateSuiteConfig.Encoded = {
             "name": "plugin-models",
             "path": "packages/plugin-models/src/**",
             "canImport": [
-                  "core"
+                  "core",
+                  "core/internal",
+                  "core/models"
             ],
             "externals": [
                   "effect",
@@ -686,6 +695,8 @@ const config: typeof GateSuiteConfig.Encoded = {
             "canImport": [
                   "sdk",
                   "core",
+                  "core/internal",
+                  "core/engine",
                   "runtime",
                   "plugin-session-sqlite",
                   "plugin-agent-loop",
@@ -712,6 +723,8 @@ const config: typeof GateSuiteConfig.Encoded = {
             "path": "packages/sdk/src/**",
             "canImport": [
                   "core",
+                  "core/internal",
+                  "core/engine",
                   "runtime"
             ],
             "externals": [

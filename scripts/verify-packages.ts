@@ -7,6 +7,8 @@ import { join, relative } from "node:path"
 import { Result, Schema } from "effect"
 import { apiBuildOf, apiDifferences, apiSnapshot, committedApi } from "./api-snapshot.js"
 import { isTestCode, verifyRefusals } from "./build-check.js"
+import { declarationImportProblems } from "./declaration-imports.js"
+import type { DeclaringManifest } from "./declaration-imports.js"
 import { installedCopies, PEERS } from "./distribution-manifest.js"
 import { importsFor, importsOf, regionsOf } from "./guide-snippets.js"
 import { BuildStamp } from "./publish-plan.js"
@@ -50,6 +52,17 @@ if (apiProblems.length > 0) {
   process.exit(1)
 }
 console.log(`The public API of the build matches api/ (${api.files.size} entries)`)
+/** A built package's declarations name only itself, what its manifest declares and the runtime's modules (scripts/declaration-imports.ts). */
+const declarationProblems = (await Promise.all(stamp.success.packages.map(async ({ dir }) => {
+  const manifest = JSON.parse(await readFile(join(packages, dir, "package.json"), "utf8")) as DeclaringManifest
+  const files = Array.from(new Bun.Glob("dist/**/*.d.ts").scanSync({ cwd: join(packages, dir) })).sort()
+  return declarationImportProblems(manifest, await Promise.all(files.map(async (file) => ({ path: `${dir}/${file}`, text: await readFile(join(packages, dir, file), "utf8") }))))
+}))).flat()
+if (declarationProblems.length > 0) {
+  console.error(`The built declarations import packages their manifests do not declare:\n${declarationProblems.map((problem) => `  - ${problem}`).join("\n")}\nName the type through the package's own module (an import in the source file that emits it).`)
+  process.exit(1)
+}
+console.log(`The built declarations of ${stamp.success.packages.length} packages import only what their manifests declare`)
 const tarballs = join(root, ".artifacts/tarballs")
 await mkdir(tarballs, { recursive: true })
 const manifests = Array.from(new Bun.Glob("*/package.json").scanSync({ cwd: packages }))
@@ -177,7 +190,8 @@ import { connect, createServer } from "node:net"
 import type { Socket } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { awaitIdle, Bash, bashConformance, Capabilities, FileSystem, fileSystemConformance, makeMemoryFileSystem, RunId, Sessions, SessionEnvironment, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskActivity, TaskExecutor, Tasks, TurnActivity, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { awaitIdle, Bash, Capabilities, FileSystem, makeMemoryFileSystem, RunId, Sessions, SessionEnvironment, SessionLogMemoryLive, TaskActivity, TaskExecutor, Tasks, TurnActivity, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { bashConformance, fileSystemConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import type { TurnWriter } from "@xandreed/core"
 import { modelsPlugin } from "@xandreed/plugin-models"
 import { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
@@ -387,14 +401,20 @@ console.log(\`\${plugins.length} plugins carry their package's version\`)
 const pluginVersions = Bun.spawn(["bun", "plugin-versions.ts"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await pluginVersions.exited !== 0) process.exit(1)
 if (Bun.which("node") !== null) {
-  // Every package that declares Node must load there: a Bun-only import fails here, not in a consumer's deploy.
-  const nodeReady = artifacts.filter(({ manifest }) => manifest.engines?.node !== undefined).map(({ manifest }) => String(manifest.name))
+  // Every entry of a package that declares Node must load there: a Bun-only import fails here, not in a consumer's deploy.
+  // A file no entry names stays out of reach: a deep import of core is refused.
+  const nodeReady = artifacts.filter(({ manifest }) => manifest.engines?.node !== undefined).flatMap(({ manifest }) =>
+    Object.keys(manifest.exports ?? { ".": "" }).filter((key) => !key.includes("*")).map((key) => key === "." ? String(manifest.name) : `${manifest.name}/${key.slice(2)}`))
   await writeFile(join(consumer, "node-imports.mjs"), nodeReady.map((name) => `await import(${JSON.stringify(name)})`).join("\n") + `
+const deepImport = await import("@xandreed/core/turn/turn-event.entity.js").then(() => "loaded", (error) => error.code)
+if (deepImport !== "ERR_PACKAGE_PATH_NOT_EXPORTED") { console.error("A deep import of @xandreed/core was not refused: " + deepImport); process.exit(1) }
+console.log("${nodeReady.length} published entries load on Node, and core refuses a deep import")
 const { encodeSse, FeedReady, renderSurfacePlugin } = await import("@xandreed/plugin-render")
 if (renderSurfacePlugin.id !== "@xandreed/plugin-render/surface" || encodeSse(FeedReady.make({})) !== "event: ready\\ndata: {}\\n\\n") process.exit(1)
 const { Context, Effect, Layer, Option, Stream } = await import("effect")
 const { LanguageModel } = await import("effect/ai")
-const { fileSystemConformance, makeMemoryFileSystem, Sessions, SessionLog, SessionLogMemoryLive, sessionLogRecoveryConformance, StepLoop, stepLoopConformance, TurnAdmissionOpen, turnConformance } = await import("@xandreed/core")
+const { makeMemoryFileSystem, Sessions, SessionLog, SessionLogMemoryLive, StepLoop, TurnAdmissionOpen } = await import("@xandreed/core")
+const { fileSystemConformance, sessionLogRecoveryConformance, stepLoopConformance, turnConformance } = await import("@xandreed/core/conformance")
 const { runSteps, STEP_LOOP, stepLoopPlugin } = await import("@xandreed/plugin-agent-loop")
 const { memoryWindowPlugin } = await import("@xandreed/plugin-memory-window")
 const { SessionsPluginLive } = await import("@xandreed/plugin-sessions")
@@ -424,7 +444,8 @@ const turn = await runKit("turn", turnConformance(agent, turnServices))
 const { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } = await import("node:fs/promises")
 const { tmpdir } = await import("node:os")
 const { join } = await import("node:path")
-const { Bash, bashConformance, Capabilities, FileSystem, RunId, SessionEnvironment, UserMessage } = await import("@xandreed/core")
+const { Bash, Capabilities, FileSystem, RunId, SessionEnvironment, UserMessage } = await import("@xandreed/core")
+const { bashConformance } = await import("@xandreed/core/conformance")
 const { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } = await import("@xandreed/plugin-workspace")
 // The busy signal on Node: an open turn and a running task count, and awaitIdle sees both settle.
 const { awaitIdle, processActivity, TaskRunner } = await import("@xandreed/core")
@@ -448,7 +469,9 @@ const busy = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
 if (busy !== JSON.stringify([1, 0, 1, true, false])) { console.error("busy signal on Node: " + busy); process.exit(1) }
 const linkTo = (target, path) => Effect.tryPromise(() => symlink(target, path))
 // The model store kits over every adapter plugin-models ships: in memory, and on files in temporary directories.
-const { authStoreConformance, AuthStore, ModelCatalog, modelCatalogConformance, SettingsStore, settingsStoreConformance } = await import("@xandreed/core")
+const { ModelCatalog } = await import("@xandreed/core")
+const { modelCatalogConformance } = await import("@xandreed/core/conformance")
+const { authStoreConformance, AuthStore, SettingsStore, settingsStoreConformance } = await import("@xandreed/core/models")
 const { ConfiguredModelCatalogLive, LocalAuthStoreLive, LocalSettingsStoreLive, MemoryAuthStoreLive, MemorySettingsStoreLive, ModelsTransport } = await import("@xandreed/plugin-models")
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = await import("node:fs")
 const { dirname } = await import("node:path")
@@ -490,7 +513,8 @@ rmSync(kitCwd, { recursive: true, force: true })
 // The Sessions kit over the packed SessionsLive and in-memory log, each check under a TestClock of its own that the kit moves;
 // the TaskRunner, Tasks and ToolRegistry kits over InProcessTaskRunnerLive, TasksLive and the tool discovery plugin.
 const { TestClock } = await import("effect/testing")
-const { sessionsConformance, taskRunnerConformance, tasksConformance, toolRegistryConformance, TaskActivity, TaskExecutor, Tasks, ToolRegistry, TurnActivity, TurnAdmission } = await import("@xandreed/core")
+const { TaskActivity, TaskExecutor, Tasks, ToolRegistry, TurnActivity, TurnAdmission } = await import("@xandreed/core")
+const { sessionsConformance, taskRunnerConformance, tasksConformance, toolRegistryConformance } = await import("@xandreed/core/conformance")
 const { SessionsLive, sessionsDefaults } = await import("@xandreed/plugin-sessions")
 const { TasksLive, tasksDefaults } = await import("@xandreed/plugin-tasks")
 const { ToolDiscoveryLive, toolDiscoveryDefaults } = await import("@xandreed/plugin-tool-discovery")

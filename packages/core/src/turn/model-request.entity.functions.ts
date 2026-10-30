@@ -14,6 +14,8 @@ import type { SessionLogEvent } from "../session/session-log.entity.js"
 import { entriesOfEvents, readStoredKeys } from "../session/session-event.entity.functions.js"
 import { ModelRequestDescriptor, ModelRequestHeader, ProviderToolId } from "./model-request.entity.js"
 import type { ModelRequestTool } from "./model-request.entity.js"
+// The declarations this module emits name the user message through this import, not another package.
+import type { UserMessage } from "./user-message.entity.js"
 
 const descriptorKey = "efferent/model-request-descriptor" as const
 const resolverKey = "efferent/model-request-resolver" as const

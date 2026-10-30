@@ -21,6 +21,7 @@ export const DecisionRecord = Schema.Struct({
   probabilities: Schema.OptionFromNullOr(Schema.Record(Schema.String, Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 1 }))))),
 })
 export type DecisionRecord = typeof DecisionRecord.Type
+/** @deprecated No package records it. Removed in the next minor release. */
 export const DecisionOutcome = Schema.Struct({
   version: Schema.Literal(1),
   decisionId: DecisionId,
@@ -30,4 +31,5 @@ export const DecisionOutcome = Schema.Struct({
   modelAttempts: Schema.Array(Schema.String),
   deliveredSequences: Schema.Array(Schema.Int),
 })
+/** @deprecated No package records it. Removed in the next minor release. */
 export type DecisionOutcome = typeof DecisionOutcome.Type

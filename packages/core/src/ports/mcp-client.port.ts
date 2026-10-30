@@ -10,11 +10,19 @@ import type { Effect } from "effect"
  * never finds a server on its own.
  */
 
+/**
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
+ */
 export class McpError extends Schema.TaggedError<McpError>()("McpError", {
   server: Schema.String,
   message: Schema.String,
 }) {}
 
+/**
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
+ */
 export class McpToolDescriptor extends Schema.Class<McpToolDescriptor>("McpToolDescriptor")({
   server: Schema.String,
   name: Schema.String,
@@ -24,6 +32,10 @@ export class McpToolDescriptor extends Schema.Class<McpToolDescriptor>("McpToolD
   inputSchema: Schema.JsonObject,
 }) {}
 
+/**
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
+ */
 export class McpCallOutcome extends Schema.Class<McpCallOutcome>("McpCallOutcome")({
   /** MCP's in-band failure flag — bridged to failure-as-data, never thrown. */
   isError: Schema.Boolean,
@@ -31,6 +43,10 @@ export class McpCallOutcome extends Schema.Class<McpCallOutcome>("McpCallOutcome
   result: Schema.Unknown,
 }) {}
 
+/**
+ * @deprecated No package implements `McpClient` or serves the bridge's tools.
+ * Removed in the next minor release.
+ */
 export class McpClient extends Context.Service<McpClient, {
     /** Aggregate across every configured server — best-effort: an
      *  unreachable server contributes nothing, never a failure. */

@@ -7,7 +7,11 @@
   "description": "The agent kernel of the new line: entities, ports, the provider-agnostic agent loop, and the session chassis — pure Effect, no IO, no provider SDKs.",
   "main": "./src/index.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": "./src/index.ts",
+    "./conformance": "./src/conformance/index.ts",
+    "./internal": "./src/internal/index.ts",
+    "./engine": "./src/engine/index.ts",
+    "./models": "./src/models/index.ts"
   },
   "dependencies": {
     "effect": "4.0.7"
