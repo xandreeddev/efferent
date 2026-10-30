@@ -1,5 +1,6 @@
 import { Schema } from "effect"
 import { DecisionRecord } from "../decision-record.entity.js"
+import { InvocationId, RunId } from "../domain/run.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { StepStatus, TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
@@ -26,7 +27,7 @@ export const CompletionVerdict = Schema.Struct({
 export type CompletionVerdict = typeof CompletionVerdict.Type
 
 export const TurnStartedEvent = Schema.TaggedStruct("turn.started", {
-  runId: Schema.String,
+  runId: RunId,
   turn: Schema.Int,
   userMessage: UserMessage,
   /** The host's metadata the turn was begun with (`{}` when none was given). */
@@ -48,7 +49,7 @@ export const StepStartedEvent = Schema.TaggedStruct("step.started", {
 
 export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
   step: Schema.Int,
-  invocationId: Schema.String,
+  invocationId: InvocationId,
   tool: Schema.String,
   input: Schema.Unknown,
   labels: Labels,
@@ -63,7 +64,7 @@ export type ToolRefusalReason = typeof ToolRefusalReason.Type
 
 export const ToolRefusedEvent = Schema.TaggedStruct("tool.refused", {
   step: Schema.Int,
-  invocationId: Schema.String,
+  invocationId: InvocationId,
   tool: Schema.String,
   /** The decoded parameters. Not journaled. */
   input: Schema.Unknown,
@@ -76,7 +77,7 @@ export const ToolRefusedEvent = Schema.TaggedStruct("tool.refused", {
 
 export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
   step: Schema.Int,
-  invocationId: Schema.String,
+  invocationId: InvocationId,
   tool: Schema.String,
   input: Schema.Unknown,
   ok: Schema.Boolean,
@@ -100,7 +101,7 @@ export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
  */
 export const ToolProgressEvent = Schema.TaggedStruct("tool.progress", {
   step: Schema.Int,
-  invocationId: Schema.String,
+  invocationId: InvocationId,
   tool: Schema.String,
   channel: Schema.Literals(["stdout", "stderr", "status"]),
   text: Schema.String,
@@ -193,7 +194,7 @@ export const StreamFallbackEvent = Schema.TaggedStruct("stream.fallback", {
 })
 
 export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {
-  runId: Schema.String,
+  runId: RunId,
   turn: Schema.Int,
   outcome: TurnOutcomeKind,
   reply: Schema.OptionFromNullOr(Schema.String),

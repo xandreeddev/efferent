@@ -3,7 +3,7 @@ import { LanguageModel, Prompt, Tool } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { join } from "node:path"
-import { canonicalJson, ConversationId, CurrentPromptCacheKey, defineCapability, defineSkill, defineTool, entriesOfEvents, Failure, LogEntry, replayModelRequest, SessionLogMemoryLive, Sessions, toolParametersSchema, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { canonicalJson, ConversationId, CurrentPromptCacheKey, defineCapability, defineSkill, defineTool, entriesOfEvents, Failure, LogEntry, replayModelRequest, RunId, SessionLogMemoryLive, Sessions, toolParametersSchema, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { Turn, TurnOutcome } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -126,7 +126,7 @@ const runStreamGolden = Effect.scoped(Effect.gen(function* () {
   yield* sessions.create({ owner: address.owner, id: conversation })
   const requests = yield* Ref.make<ReadonlyArray<unknown>>([])
   const input = (runId: string, text: string, model: LanguageModel.LanguageModel) => ({
-    turn: { session: address, userMessage: new UserMessage({ text }), runId },
+    turn: { session: address, userMessage: new UserMessage({ text }), runId: RunId.make(runId) },
     services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
   })
 
@@ -139,7 +139,7 @@ const runStreamGolden = Effect.scoped(Effect.gen(function* () {
   const secondOutcome = yield* second.turn(input("run-2", "anything else?", secondModel), runToStop)
 
   const stored = yield* sessions.read(address)
-  const replayed = yield* replayModelRequest(stored, "run-1", 1)
+  const replayed = yield* replayModelRequest(stored, RunId.make("run-1"), 1)
   return {
     outcomes: [firstOutcome, secondOutcome].map((outcome) => ({ outcome: outcome.outcome, reply: Option.getOrNull(outcome.reply) })),
     requests: yield* Ref.get(requests),

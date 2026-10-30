@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { Effect, Option } from "effect"
-import { OpenTurn } from "@xandreed/core"
+import { InboxQueuedData, OpenTurn } from "@xandreed/core"
 
 /*
  * The sessions plugin's own state, kept in the session head's `state` under
@@ -11,7 +11,8 @@ import { OpenTurn } from "@xandreed/core"
 
 /** One inbox item that is not done yet: waiting, or taken by an open turn. */
 export const InboxSlot = Schema.Struct({
-  id: Schema.String,
+  /** The item's id, as `inbox.queued` stored it. */
+  id: InboxQueuedData.fields.id,
   /** Turns that took it and did not finish it. */
   attempts: Schema.Int,
   claimedBy: Schema.OptionFromNullOr(Schema.Int),

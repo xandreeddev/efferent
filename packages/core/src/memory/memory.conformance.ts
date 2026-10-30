@@ -6,6 +6,7 @@ import { failureCode, pixelPng } from "../conformance.functions.js"
 import { mediaFromBase64, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import type { Media } from "../domain/media.entity.js"
 import { ConversationId, ToolCallId } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { ConversationMemory, LogHandle, MemorySession, ToolViews } from "../ports/memory.port.js"
@@ -96,7 +97,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
     name,
     run: Effect.scoped(Effect.gen(function* () {
       const stored = yield* inMemoryLog
-      yield* body((log, runId) => memory.open({ conversation, runId, log }).pipe(Effect.provide(services)), stored.log)
+      yield* body((log, runId) => memory.open({ conversation, runId: RunId.make(runId), log }).pipe(Effect.provide(services)), stored.log)
     })).pipe(Effect.catch((error) => error._tag === "ConformanceFailure" ? Effect.fail(error) : fail(id)(`${failureCode(error)}: ${error.message}`))),
   })
   return [

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Duration, Effect, Exit, Layer, Metric, Option, Tracer } from "effect"
-import { costOf, RunContext, TurnEvents, makeTurnEvents, sumUsage, tokenUsage, usageBreakdown } from "@xandreed/core"
+import { costOf, InvocationId, makeTurnEvents, RunContext, sumUsage, tokenUsage, TurnEvents, usageBreakdown } from "@xandreed/core"
 import type { TurnEvent } from "@xandreed/core"
 import { capturingTracer, MODEL, PRICE, RESPONSES, scriptedTurn, valueIn } from "./scripted-turn.testing.js"
 import { TelemetryMetrics } from "./telemetry-metrics.js"
@@ -110,7 +110,7 @@ describe("TurnTelemetryLive in a host's own composition", () => {
     { _tag: "step.started", step: 1, planned: false, activeTools: [] },
     { _tag: "assistant.message", step: 0, text: "", reasoning: "", model: Option.none(), toolCalls: [], usage: tokenUsage({ inputTokens: 0, outputTokens: 0 }) },
     { _tag: "assistant.message", step: 1, text: "hi", reasoning: "", model: Option.none(), toolCalls: [], usage },
-    { _tag: "tool.completed", step: 1, invocationId: "run-7:call:1", tool: "probe", input: {}, ok: false, result: "no", encoded: "no", durationMs: 12, labels: {}, stage: Option.none() },
+    { _tag: "tool.completed", step: 1, invocationId: InvocationId.make("run-7:call:1"), tool: "probe", input: {}, ok: false, result: "no", encoded: "no", durationMs: 12, labels: {}, stage: Option.none() },
     { _tag: "stream.fallback", step: 1, message: "cut off" },
     { _tag: "step.ended", step: 1, status: "failed", results: [] },
   ]

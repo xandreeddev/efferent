@@ -4,6 +4,7 @@ import type { Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, failureCode, freshId } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { defineCapability, defineSkill, defineTool } from "../harness/capability.entity.functions.js"
 import type { CapabilityCatalog } from "../harness/capability.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
@@ -36,7 +37,7 @@ export interface ToolRegistryLimits {
 }
 
 /** The run the kit's turns are, as its invocation ids name it. */
-const RUN = "conformance-run"
+const RUN = RunId.make("conformance-run")
 
 /** A service of whoever opens the tools, which the handlers must see (and not the caller's). */
 const Opener = Context.Reference<string>("efferent/conformance/ToolRegistryOpener", { defaultValue: () => "none" })

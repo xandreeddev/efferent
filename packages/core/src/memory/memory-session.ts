@@ -1,6 +1,7 @@
 import { Clock, Effect, Option, Ref, Semaphore } from "effect"
 import { toolResultMedia } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
+import type { RunId } from "../domain/run.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
 import type { LogHandle, MaintainSignal, MemoryReader, MemorySession, ToolViews } from "../ports/memory.port.js"
@@ -42,7 +43,7 @@ export interface MemoryPolicy {
     readonly entries: ReadonlyArray<LogEntry>
     readonly signal: MaintainSignal
     readonly turn: number
-    readonly runId: string
+    readonly runId: RunId
     /** The render the strategy would send now (its own compactions applied). */
     readonly render: (entries: ReadonlyArray<LogEntry>) => ReadonlyArray<AgentMessage>
   }) => Effect.Effect<MaintainDecision, HarnessError>
@@ -76,7 +77,7 @@ const latestUserMessage = (entries: ReadonlyArray<LogEntry>): Option.Option<User
 export const openLogSession = Effect.fnUntraced(function* (
   log: LogHandle,
   policy: MemoryPolicy,
-  scope: { readonly runId: string },
+  scope: { readonly runId: RunId },
 ): Effect.fn.Return<MemorySession, TurnError> {
   const runId = scope.runId
   const digester = yield* Effect.serviceOption(ResultDigester)

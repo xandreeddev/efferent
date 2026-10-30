@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
-import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, SessionHeader, SessionLogEvent, StoredData } from "@xandreed/core"
+import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, RunId, SessionHeader, SessionLogEvent, StoredData } from "@xandreed/core"
 import type { StoredKind } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 
@@ -86,7 +86,7 @@ fixtures.forEach(({ fixture }) => describe(`a ${fixture.version} session journal
     const parent = fixture.sessions[0]?.events ?? []
     const headers = parent.filter((event) => event.kind === "request.prepared")
     const rebuilt = await Effect.runPromise(Effect.forEach(headers, (header) =>
-      replayModelRequest(parent, String(header.data.runId), Number(header.data.step)).pipe(Effect.map((request) => request.prompt.content.length))))
+      replayModelRequest(parent, RunId.make(String(header.data.runId)), Number(header.data.step)).pipe(Effect.map((request) => request.prompt.content.length))))
     expect(headers.length).toBeGreaterThan(0)
     expect(rebuilt.every((messages) => messages > 1)).toBe(true)
   })

@@ -1,4 +1,5 @@
 import { Effect, Option, Schema } from "effect"
+import type { InvocationId } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentToolInvocation } from "../loop/stepContext.js"
 import { RunContext } from "../ports/run-context.port.js"
@@ -23,7 +24,7 @@ export const onEvent = <Name extends TurnEventName, R>(
  */
 export interface ToolCall<Input, Result> {
   readonly step: number
-  readonly invocationId: string
+  readonly invocationId: InvocationId
   readonly input: Input
   readonly result: Result
 }

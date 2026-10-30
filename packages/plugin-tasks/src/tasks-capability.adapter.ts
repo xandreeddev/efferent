@@ -1,6 +1,6 @@
 import { Tool } from "effect/ai"
 import { Effect, Option, Schema } from "effect"
-import { defineCapability, defineSkill, defineTool, Failure, RunContext, TaskMode, Tasks, TaskStatus } from "@xandreed/core"
+import { ConversationId, defineCapability, defineSkill, defineTool, Failure, RunContext, TaskMode, Tasks, TaskStatus } from "@xandreed/core"
 
 const StartTask = Tool.make("start_task", {
   description: "Start a background task: another run of you works on the instructions while this conversation goes on, and its result comes back here when it finishes, for you to answer then. Use it for long work the user need not wait for, and say that you started it. Put everything the task needs in instructions: with mode spawn it sees only them; with mode fork it also sees this conversation up to the user's latest message, but not that message or anything you did since. A background task cannot start another.",
@@ -19,6 +19,9 @@ const TaskStatusTool = Tool.make("task_status", {
 })
 
 const unavailable = (error: { readonly _tag: string }) => ({ error: "TasksUnavailable", message: `Background tasks are unavailable right now (${error._tag})` })
+
+/** A task id as the model gives it: a task's id is its child session's, so a string that is not one names no task. */
+const taskIdOf = Schema.decodeUnknownOption(ConversationId)
 
 /** The model's way to start background tasks and check on them. */
 export const tasksCapability = defineCapability({
@@ -41,8 +44,11 @@ export const tasksCapability = defineCapability({
       handler: ({ taskId }) => Effect.gen(function* () {
         const run = yield* RunContext
         const tasks = yield* Tasks
-        const task = yield* tasks.status(run.session, taskId).pipe(Effect.mapError((error) =>
-          error._tag === "TaskMissing" ? { error: "UnknownTask", message: `No task ${taskId} was started in this conversation` } : unavailable(error)))
+        const unknown = { error: "UnknownTask", message: `No task ${taskId} was started in this conversation` }
+        const task = yield* Option.match(taskIdOf(taskId), {
+          onNone: () => Effect.fail(unknown),
+          onSome: (id) => tasks.status(run.session, id).pipe(Effect.mapError((error) => error._tag === "TaskMissing" ? unknown : unavailable(error))),
+        })
         return { taskId: task.taskId, status: task.status, reply: Option.getOrNull(task.reply) }
       }),
       annotations: { readOnly: true },

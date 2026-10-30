@@ -1,6 +1,7 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
+import type { RunId } from "../domain/run.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { AdmittedTurn, SessionAddress, TurnError } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
@@ -12,7 +13,7 @@ export class RunContext extends Context.Service<RunContext, {
   readonly conversation: ConversationId
   /** The session the turn runs in, as its owner names it. */
   readonly session: SessionAddress
-  readonly runId: string
+  readonly runId: RunId
   readonly userMessage: UserMessage
   /** The admitted turn as the session began it: its number, key, origin, command, claimed inbox items and the host's `meta`. */
   readonly admitted: AdmittedTurn

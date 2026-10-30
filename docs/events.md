@@ -585,7 +585,7 @@ its retry is answered the same way.
 ```ts
 import { Context, Deferred, Effect, Exit, Option, Schema } from "effect"
 import { LanguageModel } from "effect/ai"
-import { ConversationId, turnBeginCodes, turnEndingOf, UserMessage } from "@xandreed/sdk"
+import { ConversationId, RunId, turnBeginCodes, turnEndingOf, UserMessage } from "@xandreed/sdk"
 import type { SessionAddress, TurnBeginError, TurnError } from "@xandreed/sdk"
 import { sseHeaders } from "@xandreed/plugin-render"
 
@@ -641,7 +641,7 @@ export const turnRoute = (host: Host, owner: string, id: string, request: Reques
     const push = yield* clientPush(writer)
     const started = yield* Deferred.make<void, TurnBeginError | TurnError>() // done by `use`, or failed as the turn did before it started
     const newTurn = {
-      session: address, userMessage: new UserMessage({ text: body.text }), runId: crypto.randomUUID(),
+      session: address, userMessage: new UserMessage({ text: body.text }), runId: RunId.make(crypto.randomUUID()),
       ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ key: value }) }),
       ...(body.resumes === undefined ? {} : { resumes: body.resumes }),
     }

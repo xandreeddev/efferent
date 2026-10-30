@@ -31,7 +31,7 @@ The historical `efferent` npm package is a different release line.
 ```ts
 import { Context, Effect, Layer, Option } from "effect"
 import { LanguageModel } from "effect/ai"
-import { Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { RunId, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import { Agent } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -51,7 +51,7 @@ const reply = Effect.scoped(Effect.gen(function* () {
   })
   const view = yield* sessions.create({ owner: "user-1" })
   const outcome = yield* agent.turn({
-    turn: { session: { id: view.header.id, owner: "user-1" }, userMessage: new UserMessage({ text: "Hello" }), runId: crypto.randomUUID() },
+    turn: { session: { id: view.header.id, owner: "user-1" }, userMessage: new UserMessage({ text: "Hello" }), runId: RunId.make(crypto.randomUUID()) },
     services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
   }, (turn) => turn.run({}).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
   return outcome.reply

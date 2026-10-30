@@ -10,6 +10,7 @@ import {
   defineTool,
   Failure,
   HarnessError,
+  RunId,
   SessionLogMemoryLive,
   Sessions,
   TurnAdmissionOpen,
@@ -127,7 +128,7 @@ const traced = (options: {
   const exit = yield* Effect.gen(function* () {
     const services = yield* (options.services ?? Effect.succeed)(Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)))
     return yield* (options.around ?? ((effect) => effect))(agent.turn({
-      turn: { session: address, userMessage: new UserMessage({ text: "archive alpha" }), runId: "run-1", ...(options.meta === undefined ? {} : { meta: options.meta }) },
+      turn: { session: address, userMessage: new UserMessage({ text: "archive alpha" }), runId: RunId.make("run-1"), ...(options.meta === undefined ? {} : { meta: options.meta }) },
       services,
     }, options.use ?? runToEnd()))
   }).pipe(Effect.withSpan("host.request"), Effect.withTracer(capturingTracer(spans)), Effect.exit)
@@ -260,7 +261,7 @@ describe("a turn's trace", () => {
       yield* sessions.create({ owner: address.owner, id: conversation })
       const model = yield* scripted(yield* Ref.make<ReadonlyArray<boolean>>([]))
       return yield* Effect.gen(function* () {
-        const writer = yield* sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "hi" }), runId: "run-1", key: "run-1", command: {}, meta: {} })
+        const writer = yield* sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "hi" }), runId: RunId.make("run-1"), key: "run-1", command: {}, meta: {} })
         return yield* agent.turn({ turn: writer, services: Context.make(LanguageModel.LanguageModel, model) }, (turn) => turn.reply("hello"))
       }).pipe(Effect.withSpan("host.request"), Effect.withTracer(capturingTracer(spans)), Effect.exit)
     })).pipe(Effect.orDie))

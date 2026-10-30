@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Ref } from "effect"
-import { ConversationId, RunContext, Tasks } from "@xandreed/core"
+import { ConversationId, RunContext, TaskMissing, Tasks } from "@xandreed/core"
 import type { TaskView } from "@xandreed/core"
 import { tasksCapability } from "./tasks-capability.adapter.js"
 
@@ -29,6 +29,27 @@ describe("the model's task tools", () => {
     expect(started).toEqual({
       output: { taskId: "00000000-0000-4000-8000-0000000007a1", status: "pending" },
       inputs: [{ instructions: "count", mode: "spawn", meta: { tenant: "acme", runId: "run-7" } }],
+    })
+  })
+
+  test("task_status answers a task id no task has as UnknownTask, and asks the tasks only for an id that can be one", async () => {
+    const parent = ConversationId.make("00000000-0000-4000-8000-0000000007b1")
+    const stranger = ConversationId.make("00000000-0000-4000-8000-0000000007b2")
+    const asked = await Effect.runPromise(Effect.gen(function* () {
+      const looked = yield* Ref.make<ReadonlyArray<string>>([])
+      const tasks = Tasks.of({
+        status: (_parent: unknown, taskId: ConversationId) => Ref.update(looked, (all) => [...all, taskId]).pipe(Effect.andThen(Effect.fail(new TaskMissing({ session: parent, taskId })))),
+      } as never)
+      const run = RunContext.of({ session: { id: parent, owner: "owner-1" } } as never)
+      const answer = (taskId: string) => Effect.flip(taskStatus!.handler({ taskId }).pipe(Effect.provideService(Tasks, tasks), Effect.provideService(RunContext, run)) as Effect.Effect<unknown, unknown>)
+      return { answers: [yield* answer("task-1"), yield* answer(stranger)], looked: yield* Ref.get(looked) }
+    }))
+    expect(asked).toEqual({
+      answers: [
+        { error: "UnknownTask", message: "No task task-1 was started in this conversation" },
+        { error: "UnknownTask", message: `No task ${stranger} was started in this conversation` },
+      ],
+      looked: [stranger],
     })
   })
 })

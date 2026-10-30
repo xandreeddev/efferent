@@ -8,6 +8,7 @@ import {
   ConversationId,
   harnessCodeOf,
   processActivity,
+  RunId,
   SessionLog,
   SessionLogError,
   SessionLogMemoryLive,
@@ -46,7 +47,7 @@ const answering = (delay: Duration.Input, called: Deferred.Deferred<void>) => La
 })
 
 const session = { id: ConversationId.make("00000000-0000-4000-8000-0000000000b1"), owner: "ops" }
-const ask = (runId: string, text = "hello") => ({ session, userMessage: new UserMessage({ text }), runId })
+const ask = (runId: string, text = "hello") => ({ session, userMessage: new UserMessage({ text }), runId: RunId.make(runId) })
 const onCommit: SessionsConfig = { ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } }
 
 const define = (extra: { readonly plugins?: ReadonlyArray<typeof sessionsPlugin>; readonly services?: Context.Context<never> } = {}) => Agent.define({
@@ -180,7 +181,7 @@ describe("a drain that times out: stop the requests, then close the services", (
       Deferred.succeed(requested, undefined).pipe(Effect.andThen(Effect.never))))
     yield* Deferred.await(requested)
     const tasked = yield* Deferred.make<void>()
-    yield* Context.get(services, TaskRunner).run(() => Effect.scoped(sessions.begin(child, { _tag: "User", userMessage: new UserMessage({ text: "work" }), runId: "task-1", key: "task-1", command: {} }).pipe(
+    yield* Context.get(services, TaskRunner).run(() => Effect.scoped(sessions.begin(child, { _tag: "User", userMessage: new UserMessage({ text: "work" }), runId: RunId.make("task-1"), key: "task-1", command: {} }).pipe(
       Effect.andThen(Deferred.succeed(tasked, undefined)), Effect.andThen(Effect.never))).pipe(Effect.ignore))
     yield* Deferred.await(tasked)
 

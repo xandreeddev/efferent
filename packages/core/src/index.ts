@@ -73,6 +73,7 @@ export { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "./loop/mo
 export { formatModelSelection, parseModelSelection } from "./domain/model-selection.entity.functions.js"
 export type { LoopEvent, ToolCallSummary } from "./domain/loop-event.entity.js"
 export { StepStatus, TurnEndReason, TurnEnding, TurnFailure, TurnOrigin, TurnOutcomeKind } from "./domain/turn-vocabulary.entity.js"
+export { InvocationId, RunId } from "./domain/run.entity.js"
 export { DirEntry, FileInfo, FileKind, FsError, FsReason, GlobOptions, GlobResult, ReadRange, RecursiveOptions, StatOptions, WriteOptions } from "./domain/file-system.entity.js"
 export { walkGlob } from "./domain/file-system.entity.functions.js"
 export { BASH_ENV_ALLOWLIST, BashChunk, BashError, BashErrorReason, BashEvent, BashExit, BashOptions, BashResult, BashTermination } from "./domain/bash.entity.js"

@@ -4,6 +4,7 @@ import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Tracer } from "ef
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { failureCode } from "../conformance.functions.js"
+import { RunId } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { openLogSession } from "../memory/memory-session.js"
 import type { MemoryPolicy } from "../memory/memory-session.js"
@@ -62,7 +63,7 @@ const registry = ToolRegistry.of({
 
 type Recorded = Effect.Success<ReturnType<typeof recordingTurnWriter>>
 const services = Layer.merge(Layer.succeed(ConversationMemory, memory), Layer.succeed(ToolRegistry, registry))
-const begun = (runId = "run-1", turn = 1) => recordingTurnWriter({ runId, text: `message of ${runId}`, turn })
+const begun = (runId = "run-1", turn = 1) => recordingTurnWriter({ runId: RunId.make(runId), text: `message of ${runId}`, turn })
 const inTurn = <A, E>(recorded: Recorded, body: Effect.Effect<A, E, TurnMemory | TurnToolbox | TurnEvents | TurnTasks | RunContext | Scope.Scope>) =>
   Effect.scoped(body).pipe(Effect.provide(TurnLive({ turn: recorded.writer })), Effect.provide(services))
 

@@ -5,7 +5,7 @@ import { dirname, join, relative } from "node:path"
 import { LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
-import { Capabilities, defineCapability, defineSkill, FileSystem, Sessions, SessionEnvironment, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { Capabilities, defineCapability, defineSkill, FileSystem, RunId, SessionEnvironment, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { Capability, SessionLogEvent, SkillDefinition } from "@xandreed/core"
 import { Journey } from "@xandreed/evals"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
@@ -170,7 +170,7 @@ const conversation = Effect.gen(function* () {
 })
 
 const turnOf = (agent: Agent, journal: Effect.Success<typeof conversation>, runId: string, text: string, model: LanguageModel.LanguageModel) => agent.turn({
-  turn: { session: journal.address, userMessage: new UserMessage({ text }), runId },
+  turn: { session: journal.address, userMessage: new UserMessage({ text }), runId: RunId.make(runId) },
   services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, journal.sessions)),
 }, (turn) => Effect.gen(function* () {
   yield* turn.tools.select(turn.userMessage)

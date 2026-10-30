@@ -1,5 +1,6 @@
 import { Cause, Effect, Exit, Option } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
+import type { RunId } from "../domain/run.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import { replayableContext } from "../loop/traceContent.js"
 import { RunContext } from "../ports/run-context.port.js"
@@ -267,7 +268,7 @@ export const traceTurn = (writer: TurnWriter, options: TurnTraceOptions = {}) =>
 /** A turn about to begin, as its begin span (`traceTurnBegin`) names it. */
 export interface TurnBeginTrace {
   readonly session: ConversationId
-  readonly runId: string
+  readonly runId: RunId
   /** Who begins it: a user (a `User` begin), or the inbox (an `Inbox` begin). */
   readonly origin: AdmittedTurn["origin"]
 }

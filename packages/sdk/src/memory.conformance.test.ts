@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option } from "effect"
-import { ConversationId, ConversationMemory, harnessCodeOf, inMemoryLog, MEDIA_LIMITS, memoryConformance, openLogSession, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { ConversationId, ConversationMemory, harnessCodeOf, inMemoryLog, MEDIA_LIMITS, memoryConformance, openLogSession, RunId, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 import type { MemoryPolicy, Plugin } from "@xandreed/core"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -54,7 +54,7 @@ describe("the summary strategy reads its summarizer where the session is opened"
     const exit = await Effect.runPromise(Effect.result(Effect.scoped(Effect.gen(function* () {
       const memory = yield* strategyOf(memorySummaryPlugin)
       const stored = yield* inMemoryLog
-      return yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005a1"), runId: "run-1", log: stored.log })
+      return yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005a1"), runId: RunId.make("run-1"), log: stored.log })
     }))))
     expect(exit._tag === "Failure" ? codeOf(exit.failure) : "opened").toBe("memory.summary")
   })

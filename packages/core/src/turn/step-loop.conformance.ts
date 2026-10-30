@@ -7,6 +7,7 @@ import { sameUsage } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
+import { InvocationId, RunId } from "../domain/run.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
 import { CurrentAgentStep } from "../loop/stepContext.js"
@@ -34,6 +35,8 @@ const toolkit = Toolkit.make(...erased)
 
 type Part = Response.PartEncoded
 const usage = { inputTokens: { total: 10 }, outputTokens: { total: 2 } }
+/** The run the scenarios' tail entries are recorded under. */
+const RUN = RunId.make("conformance")
 /** A scripted provider reply calling `probe`. */
 export const probeCall = (id: string, n: number): ReadonlyArray<Part> => [
   { type: "tool-call", id, name: Probe.name, params: { n }, providerExecuted: false },
@@ -159,7 +162,7 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
   const handlers = yield* typed.toHandlers({
     probe: ({ n }) => Effect.gen(function* () {
       const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => -1)
-      const invocationId = `probe:${yield* Ref.getAndUpdate(invocations, (value) => value + 1)}`
+      const invocationId = InvocationId.make(`probe:${yield* Ref.getAndUpdate(invocations, (value) => value + 1)}`)
       const base = { step, invocationId, tool: Probe.name, input: { n }, labels: {}, stage: Option.none() }
       yield* events.publish({ _tag: "tool.started", ...base }).pipe(Effect.orDie)
       yield* events.publish({ _tag: "tool.completed", ...base, ok: true, result: n, encoded: n, durationMs: 0 }).pipe(Effect.orDie)
@@ -190,7 +193,7 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
       : message.content.map((part) => ({
         _tag: "ToolResult", toolCallId: part.toolCallId, toolName: part.toolName, isError: part.isError ?? false,
         encoded: part.output, view: String(part.output), viewVersion: "1", subjects: [], artifacts: [], pinned: false,
-      }))).map((body, index): LogEntry => ({ id: entryId("conformance", all.length + index), runId: "conformance", turn: 1, step, at: 0, body }))
+      }))).map((body, index): LogEntry => ({ id: entryId(RUN, all.length + index), runId: RUN, turn: 1, step, at: 0, body }))
     return [entries, [...all, ...entries]]
   })))
   yield* scenario.before?.(tasks) ?? Effect.void

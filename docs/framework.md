@@ -1697,7 +1697,8 @@ user's message, the host's `command`, the idempotency `key`, and the host's
 a second begin while a turn is open is `SessionBusy` (a host answers 409).
 The same key again is `TurnDuplicate` with that turn, and the same key with
 another message, command or `resumes` is `KeyConflict`: keys are found in the log, so
-the check holds across restarts. A run id names one turn's run (memory numbers
+the check holds across restarts. A run id (`RunId`, minted per begin:
+`RunId.make(crypto.randomUUID())`) names one turn's run (memory numbers
 the turn's entries `<runId>:<n>` from it): a begin under a run id an earlier
 turn of the session, or of the history a fork inherits, was begun with is
 `RunIdReused` (code `turn.run-reused`), checked right after the key,
@@ -1921,7 +1922,10 @@ registers it with its `waitUntil`. Starting a `taskId` again starts it
 once, and also creates the child a start that stopped half way left
 without one; the same id with other instructions or another mode is
 `TaskConflict`, and an id naming a session that is not the parent's task
-child (the parent itself, another conversation) is `SessionExists`. A
+child (the parent itself, another conversation) is `SessionExists`.
+`status(parent, taskId)` and `cancel(parent, taskId)` take that id, a
+`ConversationId`; the model's `task_status` answers a string that is not
+one as it answers any unknown task. A
 store failure while the child's result is stored is logged as a warning,
 and the task then reads as interrupted (`task.lost`). The work begins the
 child's turn once (its key is the task's), runs it through the host's `TaskExecutor.turn` until the runner's

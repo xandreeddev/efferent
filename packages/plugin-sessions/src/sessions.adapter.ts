@@ -16,6 +16,7 @@ import {
   RESERVED_KINDS,
   resumeRefusal,
   ReservedKind,
+  RunId,
   RunIdReused,
   sameUserMessage,
   sessionAttributes,
@@ -44,6 +45,7 @@ import type {
   Decided,
   Decision,
   InboxItem,
+  InboxItemId,
   JsonObject,
   ResumableTurn,
   SessionAddress,
@@ -85,7 +87,7 @@ interface Guarded<A> {
 const storage = (code: string) => (error: Schema.SchemaError) => new SessionLogError({ code, message: error.message, cause: error })
 
 /** The `inbox.dropped` drafts of turn `turn` for the items its close dropped. */
-const droppedDrafts = (ids: ReadonlyArray<string>, turn: number): Effect.Effect<ReadonlyArray<SessionDraft>> =>
+const droppedDrafts = (ids: ReadonlyArray<InboxItemId>, turn: number): Effect.Effect<ReadonlyArray<SessionDraft>> =>
   Effect.forEach(ids, (id) => droppedData(id).pipe(
     Effect.map((data): SessionDraft => ({ kind: "inbox.dropped", turn: Option.some(turn), data })),
     Effect.orDie,
@@ -276,7 +278,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   )
 
   /** The inbox items with these ids, as delivered. */
-  const inboxItems = (id: ConversationId, ids: ReadonlyArray<string>) => queuedIn(id).pipe(
+  const inboxItems = (id: ConversationId, ids: ReadonlyArray<InboxItemId>) => queuedIn(id).pipe(
     Effect.map((queued) => ids.flatMap((wanted): ReadonlyArray<InboxItem> => Option.toArray(Option.fromNullishOr(queued.find((item) => item.data.id === wanted))).map(({ data }) => ({
       id: wanted,
       source: data.source,
@@ -462,7 +464,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const meta = options?.meta
     /** One inbox turn, if one opens: then whether items still wait after it. */
     const once: Effect.Effect<Option.Option<boolean>, SessionMissing | SessionContended | SessionLogError, R> = Effect.scoped(Effect.gen(function* () {
-      const runId = yield* Effect.sync(() => crypto.randomUUID())
+      const runId = RunId.make(yield* Effect.sync(() => crypto.randomUUID()))
       const open = yield* openTurn(address, meta === undefined ? { _tag: "Inbox", runId } : { _tag: "Inbox", runId, meta })
       // A TurnError carried as a defect keeps its own tag and code, as in `Agent.turn`.
       const exit = yield* Effect.exit(harnessDefectsAsFailures(run(open.writer)))

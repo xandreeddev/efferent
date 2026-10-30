@@ -1,5 +1,6 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
+import type { RunId } from "../domain/run.entity.js"
 import type { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import type { JsonObject } from "../session/session-log.entity.js"
 import type { SessionAddress, TurnRefused } from "../session/sessions.entity.js"
@@ -8,7 +9,7 @@ import type { SessionAddress, TurnRefused } from "../session/sessions.entity.js"
 export interface TurnToAdmit {
   readonly session: SessionAddress
   readonly origin: TurnOrigin
-  readonly runId: string
+  readonly runId: RunId
   readonly key: string
   /** The host's metadata the turn is begun with (`{}` when none was given): a tenant or a quota key to count by. */
   readonly meta: JsonObject

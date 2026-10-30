@@ -113,6 +113,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   sessions plugin's log annotations instead of its log text.
 - Read the `llm.model` and `llm.fallback_model` log annotations instead of
   the models plugin's retry and fallback warning text.
+- Mint ids where they are created: `RunId.make(crypto.randomUUID())` for a
+  turn's run, `InboxItemId.make(...)` for `deliver`, `ConversationId.make(...)`
+  (or a decode) for a task id. `replayModelRequest`, `modelRequestHeaderOf`,
+  `entryId` and `stepContextOf` take a `RunId`.
 
 ### Breaking
 
@@ -319,6 +323,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the model in their text (`<model>: transient failure exhausted retries…`,
   `<model> exhausted retries … falling back to <model>`); the fallback
   warning carries `llm.model` and `llm.fallback_model` annotations.
+- `@xandreed/core`: turn identities are branded: `RunId` (`NewTurn`,
+  `BeginTurn`, `AdmittedTurn`, `Turn`, `RunContext`, `TurnToAdmit`, the
+  `turn.*` events, `LogEntry`, request headers), `InvocationId` (the
+  `tool.*` events, `CurrentToolInvocation`), `InboxItemId` (`InboxItem.id`,
+  `inbox.queued`/`inbox.dropped`), and `Tasks.status`/`cancel`,
+  `TaskConflict` and `TaskMissing` take a `ConversationId`. Brands are
+  type-only: stored data is unchanged and every journal still decodes.
 
 ### Added
 
@@ -824,6 +835,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   pipe on a branded schema is no longer reported. It runs one package at a
   time over `*.entity.ts` files (`BRANDED_IDS_CLEAN`), in every package
   already clean of it, and in core's `src/domain` and `src/spec`.
+- `effect/branded-id-fields` covers `@xandreed/plugin-sessions`.
 
 ## 0.14.0 — 2026-10-29
 

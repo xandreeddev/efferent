@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { RunId } from "./domain/run.entity.js"
 
 export const DecisionId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("DecisionId"))
 export const DecisionRecord = Schema.Struct({
@@ -20,7 +21,7 @@ export type DecisionRecord = typeof DecisionRecord.Type
 export const DecisionOutcome = Schema.Struct({
   version: Schema.Literal(1),
   decisionId: DecisionId,
-  runId: Schema.String,
+  runId: RunId,
   status: Schema.Literals(["completed", "failed", "cancelled", "incomplete"]),
   toolInvocations: Schema.Array(Schema.String),
   modelAttempts: Schema.Array(Schema.String),

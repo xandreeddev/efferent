@@ -34,10 +34,10 @@ export class Tasks extends Context.Service<Tasks, {
     readonly mode: TaskMode
     readonly meta?: JsonObject
   }) => Effect.Effect<TaskView, TaskRefused | TaskConflict | SessionExists | SessionMissing | SessionContended | SessionLogError>
-  readonly status: (parent: SessionAddress, taskId: string) => Effect.Effect<TaskView, TaskMissing | SessionMissing | SessionLogError>
+  readonly status: (parent: SessionAddress, taskId: ConversationId) => Effect.Effect<TaskView, TaskMissing | SessionMissing | SessionLogError>
   readonly list: (parent: SessionAddress) => Effect.Effect<ReadonlyArray<TaskView>, SessionMissing | SessionLogError>
   /** Stop a task: its child's turn is cancelled and nothing is delivered. */
-  readonly cancel: (parent: SessionAddress, taskId: string) => Effect.Effect<boolean, TaskMissing | SessionMissing | SessionContended | SessionLogError>
+  readonly cancel: (parent: SessionAddress, taskId: ConversationId) => Effect.Effect<boolean, TaskMissing | SessionMissing | SessionContended | SessionLogError>
   /** Deliver finished results a runner lost, and start tasks that never ran. */
   readonly reconcile: (parent: SessionAddress) =>
     Effect.Effect<{ readonly delivered: number; readonly started: number }, SessionMissing | SessionContended | SessionLogError>

@@ -1,6 +1,7 @@
 import { Effect, Schema } from "effect"
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 
 /** Public provider options only, as JSON. Credentials and endpoint authorization never belong here. */
@@ -35,7 +36,7 @@ export type ModelRequestTool = typeof ModelRequestTool.Type
 export const MemoryRenderRecipe = Schema.Struct({
   strategy: Schema.String,
   currentTurn: Schema.Int,
-  currentRun: Schema.String,
+  currentRun: RunId,
   turnContext: Schema.Literals(["current", "all"]),
   replies: Schema.Boolean,
   stepContext: Schema.Literals(["tail", "none"]),
@@ -61,7 +62,7 @@ export type MemoryRenderRecipe = typeof MemoryRenderRecipe.Type
  */
 export const ModelRequestHeader = Schema.Struct({
   version: Schema.Literal(1),
-  runId: Schema.String,
+  runId: RunId,
   step: Schema.Int,
   strategyVersion: Schema.String,
   system: Schema.String,

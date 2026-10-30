@@ -2,6 +2,7 @@ import { Context } from "effect"
 import type { Effect, Option, Scope } from "effect"
 import type { MediaSlot } from "../domain/media.entity.js"
 import type { AgentMessage, ConversationId } from "../domain/message.entity.js"
+import type { RunId } from "../domain/run.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogQuery } from "../memory/memory-log.entity.functions.js"
@@ -123,7 +124,7 @@ export class ConversationMemory extends Context.Service<ConversationMemory, {
    */
   readonly open: (scope: {
     readonly conversation: ConversationId
-    readonly runId: string
+    readonly runId: RunId
     readonly log: LogHandle
   }) => Effect.Effect<MemorySession, TurnError, Scope.Scope>
 }>()("efferent/ConversationMemory") {}

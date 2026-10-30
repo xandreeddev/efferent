@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { RunId } from "../domain/run.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { TurnEnding, TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
@@ -7,6 +8,12 @@ import { TURN_EVENT_NAMES } from "../turn/turn-event.entity.js"
 import type { TurnEventName } from "../turn/turn-event.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { JsonObject } from "./session-log.entity.js"
+
+/**
+ * An inbox item's id as stored: `InboxItemId`'s brand without its checks,
+ * so every stored id reads back as it was written.
+ */
+const StoredInboxItemId = Schema.String.pipe(Schema.brand("InboxItemId"))
 
 /*
  * The session log's vocabulary. One log holds everything about a session;
@@ -26,7 +33,7 @@ import { JsonObject } from "./session-log.entity.js"
 
 /** Opens a turn: who asked, what they said, the host's command and the inbox items it claims. */
 export const TurnStartedData = Schema.Struct({
-  runId: Schema.String,
+  runId: RunId,
   /** The host's idempotency key: a second begin with it is the same turn. */
   key: Schema.String,
   origin: TurnOrigin,
@@ -34,7 +41,7 @@ export const TurnStartedData = Schema.Struct({
   /** The host's own input beside the message (an attachment, a reference), part of the key's fingerprint. */
   command: JsonObject,
   /** The inbox items this turn answers (an inbox turn only). */
-  claimed: Schema.Array(Schema.String),
+  claimed: Schema.Array(StoredInboxItemId),
   /** The memory entry the message is to the model, and when memory took it. */
   entry: EntryId,
   at: Schema.Number,
@@ -61,7 +68,7 @@ export type TurnEndedData = TurnEnding
 
 /** An inbox item as delivered (`inbox.queued`): its stable id, who sent it and the text a turn shows the model. */
 export const InboxQueuedData = Schema.Struct({
-  id: Schema.String,
+  id: StoredInboxItemId,
   source: JsonObject,
   content: Schema.String,
 })
@@ -69,7 +76,7 @@ export type InboxQueuedData = typeof InboxQueuedData.Type
 
 /** An inbox item given up on (`inbox.dropped`): as many turns took it and failed as the inbox allows. */
 export const InboxDroppedData = Schema.Struct({
-  id: Schema.String,
+  id: StoredInboxItemId,
   reason: Schema.Literals(["attempts"]),
 })
 export type InboxDroppedData = typeof InboxDroppedData.Type

@@ -13,22 +13,24 @@ import {
   defineTool,
   EntryId,
   Failure,
-  HarnessError,
   harnessCodeOf,
-  isHarnessError,
   harnessDefectsAsFailures,
+  HarnessError,
   IntentMatcher,
+  InvocationId,
+  isHarnessError,
   journalSchemaOf,
   Media,
   mediaFromBase64,
   openLogSession,
   publishToolProgress,
   RunContext,
+  RunId,
   ToolRegistry,
   TurnLive,
   TurnMemory,
-  TurnToolbox,
   turnStartedDraft,
+  TurnToolbox,
   UserMessage,
 } from "@xandreed/core"
 import type { Capability, MemoryPolicy, RunTools, SessionLogEvent, ToolInvocation, ToolRefusalReason, TurnDraft, TurnError, TurnEvent, TurnWriter } from "@xandreed/core"
@@ -75,7 +77,7 @@ const recordingWriter = (refuses: Option.Option<string> = Option.none()) => Effe
   const session = ConversationId.make("00000000-0000-4000-8000-0000000000aa")
   const userMessage = new UserMessage({ text: "build it" })
   const draft = yield* turnStartedDraft(1, {
-    runId: "run-1", key: "run-1", origin: "user", userMessage, command: {}, claimed: [], entry: EntryId.make("run-1:0"), at: 0,
+    runId: RunId.make("run-1"), key: "run-1", origin: "user", userMessage, command: {}, claimed: [], entry: EntryId.make("run-1:0"), at: 0,
   }).pipe(Effect.orDie)
   const started: SessionLogEvent = { session, seq: 1, turn: draft.turn, kind: draft.kind, at: 0, data: draft.data }
   const stored = yield* Ref.make<ReadonlyArray<SessionLogEvent>>([started])
@@ -85,7 +87,7 @@ const recordingWriter = (refuses: Option.Option<string> = Option.none()) => Effe
       session, seq: all.length + index + 1, turn: Option.some(1), kind: next.kind, at: 0, data: next.data,
     }))])
   const writer: TurnWriter = {
-    admitted: { session: { id: session, owner: "test" }, turn: 1, runId: "run-1", key: "run-1", origin: "user", userMessage, command: {}, claimed: [], meta: {} },
+    admitted: { session: { id: session, owner: "test" }, turn: 1, runId: RunId.make("run-1"), key: "run-1", origin: "user", userMessage, command: {}, claimed: [], meta: {} },
     started,
     history: () => Effect.succeed([]),
     snapshot: () => Ref.get(stored),
@@ -151,8 +153,8 @@ describe("the registry tells a handler which call it runs for", () => {
     expect(turn.events.map((event) => event._tag)).toEqual(["tool.started", "tool.progress", "tool.progress", "tool.completed"])
     const progress = turn.events.flatMap((event) => event._tag === "tool.progress" ? [event] : [])
     expect(progress).toEqual([
-      { _tag: "tool.progress", step: 2, invocationId: "run-1:call:0", tool: "report_progress", channel: "stdout", text: "compiling" },
-      { _tag: "tool.progress", step: 2, invocationId: "run-1:call:0", tool: "report_progress", channel: "status", text: "1 of 2" },
+      { _tag: "tool.progress", step: 2, invocationId: InvocationId.make("run-1:call:0"), tool: "report_progress", channel: "stdout", text: "compiling" },
+      { _tag: "tool.progress", step: 2, invocationId: InvocationId.make("run-1:call:0"), tool: "report_progress", channel: "status", text: "1 of 2" },
     ])
     expect(turn.stored).toContain("tool.started")
     expect(turn.stored).toContain("tool.completed")
@@ -160,7 +162,7 @@ describe("the registry tells a handler which call it runs for", () => {
   })
 
   test("the invocation is provided innermost: a handler sees its own call even under another tool's", async () => {
-    const outer = Option.some({ invocationId: "outer-run:call:7", tool: "delegate", step: 5 })
+    const outer = Option.some({ invocationId: InvocationId.make("outer-run:call:7"), tool: "delegate", step: 5 })
     const turn = await Effect.runPromise(callInTurn(outer))
     expect(turn.saw).toBe("run-1:call:0|report_progress|2")
     expect(turn.events.filter((event) => event._tag === "tool.progress").every((event) => event._tag === "tool.progress" && event.invocationId === "run-1:call:0")).toBe(true)
@@ -308,7 +310,7 @@ describe("the registry refuses a call before its handler runs", () => {
     expect(event).toMatchObject({ _tag: "tool.refused", step: 1, invocationId: `run-1:call:${refusedAt}`, tool, input, reason })
     expect(turn.results[refusedAt]).toEqual({ error, message: event.message })
     // Earlier calls ran (started, completed); the refused one has only its refusal.
-    expect(turn.events.filter((other) => other._tag === "tool.started" || other._tag === "tool.completed").map((other) => other._tag === "tool.started" || other._tag === "tool.completed" ? other.invocationId : ""))
+    expect(turn.events.filter((other) => other._tag === "tool.started" || other._tag === "tool.completed").map((other): string => other._tag === "tool.started" || other._tag === "tool.completed" ? other.invocationId : ""))
       .toEqual(Array.from({ length: refusedAt }, (_, index) => [`run-1:call:${index}`, `run-1:call:${index}`]).flat())
     expect(turn.events.some((other) => other._tag !== "tool.refused" && "invocationId" in other && other.invocationId === event.invocationId)).toBe(false)
   })
