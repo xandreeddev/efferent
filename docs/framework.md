@@ -1882,6 +1882,23 @@ background tasks. Two layers split the work:
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it.
 
+**The stored format.** `STORED_FORMAT` (from `@xandreed/core`) is the version
+of every shape the framework keeps in a session log: each journal kind's
+payload, the log's own rows (`SessionHeader`, `SessionLogEvent`), the tasks
+plugin's records and the sessions plugin's state in the head. It goes up by
+one with each change to one of them that a reader can tell (a key, a type,
+an optionality, a check; a description is not one), and `bun run
+docs:generate` fails on a change that does not bump it: it fingerprints the
+shapes into `docs/stored-format.json`, which keeps every format's
+fingerprint. Every commit the sessions plugin makes stamps the session with
+its release's format, raised from a lower one (or none: an earlier release
+wrote none). A session a newer release stamped is refused before anything is
+planned, with a `SessionLogError` of code `session.version`, by `begin`,
+`deliver`, `drain`, `cancel`, `transact` and `fork`: this release cannot tell
+what that release's records mean, and writes nothing beside them. `get`,
+`list` and `read` still read it. A backend keeps its own marker for its own
+layout: the SQLite file's `user_version` (`store.version`).
+
 ```ts
 const view = yield* sessions.create({ owner })                 // SessionView: header, turns, title, open, pending
 const address = { id: view.header.id, owner }                  // another owner's address finds nothing

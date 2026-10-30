@@ -27,6 +27,7 @@ import {
   SessionLogError,
   SessionMissing,
   Sessions,
+  STORED_FORMAT,
   TurnActivity,
   TurnAdmission,
   TurnDuplicate,
@@ -62,7 +63,7 @@ import type {
   TurnWriter,
 } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
-import { closedState, droppedData, heldTurn, pendingOf, queuedData, stateJson, stateOf, titleOf, viewOf } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, heldTurn, isNewerFormat, pendingOf, queuedData, stateJson, stateOf, storedFormatOf, titleOf, viewOf, withFormat } from "./sessions-state.entity.functions.js"
 import type { Holder } from "./sessions-state.entity.functions.js"
 import { Ownership } from "./sessions-state.entity.js"
 import type { HeldTurn, ProcessLiveness, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
@@ -203,6 +204,18 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   const freshId = Effect.sync(() => ConversationId.make(crypto.randomUUID()))
 
   const stateFrom = (head: SessionHead) => stateOf(head).pipe(Effect.mapError(storage("session.state")))
+  /**
+   * A session a newer release wrote (its stored format above this
+   * release's) is refused for writes and turns before anything is planned:
+   * this release cannot tell what that release's records mean, and must not
+   * write its own beside them. Reads are not refused.
+   */
+  const refuseNewer = (head: SessionHead) => storedFormatOf(head).pipe(
+    Effect.mapError(storage("session.state")),
+    Effect.flatMap((format) => isNewerFormat(format)
+      ? Effect.fail(new SessionLogError({ code: "session.version", message: `the session holds stored format ${format}, written by a newer release; this release reads up to ${STORED_FORMAT}` }))
+      : Effect.void),
+  )
   const owned = (address: SessionAddress) => log.head(address.id).pipe(Effect.flatMap((head) =>
     head.header.owner === address.owner ? Effect.succeed(head) : Effect.fail(new SessionMissing({ session: address.id }))))
   const viewFrom = (head: SessionHead) => stateFrom(head).pipe(Effect.flatMap((state) => viewOf(head, state, holder)))
@@ -212,22 +225,30 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * after a conflict, plan again at once, `config.retries` attempts in all
    * before `SessionContended`. The commit is not interrupted half way, and
    * `stored` runs with it: an interruption waits for the store's answer and
-   * for what must follow a stored commit.
+   * for what must follow a stored commit. A session a newer release wrote
+   * is refused before the plan (`session.version`); the plan starts from
+   * the state in this release's stored format, and a commit stores the
+   * state so even when the plan leaves it as it was (once, for a session
+   * an earlier release wrote).
    */
   const guarded = <A, E>(address: SessionAddress, plan: (head: SessionHead, state: SessionsState) => Effect.Effect<GuardedPlan<A>, E>, stored: (result: A) => Effect.Effect<void> = () => Effect.void): Effect.Effect<Guarded<A>, E | SessionMissing | SessionContended | SessionLogError> => {
     const once: Effect.Effect<Guarded<A>, E | SessionMissing | RevisionConflict | SessionLogError> = Effect.gen(function* () {
       const head = yield* owned(address)
-      const planned = yield* plan(head, yield* stateFrom(head))
+      yield* refuseNewer(head)
+      const held = yield* stateFrom(head)
+      const current = withFormat(held)
+      const planned = yield* plan(head, current)
       if (planned.drafts.length === 0 && Option.isNone(planned.next)) return { result: planned.result, head, committed: Option.none() }
-      const state = yield* Option.match(planned.next, {
+      const next = Option.orElse(planned.next, () => current === held ? Option.none() : Option.some(current))
+      const state = yield* Option.match(next, {
         onNone: () => Effect.succeedNone,
-        onSome: (next) => stateJson(next).pipe(Effect.map(Option.some), Effect.orDie),
+        onSome: (written) => stateJson(written).pipe(Effect.map(Option.some), Effect.orDie),
       })
       const outcome = yield* Effect.uninterruptible(Effect.result(log.commit(address.id, {
         expect: head.revision, notAfter: Option.none(), events: planned.drafts, state,
       })).pipe(Effect.tap((result) => result._tag === "Success" ? stored(planned.result) : Effect.void)))
       if (outcome._tag === "Success") {
-        yield* Option.match(planned.next, { onNone: () => Effect.void, onSome: (next) => forgetClosed(address.id, next) })
+        yield* Option.match(planned.next, { onNone: () => Effect.void, onSome: (after) => forgetClosed(address.id, after) })
         yield* wake(address.id)
         return { result: planned.result, head, committed: Option.some(outcome.success) }
       }
@@ -579,7 +600,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
       return yield* viewFrom(head)
     }),
     fork: Effect.fn("sessions.fork")(function* (parent, input) {
-      yield* owned(parent)
+      // A fork of a newer release's session would carry its records into a session this release writes.
+      yield* refuseNewer(yield* owned(parent))
       const endings = input.inherit ? yield* log.read(parent.id, { after: 0, limit: Option.none(), kinds: ["turn.ended"] }) : []
       const last = Option.fromNullishOr(endings.at(-1))
       const head = yield* log.create({

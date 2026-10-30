@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Match, Option, PubSub, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, TurnActivity, TurnAdmission } from "@xandreed/core"
+import { frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
-import type { BeginTurn, TurnError, TurnWriter } from "@xandreed/core"
+import type { BeginTurn, JsonObject, SessionAddress, TurnError, TurnWriter } from "@xandreed/core"
 import type { ConformanceCheck, SessionsInstance, SessionsSubject } from "@xandreed/core/conformance"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
@@ -18,6 +18,17 @@ const failedChecks = (checks: ReadonlyArray<ConformanceCheck>) => Promise.all(ch
   const exit = await run(check)
   return exit._tag === "Failure" ? [exit.failure.check] : []
 })).then((failed) => failed.flat().toSorted())
+
+/** A session's head state as the next release would leave it: its stored format one above this release's, the rest as it was. */
+const stampNewer = (log: Log) => (address: SessionAddress) => log.head(address.id).pipe(
+  Effect.flatMap((head) => log.commit(address.id, {
+    expect: head.revision,
+    notAfter: Option.none(),
+    events: [],
+    state: Option.some({ ...head.state, sessions: { ...(head.state["sessions"] as JsonObject), format: STORED_FORMAT + 1 } }),
+  })),
+  Effect.asVoid,
+)
 
 /**
  * SessionsLive instances over `log`: leased (renewed by commits only, or by
@@ -34,6 +45,7 @@ const subjectOver = (log: Log, change: (instance: SessionsInstance) => SessionsI
       alive: (pid) => Effect.succeed(running.includes(pid)),
     }),
     advance: (millis) => TestClock.adjust(millis),
+    newerFormat: stampNewer(log),
   }
 }
 
@@ -196,5 +208,16 @@ describe("the Sessions kit catches careless backends", () => {
     const { processOwned: _, ...leaseOnly } = subjectOver(memoryLog)
     const ids = (subject: SessionsSubject) => sessionsConformance(subject).map((check) => check.name)
     expect(ids(subjectOver(memoryLog)).length - ids(leaseOnly).length).toBe(2)
+  })
+
+  test("one that never reads the stored format (the stamp does not reach it) fails only the stored-format check", async () => {
+    const unread: SessionsSubject = { ...subjectOver(memoryLog), newerFormat: () => Effect.void }
+    expect(await failedChecks(sessionsConformance(unread))).toEqual(["stored-format"])
+  })
+
+  test("the stored-format check runs only for a backend that keeps a stored format", () => {
+    const { newerFormat: _, ...unversioned } = subjectOver(memoryLog)
+    const ids = (subject: SessionsSubject) => sessionsConformance(subject).map((check) => check.name)
+    expect(ids(subjectOver(memoryLog)).length - ids(unversioned).length).toBe(1)
   })
 })

@@ -57,6 +57,12 @@ when they do not. Work through this list instead.
 - Add keys only. A key older records lack is optional in the stored schema:
   `Schema.optionalKey` on a session schema (`TurnStartedData.meta`), or a
   `laterKeys` entry for a bus event stored whole (`context.built.budgetTokens`).
+- Any change a reader can tell (a key, a type, an optionality, a check)
+  bumps `STORED_FORMAT` (`packages/core/src/session/stored-format.entity.ts`)
+  by one: `bun run docs:generate` fails on an unbumped change and names the
+  shape, then appends the new format's row to `docs/stored-format.json`.
+  Name the new format in the CHANGELOG entry. A description alone is not a
+  change.
 - Removing, renaming or retyping a stored key breaks every session that
   release wrote: do not, unless the step is a CHANGELOG **Breaking** entry
   with a migration.
@@ -100,6 +106,7 @@ the diff. The events guide (`docs/events.md`) quotes regions of
 - [ ] Member, description, union, `TURN_EVENT_NAMES`, member-list test
 - [ ] Transient / stored / `storedPayload` / `RECORDED_ELSEWHERE` chosen; kinds appended, none removed
 - [ ] Stored keys only added, older records decode (`laterKeys` or `optionalKey`)
+- [ ] `STORED_FORMAT` bumped for a stored-shape change, `docs/stored-format.json` regenerated, the format named in the CHANGELOG
 - [ ] `JOURNAL`, `RECORDED_AS`, error-code tables updated; docs:generate output in the diff
 - [ ] Recorder scenario writes any new journal kind
 - [ ] Goldens re-recorded on purpose and reviewed; CHANGELOG entry

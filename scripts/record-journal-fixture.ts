@@ -21,6 +21,7 @@ import {
   SessionLogEvent,
   SessionLogMemoryLive,
   Sessions,
+  STORED_FORMAT,
   SubjectId,
   subscribeAll,
   TaskExecutor,
@@ -301,6 +302,8 @@ const fixture = {
   format: 1,
   version,
   description: "Session journals as this version stores them, recorded by scripts/record-journal-fixture.ts. Later versions must read them.",
+  /** The stored format this version writes (`STORED_FORMAT`): later versions find it in docs/stored-format.json's history. */
+  storedFormat: STORED_FORMAT,
   /** The kinds this version reserved: the recording holds each, and later versions must keep them reserved. */
   reserved: RESERVED_KINDS,
   sessions,

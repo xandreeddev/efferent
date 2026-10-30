@@ -162,6 +162,7 @@ const RunKey
 const RunOrdinal
 const RunRef
 const SESSION_KINDS
+const STORED_FORMAT
 const SUPPORTED_PLUGIN_API_VERSIONS
 const SectionId
 const SessionAddress

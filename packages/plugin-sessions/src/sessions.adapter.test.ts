@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsPluginLive } from "./plugin.adapter.js"
 import { processLiveness } from "./process-liveness.adapter.js"
@@ -376,6 +376,35 @@ describe("one turn at a time", () => {
     expect(results.map((result) => result._tag === "Failure" ? refusalOf(result.failure) : "success")).toEqual(["TurnClosed:ended", "TurnClosed:ended", "TurnClosed:ended"])
     expect(refusalOf(yield* Effect.flip(writer.flush))).toBe("TurnClosed:ended")
     expect(refusalOf(yield* Effect.flip(writer.end({ reason: "completed", failure: Option.none() })))).toBe("TurnClosed:ended")
+  })))
+})
+
+describe("the stored format", () => {
+  /** The format the head's state names, or none (as a release before it wrote it). */
+  const formatIn = (log: Log, address: SessionAddress) => log.head(address.id).pipe(Effect.map((head) => (head.state["sessions"] as JsonObject | undefined)?.["format"]))
+  /** The head's state as a release before the stored format wrote it: no format key. */
+  const asEarlier = (log: Log, address: SessionAddress) => log.head(address.id).pipe(Effect.flatMap((head) => {
+    const { format: _, ...earlier } = head.state["sessions"] as JsonObject
+    return log.commit(address.id, { expect: head.revision, notAfter: Option.none(), events: [], state: Option.some({ ...head.state, sessions: earlier }) })
+  }))
+
+  test("a session is written in this release's format, and one an earlier release wrote is raised to it by the next commit, a turn's included", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* sessions!.deliver(address, { id: InboxItemId.make("first"), content: "first", source: {} })
+    expect(yield* formatIn(log, address)).toBe(STORED_FORMAT)
+    yield* asEarlier(log, address)
+    expect(yield* formatIn(log, address)).toBeUndefined()
+    // A read does not write: the format stays as the earlier release left it.
+    expect((yield* sessions!.get(address)).pending).toBe(1)
+    expect(yield* formatIn(log, address)).toBeUndefined()
+    yield* sessions!.deliver(address, { id: InboxItemId.make("second"), content: "second", source: {} })
+    expect(yield* formatIn(log, address)).toBe(STORED_FORMAT)
+    // A turn's writer raises it too, when an earlier release wrote the state since the begin.
+    const writer = yield* sessions!.begin(address, say("go"))
+    yield* asEarlier(log, address)
+    yield* writer.end({ reason: "completed", failure: Option.none() })
+    expect(yield* formatIn(log, address)).toBe(STORED_FORMAT)
   })))
 })
 
