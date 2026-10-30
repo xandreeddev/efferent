@@ -1,5 +1,5 @@
 import { AiError, LanguageModel, Prompt, Tool, type Response as ResponseParts } from "effect/ai"
-import { Cause, Effect, Option, Schema, Stream } from "effect"
+import { Cause, Effect, Match, Option, Schema, Stream } from "effect"
 import { Base64 } from "effect/encoding"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, reasonOf } from "@xandreed/core"
 import { strictJsonSchema, toolParametersSchema } from "@xandreed/core/internal"
@@ -207,18 +207,18 @@ export const toChatMessages = (prompt: Prompt.Prompt, options: ChatMessageOption
         : isSendableImage(p) ? [imageUrlPart(p)] : [{ type: "text", text: filePartLabel(p) }]),
     }
   }
-  const folded = prompt.content.reduce((fold: ChatFold, message): ChatFold => {
-    if (message.role === "user") {
-      const user = userMessage(message)
+  const folded = prompt.content.reduce((fold: ChatFold, message): ChatFold => Match.value(message).pipe(Match.discriminatorsExhaustive("role")({
+    user: (asked): ChatFold => {
+      const user = userMessage(asked)
       if (fold.pending.length === 0) return { out: [...fold.out, user], pending: [] }
       // The user's own images, after the tool's: a caption tells them apart.
       const parts = contentParts(user["content"])
       const own = parts.some((part) => typeof part === "object" && part !== null && "type" in part && part.type === "image_url")
       return { out: [...fold.out, { role: "user", content: [...fold.pending, ...(own ? [{ type: "text", text: USER_CAPTION }] : []), ...parts] }], pending: [] }
-    }
-    if (message.role === "tool") {
+    },
+    tool: (tool): ChatFold => {
       // One chat message per result part, keyed by the originating call id (a provider-run tool's is left out, as its call is).
-      const results = message.content.flatMap((p) => p.type === "tool-result" && !p.providerExecuted ? [p] : [])
+      const results = tool.content.flatMap((p) => p.type === "tool-result" && !p.providerExecuted ? [p] : [])
       const sent = results.flatMap((p) => {
         const parts = images ? (p.modelOutput ?? []).flatMap((output) => output.type === "file" && isSendableImage(output) ? [output] : []) : []
         return parts.length === 0 ? [] : [{ type: "text", text: `Images returned by ${p.name} (call ${p.id}):` }, ...parts.map(imageUrlPart)]
@@ -229,32 +229,33 @@ export const toChatMessages = (prompt: Prompt.Prompt, options: ChatMessageOption
         return { role: "tool", tool_call_id: p.id, content: text.length === 0 && hasImages ? "[the images this call returned follow]" : text }
       })
       return { out: [...fold.out, ...toolMessages], pending: [...fold.pending, ...sent] }
-    }
-    const out = flush(fold)
-    if (message.role === "system") return { out: [...out, { role: "system", content: message.content }], pending: [] }
-    const text = message.content
-      .flatMap((p) => (p.type === "text" ? [p.text] : []))
-      .join("")
-    const toolCalls = message.content.flatMap((p) =>
-      p.type === "tool-call" && !p.providerExecuted // a provider-run tool (call and result) is the provider's own: neither is sent
-        ? [
-            {
-              id: p.id,
-              type: "function" as const,
-              function: { name: p.name, arguments: JSON.stringify(p.params ?? {}) },
-            },
-          ]
-        : [],
-    )
-    return {
-      out: [...out, {
-        role: "assistant",
-        content: text.length > 0 ? text : null,
-        ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
-      }],
-      pending: [],
-    }
-  }, { out: [], pending: [] })
+    },
+    system: (system): ChatFold => ({ out: [...flush(fold), { role: "system", content: system.content }], pending: [] }),
+    assistant: (assistant): ChatFold => {
+      const text = assistant.content
+        .flatMap((p) => (p.type === "text" ? [p.text] : []))
+        .join("")
+      const toolCalls = assistant.content.flatMap((p) =>
+        p.type === "tool-call" && !p.providerExecuted // a provider-run tool (call and result) is the provider's own: neither is sent
+          ? [
+              {
+                id: p.id,
+                type: "function" as const,
+                function: { name: p.name, arguments: JSON.stringify(p.params ?? {}) },
+              },
+            ]
+          : [],
+      )
+      return {
+        out: [...flush(fold), {
+          role: "assistant",
+          content: text.length > 0 ? text : null,
+          ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+        }],
+        pending: [],
+      }
+    },
+  })), { out: [], pending: [] })
   return flush(folded)
 }
 
@@ -266,24 +267,22 @@ export const toChatMessages = (prompt: Prompt.Prompt, options: ChatMessageOption
  * label line per file part, as its result. Messages without files are kept.
  */
 export const promptWithImageLabels = (prompt: Prompt.Prompt): Prompt.Prompt =>
-  Prompt.fromMessages(prompt.content.map((message): Prompt.Message => {
-    if (message.role === "user") {
-      return message.content.some((p) => p.type === "file")
-        ? Prompt.makeMessage("user", { content: [Prompt.makePart("text", { text: userText(message) })], options: message.options })
-        : message
-    }
-    if (message.role === "tool") {
-      return message.content.some((p) => p.type === "tool-result" && p.modelOutput !== undefined)
-        ? Prompt.makeMessage("tool", {
-          content: message.content.map((p) => p.type !== "tool-result" || p.modelOutput === undefined ? p : Prompt.makePart("tool-result", {
-            id: p.id, name: p.name, isFailure: p.isFailure, result: toolResultText(p, false), providerExecuted: p.providerExecuted, options: p.options,
-          })),
-          options: message.options,
-        })
-        : message
-    }
-    return message
-  }))
+  Prompt.fromMessages(prompt.content.map((message): Prompt.Message => Match.value(message).pipe(Match.discriminatorsExhaustive("role")({
+    user: (user): Prompt.Message => user.content.some((p) => p.type === "file")
+      ? Prompt.makeMessage("user", { content: [Prompt.makePart("text", { text: userText(user) })], options: user.options })
+      : user,
+    tool: (tool): Prompt.Message => tool.content.some((p) => p.type === "tool-result" && p.modelOutput !== undefined)
+      ? Prompt.makeMessage("tool", {
+        content: tool.content.map((p) => p.type !== "tool-result" || p.modelOutput === undefined ? p : Prompt.makePart("tool-result", {
+          id: p.id, name: p.name, isFailure: p.isFailure, result: toolResultText(p, false), providerExecuted: p.providerExecuted, options: p.options,
+        })),
+        options: tool.options,
+      })
+      : tool,
+    // Neither carries files.
+    system: (system): Prompt.Message => system,
+    assistant: (assistant): Prompt.Message => assistant,
+  }))))
 
 /** User-defined tools → chat-completions function declarations (empty when
  *  the request carries none — the caller omits the `tools` key entirely). */

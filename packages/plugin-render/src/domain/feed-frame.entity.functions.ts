@@ -51,11 +51,11 @@ export const encodeSocketFrame = (frame: FeedFrame): string => JSON.stringify(Ma
 /** @public */
 export const decodeSocketFrame = (text: string): Option.Option<FeedFrame> =>
   Result.getSuccess(Schema.decodeUnknownResult(Schema.fromJsonString(SocketFrame))(text)).pipe(Option.map((frame): FeedFrame =>
-    Match.value(frame).pipe(
-      Match.when({ type: "record" }, (record) => FeedRecord.make({ sequence: record.sequence, event: record.event, data: record.data })),
-      Match.when({ type: "ready" }, () => FeedReady.make({})),
-      Match.orElse(() => FeedHeartbeat.make({})),
-    )))
+    Match.value(frame).pipe(Match.discriminatorsExhaustive("type")({
+      record: (record): FeedFrame => FeedRecord.make({ sequence: record.sequence, event: record.event, data: record.data }),
+      ready: (): FeedFrame => FeedReady.make({}),
+      heartbeat: (): FeedFrame => FeedHeartbeat.make({}),
+    }))))
 
 /**
  * The cursor a WebSocket client asks to resume after (`{"after": n}`).

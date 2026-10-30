@@ -26,8 +26,7 @@ None of its own: the system prompt prefix is the host's (`AgentConfig.system`, a
 |---|---|---|
 | Every model request of the golden conversation: system prompts with the tool-discovery catalogue, tool descriptions and schemas (`load_skill`, `recall_context`, the host's), memory renderings (a `CompactViews` compaction, a digested result), seeded `load_skill` exchanges | `golden/agent-turn.model.json` | exact text, `src/agent.golden.test.ts:318`; over three storage backends, `src/agent.backends.test.ts` |
 | Every model request of a streamed conversation: signed and redacted thinking sent back with its provider metadata, by the next request, the journal's rebuild of it and a second agent | `golden/agent-stream.model.json` | exact text, `src/agent.stream-golden.test.ts` |
-
-The golden has no spill, dropped-turn or summary scenario: those texts are pinned, or not, in their plugins.
+| Every model and summarizer request of two compacting conversations: the window strategy's spill preview, the `recall_context` page that reads it back, and the host note and ledger of dropped turns; the summary strategy's summarizer prompt (default instructions, the data rule, the `<earlier-summary>` and `<conversation-transcript>` frames, a clipped tool result) and its handoff | `golden/agent-compaction.model.json` | exact text, `src/agent.compaction-golden.test.ts`; the journal's rebuild of each conversation's last request |
 
 ## Erasure files
 
@@ -43,11 +42,12 @@ None.
 | `src/testing.port.ts` | test-only services for the agent tests |
 | `golden/agent-turn.model.json`, `golden/agent-turn.journal.json` | the golden conversation: what the model and host see, and what is stored |
 | `golden/agent-stream.model.json` | the streamed golden: what a streamed conversation sends and stores |
+| `golden/agent-compaction.model.json` | the compaction golden: what a window and a summary conversation send, and the compactions they store |
 | `fixtures/journal-<version>.json` | journals each release wrote |
 
 ## Tests
 
-- Golden and composition: `agent.golden.test.ts`, `agent.stream-golden.test.ts`, `agent.backends.test.ts`, `turn-composition.test.ts` (also runs core's `turnConformance`), `plugin-stack.test.ts`.
+- Golden and composition: `agent.golden.test.ts`, `agent.stream-golden.test.ts`, `agent.compaction-golden.test.ts`, `agent.backends.test.ts`, `turn-composition.test.ts` (also runs core's `turnConformance`), `plugin-stack.test.ts`.
 - Behaviour: `agent.adapter.test.ts`, `agent.trace.test.ts` (span nesting and ids), `activity.test.ts`, `models-plugin.test.ts`; the key-free journeys `resume.journey.test.ts` and `tasks.journey.test.ts` (a background task through `agentTaskExecutor`: start, the child's turn, delivery, `pending`, drain; the `Tasks` among each turn's services, a task's `start_task` refused for depth, a reaction starting a task).
 - Kits and compatibility: `memory.conformance.test.ts` (core's `memoryConformance` over the window and summary strategies and a test-only one), `journal-compat.test.ts`, `events-guide.test.ts`.
 - Run: `bun test packages/sdk`.

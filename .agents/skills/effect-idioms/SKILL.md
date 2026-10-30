@@ -75,7 +75,8 @@ before using it; do not trust Effect 3 memory.
 - A failure's code is `harnessCodeOf(e)`: a `HarnessError`'s own, the one
   a tag stands for (`turnBeginCodes`, `TAGGED_CODES`: `SessionBusy` is
   `session.busy`), or a tagged error's string `code`. A Node or SQLite
-  error's `code` (`ENOENT`) is `errorCodeOf(e)`. Compare a `code` to a
+  error's `code` (`ENOENT`) is `errorCodeOf(e)` (the evals packages export
+  their own), never `"code" in e` (`effect/no-code-property-guard`). Compare a `code` to a
   literal only in the module that declares the error; elsewhere use a guard
   it exports (`isStoreBusy`; `effect/no-error-code-compare`).
 - A tagged error keeps the failure it wraps as a value, in a `cause` field
@@ -172,10 +173,11 @@ service method that only returns `Effect.gen(…)` is one of the two below.
 
 - A `_tag` union: `Match.valueTags(value, { … })` or
   `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`; `Option.match`,
-  `Result.match`, `Exit.match`. Not `switch (x._tag)`, an if/else ladder or
-  a ternary chain on `_tag`, `type`, `role` or `mode`
-  (`effect/match-over-tag-switch`; `Match.discriminators("type")` for a
-  field other than `_tag`).
+  `Result.match`, `Exit.match`. Not `switch (x._tag)`, an if/else ladder,
+  adjacent `if (x._tag === …) return …` statements or a ternary chain on
+  `_tag`, `type`, `role` or `mode` (`effect/match-over-tag-switch`;
+  `Match.discriminators("type")` for a field other than `_tag`;
+  `Match.orElse` where a default is deliberate).
 - No `let`, no loops, no `try`/`catch`/`throw`: the gates refuse them.
 
 ## Checklist

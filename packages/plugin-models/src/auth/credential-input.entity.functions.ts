@@ -1,30 +1,46 @@
-import { Match, Redacted } from "effect"
-import type { Credential } from "@xandreed/core/models"
+import { Effect, Match, Schema } from "effect"
+import { AuthError, Credential } from "@xandreed/core/models"
 import { AccountId, InstallationId } from "./credential-input.entity.js"
 import type { CredentialInput, CredentialInputs } from "./credential-input.entity.js"
 
-/** The stored form of a credential a host handed over: its secrets unwrapped. */
-export const toCredential = (input: CredentialInput): Credential =>
-  Match.value(input).pipe(
-    Match.when({ type: "api_key" }, ({ key }): Credential => ({ type: "api_key", key: Redacted.value(key) })),
-    Match.when({ type: "oauth" }, ({ access, refresh, ...rest }): Credential => ({ ...rest, access: Redacted.value(access), refresh: Redacted.value(refresh) })),
-    Match.when({ type: "local" }, (local): Credential => local),
-    Match.exhaustive,
-  )
+const encode = Schema.encodeEffect(Credential)
 
-/** A stored credential as a host receives it: its secrets `Redacted`. */
+/**
+ * A credential in its stored form, secrets in the clear: what `auth.json`
+ * holds for it. A secret that is not `Redacted` (a plain string from
+ * untyped code), or a field the credential does not type so, fails with an
+ * `AuthError` naming the provider, never the value.
+ */
+export const encodeCredential = (provider: string, credential: Credential): Effect.Effect<typeof Credential.Encoded, AuthError> =>
+  encode(credential).pipe(Effect.mapError(() => new AuthError({
+    provider,
+    message: `the ${provider} credential cannot be stored: its secrets must be Redacted values (Redacted.make(...)), and its other fields those of a credential`,
+  })))
+
+/**
+ * The stored form of a credential a host handed over: the same value, since
+ * a stored credential's secrets are `Redacted` too.
+ *
+ * @deprecated A `CredentialInput` is a `Credential`: use it as it is.
+ */
+export const toCredential = (input: CredentialInput): Credential => input
+
+/**
+ * A stored credential as a host receives it: the same secrets, already
+ * `Redacted`, and an OAuth credential's account and installation ids
+ * branded (`AccountId`, `InstallationId`).
+ */
 export const toCredentialInput = (credential: Credential): CredentialInput =>
   Match.value(credential).pipe(
-    Match.when({ type: "api_key" }, ({ key }): CredentialInput => ({ type: "api_key", key: Redacted.make(key) })),
-    Match.when({ type: "oauth" }, ({ type, access, refresh, expires, accountId, installationId }): CredentialInput => ({
-      type, expires, access: Redacted.make(access), refresh: Redacted.make(refresh),
+    Match.when({ type: "api_key" }, (apiKey): CredentialInput => apiKey),
+    Match.when({ type: "oauth" }, ({ accountId, installationId, ...oauth }): CredentialInput => ({
+      ...oauth,
       ...(accountId === undefined ? {} : { accountId: AccountId.make(accountId) }),
       ...(installationId === undefined ? {} : { installationId: InstallationId.make(installationId) }),
     })),
-    Match.when({ type: "local" }, ({ type, baseUrl }): CredentialInput => ({ type, ...(baseUrl === undefined ? {} : { baseUrl }) })),
+    Match.when({ type: "local" }, (local): CredentialInput => local),
     Match.exhaustive,
   )
 
-/** Handed-over credentials, by provider id, in their stored form. */
-export const credentialsOf = (inputs: CredentialInputs): ReadonlyMap<string, Credential> =>
-  new Map(Object.entries(inputs).map(([provider, input]) => [provider, toCredential(input)] as const))
+/** Handed-over credentials, by provider id, as the store keeps them. */
+export const credentialsOf = (inputs: CredentialInputs): ReadonlyMap<string, Credential> => new Map(Object.entries(inputs))

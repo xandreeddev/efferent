@@ -29,7 +29,9 @@ version and publish together under npm's `latest` tag.
    above the new one: `npm view @xandreed/plugin-telemetry versions`.
 6. Record the release's journal fixture: `bun scripts/record-journal-fixture.ts`
    writes `packages/sdk/fixtures/journal-<version>.json` (it refuses to
-   overwrite one; `--force` only while that version is unreleased).
+   overwrite one; `--force` only while that version is unreleased). Record its
+   evaluation run the same way: `bun scripts/record-run-fixture.ts` writes
+   `packages/evals/fixtures/run-<version>.json`.
 7. Run every gate (below), open the PR titled `release <version>` (skill
    `commit-style`) and merge it. Merging publishes nothing.
 

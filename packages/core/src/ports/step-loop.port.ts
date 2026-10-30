@@ -116,6 +116,9 @@ export interface StepRequest {
 /**
  * The references a step loop provides, whatever the caller's: a custom
  * `StepLoop` provides each of them, and `stepLoopConformance` checks each.
+ * The caller's values may be in the request's `handlers` too (a turn's
+ * services capture the context it runs in), so the loop provides its own
+ * inside them, never under them.
  * - `CurrentPromptCacheKey`: the request's `cacheKey`, to its dispatch
  *   checks and its model calls;
  * - `CurrentModelCallPolicy`: the request's `callPolicy`, to its dispatch

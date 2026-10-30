@@ -13,3 +13,23 @@ export const rank = (message: Message): number => {
 }
 export const one = (shape: Shape): string => (shape._tag === "circle" ? "round" : "other")
 export const same = (a: Message, b: Message): string => (a.mode === b.mode ? "same" : a.role === "user" ? "you" : "them")
+export const outline = (shape: Shape): string => {
+  if (shape._tag === "circle") return "round"
+  if (shape._tag === "square") {
+    return "boxy"
+  }
+  return "flat"
+}
+export const edge = (shape: Shape): string => {
+  if (shape._tag === "circle") return "round"
+  if (shape._tag === "line") {
+    return "thin"
+  } else {
+    return "boxy"
+  }
+}
+export const turn = (a: Message, b: Message): string => {
+  if (a.role === "user") return "you"
+  if (b.role === "user") return "them"
+  return "nobody"
+}

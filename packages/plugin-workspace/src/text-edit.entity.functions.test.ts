@@ -28,8 +28,32 @@ describe("applyTextEdits", () => {
     expect(errorOf(applyTextEdits("aaa", [{ oldText: "aa", newText: "b" }], exact))).toBe("Ambiguous")
     expect(errorOf(applyTextEdits(file, [{ oldText: "a = 1\nconst b", newText: "x" }, { oldText: "const b = 2", newText: "y" }], exact))).toBe("Overlap")
     expect(errorOf(applyTextEdits(file, [{ oldText: "const b = 2", newText: "const b = 2" }], exact))).toBe("NoChange")
-    const overlap = applyTextEdits(file, [{ oldText: "const c = 3", newText: "z" }, { oldText: "a = 1\nconst b", newText: "x" }, { oldText: "const b = 2", newText: "y" }], exact)
-    expect(Result.isFailure(overlap) ? overlap.failure.message : "").toContain("edits 2 and 3")
+  })
+
+  test("each refusal says what is wrong and what to do, naming the edit when there are several", () => {
+    const refusal = (original: string, edits: ReadonlyArray<{ readonly oldText: string; readonly newText: string }>, options = exact) =>
+      Result.match(applyTextEdits(original, edits, options), { onFailure: (failure) => failure, onSuccess: () => ({ error: "ok", message: "" }) })
+    expect([
+      refusal(file, [{ oldText: "", newText: "x" }]),
+      refusal(file, [{ oldText: "const a = 1", newText: "x" }, { oldText: "", newText: "x" }]),
+      refusal(file, [{ oldText: "const d", newText: "x" }]),
+      refusal(file, [{ oldText: "const a = 1", newText: "x" }, { oldText: "const d", newText: "x" }]),
+      refusal(file, [{ oldText: "const", newText: "let" }]),
+      refusal("aaa", [{ oldText: "aa", newText: "b" }]),
+      refusal("x = 1\n\tx = 1\n", [{ oldText: "x  =  1", newText: "y" }], fuzzy),
+      refusal(file, [{ oldText: "const c = 3", newText: "z" }, { oldText: "a = 1\nconst b", newText: "x" }, { oldText: "const b = 2", newText: "y" }]),
+      refusal(file, [{ oldText: "const b = 2", newText: "const b = 2" }]),
+    ]).toEqual([
+      { error: "EmptyOldText", message: "oldText is empty; to create a file or replace all of it, use write" },
+      { error: "EmptyOldText", message: "edit 2's oldText is empty; to create a file or replace all of it, use write" },
+      { error: "NoMatch", message: "oldText was not found in the file; read it again and copy the text exactly, whitespace included" },
+      { error: "NoMatch", message: "edit 2's oldText was not found in the file; read it again and copy the text exactly, whitespace included" },
+      { error: "Ambiguous", message: "oldText appears 3 times; add surrounding lines so it appears exactly once" },
+      { error: "Ambiguous", message: "oldText appears 2 times; add surrounding lines so it appears exactly once" },
+      { error: "Ambiguous", message: "oldText matches 2 places once whitespace and quotes are normalised; add surrounding lines so it matches exactly once" },
+      { error: "Overlap", message: "edits 2 and 3 change overlapping text; merge them into one edit" },
+      { error: "NoChange", message: "the edits leave the file as it is" },
+    ])
   })
 
   test("adjacent edits are not overlapping", () => {

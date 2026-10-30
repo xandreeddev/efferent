@@ -142,8 +142,9 @@ turn's usage, cost and tool metrics (see [observability](/docs/concepts/observab
 
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere.
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores
-them in a SQLite file on Bun; any other store can implement the `SessionLog`
-port.
+them in a SQLite file on Bun, which records its schema version: opening it
+upgrades an older file, and a file a newer release wrote fails to open with
+`store.version`. Any other store can implement the `SessionLog` port.
 
 ## Plugins
 

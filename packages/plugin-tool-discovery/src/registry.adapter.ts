@@ -256,7 +256,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
      */
     const activation = (requested: ReadonlyArray<string>, source: ActivationSource) => Effect.gen(function* () {
       const unknown = requested.filter((id) => !skills.some((skill) => skill.id === id))
-      if (unknown.length > 0) return yield* Effect.fail(harness("skills.unknown", `Unknown skills: ${unknown.join(", ")}`))
+      if (unknown.length > 0) return yield* Effect.fail(harness("skills.unknown", `Unknown skill${unknown.length === 1 ? "" : "s"}: ${unknown.join(", ")}; load_skill takes the skills the catalogue lists`))
       const resolved = yield* resolveCapabilities(catalog, { recipes: [...requested], tools: [] }, grants)
       const step = yield* SynchronizedRef.modifyEffect(activated, (held) => {
         const freshTools = resolved.tools.map((tool) => tool.id).filter((tool) => !held.tools.includes(tool))
@@ -274,7 +274,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
 
     const loadSkill = ({ skills: requested }: { readonly skills: ReadonlyArray<string> }) => Effect.gen(function* () {
       const loads = yield* Ref.getAndUpdate(skillLoads, (value) => value + 1)
-      if (loads >= config.maxSkillLoadsPerRun) return yield* Effect.fail(failure("SkillLoadLimit", `At most ${config.maxSkillLoadsPerRun} skill loads per turn`))
+      if (loads >= config.maxSkillLoadsPerRun) return yield* Effect.fail(failure("SkillLoadLimit", `At most ${config.maxSkillLoadsPerRun} skill load${config.maxSkillLoadsPerRun === 1 ? "" : "s"} per turn; work with the tools already loaded`))
       // A refusal is the model's to correct; anything else (the store failing) is the turn's.
       const step = yield* activation(requested, "load_skill").pipe(
         Effect.catch((error) => isHarnessError(error) && isRefusal(error) ? Effect.fail(failure(error.code, error.message)) : Effect.die(error)),
@@ -318,7 +318,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       const total = [...counts.values()].reduce((sum, value) => sum + value, 0)
       if (total >= config.maxCallsPerRun) return yield* refuse("call-limit", "CallLimit", `The turn's ${config.maxCallsPerRun}-call limit is reached; deliver with what you have`)
       if (Option.isSome(entry.annotations.maxCallsPerRun) && (counts.get(name) ?? 0) >= entry.annotations.maxCallsPerRun.value) {
-        return yield* refuse("tool-call-limit", "ToolCallLimit", `${name} may be called at most ${entry.annotations.maxCallsPerRun.value} times per turn`)
+        return yield* refuse("tool-call-limit", "ToolCallLimit", `${name} may be called at most ${entry.annotations.maxCallsPerRun.value === 1 ? "once" : `${entry.annotations.maxCallsPerRun.value} times`} per turn; use what its earlier calls returned`)
       }
       yield* Ref.update(calls, (all) => new Map([...all, [name, (all.get(name) ?? 0) + 1]]))
       const labels = entry.annotations.labels

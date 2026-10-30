@@ -12,7 +12,7 @@ import { noAmbientTimeRandom, noProcessEnv } from "./ambientServices.js"
 import { noJsonParse, noRecordCast, noSyncCodec, noUnknownJson } from "./boundaryDecoding.js"
 import { boundedPubSub, callbackBufferSize } from "./callbackBufferSize.js"
 import { noLocaleCompare, requireSortComparator } from "./deterministicOrder.js"
-import { noCausePrettyData, noErrorCodeCompare, noInstanceofTaggedError, noStringifiedCause } from "./errorValues.js"
+import { noCausePrettyData, noCodePropertyGuard, noErrorCodeCompare, noInstanceofTaggedError, noStringifiedCause } from "./errorValues.js"
 import { noEffectPromise, noPromiseAll } from "./promiseInterop.js"
 import { requireConcurrencyOption } from "./concurrencyOption.js"
 import { preferEffectFn } from "./effectFn.js"
@@ -66,6 +66,7 @@ export {
   noSilentIgnore,
   noStringifiedCause,
   noErrorCodeCompare,
+  noCodePropertyGuard,
   preferEffectFn,
   requireConcurrencyOption,
   noOptionUnwrap,

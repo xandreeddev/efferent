@@ -785,7 +785,11 @@ activation, digest and compaction decision is an entry in the session's log
 (a `memory.*` event, the turn's `turn.started` and its `turn.reply`) with its
 own id (`<runId>:<n>`). Every request is a pure fold of that log, so
 a request rebuilt later (another process, a restart) is byte-identical to the
-one the model saw. A strategy decides compactions and digests (`maintain`)
+one the model saw. A call's params, a provider-run tool's result and provider
+options go out with their keys sorted at every depth (`toPromptMessages`,
+core's canonical order), so a past call has the same bytes in the turn that
+made it, in every later turn and in a rebuild, and a provider's cached prompt
+prefix holds. A strategy decides compactions and digests (`maintain`)
 and records them before they apply; it applies only its own compactions, so
 a new strategy rebuilds from the full-fidelity entries.
 
@@ -940,7 +944,10 @@ to its dispatch checks and model calls; its `captureTraceContent` as
 `CurrentTraceContent` to its model calls; `CurrentEmptyResponseTolerance`
 to its model calls, false until the run has executed a tool call and true
 after; and the current step as `CurrentAgentStep` to its tool handlers and
-model calls. `stepLoopConformance` checks each.
+model calls. The caller's values can be in the request's `handlers` as well
+(a turn's services capture the context the turn runs in), so the loop
+provides its own inside `handlers`, never under them. `stepLoopConformance`
+checks each, with the caller's values around the run and in `handlers`.
 
 `memoryConformance(memory, services)`, `stepLoopConformance(loop)`,
 `turnConformance(runner, services)`, `sessionLogConformance(log)`,
@@ -1797,7 +1804,10 @@ background tasks. Two layers split the work:
   `create`, `head`, `list` (an owner's sessions, newest first, keyset
   paged), `read` (after a cursor, by kinds), `remove` (with its children)
   and `commit`. A commit is one compare-and-swap: it applies only when
-  `revision` still equals `expect` and, with `notAfter`, only while the
+  `revision` still equals `expect` (else `RevisionConflict`, told by its
+  tag with `isRevisionConflict`: nothing was written, so a writer reads the
+  head again and retries at once, `Effect.retry({ times, while:
+  isRevisionConflict })`) and, with `notAfter`, only while the
   storage's clock has not passed it; events get dense `seq`s and the
   storage's time; a commit may carry state and no events. The storage's
   clock is whatever the backend reads: the memory and SQLite logs read the
@@ -1831,7 +1841,11 @@ background tasks. Two layers split the work:
   processes opening one new file at once wait for each other rather than
   fail. The file is WAL with `synchronous = NORMAL` (a power loss may drop
   the last commits, never tear one), and a row that does not decode fails
-  with code `store.decode`.
+  with code `store.decode`. The file records its schema version
+  (`PRAGMA user_version`): opening it applies the migrations it lacks, under
+  the write lock, and a file a newer release wrote fails to open with code
+  `store.version`, neither read nor written; a 0.14.0 file, without a
+  version, opens as it was.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it.
@@ -2031,8 +2045,9 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 | anything else | the host, through the writer or `transact` |
 
 Memory is rebuilt from `MEMORY_KINDS` by `entriesOfEvents`, which reads JSON
-back with sorted keys: the requests a model sees do not depend on the store
-(a JSON column may reorder keys), and the SDK checks this over the memory,
+back with sorted keys, and requests send params, results and provider options
+with sorted keys: the requests a model sees do not depend on the store (a
+JSON column may reorder keys), and the SDK checks this over the memory,
 SQLite and key-reordering stores against the golden requests.
 
 A record is read by its fields only once decoded. `readStored(kind, events)`

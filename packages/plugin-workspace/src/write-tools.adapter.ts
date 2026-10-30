@@ -73,7 +73,7 @@ export const writeTool = (context: WorkspaceToolContext): RegisteredTool => defi
     yield* checkWritable(access, target, context.protect)
     return yield* holding(context, target.path)(Effect.gen(function* () {
       const before = yield* existing(access, target)
-      if (Option.exists(before, (info) => info.kind === "directory")) return yield* Effect.fail(failure("IsDirectory", `${target.display} is a directory`))
+      if (Option.exists(before, (info) => info.kind === "directory")) return yield* Effect.fail(failure("IsDirectory", `${target.display} is a directory; write takes the path of a file`))
       if (Option.exists(before, (info) => info.kind !== "file")) return yield* Effect.fail(notAFile(target.display, "write"))
       if (params.content.length === 0 && Option.exists(before, (info) => info.size > 0)) {
         return yield* Effect.fail(failure("WouldEmpty", `${target.display} has content; write refuses to empty it. Use edit to remove parts of it, or bash to delete it`))
@@ -107,10 +107,10 @@ export const editTool = (context: WorkspaceToolContext): RegisteredTool => defin
         onNone: () => Effect.fail(failure("NotFound", `${target.display} does not exist; use write to create it`)),
         onSome: Effect.succeed,
       })
-      if (info.kind === "directory") return yield* Effect.fail(failure("IsDirectory", `${target.display} is a directory`))
+      if (info.kind === "directory") return yield* Effect.fail(failure("IsDirectory", `${target.display} is a directory; edit takes the path of a file`))
       if (info.kind !== "file") return yield* Effect.fail(notAFile(target.display, "edit"))
       if (info.size > config.maxFileBytes) {
-        return yield* Effect.fail(failure("FileTooLarge", `${target.display} is ${formatBytes(info.size)}, more than the ${formatBytes(config.maxFileBytes)} edit loads`))
+        return yield* Effect.fail(failure("FileTooLarge", `${target.display} is ${formatBytes(info.size)}, more than the ${formatBytes(config.maxFileBytes)} edit loads; change it with bash (sed -i, or a script)`))
       }
       const bytes = yield* access.fs.readBytes(target.path).pipe(Effect.mapError(fsFailure(target.display)))
       if (looksBinary(bytes)) return yield* Effect.fail(failure("Binary", `${target.display} is a binary file; edit changes text files only`))

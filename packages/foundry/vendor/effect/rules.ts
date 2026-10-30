@@ -186,7 +186,7 @@ const unparenthesized = (node: ts.Expression): ts.Expression =>
 const discriminantOf = (node: ts.Expression): string | undefined =>
   ts.isPropertyAccessExpression(node) && DISCRIMINANTS.includes(node.name.text) ? node.name.text : undefined
 
-const comparedDiscriminant = (node: ts.Expression): string | undefined => {
+const comparedAccess = (node: ts.Expression): ts.PropertyAccessExpression | undefined => {
   const comparison = unparenthesized(node)
   if (
     !ts.isBinaryExpression(comparison) ||
@@ -200,12 +200,17 @@ const comparedDiscriminant = (node: ts.Expression): string | undefined => {
     [comparison.right, comparison.left],
   ]
   return sides
-    .map(([subject, other]) => {
-      const name = discriminantOf(subject)
-      return name !== undefined && (name === "_tag" || ts.isStringLiteralLike(other)) ? name : undefined
-    })
-    .find((name) => name !== undefined)
+    .map(([subject, other]) =>
+      ts.isPropertyAccessExpression(subject) &&
+      DISCRIMINANTS.includes(subject.name.text) &&
+      (subject.name.text === "_tag" || ts.isStringLiteralLike(other))
+        ? subject
+        : undefined,
+    )
+    .find((access) => access !== undefined)
 }
+
+const comparedDiscriminant = (node: ts.Expression): string | undefined => comparedAccess(node)?.name.text
 
 const ladder = (node: ts.IfStatement): ReadonlyArray<string> => {
   const name = comparedDiscriminant(node.expression)
@@ -219,6 +224,31 @@ const ternaryChain = (node: ts.ConditionalExpression): ReadonlyArray<string> => 
   if (name === undefined) return []
   const next = unparenthesized(node.whenFalse)
   return [name, ...(ts.isConditionalExpression(next) ? ternaryChain(next) : [])]
+}
+
+const endsInReturn = (node: ts.Statement): boolean => {
+  const last = ts.isBlock(node) ? node.statements[node.statements.length - 1] : node
+  return last !== undefined && ts.isReturnStatement(last)
+}
+
+/** An `if` without an `else` that compares a discriminant, then returns. */
+const rungOf = (node: ts.Statement): ts.PropertyAccessExpression | undefined =>
+  ts.isIfStatement(node) && node.elseStatement === undefined && endsInReturn(node.thenStatement)
+    ? comparedAccess(node.expression)
+    : undefined
+
+/** The first `if` of each run of two or more adjacent rungs on the same subject. */
+const ifReturnLadders = (
+  sourceFile: ts.SourceFile,
+  statements: ReadonlyArray<ts.Statement>,
+): ReadonlyArray<{ readonly node: ts.Statement; readonly name: string }> => {
+  const rungs = statements.map((statement) => ({ statement, access: rungOf(statement) }))
+  const subjects = rungs.map(({ access }) => access?.getText(sourceFile))
+  return rungs.flatMap(({ statement, access }, index) =>
+    access !== undefined && subjects[index - 1] !== subjects[index] && subjects[index + 1] === subjects[index]
+      ? [{ node: statement, name: access.name.text }]
+      : [],
+  )
 }
 
 const isLadderHead = (node: ts.IfStatement): boolean => {
@@ -236,13 +266,13 @@ const isTernaryHead = (node: ts.ConditionalExpression): boolean => {
 }
 
 /** The `switch` and the else-if ladder on `_tag` report everywhere; ternary
- *  chains and the `type`/`role`/`mode` discriminants are tolerated in the
- *  files a rule config names as its `boundary`. */
+ *  chains, if-return ladders and the `type`/`role`/`mode` discriminants are
+ *  tolerated in the files a rule config names as its `boundary`. */
 export const matchOverTagSwitch = {
   id: "effect/match-over-tag-switch",
   defaultSeverity: "error",
   description:
-    "discriminated unions are branched with Match, not `switch`, else-if ladders or ternary chains on `_tag`, `type`, `role` or `mode`",
+    "discriminated unions are branched with Match, not `switch`, else-if ladders, if-return ladders or ternary chains on `_tag`, `type`, `role` or `mode`",
   fixHint:
     "Match.value(x).pipe(Match.tag(…), Match.exhaustive) or Match.valueTags(x, { … }) for `_tag`; Match.discriminators(\"type\")({ … }) for another field — or Option.match / Result.match / Exit.match",
   check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => {
@@ -269,6 +299,15 @@ export const matchOverTagSwitch = {
         if (names.length >= 2) {
           matches.push({ node, message: `\`.${names[0] ?? "_tag"}\` ternary chain — use Match.exhaustive`, toleratedAtBoundary: true })
         }
+      }
+      if (ts.isBlock(node) || ts.isSourceFile(node) || ts.isCaseOrDefaultClause(node)) {
+        ifReturnLadders(sourceFile, node.statements).forEach(({ node: head, name }) =>
+          matches.push({
+            node: head,
+            message: `\`.${name}\` if-return ladder — use Match.exhaustive (Match.orElse for a deliberate default)`,
+            toleratedAtBoundary: true,
+          }),
+        )
       }
     })
     return matches
@@ -776,11 +815,15 @@ export const noProcessEnv = {
     ),
 }
 
-const ambientMatch = (node: ts.Node): ReadonlyArray<VendoredMatch> => {
+const wallClockMatch = (node: ts.Node): ReadonlyArray<VendoredMatch> => {
   if (isMemberOf(node, "Date", ["now"])) return [{ node, message: "`Date.now` reads the wall clock" }]
   if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Date" && (node.arguments ?? []).length === 0) {
     return [{ node, message: "`new Date()` reads the wall clock" }]
   }
+  return []
+}
+
+const generatorMatch = (node: ts.Node): ReadonlyArray<VendoredMatch> => {
   if (isMemberOf(node, "Math", ["random"])) return [{ node, message: "`Math.random` is a generator no seed or test controls" }]
   if (
     (ts.isPropertyAccessExpression(node) && node.name.text === "randomUUID") ||
@@ -791,13 +834,18 @@ const ambientMatch = (node: ts.Node): ReadonlyArray<VendoredMatch> => {
   return []
 }
 
+const ambientMatch = (node: ts.Node): ReadonlyArray<VendoredMatch> => [...wallClockMatch(node), ...generatorMatch(node)]
+
+const isAdapter = (sourceFile: ts.SourceFile): boolean => /\.adapter\.ts$/.test(sourceFile.fileName)
+
 export const noAmbientTimeRandom = {
   id: "effect/no-ambient-time-random",
   defaultSeverity: "error",
-  description: "time comes from `Clock` and randomness from `Random`, outside adapters",
+  description: "time comes from `Clock` everywhere, and randomness from `Random` outside adapters",
   fixHint:
-    "read the time with `Clock.currentTimeMillis` (or `DateTime.now`) and draw from `Random`, so a TestClock or a seed drives them; only an adapter (`*.adapter.ts`) touches the platform clock and generator",
-  check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> => matchesIn(sourceFile, ambientMatch),
+    "read the time with `Clock.currentTimeMillis` (or `DateTime.now`) and draw from `Random`, so a TestClock or a seed drives them; only an adapter (`*.adapter.ts`) draws from the platform generator, and it too reads the time from `Clock`",
+  check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
+    matchesIn(sourceFile, isAdapter(sourceFile) ? wallClockMatch : ambientMatch),
 }
 
 export const noLocaleCompare = {
@@ -1025,6 +1073,25 @@ export const noErrorCodeCompare = {
     }),
 }
 
+const isCodeKey = (node: ts.Node | undefined): boolean =>
+  node !== undefined && ts.isStringLiteralLike(node) && node.text === "code"
+
+const isCodeGuard = (node: ts.Node): boolean =>
+  (ts.isCallExpression(node) && isMemberOf(node.expression, "Predicate", ["hasProperty"]) && isCodeKey(node.arguments.at(-1))) ||
+  (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.InKeyword && isCodeKey(node.left))
+
+export const noCodePropertyGuard = {
+  id: "effect/no-code-property-guard",
+  defaultSeverity: "error",
+  description: "a failure's `code` is read through its reader, never guarded by hand",
+  fixHint:
+    "use `errorCodeOf(error)` for a Node or SQLite code (`Option.contains(errorCodeOf(error), \"ENOENT\")`), `harnessCodeOf(error)` for the framework's codes, `Effect.catchTag` for a tagged error",
+  check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
+    matchesIn(sourceFile, (node) =>
+      isCodeGuard(node) ? [{ node, message: `\`${node.getText(sourceFile)}\` reads a \`code\` by hand` }] : [],
+    ),
+}
+
 type FunctionBody = ts.ConciseBody | undefined
 
 const onlyReturnsGen = (body: FunctionBody): boolean => {
@@ -1162,6 +1229,7 @@ export const rules = [
   noSilentIgnore,
   noStringifiedCause,
   noErrorCodeCompare,
+  noCodePropertyGuard,
   preferEffectFn,
   requireConcurrencyOption,
   noOptionUnwrap,

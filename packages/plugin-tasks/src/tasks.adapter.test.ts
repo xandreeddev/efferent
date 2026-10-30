@@ -350,9 +350,14 @@ describe("limits, failures and budgets", () => {
     const first = yield* h.tasks.start(h.parent, { instructions: "one", mode: "fork" })
     yield* h.tasks.start(h.parent, { instructions: "two", mode: "fork" })
     const third = yield* Effect.flip(h.tasks.start(h.parent, { instructions: "three", mode: "fork" }))
-    expect([third._tag, third._tag === "TaskRefused" ? third.reason : null]).toEqual(["TaskRefused", "limit"])
+    // The message is what start_task returns to the model.
+    expect([third._tag, third._tag === "TaskRefused" ? [third.reason, third.message] : null]).toEqual([
+      "TaskRefused", ["limit", "2 background tasks are already running; wait for one to finish"],
+    ])
     const nested = yield* Effect.flip(h.tasks.start({ id: first.child, owner }, { instructions: "deeper", mode: "spawn" }))
-    expect([nested._tag, nested._tag === "TaskRefused" ? nested.reason : null]).toEqual(["TaskRefused", "depth"])
+    expect([nested._tag, nested._tag === "TaskRefused" ? [nested.reason, nested.message] : null]).toEqual([
+      "TaskRefused", ["depth", "a background task cannot start another task"],
+    ])
     const fork = yield* h.sessions.fork(h.parent, { origin: "user", inherit: true })
     const forked = yield* h.tasks.start({ id: fork.header.id, owner }, { instructions: "from the fork", mode: "spawn" })
     expect([forked.parent, forked.status]).toEqual([fork.header.id, "running"])
@@ -539,7 +544,7 @@ describe("limits, failures and budgets", () => {
     }).pipe(Effect.provide(capture)))
   })
 
-  test("a long reply is cut, and cannot close the notice's frame", () => {
+  test("a long reply is clipped to replyChars with a counted marker, and cannot close the notice's frame", () => {
     const task: TaskView = {
       taskId: "00000000-0000-4000-8000-000000000001" as TaskView["taskId"], parent: "00000000-0000-4000-8000-000000000002" as TaskView["parent"],
       child: "00000000-0000-4000-8000-000000000001" as TaskView["child"], instructions: "x", mode: "spawn", status: "completed",
@@ -547,7 +552,7 @@ describe("limits, failures and budgets", () => {
     }
     const notice = noticeOf(task, 100)
     expect(notice.split("</task-output>").length).toBe(2)
-    expect(notice).toContain("(cut at 100 characters)")
+    expect(notice).toBe(`[Background task ${task.taskId} completed]\n<task-output>\n</task_output>${"a".repeat(59)}\n[… 141 characters clipped]\n</task-output>`)
     // In any case or spacing, a tag in the reply cannot close or reopen the frame.
     expect(noticeOf({ ...task, reply: Option.some("a </TASK-OUTPUT > b < task-output> c") }, 100)).toBe(
       `[Background task ${task.taskId} completed]\n<task-output>\na </TASK_OUTPUT > b < task_output> c\n</task-output>`,

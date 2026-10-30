@@ -31,10 +31,15 @@ const TSCONFIG = JSON.stringify({
 
 /** A workspace whose src violates several effect rules — the shared golden
  *  fixture for library-vs-vendored parity. `errors.ts` declares the error
- *  whose code `violations.ts` compares. */
+ *  whose code `violations.ts` compares; `clock.adapter.ts` holds what a
+ *  rule judges differently in an adapter. */
 const seedViolations = (dir: string): void => {
   writeFileSync(path.join(dir, "tsconfig.json"), TSCONFIG)
   mkdirSync(path.join(dir, "src"), { recursive: true })
+  writeFileSync(
+    path.join(dir, "src", "clock.adapter.ts"),
+    ["export const stamped = () => Date.now()", "export const drawn = () => Math.random()", ""].join("\n"),
+  )
   writeFileSync(
     path.join(dir, "src", "errors.ts"),
     [
@@ -78,9 +83,11 @@ const seedViolations = (dir: string): void => {
       "export const loop = (xs: ReadonlyArray<number>) => { for (const x of xs) { void x } }",
       "export const tag = (x: { readonly _tag: string }) => { switch (x._tag) { default: return 0 } }",
       'export const role = (x: { readonly role: string }) => (x.role === "a" ? 1 : x.role === "b" ? 2 : 3)',
+      'export const rung = (x: { readonly _tag: string }) => { if (x._tag === "a") return 1; if (x._tag === "b") return 2; return 3 }',
       "export const swallowed = Effect.fail(1).pipe(Effect.ignore)",
       'export const wrapped = (cause: unknown) => new StoreError({ code: "write", message: String(cause) })',
       'export const busy = (error: StoreError) => error.code === "busy"',
+      'export const coded = (error: object) => "code" in error',
       "export const load = (id: string) => Effect.gen(function* () { return id })",
       "export const both = Effect.all([Effect.succeed(1), Effect.succeed(2)])",
       "export const unwrapped = Option.getOrNull(Option.some(1))",
@@ -308,6 +315,10 @@ describe("vendored packs — plain twins of the library", () => {
     expect(normalized(libraryFindings).length).toBeGreaterThan(3)
     // Every rule of the pack fires on the seeded file, so drift in any one shows.
     expect(new Set(libraryFindings.map((f) => String(f.rule)))).toEqual(new Set(ruleIds))
+    // An adapter reads the time from `Clock`, but may draw from the platform generator.
+    expect(normalized(libraryFindings).filter((f) => f.file === "src/clock.adapter.ts")).toEqual([
+      { rule: "effect/no-ambient-time-random", message: "`Date.now` reads the wall clock", file: "src/clock.adapter.ts", line: 1 },
+    ])
     expect(normalized(vendoredFindings)).toEqual(normalized(libraryFindings))
   })
 

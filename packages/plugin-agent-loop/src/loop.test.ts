@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { Data, Effect, Layer, Option, Ref, Schema, Stream, Tracer } from "effect"
-import { CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, Failure, mediaFromBase64 } from "@xandreed/core"
+import { Data, Effect, Layer, Match, Option, Ref, Schema, Stream, Tracer } from "effect"
+import { CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, Failure, hostNote, mediaFromBase64 } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import { DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
 
@@ -23,23 +23,25 @@ const scriptedModel = (script: (call: number) => ReadonlyArray<unknown>) =>
 const toStreamParts = (parts: ReadonlyArray<unknown>): ReadonlyArray<unknown> =>
   parts.flatMap((part) => {
     const p = part as { type?: string; text?: string }
-    if (p.type === "text") {
-      const mid = Math.ceil((p.text ?? "").length / 2)
-      return [
-        { type: "text-start", id: "t1" },
-        { type: "text-delta", id: "t1", delta: (p.text ?? "").slice(0, mid) },
-        { type: "text-delta", id: "t1", delta: (p.text ?? "").slice(mid) },
-        { type: "text-end", id: "t1" },
-      ]
-    }
-    if (p.type === "reasoning") {
-      return [
+    const text = p.text ?? ""
+    return Match.value(p.type).pipe(
+      Match.when("text", (): ReadonlyArray<unknown> => {
+        const mid = Math.ceil(text.length / 2)
+        return [
+          { type: "text-start", id: "t1" },
+          { type: "text-delta", id: "t1", delta: text.slice(0, mid) },
+          { type: "text-delta", id: "t1", delta: text.slice(mid) },
+          { type: "text-end", id: "t1" },
+        ]
+      }),
+      Match.when("reasoning", (): ReadonlyArray<unknown> => [
         { type: "reasoning-start", id: "r1" },
-        { type: "reasoning-delta", id: "r1", delta: p.text ?? "" },
+        { type: "reasoning-delta", id: "r1", delta: text },
         { type: "reasoning-end", id: "r1" },
-      ]
-    }
-    return [part]
+      ]),
+      // Every other part is streamed as it is.
+      Match.orElse((): ReadonlyArray<unknown> => [part]),
+    )
   })
 
 /** A provider that ONLY streams — generateText dies, proving the streamed
@@ -185,7 +187,7 @@ describe("runLoop", () => {
     expect(result.finalText).toBe("fixed")
     expect(result.outcome).toBe("ok")
     const corrective = result.newTail.find(
-      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("could not be parsed"),
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.startsWith("[Host note: your previous reply called echo with parameters that do not match its schema"),
     )
     expect(corrective).toBeDefined()
   })
@@ -203,7 +205,7 @@ describe("runLoop", () => {
     )
     expect(result.finalText).toBe("recovered")
     const corrective = result.newTail.find(
-      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("could not be parsed"),
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.startsWith("[Host note: your previous reply could not be decoded"),
     )
     expect(corrective).toBeDefined()
   })
@@ -228,7 +230,7 @@ describe("runLoop", () => {
     expect(result.outcome).toBe("partial")
     expect(result.reason).toBe("degenerate-loop")
     const nudges = result.newTail.filter(
-      (m) => m.role === "user" && m.content === DEGENERATE_REPEAT_NUDGE,
+      (m) => m.role === "user" && m.content === hostNote(DEGENERATE_REPEAT_NUDGE),
     )
     expect(nudges).toHaveLength(1)
     // Step 3 is the third stale one: the nudge is what step 4 reads, recorded under it.
@@ -792,7 +794,7 @@ describe("runLoop streaming", () => {
     )
     expect(result.finalText).toBe("all done")
     const corrective = result.newTail.find(
-      (m) => m.role === "user" && typeof m.content === "string" && m.content.includes("could not be parsed"),
+      (m) => m.role === "user" && typeof m.content === "string" && m.content.startsWith("[Host note: your previous reply could not be decoded"),
     )
     expect(corrective).toBeDefined()
   })
@@ -1183,4 +1185,73 @@ test("native prompt instructions preserve messages and provider metadata", async
     prepareModel: () => Effect.succeed({ model: chosen, system: Prompt.make("selected") }),
   }), () => [{ type: "text", text: "wrong provider" }, finish("stop")])
   expect(JSON.stringify(result.newTail)).toContain("streamed selection")
+})
+
+describe("the loop's own text, exactly as the model reads it", () => {
+  /** A provider whose first reply does not decode, with `description` as the decode error; then it answers in text. */
+  const malformedOnce = (description: string) => Effect.gen(function* () {
+    const calls = yield* Ref.make(0)
+    return yield* LanguageModel.make({
+      generateText: () => Ref.getAndUpdate(calls, (n) => n + 1).pipe(Effect.flatMap((n) => n === 0
+        ? Effect.fail(AiError.make({ module: "Test", method: "generateText", reason: new AiError.InvalidOutputError({ description }) }))
+        : Effect.succeed([{ type: "text", text: "fixed" }, finish("stop")]))) as never,
+      streamText: () => Stream.die("not scripted") as never,
+    })
+  })
+  const correctiveAfter = (description: string) => Effect.runPromise(runLoop({ system: "sys", messages: [user("go")], toolkit: kit }).pipe(
+    Effect.provide(handlers),
+    Effect.provideServiceEffect(LanguageModel.LanguageModel, malformedOnce(description)),
+    Effect.map((result) => result.newTail.filter((message) => message.role === "user")),
+  ))
+
+  /** The user-role messages after a first reply of `part` (a tool call that cannot be used), then a reply in text. */
+  const correctiveFor = (part: unknown) => run(runLoop({ system: "sys", messages: [user("go")], toolkit: kit }), (call) => call === 0
+    ? [part, finish("tool-calls")]
+    : [{ type: "text", text: "fixed" }, finish("stop")]).then((result) => result.newTail.filter((message) => message.role === "user"))
+
+  test("the malformed corrective: a host note with what went wrong and the step's tools; the parameters' report framed and clipped, a decoder's dump never", async () => {
+    expect(await correctiveAfter("the reply is not valid JSON")).toEqual([{
+      role: "user",
+      content: "[Host note: your previous reply could not be decoded, which usually means it called a tool you do not have or gave a call parameters of the wrong shape. "
+        + "The tools you can call are: echo. Reply again with one of them, its parameters as its schema gives them, or in plain text if you are done.]",
+    }])
+    expect(await correctiveFor({ type: "tool-call", id: "c1", name: "echo", params: { wrong: true } })).toEqual([{
+      role: "user",
+      content: "[Host note: your previous reply called echo with parameters that do not match its schema; what did not match follows, and it may quote your reply. "
+        + "The tools you can call are: echo. Reply again with one of them, its parameters as its schema gives them, or in plain text if you are done.]\n\n<parameter-errors>\nMissing key\n  at [\"value\"]\n</parameter-errors>",
+    }])
+    expect(await correctiveFor({ type: "tool-call", id: "c1", name: "echo", params: { value: 7 } })).toEqual([{
+      role: "user",
+      content: "[Host note: your previous reply called echo with parameters that do not match its schema; what did not match follows, and it may quote your reply. "
+        + "The tools you can call are: echo. Reply again with one of them, its parameters as its schema gives them, or in plain text if you are done.]\n\n<parameter-errors>\nExpected string\n  at [\"value\"]\n</parameter-errors>",
+    }])
+  })
+
+  test("the degenerate-loop nudge, and the reply of a run the breaker stopped with no text", async () => {
+    const result = await run(
+      runLoop({ system: "sys", messages: [user("go")], toolkit: kit }),
+      () => [{ type: "tool-call", id: "c1", name: "echo", params: { value: "same" } }, finish("tool-calls")],
+    )
+    expect(result.newTail.filter((message) => message.role === "user")).toEqual([{
+      role: "user",
+      content: "[Host note: You've called the same tool(s) and gotten the same result several times in a row — you're looping without making progress. "
+        + "STOP repeating that call. Take a DIFFERENT concrete action toward the task; if you're genuinely stuck, say what's blocking you and stop.]",
+    }])
+    expect(result.finalText).toBe("[stopped: repeated the same tool call with no progress — the run was looping]")
+  })
+
+  test("the incomplete corrective, after a stop that left the host's required work undone", async () => {
+    const { events, onEvent } = collect()
+    const result = await run(runLoop({
+      system: "sys", messages: [user("deliver")], toolkit: kit, onEvent, requireCompletion: true, maxSteps: 3,
+      isComplete: () => Effect.succeed(events.some((event) => event.type === "tool_end" && event.ok)),
+    }), (call) => call === 0
+      ? [{ type: "text", text: "I will do it" }, finish("stop")]
+      : [{ type: "tool-call", id: "c1", name: "echo", params: { value: "delivered" } }, finish("tool-calls")])
+    expect(result.newTail.filter((message) => message.role === "user")).toEqual([{
+      role: "user",
+      content: "[Host note: the host reports that the required work is not complete, so a reply in text does not finish this turn. "
+        + "Complete it with the tools you can call; if it cannot be completed, use one of them that reports why, when there is one.]",
+    }])
+  })
 })

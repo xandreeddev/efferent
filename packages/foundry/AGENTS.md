@@ -110,10 +110,10 @@ configured placeholder home) or a term of the config's local, git-ignored
 denylist. Its messages never repeat what matched. A rule entry's `boundary`
 globs drop the matches the rule marks `toleratedAtBoundary`:
 `effect/no-as-never`'s plain `as never` (where type erasure is the
-design), and `effect/match-over-tag-switch`'s ternary chains and
-`type`/`role`/`mode` discriminants (its `switch` and ladder on `_tag`
-report everywhere; the root config names no boundary for it, every
-package being converted). A boundary only shrinks too: a glob that
+design), and `effect/match-over-tag-switch`'s ternary chains, if-return
+ladders and `type`/`role`/`mode` discriminants (its `switch` and else-if
+ladder on `_tag` report everywhere; the root config names no boundary for
+it, every package being converted). A boundary only shrinks too: a glob that
 names no file the rule checks, or whose files hold no match the rule
 drops there, is itself a finding under the rule's id. A rule entry's
 `allow` names exact files the rule skips, a frozen list that only
@@ -138,6 +138,8 @@ failure is logged first: `Effect.ignore({ log })` or a logging
 `effect/no-stringified-cause` (type-aware: a failure turned to text
 inside a tagged error), `effect/no-error-code-compare` (type-aware: a
 code compared outside the file declaring it and its `.functions.ts`),
+`effect/no-code-property-guard` (`Predicate.hasProperty(e, "code")` and
+`"code" in e`: one reader, `errorCodeOf`, reads a foreign code),
 `effect/prefer-effect-fn` and `effect/require-concurrency-option`
 (type-aware about `forEach`'s data-last form); the `effect-architecture`
 pack adds `architecture/role-suffix-required`. Two more decode what

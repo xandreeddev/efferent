@@ -1,6 +1,5 @@
 import { Schema } from "effect"
 
-export const EvaluationId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("EvaluationId"))
 export const EvaluationVersion = Schema.Trimmed.check(Schema.isNonEmpty())
 /** @public */
 export const EvaluationSplit = Schema.Literals(["calibration", "validation"])
@@ -21,7 +20,7 @@ export const EvaluationUsage = Schema.Struct({
   costUsd: Schema.OptionFromNullOr(Schema.Number.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(0)))),
 })
 export type EvaluationUsage = typeof EvaluationUsage.Type
-/** @public */
+/** @deprecated A grader's verdict is a `Grade`: put the evaluator behind a grader with `graderFromEvaluator`. */
 export const EvaluationResult = Schema.Struct({
   version: Schema.Literal(2),
   evaluator: Schema.String,
@@ -35,6 +34,7 @@ export const EvaluationResult = Schema.Struct({
   usage: EvaluationUsage,
   metadata: Schema.JsonObject,
 })
+/** @deprecated A grader's verdict is a `Grade`. */
 export type EvaluationResult = typeof EvaluationResult.Type
 /**
  * `message` says what failed; `cause` keeps the failure it wraps (a schema or provider error) for an operator, never for a report.

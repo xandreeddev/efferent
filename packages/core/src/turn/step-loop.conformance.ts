@@ -101,19 +101,19 @@ interface Scenario {
   readonly providerCall?: Effect.Effect<void>
   /** The request's `captureTraceContent` (off by default). */
   readonly captureTraceContent?: boolean
-  /** `CurrentTraceContent` where the loop runs (off by default). */
+  /** `CurrentTraceContent` where the loop runs and in the request's services (off by default). */
   readonly ambientTraceContent?: boolean
   /** The request's `cacheKey` (none by default). */
   readonly cacheKey?: Option.Option<string>
-  /** `CurrentPromptCacheKey` where the loop runs (none by default). */
+  /** `CurrentPromptCacheKey` where the loop runs and in the request's services (none by default). */
   readonly ambientCacheKey?: Option.Option<string>
   /** The request's `callPolicy` (none by default). */
   readonly callPolicy?: Option.Option<ModelCallPolicy>
-  /** `CurrentModelCallPolicy` where the loop runs (none by default). */
+  /** `CurrentModelCallPolicy` where the loop runs and in the request's services (none by default). */
   readonly ambientCallPolicy?: Option.Option<ModelCallPolicy>
-  /** `CurrentEmptyResponseTolerance` where the loop runs (off by default). */
+  /** `CurrentEmptyResponseTolerance` where the loop runs and in the request's services (off by default). */
   readonly ambientTolerance?: boolean
-  /** `CurrentAgentStep` where the loop runs (none by default). */
+  /** `CurrentAgentStep` where the loop runs and in the request's services (none by default). */
   readonly ambientStep?: Option.Option<number>
   /** The provider refuses its first request over an image (an `InvalidRequestError` naming one). */
   readonly refuseFirst?: boolean
@@ -259,7 +259,15 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const request: StepRequest = {
     run: scenario.run ?? FIRST_RUN,
     tools,
-    handlers: Context.merge(handlers, Context.make(LanguageModel.LanguageModel, model)),
+    // The caller's values of `StepLoopReferences` are in the request's services too, as a turn's
+    // services capture the context it runs in: the loop's own values must win over them as well.
+    handlers: Context.merge(handlers, Context.make(LanguageModel.LanguageModel, model)).pipe(
+      Context.add(CurrentPromptCacheKey, scenario.ambientCacheKey ?? Option.none()),
+      Context.add(CurrentTraceContent, scenario.ambientTraceContent ?? false),
+      Context.add(CurrentModelCallPolicy, scenario.ambientCallPolicy ?? Option.none()),
+      Context.add(CurrentEmptyResponseTolerance, scenario.ambientTolerance ?? false),
+      Context.add(CurrentAgentStep, scenario.ambientStep ?? Option.none()),
+    ),
     limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: scenario.streaming ?? false, requireCompletion: scenario.requireCompletion ?? false },
     initial: Option.fromNullishOr(scenario.initial),
     plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(
@@ -326,7 +334,8 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * `malformed` with no `completion.evaluated`, planned batches
  * without a provider call, forced tool choices, awaiting verdicts, no call
  * after completion, the run's usage, the step cap, each of
- * `StepLoopReferences` provided whatever the caller's (the request's
+ * `StepLoopReferences` provided whatever the caller's, around the run and
+ * in the request's services alike (the request's
  * `captureTraceContent` to its model calls as `CurrentTraceContent`, its
  * `cacheKey` and `callPolicy` to its dispatch checks and model calls as
  * `CurrentPromptCacheKey` and `CurrentModelCallPolicy`, which the dispatch

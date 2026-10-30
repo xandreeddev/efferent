@@ -13,6 +13,9 @@ export const isUnavailable = (error: EvaluationError | AssessmentError): boolean
 const stringField = (value: unknown, key: string): Option.Option<string> =>
   Predicate.isObject(value) ? Option.filter(Option.some(value[key]), Predicate.isString) : Option.none()
 
+/** The string `code` a foreign error carries (a Node error's `ENOENT`), when it has one. */
+export const errorCodeOf = (error: unknown): Option.Option<string> => stringField(error, "code")
+
 /** An error's label: its `code`, else its `_tag`, else its class name unless that is plain `Error`. */
 const labelOf = (value: unknown): Option.Option<string> => Option.firstSomeOf([
   stringField(value, "code"),

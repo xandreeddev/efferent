@@ -67,6 +67,7 @@ export const HARNESS_CODES = [
   "store.encode",
   "store.io",
   "store.open",
+  "store.version",
   "task.deadline",
   "task.lost",
   "task.refused",

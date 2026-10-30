@@ -19,11 +19,15 @@ export const noProcessEnv: IdiomRule = {
     ),
 }
 
-const ambientMatch = (node: ts.Node): ReadonlyArray<RuleMatch> => {
+const wallClockMatch = (node: ts.Node): ReadonlyArray<RuleMatch> => {
   if (isMemberOf(node, "Date", ["now"])) return [{ node, message: "`Date.now` reads the wall clock" }]
   if (ts.isNewExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "Date" && (node.arguments ?? []).length === 0) {
     return [{ node, message: "`new Date()` reads the wall clock" }]
   }
+  return []
+}
+
+const generatorMatch = (node: ts.Node): ReadonlyArray<RuleMatch> => {
   if (isMemberOf(node, "Math", ["random"])) return [{ node, message: "`Math.random` is a generator no seed or test controls" }]
   if (
     (ts.isPropertyAccessExpression(node) && node.name.text === "randomUUID") ||
@@ -34,13 +38,19 @@ const ambientMatch = (node: ts.Node): ReadonlyArray<RuleMatch> => {
   return []
 }
 
+const ambientMatch = (node: ts.Node): ReadonlyArray<RuleMatch> => [...wallClockMatch(node), ...generatorMatch(node)]
+
+const isAdapter = (sourceFile: ts.SourceFile): boolean => /\.adapter\.ts$/.test(sourceFile.fileName)
+
 /** Time and randomness are services: `Clock` and `Random` are what a
- *  TestClock or a seed replaces, so code reading them stays repeatable. */
+ *  TestClock or a seed replaces, so code reading them stays repeatable.
+ *  An adapter may still draw from the platform generator (a run id, a
+ *  temporary file's name); it reads the time from `Clock` like the rest. */
 export const noAmbientTimeRandom: IdiomRule = {
   id: RuleId.make("effect/no-ambient-time-random"),
   defaultSeverity: "error",
-  description: "time comes from `Clock` and randomness from `Random`, outside adapters",
+  description: "time comes from `Clock` everywhere, and randomness from `Random` outside adapters",
   fixHint:
-    "read the time with `Clock.currentTimeMillis` (or `DateTime.now`) and draw from `Random`, so a TestClock or a seed drives them; only an adapter (`*.adapter.ts`) touches the platform clock and generator",
-  check: ({ sourceFile }) => matchesIn(sourceFile, ambientMatch),
+    "read the time with `Clock.currentTimeMillis` (or `DateTime.now`) and draw from `Random`, so a TestClock or a seed drives them; only an adapter (`*.adapter.ts`) draws from the platform generator, and it too reads the time from `Clock`",
+  check: ({ sourceFile }) => matchesIn(sourceFile, isAdapter(sourceFile) ? wallClockMatch : ambientMatch),
 }

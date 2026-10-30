@@ -1,6 +1,7 @@
 import { Effect, Option } from "effect"
 import { AssessmentError } from "./assessment.entity.js"
 import type { Evaluator } from "./assessment.usecase.js"
+import type { EvaluationError } from "./domain/identity.entity.js"
 import type { EvaluatorRegistration } from "./evaluator-registry.usecase.js"
 
 /**
@@ -8,14 +9,13 @@ import type { EvaluatorRegistration } from "./evaluator-registry.usecase.js"
  *
  * @public
  */
-export const projectEvaluatorInput = <Whole, Input, R, P = never>(evaluator: Evaluator<Input, R>, project: (whole: Whole) => Effect.Effect<Input, AssessmentError, P>): Evaluator<Whole, R | P> => ({
+export const projectEvaluatorInput = <Whole, Input, R, P = never>(evaluator: Evaluator<Input, R>, project: (whole: Whole) => Effect.Effect<Input, AssessmentError | EvaluationError, P>): Evaluator<Whole, R | P> => ({
   ...evaluator, run: (whole) => project(whole).pipe(Effect.flatMap(evaluator.run)),
 })
 
 /**
  * An application's registry value: unique `id@version` entries resolved by calibrations and journeys.
- *
- * @public
+ * @deprecated Register each evaluator as a grader (`graderFromEvaluator`) in the app's `graders`, which `parseEvaluationApp` checks for duplicates; a task binds it as `<id>@<version>`.
  */
 export const evaluatorRegistry = Effect.fnUntraced(function* <I, R>(entries: ReadonlyArray<EvaluatorRegistration<I, R>>) {
   const keys = entries.map((entry) => `${entry.id}@${entry.version}`)

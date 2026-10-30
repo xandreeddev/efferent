@@ -6,7 +6,6 @@ import { CurrentModelCallPolicy, CurrentPromptCacheKey, mediaFromBase64, mediaLa
 import { toPromptMessages } from "@xandreed/core/internal"
 import type { AgentMessage, ModelCallPolicy } from "@xandreed/core"
 import type { Credential } from "@xandreed/core/models"
-import { CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { buildProvider, chatCompletionsUrl, OPENCODE_RESPONSES_API_URL, prependClaudeCode, usesOpenCodeResponses, withAnthropicCacheBreakpoints } from "./providers.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
@@ -306,7 +305,7 @@ describe("call options", () => {
     const shaped = prependClaudeCode({ prompt: [{ role: "system", content: "rules" }, { role: "user", content: "hi" }], toolChoice: "auto" as const })
     expect(shaped.toolChoice).toBe("auto")
     expect(shaped.prompt.content.map((message) => message.role)).toEqual(["system", "system", "user"])
-    expect(shaped.prompt.content[0]).toMatchObject({ role: "system", content: CLAUDE_CODE_SYSTEM })
+    expect(shaped.prompt.content[0]?.content).toBe("You are Claude Code, Anthropic's official CLI for Claude.")
   })
 
   it("a built model names its route: a configured endpoint's and a local credential's are compat", async () => {
@@ -320,7 +319,7 @@ describe("call options", () => {
       routeOf("opencode:gpt-5.6-luna"),
       routeOf("opencode:glm-5.2"),
       routeOf("google:gemini-3.5-flash"),
-      routeOf("openai-codex:gpt-5.5", {}, { type: "oauth", access: "a", refresh: "r", expires: 1, accountId: "account" }),
+      routeOf("openai-codex:gpt-5.5", {}, { type: "oauth", access: Redacted.make("a"), refresh: Redacted.make("r"), expires: 1, accountId: "account" }),
       routeOf("anthropic:claude-sonnet-5", { anthropic: { url: "http://127.0.0.1:1/v1" } }),
       routeOf("ollama:qwen3", {}, { type: "local", baseUrl: "http://127.0.0.1:1/v1" }),
     ])).toEqual(["anthropic", "openai-responses", "openai-responses", "compat", "compat", "openai-codex", "compat", "compat"])

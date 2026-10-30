@@ -344,6 +344,7 @@ const isBudgetTokens
 const isFrameworkDraft
 const isHarnessError
 const isMediaValue
+const isRevisionConflict
 const isStoreBusy
 const isTurnError
 const journalSchemaOf

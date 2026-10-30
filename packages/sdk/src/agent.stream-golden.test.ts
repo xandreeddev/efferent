@@ -3,7 +3,7 @@ import { LanguageModel, Prompt, Tool } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { join } from "node:path"
-import { canonicalJson, ConversationId, CurrentPromptCacheKey, defineCapability, defineSkill, defineTool, entriesOfEvents, Failure, LogEntry, replayModelRequest, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { ConversationId, CurrentPromptCacheKey, defineCapability, defineSkill, defineTool, entriesOfEvents, Failure, LogEntry, replayModelRequest, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import { toolParametersSchema } from "@xandreed/core/internal"
 import type { Turn, TurnOutcome } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
@@ -20,9 +20,9 @@ import type { AgentConfig } from "./agent.adapter.js"
  * its start, then a tool call — and the next request must carry both blocks
  * with their provider metadata, as it would after a non-streamed response.
  * The journal rebuilds that request byte for byte, and a second agent over
- * the same sessions sends the blocks again from the stored history. Bytes are
- * canonical JSON, as the dispatch check compares them: stored JSON reads back
- * with sorted keys.
+ * the same sessions sends the blocks again from the stored history, with the
+ * same bytes: every request sends provider metadata and params in core's
+ * canonical key order, from memory or from the store alike.
  */
 
 const Lookup = Tool.make("lookup", {
@@ -167,9 +167,9 @@ test("a streamed turn keeps its reasoning's provider metadata: the next request,
     { type: "reasoning", text: "", options: redacted },
   ])
   // The journal rebuilds request 2 byte for byte.
-  expect(canonicalJson(result.replayed)).toBe(canonicalJson((second as { readonly prompt: unknown }).prompt))
-  // The second agent sends turn 1's first assistant message again as request 2 did, from the stored history.
-  const thinking = (request: unknown) => canonicalJson(promptOf(request).find((message) => message.role === "assistant"))
+  expect(JSON.stringify(result.replayed)).toBe(JSON.stringify((second as { readonly prompt: unknown }).prompt))
+  // The second agent sends turn 1's first assistant message again with request 2's bytes, from the stored history.
+  const thinking = (request: unknown) => JSON.stringify(promptOf(request).find((message) => message.role === "assistant"))
   expect(thinking(third)).toBe(thinking(second))
 
   const actual = `${JSON.stringify({ outcomes: result.outcomes, requests: result.requests, log: result.log }, null, 2)}\n`

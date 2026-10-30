@@ -288,30 +288,38 @@ describe("the registry refuses a call before its handler runs", () => {
   const cases: Array<{
     readonly reason: ToolRefusalReason
     readonly error: string
+    /** The refusal's text, as the model reads it. */
+    readonly message: string
     readonly calls: ReadonlyArray<readonly [string, unknown]>
     readonly options?: Parameters<typeof refusalTurn>[1]
     /** The refused call's position: earlier calls ran. */
     readonly refusedAt: number
   }> = [
-    { reason: "inactive", error: "ToolInactive", calls: [[Archive.name, { id: "r1" }]], refusedAt: 0 },
-    { reason: "forbidden", error: "Forbidden", calls: [[Vault.name, { key: "k" }]], options: { vaultActive: true }, refusedAt: 0 },
+    { reason: "inactive", error: "ToolInactive", message: "archive is not loaded yet; call load_skill with one of: archiving", calls: [[Archive.name, { id: "r1" }]], refusedAt: 0 },
+    { reason: "forbidden", error: "Forbidden", message: "read_vault requires vault.read", calls: [[Vault.name, { key: "k" }]], options: { vaultActive: true }, refusedAt: 0 },
     {
-      reason: "denied", error: "Denied", calls: [[Ping.name, { n: 1 }]], refusedAt: 0,
+      reason: "denied", error: "Denied", message: "pings are closed today", calls: [[Ping.name, { n: 1 }]], refusedAt: 0,
       options: { policy: { authorize: (tool) => tool === Ping.name ? Effect.fail(new HarnessError({ code: "policy.closed", message: "pings are closed today" })) : Effect.void } },
     },
-    { reason: "call-limit", error: "CallLimit", calls: [[Ping.name, { n: 1 }], [Ping.name, { n: 2 }]], options: { config: { maxCallsPerRun: 1 } }, refusedAt: 1 },
-    { reason: "tool-call-limit", error: "ToolCallLimit", calls: [[Ping.name, { n: 1 }], [Ping.name, { n: 2 }], [Ping.name, { n: 3 }]], refusedAt: 2 },
+    {
+      reason: "call-limit", error: "CallLimit", message: "The turn's 1-call limit is reached; deliver with what you have",
+      calls: [[Ping.name, { n: 1 }], [Ping.name, { n: 2 }]], options: { config: { maxCallsPerRun: 1 } }, refusedAt: 1,
+    },
+    {
+      reason: "tool-call-limit", error: "ToolCallLimit", message: "ping may be called at most 2 times per turn; use what its earlier calls returned",
+      calls: [[Ping.name, { n: 1 }], [Ping.name, { n: 2 }], [Ping.name, { n: 3 }]], refusedAt: 2,
+    },
   ]
 
-  test.each(cases)("$reason: one tool.refused with the call's id and input, no tool.started, the refusal as the call's failed result", async ({ reason, error, calls, options, refusedAt }) => {
+  test.each(cases)("$reason: one tool.refused with the call's id and input, no tool.started, the refusal as the call's failed result", async ({ reason, error, message, calls, options, refusedAt }) => {
     const turn = await Effect.runPromise(refusalTurn(calls, options))
     const refused = refusedEvents(turn)
     expect(refused).toHaveLength(1)
     const event = refused[0]!
     const [tool, input] = calls[refusedAt]!
     // The call's id is minted before the checks: earlier calls took 0…refusedAt-1.
-    expect(event).toMatchObject({ _tag: "tool.refused", step: 1, invocationId: `run-1:call:${refusedAt}`, tool, input, reason })
-    expect(turn.results[refusedAt]).toEqual({ error, message: event.message })
+    expect(event).toMatchObject({ _tag: "tool.refused", step: 1, invocationId: `run-1:call:${refusedAt}`, tool, input, reason, message })
+    expect(turn.results[refusedAt]).toEqual({ error, message })
     // Earlier calls ran (started, completed); the refused one has only its refusal.
     expect(turn.events.filter((other) => other._tag === "tool.started" || other._tag === "tool.completed").map((other): string => other._tag === "tool.started" || other._tag === "tool.completed" ? other.invocationId : ""))
       .toEqual(Array.from({ length: refusedAt }, (_, index) => [`run-1:call:${index}`, `run-1:call:${index}`]).flat())
@@ -332,6 +340,13 @@ describe("the registry refuses a call before its handler runs", () => {
       policy: { authorize: () => Effect.fail(new HarnessError({ code: "policy.closed", message: "pings are closed today" })) },
     }))
     expect(refusedEvents(turn).map((event) => event.message)).toEqual(["pings are closed today"])
+  })
+
+  test("a tool no skill provides is refused as not available, with no skill to load", async () => {
+    const Stray = Tool.make("stray", { description: "Wander off.", parameters: Schema.Struct({}), success: Schema.String, failure: Failure, failureMode: "return" })
+    const stray = defineCapability({ id: "stray", version: "1", tools: [defineTool({ tool: Stray, handler: () => Effect.succeed("wandered") })] })
+    const turn = await Effect.runPromise(refusalTurn([[Stray.name, {}]], { capabilities: [guarded, stray] }))
+    expect(turn.results).toEqual([{ error: "ToolInactive", message: "stray is not available in this conversation" }])
   })
 
   test("an allowed call publishes no tool.refused, and its id follows the refused ones", async () => {
@@ -358,7 +373,7 @@ describe("opening a run's tools", () => {
   test("fails with requires.missing, naming each tool and each service it declares that the run lacks, before any step", async () => {
     const error = await Effect.runPromise(Effect.flip(harnessDefectsAsFailures(refusalTurn([], { capabilities: [declaring] }))))
     expect([harnessCodeOf(error), isHarnessError(error) ? error.message : "none"]).toEqual([
-      Option.some("requires.missing"), `look requires ${SessionEnvironment.key}; touch requires ${FileSystem.key}, ${SessionEnvironment.key}`,
+      Option.some("requires.missing"), "look requires efferent/SessionEnvironment; touch requires @xandreed/core/FileSystem, efferent/SessionEnvironment",
     ])
   })
 })
@@ -418,10 +433,15 @@ const message = new UserMessage({ text: "file the records" })
  * restored as at the turn boundary. With `refuses`, the store fails to write
  * that kind. Returns how `body` ended, the decisions published and what memory holds.
  */
-const matchedTurn = <A>(picks: ReadonlyArray<ReadonlyArray<string>>, body: (tools: RunTools) => Effect.Effect<A, TurnError>, refuses: Option.Option<string> = Option.none()) =>
+const matchedTurn = <A>(
+  picks: ReadonlyArray<ReadonlyArray<string>>,
+  body: (tools: RunTools) => Effect.Effect<A, TurnError>,
+  refuses: Option.Option<string> = Option.none(),
+  capabilities: ReadonlyArray<Capability> = [selectable],
+) =>
   Effect.scoped(Effect.gen(function* () {
     const recorded = yield* recordingWriter(refuses)
-    const registry = yield* makeRegistry(config, [selectable])
+    const registry = yield* makeRegistry(config, capabilities)
     const left = yield* Ref.make(picks)
     const matcher = IntentMatcher.of({
       id: "picking", version: "1",
@@ -480,15 +500,67 @@ describe("the matcher's choice, applied", () => {
   })
 })
 
+/** What `body` succeeded with, or its failure's code. */
+const successOf = <A>(outcome: Result.Result<A, TurnError>): A | string => outcome._tag === "Success" ? outcome.success : codeOf(outcome)
+
 describe("load_skill", () => {
   test("a skill the turn may not use is refused as the call's result, for the model to correct", async () => {
     const turn = await Effect.runPromise(matchedTurn([], (tools) => callTool(tools, "load_skill", { skills: ["vault"] })))
-    expect(turn.outcome).toMatchObject({ _tag: "Success", success: { error: "capability.forbidden" } })
+    expect(successOf(turn.outcome)).toEqual({ error: "capability.forbidden", message: "Selection requires permissions this run was not granted (read_vault needs vault.read); it cannot be loaded in this run" })
+  })
+
+  test("skills the catalogue lacks are refused, each named", async () => {
+    const turn = await Effect.runPromise(matchedTurn([], (tools) => callTool(tools, "load_skill", { skills: ["filing", "archiving", "sorting"] })))
+    expect(successOf(turn.outcome)).toEqual({ error: "skills.unknown", message: "Unknown skills: filing, sorting; load_skill takes the skills the catalogue lists" })
+  })
+
+  test("a load past the turn's limit is refused with the limit", async () => {
+    const loads = Array.from({ length: config.maxSkillLoadsPerRun + 1 }, () => ({ skills: ["pinging"] }))
+    const turn = await Effect.runPromise(matchedTurn([], (tools) => Effect.forEach(loads, (params) => callTool(tools, "load_skill", params), { concurrency: 1 }).pipe(
+      Effect.map((results) => results.at(-1)))))
+    expect(successOf(turn.outcome)).toEqual({ error: "SkillLoadLimit", message: "At most 4 skill loads per turn; work with the tools already loaded" })
   })
 
   test("a store failure while activating fails the turn, and never reaches the model as the call's result", async () => {
     const turn = await Effect.runPromise(matchedTurn([], (tools) => callTool(tools, "load_skill", { skills: ["archiving"] }), Option.some("memory.skills")))
     expect(codeOf(turn.outcome)).toBe("store.unavailable")
+  })
+})
+
+/** `archiving` ships one reference. */
+const referenced = defineCapability({
+  id: "referenced",
+  version: "1",
+  tools: [defineTool({ tool: Archive, handler: ({ id }) => Effect.succeed(`archived ${id}`) })],
+  skills: [defineSkill({
+    id: "archiving", summary: "Archive records.", tools: [Archive.name],
+    references: [{ id: "retention", title: "Retention rules", text: "Keep records seven years." }],
+  })],
+})
+
+describe("the registry's own tools", () => {
+  test("load_skill always, read_skill_reference once a skill ships references, each with its description", async () => {
+    const own = (capabilities: ReadonlyArray<Capability>) => Effect.runPromise(matchedTurn([], (tools) => Effect.succeed(Object.values(tools.toolkit.tools).flatMap((tool) =>
+      tool.name === "load_skill" || tool.name === "read_skill_reference" ? [[tool.name, tool.description]] : [])), Option.none(), capabilities))
+    const loadSkill = ["load_skill", "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers."]
+    expect(successOf((await own([selectable])).outcome)).toEqual([loadSkill])
+    expect(successOf((await own([referenced])).outcome)).toEqual([loadSkill, ["read_skill_reference", "Read one reference document listed by a loaded skill."]])
+  })
+
+  test("read_skill_reference reads a reference of a loaded skill, and refuses one of a skill not loaded or not listed", async () => {
+    const calls: ReadonlyArray<readonly [string, unknown]> = [
+      ["read_skill_reference", { skill: "archiving", reference: "retention" }],
+      ["load_skill", { skills: ["archiving"] }],
+      ["read_skill_reference", { skill: "archiving", reference: "purge" }],
+      ["read_skill_reference", { skill: "archiving", reference: "retention" }],
+    ]
+    const turn = await Effect.runPromise(matchedTurn([], (tools) => Effect.forEach(calls, ([name, params]) => callTool(tools, name, params), { concurrency: 1 }), Option.none(), [referenced]))
+    expect(successOf(turn.outcome)).toEqual([
+      { error: "SkillNotLoaded", message: "Load archiving with load_skill first" },
+      "## archiving\nArchive records.\nTools: archive\nReferences (read_skill_reference): retention — Retention rules\n\nNow available: archive",
+      { error: "UnknownReference", message: "archiving has no reference purge" },
+      "Keep records seven years.",
+    ])
   })
 })
 

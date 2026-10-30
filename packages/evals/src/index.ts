@@ -1,5 +1,5 @@
 export { AppViolation, EvalId, EvalPath, EvaluationError, Fingerprints, Version } from "./domain/identity.entity.js"
-export { reasonOf } from "./domain/identity.entity.functions.js"
+export { errorCodeOf, reasonOf } from "./domain/identity.entity.functions.js"
 export { GraderBinding, Task } from "./domain/task.entity.js"
 export { Journey } from "./domain/journey.entity.js"
 export { Runnable } from "./domain/runnable.entity.js"
@@ -33,8 +33,15 @@ export {
 } from "./contracts/evaluation-app.contract.functions.js"
 export { defineRunnable } from "./adapters/runnable.adapter.js"
 export { defineGraderCalibration } from "./adapters/grader-calibration.adapter.js"
+export { graderFromEvaluator } from "./adapters/evaluator-grader.adapter.js"
 export { CalibrationObservation, CalibrationReference } from "./domain/grader-calibration.entity.js"
-export { calibrationAgreement } from "./domain/grader-calibration.entity.functions.js"
+export {
+  calibrationAgreement,
+  compareCalibrationMetric,
+  compareMetric,
+  type MetricComparison,
+  summarizeCalibration,
+} from "./domain/grader-calibration.entity.functions.js"
 export { EvaluationRunStore } from "./ports/evaluation-store.port.js"
 export { EvaluationExport, ExportReceipt } from "./ports/evaluation-export.port.js"
 export {
@@ -99,7 +106,6 @@ export {
 export { fingerprint as evaluationFingerprint } from "./domain/grading-context.entity.functions.js"
 export { isolatedServices } from "./adapters/isolated-services.adapter.js"
 export { argValue, csv, hasFlag, positiveInt } from "./cli.functions.js"
-export { compareCalibrationMetric, summarizeCalibration } from "./evaluator-calibration.entity.functions.js"
 export { type EvaluatorRegistration } from "./evaluator-registry.usecase.js"
 export { evaluatorRegistry, projectEvaluatorInput } from "./evaluator-registry.usecase.functions.js"
 export {
@@ -115,8 +121,8 @@ export { SemanticJudge } from "./ports/semantic-judge.port.js"
 export { semanticEvaluator } from "./evaluators/semantic.js"
 export { makeSemanticLlmJudge, SemanticLlmLive, type SemanticLlmOptions } from "./adapters/semantic-llm.adapter.js"
 export { makeSemanticJevJudge, SemanticJevLive, type SemanticJevOptions } from "./adapters/semantic-jev.adapter.js"
-export { EvaluationScore } from "./evaluation-score.entity.js"
-export { evaluationScores } from "./evaluation-score.entity.functions.js"
+export { EvaluationScore, ExportedScore } from "./evaluation-score.entity.js"
+export { evaluationScores, exportableScores } from "./evaluation-score.entity.functions.js"
 export {
   ActionAssessment,
   ActionId,

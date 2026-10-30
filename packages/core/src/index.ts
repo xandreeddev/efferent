@@ -115,7 +115,7 @@ export {
   SessionMissing,
   SessionReadQuery,
 } from "./session/session-log.entity.js"
-export { isStoreBusy, storedJson } from "./session/session-log.entity.functions.js"
+export { isRevisionConflict, isStoreBusy, storedJson } from "./session/session-log.entity.functions.js"
 export { SessionLog } from "./ports/session-log.port.js"
 export { SessionLogMemoryLive } from "./session/session-log.memory.adapter.js"
 export {

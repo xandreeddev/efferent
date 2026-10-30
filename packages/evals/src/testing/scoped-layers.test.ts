@@ -8,18 +8,21 @@ import {
   TrialRecorder,
   gradeEvaluation,
   runEvaluation,
+  type TranscriptEvent,
   type Trial
 } from "../index.js"
 import { fixture, FixtureRunnable, FixtureEnvironment, fixtureRegistration } from "./fixture.testing.js"
 
 const store = Layer.succeed(EvaluationRunStore, {
   writeTrial: () => Effect.void,
+  appendTranscript: () => Effect.void,
   writeRun: () => Effect.void
 })
 
 test("a late provider callback cannot change a settled trial or its durable transcript", async () => {
   const recorders: TrialRecorder["Service"][] = []
   const writes: Trial[] = []
+  const appended: TranscriptEvent[] = []
   const app = fixture((_, __, ___, recorder) => Effect.gen(function* () {
     recorders.push(recorder)
     yield* recorder.record("model.request", { body: "exact request" })
@@ -29,12 +32,14 @@ test("a late provider callback cannot change a settled trial or its durable tran
     ids: [], split: "validation", executeOnly: true,
   }).pipe(Effect.provide(EvaluationServicesLive(app)), Effect.provide(Layer.succeed(EvaluationRunStore, {
     writeTrial: (trial) => Effect.sync(() => { writes.push(trial) }),
+    appendTranscript: (_, event) => Effect.sync(() => { appended.push(event) }),
     writeRun: () => Effect.void,
   }))))
   const settled = JSON.stringify(writes.at(-1))
   const count = writes.length
   await Effect.runPromise(recorders[0]!.record("model.response", { body: "late cancelled response" }))
   expect(writes).toHaveLength(count)
+  expect(appended.map((event) => event.kind)).toEqual(["model.request"])
   expect(JSON.stringify(writes.at(-1))).toBe(settled)
   expect(writes.at(-1)).toEqual(captured.trials[0])
   expect(captured.trials[0]?.status).toBe("completed")

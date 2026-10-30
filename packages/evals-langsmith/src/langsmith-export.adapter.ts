@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
 import { Client } from "langsmith"
-import { Cause, Effect, Layer, Predicate, Schema } from "effect"
+import { Cause, Clock, Effect, Layer, Predicate, Schema } from "effect"
 import {
   EvaluationError,
   EvaluationExport,
   EvaluationRun,
+  exportableScores,
   reasonOf,
   type ExportReceipt,
   type ExporterRegistration
@@ -123,35 +124,17 @@ const exportService = (options: LangSmithExportOptions) => ({
       )
       yield* sdk(() => client.flush()).pipe(Effect.mapError(providerError))
       yield* Effect.forEach(
-        encoded.trials.flatMap((trial) =>
-          trial.grades
-            .filter((grade) => grade.status === "scored")
-            .flatMap((grade) =>
-              grade.metrics
-                .filter(
-                  (metric) =>
-                    metric.kind === "boolean" ||
-                    metric.kind === "score" ||
-                    metric.kind === "probability"
-                )
-                .map((metric) => ({
-                  runId: mappings[trial.id]!,
-                  key: `${grade.grader}@${grade.version}/${grade.scope}/${metric.name}`,
-                  score:
-                    metric.kind === "boolean"
-                      ? Number(metric.value)
-                      : metric.value,
-                  comment: grade.reason,
-                  feedbackId: remoteId(
-                    `${trial.id}/${grade.grader}/${grade.version}/${grade.scope}/${metric.name}`
-                  ),
-                  sourceInfo: {
-                    context: grade.context,
-                    usage: grade.usage
-                  }
-                }))
-            )
-        ),
+        exportableScores(encoded).map((score) => ({
+          runId: mappings[score.trial]!,
+          key: score.key,
+          score: score.value,
+          comment: score.comment,
+          feedbackId: remoteId(score.seed),
+          sourceInfo: {
+            context: score.context,
+            usage: score.usage
+          }
+        })),
         (feedback) =>
           upsert(
             () =>
@@ -173,7 +156,7 @@ const exportService = (options: LangSmithExportOptions) => ({
         runId: run.id,
         url: options.webUrl ?? options.apiUrl,
         exported: run.trials.length,
-        at: Date.now(),
+        at: yield* Clock.currentTimeMillis,
         mappings
       }
     },

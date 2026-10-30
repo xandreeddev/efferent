@@ -8,6 +8,7 @@ import type {
 import { parseEvaluationApp } from "../contracts/evaluation-app.contract.functions.js"
 import { EvaluationError, EvalId, EvalPath } from "../domain/identity.entity.js"
 import type { Trial } from "../domain/trial.entity.js"
+import type { TranscriptEvent } from "../domain/transcript.entity.js"
 import type { Grade } from "../domain/grader.entity.js"
 import type { Suite } from "../domain/suite.entity.js"
 import type { Task } from "../domain/task.entity.js"
@@ -238,6 +239,7 @@ const runTrial = Effect.fn("eval.trial")(
         const state = yield* Ref.make(initial)
         const writer = yield* Semaphore.make(1)
         yield* store.writeTrial(initial)
+        // Each event is appended to the store; the trial keeps them all for its settled write.
         const recorder: TrialRecorder["Service"] = {
           record: (kind, data) =>
             Effect.uninterruptible(
@@ -246,22 +248,19 @@ const runTrial = Effect.fn("eval.trial")(
                   const current = yield* Ref.get(state)
                   if (current.status !== "running") return
                   const at = yield* Clock.currentTimeMillis
-                  const updated = yield* Ref.updateAndGet(state, (trial) => ({
-                    ...trial,
-                    transcript: [
-                      ...trial.transcript,
-                      {
-                        id: EvalPath.make(
-                          `${trial.id}/event/${trial.transcript.length}`
-                        ),
-                        sequence: trial.transcript.length,
-                        at,
-                        kind,
-                        data
-                      }
-                    ]
-                  }))
-                  yield* store.writeTrial(updated)
+                  const event = yield* Ref.modify(state, (trial): readonly [TranscriptEvent, Trial] => {
+                    const next: TranscriptEvent = {
+                      id: EvalPath.make(
+                        `${trial.id}/event/${trial.transcript.length}`
+                      ),
+                      sequence: trial.transcript.length,
+                      at,
+                      kind,
+                      data
+                    }
+                    return [next, { ...trial, transcript: [...trial.transcript, next] }]
+                  })
+                  yield* store.appendTranscript(current.id, event)
                 })
               )
             )

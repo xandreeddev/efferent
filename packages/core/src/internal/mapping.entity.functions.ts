@@ -1,4 +1,4 @@
-import { Option, Schema } from "effect"
+import { Array as Arr, Match, Option, Order, Schema } from "effect"
 import { Response } from "effect/ai"
 import type { Prompt } from "effect/ai"
 import { ENGINE_KEY, ResponseStamp } from "../domain/engine-stamp.entity.js"
@@ -28,6 +28,14 @@ import { framed, hostNote } from "../turn/model-text.js"
  * with its rules: a result of a tool the provider ran stays in the assistant
  * message, and a preliminary result is no result. Everything here is pure:
  * no mutation, no IO.
+ *
+ * What goes out is in core's canonical order: a call's params, a result and
+ * every provider blob leave with their keys sorted at every depth, as
+ * `canonicalJson` sorts them. Memory holds them in the order the provider
+ * gave while a turn runs and in whatever order the store keeps once read
+ * back (a JSON column may reorder keys), so a past call is sent with the
+ * same bytes in every later request, live or replayed, and a provider's
+ * cached prompt prefix never changes under it.
  */
 
 /**
@@ -69,6 +77,34 @@ type ResponseToolResult = Extract<Response.AnyPart, { readonly type: "tool-resul
 
 const hasKeys = (blob: ProviderOptions): boolean => Object.keys(blob).length > 0
 
+/** Core's canonical key order (`canonicalJson`'s). */
+const byKey = Order.mapInput(Order.String, ([key]: readonly [string, unknown]) => key)
+
+/** A JSON value as sent: every object's keys sorted, at every depth. */
+const sortedJson = (value: Schema.Json): Schema.Json =>
+  typeof value !== "object" || value === null ? value
+    : Array.isArray(value) ? value.map(sortedJson)
+      : Object.fromEntries(Arr.sort(Object.entries(value), byKey).map(([key, field]) => [key, sortedJson(field)]))
+
+/** A plain object, as JSON text reads back: not an array, nor an instance of a class. */
+const isPlainObject = (value: unknown): value is object => {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
+/**
+ * An open value sent as JSON (a call's params, a result): every plain
+ * object's keys sorted, at every depth, an `undefined` field left out as
+ * JSON text leaves it; anything else (a class instance a schema decoded)
+ * as it is.
+ */
+const sortedValue = (value: unknown): unknown =>
+  Array.isArray(value) ? value.map(sortedValue)
+    : isPlainObject(value)
+      ? Object.fromEntries(Arr.sort(Object.entries(value), byKey).flatMap(([key, field]) => field === undefined ? [] : [[key, sortedValue(field)] as const]))
+      : value
+
 /** A blob without the engine's own stamp: engine-private bookkeeping, which
  *  is never sent to a provider (at best noise, at worst a 400 on a strict
  *  gateway). */
@@ -77,10 +113,12 @@ const withoutEngine = (blob: ProviderOptions): ProviderOptions => {
   return rest
 }
 
-/** A stored blob as prompt `options`, the engine's stamp left out; none when nothing else is in it. */
+/** A stored blob as prompt `options`, the engine's stamp left out, keys sorted (`sortedJson`); none when nothing else is in it. */
 const withOptions = (blob: ProviderOptions | undefined): { readonly options?: ProviderOptions } => {
   const sent = blob === undefined ? {} : withoutEngine(blob)
-  return hasKeys(sent) ? { options: sent } : {}
+  return hasKeys(sent)
+    ? { options: Object.fromEntries(Arr.sort(Object.entries(sent), byKey).map(([key, value]) => [key, sortedJson(value)])) }
+    : {}
 }
 
 const toJsonText = Schema.encodeUnknownOption(Schema.fromJsonString(Schema.Unknown))
@@ -128,51 +166,50 @@ const toolModelOutput = (
   return { modelOutput: [...(text.length === 0 ? [] : [{ type: "text" as const, text }]), ...media.map(filePart)] }
 }
 
-/** A tool result → its prompt part; one the provider ran says so, and the provider sends it back as its own. */
-const toolResultPromptPart = (p: ToolResultPart): Prompt.ToolResultPartEncoded => ({
-  type: "tool-result",
-  id: p.toolCallId,
-  name: p.toolName,
-  result: p.output,
-  ...toolModelOutput(p.output, p.media),
-  isFailure: p.isError ?? false,
-  providerExecuted: p.providerExecuted ?? false,
-  ...withOptions(p.providerOptions),
-})
-
-const assistantPromptPart = (p: AssistantPart): Prompt.AssistantMessagePartEncoded => {
-  if (p.type === "text") return { type: "text", text: p.text, ...withOptions(p.providerOptions) }
-  if (p.type === "reasoning") return { type: "reasoning", text: p.text, ...withOptions(p.providerOptions) }
-  if (p.type === "tool-call") {
-    return {
-      type: "tool-call",
-      id: p.toolCallId,
-      name: p.toolName,
-      params: p.input ?? {},
-      providerExecuted: p.providerExecuted ?? false,
-      ...withOptions(p.providerOptions),
-    }
+/** A tool result → its prompt part, its result sorted (`sortedValue`); one the provider ran says so, and the provider sends it back as its own. */
+const toolResultPromptPart = (p: ToolResultPart): Prompt.ToolResultPartEncoded => {
+  const result = sortedValue(p.output)
+  return {
+    type: "tool-result",
+    id: p.toolCallId,
+    name: p.toolName,
+    result,
+    ...toolModelOutput(result, p.media),
+    isFailure: p.isError ?? false,
+    providerExecuted: p.providerExecuted ?? false,
+    ...withOptions(p.providerOptions),
   }
-  return toolResultPromptPart(p)
 }
+
+const assistantPromptPart = (p: AssistantPart): Prompt.AssistantMessagePartEncoded => Match.value(p).pipe(Match.discriminatorsExhaustive("type")({
+  text: (text): Prompt.AssistantMessagePartEncoded => ({ type: "text", text: text.text, ...withOptions(text.providerOptions) }),
+  reasoning: (reasoning): Prompt.AssistantMessagePartEncoded => ({ type: "reasoning", text: reasoning.text, ...withOptions(reasoning.providerOptions) }),
+  "tool-call": (call): Prompt.AssistantMessagePartEncoded => ({
+    type: "tool-call",
+    id: call.toolCallId,
+    name: call.toolName,
+    params: sortedValue(call.input ?? {}),
+    providerExecuted: call.providerExecuted ?? false,
+    ...withOptions(call.providerOptions),
+  }),
+  "tool-result": toolResultPromptPart,
+}))
 
 /**
  * `AgentMessage[]` → `@effect/ai` encoded prompt messages (`Prompt.make`
  * takes them). A text-only user message stays a string. The engine's stamp
- * is left out of every blob, so it never reaches a provider.
+ * is left out of every blob, so it never reaches a provider. Params,
+ * results and blobs go out in core's canonical key order, so a message
+ * sends the same bytes whatever order memory holds them in.
  */
 export const toPromptMessages = (
   messages: ReadonlyArray<AgentMessage>,
 ): ReadonlyArray<Prompt.MessageEncoded> =>
-  messages.map((m): Prompt.MessageEncoded => {
-    if (m.role === "user") {
-      return { role: "user", content: typeof m.content === "string" ? m.content : userPromptParts(m.content) }
-    }
-    if (m.role === "assistant") {
-      return { role: "assistant", content: m.content.map(assistantPromptPart), ...withOptions(m.providerOptions) }
-    }
-    return { role: "tool", content: m.content.map(toolResultPromptPart) }
-  })
+  messages.map((m): Prompt.MessageEncoded => Match.value(m).pipe(Match.discriminatorsExhaustive("role")({
+    user: (user): Prompt.MessageEncoded => ({ role: "user", content: typeof user.content === "string" ? user.content : userPromptParts(user.content) }),
+    assistant: (assistant): Prompt.MessageEncoded => ({ role: "assistant", content: assistant.content.map(assistantPromptPart), ...withOptions(assistant.providerOptions) }),
+    tool: (tool): Prompt.MessageEncoded => ({ role: "tool", content: tool.content.map(toolResultPromptPart) }),
+  })))
 
 /**
  * Some providers (notably Gemini) return tool calls WITHOUT an id. An absent
@@ -196,23 +233,22 @@ export const withToolCallIds = (
   const idOf = (tool: string, n: number) => run === undefined ? `${step}:${tool}:${n}` : toolCallIdOf(run, step, tool, n)
   return content
     .reduce(
-      (acc: { calls: number; results: number; out: ReadonlyArray<Response.AnyPart> }, part) => {
-        if (part.type === "tool-call") {
-          return {
+      (acc: { calls: number; results: number; out: ReadonlyArray<Response.AnyPart> }, part) => Match.value(part).pipe(
+        Match.discriminators("type")({
+          "tool-call": (call) => ({
             calls: acc.calls + 1,
             results: acc.results,
-            out: [...acc.out, part.id === "" ? { ...part, id: idOf(part.name, acc.calls) } : part],
-          }
-        }
-        if (part.type === "tool-result") {
-          return {
+            out: [...acc.out, call.id === "" ? { ...call, id: idOf(call.name, acc.calls) } : call],
+          }),
+          "tool-result": (result) => ({
             calls: acc.calls,
             results: acc.results + 1,
-            out: [...acc.out, part.id === "" ? { ...part, id: idOf(part.name, acc.results) } : part],
-          }
-        }
-        return { ...acc, out: [...acc.out, part] }
-      },
+            out: [...acc.out, result.id === "" ? { ...result, id: idOf(result.name, acc.results) } : result],
+          }),
+        }),
+        // Every other part passes through as it is.
+        Match.orElse((other) => ({ ...acc, out: [...acc.out, other] })),
+      ),
       { calls: 0, results: 0, out: [] },
     ).out
 }
@@ -245,22 +281,24 @@ export const responseToAgentMessages = (
   content: ReadonlyArray<Response.AnyPart>,
 ): ReadonlyArray<AgentMessage> => {
   const parts = content.filter(isSettled)
-  const assistantParts = parts.flatMap((p): ReadonlyArray<AssistantPart> => {
-    if (p.type === "text") return [{ type: "text", text: p.text, ...withProviderOptions(p.metadata) }]
-    if (p.type === "reasoning") return [{ type: "reasoning", text: p.text, ...withProviderOptions(p.metadata) }]
-    if (p.type === "tool-call") {
-      return [{
+  const assistantParts = parts.flatMap((p): ReadonlyArray<AssistantPart> => Match.value(p).pipe(
+    Match.discriminators("type")({
+      text: (text): ReadonlyArray<AssistantPart> => [{ type: "text", text: text.text, ...withProviderOptions(text.metadata) }],
+      reasoning: (reasoning): ReadonlyArray<AssistantPart> => [{ type: "reasoning", text: reasoning.text, ...withProviderOptions(reasoning.metadata) }],
+      "tool-call": (call): ReadonlyArray<AssistantPart> => [{
         type: "tool-call",
-        toolCallId: ToolCallId.make(p.id),
-        toolName: p.name,
-        input: p.params ?? {},
-        providerExecuted: p.providerExecuted,
-        ...withProviderOptions(p.metadata),
-      }]
-    }
-    if (p.type === "tool-result" && p.providerExecuted) return [toolResultOf(p)]
-    return []
-  })
+        toolCallId: ToolCallId.make(call.id),
+        toolName: call.name,
+        input: call.params ?? {},
+        providerExecuted: call.providerExecuted,
+        ...withProviderOptions(call.metadata),
+      }],
+      // The provider's own results stay in the assistant message; the loop's go to the tool message below.
+      "tool-result": (result): ReadonlyArray<AssistantPart> => result.providerExecuted ? [toolResultOf(result)] : [],
+    }),
+    // Every other part (a source, a file, a finish) is left out on purpose.
+    Match.orElse((): ReadonlyArray<AssistantPart> => []),
+  ))
   const toolParts = parts.flatMap((p): ReadonlyArray<ToolResultPart> =>
     p.type === "tool-result" && !p.providerExecuted ? [toolResultOf(p)] : [],
   )

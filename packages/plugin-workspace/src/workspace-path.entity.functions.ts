@@ -11,16 +11,23 @@ export type WorkspaceAccess = WorkspaceRoot & { readonly fs: Fs; readonly path: 
 
 const failure = (error: string, message: string): Failure => ({ error, message })
 
-const reasons: Partial<Record<FsReason, (display: string) => Failure>> = {
+const reasons: Readonly<Record<FsReason, (display: string) => Failure>> = {
   NotFound: (display) => failure("NotFound", `${display} does not exist`),
-  IsDirectory: (display) => failure("IsDirectory", `${display} is a directory`),
+  Exists: (display) => failure("Exists", `${display} already exists, and the file system would not replace it; give another path`),
+  IsDirectory: (display) => failure("IsDirectory", `${display} is a directory; give the path of a file`),
   NotDirectory: (display) => failure("NotDirectory", `${display} is not a directory, or a part of the path before it is a file`),
+  NotEmpty: (display) => failure("NotEmpty", `${display} is a directory with entries in it; give another path`),
   Permission: (display) => failure("Permission", `permission denied: ${display}`),
+  Invalid: (display) => failure("Invalid", `${display} is not a path the file system accepts; check it and try again`),
+  Io: (display) => failure("Io", `${display} could not be read or written (a file-system error); try again, or give another path`),
 }
 
-/** A file-system failure as the model reads it: what went wrong with the path it gave. */
-export const fsFailure = (display: string) => (error: FsError): Failure =>
-  reasons[error.reason]?.(display) ?? failure(error.reason, `${display}: ${error.message}`)
+/**
+ * A file-system failure as the model reads it: what went wrong with the path
+ * it gave, in words, by the failure's reason. Never the backend's message,
+ * which names host paths the model never gave.
+ */
+export const fsFailure = (display: string) => (error: FsError): Failure => reasons[error.reason](display)
 
 /** Whether `path` is `root` or below it. */
 export const isWithin = (root: string, path: string): boolean => path === root || path.startsWith(root.endsWith("/") ? root : `${root}/`)
@@ -34,8 +41,9 @@ export const openWorkspace = Effect.fnUntraced(function* (path: Path.Path): Effe
   const fs = yield* FileSystem
   const { workspace } = yield* SessionEnvironment
   const lexicalRoot = path.resolve(workspace)
+  // The reason only: the file system's message names the host's path.
   const root = yield* fs.realPath(lexicalRoot).pipe(Effect.mapError((error) =>
-    failure("WorkspaceMissing", `the workspace directory cannot be opened (${error.reason}): ${error.message}`)))
+    failure("WorkspaceMissing", `the workspace directory cannot be opened (${error.reason}), so no workspace tool can run in this session; tell the user`)))
   return { fs, path, root, lexicalRoot }
 })
 
@@ -53,15 +61,15 @@ export const displayOf = (access: WorkspaceAccess, absolute: string): string => 
  * missing names. A link on the way whose target is missing is refused
  * (`Invalid`): what it would create is not where the path says.
  */
-const canonicalOf = (access: WorkspaceAccess, target: string): Effect.Effect<string, FsError> => access.fs.realPath(target).pipe(
-  Effect.catchIf((error) => error.reason === "NotFound", (missing) => {
+const canonicalOf = (access: WorkspaceAccess, target: string, display: string): Effect.Effect<string, Failure> => access.fs.realPath(target).pipe(
+  Effect.catch((error) => {
     const parent = access.path.dirname(target)
-    if (parent === target) return Effect.fail(missing)
+    if (error.reason !== "NotFound" || parent === target) return Effect.fail(fsFailure(display)(error))
     return access.fs.stat(target, { followSymlinks: false }).pipe(Effect.matchEffect({
-      onSuccess: () => Effect.fail(new FsError({ path: target, reason: "Invalid", message: "it is a symbolic link to something that does not exist" })),
-      onFailure: (error) => error.reason === "NotFound"
-        ? canonicalOf(access, parent).pipe(Effect.map((dir) => access.path.join(dir, access.path.basename(target))))
-        : Effect.fail(error),
+      onSuccess: () => Effect.fail(failure("Invalid", `${display}: it is a symbolic link to something that does not exist`)),
+      onFailure: (missing) => missing.reason === "NotFound"
+        ? canonicalOf(access, parent, display).pipe(Effect.map((dir) => access.path.join(dir, access.path.basename(target))))
+        : Effect.fail(fsFailure(display)(missing)),
     }))
   }),
 )
@@ -81,7 +89,7 @@ export const resolveTarget = Effect.fnUntraced(function* (access: WorkspaceAcces
   if (options.confine && !inside(lexical)) {
     return yield* Effect.fail(failure("OutsideWorkspace", `${input} is outside the workspace; use a path under its root`))
   }
-  const path = yield* canonicalOf(access, lexical).pipe(Effect.mapError(fsFailure(display)))
+  const path = yield* canonicalOf(access, lexical, display)
   if (options.confine && !isWithin(access.root, path)) {
     return yield* Effect.fail(failure("OutsideWorkspace", `${display} leads outside the workspace through a symbolic link`))
   }

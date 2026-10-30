@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto"
-import { Clock, Effect, Option } from "effect"
+import { Clock, Effect, Option, Redacted } from "effect"
 import { AuthError } from "@xandreed/core/models"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
-import { decodeTokenResponse } from "./token-response.entity.functions.js"
+import { decodeTokenResponse, tokenRefusalText } from "./token-response.entity.functions.js"
 
 /**
  * Anthropic OAuth (Claude Pro/Max subscription) — the full protocol:
@@ -28,9 +28,10 @@ export const ANTHROPIC_OAUTH_BETA = "claude-code-20250219,oauth-2025-04-20"
 export const CLAUDE_CODE_SYSTEM =
   "You are Claude Code, Anthropic's official CLI for Claude."
 
+/** The tokens a sign-in or a refresh grants, `Redacted` from the token response on. */
 export interface RefreshedTokens {
-  readonly access: string
-  readonly refresh: string
+  readonly access: Redacted.Redacted<string>
+  readonly refresh: Redacted.Redacted<string>
   /** Absolute expiry, epoch ms (with a 5-minute early-refresh skew baked in). */
   readonly expires: number
 }
@@ -58,15 +59,15 @@ export const tokenTime = (options: TokenRequestOptions): Effect.Effect<number> =
   options.now === undefined ? Clock.currentTimeMillis : Effect.succeed(options.now)
 
 /**
- * One token-endpoint POST; refresh and exchange share it verbatim.
- * `previous` is the refresh token a refresh sends, kept when the response
- * does not rotate it.
+ * One token-endpoint POST; refresh and exchange share it verbatim. `body`
+ * is the request as sent, its secrets in the clear. `previous` is the
+ * refresh token a refresh sends, kept when the response does not rotate it.
  */
 const postToken = (
   body: Record<string, string>,
   stage: string,
   options: TokenRequestOptions,
-  previous: Option.Option<string>,
+  previous: Option.Option<Redacted.Redacted<string>>,
 ): Effect.Effect<RefreshedTokens, AuthError> => {
   const fail = oauthError(stage)
   return Effect.tryPromise({
@@ -83,7 +84,7 @@ const postToken = (
   }).pipe(
     Effect.filterOrFail(
       (res) => res.ok,
-      (res) => fail(`status ${res.status}: ${res.text.slice(0, 200)}`),
+      (res) => fail(tokenRefusalText(res.status, res.text, body)),
     ),
     Effect.flatMap((res) => decodeTokenResponse(res.text, previous).pipe(Effect.mapError(fail))),
     Effect.flatMap((issued) => Effect.map(tokenTime(options), (now) => ({
@@ -94,16 +95,16 @@ const postToken = (
   )
 }
 
-/** Refresh an expired (or near-expiry) access token. */
+/** Refresh an expired (or near-expiry) access token; the refresh token is unwrapped only into the request body. */
 export const refreshAnthropicToken = (
-  refreshToken: string,
+  refreshToken: Redacted.Redacted<string>,
   options: TokenRequestOptions = {},
 ): Effect.Effect<RefreshedTokens, AuthError> =>
   postToken(
     {
       grant_type: "refresh_token",
       client_id: ANTHROPIC_CLIENT_ID,
-      refresh_token: refreshToken,
+      refresh_token: Redacted.value(refreshToken),
     },
     "token refresh",
     options,
@@ -160,7 +161,7 @@ export const beginAnthropicOAuth: Effect.Effect<OAuthBegin> = Effect.map(
   }),
 )
 
-/** Exchange the authorization code for tokens. */
+/** Exchange the authorization code for tokens, `Redacted` (ready for `AuthStore.set`). */
 export const exchangeAnthropicCode = (
   code: string,
   verifier: string,

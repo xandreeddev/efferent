@@ -1,6 +1,6 @@
-import { Cause, Effect, Exit, Option, Schema } from "effect"
-import { framed, harnessCodeOf, InboxItemId, isHarnessError, readStored, reasonOf, SessionLogError } from "@xandreed/core"
-import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnError, TurnFailure, TurnOutcome } from "@xandreed/core"
+import { Cause, Effect, Exit, Match, Option, Schema } from "effect"
+import { clipTo, framed, harnessCodeOf, InboxItemId, isTurnError, readStored, SessionLogError } from "@xandreed/core"
+import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnClosed, TurnError, TurnFailure, TurnOutcome } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskOutcome, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started } from "./task-records.entity.js"
 
@@ -63,11 +63,32 @@ export const isChildOf = (view: SessionView, parent: string): boolean =>
 /** A child that no longer exists: its parent's removal took it. */
 export const goneEnd: TaskEnd = { status: "cancelled", reply: Option.none(), failure: Option.some({ code: "task.removed", message: "the task's session was removed" }) }
 
+/** Why a task's turn closed, in the parent model's words. */
+const closedText: Readonly<Record<TurnClosed["reason"], string>> = {
+  cancelled: "the task's turn was cancelled",
+  interrupted: "the task's turn was interrupted",
+  removed: "the task's session was removed",
+  ended: "the task's turn had already ended",
+}
+
+/**
+ * A turn's failure as the parent model reads it: a `HarnessError`'s own
+ * message, the other tags in words. Never a tag's name or a store's message.
+ */
+const failureText = (error: TurnError): string => Match.valueTags(error, {
+  HarnessError: (harness) => harness.message,
+  TurnClosed: (closed) => closedText[closed.reason],
+  ReservedKind: () => "the task's turn tried to record an event only the framework records",
+  SessionContended: () => "the task's session was too busy: its writes kept conflicting with others",
+  SessionLogError: () => "the task's session could not be read or stored",
+})
+
 /**
  * How the child's turn went, as its result records it: a turn past its
  * deadline is interrupted; a failed one stores its error's framework code
  * (`harnessCodeOf`: a `HarnessError`'s own, carried as a defect included, or
- * the code a tag such as `TurnClosed` stands for), else `task.turn`.
+ * the code a tag such as `TurnClosed` stands for), else `task.turn`, and
+ * what went wrong in words (`failureText`).
  */
 export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option<TurnOutcome>, TurnError>): Result => Exit.match(exit, {
   onSuccess: (outcome) => Option.match(outcome, {
@@ -83,7 +104,7 @@ export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option
       taskId, outcome: "failed", reply: Option.none(),
       failure: Option.some(Option.match(harnessCodeOf(error), {
         onNone: () => ({ code: "task.turn", message: "the task's turn failed" }),
-        onSome: (code) => ({ code, message: isHarnessError(error) ? error.message : reasonOf(Cause.fail(error)) }),
+        onSome: (code) => ({ code, message: isTurnError(error) ? failureText(error) : "the task's turn failed" }),
       })),
     }
   },
@@ -92,12 +113,12 @@ export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option
 /**
  * What the parent's inbox turn shows the model: a trusted frame around the
  * task's own words, which may not close or reopen the frame (in any case or
- * spacing).
+ * spacing), clipped to `replyChars` with a counted marker (`clipTo`).
  */
 export const noticeOf = (task: TaskView, replyChars: number): string => {
   const output = Option.match(task.reply, {
     onNone: () => Option.match(task.failure, { onNone: () => "(no reply)", onSome: (failure) => `(no reply: ${failure.message})` }),
-    onSome: (reply) => reply.length > replyChars ? `${reply.slice(0, replyChars)}\n(cut at ${replyChars} characters)` : reply,
+    onSome: (reply) => clipTo(reply, replyChars),
   })
   return [`[Background task ${task.taskId} ${task.status}]`, framed("task-output", output)].join("\n")
 }

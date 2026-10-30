@@ -60,7 +60,7 @@ const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       return { outcome: run.outcome, reply: Option.some(run.text) }
     }))
   const first = yield* turn("run-1", (services) => Effect.gen(function* () {
-    yield* Context.getUnsafe(services, AuthStore).set(ProviderId.make("stub"), { type: "api_key", key: "login-key" })
+    yield* Context.getUnsafe(services, AuthStore).set(ProviderId.make("stub"), { type: "api_key", key: Redacted.make("login-key") })
     yield* Context.getUnsafe(services, SettingsStore).setRole("general", Option.some("stub:second"))
   }))
   const second = yield* turn("run-2", (services) => Effect.gen(function* () {

@@ -1,5 +1,6 @@
 import type { Effect, Schema } from "effect"
 import type { AssessmentError, EvaluationResult, EvaluationSplit, EvaluationUsage, LabelReview, Metric } from "./assessment.entity.js"
+import type { EvaluationError } from "./domain/identity.entity.js"
 
 /** @public */
 export interface DatasetCase<I, Ref> {
@@ -27,15 +28,20 @@ export interface Assessment {
   readonly usage?: EvaluationUsage
   readonly metadata?: Schema.JsonObject
 }
-/** @public */
+/**
+ * A judging primitive: one run measures every metric it declares. It grades
+ * a trial behind a grader (`graderFromEvaluator`). It fails with an
+ * `AssessmentError` (a model call's: `assessmentOfAiError`) or an
+ * `EvaluationError`; the grade keeps the code either way.
+ */
 export interface Evaluator<I, R = never> {
   readonly id: string
   readonly version: string
   /** A single execution may emit several independently selected metrics. */
   readonly metrics: ReadonlyArray<string>
-  readonly run: (input: I) => Effect.Effect<Assessment, AssessmentError, R>
+  readonly run: (input: I) => Effect.Effect<Assessment, AssessmentError | EvaluationError, R>
 }
-/** @public */
+/** @deprecated Put the evaluator behind a grader with `graderFromEvaluator`; the grader's `metrics` select what it keeps. */
 export interface EvaluatorBinding<I, R = never> {
   readonly evaluator: Evaluator<I, R>
   readonly select: ReadonlyArray<string>

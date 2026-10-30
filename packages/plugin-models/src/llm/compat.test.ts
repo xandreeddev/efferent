@@ -453,6 +453,23 @@ describe("toChatMessages: a user's images", () => {
   test("a text-only message is sent as before", () => {
     expect(chat([{ role: "user", content: "hi" }])).toEqual([{ role: "user", content: "hi" }])
   })
+
+  test("a file that is not an inline image is its [file omitted: …] line: its type, then its name when it has one", () => {
+    const pdf = { type: "file" as const, mediaType: "application/pdf", fileName: "report.pdf", data: "JVBERi0xLjQ=" }
+    const prompt = Prompt.make([
+      { role: "user", content: [{ type: "text", text: "summarize this" }, pdf] },
+      { role: "user", content: [{ type: "file", mediaType: "text/csv", data: "YSxiCg==" }] },
+      { role: "user", content: [{ type: "file", mediaType: "image/png", fileName: "chart.png", data: new URL("https://example.com/chart.png") }] },
+    ])
+    expect(toChatMessages(prompt)).toEqual([
+      { role: "user", content: "summarize this\n[file omitted: application/pdf, report.pdf]" },
+      { role: "user", content: "[file omitted: text/csv]" },
+      { role: "user", content: "[file omitted: image/png, chart.png]" },
+    ])
+    expect(toChatMessages(Prompt.make([{ role: "user", content: [{ type: "file", mediaType: "image/png", data: pixel }, pdf] }]), { images: true })).toEqual([
+      { role: "user", content: [{ type: "image_url", image_url: { url: `data:image/png;base64,${pixel}` } }, { type: "text", text: "[file omitted: application/pdf, report.pdf]" }] },
+    ])
+  })
 })
 
 describe("toChatMessages: images on an endpoint that reads them", () => {

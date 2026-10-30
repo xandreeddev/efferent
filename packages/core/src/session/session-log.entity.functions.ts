@@ -1,6 +1,6 @@
-import { Effect, Schema } from "effect"
+import { Effect, Predicate, Schema } from "effect"
 import { JsonObject } from "./session-log.entity.js"
-import type { SessionLogError } from "./session-log.entity.js"
+import type { RevisionConflict, SessionLogError } from "./session-log.entity.js"
 
 /** Any value written out as JSON text: `undefined` fields are dropped, as a store drops them. */
 const toText = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))
@@ -21,3 +21,10 @@ export const storedJson = (value: Readonly<Record<string, unknown>>): Effect.Eff
 
 /** Whether the store was too busy to answer (`store.busy`: another connection held it): nothing was written, and a retry may succeed. */
 export const isStoreBusy = (error: SessionLogError): boolean => error.code === "store.busy"
+
+/**
+ * Whether a failure is a `RevisionConflict` (by its tag, whichever copy of
+ * `@xandreed/core` made it): the head moved on and nothing was written, so a
+ * compare-and-swap reads the head again and retries at once.
+ */
+export const isRevisionConflict = (error: unknown): error is RevisionConflict => Predicate.isTagged(error, "RevisionConflict")

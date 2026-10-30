@@ -67,7 +67,7 @@ export const BashExit = Schema.TaggedStruct("BashExit", {
 export type BashExit = typeof BashExit.Type
 
 /** What `Bash.stream` emits: chunks as they come, then exactly one `BashExit`, last. */
-export const BashEvent = Schema.Union([BashChunk, BashExit])
+export const BashEvent = Schema.Union([BashChunk, BashExit]).pipe(Schema.toTaggedUnion("_tag"))
 export type BashEvent = typeof BashEvent.Type
 
 /**

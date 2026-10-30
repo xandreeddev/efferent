@@ -23,6 +23,7 @@ import {
   contextualPrecision,
   contextualRecall,
   type EvaluationApp,
+  type TranscriptEvent,
   type Trial
 } from "../index.js"
 import { unknownEvaluationUsage } from "../assessment.usecase.functions.js"
@@ -41,6 +42,7 @@ const run = (app: EvaluationApp) =>
     Effect.provide(
       Layer.succeed(EvaluationRunStore, {
         writeTrial: () => Effect.void,
+        appendTranscript: () => Effect.void,
         writeRun: () => Effect.void
       })
     )
@@ -67,7 +69,7 @@ test("execution gets input alone; observed outcome and grades remain distinct", 
 
 test("a failed execution preserves partial events and releases its environment", async () => {
   const released = await Effect.runPromise(Ref.make(0))
-  const saved: Trial[] = []
+  const writes: string[] = []
   const configured = fixture((_, __, ___, recorder) => recorder.record("tool.started", { tool: "lookup" }).pipe(
     Effect.andThen(Effect.fail(new EvaluationError({ code: "execution", message: "failed" })))
   ), Layer.succeed(FixtureEnvironment, {
@@ -81,7 +83,11 @@ test("a failed execution preserves partial events and releases its environment",
         Layer.succeed(EvaluationRunStore, {
           writeTrial: (trial) =>
             Effect.sync(() => {
-              saved.push(trial)
+              writes.push(`trial ${trial.status} ${trial.transcript.length}`)
+            }),
+          appendTranscript: (trial, event) =>
+            Effect.sync(() => {
+              writes.push(`event ${trial}#${event.sequence} ${event.kind}`)
             }),
           writeRun: () => Effect.void
         })
@@ -89,13 +95,43 @@ test("a failed execution preserves partial events and releases its environment",
     )
   )
   expect(await Effect.runPromise(Ref.get(released))).toBe(1)
-  expect(
-    saved.some(
-      (trial) => trial.status === "running" && trial.transcript.length === 1
-    )
-  ).toBe(true)
+  // The event is stored while the trial runs; the settled trial and its graded copy hold it.
+  expect(writes).toEqual([
+    "trial running 0",
+    "event run/suite/candidate/task/1#0 tool.started",
+    "trial error 1",
+    "trial error 1"
+  ])
   expect(report.trials[0]?.status).toBe("error")
   expect(report.gates[0]?.value).toEqual(Option.none())
+})
+
+test("each transcript event is appended in order, and the trial is written only when it starts, settles and is graded", async () => {
+  const writes = { trials: 0 }
+  const appended: TranscriptEvent[] = []
+  // Ten records at a time: the writer still numbers and stores them one by one.
+  const app = fixture((_, __, ___, recorder) =>
+    Effect.forEach(
+      Array.from({ length: 100 }, (_, index) => index),
+      (index) => recorder.record("tool.completed", { index }),
+      { concurrency: 10, discard: true }
+    ).pipe(Effect.as({ output: "answer", evidence: { facts: ["source"] } }))
+  )
+  const report = await Effect.runPromise(
+    runEvaluation(app, "run", { ids: [], split: "validation" }).pipe(
+      Effect.provide(EvaluationServicesLive(app)),
+      Effect.provide(
+        Layer.succeed(EvaluationRunStore, {
+          writeTrial: () => Effect.sync(() => { writes.trials++ }),
+          appendTranscript: (_, event) => Effect.sync(() => { appended.push(event) }),
+          writeRun: () => Effect.void
+        })
+      )
+    )
+  )
+  expect(appended.map((event) => event.sequence)).toEqual(Array.from({ length: 100 }, (_, index) => index))
+  expect(writes.trials).toBe(3)
+  expect(report.trials[0]?.transcript).toEqual(appended)
 })
 
 test("a failed trial or grade keeps its error's code and message as its reason, never a stack frame or a path", async () => {
@@ -230,6 +266,7 @@ test("candidate selection only gates selected candidates", async () => {
       Effect.provide(
         Layer.succeed(EvaluationRunStore, {
           writeTrial: () => Effect.void,
+          appendTranscript: () => Effect.void,
           writeRun: () => Effect.void
         })
       )
@@ -284,6 +321,7 @@ test("all execution is captured before the first grader and can be graded repeat
   }
   const store = Layer.succeed(EvaluationRunStore, {
     writeTrial: () => Effect.void,
+    appendTranscript: () => Effect.void,
     writeRun: (run) =>
       Effect.sync(() => {
         snapshots.push(run)
@@ -340,6 +378,7 @@ test("changed grader versions score the saved execution without a runnable or en
       Effect.provide(
         Layer.succeed(EvaluationRunStore, {
           writeTrial: () => Effect.void,
+          appendTranscript: () => Effect.void,
           writeRun: () => Effect.void
         })
       )
@@ -379,6 +418,7 @@ test("changed grader versions score the saved execution without a runnable or en
       Effect.provide(
         Layer.succeed(EvaluationRunStore, {
           writeTrial: () => Effect.void,
+          appendTranscript: () => Effect.void,
           writeRun: () => Effect.void
         })
       )
@@ -410,6 +450,7 @@ test("a timed-out or cancelled execution keeps the outcome its environment showe
         writeTrial: (trial) => Effect.sync(() => {
           saved.push(trial)
         }),
+        appendTranscript: () => Effect.void,
         writeRun: () => Effect.void
       })),
       Effect.forkChild
@@ -458,7 +499,7 @@ test("ids are single segments, so trial files and grader keys cannot collide", a
   const refused = await Effect.runPromise(
     runEvaluation(app, "nightly/1", { ids: [], split: "validation" }).pipe(
       Effect.provide(EvaluationServicesLive(app)),
-      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void })),
+      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, appendTranscript: () => Effect.void, writeRun: () => Effect.void })),
       Effect.flip
     )
   )
@@ -468,7 +509,7 @@ test("ids are single segments, so trial files and grader keys cannot collide", a
 
 test("a grader is selected by its key or its id, and an unknown one is refused", async () => {
   const app = fixture()
-  const store = Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void })
+  const store = Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, appendTranscript: () => Effect.void, writeRun: () => Effect.void })
   const executed = await Effect.runPromise(
     runEvaluation(app, "source", { ids: [], split: "validation", executeOnly: true }).pipe(
       Effect.provide(EvaluationServicesLive(app)), Effect.provide(store))

@@ -214,6 +214,37 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   becomes `@xandreed/evals-cli`, and so do `/run-main.adapter`,
   `/config-loader.adapter` and `/adapters/evaluation-store.fs.adapter` (with
   or without `.js`). The `efferent-eval` bin is unchanged.
+- Nothing to do for SQLite session databases: a 0.14 file, which has no
+  schema version, opens as it was and is stamped schema 1 the first time it
+  opens.
+- Credential secrets are `Redacted`: wrap them with `Redacted.make`, read
+  them with `Redacted.value`, and compare them with `Equal.equals`, never
+  `===`. The file format is unchanged. A custom `AuthStore` that persists
+  credentials encodes them with `Schema.encodeEffect(Credential)` before
+  writing (`JSON.stringify` writes `"<redacted>"`) and reruns
+  `authStoreConformance`. Drop calls to `toCredential`.
+- Pass a sign-in's tokens to `AuthStore.set` as they are (no
+  `Redacted.make`); wrap a refresh token with `Redacted.make` before passing
+  it to a refresh function, and read a token with `Redacted.value`.
+- Calibration runs graded from this release carry
+  `comparison: "calibration-agreement:2"`, so `compare` against an earlier
+  calibration run reports that the grader definitions differ; stored
+  reports still decode unchanged. To compare an old run, regrade its saved
+  observations first with `efferent-eval grade --from <execution.json>`
+  (no grader calls).
+- `@xandreed/evals`: a custom `EvaluationRunStore` adds
+  `appendTranscript(trial, event)`; a store that keeps only whole trials
+  can return `Effect.void`, since the settled trial still carries every
+  event.
+- `@xandreed/evals`: put each evaluator behind a grader with
+  `graderFromEvaluator`, list it in the app's `graders`, and bind it to
+  tasks as `<id>@<version>`; the grader's `metrics` replace a binding's
+  `select`, and the judge Layer is the second argument instead of an
+  `Effect.provide`. Regrade saved work with `gradeEvaluation`
+  (`efferent-eval grade --from`). Reports on disk are unchanged.
+- A custom `StepLoop` provides `request.handlers` outermost and its
+  `StepLoopReferences` (the request's `cacheKey` as `CurrentPromptCacheKey`,
+  its `callPolicy` as `CurrentModelCallPolicy`, and the others) inside them.
 
 ### Breaking
 
@@ -532,6 +563,49 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/evals-cli` drops its `./*` export: a subpath import such as
   `@xandreed/evals-cli/cli.adapter` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
   The root exports every name those modules published.
+- `@xandreed/plugin-session-sqlite` records the session database's schema
+  version (`PRAGMA user_version`) and applies the migrations a file lacks
+  when it opens it, under the write lock. A database written by a newer
+  release fails to open with `SessionLogError` code `store.version`, its
+  tables neither read nor written; before, it was opened and could be
+  damaged.
+- `@xandreed/core`: a `Credential`'s secrets (`key`, `access`, `refresh`)
+  are `Redacted`; `AuthStore.set` takes them `Redacted`, and `get` and `all`
+  return them that way. `accountId`, `installationId` and `baseUrl` are
+  left out when unset, never `undefined`. `auth.json` is unchanged, legacy
+  flat-string keys included.
+- `@xandreed/core`: `authStoreConformance` compares credentials by value
+  through the schema and adds the `redacted` check (`get` and `all` hand
+  out every secret `Redacted`).
+- `@xandreed/plugin-models`: both auth stores refuse a credential whose
+  secret is not `Redacted` with an `AuthError` that names the provider,
+  never the value, and write nothing.
+- `@xandreed/plugin-models`: the OAuth sign-in and refresh helpers keep
+  tokens `Redacted` from the token endpoint's answer on:
+  `exchangeAnthropicCode` and `exchangeOpenAiCodexCode` return `Redacted`
+  access and refresh tokens (`RefreshedTokens`, `OpenAiCodexTokens`), and
+  `refreshAnthropicToken` and `refreshOpenAiCodexToken` take the refresh
+  token `Redacted`. Types only; requests and `auth.json` are unchanged.
+- `@xandreed/evals`: calibration compares a metric with its label by one
+  rule, `compareMetric` (new export). A probability grade against a boolean
+  label agrees when `p >= 0.5` equals the label, and counts as a false pass
+  at `p >= 0.5` against `false` and a false fail under 0.5 against `true`;
+  before, it always disagreed, so a model judge calibrated against
+  pass/fail labels could not pass. `summarizeCalibration` and
+  `compareCalibrationMetric` measure two probabilities (exact equality)
+  instead of reporting them unavailable.
+- `@xandreed/evals`: `EvaluationRunStore` gains `appendTranscript`. The
+  runner appends each transcript event through it and calls `writeTrial`
+  only when a trial starts, settles and is graded, no longer once per
+  event.
+- `@xandreed/evals`: `Evaluator.run` may fail with `EvaluationError` as well
+  as `AssessmentError`, and so may `projectEvaluatorInput`'s projection;
+  code that handles only `AssessmentError` handles `EvaluationError` too.
+- `@xandreed/core`: `stepLoopConformance` puts the caller's values of
+  `StepLoopReferences` in the request's `handlers` too, as a turn's services
+  carry them, and checks that the loop's own values still win there. A
+  custom `StepLoop` that provides `request.handlers` inside its own
+  references now fails the cache-key and call-policy checks.
 
 ### Added
 
@@ -689,6 +763,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `ModelRole`, `SettingsKey`, `authStoreConformance`,
   `settingsStoreConformance` and their option types), which move there in the
   next minor release.
+- `@xandreed/evals` exports `errorCodeOf(error)`: a foreign error's string
+  `code` (`ENOENT`) as an `Option`, the evals packages' copy of core's
+  reader. The evals CLI's file reads use it; a missing file is still
+  `missing`, any other failure `persistence`.
+- `store.version` in `HARNESS_CODES` and the event reference.
+- `@xandreed/evals`: `exportableScores(encodedRun)` and `ExportedScore`, the
+  scores a run's exporters send (each boolean, probability and score metric
+  of a scored grade, with its key and remote-id seed), so a custom exporter
+  can send the same list.
+- `@xandreed/evals`: `graderFromEvaluator({ definition, input, evaluator,
+  timeoutMs }, services)` puts an `Evaluator` behind a grader: each grade
+  decodes the grading context's input with `input` and runs the evaluator
+  with `services` within `timeoutMs` (default 90 s), keeping the grader's
+  metrics; an input that does not decode is an `invalid` grade.
+- `@xandreed/core`: `isRevisionConflict` tells a `RevisionConflict` by its
+  tag, from any copy of core: retry a compare-and-swap over a `SessionLog`
+  with `Effect.retry({ times, while: isRevisionConflict })`.
+- `@xandreed/core`: `LogBody`, `CompactionAction` and `BashEvent` carry the
+  tagged-union helpers (`match`, `matchOrElse`, `guards`, `isAnyOf`,
+  `cases`).
 
 ### Changed
 
@@ -715,6 +809,64 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   The boundaries gate now layers core by role (model, ports, logic, core,
   engine, kits, tests; `packages/core/AGENTS.md` has the table), so a port,
   an entity or a helper that imports the engine fails `bun run typecheck`.
+- `@xandreed/plugin-models`: `toCredential` is deprecated (a stored
+  `Credential` is used as it is); `toCredentialInput` keeps a credential's
+  `Redacted` secrets and brands its ids (`AccountId`, `InstallationId`).
+- The Langfuse and LangSmith exporters share the `exportableScores`
+  mapping; payloads, score names and remote ids are unchanged, so exporting
+  a saved report again still updates the records earlier exports made.
+- An evals export receipt's `at` comes from Effect's `Clock`.
+- `@xandreed/evals`: `evaluationScores` and `EvaluationScore` are deprecated
+  in favour of `exportableScores` and `ExportedScore`.
+- `@xandreed/evals`: `assess`, `assessAll`, `validateBindings`,
+  `EvaluatorBinding`, `EvaluationResult`, `summarizeAssessments`,
+  `evaluatorRegistry` and `EvaluatorRegistration` are deprecated, to be
+  removed one minor release later.
+- Requests send tool-call params, tool results and provider options with
+  their keys sorted at every depth (the canonical JSON order fingerprints
+  use), including the request right after a call. Stored data and
+  fingerprints are unchanged; existing sessions send what they sent before.
+
+Model-visible text (exact pins and the compaction golden updated):
+
+- Workspace tools: with nothing in `exclude`, `find` and `grep` describe
+  only the symbolic links they skip (no "nothing"), and the environment
+  section leaves the exclude line out. No-match lines name the workspace
+  root in words (`No matches for x in the workspace root.`, no `..`).
+  Counts agree with their noun (`1 entry`, `1 path`, `1 more line`,
+  `1 file`, `1 matching line`); the `ls`, `find` and `grep` views are
+  version 2. A refused directory says to give a file's path (`write`,
+  `edit` and the file-system refusal); `edit`'s file-too-large refusal
+  says to change the file with bash. A file-system refusal is in words for
+  every reason, and `WorkspaceMissing` names the reason and that no
+  workspace tool can run, never the backend's message (which held host
+  paths). A regular expression that does not compile reads `… is not a
+  valid regular expression; the engine says: …. Pass literal: true …`
+  (no nested parentheses), and a refused `grep` glob is named as given,
+  not as rewritten (`**/<glob>`).
+- Background tasks: a failed task's notice says what went wrong in words
+  (`the task's session was too busy: …`, `… could not be read or stored`,
+  `… was cancelled`), never a tag name; a long reply is clipped by
+  `clipTo` with a counted marker (`[… N characters clipped]`) in place of
+  `(cut at N characters)`; `TasksUnavailable` no longer names the failed
+  tag and says to try later.
+- Tool discovery: `ToolCallLimit` reads `at most once`/`N times per turn`
+  and says to use the earlier results; `SkillLoadLimit` and unknown skills
+  say what to do next (`Unknown skill: x; load_skill takes the skills the
+  catalogue lists`); core's `capability.forbidden` names each tool and the
+  permissions it needs.
+- Agent loop: the default correctives and the degenerate-loop nudge are
+  host notes. The malformed corrective says why the reply could not be
+  used (a tool it does not have, parameters that do not match, a reply
+  that does not decode) and lists the step's tools; a parameter report is
+  framed (`<parameter-errors>`) and clipped, and a decoder's schema dump is
+  never quoted. The incomplete corrective no longer names an action the
+  step may not offer. A host's own `correctives` are sent as they are.
+- Memory: a dropped-turns ledger clips each request and reply with a
+  counted marker and lists the subjects the tools reported framed as data
+  (`<known-subjects>`); the summarizer's transcript leaves out a reply
+  that repeats its turn's last assistant text. Ledgers already stored
+  render as before.
 
 ### Fixed
 
@@ -982,6 +1134,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/core`'s published declarations no longer import
   `@xandreed/sdk`, which core does not depend on: a host that installs core
   without the sdk gets every type.
+- `@xandreed/evals-cli`: a running trial's events are appended to
+  `trials/<id>.events.jsonl` (one JSON line each, mode 0600) instead of
+  rewriting the trial file per event, whose bytes grew with the square of
+  the transcript. The file is removed once the trial settles, so one left
+  behind holds the events of a trial whose process died.
+  `execution.json`, `report.json` and `trials/<id>.json` keep their format.
+- The evals guide's examples use `Prompt.concat` (there is no
+  `Prompt.merge`) and no longer call the unexported `llmEvaluator`.
+- A past tool call is sent with the same bytes in every later request,
+  whatever key order the session store keeps: its params, a provider-run
+  tool's result and provider options were sent in the provider's order by
+  the turn that made the call and sorted afterwards, which broke the
+  provider's prompt-cache prefix.
+- `@xandreed/plugin-agent-loop`: a `CurrentPromptCacheKey` or
+  `CurrentModelCallPolicy` that a host provides around `Agent.turn` no
+  longer replaces the turn's own for its model calls. The turn's services
+  carried the host's value, which won over the request's, and the dispatch
+  check failed the turn with `request.diverged`.
+- `@xandreed/plugin-models`: a token endpoint's refusal quoted up to 200
+  characters of its body, which could echo the refresh token, code or PKCE
+  verifier the request sent; each is replaced by `<redacted>` before the
+  body is quoted (`tokenRefusalText`).
+- `@xandreed/plugin-workspace`: a file-system failure no longer passes the
+  backend's message to the model, so host paths outside the workspace do
+  not reach it.
 
 ### Repository
 
@@ -1281,6 +1458,66 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `export *`, and `quality/exports-have-consumers` checks it
   (`CURATED_ENTRIES`): the exports no first-party code imports are tagged
   `@public`. Its API is unchanged.
+- New gate rule `effect/no-code-property-guard`: `Predicate.hasProperty(x,
+  "code")` and `"code" in x` are refused outside test code; read a code
+  with `errorCodeOf` (Node or SQLite) or `harnessCodeOf` (the framework's
+  codes). Mirrored in the vendored effect pack.
+- `effect/match-over-tag-switch` also refuses if-return ladders: adjacent
+  `if (x._tag === …) return …` statements on one subject (and on `type`,
+  `role` or `mode`), in every package.
+- `effect/no-ambient-time-random` reads adapters too: an `*.adapter.ts`
+  file takes the time from `Clock` like any other file (`Date.now` and an
+  argless `new Date()` fail there), and may still draw from the platform
+  generator (`Math.random`, `randomUUID`). The vendored `effect` pack makes
+  the same distinction by file name, so a profile no longer excludes
+  adapters from the rule.
+- `packages/evals/fixtures/run-0.14.0.json`, recorded by
+  `scripts/record-run-fixture.ts`, and `run-compat.test.ts` keep stored
+  evaluation runs readable; the release checklist records one per release.
+- Core's model-facing text is listed in a table in `packages/core/AGENTS.md`,
+  and exact tests pin the text that had none or only a partial check: the
+  dropped-turns preamble and ledger, a result's artifact lines, the agent
+  loop's correctives, nudge and stop reply, the recall failures, the
+  summarizer's default instructions, and the inbox turn's joined message.
+- The workspace tools' model text is pinned word for word: the seven tool
+  descriptions, the `workspace.environment` section, the skills' catalogue
+  summaries, every result and compact view, and every refusal message.
+- The Anthropic subscription's Claude Code system block and the
+  `[file omitted: <type>, <name>]` label (models plugin), and the evals
+  judges' structured-output names (`semantic_assessment`, an LLM
+  evaluator's object name), are pinned by exact tests.
+- A compaction golden, `packages/sdk/golden/agent-compaction.model.json`,
+  pins what an agent sends once its memory compacts: the window strategy's
+  spill preview, the `recall_context` page that reads it back, and the host
+  note and ledger of dropped turns; the summary strategy's summarizer
+  prompts (two summaries in consecutive turns, the second folding the
+  first) and the handoff the next request carries. The journal rebuilds the
+  last request of each conversation byte for byte.
+- The sessions plugin's guarded commits and its turn writer, and the
+  session log recovery kit, retry revision conflicts with `Effect.retry`
+  instead of hand-written recursion: still immediate, the same number of
+  attempts (`retries`, then `SessionContended`), the same spans, and every
+  conflict in a turn's writer still reads the head again, the last one
+  included.
+- The model text of tool discovery, background tasks and the render tool is
+  pinned by exact tests beside its source: the registry's own tool
+  descriptions and every refusal and `load_skill` message, the tasks'
+  failures and every no-reply notice, and `render_component`'s description,
+  parameters and failures.
+- `scripts/model-text-pins.test.ts` checks every package's "Model-facing
+  text" table: a "Pinned by" cell that says `unpinned`, `contains`,
+  `codes only` or `by reference only`, or that cites a test file or line
+  that does not exist, fails the test suite. Every row pins its text
+  exactly.
+- Core branches over log bodies, compaction actions, provider parts and
+  messages, stream parts and turn events with `Match` or the union's own
+  `match` instead of if-return ladders; each renderer names every log body,
+  so a new one fails to compile until it is placed. No behaviour or
+  model-text change: the goldens are byte-identical.
+- The step loop's event translation, the chat-completions mapping, the turn
+  writer's queue, the bash tool, the render feed and the semantic answer
+  check branch with `Match` (exhaustive where every case is known), and so
+  do two tests. No behaviour change.
 
 ### Deprecated
 

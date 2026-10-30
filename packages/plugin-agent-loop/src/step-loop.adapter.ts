@@ -1,6 +1,6 @@
 import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
-import { Cause, Context, Effect, Layer, Option, Ref, Schema } from "effect"
+import { Cause, Context, Effect, Layer, Match, Option, Ref, Schema } from "effect"
 import { CurrentAgentStep, CurrentModelCallPolicy, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, reasonOf, StepLoop, StreamPartId, ToolCallId } from "@xandreed/core"
 import type { AgentMessage, CompletionVerdict, LoopEvent, RunResult, StepInfo, StepRequest, StepStatus, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
@@ -75,25 +75,29 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     return (yield* evaluate(info)).complete
   })
 
-  const onEvent = (event: LoopEvent): Effect.Effect<void, TurnError> => {
-    if (event.type === "assistant_delta") {
-      return request.events.publish({ _tag: "assistant.delta", step: event.turnIndex, channel: event.channel, id: StreamPartId.make(event.id), delta: event.delta })
-    }
-    if (event.type === "assistant_message") {
-      return Effect.gen(function* () {
-        if (!isPlanned(event.turnIndex)) yield* Ref.update(ledger, used(event.usage))
-        yield* request.events.publish({
-          _tag: "assistant.message", step: event.turnIndex, run, text: event.text, reasoning: event.reasoning,
-          model: Option.fromNullishOr(event.model), toolCalls: event.toolCalls.map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })),
-          usage: event.usage,
-        })
+  // Every LoopEvent has its case: the ones the turn's events carry otherwise (the registry's tool.*, the loop's
+  // own step.* from onStepSettled) or not at all publish nothing here.
+  const onEvent = (event: LoopEvent): Effect.Effect<void, TurnError> => Match.value(event).pipe(Match.discriminatorsExhaustive("type")({
+    assistant_delta: (delta): Effect.Effect<void, TurnError> =>
+      request.events.publish({ _tag: "assistant.delta", step: delta.turnIndex, channel: delta.channel, id: StreamPartId.make(delta.id), delta: delta.delta }),
+    assistant_message: (message): Effect.Effect<void, TurnError> => Effect.gen(function* () {
+      if (!isPlanned(message.turnIndex)) yield* Ref.update(ledger, used(message.usage))
+      yield* request.events.publish({
+        _tag: "assistant.message", step: message.turnIndex, run, text: message.text, reasoning: message.reasoning,
+        model: Option.fromNullishOr(message.model), toolCalls: message.toolCalls.map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })),
+        usage: message.usage,
       })
-    }
-    if (event.type === "stream_fallback") {
-      return request.events.publish({ _tag: "stream.fallback", step: event.turnIndex, run, message: event.message })
-    }
-    return Effect.void
-  }
+    }),
+    stream_fallback: (fallback): Effect.Effect<void, TurnError> =>
+      request.events.publish({ _tag: "stream.fallback", step: fallback.turnIndex, run, message: fallback.message }),
+    turn_start: () => Effect.void,
+    turn_end: () => Effect.void,
+    tool_start: () => Effect.void,
+    tool_end: () => Effect.void,
+    compaction: () => Effect.void,
+    agent_end: () => Effect.void,
+    error: () => Effect.void,
+  }))
 
   const loop = runLoop<Record<string, Tool.Any>, TurnError>({
     run: request.run,
@@ -140,10 +144,12 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     onEvent,
   })
   const result = yield* harnessDefectsAsFailures(loop.pipe(
-    Effect.provide(request.handlers),
-    Effect.provideService(LanguageModel.LanguageModel, model),
+    // The request's references innermost: the turn's services (`handlers`) capture the context the turn runs
+    // in, so a caller's `CurrentPromptCacheKey` or `CurrentModelCallPolicy` is in them too, and must not win.
     Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
     Effect.provideService(CurrentModelCallPolicy, request.callPolicy),
+    Effect.provideService(LanguageModel.LanguageModel, model),
+    Effect.provide(request.handlers),
     // A turn's failure (a HarnessError, the writer's TurnClosed and the other TurnError tags) keeps its tag: the request's
     // callbacks fail with it, typed, and a tool handler's carries it as a defect, which `harnessDefectsAsFailures` restores.
     // What else failed underneath (a provider's `AiError`) is `loop.failed`, with it as the cause and its text, never its stack, as the message.

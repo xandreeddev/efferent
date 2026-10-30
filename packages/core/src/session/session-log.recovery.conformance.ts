@@ -6,6 +6,7 @@ import type { ConversationId } from "../domain/message.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import type { SessionLog } from "../ports/session-log.port.js"
 import type { JsonObject, SessionDraft, SessionLogError } from "./session-log.entity.js"
+import { isRevisionConflict } from "./session-log.entity.functions.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
 
@@ -61,18 +62,18 @@ const listed = (log: Log, owner: string) => log.list({ owner, limit: 10, before:
 /**
  * Add one to the session's `count` by compare-and-swap through `log`: read
  * the head, let the other writers run, commit against that revision, and
- * read again after a conflict. Returns the revision it stored.
+ * read again after a conflict, at once, up to 100 times. Returns the
+ * revision it stored.
  */
-const increment = (log: Log, id: ConversationId, by: string, n: number, tries = 0): Effect.Effect<number, unknown> => Effect.gen(function* () {
+const increment = (log: Log, id: ConversationId, by: string, n: number): Effect.Effect<number, unknown> => Effect.gen(function* () {
   const head = yield* log.head(id)
   yield* Effect.yieldNow
   const count = typeof head.state.count === "number" ? head.state.count : 0
-  const outcome = yield* Effect.result(log.commit(id, {
+  const committed = yield* log.commit(id, {
     expect: head.revision, notAfter: Option.none(), events: [draft("increment", { by, n })], state: Option.some({ count: count + 1 }),
-  }))
-  if (outcome._tag === "Success") return outcome.success.revision
-  return outcome.failure._tag === "RevisionConflict" && tries < 100 ? yield* increment(log, id, by, n, tries + 1) : yield* Effect.fail(outcome.failure)
-})
+  })
+  return committed.revision
+}).pipe(Effect.retry({ times: 100, while: isRevisionConflict }))
 
 /**
  * What a SessionLog backend must keep across handles, restarts and

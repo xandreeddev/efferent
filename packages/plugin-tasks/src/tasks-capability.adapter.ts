@@ -18,7 +18,8 @@ const TaskStatusTool = Tool.make("task_status", {
   failureMode: "return",
 })
 
-const unavailable = (error: { readonly _tag: string }) => ({ error: "TasksUnavailable", message: `Background tasks are unavailable right now (${error._tag})` })
+/** The tasks' store failed, or the session went: the model hears that it may try later, never which tag failed. */
+const unavailable = () => ({ error: "TasksUnavailable", message: "Background tasks are unavailable right now; try again later, or do the work in this conversation" })
 
 /** A task id as the model gives it: a task's id is its child session's, so a string that is not one names no task. */
 const taskIdOf = Schema.decodeUnknownOption(ConversationId)
@@ -36,7 +37,7 @@ export const tasksCapability = defineCapability({
         const tasks = yield* Tasks
         // The turn's own metadata (a tenant, a quota key) goes with the task, so its turns are admitted as the starter's.
         const task = yield* tasks.start(run.session, { instructions, mode, meta: run.admitted.meta, startedBy: { runId: run.runId, turn: run.admitted.turn } }).pipe(Effect.mapError((error) =>
-          error._tag === "TaskRefused" ? { error: "TaskRefused", message: error.message } : unavailable(error)))
+          error._tag === "TaskRefused" ? { error: "TaskRefused", message: error.message } : unavailable()))
         return { taskId: task.taskId, status: task.status }
       }),
     }),
@@ -49,7 +50,7 @@ export const tasksCapability = defineCapability({
         const unknown = { error: "UnknownTask", message: `No task ${taskId} was started in this conversation` }
         const task = yield* Option.match(taskIdOf(taskId), {
           onNone: () => Effect.fail(unknown),
-          onSome: (id) => tasks.status(run.session, id).pipe(Effect.mapError((error) => error._tag === "TaskMissing" ? unknown : unavailable(error))),
+          onSome: (id) => tasks.status(run.session, id).pipe(Effect.mapError((error) => error._tag === "TaskMissing" ? unknown : unavailable())),
         })
         return { taskId: task.taskId, status: task.status, reply: Option.getOrNull(task.reply) }
       }),

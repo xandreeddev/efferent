@@ -101,7 +101,10 @@ The lists the check reads are the `registration` data in
   release wrote: record one per release with
   `bun scripts/record-journal-fixture.ts`. It refuses to overwrite an
   existing fixture unless `--force` is passed, and `--force` is only for
-  re-recording the current, unreleased version.
+  re-recording the current, unreleased version. Evaluation reports follow
+  the same rule: `packages/evals/src/run-compat.test.ts` reads each
+  `packages/evals/fixtures/run-<version>.json`, recorded with
+  `bun scripts/record-run-fixture.ts`.
 - The sdk golden (`packages/sdk/src/agent.golden.test.ts`) pins one
   conversation byte for byte: what the model and the host see
   (`packages/sdk/golden/agent-turn.model.json`) and what the session stores
@@ -144,7 +147,8 @@ at" sentences, and drop any README exception for a package not yet on npm
 (npm holds older `@xandreed/plugin-telemetry` versions, 0.3.0 and 0.4.0, from
 an earlier line: check with `npm view @xandreed/plugin-telemetry versions`
 that none is at or above the new version). Record the release's journal
-fixture with `bun scripts/record-journal-fixture.ts`. Merge that, then
+fixture with `bun scripts/record-journal-fixture.ts` and its evaluation run
+with `bun scripts/record-run-fixture.ts`. Merge that, then
 publish from a clean checkout of the merge commit:
 
 ```sh

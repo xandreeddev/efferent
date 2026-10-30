@@ -10,6 +10,7 @@ import { fixture, spanRecorder } from "./fixture.testing.js"
 
 const store = Layer.succeed(EvaluationRunStore, {
   writeTrial: () => Effect.void,
+  appendTranscript: () => Effect.void,
   writeRun: () => Effect.void
 })
 const trialKeys = ["eval.run.id", "eval.trial.id", "eval.suite.id", "eval.task.id", "eval.candidate.id", "eval.sample"]

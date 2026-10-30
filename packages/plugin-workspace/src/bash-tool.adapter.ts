@@ -1,7 +1,7 @@
 import { Tool } from "effect/ai"
 import { Array as Arr, Clock, Effect, Option, Order, Random, Stream } from "effect"
-import { Bash, CurrentToolInvocation, defineTool, Failure, publishToolProgress, RunContext } from "@xandreed/core"
-import type { BashChunk, BashEvent, BashExit, BashOptions, RegisteredTool } from "@xandreed/core"
+import { Bash, BashEvent, CurrentToolInvocation, defineTool, Failure, publishToolProgress, RunContext } from "@xandreed/core"
+import type { BashChunk, BashExit, BashOptions, RegisteredTool } from "@xandreed/core"
 import { clipHead, tailText, utf8Length } from "./text-window.entity.functions.js"
 import { openWorkspace } from "./workspace-path.entity.functions.js"
 import type { WorkspaceAccess } from "./workspace-path.entity.functions.js"
@@ -37,8 +37,6 @@ interface Gathered {
   readonly exit: Option.Option<BashExit>
 }
 
-const isChunk = (event: BashEvent): event is BashChunk => event._tag === "BashChunk"
-const isExit = (event: BashEvent): event is BashExit => event._tag === "BashExit"
 
 /** Chunks in a row from one stream, as one text each: what one `tool.progress` carries. */
 const runsOf = (chunks: ReadonlyArray<BashChunk>): ReadonlyArray<{ readonly stream: BashChunk["stream"]; readonly text: string }> =>
@@ -128,13 +126,13 @@ export const bashTool = (context: WorkspaceToolContext): RegisteredTool => defin
     const over = (state: Pick<Gathered, "bytes" | "breaks" | "crlf">) => state.bytes - state.crlf - 1 > config.maxBytes || state.breaks > config.maxLines
 
     const step = (state: Gathered, group: ReadonlyArray<BashEvent>): Effect.Effect<Gathered> => Effect.gen(function* () {
-      const chunks = group.filter(isChunk)
+      const chunks = group.filter(BashEvent.guards.BashChunk)
       yield* Effect.forEach(runsOf(chunks), (current) => publishToolProgress(current.stream, current.text), { concurrency: 1, discard: true })
       const text = chunks.map((chunk) => chunk.text).join("")
       const bytes = state.bytes + utf8Length(text)
       const breaks = state.breaks + (text.split("\n").length - 1)
       const crlf = state.crlf + (text.split("\r\n").length - 1) + (state.tail.endsWith("\r") && text.startsWith("\n") ? 1 : 0)
-      const exit = Option.orElse(Option.fromNullishOr(group.find(isExit)), () => state.exit)
+      const exit = Option.orElse(Option.fromNullishOr(group.find(BashEvent.guards.BashExit)), () => state.exit)
       const base = { tail: (state.tail + text).slice(-(config.maxBytes + 2)), bytes, breaks, crlf, open: text.length === 0 ? state.open : !text.endsWith("\n"), exit }
       if (Option.isSome(state.spill)) return { ...base, whole: Option.none(), spill: Option.some(yield* addToSpill(state.spill.value, text)) }
       const whole = Option.map(state.whole, (sofar) => sofar + text)

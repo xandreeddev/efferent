@@ -1,10 +1,10 @@
-import { EvaluationExport, EvaluationError, EvaluationRunStore, comparisonIssues, positiveInt, type EvaluationApp } from "@xandreed/evals"
+import { EvalPath, EvaluationExport, EvaluationError, EvaluationRunStore, TranscriptEvent, Trial, TrialRecorder, comparisonIssues, positiveInt, type EvaluationApp } from "@xandreed/evals"
 import { spanRecorder } from "@xandreed/evals/testing/fixture.testing"
 import { expect, test } from "bun:test"
-import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Deferred, Effect, Fiber, Layer, Option, Tracer } from "effect"
+import { Array as Arr, Deferred, Effect, Fiber, Layer, Option, Order, Schema, Tracer } from "effect"
 import { evaluationCli } from "./cli.adapter.js"
 import { EvaluationRunStoreFsLive, readRun, readText, writeJson } from "./adapters/evaluation-store.fs.adapter.js"
 import { loadEvaluationApp } from "./config-loader.adapter.js"
@@ -251,6 +251,48 @@ test("a missing file is missing, a malformed one invalid, and a failed write lea
   expect(await readdir(join(directory, "taken"))).toEqual(["report.json"])
 })
 
+test("a running trial's events are appended to its event file (mode 0600), which goes once the trial settles", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-events-"))
+  const trials = join(directory, "trials")
+  const recorded = Promise.withResolvers<void>()
+  const release = Promise.withResolvers<void>()
+  const config = cliFixture((input) => TrialRecorder.use((recorder) => recorder.record("tool.started", { input }).pipe(
+    Effect.andThen(recorder.record("tool.completed", { output: input })),
+  )).pipe(
+    Effect.andThen(Effect.sync(() => recorded.resolve())),
+    Effect.andThen(Effect.promise(() => release.promise)),
+    Effect.as({ output: input, evidence: {} }),
+  ))
+  const exited = Effect.runPromise(evaluationCli(["run", "suite", "--directory", directory], { config, output }))
+  await recorded.promise
+  const [events, trial] = Arr.sort(await readdir(trials), Order.String)
+  expect([events?.endsWith(".events.jsonl"), trial?.endsWith(".json")]).toEqual([true, true])
+  const lines = (await readFile(join(trials, events!), "utf8")).split("\n")
+  expect(lines.at(-1)).toBe("")
+  const decodeEvent = Schema.decodeUnknownSync(Schema.fromJsonString(TranscriptEvent))
+  const appended = lines.slice(0, -1).map((line) => decodeEvent(line))
+  expect(appended.map((event) => [event.sequence, event.kind])).toEqual([[0, "tool.started"], [1, "tool.completed"]])
+  expect((await stat(join(trials, events!))).mode & 0o777).toBe(0o600)
+  expect(Schema.decodeUnknownSync(Schema.fromJsonString(Trial))(await readFile(join(trials, trial!), "utf8")).transcript).toEqual([])
+  release.resolve()
+  expect(await exited).toBe(0)
+  expect(await readdir(trials)).toEqual([trial!])
+  const report = await Effect.runPromise(readRun(join(directory, "report.json")))
+  expect(report.trials[0]?.transcript).toEqual(appended)
+})
+
+// A superuser reads any file, so the unreadable one needs an ordinary user.
+test.skipIf(process.getuid?.() === 0)("a read is missing only for ENOENT: a file it may not read is persistence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "evaluation-reads-"))
+  const absent = await Effect.runPromise(readText(join(directory, "absent.json")).pipe(Effect.flip))
+  expect([absent.code, absent.message]).toEqual(["missing", `No file at ${join(directory, "absent.json")}`])
+  await writeFile(join(directory, "locked.json"), "{}", { mode: 0o000 })
+  const locked = await Effect.runPromise(readText(join(directory, "locked.json")).pipe(Effect.flip))
+  expect(locked.code).toBe("persistence")
+  expect(locked.message).toStartWith(`Cannot read ${join(directory, "locked.json")}: EACCES`)
+  expect(locked.cause).toMatchObject({ code: "EACCES" })
+})
+
 test("a failure the CLI wraps stays its cause, and the message says what failed", async () => {
   const directory = await mkdtemp(join(tmpdir(), "evaluation-causes-"))
   const unreadable = await Effect.runPromise(readText(directory).pipe(Effect.flip))
@@ -270,6 +312,14 @@ test("a failure the CLI wraps stays its cause, and the message says what failed"
   expect(unencoded.code).toBe("persistence")
   expect(unencoded.message).toStartWith("Trial unencodable does not encode: ")
   expect(unencoded.cause).toMatchObject({ _tag: "SchemaError" })
+  const unappended = await Effect.runPromise(
+    Effect.gen(function* () {
+      const store = yield* EvaluationRunStore
+      return yield* store.appendTranscript(EvalPath.make("run/suite/candidate/task/1"), { id: "unencodable" } as never)
+    }).pipe(Effect.provide(EvaluationRunStoreFsLive(directory)), Effect.flip)
+  )
+  expect([unappended.code, unappended.cause]).toMatchObject(["persistence", { _tag: "SchemaError" }])
+  expect(unappended.message).toStartWith("Event unencodable does not encode: ")
   const unloaded = await Effect.runPromise(loadEvaluationApp(join(directory, "absent.config.ts")).pipe(Effect.flip))
   expect(unloaded.code).toBe("invalid")
   expect(unloaded.message).toStartWith(`Cannot load evaluation configuration ${join(directory, "absent.config.ts")}: `)

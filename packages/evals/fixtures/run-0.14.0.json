@@ -1,0 +1,529 @@
+{
+  "format": 1,
+  "version": "0.14.0",
+  "description": "Evaluation runs as this version stores them, recorded by scripts/record-run-fixture.ts. Later versions must read them.",
+  "execution": {
+    "version": 1,
+    "id": "fixture",
+    "application": "fixture",
+    "phase": "executed",
+    "startedAt": 1767225600000,
+    "endedAt": 1767225600000,
+    "fingerprints": {
+      "fixture:world": "1"
+    },
+    "trials": [
+      {
+        "version": 1,
+        "id": "fixture/suite/candidate/task/1",
+        "runId": "fixture",
+        "suiteId": "suite",
+        "task": {
+          "id": "task",
+          "version": "1",
+          "runnable": "subject",
+          "dataset": "dataset",
+          "datasetVersion": "1",
+          "family": "family",
+          "split": "validation",
+          "review": "reviewed",
+          "input": "question",
+          "reference": "secret-label",
+          "graders": [
+            {
+              "grader": "grader@1",
+              "projection": "projection",
+              "scope": "trial"
+            },
+            {
+              "grader": "judge@1",
+              "projection": "projection",
+              "scope": "answer"
+            }
+          ],
+          "provenance": "fixture"
+        },
+        "candidate": {
+          "id": "candidate",
+          "configuration": {},
+          "fingerprints": {}
+        },
+        "sample": 1,
+        "status": "completed",
+        "startedAt": 1767225600000,
+        "endedAt": 1767225600000,
+        "output": "answer",
+        "evidence": {
+          "facts": [
+            "source"
+          ]
+        },
+        "outcome": {
+          "state": {
+            "state": "actual"
+          },
+          "references": []
+        },
+        "transcript": [
+          {
+            "id": "fixture/suite/candidate/task/1/event/0",
+            "sequence": 0,
+            "at": 1767225600000,
+            "kind": "model.request",
+            "data": {
+              "body": "answer: question"
+            }
+          },
+          {
+            "id": "fixture/suite/candidate/task/1/event/1",
+            "sequence": 1,
+            "at": 1767225600000,
+            "kind": "tool.completed",
+            "data": {
+              "tool": "lookup",
+              "result": "source"
+            }
+          }
+        ],
+        "reason": "",
+        "grades": []
+      },
+      {
+        "version": 1,
+        "id": "fixture/suite/broken/task/1",
+        "runId": "fixture",
+        "suiteId": "suite",
+        "task": {
+          "id": "task",
+          "version": "1",
+          "runnable": "subject",
+          "dataset": "dataset",
+          "datasetVersion": "1",
+          "family": "family",
+          "split": "validation",
+          "review": "reviewed",
+          "input": "question",
+          "reference": "secret-label",
+          "graders": [
+            {
+              "grader": "grader@1",
+              "projection": "projection",
+              "scope": "trial"
+            },
+            {
+              "grader": "judge@1",
+              "projection": "projection",
+              "scope": "answer"
+            }
+          ],
+          "provenance": "fixture"
+        },
+        "candidate": {
+          "id": "broken",
+          "configuration": {
+            "model": "fixture"
+          },
+          "fingerprints": {
+            "prompt": "1"
+          }
+        },
+        "sample": 1,
+        "status": "error",
+        "startedAt": 1767225600000,
+        "endedAt": 1767225600000,
+        "output": null,
+        "evidence": null,
+        "outcome": {
+          "state": {
+            "state": "actual"
+          },
+          "references": []
+        },
+        "transcript": [
+          {
+            "id": "fixture/suite/broken/task/1/event/0",
+            "sequence": 0,
+            "at": 1767225600000,
+            "kind": "tool.started",
+            "data": {
+              "tool": "lookup",
+              "query": "question"
+            }
+          }
+        ],
+        "reason": "execution: the lookup service refused",
+        "grades": []
+      }
+    ],
+    "gates": [],
+    "failures": [
+      "fixture/suite/broken/task/1: execution: the lookup service refused"
+    ]
+  },
+  "report": {
+    "version": 1,
+    "id": "fixture",
+    "application": "fixture",
+    "phase": "graded",
+    "startedAt": 1767225600000,
+    "endedAt": 1767225600000,
+    "fingerprints": {
+      "fixture:world": "1",
+      "gradingConfiguration": "36d03d4e119fbdee014f86d927b0fa1bc617c840804be217b41f1e6b800f2ff2",
+      "sourceRun": "fixture",
+      "sourceExecution": "0bbd5780c89c4611236d36e5c3885922d6793d8bfd25e387c18ea87641aca6e0"
+    },
+    "trials": [
+      {
+        "version": 1,
+        "id": "fixture/suite/candidate/task/1",
+        "runId": "fixture",
+        "suiteId": "suite",
+        "task": {
+          "id": "task",
+          "version": "1",
+          "runnable": "subject",
+          "dataset": "dataset",
+          "datasetVersion": "1",
+          "family": "family",
+          "split": "validation",
+          "review": "reviewed",
+          "input": "question",
+          "reference": "secret-label",
+          "graders": [
+            {
+              "grader": "grader@1",
+              "projection": "projection",
+              "scope": "trial"
+            },
+            {
+              "grader": "judge@1",
+              "projection": "projection",
+              "scope": "answer"
+            }
+          ],
+          "provenance": "fixture"
+        },
+        "candidate": {
+          "id": "candidate",
+          "configuration": {},
+          "fingerprints": {}
+        },
+        "sample": 1,
+        "status": "completed",
+        "startedAt": 1767225600000,
+        "endedAt": 1767225600000,
+        "output": "answer",
+        "evidence": {
+          "facts": [
+            "source"
+          ]
+        },
+        "outcome": {
+          "state": {
+            "state": "actual"
+          },
+          "references": []
+        },
+        "transcript": [
+          {
+            "id": "fixture/suite/candidate/task/1/event/0",
+            "sequence": 0,
+            "at": 1767225600000,
+            "kind": "model.request",
+            "data": {
+              "body": "answer: question"
+            }
+          },
+          {
+            "id": "fixture/suite/candidate/task/1/event/1",
+            "sequence": 1,
+            "at": 1767225600000,
+            "kind": "tool.completed",
+            "data": {
+              "tool": "lookup",
+              "result": "source"
+            }
+          }
+        ],
+        "reason": "",
+        "grades": [
+          {
+            "grader": "grader",
+            "version": "1",
+            "scope": "trial",
+            "status": "scored",
+            "metrics": [
+              {
+                "kind": "boolean",
+                "name": "correct",
+                "value": true
+              }
+            ],
+            "reason": "matches",
+            "context": {
+              "projection": "projection",
+              "version": "1",
+              "input": "answer",
+              "references": [
+                "fixture/suite/candidate/task/1"
+              ],
+              "omissions": [],
+              "bytes": 8,
+              "fingerprint": "76f2ece8b06b7f09e88a47f2f1a867606b324a3c93c0219fecc28f49e911b762"
+            },
+            "usage": {
+              "inputTokens": null,
+              "outputTokens": null,
+              "costUsd": null
+            },
+            "startedAt": 1767225600000,
+            "endedAt": 1767225600000,
+            "metadata": {}
+          },
+          {
+            "grader": "judge",
+            "version": "1",
+            "scope": "answer",
+            "status": "scored",
+            "metrics": [
+              {
+                "kind": "score",
+                "name": "relevance",
+                "comment": "on topic",
+                "value": 4,
+                "min": 1,
+                "max": 5
+              },
+              {
+                "kind": "probability",
+                "name": "confidence",
+                "value": 0.75
+              },
+              {
+                "kind": "preference",
+                "name": "preferred",
+                "value": "A"
+              }
+            ],
+            "reason": "judged",
+            "context": {
+              "projection": "projection",
+              "version": "1",
+              "input": "answer",
+              "references": [
+                "fixture/suite/candidate/task/1"
+              ],
+              "omissions": [],
+              "bytes": 8,
+              "fingerprint": "76f2ece8b06b7f09e88a47f2f1a867606b324a3c93c0219fecc28f49e911b762"
+            },
+            "usage": {
+              "inputTokens": 120,
+              "outputTokens": 30,
+              "costUsd": null
+            },
+            "startedAt": 1767225600000,
+            "endedAt": 1767225600000,
+            "metadata": {
+              "model": "fixture-judge"
+            }
+          }
+        ]
+      },
+      {
+        "version": 1,
+        "id": "fixture/suite/broken/task/1",
+        "runId": "fixture",
+        "suiteId": "suite",
+        "task": {
+          "id": "task",
+          "version": "1",
+          "runnable": "subject",
+          "dataset": "dataset",
+          "datasetVersion": "1",
+          "family": "family",
+          "split": "validation",
+          "review": "reviewed",
+          "input": "question",
+          "reference": "secret-label",
+          "graders": [
+            {
+              "grader": "grader@1",
+              "projection": "projection",
+              "scope": "trial"
+            },
+            {
+              "grader": "judge@1",
+              "projection": "projection",
+              "scope": "answer"
+            }
+          ],
+          "provenance": "fixture"
+        },
+        "candidate": {
+          "id": "broken",
+          "configuration": {
+            "model": "fixture"
+          },
+          "fingerprints": {
+            "prompt": "1"
+          }
+        },
+        "sample": 1,
+        "status": "error",
+        "startedAt": 1767225600000,
+        "endedAt": 1767225600000,
+        "output": null,
+        "evidence": null,
+        "outcome": {
+          "state": {
+            "state": "actual"
+          },
+          "references": []
+        },
+        "transcript": [
+          {
+            "id": "fixture/suite/broken/task/1/event/0",
+            "sequence": 0,
+            "at": 1767225600000,
+            "kind": "tool.started",
+            "data": {
+              "tool": "lookup",
+              "query": "question"
+            }
+          }
+        ],
+        "reason": "execution: the lookup service refused",
+        "grades": [
+          {
+            "grader": "grader",
+            "version": "1",
+            "scope": "trial",
+            "status": "scored",
+            "metrics": [
+              {
+                "kind": "boolean",
+                "name": "correct",
+                "value": true
+              }
+            ],
+            "reason": "matches",
+            "context": {
+              "projection": "projection",
+              "version": "1",
+              "input": null,
+              "references": [
+                "fixture/suite/broken/task/1"
+              ],
+              "omissions": [],
+              "bytes": 4,
+              "fingerprint": "0c7afb0478e0718ee1c1bf9760f5fbcf25295c827e56329919fe95b02a8e978b"
+            },
+            "usage": {
+              "inputTokens": null,
+              "outputTokens": null,
+              "costUsd": null
+            },
+            "startedAt": 1767225600000,
+            "endedAt": 1767225600000,
+            "metadata": {}
+          },
+          {
+            "grader": "judge",
+            "version": "1",
+            "scope": "answer",
+            "status": "scored",
+            "metrics": [
+              {
+                "kind": "score",
+                "name": "relevance",
+                "comment": "on topic",
+                "value": 4,
+                "min": 1,
+                "max": 5
+              },
+              {
+                "kind": "probability",
+                "name": "confidence",
+                "value": 0.75
+              },
+              {
+                "kind": "preference",
+                "name": "preferred",
+                "value": "A"
+              }
+            ],
+            "reason": "judged",
+            "context": {
+              "projection": "projection",
+              "version": "1",
+              "input": null,
+              "references": [
+                "fixture/suite/broken/task/1"
+              ],
+              "omissions": [],
+              "bytes": 4,
+              "fingerprint": "0c7afb0478e0718ee1c1bf9760f5fbcf25295c827e56329919fe95b02a8e978b"
+            },
+            "usage": {
+              "inputTokens": 120,
+              "outputTokens": 30,
+              "costUsd": null
+            },
+            "startedAt": 1767225600000,
+            "endedAt": 1767225600000,
+            "metadata": {
+              "model": "fixture-judge"
+            }
+          }
+        ]
+      }
+    ],
+    "gates": [
+      {
+        "candidate": "candidate",
+        "grader": "grader@1",
+        "metric": "correct",
+        "mode": "blocking",
+        "passed": true,
+        "measured": 1,
+        "value": 1,
+        "reason": "Passed"
+      },
+      {
+        "candidate": "candidate",
+        "grader": "judge@1",
+        "metric": "relevance",
+        "mode": "diagnostic",
+        "passed": false,
+        "measured": 1,
+        "value": 0.75,
+        "reason": "Outside threshold"
+      },
+      {
+        "candidate": "broken",
+        "grader": "grader@1",
+        "metric": "correct",
+        "mode": "blocking",
+        "passed": false,
+        "measured": 0,
+        "value": null,
+        "reason": "Incomplete trial or measurement coverage"
+      },
+      {
+        "candidate": "broken",
+        "grader": "judge@1",
+        "metric": "relevance",
+        "mode": "diagnostic",
+        "passed": false,
+        "measured": 0,
+        "value": null,
+        "reason": "Incomplete trial or measurement coverage"
+      }
+    ],
+    "failures": [
+      "fixture/suite/broken/task/1: execution: the lookup service refused"
+    ]
+  }
+}

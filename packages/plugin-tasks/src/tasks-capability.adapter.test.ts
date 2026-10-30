@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Ref } from "effect"
-import { ConversationId, RunContext, TaskMissing, Tasks } from "@xandreed/core"
+import { ConversationId, RunContext, SessionLogError, SessionMissing, TaskMissing, TaskRefused, Tasks } from "@xandreed/core"
 import type { TaskView } from "@xandreed/core"
 import { tasksCapability } from "./tasks-capability.adapter.js"
 
@@ -55,5 +55,29 @@ describe("the model's task tools", () => {
       ],
       looked: [stranger],
     })
+  })
+
+  test("a refused start returns the refusal's message; any other failure of either tool says the tasks are unavailable", async () => {
+    const parent = ConversationId.make("00000000-0000-4000-8000-0000000007c1")
+    const task = ConversationId.make("00000000-0000-4000-8000-0000000007c2")
+    const answers = await Effect.runPromise(Effect.gen(function* () {
+      const refusing = yield* Ref.make(true)
+      const tasks = Tasks.of({
+        start: () => Ref.get(refusing).pipe(Effect.flatMap((refuse) => Effect.fail(refuse
+          ? new TaskRefused({ session: parent, reason: "depth", message: "a background task cannot start another task" })
+          : new SessionLogError({ code: "store.io", message: "the store is down" })))),
+        status: () => Effect.fail(new SessionMissing({ session: parent })),
+      } as never)
+      const run = RunContext.of({ session: { id: parent, owner: "owner-1" }, runId: "run-8", admitted: { meta: {} } } as never)
+      const provided = <A, E>(effect: Effect.Effect<A, E, Tasks | RunContext>) => Effect.flip(effect.pipe(Effect.provideService(Tasks, tasks), Effect.provideService(RunContext, run)))
+      const refused = yield* provided(startTask!.handler({ instructions: "deeper", mode: "spawn" }))
+      yield* Ref.set(refusing, false)
+      return [refused, yield* provided(startTask!.handler({ instructions: "deeper", mode: "spawn" })), yield* provided(taskStatus!.handler({ taskId: task }))]
+    }))
+    expect(answers).toEqual([
+      { error: "TaskRefused", message: "a background task cannot start another task" },
+      { error: "TasksUnavailable", message: "Background tasks are unavailable right now; try again later, or do the work in this conversation" },
+      { error: "TasksUnavailable", message: "Background tasks are unavailable right now; try again later, or do the work in this conversation" },
+    ])
   })
 })

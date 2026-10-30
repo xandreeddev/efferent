@@ -58,7 +58,7 @@ export const compilePattern = (pattern: string, options: { readonly literal: boo
   const source = options.literal ? pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") : pattern
   const compiled = Result.try({
     try: () => new RegExp(source, options.ignoreCase ? "i" : ""),
-    catch: (error) => failure("InvalidPattern", `${pattern} is not a valid regular expression (${error instanceof Error ? error.message : String(error)}); pass literal: true to search for it as text`),
+    catch: (error) => failure("InvalidPattern", `${pattern} is not a valid regular expression; the engine says: ${error instanceof Error ? error.message : String(error)}. Pass literal: true to search for it as text`),
   })
   return Result.flatMap(compiled, (regex) => !options.literal && repeatsRepetition(source)
     ? Result.fail(failure("InvalidPattern", `${pattern} repeats a group that itself repeats (as in (a+)+), which can take exponential time on some lines; rewrite it without the nested repetition, or search with bash (grep -E, rg)`))

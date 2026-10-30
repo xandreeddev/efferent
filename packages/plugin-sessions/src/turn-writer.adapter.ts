@@ -1,9 +1,10 @@
-import { Cause, Clock, Deferred, Effect, Exit, HashSet, Option, Queue, Ref, Result, Scope, Semaphore, Tracer } from "effect"
-import { harnessError, readStored, reasonOf, ReservedKind, SessionContended, turnAttributes, turnEndedDraft, TurnClosed, unmarkedReservedDraft } from "@xandreed/core"
+import { Cause, Clock, Deferred, Effect, Exit, HashSet, Match, Option, Queue, Ref, Result, Scope, Semaphore, Tracer } from "effect"
+import { harnessError, isRevisionConflict, readStored, reasonOf, ReservedKind, SessionContended, turnAttributes, turnEndedDraft, TurnClosed, unmarkedReservedDraft } from "@xandreed/core"
 import type {
   AdmittedTurn,
   Decided,
   Decision,
+  RevisionConflict,
   SessionDraft,
   SessionHeader,
   SessionLog,
@@ -237,10 +238,13 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
 
   /**
    * One guarded commit of what `plan` decides from the current position and
-   * the others' events; decided again after each conflict.
+   * the others' events; decided again at once after each conflict,
+   * `config.retries` attempts in all before `SessionContended`. Every
+   * conflict rebases first, the last one included, so a turn taken
+   * meanwhile fails with `TurnClosed`.
    */
   const commitPlan = <A, E>(plan: (at: Position, others: ReadonlyArray<SessionLogEvent>) => Effect.Effect<Plan<A>, E>, options: { readonly renew: boolean }): Effect.Effect<Decided<A>, E | TurnError> => {
-    const attempt = (tries: number): Effect.Effect<Decided<A>, E | TurnError> => Effect.gen(function* () {
+    const once: Effect.Effect<Decided<A>, E | TurnError | RevisionConflict> = Effect.gen(function* () {
       yield* refuseIfStopped
       const { position: at, foreign } = yield* Ref.get(cursor)
       const decided = yield* plan(at, foreign)
@@ -248,28 +252,21 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       const next = options.renew ? renewed(decided.next, now, false) : decided.next
       const notAfter = ownership.mode === "lease" ? Option.flatMap(at.state.open, (open) => open.expiresAt) : Option.none()
       const state = next === at.state ? Option.none() : Option.some(yield* stateJson(next).pipe(Effect.mapError((error) => harnessError("session.encode", error.message, error))))
-      const outcome = yield* Effect.result(log.commit(id, {
-        expect: at.revision, notAfter, events: stamped(decided.drafts), state,
+      const committed = yield* log.commit(id, { expect: at.revision, notAfter, events: stamped(decided.drafts), state }).pipe(Effect.catchTags({
+        RevisionConflict: (conflict) => rebase(at).pipe(Effect.andThen(Effect.fail(conflict))),
+        LeaseExpired: () => closeAndFail("interrupted"),
+        SessionMissing: () => closeAndFail("removed"),
       }))
-      if (outcome._tag === "Success") {
-        const committed = outcome.success
-        const localAt = yield* Clock.currentTimeMillis
-        yield* Ref.update(cursor, (current) => ({ ...current, position: { revision: committed.revision, seq: committed.seq, state: next, storageAt: committed.at, localAt } }))
-        yield* input.wake
-        return { result: decided.result, events: committed.events }
-      }
-      const error = outcome.failure
-      if (error._tag === "RevisionConflict") {
-        yield* rebase(at)
-        return tries + 1 >= config.retries
-          ? yield* Effect.fail(new SessionContended({ session: id, attempts: tries + 1 }))
-          : yield* attempt(tries + 1)
-      }
-      if (error._tag === "LeaseExpired") return yield* closeAndFail("interrupted")
-      if (error._tag === "SessionMissing") return yield* closeAndFail("removed")
-      return yield* Effect.fail(error)
+      const localAt = yield* Clock.currentTimeMillis
+      yield* Ref.update(cursor, (current) => ({ ...current, position: { revision: committed.revision, seq: committed.seq, state: next, storageAt: committed.at, localAt } }))
+      yield* input.wake
+      return { result: decided.result, events: committed.events }
     })
-    return attempt(0).pipe(Effect.withSpan("turn_writer.commit", { attributes: ids }))
+    return once.pipe(
+      Effect.retry({ times: config.retries - 1, while: isRevisionConflict }),
+      Effect.catchIf(isRevisionConflict, () => Effect.fail(new SessionContended({ session: id, attempts: config.retries }))),
+      Effect.withSpan("turn_writer.commit", { attributes: ids }),
+    )
   }
 
   /** A failed store write latches: the turn fails at its next touch of the writer. */
@@ -280,12 +277,18 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
 
   const unchanged = <A>(result: A, drafts: ReadonlyArray<TurnDraft>) => (at: Position) => Effect.succeed<Plan<A>>({ drafts, next: at.state, result })
 
-  const process = (item: Item): Effect.Effect<void> => item._tag === "Tracked" ? process(item.item).pipe(Effect.ensuring(item.settled)) : phaseNow.pipe(Effect.flatMap((now) => {
-    const failure = Option.map(stopped(now), refusal)
-    if (item._tag === "Marker") return Option.match(failure, { onNone: () => Deferred.succeed(item.done, undefined), onSome: (error) => Deferred.fail(item.done, error) }).pipe(Effect.asVoid)
-    if (item._tag === "Run" || item._tag === "Commit") return item._tag === "Run" ? item.run : item.commit
-    return Option.isSome(failure) ? Effect.void : latching(commitPlan(unchanged(undefined, item.drafts), { renew: true })).pipe(Effect.asVoid, underCaller(item.caller))
-  }))
+  /** One queued item, in order: a stopped writer settles a marker with its refusal and drops an append; a run or a commit runs as it is. */
+  const process = (item: Item): Effect.Effect<void> => {
+    const failure = phaseNow.pipe(Effect.map((now) => Option.map(stopped(now), refusal)))
+    return Match.valueTags(item, {
+      Tracked: (tracked) => process(tracked.item).pipe(Effect.ensuring(tracked.settled)),
+      Marker: (marker) => failure.pipe(Effect.flatMap(Option.match({ onNone: () => Deferred.succeed(marker.done, undefined), onSome: (error) => Deferred.fail(marker.done, error) })), Effect.asVoid),
+      Run: (run) => run.run,
+      Commit: (commit) => commit.commit,
+      Append: (append) => failure.pipe(Effect.flatMap((stop) => Option.isSome(stop) ? Effect.void
+        : latching(commitPlan(unchanged(undefined, append.drafts), { renew: true })).pipe(Effect.asVoid, underCaller(append.caller)))),
+    })
+  }
 
   /**
    * An item that dies with a defect (a store or an encoder that throws) latches

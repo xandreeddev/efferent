@@ -52,7 +52,7 @@ export const numericMetric = (metric: Metric): Option.Option<number> => Match.va
   Match.exhaustive,
 )
 
-/** @public */
+/** @deprecated Grade with the evaluator behind a grader (`graderFromEvaluator`) and read the run: its grades and `runGates`. */
 export const summarizeAssessments = (results: ReadonlyArray<EvaluationResult>) => ({
   total: results.length,
   scored: results.filter((result) => result.status === "scored").length,

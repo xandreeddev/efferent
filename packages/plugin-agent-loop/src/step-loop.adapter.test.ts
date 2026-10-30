@@ -58,9 +58,12 @@ const minimalLoop = StepLoop.of({
         return yield* generated.pipe(
           // The run's trace content switch, for the model call to read.
           Effect.provideService(CurrentTraceContent, request.captureTraceContent),
-          Effect.provide(request.handlers),
           Effect.provideService(CurrentAgentStep, Option.some(index)),
           Effect.provideService(CurrentEmptyResponseTolerance, toolCalled),
+          Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
+          Effect.provideService(CurrentModelCallPolicy, request.callPolicy),
+          // The turn's services outermost: the caller's values of the references in them must not win.
+          Effect.provide(request.handlers),
         )
       })
       const answered = yield* attempt.pipe(

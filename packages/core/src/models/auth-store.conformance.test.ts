@@ -1,12 +1,14 @@
 import { describe, expect, test } from "bun:test"
-import { Clock, Deferred, Effect, Match, Option, Redacted, Ref, Semaphore } from "effect"
+import { Clock, Deferred, Effect, Match, Option, Redacted, Ref, Schema, Semaphore } from "effect"
 import { ProviderId } from "../domain/model-selection.entity.js"
-import { AuthError, AuthStore } from "../ports/auth-store.port.js"
-import type { Credential } from "../ports/auth-store.port.js"
+import { AuthError, AuthStore, Credential } from "../ports/auth-store.port.js"
 import { authStoreConformance } from "./auth-store.conformance.js"
 import type { AuthStoreConformanceOptions, AuthStoreRefreshProbe } from "./auth-store.conformance.js"
 
 type Store = typeof AuthStore.Service
+
+/** A credential as it is stored, secrets in the clear: what a test compares (`toEqual` sees no difference between two `Redacted` values). */
+const plain = Schema.encodeSync(Credential)
 
 /** A minimal store that keeps the contract: credentials in a Ref, no refresh flow. */
 const reference = Effect.gen(function* () {
@@ -19,10 +21,10 @@ const reference = Effect.gen(function* () {
       if (Option.isNone(credential)) return Option.none()
       const now = yield* Clock.currentTimeMillis
       return yield* Match.value(credential.value).pipe(
-        Match.when({ type: "api_key" }, (value) => Effect.succeed(Option.some(Redacted.make(value.key)))),
+        Match.when({ type: "api_key" }, (value) => Effect.succeed(Option.some(value.key))),
         Match.when({ type: "local" }, () => Effect.succeed(Option.none<Redacted.Redacted<string>>())),
         Match.when({ type: "oauth" }, (value) => value.expires > now + 60_000
-          ? Effect.succeed(Option.some(Redacted.make(value.access)))
+          ? Effect.succeed(Option.some(value.access))
           : Effect.fail(new AuthError({ provider, message: "the token expired" }))),
         Match.exhaustive,
       )
@@ -76,24 +78,24 @@ const refreshingReference = (behaviour: { readonly locked: boolean; readonly che
   }))
   const refresh = (provider: ProviderId, stale: Extract<Credential, { readonly type: "oauth" }>): Effect.Effect<Option.Option<Redacted.Redacted<string>>, AuthError> => {
     const once = Effect.gen(function* () {
-      if (behaviour.locked && !Option.exists(yield* current(provider), (held) => held === stale)) return Option.none<string>()
+      if (behaviour.locked && !Option.exists(yield* current(provider), (held) => held === stale)) return Option.none<Redacted.Redacted<string>>()
       const count = yield* call
-      const fresh: Credential = { ...stale, access: `fresh-access-${count}`, expires: (yield* Clock.currentTimeMillis) + 3_600_000 }
-      if (behaviour.checked && !Option.exists(yield* current(provider), (held) => held === stale)) return Option.none<string>()
+      const fresh: Credential = { ...stale, access: Redacted.make(`fresh-access-${count}`), expires: (yield* Clock.currentTimeMillis) + 3_600_000 }
+      if (behaviour.checked && !Option.exists(yield* current(provider), (held) => held === stale)) return Option.none<Redacted.Redacted<string>>()
       yield* write(provider, Option.some(fresh))
       return Option.some(fresh.access)
     })
     return (behaviour.locked ? lock.withPermit(once) : once).pipe(Effect.flatMap(Option.match({
-      onSome: (access) => Effect.succeed(Option.some(Redacted.make(access))),
+      onSome: (access) => Effect.succeed(Option.some(access)),
       onNone: () => resolveKey(provider),
     })))
   }
   const resolveKey = (provider: ProviderId): Effect.Effect<Option.Option<Redacted.Redacted<string>>, AuthError> => current(provider).pipe(Effect.flatMap(Option.match({
     onNone: () => Effect.succeed(Option.none<Redacted.Redacted<string>>()),
     onSome: (credential) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Match.value(credential).pipe(
-      Match.when({ type: "api_key" }, (value) => Effect.succeed(Option.some(Redacted.make(value.key)))),
+      Match.when({ type: "api_key" }, (value) => Effect.succeed(Option.some(value.key))),
       Match.when({ type: "local" }, () => Effect.succeed(Option.none<Redacted.Redacted<string>>())),
-      Match.when({ type: "oauth" }, (value) => value.expires > now + 60_000 ? Effect.succeed(Option.some(Redacted.make(value.access)))
+      Match.when({ type: "oauth" }, (value) => value.expires > now + 60_000 ? Effect.succeed(Option.some(value.access))
         : provider === probe.provider ? refresh(provider, value)
         : Effect.fail(new AuthError({ provider, message: "the token expired" }))),
       Match.exhaustive,
@@ -131,11 +133,10 @@ describe("the AuthStore kit over a store with a refresh flow and backing data", 
   }))
 
   test("puts back the probe's provider as it found it, and sends one request per refresh check", async () => {
-    const before: Credential = { type: "api_key", key: "the host's own" }
-    await Effect.runPromise(store.set(options.refresh.provider, before))
+    await Effect.runPromise(store.set(options.refresh.provider, { type: "api_key", key: Redacted.make("the host's own") }))
     const sent = await Effect.runPromise(options.refresh.requests)
     expect(await failedChecks(store, options)).toEqual([])
-    expect(Option.getOrThrow(await Effect.runPromise(store.get(options.refresh.provider)))).toEqual(before)
+    expect(plain(Option.getOrThrow(await Effect.runPromise(store.get(options.refresh.provider))))).toEqual({ type: "api_key", key: "the host's own" })
     expect(await Effect.runPromise(options.refresh.requests)).toBe(sent + 2)
   })
 })
@@ -152,8 +153,8 @@ describe("the AuthStore kit catches stores that break the contract", () => {
       ...store,
       resolveKey: (provider) => store.get(provider).pipe(Effect.map(Option.flatMap((credential) => Match.value(credential).pipe(
         Match.discriminatorsExhaustive("type")({
-          oauth: (oauth) => Option.some(Redacted.make(oauth.access)),
-          api_key: (apiKey) => Option.some(Redacted.make(apiKey.key)),
+          oauth: (oauth) => Option.some(oauth.access),
+          api_key: (apiKey) => Option.some(apiKey.key),
           local: () => Option.none(),
         }),
       )))),
@@ -174,6 +175,38 @@ describe("the AuthStore kit catches stores that break the contract", () => {
   test("a store that reads damaged data as empty fails the corrupt check", async () => {
     const { store, options } = Effect.runSync(refreshingReference({ locked: true, checked: true, damaged: "empty" }))
     expect(await failedChecks(store, options)).toEqual(["corrupt"])
+  })
+
+  test("a store that keeps JSON.stringify(credential) reads back <redacted> and fails every check that reads a secret", async () => {
+    const texts = Effect.runSync(Ref.make<ReadonlyMap<string, string>>(new Map()))
+    const decode = Schema.decodeUnknownOption(Schema.fromJsonString(Credential))
+    const read = (provider: string) => Ref.get(texts).pipe(Effect.map((all) => Option.flatMap(Option.fromNullishOr(all.get(provider)), decode)))
+    const stringified = AuthStore.of({
+      all: Ref.get(texts).pipe(Effect.map((all) => new Map([...all].flatMap(([provider, text]) => Option.toArray(Option.map(decode(text), (credential) => [provider, credential] as const)))))),
+      get: read,
+      resolveKey: (provider) => Effect.all([read(provider), Clock.currentTimeMillis], { concurrency: 1 }).pipe(Effect.flatMap(([credential, now]) => Option.match(credential, {
+        onNone: () => Effect.succeedNone,
+        onSome: (found) => Match.value(found).pipe(Match.discriminatorsExhaustive("type")({
+          oauth: (oauth) => oauth.expires > now + 60_000 ? Effect.succeedSome(oauth.access) : Effect.fail(new AuthError({ provider, message: "the token expired" })),
+          api_key: (apiKey) => Effect.succeedSome(apiKey.key),
+          local: () => Effect.succeedNone,
+        })),
+      }))),
+      set: (provider, credential) => Ref.update(texts, (all) => new Map([...all, [provider, JSON.stringify(credential)]])),
+      remove: (provider) => Ref.update(texts, (all) => new Map([...all].filter(([key]) => key !== provider))),
+    })
+    expect(await failedChecks(stringified)).toEqual(["api-key", "isolation", "oauth-valid", "overwrite"])
+  })
+
+  test("a store that hands out its secrets unwrapped fails the redacted check, and every check that reads one, without a defect", async () => {
+    const store = Effect.runSync(reference)
+    const unwrapped = (credential: Credential): Credential => plain(credential) as never
+    const careless = AuthStore.of({
+      ...store,
+      all: Effect.map(store.all, (all) => new Map([...all].map(([provider, credential]) => [provider, unwrapped(credential)] as const))),
+      get: (provider) => Effect.map(store.get(provider), Option.map(unwrapped)),
+    })
+    expect(await failedChecks(careless)).toEqual(["api-key", "isolation", "oauth-valid", "overwrite", "redacted"])
   })
 
   test("a store whose providers share one slot fails the isolation check", async () => {

@@ -1,4 +1,4 @@
-import { Effect, Option, Stream } from "effect"
+import { Effect, Match, Option, Stream } from "effect"
 import type { Schema } from "effect"
 import { Response } from "effect/ai"
 
@@ -81,8 +81,6 @@ const CHANNEL_BY_TYPE: { readonly [T in ChunkPart["type"]]: Channel } = {
   "reasoning-end": "reasoning",
 }
 
-const isChunkPart = (part: Response.AnyPart): part is ChunkPart => Object.hasOwn(CHANNEL_BY_TYPE, part.type)
-
 const isJsonObject = (value: Schema.Json | undefined): value is Schema.JsonObject =>
   typeof value === "object" && value !== null && !Array.isArray(value)
 
@@ -151,35 +149,43 @@ export const foldStreamParts = <E, R, R2 = never, E2 = never>(
       usage: Option.none(),
     }),
     (state: FoldState, part): Effect.Effect<FoldState, E2, R2> => {
-      // Tool argument streaming: fan the deltas for incremental admission
-      // AND keep the parts passing through as settled entries (the settled
-      // content is byte-identical to the non-streamed path). The start part
-      // carries the tool name; deltas share the call id.
-      if (part.type === "tool-params-start") {
-        return onDelta({ channel: "tool-params", id: part.id, delta: "", toolName: part.name }).pipe(Effect.as(settle(state, part)))
-      }
-      if (part.type === "tool-params-delta") {
-        return onDelta({ channel: "tool-params", id: part.id, delta: part.delta }).pipe(Effect.as(settle(state, part)))
-      }
-      if (isChunkPart(part)) {
-        const channel = CHANNEL_BY_TYPE[part.type]
-        const delta = "delta" in part ? part.delta : ""
-        const next = { ...state, entries: extendChunk(state.entries, channel, part.id, delta, part.metadata) }
+      /** A text or reasoning chunk: extends its entry, and fans its delta out when it has one. */
+      const chunk = (chunkPart: ChunkPart): Effect.Effect<FoldState, E2, R2> => {
+        const channel = CHANNEL_BY_TYPE[chunkPart.type]
+        const delta = "delta" in chunkPart ? chunkPart.delta : ""
+        const next = { ...state, entries: extendChunk(state.entries, channel, chunkPart.id, delta, chunkPart.metadata) }
         return delta.length > 0
-          ? onDelta({ channel, id: part.id, delta }).pipe(Effect.as(next))
+          ? onDelta({ channel, id: chunkPart.id, delta }).pipe(Effect.as(next))
           : Effect.succeed(next)
       }
-      if (part.type === "finish") {
-        // Mirror extractUsage's preference: the FIRST finish's reason wins
-        // (a trailing usage-only finish has no meaningful reason), while a
-        // usage-CARRYING finish wins for usage.
-        return Effect.succeed({
-          entries: [...state.entries, { kind: "part", part }],
-          finishReason: Option.orElse(state.finishReason, () => Option.some(part.reason)),
-          usage: carriesUsage(part.usage) || Option.isNone(state.usage) ? Option.some(part.usage) : state.usage,
-        })
-      }
-      return Effect.succeed(settle(state, part))
+      return Match.value(part).pipe(
+        Match.discriminators("type")({
+          // Tool argument streaming: fan the deltas for incremental admission
+          // AND keep the parts passing through as settled entries (the settled
+          // content is byte-identical to the non-streamed path). The start part
+          // carries the tool name; deltas share the call id.
+          "tool-params-start": (start): Effect.Effect<FoldState, E2, R2> =>
+            onDelta({ channel: "tool-params", id: start.id, delta: "", toolName: start.name }).pipe(Effect.as(settle(state, start))),
+          "tool-params-delta": (params): Effect.Effect<FoldState, E2, R2> =>
+            onDelta({ channel: "tool-params", id: params.id, delta: params.delta }).pipe(Effect.as(settle(state, params))),
+          "text-start": chunk,
+          "text-delta": chunk,
+          "text-end": chunk,
+          "reasoning-start": chunk,
+          "reasoning-delta": chunk,
+          "reasoning-end": chunk,
+          // Mirror extractUsage's preference: the FIRST finish's reason wins
+          // (a trailing usage-only finish has no meaningful reason), while a
+          // usage-CARRYING finish wins for usage.
+          finish: (finish): Effect.Effect<FoldState, E2, R2> => Effect.succeed({
+            entries: [...state.entries, { kind: "part", part: finish }],
+            finishReason: Option.orElse(state.finishReason, () => Option.some(finish.reason)),
+            usage: carriesUsage(finish.usage) || Option.isNone(state.usage) ? Option.some(finish.usage) : state.usage,
+          }),
+        }),
+        // Every other part passes through as a settled entry.
+        Match.orElse((other): Effect.Effect<FoldState, E2, R2> => Effect.succeed(settle(state, other))),
+      )
     },
   ).pipe(
     Effect.map((state): FoldedTurn => ({
