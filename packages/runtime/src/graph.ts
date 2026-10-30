@@ -1,4 +1,4 @@
-import { Array as Arr, Clock, ConfigProvider, Console, Context, Effect, Metric, Option, Order, Random, References, Scheduler, Schema, Scope, Tracer } from "effect"
+import { Array as Arr, Clock, ConfigProvider, Console, Context, Effect, Metric, Option, Order, Predicate, Random, References, Scheduler, Schema, Scope, Tracer } from "effect"
 import { createHash } from "node:crypto"
 import { CurrentTraceContent, HarnessError, mergeOptions, PLUGIN_API_VERSION, SUPPORTED_PLUGIN_API_VERSIONS } from "@xandreed/core"
 import type { HarnessConfig, Plugin, PluginEntry } from "@xandreed/core"
@@ -19,6 +19,14 @@ const invalid = (message: string) => Effect.fail(new HarnessError({ code: "confi
 /** Version 1 plugins predate capabilities and optional services. */
 const contributes = (node: PluginNode): ReadonlyArray<string> => node.plugin.contributes ?? []
 const optional = (node: PluginNode): ReadonlyArray<string> => node.plugin.optional ?? []
+/**
+ * Whether a config still carries a profile selection (`profile`, `profiles`):
+ * the host folds the selected profile into the config before resolving it.
+ * `HarnessConfig` names neither key, but a config object a host built or
+ * read itself may still hold one.
+ */
+const carriesProfiles = (config: HarnessConfig): boolean =>
+  (["profile", "profiles"] as const).some((key) => Predicate.hasProperty(config, key) && config[key] !== undefined)
 
 export const resolveGraph: (
   config: HarnessConfig,
@@ -27,7 +35,7 @@ export const resolveGraph: (
 ) => Effect.Effect<PluginGraph, HarnessError> = Effect.fnUntraced(function* (config, plugins, external = []) {
   const duplicatePlugin = plugins.find((plugin, index) => plugins.findIndex((other) => other.id === plugin.id) !== index)
   if (duplicatePlugin !== undefined) return yield* invalid(`duplicate plugin definition: ${duplicatePlugin.id}`)
-  if (config.profile !== undefined || config.profiles !== undefined) {
+  if (carriesProfiles(config)) {
     return yield* Effect.fail(new HarnessError({
       code: "config.profile",
       message: "profiles are not resolved by the plugin graph: fold the selected profile's plugins, bindings and system into the config, and leave profile and profiles out",

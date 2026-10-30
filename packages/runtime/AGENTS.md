@@ -5,7 +5,7 @@ The plugin graph: resolves a `HarnessConfig` against the installed plugins (inst
 ## Rules
 
 - Know plugins only by what they declare (`provides`, `contributes`, `requires`, `optional`, `scope`); import no plugin package here.
-- A plugin's layer gets only the services it declares plus the fiber's settings (`fiberSettings`, `src/graph.ts:100-104`): add a fiber reference there, never pass the caller's context through.
+- A plugin's layer gets only the services it declares plus the fiber's settings (`fiberSettings`, `src/graph.ts:108-112`): add a fiber reference there, never pass the caller's context through.
 - Refuse every invalid configuration with a `HarnessError` (`config.graph`, `config.options`, `config.profile`), never ignore it: profiles are refused, unknown option keys fail.
 - Options are core's `mergeOptions` over the plugin's defaults, decoded with `onExcessProperty: "error"`.
 - A runtime-scoped plugin never depends on a session-scoped service, and a key is provided or contributed, never both.

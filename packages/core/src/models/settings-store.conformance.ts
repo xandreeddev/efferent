@@ -29,7 +29,7 @@ const others = (settings: EngineSettings, except: Field): string =>
 const selection = (label: string): Effect.Effect<string> => Effect.map(randomUuid, (id) => `conformance:${label}-${id}`)
 
 const SELECTIONS: ReadonlySet<Field> = new Set(["model", "codeModel", "fastModel", "fallbackModel"])
-const COUNTS: ReadonlySet<Field> = new Set(["maxAttempts"])
+const COUNTS: ReadonlySet<Field> = new Set(["maxAttempts", "budgetMillis"])
 
 /**
  * Whether the kit can write `value` back to `field`: not a value the
@@ -74,14 +74,14 @@ const refused = (store: Store, id: string, what: string, write: Effect.Effect<vo
 /** Each non-role key the kit writes, the canonical string it writes and the value `load` must then give. */
 const CANONICAL: ReadonlyArray<{ readonly key: SettingsKey; readonly text: string; readonly reads: unknown }> = [
   { key: "maxAttempts", text: "3", reads: 3 },
-  { key: "sandbox", text: "true", reads: true },
+  { key: "budgetMillis", text: "60000", reads: 60000 },
   { key: "reasoningEffort", text: "high", reads: "high" },
 ]
 
 /** Each key the clear check writes, with two canonical values it can choose from. */
 const CLEARED: ReadonlyArray<{ readonly key: SettingsKey; readonly texts: readonly [string, string] }> = [
   { key: "maxAttempts", texts: ["4", "5"] },
-  { key: "sandbox", texts: ["false", "true"] },
+  { key: "budgetMillis", texts: ["1000", "2000"] },
   { key: "reasoningEffort", texts: ["low", "medium"] },
 ]
 
@@ -90,7 +90,7 @@ const BAD: ReadonlyArray<{ readonly key: SettingsKey; readonly text: string }> =
   { key: "fallbackModel", text: "not-a-selection" },
   { key: "maxAttempts", text: "0" },
   { key: "maxAttempts", text: "two" },
-  { key: "sandbox", text: "maybe" },
+  { key: "budgetMillis", text: "1.5" },
   { key: "reasoningEffort", text: "extreme" },
 ]
 
@@ -140,8 +140,8 @@ const corruptCheck = (store: Store, writable: boolean, corrupt: Effect.Effect<vo
  * the value before the set; `set` accepts each key's canonical string form
  * and `load` gives it typed; `None` clears a key back to the value before the
  * set; a value that does not parse (a selection that is not
- * `"<provider>:<modelId>"`, a count below 1, a switch that is not
- * true/false, an unknown effort) fails with a `SettingsError` and changes
+ * `"<provider>:<modelId>"`, a count that is not a whole number of at least
+ * 1, an unknown effort) fails with a `SettingsError` and changes
  * nothing, through `set` and `setRole` alike. A read-only store refuses
  * every write with a `SettingsError` and changes nothing.
  *

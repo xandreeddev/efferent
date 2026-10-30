@@ -265,6 +265,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Call `parseEvaluationApp` where you called `validateEvaluationApp`.
 - Saved reports are unaffected: no stored run holds an `EvaluationResult`
   or an `EvaluationScore`.
+- Move each import named above to its subpath; `tsc` names every one that
+  no longer resolves. `@xandreed/core/internal` carries no semver.
+- A model that sends each call on to another and stamped the resolved model
+  under its own `router` key on the finish part stamps it with
+  `stampResponseModel` (`stampPartModel` for a stream); otherwise the
+  stored assistant message and the telemetry plugin's metrics carry no
+  model.
+- A custom `SettingsStore` drops its `sandbox` and `viMode` cases and reruns
+  `settingsStoreConformance`. An exhaustive match over `LoopEvent` drops its
+  `error` case.
 
 ### Breaking
 
@@ -639,6 +649,86 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `evaluationScores` and `EvaluationScore`: `exportableScores` and
   `ExportedScore`.
 - `validateEvaluationApp`: `parseEvaluationApp`, the same check.
+- `@xandreed/core`, and `@xandreed/sdk`, which re-exports it, no longer
+  name what core's subpaths hold. Import:
+  - from `@xandreed/core/conformance`: `ConformanceCheck`,
+    `ConformanceFailure`, `bashConformance` (`BashFixture`, `BashSubject`),
+    `fileSystemConformance` (`FileSystemFixture`, `FileSystemSubject`),
+    `inMemoryLog`, `memoryConformance`, `modelCatalogConformance`,
+    `probeCall`, `sessionLogConformance`, `sessionLogRecoveryConformance`
+    (`SessionLogSubject`), `sessionsConformance` (`SessionsInstance`,
+    `SessionsProcess`, `SessionsSubject`), `stepLoopConformance`,
+    `taskRunnerConformance`, `tasksConformance` (`TaskRunnerFixture`,
+    `TasksDependencies`, `TasksFixture`), `textReply`,
+    `toolRegistryConformance` (`ToolRegistryLimits`), `turnConformance`;
+  - from `@xandreed/core/models` (or `@xandreed/plugin-models`, which
+    re-exports them): `AuthError`, `AuthStore`, `Credential`,
+    `EngineSettings`, `SETTINGS_KEYS`, `SettingsError`, `SettingsStore`,
+    `ModelRole`, `SettingsKey`, `authStoreConformance`
+    (`AuthStoreConformanceOptions`, `AuthStoreRefreshProbe`),
+    `settingsStoreConformance` (`SettingsStoreConformanceOptions`);
+  - from `@xandreed/core/engine`: `TurnLive`, `cacheKeyOf`, `runTurnLoop`,
+    `stepRequestOf` (`TurnRunServices`), `finishTurn`, `guardTurn`,
+    `openTurnTools`, `settleTurn`, `traceTurn`, `traceTurnBegin`
+    (`TurnBeginTrace`, `TurnTraceOptions`), `turnOf`, `turnTools`,
+    `makeTurnEvents`, `makeTurnTasks`;
+  - from `@xandreed/core/internal`, the framework's own packages only:
+    `extractUsage`, `foldStreamParts`, `handoffToMessage`,
+    `responseReasoning`, `responseText`, `responseToAgentMessages`,
+    `responseToolCalls`, `responseToolResults`, `strictJsonSchema`,
+    `toolParametersSchema`, `toPromptMessages`, `withToolCallIds`,
+    `withUsageOnAssistant`.
+- Removed from `@xandreed/core`, with what to use instead:
+  - the session chassis (`makeSession`, `Session`, `SeqEvent`): compose with
+    `Agent.define` and run each turn with `Agent.turn` over `Sessions`;
+  - the spec pipeline's vocabulary (`SpecDoc`, `SpecSlug`, `SpecStatus`,
+    `SpecCheck`, `SpecLimits`, `SpecGates`, `DEFAULT_SPEC_LIMITS`,
+    `renderSpecSection`, `SpecDocParseError`, `decodeSpecDocText`,
+    `encodeSpecDocText`, `specSlug`, `uniqueSlug`, `parseFrontmatter`), with
+    nothing in its place;
+  - the MCP bridge (`McpClient`, `McpError`, `McpToolDescriptor`,
+    `McpCallOutcome`, `McpCall`, `McpDescribe`, `McpBridge`,
+    `McpBridgedTool`, `buildMcpBridge`, `emptyMcpBridge`), with nothing in
+    its place;
+  - `AgentFailure`, `AgentFailureCategory` (and their `AgentFailureType`,
+    `AgentFailureCategoryType` aliases), `toAgentFailure` and
+    `toolResultFailure`: tell a failure apart with `harnessCodeOf` and
+    describe it with `reasonOf`;
+  - `LoopEvent`'s `error` variant, which only the session chassis published;
+  - `Checkpoint` and `DecisionOutcome`, with nothing in their place
+    (`DecisionRecord` and `recordDecision` stay);
+  - `defineAgent`, `defineConfig` and `AgentDefinition`: compose an agent
+    with `Agent.define`, and write a config `satisfies HarnessConfig`;
+  - `HarnessConfig`'s `profile` and `profiles`, and `Profile`: fold the
+    selected profile's plugins, bindings and system into the config.
+    `resolveGraph` still refuses a config that carries either key
+    (`config.profile`); decoding a config with the `HarnessConfig` schema
+    drops them, as it drops any key the schema does not name;
+  - `EngineSettings`' `sandbox` and `viMode`, and their `SETTINGS_KEYS` and
+    `SettingsKey` entries. A settings file that holds them still decodes,
+    the keys unread, and the local store keeps them when it writes another
+    key. `settingsStoreConformance` checks `budgetMillis` where it checked
+    `sandbox`;
+  - the JSON helpers `asJsonRecord`, `decodeJsonLines`, `parseJsonOption`
+    and `parseJsonWarn`: decode the shape that is read with
+    `Schema.fromJsonString(S)` (`Schema.Json` or `Schema.JsonObject` when it
+    stays open);
+  - `extractModel`: use `responseModelOf`. The agent loop reads a
+    response's model from the engine's stamp only (`ENGINE_KEY`), no longer
+    from a `router` key on the finish part;
+  - root helpers no package used: `artifactLines`, `base64Length`,
+    `buildContext`, `checkModelRequest`, `ComparedModelRequest`,
+    `currentTurnOf`, `defaultAnnotations`, `draftOfEntry`,
+    `draftOfTurnEvent`, `draftsOfEntries`, `entriesSendingMedia`,
+    `entryOfEvent`, `estimateTokens`, `ImageSize`, `imageSizeOf`,
+    `isFrameworkDraft`, `latestRunOf`, `mediaAt`, `mediaFingerprintOf`,
+    `modelRequestHeaderOf`, `modelRequestTools`, `normalizeMedia`,
+    `orderSections`, `rawTranscript`, `readerOf`, `reconstructModelRequest`,
+    `referenceTranscript`, `renderSections`, `subjectsOf`, `schemaTokens`,
+    `FoldedTurn`, `StreamDelta` and `ToolResultSummary`, with nothing in
+    their place; `globMatcher` (use `compileGlob(pattern)` and its
+    `matches`), `toFailure` (a defect's text is `reasonOf(Cause.die(defect))`),
+    `safeKeepFrom` and `stepContextOf`, with nothing in their place.
 
 ### Added
 
@@ -1556,6 +1646,10 @@ Model-visible text (exact pins and the compaction golden updated):
   writer's queue, the bash tool, the render feed and the semantic answer
   check branch with `Match` (exhaustive where every case is known), and so
   do two tests. No behaviour change.
+- The gate lists lose the deleted files: `UNKNOWN_JSON_EDGES`,
+  `RECORD_CAST_EDGES` and `ROLELESS_FILES` shrink, `effect/branded-id-fields`
+  no longer names `src/spec`, and `PROVIDER_NAMESPACE_EDGES`, now empty, is
+  deleted: no file of core or the agent loop reads a provider's namespace.
 
 ### Deprecated
 

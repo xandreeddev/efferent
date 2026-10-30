@@ -20,43 +20,41 @@ The package has five entries, each an `index.ts` of explicit named exports:
 |---|---|---|---|
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
 | `./conformance` (`src/conformance/index.ts`) | every kit but the models plugin's, `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
-| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold and tool schemas, and `responseModelOrLegacyOf` (the model a response names, reading the router's old stamp too until the next minor release) | none | plugin-agent-loop, plugin-models, sdk |
+| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold and tool schemas | none | plugin-agent-loop, plugin-models, sdk |
 | `./engine` (`src/engine/index.ts`) | `TurnLive`, a turn's run and lifecycle, its bus | none; it moves into `@xandreed/sdk` in the next minor release | sdk |
 | `./models` (`src/models/index.ts`) | `AuthStore`, `Credential`, `AuthError`, `SettingsStore`, `EngineSettings` and their kits | none; it moves into `@xandreed/plugin-models` in the next minor release | plugin-models |
 
 A package reaches `./internal`, `./engine` or `./models` only when its
 boundaries layer grants `core/<subpath>` (the core entry layer's
-`restricted`). The root keeps each name these entries hold, deprecated
-(`@deprecated Import from "@xandreed/core/<entry>".`), in the block at the
-end of `src/index.ts`, until the next minor release: the conformance and
-models names as re-exports, the `internal/` and `engine/` names declared
-again (the same value, or a type of the same shape), since a root entry may
-not re-export what those folders declare (`scripts/api-snapshot.ts`). A few
-names declared there stay root API, not deprecated: `compileGlob` and its
-types (the workspace plugin uses them), `harnessDefectsAsFailures` (the
-sessions plugin and the agent loop), and `assistantModel` and
-`assistantUsage` (documented for hosts).
+`restricted`). The root does not repeat what these entries hold: a kit, a
+models store or an engine function is imported from its entry. A few names
+declared in `internal/` or `engine/` are root API too, declared again at the
+end of `src/index.ts` (the same value, or a type of the same shape, since a
+root entry may not re-export what those folders declare:
+`scripts/api-snapshot.ts`): `compileGlob` and its types (the workspace
+plugin uses them), `harnessDefectsAsFailures` (the sessions plugin and the
+agent loop), and `assistantModel` and `assistantUsage` (documented for
+hosts).
 
 `quality/exports-have-consumers` runs on all five entries (`CURATED_ENTRIES`
 in `foundry.config.ts`): each export is imported, by its entry's name, from
-another package, a script or a doc code block, or is tagged `@public`, or is
-`@deprecated` and imported by none. `@public`, on the declaration, marks
-host API: what the README, the guides or the website document for hosts, and
-what a host needs to write a plugin, a port's adapter or a kit (ports and the
-entities in their signatures, `define*`, References, error tags and guards,
-event and stored-payload schemas). An export that is neither is not added:
-use it from first-party code, document and tag it, or leave it unexported.
-Root names no package uses and no host needs are deprecated in the block at
-the end of `src/index.ts` (`@deprecated Removed in the next minor release.`);
-core keeps using them where they are declared.
+another package, a script or a doc code block, or is tagged `@public`.
+`@public`, on the declaration, marks host API: what the README, the guides
+or the website document for hosts, and what a host needs to write a plugin,
+a port's adapter or a kit (ports and the entities in their signatures,
+`define*`, References, error tags and guards, event and stored-payload
+schemas). An export that is neither is not added: use it from first-party
+code, document and tag it, or leave it unexported. A name no package uses
+and no host needs is not exported; core uses it where it is declared. Core
+exports nothing `@deprecated`: a name that goes is removed in the release
+that drops it, with its replacement in the CHANGELOG.
 
-Deprecated in this release and removed in the next minor one, each with an
-`@deprecated` tag on its declaration: the session chassis (`makeSession`),
-`src/spec`, `src/mcp` and `McpClient`, `AgentFailure` with its functions,
-`Checkpoint`, `DecisionOutcome`, `defineAgent`, `defineConfig` and
-`AgentDefinition`, `HarnessConfig.profile`, `profiles` and `Profile`, and
-`EngineSettings.sandbox` and `viMode` (a settings file that holds them still
-decodes). Behaviour does not change until they go.
+What a host may still hold from older releases keeps reading: a
+`HarnessConfig` names no profiles, and `resolveGraph` refuses a config that
+still carries `profile` or `profiles` (`config.profile`) rather than ignore
+them; a settings file that still holds the `sandbox` or `viMode` key decodes,
+the key unread (`EngineSettings` names neither, and a store keeps it when it
+writes another).
 
 The boundaries gate (`foundry.config.ts`) layers core by a file's role; a
 file is in the first layer whose glob matches it:
@@ -189,16 +187,15 @@ Skills as files: `harness/skill-files.entity.ts` and its functions read a
 tree of `SKILL.md` files without IO (`readSkillFiles`, which never fails and
 returns the issues; `skillsFromFiles`, strict) and collect one through the
 `FileSystem` port (`collectSkillFiles`, over `glob`). The frontmatter parser
-there is the skills' own YAML subset; `spec/frontmatter.ts` stays the flat
-one the spec codec uses.
+there is the skills' own YAML subset.
 
 A context captured with `Effect.context()` to be provided again later,
 around work that runs somewhere else, goes through `replayableContext`
 (`src/loop/traceContent.ts`): the services tool handlers, policy and loop
 callbacks run with (the registry, `stepRequestOf`, `turnOf`, `runLoop`),
 a model layer's dependencies (the models plugin), the services of
-`Agent.turn`'s input, bus subscribers (`engine/turn-bus.adapter.ts`), a live layer's
-dependencies (`makeLiveLayer`) and the session chassis's (`makeSession`).
+`Agent.turn`'s input, bus subscribers (`engine/turn-bus.adapter.ts`) and a live layer's
+dependencies (`makeLiveLayer`).
 It drops the trace and log state of the place it was captured: the parent
 span, so spans nest where the replayed work runs; the span annotations and
 links, and the log annotations and log spans, which would replace those of
@@ -236,11 +233,11 @@ entry (`publishToolProgress`, the memory log's `append`, the step request's
 | A host note, `[Host note: …]` (`hostNote`) | `src/turn/model-text.ts:12` | exact, `src/turn/model-text.test.ts:6` |
 | The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact, `src/turn/model-text.test.ts:7`, `:22-27` |
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |
-| The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/internal/mapping.entity.functions.ts:47-54` | exact, `src/internal/mapping.entity.functions.test.ts:402` |
-| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:76` | exact, `src/memory/memory-log.entity.test.ts:389` |
-| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:495-510` | exact, `src/memory/memory-log.entity.test.ts:361`, `:372`, `:389` |
-| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:459-487` | exact, `src/memory/memory-log.entity.test.ts:294`, `:308`, `:327` |
-| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:137-147` | exact, `src/memory/memory-log.entity.test.ts:406-408` |
+| The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/internal/mapping.entity.functions.ts:47-54` | exact, `src/internal/mapping.entity.functions.test.ts:378` |
+| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:76` | exact, `src/memory/memory-log.entity.test.ts:388` |
+| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:491-506` | exact, `src/memory/memory-log.entity.test.ts:360`, `:371`, `:388` |
+| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:455-483` | exact, `src/memory/memory-log.entity.test.ts:293`, `:307`, `:326` |
+| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:137-147` | exact, `src/memory/memory-log.entity.test.ts:405-407` |
 | An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:163-164` | exact, `src/domain/media.entity.test.ts:148-150` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

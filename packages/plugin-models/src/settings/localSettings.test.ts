@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Option } from "effect"
-import { SettingsStore } from "@xandreed/core/models"
+import { Effect, Option, Schema } from "effect"
+import { EngineSettings, SettingsStore } from "@xandreed/core/models"
 import { LocalSettingsStoreLive } from "./localSettings.js"
 
 const setup = (global: Record<string, unknown>, local?: Record<string, unknown>) => {
@@ -48,30 +48,40 @@ describe("LocalSettingsStoreLive", () => {
     const codes = await Effect.runPromise(Effect.gen(function* () {
       const store = yield* SettingsStore
       const load = yield* Effect.flip(store.load)
-      const write = yield* Effect.flip(store.set("sandbox", Option.some("true")))
+      const write = yield* Effect.flip(store.set("maxAttempts", Option.some("3")))
       return [load.code, load.message.includes("could not be read"), write.code, write.message.includes("does not hold a JSON object")]
     }).pipe(Effect.provide(LocalSettingsStoreLive(cwd, home))))
     expect(codes).toEqual(["settings.corrupt", true, "settings.corrupt", true])
   })
 
-  test("a 0.14.0 settings file, which may hold the deprecated sandbox and viMode keys, still decodes", async () => {
+  test("a 0.14.0 settings file still decodes: the sandbox and viMode keys it may hold are not read, and a write keeps them", async () => {
     const written = JSON.parse(readFileSync(join(import.meta.dir, "../../fixtures/config-0.14.0.json"), "utf8")) as Record<string, unknown>
-    const { layer } = setup(written)
-    const settings = await Effect.runPromise(Effect.flatMap(Effect.service(SettingsStore), (store) => store.load).pipe(Effect.provide(layer)))
-    expect([settings.model, settings.fastModel, settings.sandbox, settings.viMode, settings.maxAttempts, settings.reasoningEffort]
+    const { layer, cwd } = setup({}, written)
+    const settings = await Effect.runPromise(Effect.gen(function* () {
+      const store = yield* SettingsStore
+      const loaded = yield* store.load
+      yield* store.set("maxAttempts", Option.some("4"))
+      return loaded
+    }).pipe(Effect.provide(layer)))
+    expect([settings.model, settings.fastModel, settings.maxAttempts, settings.reasoningEffort]
       .map((value: Option.Option<unknown>) => Option.getOrNull(value)))
-      .toEqual(["anthropic:claude-sonnet-5", "anthropic:claude-haiku-5", true, true, 3, "high"])
+      .toEqual(["anthropic:claude-sonnet-5", "anthropic:claude-haiku-5", 3, "high"])
+    expect(Object.keys(settings)).not.toContain("sandbox")
+    expect(JSON.parse(readFileSync(join(cwd, ".efferent", "config.json"), "utf8"))).toEqual({ ...written, maxAttempts: 4 })
+    // Decoded by the schema itself, the two keys are dropped as well.
+    expect(Schema.encodeSync(EngineSettings)(Schema.decodeUnknownSync(EngineSettings)(written)))
+      .toEqual({ model: "anthropic:claude-sonnet-5", fastModel: "anthropic:claude-haiku-5", maxAttempts: 3, reasoningEffort: "high" })
   })
 
   test("a key of the wrong type reads as unset, and the others still decode", async () => {
     const { layer } = setup(
-      { model: "opencode:kimi-k2.6", maxAttempts: "three", sandbox: true, reasoningEffort: "extreme", budgetMillis: 60000 },
-      { fastModel: 7, viMode: "on", codeReasoningEffort: "high" },
+      { model: "opencode:kimi-k2.6", maxAttempts: "three", reasoningEffort: "extreme", budgetMillis: 60000 },
+      { fastModel: 7, fallbackModel: true, codeReasoningEffort: "high" },
     )
     const settings = await Effect.runPromise(Effect.flatMap(Effect.service(SettingsStore), (store) => store.load).pipe(Effect.provide(layer)))
-    expect([settings.model, settings.maxAttempts, settings.sandbox, settings.reasoningEffort, settings.budgetMillis, settings.fastModel, settings.viMode, settings.codeReasoningEffort]
+    expect([settings.model, settings.maxAttempts, settings.reasoningEffort, settings.budgetMillis, settings.fastModel, settings.fallbackModel, settings.codeReasoningEffort]
       .map((value: Option.Option<unknown>) => Option.getOrNull(value)))
-      .toEqual(["opencode:kimi-k2.6", null, true, null, 60000, null, null, "high"])
+      .toEqual(["opencode:kimi-k2.6", null, null, 60000, null, null, "high"])
   })
 
   test("concurrent writes in one process all land", async () => {
@@ -80,7 +90,7 @@ describe("LocalSettingsStoreLive", () => {
       const store = yield* SettingsStore
       yield* Effect.all([
         store.set("maxAttempts", Option.some("4")),
-        store.set("sandbox", Option.some("true")),
+        store.set("fallbackModel", Option.some("google:gemini-3.5-flash")),
         store.set("budgetMillis", Option.some("60000")),
         store.set("reasoningEffort", Option.some("high")),
         store.setRole("fast", Option.some("opencode:deepseek-v4-flash")),
@@ -88,8 +98,8 @@ describe("LocalSettingsStoreLive", () => {
       ], { concurrency: "unbounded" })
       return yield* store.load
     }).pipe(Effect.provide(layer)))
-    expect([settings.maxAttempts, settings.sandbox, settings.budgetMillis, settings.reasoningEffort, settings.fastModel, settings.codeModel].map((value: Option.Option<unknown>) => Option.getOrNull(value)))
-      .toEqual([4, true, 60000, "high", "opencode:deepseek-v4-flash", "opencode:kimi-k2.7-code"])
+    expect([settings.maxAttempts, settings.fallbackModel, settings.budgetMillis, settings.reasoningEffort, settings.fastModel, settings.codeModel].map((value: Option.Option<unknown>) => Option.getOrNull(value)))
+      .toEqual([4, "google:gemini-3.5-flash", 60000, "high", "opencode:deepseek-v4-flash", "opencode:kimi-k2.7-code"])
     expect(readdirSync(join(cwd, ".efferent"))).toEqual(["config.json"])
   })
 
@@ -167,17 +177,15 @@ describe("LocalSettingsStoreLive", () => {
       Effect.gen(function* () {
         const store = yield* SettingsStore
         yield* store.set("fallbackModel", Option.some("google:gemini-3.5-flash"))
-        yield* store.set("sandbox", Option.some("off"))
         yield* store.set("maxAttempts", Option.some("5"))
         yield* store.set("budgetMillis", Option.some("600000"))
         const settings = yield* store.load
         expect(Option.getOrThrow(settings.fallbackModel)).toBe("google:gemini-3.5-flash")
-        expect(Option.getOrThrow(settings.sandbox)).toBe(false)
         expect(Option.getOrThrow(settings.maxAttempts)).toBe(5)
         expect(Option.getOrThrow(settings.budgetMillis)).toBe(600000)
-        yield* store.set("sandbox", Option.none())
+        yield* store.set("fallbackModel", Option.none())
         const cleared = yield* store.load
-        expect(Option.isNone(cleared.sandbox)).toBe(true)
+        expect(Option.isNone(cleared.fallbackModel)).toBe(true)
       }).pipe(Effect.provide(layer)),
     )
     const written = JSON.parse(
@@ -188,14 +196,13 @@ describe("LocalSettingsStoreLive", () => {
     expect(written["maxAttempts"]).toBe(5)
     expect(written["budgetMillis"]).toBe(600000)
     expect(written["theme"]).toBe("efferent")
-    expect("sandbox" in written).toBe(false)
+    expect("fallbackModel" in written).toBe(false)
   })
 
   test("the keyed setter REJECTS values that don't parse", async () => {
     const { layer } = setup({})
     const attempts: ReadonlyArray<readonly [string, string]> = [
       ["fallbackModel", "not-a-selection"],
-      ["sandbox", "maybe"],
       ["maxAttempts", "zero"],
       ["maxAttempts", "0"],
       ["budgetMillis", "-5"],
@@ -218,14 +225,14 @@ describe("LocalSettingsStoreLive", () => {
 
   test("the new keys read local-over-global like the roles", async () => {
     const { layer } = setup(
-      { sandbox: true, maxAttempts: 3, fallbackModel: "a:b" },
-      { sandbox: false, maxAttempts: 7 },
+      { budgetMillis: 1000, maxAttempts: 3, fallbackModel: "a:b" },
+      { budgetMillis: 2000, maxAttempts: 7 },
     )
     await Effect.runPromise(
       Effect.gen(function* () {
         const store = yield* SettingsStore
         const settings = yield* store.load
-        expect(Option.getOrThrow(settings.sandbox)).toBe(false)
+        expect(Option.getOrThrow(settings.budgetMillis)).toBe(2000)
         expect(Option.getOrThrow(settings.maxAttempts)).toBe(7)
         expect(Option.getOrThrow(settings.fallbackModel)).toBe("a:b")
       }).pipe(Effect.provide(layer)),

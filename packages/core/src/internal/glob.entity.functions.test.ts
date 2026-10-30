@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
-import { compileGlob, globMatcher } from "./glob.entity.functions.js"
+import { compileGlob } from "./glob.entity.functions.js"
 import type { GlobMatcher, GlobMatchOptions } from "./glob.entity.functions.js"
 
 /** The compiled pattern; a refused one fails the test. */
@@ -11,7 +11,7 @@ const compiled = (pattern: string, options?: GlobMatchOptions): GlobMatcher => {
 }
 const matching = (pattern: string, paths: ReadonlyArray<string>, dot = false) => paths.filter(compiled(pattern, { dot }).matches)
 
-describe("globMatcher", () => {
+describe("compileGlob", () => {
   test("* and ? stay within one segment; ** crosses any number, none included", () => {
     expect(matching("*.ts", ["a.ts", "src/a.ts", "a.tsx", ".ts"])).toEqual(["a.ts"])
     expect(matching("?.md", ["a.md", "ab.md", "/.md"])).toEqual(["a.md"])
@@ -77,7 +77,7 @@ describe("compileGlob descends", () => {
     expect(["a".repeat(10), "b".repeat(10), "ab".repeat(5), "a".repeat(9)].filter(ten.matches)).toEqual(["a".repeat(10), "b".repeat(10), "ab".repeat(5)])
     const eleven = compileGlob(braces(11))
     expect(Result.isFailure(eleven) ? eleven.failure : "compiled").toBe("its braces stand for more than 1024 patterns")
-    const twenty = globMatcher(braces(20))
+    const twenty = compileGlob(braces(20))
     expect(Result.isFailure(twenty)).toBe(true)
   })
 })

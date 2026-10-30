@@ -10,18 +10,17 @@ import type { AgentMessage, AgentResult } from "@xandreed/core"
 import { addUsage, clipTo, elideMediaData, framed, hostNote, isMediaValue, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
-import { plannedCallIdOf } from "@xandreed/core"
+import { plannedCallIdOf, responseModelOf } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
-import { responseModelOrLegacyOf } from "@xandreed/core/internal"
 import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
 
 /**
  * A mid-run fold the `compact` callback hands back: everything before
  * `keepFrom` is replaced by `handoffToMessage(summary)`; `messages[keepFrom..]`
  * survive verbatim. CONTRACT: `keepFrom` must index an assistant message
- * (never split a tool-call from its results) — `safeKeepFrom` guarantees it;
- * the loop ignores a plan that violates the contract (the run continues
- * unfolded, best-effort).
+ * (never split a tool-call from its results: a tool message follows the
+ * assistant message whose calls it answers); the loop ignores a plan that
+ * violates the contract (the run continues unfolded, best-effort).
  *
  * @public
  */
@@ -667,7 +666,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
             ? { "engine.step.output": tracedJson({ content, usage, finishReason: outcome.finishReason }) }
             : {}),
         })
-        const model = responseModelOrLegacyOf(content)
+        const model = responseModelOf(content)
         const tail = planned ? responseToAgentMessages(content) : withUsageOnAssistant(responseToAgentMessages(content), usage, model)
         // Persist BEFORE the events fire so the assistant message's durable
         // position is known when its event is emitted (UIs key on it).

@@ -1,7 +1,7 @@
 import { LanguageModel, Tool } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Context, Effect, Layer, Metric, Option, Ref, Schema, Stream, Tracer } from "effect"
-import { ConversationId, defineCapability, defineSkill, defineTool, Failure, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { ConversationId, defineCapability, defineSkill, defineTool, ENGINE_KEY, Failure, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { ModelPrice, Turn, TurnBeginError, TurnError, TurnOutcome, TurnResult } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -48,7 +48,7 @@ const host = defineCapability({
 
 /** One response's usage: 100 input (30 cache reads, 10 cache writes), 20 output (5 reasoning). */
 const usage = { inputTokens: { total: 100, uncached: 60, cacheRead: 30, cacheWrite: 10 }, outputTokens: { total: 20, reasoning: 5 } }
-const finish = (reason: "tool-calls" | "stop"): Response.PartEncoded => ({ type: "finish", reason, usage, metadata: { router: { model: MODEL } } })
+const finish = (reason: "tool-calls" | "stop"): Response.PartEncoded => ({ type: "finish", reason, usage, metadata: { [ENGINE_KEY]: { model: MODEL } } })
 const script: ReadonlyArray<Array<Response.PartEncoded>> = [
   [{ type: "tool-call", id: "c1", name: Lookup.name, params: { query: "alpha" } }, finish("tool-calls")],
   [

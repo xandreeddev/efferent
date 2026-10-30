@@ -10,7 +10,7 @@ import { UserMessage } from "../turn/user-message.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
   artifactLines, buildContext, canonicalJson, digestTranscript, emptyQuery, entriesSendingMedia, entryId, estimateMessageTokens, fingerprintOf, latestRunOf, ledgerOf, queryLog,
-  rawTranscript, referenceTranscript, renderLog, stepContextOf,
+  rawTranscript, referenceTranscript, renderLog,
 } from "./memory-log.entity.functions.js"
 import { ArtifactRef, LogBody, LogEntry, Subject } from "./memory-log.entity.js"
 
@@ -71,7 +71,6 @@ describe("a step context", () => {
   test("closes the render of its own run only: a later run of the turn that records none shows none", () => {
     expect([tail(turn, first), tail(turn, second)]).toEqual([["go", "FIRST RUN"], ["go"]])
     expect(tail([...turn, stepContext(2, second, "SECOND RUN")], second)).toEqual(["go", "SECOND RUN"])
-    expect([stepContextOf(turn, runOf(1), first), stepContextOf(turn, runOf(1), second)]).toEqual([Option.some("FIRST RUN"), Option.none()])
     expect([latestRunOf([], runOf(1)), latestRunOf([...turn, stepContext(2, second, "SECOND RUN")], runOf(1))]).toEqual([first, second])
   })
 

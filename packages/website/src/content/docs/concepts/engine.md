@@ -32,12 +32,7 @@ own implementation, from `@xandreed/core/conformance`: see
 | `@xandreed/core/engine` | the turn engine: `TurnLive` and the turn's lifecycle | no; moves into `@xandreed/sdk` in the next minor release |
 | `@xandreed/core/internal` | the provider mapping, stream fold and tool schemas the first-party packages share | no |
 
-The root still exports every name it did; a name with a subpath home is
-`@deprecated` there, naming the path to import from, until the next minor
-release. Also deprecated, and removed in the next minor release: the session
-chassis (`makeSession`), the spec pipeline's vocabulary, the MCP bridge and
-`McpClient`, `AgentFailure`, `Checkpoint`, `DecisionOutcome`, `defineAgent`
-and `defineConfig`, a config's `profile` and `profiles`, and the `sandbox` and
-`viMode` settings.
+The root does not repeat what a subpath holds: import a kit, a store or an
+engine function from its entry.
 
 See [SDK and sessions](/docs/concepts/harness).

@@ -14,7 +14,6 @@ const ROLE_FIELDS = { general: "model", code: "codeModel", fast: "fastModel" } a
 const coerce = (key: SettingsKey, raw: string): Effect.Effect<unknown, SettingsError> => {
   const refuse = Effect.fail(new SettingsError({ message: `${key}: "${raw}"` }))
   if (key === "fallbackModel") return Option.isSome(parseModelSelection(raw)) ? Effect.succeed(raw) : refuse
-  if (key === "sandbox" || key === "viMode") return raw === "true" ? Effect.succeed(true) : raw === "false" ? Effect.succeed(false) : refuse
   if (key === "reasoningEffort" || key === "codeReasoningEffort" || key === "fastReasoningEffort") {
     return ["none", "low", "medium", "high", "xhigh", "max"].includes(raw) ? Effect.succeed(raw) : refuse
   }
@@ -71,7 +70,7 @@ const damageable = (damaged: "fail" | "defaults", initial = new EngineSettings({
   }
 })
 
-const seeded = new EngineSettings({ model: Option.some("seed:general"), fastModel: Option.some("seed:fast"), maxAttempts: Option.some(7), sandbox: Option.some(false) })
+const seeded = new EngineSettings({ model: Option.some("seed:general"), fastModel: Option.some("seed:fast"), maxAttempts: Option.some(7), budgetMillis: Option.some(30_000) })
 
 describe("the SettingsStore kit", () => {
   const store = Effect.runSync(reference(seeded))
@@ -86,7 +85,7 @@ describe("the SettingsStore kit", () => {
   })
 
   test("refuses to touch a key holding a value it could not put back, and leaves it as it was", async () => {
-    const legacy = new EngineSettings({ model: Option.some("sonnet"), maxAttempts: Option.some(0), sandbox: Option.some(true) })
+    const legacy = new EngineSettings({ model: Option.some("sonnet"), maxAttempts: Option.some(0) })
     const store = Effect.runSync(reference(legacy))
     expect(await failedChecks(store, true)).toEqual(["bad-role", "bad-values", "clear", "role", "values"])
     expect(Schema.encodeSync(EngineSettings)(await Effect.runPromise(store.load))).toEqual(Schema.encodeSync(EngineSettings)(legacy))

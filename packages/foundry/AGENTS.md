@@ -122,8 +122,8 @@ longer flags, is itself a finding under the rule's id
 (`architecture/role-suffix-required`'s `ROLELESS_FILES`,
 `effect/no-option-unwrap`'s `NULLABLE_EDGES`, `effect/no-unknown-json`'s
 `UNKNOWN_JSON_EDGES`, `effect/no-record-cast`'s `RECORD_CAST_EDGES`,
-`effect/no-provider-namespace`'s `PROVIDER_NAMESPACE_EDGES`,
-`effect/no-unknown-requirements`'s `UNKNOWN_REQUIREMENT_EDGES`). A
+`effect/no-unknown-requirements`'s `UNKNOWN_REQUIREMENT_EDGES`); a list
+that names nothing more is deleted with its `allow`. A
 new rule that needs a per-file exemption uses `exclude`, `allow` for
 today's exceptions, or a boundary when only part of what it flags is the
 design there. A rule with

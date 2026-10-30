@@ -22,19 +22,16 @@ const FIELDS: ReadonlyArray<RoleField | SettingsKey> = ["model", "codeModel", "f
 
 /** One config value, decoded by its key's type: one of another type is none, so it reads as unset. */
 const asString = Schema.decodeUnknownOption(Schema.NonEmptyString)
-const asBoolean = Schema.decodeUnknownOption(Schema.Boolean)
 const asNumber = Schema.decodeUnknownOption(Schema.Finite)
 const asReasoningEffort = Schema.decodeUnknownOption(ReasoningEffort)
 
-/** Settings from a config record: values of the wrong type read as unset; the legacy `openAiReasoningEffort` key backs `reasoningEffort`. */
+/** Settings from a config record: values of the wrong type read as unset, keys it does not name are not read; the legacy `openAiReasoningEffort` key backs `reasoningEffort`. */
 export const settingsFromRecord = (record: Readonly<Record<string, unknown>>): EngineSettings =>
   new EngineSettings({
     model: asString(record["model"]),
     codeModel: asString(record["codeModel"]),
     fastModel: asString(record["fastModel"]),
     fallbackModel: asString(record["fallbackModel"]),
-    sandbox: asBoolean(record["sandbox"]),
-    viMode: asBoolean(record["viMode"]),
     maxAttempts: asNumber(record["maxAttempts"]),
     budgetMillis: asNumber(record["budgetMillis"]),
     reasoningEffort: Option.orElse(
@@ -58,8 +55,8 @@ const refuse = (message: string) => Effect.fail(new SettingsError({ message }))
 
 /**
  * One key's value from its string form, checked: a selection must be
- * `"<provider>:<modelId>"`, a switch true/on/false/off, an effort one the
- * models accept, a count a positive integer. A value that does not parse is
+ * `"<provider>:<modelId>"`, an effort one the models accept, a count a
+ * positive integer. A value that does not parse is
  * refused, not written and then ignored on load.
  */
 export const coerceSettingValue = (key: SettingsKey, raw: string): Effect.Effect<SettingValue, SettingsError> =>
@@ -68,10 +65,6 @@ export const coerceSettingValue = (key: SettingsKey, raw: string): Effect.Effect
       onNone: () => refuse(`fallbackModel must be "<provider>:<modelId>" — got "${raw}"`),
       onSome: () => Effect.succeed<SettingValue>(raw),
     })),
-    Match.whenOr("sandbox", "viMode", (flag) =>
-      raw === "true" || raw === "on" ? Effect.succeed<SettingValue>(true)
-        : raw === "false" || raw === "off" ? Effect.succeed<SettingValue>(false)
-          : refuse(`${flag} must be true/false — got "${raw}"`)),
     Match.whenOr("reasoningEffort", "codeReasoningEffort", "fastReasoningEffort", (effort) => Option.match(asReasoningEffort(raw), {
       onNone: () => refuse(`${effort} is not supported: "${raw}"`),
       onSome: (value) => Effect.succeed<SettingValue>(value),

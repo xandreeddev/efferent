@@ -193,7 +193,3 @@ export const compileGlob = (pattern: string, options?: GlobMatchOptions): Result
     },
   }))
 }
-
-/** Whether a relative POSIX path matches the pattern (see `compileGlob`, and when it fails). */
-export const globMatcher = (pattern: string, options?: GlobMatchOptions): Result.Result<(path: string) => boolean, string> =>
-  Result.map(compileGlob(pattern, options), (matcher) => matcher.matches)

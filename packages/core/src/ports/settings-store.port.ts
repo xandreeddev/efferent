@@ -9,8 +9,9 @@ import { ReasoningEffort } from "../domain/model-call-policy.entity.js"
  *
  * Beyond the roles: `fallbackModel` (the router's last rung once retries
  * exhaust) and the run knobs a driver may persist instead of re-flagging
- * every launch (`sandbox`, `maxAttempts`, `budgetMillis`). Resolution stays
- * the driver's: flags > config > defaults.
+ * every launch (`maxAttempts`, `budgetMillis`). Resolution stays the
+ * driver's: flags > config > defaults. A key the schema does not name (one
+ * an older release wrote) is not read.
  */
 const optionField = <A, I>(schema: Schema.Codec<A, I>) =>
   Schema.OptionFromOptional(schema).pipe(
@@ -22,16 +23,6 @@ export class EngineSettings extends Schema.Class<EngineSettings>("EngineSettings
   codeModel: optionField(Schema.String),
   fastModel: optionField(Schema.String),
   fallbackModel: optionField(Schema.String),
-  /**
-   * @deprecated No package reads it; a settings file that holds it still
-   * decodes. Removed in the next minor release.
-   */
-  sandbox: optionField(Schema.Boolean),
-  /**
-   * @deprecated No package reads it; a settings file that holds it still
-   * decodes. Removed in the next minor release.
-   */
-  viMode: optionField(Schema.Boolean),
   maxAttempts: optionField(Schema.Number),
   budgetMillis: optionField(Schema.Number),
   /** Selected after the model because the accepted levels are model-specific. */
@@ -56,8 +47,6 @@ export type ModelRole = "general" | "code" | "fast"
  *  typo can never land a dead key in the user's config. */
 export const SETTINGS_KEYS = [
   "fallbackModel",
-  "sandbox",
-  "viMode",
   "maxAttempts",
   "budgetMillis",
   "reasoningEffort",

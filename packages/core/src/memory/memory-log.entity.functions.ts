@@ -333,10 +333,6 @@ export const buildContext = (entries: ReadonlyArray<LogEntry>, options: RenderOp
   }
 }
 
-/** The latest step context recorded by this run of the turn `runId` began, if any. */
-export const stepContextOf = (entries: ReadonlyArray<LogEntry>, runId: RunId, run: RunOrdinal): Option.Option<string> =>
-  Option.fromNullishOr(entries.flatMap((entry) => entry.body._tag === "StepContext" && entry.runId === runId && entry.body.run === run ? [entry.body.text] : []).at(-1))
-
 /** The run of the latest step context the turn `runId` began recorded; 0 (its first run) when it recorded none. */
 export const latestRunOf = (entries: ReadonlyArray<LogEntry>, runId: RunId): RunOrdinal =>
   entries.reduce((latest, entry) => entry.body._tag === "StepContext" && entry.runId === runId ? entry.body.run : latest, RunOrdinal.make(0))
