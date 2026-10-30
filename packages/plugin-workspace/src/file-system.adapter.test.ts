@@ -4,8 +4,10 @@ import { chmod, mkdtemp, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option } from "effect"
-import { fileSystemConformance, FileSystem } from "@xandreed/core"
-import type { FileSystemSubject, FsError } from "@xandreed/core"
+import { FileSystem } from "@xandreed/core"
+import { fileSystemConformance } from "@xandreed/core/conformance"
+import type { FsError } from "@xandreed/core"
+import type { FileSystemSubject } from "@xandreed/core/conformance"
 import { FileSystemLive, localFileSystem } from "./file-system.adapter.js"
 
 /** A fresh directory under the system's temporary directory, removed with its scope. */

@@ -1215,6 +1215,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/plugin-memory-window`'s tests read a tool's model-facing schema
   with `toolParametersSchema` from `@xandreed/core/internal`, which a
   `plugin-memory-window-tests` boundaries layer grants to its tests only.
+- `@xandreed/plugin-workspace`'s tests import the file-system and shell kits
+  from `@xandreed/core/conformance` and `toolParametersSchema` from
+  `@xandreed/core/internal`, granted to its tests only.
 
 ### Deprecated
 
