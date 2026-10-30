@@ -2,14 +2,13 @@ import { AiError, LanguageModel } from "effect/ai"
 import type { Response, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Cause, Clock, Config, Context, Deferred, Duration, Effect, Layer, Metric, Option, Predicate, Ref, References, Stream } from "effect"
-import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, harnessError, parseModelSelection, reasonOf, replayableContext, resolvingModel, SettingsStore, stampPartModel, stampResponseModel, storedJson } from "@xandreed/core"
+import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, harnessError, parseModelSelection, reasonOf, resolvingModel, SettingsStore, stampPartModel, stampResponseModel, storedJson } from "@xandreed/core"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
-import { buildProvider, endpointOwnKey, prependClaudeCode, withAnthropicCacheBreakpoints } from "./providers.js"
-import type { BuiltProvider, PromptOptions } from "./providers.js"
-import { CurrentOpenAiCodexSessions, makeOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
-import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
-import { ModelsTransport } from "../ports/models-transport.port.js"
+import { buildProviderOver, endpointOwnKey, prependClaudeCode, providerServices, withAnthropicCacheBreakpoints } from "./providers.js"
+import type { BuiltProvider, PromptOptions, ProviderServices } from "./providers.js"
+import { makeOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
+import type { ModelEndpoints } from "../ports/model-endpoints.port.js"
 import { transportFetch } from "../transport/models-transport.adapter.js"
 import {
   canTryAgain,
@@ -32,6 +31,12 @@ import type { CallBudget } from "./retry.js"
  * call's attempts (a settled call's fallback rung too) share one
  * `CallBudget`, and the call is final once it hands a tool call to its
  * toolkit.
+ *
+ * A routed model reads what its calls are built over (the configured
+ * endpoints, the transport, a subscription session cache of its own) once,
+ * where its layer is built, and replays only its stores on a call: what a
+ * call carries (its call policy, its prompt cache key, its trace state) is
+ * the call's own.
  */
 
 const configError = (message: string): AiError.AiError =>
@@ -204,8 +209,7 @@ const describeSelection = (primary: ModelSelection, fallback: Option.Option<Mode
  * selection reads the AuthStore, which refreshes a near-expiry OAuth token
  * first.
  */
-const credentialFor = Effect.fn("models.credentials")(function* (selection: ModelSelection) {
-  const endpoints = yield* Effect.service(CurrentModelEndpoints)
+const credentialFor = Effect.fn("models.credentials")(function* (selection: ModelSelection, endpoints: ModelEndpoints) {
   const own = yield* Option.match(Option.fromNullishOr(endpoints[selection.provider]), {
     onNone: () => Effect.succeedNone,
     onSome: (endpoint) => endpointOwnKey(endpoint).pipe(
@@ -233,10 +237,10 @@ const authenticationFailure = (error: AuthError): AiError.AiError =>
     reason: new AiError.AuthenticationError({ kind: "Unknown", description: error.message, metadata: { router: { provider: error.provider } } }),
   })
 
-/** The provider one call goes to, built over its credential. */
-const providerFor = (selection: ModelSelection) =>
-  credentialFor(selection).pipe(
-    Effect.flatMap(({ credential, key }) => buildProvider(selection, credential, key)),
+/** The provider one call goes to, built over its credential and the provider services. */
+const providerFor = (selection: ModelSelection, services: ProviderServices) =>
+  credentialFor(selection, services.endpoints).pipe(
+    Effect.flatMap(({ credential, key }) => buildProviderOver(services)(selection, credential, key)),
     Effect.mapError(authenticationFailure),
   )
 
@@ -318,26 +322,26 @@ export const withHandOff = <O extends PromptOptions>(options: O, budget: CallBud
   return { ...options, toolkit: watched }
 }
 
-/** Build + call one provider generateText for an explicit selection.
- *  `isFallback` only labels telemetry — the fallback rung must be visible
- *  in Grafana without changing the metric identities. `budget` is the
- *  routed call's, shared with its fallback rung; a call made without one
- *  gets its own. */
-export const generateWith = <O extends PromptOptions>(
+/** One routed call's settled response, as {@link generateOver} returns it. */
+type Generated = { readonly content: ReadonlyArray<unknown>; readonly usage: unknown }
+
+/** Build + call one provider generateText for an explicit selection, over
+ *  the given provider services (a routed model's, read where its layer was
+ *  built). `isFallback` only labels telemetry — the fallback rung must be
+ *  visible in Grafana without changing the metric identities. `budget` is
+ *  the routed call's, shared with its fallback rung; a call made without
+ *  one gets its own. */
+export const generateOver = (services: ProviderServices) => <O extends PromptOptions>(
   selection: ModelSelection,
   options: O,
   isFallback = false,
   budget?: CallBudget,
-): Effect.Effect<
-  { readonly content: ReadonlyArray<unknown>; readonly usage: unknown },
-  AiError.AiError,
-  AuthStore | HttpClient.HttpClient
-> =>
+): Effect.Effect<Generated, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const label = formatModelSelection(selection)
     const traced = yield* tracedContent
     const bound = budget ?? (yield* makeCallBudget())
-    const built = yield* providerFor(selection)
+    const built = yield* providerFor(selection, services)
     return yield* (
       built.svc.generateText(
         shapeOptions(built, withHandOff(options, bound)) as never,
@@ -368,26 +372,36 @@ export const generateWith = <O extends PromptOptions>(
     )
   }).pipe(Effect.scoped, providerCall(selection))
 
-/** Build + call one provider generateObject for an explicit selection: the
- *  resolution, option shaping, budget, retries and telemetry of
- *  {@link generateWith} (an object has no empty response to reject and no
- *  message to stamp). */
-export const objectWith = <O extends PromptOptions>(
+/** {@link generateOver} over the provider services where it runs
+ *  (`CurrentModelEndpoints`, `ModelsTransport`), for a call made outside a
+ *  routed model. */
+export const generateWith = <O extends PromptOptions>(
   selection: ModelSelection,
   options: O,
   isFallback = false,
   budget?: CallBudget,
+): Effect.Effect<Generated, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
+  Effect.flatMap(providerServices, (services) => generateOver(services)(selection, options, isFallback, budget))
+
+/** Build + call one provider generateObject for an explicit selection: the
+ *  resolution, option shaping, budget, retries and telemetry of
+ *  {@link generateOver} (an object has no empty response to reject and no
+ *  message to stamp). */
+const objectOver = (services: ProviderServices) => <O extends PromptOptions>(
+  selection: ModelSelection,
+  options: O,
+  isFallback: boolean,
+  budget: CallBudget,
 ): Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const label = formatModelSelection(selection)
-    const bound = budget ?? (yield* makeCallBudget())
-    const built = yield* providerFor(selection)
+    const built = yield* providerFor(selection, services)
     // The schema's decoding services are the caller's, erased with its options.
     const call: Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError> = built.svc.generateObject(
-      shapeOptions(built, withHandOff(options, bound)) as never,
+      shapeOptions(built, withHandOff(options, budget)) as never,
     ) as never
     return yield* call.pipe(
-      retryableLlm(label, bound),
+      retryableLlm(label, budget),
       Effect.tap((res) =>
         Effect.annotateCurrentSpan({
           "llm.finish_reason": String(res.finishReason),
@@ -532,26 +546,24 @@ export const tapStreamTelemetry =
     )
 
 /** Build + call one provider streamText for an explicit selection — the
- *  stream twin of {@link generateWith}: same resolution, same option
+ *  stream twin of {@link generateOver}: same resolution, same option
  *  shaping (anthropic cache breakpoints inherit for free), same budget and
- *  hand-off, same stamp, the stream-aware retry, and finish-part telemetry.
- *  A call made without a budget gets its own. */
-export const streamWith = <O extends PromptOptions>(
+ *  hand-off, same stamp, the stream-aware retry, and finish-part telemetry. */
+const streamOver = (services: ProviderServices) => <O extends PromptOptions>(
   selection: ModelSelection,
   options: O,
-  budget?: CallBudget,
+  budget: CallBudget,
 ): Stream.Stream<unknown, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Stream.unwrap(
     Effect.gen(function* () {
       const label = formatModelSelection(selection)
-      const bound = budget ?? (yield* makeCallBudget())
-      const built = yield* providerFor(selection)
+      const built = yield* providerFor(selection, services)
       return (
         built.svc.streamText(
-          shapeOptions(built, withHandOff(options, bound)) as never,
+          shapeOptions(built, withHandOff(options, budget)) as never,
         ) as Stream.Stream<Response.AnyPart, AiError.AiError>
       ).pipe(
-        retryableLlmStream(label, bound),
+        retryableLlmStream(label, budget),
         Stream.map((part) => stampPartModel(part, label)),
         tapStreamTelemetry(label),
       )
@@ -572,36 +584,37 @@ const withConfiguredEffortStream = <A, E, R>(
 /**
  * The fetch the SDK providers' HTTP client uses on a call: the
  * `ModelsTransport`'s (which knows the proxy), when the model was built over
- * one. It is provided innermost, inside the replayed build context, so a
- * `FetchHttpClient.Fetch` in that context or around the call cannot send the
- * call past the proxy. Without a transport the call keeps whatever fetch is
- * in force, the global one by default.
+ * one. It is provided innermost, so a `FetchHttpClient.Fetch` around the
+ * call cannot send the call past the proxy. Without a transport the call
+ * keeps whatever fetch is in force, the global one by default.
  */
-export const transportFetchOf = Effect.map(Effect.serviceOption(ModelsTransport), Option.map(transportFetch))
+export const throughTransport = (services: ProviderServices) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Option.match(services.transport, { onNone: () => effect, onSome: (transport) => Effect.provideService(effect, FetchHttpClient.Fetch, transportFetch(transport)) })
 
-const withFetch = (fetch: Option.Option<typeof globalThis.fetch>) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  Option.match(fetch, { onNone: () => effect, onSome: (value) => Effect.provideService(effect, FetchHttpClient.Fetch, value) })
-
-const withFetchStream = (fetch: Option.Option<typeof globalThis.fetch>) => <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
-  Option.match(fetch, { onNone: () => stream, onSome: (value) => Stream.provideService(stream, FetchHttpClient.Fetch, value) })
+/** {@link throughTransport} for a stream. */
+const throughTransportStream = (services: ProviderServices) => <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
+  Option.match(services.transport, { onNone: () => stream, onSome: (transport) => Stream.provideService(stream, FetchHttpClient.Fetch, transportFetch(transport)) })
 
 /**
- * A layer's calls' context with the layer's own OpenAI subscription session
- * cache (`CurrentOpenAiCodexSessions`): each conversation keeps its session
- * id while the layer lives, bounded to the conversations used last, and two
- * layers (two agents in one process) never share one.
+ * The provider services of a routed model's layer, read once where it is
+ * built: the configured endpoints (`CurrentModelEndpoints`), the transport
+ * (`ModelsTransport`), and an OpenAI subscription session cache of the
+ * layer's own: each conversation keeps its session id while the layer
+ * lives, bounded to the conversations used last, and two layers (two agents
+ * in one process) never share one.
  */
-export const withCodexSessions = <R>(context: Context.Context<R>): Effect.Effect<Context.Context<R>> =>
-  Effect.map(makeOpenAiCodexSessions(), (sessions) => Context.add(context, CurrentOpenAiCodexSessions, Option.some(sessions)))
+export const layerProviderServices: Effect.Effect<ProviderServices> = Effect.all([providerServices, makeOpenAiCodexSessions()], { concurrency: 1 }).pipe(
+  Effect.map(([services, sessions]) => ({ ...services, sessions: Option.some(sessions) })),
+)
 
 /** The routed model of one selection: its fallback rung, the persisted effort, described as requested. */
 const selectionModel = (
   primary: ModelSelection,
   fallback: Option.Option<ModelSelection>,
   effort: EngineSettings["reasoningEffort"],
-  context: Context.Context<AuthStore>,
+  stores: Context.Context<AuthStore>,
   http: HttpClient.HttpClient,
-  fetch: Option.Option<typeof globalThis.fetch>,
+  services: ProviderServices,
 ): LanguageModel.LanguageModel => {
   // One budget per routed call, shared by its attempts and its fallback rung.
   // A stream's is made when it starts.
@@ -610,30 +623,30 @@ const selectionModel = (
     generateText: (options: PromptOptions) =>
       makeCallBudget().pipe(
         Effect.flatMap((budget) => withConfiguredEffort(
-          withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback, budget), budget),
+          withFallbackRung(primary, fallback, (selection, isFallback) => generateOver(services)(selection, options, isFallback, budget), budget),
           effort,
         )),
-        withFetch(fetch),
-        Effect.provide(context),
+        throughTransport(services),
+        Effect.provide(stores),
         Effect.provideService(HttpClient.HttpClient, http),
       ) as never,
     generateObject: ((options: PromptOptions) =>
       makeCallBudget().pipe(
         Effect.flatMap((budget) => withConfiguredEffort(
-          withFallbackRung(primary, fallback, (selection, isFallback) => objectWith(selection, options, isFallback, budget), budget),
+          withFallbackRung(primary, fallback, (selection, isFallback) => objectOver(services)(selection, options, isFallback, budget), budget),
           effort,
         )),
-        withFetch(fetch),
-        Effect.provide(context),
+        throughTransport(services),
+        Effect.provide(stores),
         Effect.provideService(HttpClient.HttpClient, http),
       )) as never,
     // No stream-level fallback rung: a pre-first-part stream failure
     // already falls back to generateText in the engine loop, and THAT
     // call rides this router's fallback — one rung, no double-hop.
     streamText: ((options: PromptOptions) =>
-      withConfiguredEffortStream(Stream.unwrap(Effect.map(makeCallBudget(), (budget) => streamWith(primary, options, budget))), effort).pipe(
-        withFetchStream(fetch),
-        Stream.provideContext(context),
+      withConfiguredEffortStream(Stream.unwrap(Effect.map(makeCallBudget(), (budget) => streamOver(services)(primary, options, budget))), effort).pipe(
+        throughTransportStream(services),
+        Stream.provideContext(stores),
         Stream.provideService(HttpClient.HttpClient, http),
       )) as never,
   } satisfies LanguageModel.LanguageModel
@@ -643,21 +656,21 @@ const selectionModel = (
 /**
  * `LanguageModelLive` — the engine loop's `LanguageModel`, routed per call.
  * Requires `SettingsStore` + `AuthStore`; brings its own fetch-backed
- * `HttpClient` so drivers don't have to. Built over a `ModelsTransport`
- * (as the models plugin builds it), every call goes through that transport.
+ * `HttpClient` so drivers don't have to. Reads `CurrentModelEndpoints` and
+ * `ModelsTransport` once, where it is built: built over a transport (as the
+ * models plugin builds it), every call goes through that transport.
  */
 export const LanguageModelLive = Layer.effect(
   LanguageModel.LanguageModel,
   Effect.gen(function* () {
-    // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
-    // The subscription's session ids are the layer's own (`withCodexSessions`).
-    const context = yield* withCodexSessions(replayableContext(yield* Effect.context<AuthStore | SettingsStore>()))
+    // Replayed on every call: the stores alone, so a call's spans nest where it runs and its references are its own.
+    const stores = Context.pick(AuthStore, SettingsStore)(yield* Effect.context<AuthStore | SettingsStore>())
+    const services = yield* layerProviderServices
     const http = yield* HttpClient.HttpClient
-    const fetch = yield* transportFetchOf
     // One settings read: the model of the selection it finds.
     const selected = currentSelection.pipe(
-      Effect.map(({ primary, fallback, effort }) => selectionModel(primary, fallback, effort, context, http, fetch)),
-      Effect.provide(context),
+      Effect.map(({ primary, fallback, effort }) => selectionModel(primary, fallback, effort, stores, http, services)),
+      Effect.provide(stores),
     )
     const service: LanguageModel.LanguageModel = {
       [LanguageModel.TypeId]: LanguageModel.TypeId,
@@ -673,7 +686,7 @@ export const LanguageModelLive = Layer.effect(
       describeModel(service, currentSelection.pipe(
         Effect.mapError(asHarness),
         Effect.flatMap(({ primary, fallback, effort }) => describeSelection(primary, fallback, effort)),
-        Effect.provide(context),
+        Effect.provide(stores),
       )),
       selected.pipe(Effect.mapError(asHarness)),
     )
@@ -682,16 +695,17 @@ export const LanguageModelLive = Layer.effect(
 
 /** A profile-pinned routed model. Unlike LanguageModelLive it never consults
  * SettingsStore; dedicated agents use this so global role edits cannot
- * silently change an evalled execution profile. */
+ * silently change an evalled execution profile. Like it, it reads its
+ * provider services once, where it is built. */
 export const LanguageModelSelectionLive = (
   primary: ModelSelection,
   fallback: Option.Option<ModelSelection>,
 ) => Layer.effect(
   LanguageModel.LanguageModel,
   Effect.gen(function* () {
-    // Replayed on every call: without the span where the layer was built, so a call's spans nest where it runs.
-    const context = yield* withCodexSessions(replayableContext(yield* Effect.context<AuthStore>()))
+    // Replayed on every call: the store alone, so a call's spans nest where it runs and its references are its own.
+    const stores = Context.pick(AuthStore)(yield* Effect.context<AuthStore>())
     const http = yield* HttpClient.HttpClient
-    return selectionModel(primary, fallback, Option.none(), context, http, yield* transportFetchOf)
+    return selectionModel(primary, fallback, Option.none(), stores, http, yield* layerProviderServices)
   }),
 ).pipe(Layer.provide(FetchHttpClient.layer))

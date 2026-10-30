@@ -87,6 +87,41 @@ describe("UtilityLlmLive", () => {
     expect(await completeUnder({ fastReasoningEffort: "medium" }, Option.some("high"))).toMatchObject({ reasoning_effort: "high" })
   })
 
+  test("built with endpoints E under one call policy, a completion called elsewhere under another goes to E with the caller's policy", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: async (request) => {
+        bodies.push(await request.json() as Record<string, unknown>)
+        return Response.json({ choices: [{ finish_reason: "stop", message: { content: "a title" } }], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } })
+      },
+    })
+    const store = Layer.succeed(SettingsStore, SettingsStore.of({
+      load: Effect.succeed(new EngineSettings({ model: Option.some("gw:general") })),
+      setRole: () => Effect.void,
+      set: () => Effect.void,
+    }))
+    const auth = Layer.succeed(AuthStore, AuthStore.of({
+      all: Effect.succeed(new Map()),
+      get: () => Effect.succeed(Option.none()),
+      resolveKey: () => Effect.succeed(Option.none()),
+      set: () => Effect.void,
+      remove: () => Effect.void,
+    }))
+    await Effect.runPromise(Effect.gen(function* () {
+      const utility = yield* UtilityLlm.pipe(
+        Effect.provide(UtilityLlmLive.pipe(Layer.provide(Layer.merge(store, auth)))),
+        Effect.provideService(CurrentModelEndpoints, { gw: { url: `http://127.0.0.1:${server.port}/v1`, standardOnly: false } }),
+        Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low" as const })),
+      )
+      yield* utility.complete("Name this conversation").pipe(
+        Effect.provideService(CurrentModelEndpoints, {}),
+        Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "high" as const })),
+      )
+    })).finally(() => server.stop(true))
+    expect(bodies.map((body) => [body["model"], body["reasoning_effort"]])).toEqual([["general", "high"]])
+  })
+
   test("a completion is a models.utility span where it is called, around its providers.generate", async () => {
     const server = Bun.serve({
       hostname: "127.0.0.1", port: 0,

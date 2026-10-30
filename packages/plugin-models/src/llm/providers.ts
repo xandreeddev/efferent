@@ -10,12 +10,14 @@ import { ANTHROPIC_OAUTH_BETA, CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth
 import { makeCompatLanguageModel, promptWithImageLabels } from "./compat.js"
 import { publicReasoningEffort, usesOpenCodeResponses } from "./modelCatalog.js"
 import { makeOpenAiCodexLanguageModel, OPENAI_CODEX_API_URL } from "./openAiCodex.js"
+import { CurrentOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
+import type { OpenAiCodexSessions } from "./openAiCodexWebSocket.js"
 import { BuiltInProvider } from "./provider-profile.entity.js"
 import type { ChatRoute, ModelProfile, ResponsesRoute, Route } from "./provider-profile.entity.js"
 import { profileOf } from "./provider-profile.entity.functions.js"
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
-import type { ModelEndpoint } from "../ports/model-endpoints.port.js"
+import type { ModelEndpoint, ModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import type { WebSocketProxy } from "../ports/models-transport.port.js"
 
@@ -190,6 +192,26 @@ const endpointKey = (selection: ModelSelection, endpoint: ModelEndpoint, stored:
 /** The transport the plugin was built over, if any: the compat client's fetch goes through it. */
 type Transport = Option.Option<Context.Service.Shape<typeof ModelsTransport>>
 
+/**
+ * What a provider is built over besides its selection and credential: the
+ * configured endpoints, the transport, and the OpenAI subscription's
+ * session cache (`None` keeps one per built model). The routed models read
+ * them once, where their layer is built, and build every call's provider
+ * over them ({@link buildProviderOver}).
+ */
+export interface ProviderServices {
+  readonly endpoints: ModelEndpoints
+  readonly transport: Transport
+  readonly sessions: Option.Option<OpenAiCodexSessions>
+}
+
+/** The provider services where this runs: `CurrentModelEndpoints`, `ModelsTransport` if provided, `CurrentOpenAiCodexSessions`. */
+export const providerServices: Effect.Effect<ProviderServices> = Effect.all({
+  endpoints: Effect.service(CurrentModelEndpoints),
+  transport: Effect.serviceOption(ModelsTransport),
+  sessions: Effect.service(CurrentOpenAiCodexSessions),
+}, { concurrency: 1 })
+
 /** The compat client's `fetchImpl`: the transport's fetch, or (no transport) the global one. */
 const compatFetch = (transport: Transport) =>
   Option.match(transport, { onNone: () => ({}), onSome: ({ fetch }) => ({ fetchImpl: fetch }) })
@@ -250,27 +272,28 @@ const buildProviderService = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
-): Building<Built> =>
-  Effect.flatMap(Effect.all({ endpoints: Effect.service(CurrentModelEndpoints), transport: Effect.serviceOption(ModelsTransport) }, { concurrency: 1 }), ({ endpoints, transport }) => {
-    const endpoint = Option.fromNullishOr(endpoints[selection.provider])
-    if (Option.isSome(endpoint)) {
-      const configured = endpoint.value
-      return Effect.flatMap(endpointKey(selection, configured, key), (own) =>
-        endpointModel(selection, configured.url, own, configured.standardOnly ?? true, configured.images ?? false, transport))
-    }
-    if (credential?.type === "local" && credential.baseUrl !== undefined) {
-      return endpointModel(selection, credential.baseUrl, Option.none(), true, false, transport)
-    }
-    return buildBuiltInProvider(selection, credential, key, transport)
-  })
+  services: ProviderServices,
+): Building<Built> => {
+  const endpoint = Option.fromNullishOr(services.endpoints[selection.provider])
+  if (Option.isSome(endpoint)) {
+    const configured = endpoint.value
+    return Effect.flatMap(endpointKey(selection, configured, key), (own) =>
+      endpointModel(selection, configured.url, own, configured.standardOnly ?? true, configured.images ?? false, services.transport))
+  }
+  if (credential?.type === "local" && credential.baseUrl !== undefined) {
+    return endpointModel(selection, credential.baseUrl, Option.none(), true, false, services.transport)
+  }
+  return buildBuiltInProvider(selection, credential, key, services)
+}
 
-/** What a route builder is given: the selection, its model's profile, the credential and its key, the transport. */
+/** What a route builder is given: the selection, its model's profile, the credential and its key, the transport, the subscription's sessions. */
 interface RouteCall {
   readonly selection: ModelSelection
   readonly model: ModelProfile
   readonly credential: Credential | undefined
   readonly key: Redacted.Redacted<string>
   readonly transport: Transport
+  readonly sessions: Option.Option<OpenAiCodexSessions>
 }
 
 /** Anthropic's Messages API over an API key, or over the subscription's OAuth token, whose calls take the Claude Code block first. */
@@ -323,15 +346,17 @@ const responsesModel = (route: ResponsesRoute, { selection, model, key }: RouteC
     }),
   )
 
-/** The OpenAI subscription's Codex dialect, over its OAuth token and the ChatGPT account it names. */
-const codexModel = ({ selection, credential, key, transport }: RouteCall): Building<RouteModel> => {
+/** The OpenAI subscription's Codex dialect, over its OAuth token and the ChatGPT account it names, keeping its session ids in `sessions`. */
+const codexModel = ({ selection, credential, key, transport, sessions }: RouteCall): Building<RouteModel> => {
   if (credential?.type !== "oauth") return Effect.fail(missingKey(selection))
   const accountId = Option.orElse(Option.fromNullishOr(credential.accountId), () => openAiCodexAccountId(Redacted.value(key)))
   if (Option.isNone(accountId)) {
     return Effect.fail(new AuthError({ provider: selection.provider, message: "the OpenAI subscription token has no ChatGPT account id — sign in to the subscription again and store the new token" }))
   }
   return codexWebSocketProxy(selection, transport).pipe(
-    Effect.flatMap((webSocketProxy) => makeOpenAiCodexLanguageModel({ model: selection.modelId, accessToken: key, accountId: accountId.value, webSocketProxy })),
+    Effect.flatMap((webSocketProxy) => makeOpenAiCodexLanguageModel({ model: selection.modelId, accessToken: key, accountId: accountId.value, webSocketProxy }).pipe(
+      Effect.provideService(CurrentOpenAiCodexSessions, sessions),
+    )),
     Effect.map((svc) => ({ svc, settings: Option.none(), prependClaudeCode: false })),
   )
 }
@@ -354,14 +379,14 @@ const buildBuiltInProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
-  transport: Transport,
+  { transport, sessions }: ProviderServices,
 ): Building<Built> =>
   Option.match(profileOf(selection.provider), {
     onNone: () => Effect.fail(notWired(selection)),
     onSome: (profile) => Option.match(Option.fromNullishOr(key), {
       onNone: () => Effect.fail(missingKey(selection)),
       onSome: (found) => {
-        const call: RouteCall = { selection, model: profile.modelOf(selection.modelId), credential, key: found, transport }
+        const call: RouteCall = { selection, model: profile.modelOf(selection.modelId), credential, key: found, transport, sessions }
         const route = profile.routeOf(selection.modelId)
         const built: Building<RouteModel> = Match.valueTags(route, {
           anthropic: () => anthropicModel(call),
@@ -386,16 +411,15 @@ const descriptorOf = (selection: ModelSelection, built: Built) =>
   })
 
 /**
- * Preserve adapter descriptors and describe the public configuration of
- * SDK-backed models. On a route that reads no images (the model's profile,
- * a configured endpoint's `images`), every request is sent with its images
- * as label lines (`promptWithImageLabels`) instead of a provider error.
+ * {@link buildProvider} over the given provider services, not those where
+ * it runs: a routed model builds each call's provider over the services its
+ * layer was built with.
  */
-export const buildProvider = (
+export const buildProviderOver = (services: ProviderServices) => (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
-): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key).pipe(
+): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key, services).pipe(
   Effect.map((built) => ({
     svc: describeModel(built.images ? built.svc : withImageLabels(built.svc), descriptorOf(selection, built)),
     prependClaudeCode: built.prependClaudeCode,
@@ -403,3 +427,17 @@ export const buildProvider = (
     route: built.route,
   })),
 )
+
+/**
+ * Preserve adapter descriptors and describe the public configuration of
+ * SDK-backed models. On a route that reads no images (the model's profile,
+ * a configured endpoint's `images`), every request is sent with its images
+ * as label lines (`promptWithImageLabels`) instead of a provider error.
+ * Built over the provider services where it runs (`providerServices`).
+ */
+export const buildProvider = (
+  selection: ModelSelection,
+  credential: Credential | undefined,
+  key: Redacted.Redacted<string> | undefined,
+): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> =>
+  Effect.flatMap(providerServices, (services) => buildProviderOver(services)(selection, credential, key))

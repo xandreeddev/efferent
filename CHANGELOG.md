@@ -186,6 +186,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `CurrentModelCallPolicy` next to `request.cacheKey`; a hand-built
   `StepRequest` adds `callPolicy` (`Option.none()` when there is no
   policy).
+- If you compose `LanguageModelLive`, `LanguageModelSelectionLive` or
+  `UtilityLlmLive` yourself, provide `CurrentModelEndpoints` and
+  `ModelsTransport` to the layer, not around its calls. Hosts using
+  `modelsPlugin` need no change.
 
 ### Breaking
 
@@ -493,6 +497,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A custom `StepLoop` must provide all of `StepLoopReferences`
   (prompt-cache key, call policy, trace content, empty-response tolerance,
   current step), whatever its caller's; `stepLoopConformance` checks each.
+- `@xandreed/plugin-models`: `LanguageModelLive`,
+  `LanguageModelSelectionLive` and `UtilityLlmLive` read
+  `CurrentModelEndpoints` and `ModelsTransport` once, when they are built;
+  values provided only around a call are ignored.
 
 ### Added
 
@@ -907,6 +915,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A step loop run under a caller's `CurrentAgentStep` (a run inside a tool)
   published its step events with the caller's step; the loop's callbacks
   now read its own step and empty-response tolerance.
+- The models plugin's routed `LanguageModel` and `UtilityLlm` no longer
+  apply settings from where they were built to their calls: a call uses its
+  own call policy, prompt cache key, log annotations and `ConfigProvider`.
 
 ### Repository
 

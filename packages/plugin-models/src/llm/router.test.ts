@@ -3,7 +3,7 @@ import { AiError, LanguageModel, Response as AiResponse, Tool, Toolkit } from "e
 import { FetchHttpClient } from "effect/http"
 import { Cause, ConfigProvider, Deferred, Duration, Effect, Exit, Fiber, Layer, Logger, Metric, Option, Redacted, Ref, References, Schema, Stream, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, responseModelOf, SettingsStore } from "@xandreed/core"
+import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentPromptCacheKey, CurrentTraceContent, EngineSettings, ModelSelection, modelRequestDescriptorOf, parseModelSelection, resolveModelRequest, responseModelOf, SettingsStore } from "@xandreed/core"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { makeCallBudget, retryableLlm, retryableLlmStream } from "./retry.js"
 import type { CallBudget } from "./retry.js"
@@ -569,6 +569,54 @@ describe("the routed model's surface", () => {
     expect(Option.getOrThrow(descriptor)).toStrictEqual({
       provider: "opencode", model: "glm-5.2",
       settings: { fallback: "google:gemini-3.5-flash", policy: { effort: "high" } },
+    })
+  })
+})
+
+describe("what a routed model reads where it is built, and what where it is called", () => {
+  test("built with endpoints E, then called under another call policy, cache key and endpoints: its calls go to E with the call's own policy and key", async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    const server = Bun.serve({
+      hostname: "127.0.0.1", port: 0,
+      fetch: async (request) => {
+        const body = await request.json() as Record<string, unknown>
+        bodies.push(body)
+        return body["stream"] === true
+          ? new Response(`data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n`, { headers: { "content-type": "text/event-stream" } })
+          : Response.json({ choices: [{ finish_reason: "stop", message: { content: "ok" } }], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } })
+      },
+    })
+    const settings = Layer.succeed(SettingsStore, SettingsStore.of({
+      load: Effect.succeed(new EngineSettings({ model: Option.some("gw:m") })),
+      setRole: () => Effect.void,
+      set: () => Effect.void,
+    }))
+    const endpoints = { gw: { url: `http://127.0.0.1:${server.port}/v1`, standardOnly: false } }
+    const descriptor = await Effect.runPromise(Effect.gen(function* () {
+      // Built where the endpoints are E, under a policy and a cache key of that place's own.
+      const model = yield* LanguageModel.LanguageModel.pipe(
+        Effect.provide(LanguageModelLive.pipe(Layer.provide(Layer.merge(settings, localAuth(Option.none()))))),
+        Effect.provideService(CurrentModelEndpoints, endpoints),
+        Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "low", maxOutputTokens: 100 })),
+        Effect.provideService(CurrentPromptCacheKey, Option.some("built-here")),
+      )
+      // Called where no endpoint is configured, under the call's own policy and key.
+      const called = <A, E, R>(effect: Effect.Effect<A, E, R>) => effect.pipe(
+        Effect.provideService(CurrentModelEndpoints, {}),
+        Effect.provideService(CurrentModelCallPolicy, Option.some({ effort: "high", maxOutputTokens: 900 })),
+        Effect.provideService(CurrentPromptCacheKey, Option.some("called-here")),
+      )
+      yield* called(model.generateText({ prompt: "hi" }))
+      yield* called(Stream.runDrain(model.streamText({ prompt: "hi" })))
+      return yield* called(modelRequestDescriptorOf(model))
+    })).finally(() => server.stop(true))
+    expect(bodies.map((body) => [body["model"], body["prompt_cache_key"], body["reasoning_effort"], body["max_tokens"]])).toEqual([
+      ["m", "called-here", "high", 900],
+      ["m", "called-here", "high", 900],
+    ])
+    expect(Option.getOrThrow(descriptor)).toStrictEqual({
+      provider: "gw", model: "m",
+      settings: { fallback: null, policy: { effort: "high", maxOutputTokens: 900 } },
     })
   })
 })
