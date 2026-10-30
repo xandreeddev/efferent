@@ -2,30 +2,37 @@ import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Option, Ref, Schema } from "effect"
 import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, reasonOf, StepLoop } from "@xandreed/core"
-import type { AgentMessage, CompletionVerdict, LogEntry, LoopEvent, RunResult, StepInfo, StepPlan, StepRequest, StepResult, StepStatus, TokenUsage, TurnError } from "@xandreed/core"
+import type { AgentMessage, CompletionVerdict, LoopEvent, RunResult, StepInfo, StepRequest, StepStatus, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopToolChoice } from "./loop.js"
+import { emptyLedger } from "./step-ledger.entity.js"
+import { cachedPlan, planned, recorded, replanned, resultsOf, started, used } from "./step-ledger.entity.functions.js"
 
 export const STEP_LOOP = { id: "steps", version: "1" } as const
-
-const resultsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<StepResult> => entries.flatMap((entry) =>
-  entry.body._tag === "ToolResult" ? [{ entry: entry.id, toolCallId: entry.body.toolCallId, tool: entry.body.toolName, ok: !entry.body.isError }] : [])
 
 /**
  * The step loop over `runLoop`. Per step it publishes `step.started` (with
  * the active tools), lets the registry publish `tool.*` as calls settle,
- * records the tail, publishes `step.ended` with the recorded results, then
- * evaluates the host's completion (`completion.evaluated`). A verdict that
- * awaits tasks joins them and is evaluated once more. The plan for a step is
- * computed once and serves the model, the messages and the tool choice; a
- * host-planned first batch runs without a provider call or a plan. A stream
- * that fails before its first part publishes `stream.fallback` once, and the
- * run goes on without streaming. The run's `captureTraceContent` is
- * `CurrentTraceContent` for its model calls. A request a provider refuses
- * over an image goes to `request.onMediaRejected`; when it records an
- * `OmitMedia`, the step is planned again and sent once more. Every step
- * event carries the request's run ordinal, and the ids of a provider's
- * id-less tool calls are minted from its run (`toolCallIdOf`).
+ * records the tail, and publishes `step.ended` once, when `runLoop` settles
+ * the step (`onStepSettled`), with the recorded results and the status of
+ * the step's own call, tools and tail (`malformed` for a response the model
+ * could not form). Only then is the host's completion evaluated
+ * (`completion.evaluated`; none after a malformed step), a query that ends
+ * no step: a completion that fails fails the run and leaves the step
+ * `completed`. A verdict that awaits tasks joins them and is evaluated once
+ * more. The loop's own messages (a corrective, a nudge, a steer) are
+ * recorded under the next step, so nothing is recorded under a step after
+ * its `step.ended`. The plan for a step is computed once and serves the
+ * model, the messages and the tool choice; a host-planned first batch runs
+ * without a provider call or a plan. A stream that fails before its first
+ * part publishes `stream.fallback` once, and the run goes on without
+ * streaming. The run's `captureTraceContent` is `CurrentTraceContent` for
+ * its model calls. A request a provider refuses over an image goes to
+ * `request.onMediaRejected`; when it records an `OmitMedia`, the step is
+ * planned again and sent once more. Every step event carries the request's
+ * run ordinal, and the ids of a provider's id-less tool calls are minted
+ * from its run (`toolCallIdOf`). What it keeps across steps is one
+ * `StepLedger`.
  */
 export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effect.fn.Return<RunResult, TurnError> {
   const model = yield* Option.match(Context.getOption(request.handlers, LanguageModel.LanguageModel), {
@@ -35,36 +42,30 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
   const run = request.run.ordinal
   const hasInitial = Option.isSome(request.initial)
   const isPlanned = (step: number) => hasInitial && step === 0
-  const cached = yield* Ref.make(Option.none<{ readonly step: number; readonly plan: StepPlan }>())
-  const lastUsage = yield* Ref.make(Option.none<TokenUsage>())
-  const results = yield* Ref.make(new Map<number, ReadonlyArray<StepResult>>())
-  const ended = yield* Ref.make(new Set<number>())
-  const steps = yield* Ref.make(0)
+  const ledger = yield* Ref.make(emptyLedger)
   const currentStep = Effect.service(CurrentAgentStep).pipe(Effect.map(Option.getOrElse(() => 0)))
   const infoOf = (step: number, activeTools: ReadonlyArray<string>) =>
-    Ref.get(lastUsage).pipe(Effect.map((usage): StepInfo => ({ stepIndex: step, activeTools, lastUsage: usage })))
+    Ref.get(ledger).pipe(Effect.map((current): StepInfo => ({ stepIndex: step, activeTools, lastUsage: current.lastUsage })))
 
-  const planFor = (info: StepInfo) => Ref.get(cached).pipe(Effect.flatMap((current) =>
-    Option.isSome(current) && current.value.step === info.stepIndex
-      ? Effect.succeed(current.value.plan)
-      : request.plan(info).pipe(Effect.tap((plan) => Ref.set(cached, Option.some({ step: info.stepIndex, plan })))),
-  ))
+  const planFor = (info: StepInfo) => Ref.get(ledger).pipe(Effect.flatMap((current) => Option.match(cachedPlan(current, info.stepIndex), {
+    onSome: Effect.succeed,
+    onNone: () => request.plan(info).pipe(Effect.tap((plan) => Ref.update(ledger, planned(info.stepIndex, plan)))),
+  })))
 
-  const endStep = (step: number, status: StepStatus) => Effect.gen(function* () {
-    const done = yield* Ref.get(ended)
-    if (done.has(step)) return
-    yield* Ref.set(ended, new Set([...done, step]))
-    const recorded = (yield* Ref.get(results)).get(step) ?? []
-    yield* request.events.publish({ _tag: "step.ended", step, run, status, results: recorded })
-  })
+  // Once per step, from `runLoop`: a step that already failed must not fail again on its way out.
+  const settle = (step: number, status: StepStatus) => {
+    const ending = Ref.get(ledger).pipe(Effect.flatMap((current) =>
+      request.events.publish({ _tag: "step.ended", step, run, status, results: resultsOf(current, step) })))
+    return status === "failed" || status === "cancelled"
+      ? ending.pipe(Effect.ignoreCause({ log: "Warn", message: `the end of failed step ${step} was not recorded` }))
+      : ending.pipe(Effect.orDie)
+  }
 
   const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, TurnError> => request.completion(info).pipe(
     Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, run, verdict })),
   )
 
-  const isComplete = () => Effect.gen(function* () {
-    const step = yield* currentStep
-    yield* endStep(step, "completed")
+  const isComplete = (step: number) => Effect.gen(function* () {
     const info = yield* infoOf(step, yield* request.tools.active)
     const first = yield* evaluate(info)
     if (first.complete || first.awaiting.length === 0) return first.complete
@@ -78,7 +79,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     }
     if (event.type === "assistant_message") {
       return Effect.gen(function* () {
-        if (!isPlanned(event.turnIndex)) yield* Ref.set(lastUsage, Option.some(event.usage))
+        if (!isPlanned(event.turnIndex)) yield* Ref.update(ledger, used(event.usage))
         yield* request.events.publish({
           _tag: "assistant.message", step: event.turnIndex, run, text: event.text, reasoning: event.reasoning,
           model: Option.fromNullishOr(event.model), toolCalls: event.toolCalls.map((call) => ({ id: call.id, tool: call.toolName, input: call.args })),
@@ -88,13 +89,6 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     }
     if (event.type === "stream_fallback") {
       return request.events.publish({ _tag: "stream.fallback", step: event.turnIndex, run, message: event.message }).pipe(Effect.orDie)
-    }
-    if (event.type === "turn_end") {
-      const ending = endStep(event.turnIndex, event.status)
-      // A step that already failed must not fail again on its way out.
-      return event.status === "completed"
-        ? ending.pipe(Effect.orDie)
-        : ending.pipe(Effect.ignoreCause({ log: "Warn", message: `the end of failed step ${event.turnIndex} was not recorded` }))
     }
     return Effect.void
   }
@@ -115,7 +109,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     activeTools: () => Effect.gen(function* () {
       const step = yield* currentStep
       const active = yield* request.tools.active
-      yield* Ref.update(steps, (count) => Math.max(count, step + 1))
+      yield* Ref.update(ledger, started(step))
       yield* request.events.publish({ _tag: "step.started", step, run, planned: isPlanned(step), activeTools: active })
       return active
     }).pipe(Effect.orDie),
@@ -133,18 +127,17 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     beforeDispatch: (step, actual) => request.dispatch(step, actual).pipe(Effect.orDie),
     // The images are omitted from now on: the step is planned again for its second attempt.
     onMediaRejected: (reason) => request.onMediaRejected(reason).pipe(
-      Effect.tap((retry) => retry ? Ref.set(cached, Option.none()) : Effect.void),
+      Effect.tap((retry) => retry ? Ref.update(ledger, replanned) : Effect.void),
       Effect.orDie,
     ),
     isComplete,
+    onStepSettled: settle,
     pendingInput: () => request.steering.pipe(Effect.orDie),
-    onTail: (messages) => Effect.gen(function* () {
-      const step = yield* currentStep
-      const entries = yield* request.record(step, messages)
-      const recorded = resultsOf(entries)
-      yield* recorded.length === 0 ? Effect.void : Ref.update(results, (all) => new Map([...all, [step, [...(all.get(step) ?? []), ...recorded]]]))
-      return []
-    }).pipe(Effect.orDie),
+    onTail: (messages, step) => request.record(step, messages).pipe(
+      Effect.flatMap((entries) => Ref.update(ledger, recorded(step, entries))),
+      Effect.as([]),
+      Effect.orDie,
+    ),
     onEvent,
   })
   const handlers = request.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>
@@ -156,14 +149,11 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     // failed underneath (a provider's `AiError`) is `loop.failed`, with it as the cause and its text, never its stack, as the message.
     Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
   ))
-  return {
-    outcome: result.outcome === "ok" ? "completed" : "partial",
-    reason: result.reason,
-    text: result.finalText,
-    steps: yield* Ref.get(steps),
-    // The loop's sum of the usage each `assistant.message` carried.
-    usage: result.usage,
-  } satisfies RunResult
+  // The loop's sum of the usage each `assistant.message` carried.
+  const totals = { text: result.finalText, steps: (yield* Ref.get(ledger)).steps, usage: result.usage }
+  return result.reason === "completed"
+    ? { outcome: "completed", reason: "completed", ...totals }
+    : { outcome: "partial", reason: result.reason, ...totals }
 })
 
 export const StepLoopLive = Layer.succeed(StepLoop, StepLoop.of({ ...STEP_LOOP, run: runSteps }))

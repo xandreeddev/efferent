@@ -114,6 +114,8 @@ describe("TurnTelemetryLive in a host's own composition", () => {
     { _tag: "tool.completed", step: 1, invocationId: InvocationId.make("run-7:call:1"), tool: "probe", input: {}, ok: false, result: "no", encoded: "no", durationMs: 12, labels: {}, stage: Option.none() },
     { _tag: "stream.fallback", step: 1, run, message: "cut off" },
     { _tag: "step.ended", step: 1, run, status: "failed", results: [] },
+    // A response the model could not form: the step ends malformed, without a response of its own.
+    { _tag: "step.ended", step: 2, run, status: "malformed", results: [] },
   ]
 
   test("writes to the span current where it is built, not the publisher's", async () => {
@@ -139,7 +141,8 @@ describe("TurnTelemetryLive in a host's own composition", () => {
       counted(registry, TelemetryMetrics.toolCalls, { "efferent.tool": "probe", "efferent.ok": "false" }),
       counted(registry, TelemetryMetrics.streamFallbacks, {}),
       counted(registry, TelemetryMetrics.steps, { "efferent.step.status": "failed" }),
-    ])).toEqual([20, 20, 0, 2, 8, 1, 1, 1])
+      counted(registry, TelemetryMetrics.steps, { "efferent.step.status": "malformed" }),
+    ])).toEqual([20, 20, 0, 2, 8, 1, 1, 1, 1])
     const duration = await Effect.runPromise(valueIn(registry, TelemetryMetrics.toolDuration, { "efferent.tool": "probe", "efferent.ok": "false" }))
     expect([duration.count, duration.sum]).toEqual([1, Duration.toMillis(Duration.millis(12))])
   })

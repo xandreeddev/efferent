@@ -40,6 +40,12 @@ export type TurnFailure = typeof TurnFailure.Type
 export const TurnEnding = Schema.Struct({ reason: TurnEndReason, failure: Schema.OptionFromNullOr(TurnFailure) })
 export type TurnEnding = typeof TurnEnding.Type
 
-/** How one step of a run ended (`step.ended`). */
-export const StepStatus = Schema.Literals(["completed", "failed", "cancelled"])
+/**
+ * How one step of a run ended (`step.ended`): its call, its tools and its
+ * tail done (`completed`), the call failed or something it ran did
+ * (`failed`), interrupted (`cancelled`), or a response the model could not
+ * form (a tool that does not exist, parameters that do not decode), which
+ * the loop answers with a corrective turn (`malformed`).
+ */
+export const StepStatus = Schema.Literals(["completed", "failed", "cancelled", "malformed"])
 export type StepStatus = typeof StepStatus.Type

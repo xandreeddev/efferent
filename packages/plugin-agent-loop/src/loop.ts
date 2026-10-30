@@ -4,7 +4,7 @@ import { Array as Arr, Cause, Effect, Exit, Formatter, Match, Metric, Option, Or
 import { CurrentTraceContent, foldStreamParts, freezeModelRequest, replayableContext } from "@xandreed/core"
 import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import type { LoopEvent } from "@xandreed/core"
+import type { LoopEvent, StepStatus } from "@xandreed/core"
 import type { AgentMessage, AgentResult } from "@xandreed/core"
 import { addUsage, elideMediaData, isMediaValue, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
@@ -88,9 +88,20 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
   readonly captureTraceContent?: boolean
   readonly messages: ReadonlyArray<AgentMessage>
   readonly toolkit: Toolkit.Toolkit<Tools>
-  /** Host completion condition, checked after settled tools/events. Avoids a
-   * paid final prose call when a tool already delivered the complete result. */
-  readonly isComplete?: () => Effect.Effect<boolean, never, R>
+  /** Host completion condition for `step`, checked after the step settled
+   * (`onStepSettled`), never after a malformed one. A query: it ends no step.
+   * Avoids a paid final prose call when a tool already delivered the
+   * complete result. */
+  readonly isComplete?: (step: number) => Effect.Effect<boolean, never, R>
+  /**
+   * Called exactly once per step, after its tail went through `onTail` and
+   * before anything is decided (completion, nudges, compaction, steering),
+   * with the exit of the step's own call, tools and tail: `completed`,
+   * `failed`, `cancelled`, or `malformed` (a response the model could not
+   * form, answered with a corrective turn). What is decided afterwards, and
+   * fails, fails the run, never the settled step.
+   */
+  readonly onStepSettled?: (step: number, status: StepStatus) => Effect.Effect<void, never, R>
   /** When true, a model stop cannot substitute for host completion. A bounded
    * corrective turn asks for the missing actions; maxSteps still applies. */
   readonly requireCompletion?: boolean
@@ -114,11 +125,15 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
   /**
    * Incremental persistence: called with each turn's appended messages
    * (model responses AND synthetic correctives) the moment they land, so a
-   * session is restorable to its last completed turn after a crash. Returns
-   * the absolute store positions aligned with the input.
+   * session is restorable to its last completed turn after a crash, with
+   * the step they belong to: a step's response and tool results are its
+   * own, recorded before it settles; the loop's own messages (a malformed
+   * corrective, a nudge, a steer) belong to the next step, which reads
+   * them. Returns the absolute store positions aligned with the input.
    */
   readonly onTail?: (
     messages: ReadonlyArray<AgentMessage>,
+    step: number,
   ) => Effect.Effect<ReadonlyArray<number>, never, R>
   /**
    * The WITHIN-RUN compaction seam, consulted at turn boundaries while the
@@ -376,7 +391,12 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
     // Resolve the toolkit's handlers once — they're stable across turns.
     const toolkit = yield* options.toolkit
 
-    const step = (state: LoopState) =>
+    /**
+     * A step's execution: its call, its tools and its tail, recorded under
+     * it. Its exit is the step's status (`onStepSettled`); a response that
+     * does not decode comes back `Malformed`, for the loop to answer.
+     */
+    const execute = (state: LoopState) =>
       Effect.gen(function* () {
         yield* onEvent({ type: "turn_start", turnIndex: state.turnIndex })
         const active: ReadonlyArray<string> = options.activeTools === undefined ? Object.keys(toolkit.tools) : (yield* options.activeTools().pipe(Effect.provide(eventContext))).map(String)
@@ -571,41 +591,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
 
         // A response that doesn't decode — a hallucinated tool NAME or a
         // wrong-shaped param set (both fail inside generateText, before any
-        // handler runs, so `failureMode: "return"` never sees them): feed the
-        // decode error back as a corrective turn and retry, bounded.
-        if (outcome._tag === "malformed") {
-          const streak = state.malformedStreak + 1
-          if (streak >= MAX_MALFORMED) return yield* Effect.fail(outcome.err)
-          const reason = outcome.err.reason
-          const desc = clip("description" in reason ? reason.description : reason.message, 600)
-          yield* Effect.logWarning(`recovering from a malformed response: ${desc}`)
-          yield* Metric.update(tagged(engineCorrections, { "engine.kind": "malformed" }), 1)
-          const corrective: AgentMessage = {
-            role: "user",
-            content: options.correctives?.malformed?.(toolNames, desc) ??
-              `Your previous reply could not be parsed: ${desc}\n\n` +
-              `This usually means you called a tool that doesn't exist or used the ` +
-              `wrong argument shape. The only tools available are: ${toolNames.join(", ")}. ` +
-              `Reply again using one of those tools, or plain text if you're done.`,
-          }
-          yield* options.onTail?.([corrective]) ?? Effect.void
-          // A corrective turn is a turn: the step cap counts it too, so a
-          // malformed streak can never carry a run past its ceiling.
-          const recoveredIndex = state.turnIndex + 1
-          const capped = recoveredIndex >= maxSteps
-          yield* capped
-            ? Effect.logWarning(`step cap reached while recovering from a malformed response`)
-            : Effect.void
-          return {
-            ...state,
-            messages: [...state.messages, corrective],
-            newTail: [...state.newTail, corrective],
-            turnIndex: recoveredIndex,
-            malformedStreak: streak,
-            corrections: state.corrections + 1,
-            phase: capped ? "step-cap" : state.phase,
-          } satisfies LoopState
-        }
+        // handler runs, so `failureMode: "return"` never sees them): the step
+        // settles `malformed`, and the loop answers it (`recover`).
+        if (outcome._tag === "malformed") return { _tag: "Malformed" as const, err: outcome.err, toolNames }
 
         // Mint deterministic ids for id-less tool calls BEFORE the content
         // fans out into events + persisted messages (durable UI identity).
@@ -623,7 +611,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         const tail = planned ? responseToAgentMessages(content) : withUsageOnAssistant(responseToAgentMessages(content), usage, model)
         // Persist BEFORE the events fire so the assistant message's durable
         // position is known when its event is emitted (UIs key on it).
-        const positions = yield* options.onTail?.(tail) ?? Effect.succeed([])
+        const positions = yield* options.onTail?.(tail, state.turnIndex) ?? Effect.succeed([])
         const assistantAt = tail.findIndex((m) => m.role === "assistant")
         const assistantPosition =
           assistantAt >= 0 ? Option.fromNullishOr(positions[assistantAt]) : Option.none<number>()
@@ -647,104 +635,181 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
         yield* Effect.forEach(toolResults, (tr) => Metric.update(tagged(engineToolCalls, {
           "engine.tool": tr.toolName, "engine.ok": tr.ok ? "true" : "false",
         }), 1), { concurrency: 1 })
-
-        // --- Degenerate-loop circuit breaker ---
-        // A turn whose progress signature was already seen produced nothing
-        // new; count consecutive stale turns, nudge once, then force-stop.
-        const sig = progressSignature(content, pollable)
-        const progress = foldProgress(state, sig)
-        const { stale, seen } = progress
-        const nudge: ReadonlyArray<AgentMessage> = progress.nudge
-          ? [{ role: "user", content: DEGENERATE_REPEAT_NUDGE }]
-          : []
-        yield* nudge.length > 0 ? (options.onTail?.(nudge) ?? Effect.void) : Effect.void
-        yield* nudge.length > 0
-          ? Metric.update(tagged(engineCorrections, { "engine.kind": "degenerate-nudge" }), 1)
-          : Effect.void
-
-        const finalText = text.length > 0 ? text : state.finalText
-        const turnIndex = state.turnIndex + 1
-        const completed = yield* options.isComplete?.() ?? Effect.succeed(false)
-        const requireMore = !completed && options.requireCompletion === true
-        const completionNudge: ReadonlyArray<AgentMessage> = requireMore && toolCalls.length === 0
-          ? [{ role: "user", content: options.correctives?.incomplete ?? "The host reports that required actions are incomplete. Your ordinary text is not a delivered result. Complete the requested work using the available tools, or use an explicit supported failure/clarification action if the evidence is missing." }]
-          : []
-        yield* completionNudge.length > 0 ? (options.onTail?.(completionNudge) ?? Effect.void) : Effect.void
-        const wantsMore = !completed && (requireMore || outcome.finishReason === "tool-calls" && toolCalls.length > 0)
-        const broke = progress.broke
-        const phase = nextPhase({ broke, wantsMore, turnIndex, maxSteps })
-        yield* broke
-          ? Effect.logWarning(`breaking a degenerate tool-call loop after ${stale} stale turns`)
-          : Effect.void
-
-        // --- Within-run compaction (turn boundaries only) ---
-        // Consulted only while the run CONTINUES; the buffer rewrite is
-        // load-side (persisted history and `newTail` untouched). A plan that
-        // violates the assistant-boundary contract is ignored, never applied.
-        const nextMessages = [...state.messages, ...tail, ...nudge, ...completionNudge]
-        const plan =
-          phase === "continue" && options.compact !== undefined
-            ? yield* options.compact(nextMessages, usage)
-            : Option.none<CompactionPlan>()
-        const applied = Option.filter(
-          plan,
-          (p) =>
-            p.keepFrom > 0 &&
-            p.keepFrom < nextMessages.length &&
-            nextMessages[p.keepFrom]?.role === "assistant",
-        )
-        yield* Option.match(applied, {
-          onNone: () => Effect.void,
-          onSome: (p) =>
-            onEvent({
-              type: "compaction",
-              turnIndex: state.turnIndex,
-              tokens: usage.inputTokens,
-              kept: nextMessages.length - p.keepFrom,
-            }),
-        })
-
-        // --- Mid-turn steering (turn boundaries, running runs only) ---
-        // Consulted AFTER the fold so a steering message can never be
-        // compacted away before the model sees it.
-        const steered =
-          phase === "continue" && options.pendingInput !== undefined
-            ? yield* options.pendingInput()
-            : Option.none<string>()
-        const steerTail: ReadonlyArray<AgentMessage> = Option.match(steered, {
-          onNone: () => [],
-          onSome: (text) => [{ role: "user", content: text }],
-        })
-        yield* steerTail.length > 0 ? (options.onTail?.(steerTail) ?? Effect.void) : Effect.void
-
         return {
-          messages: [
-            ...Option.match(applied, {
-              onNone: () => nextMessages,
-              onSome: (p) => [handoffToMessage(p.summary), ...nextMessages.slice(p.keepFrom)],
-            }),
-            ...steerTail,
-          ],
-          newTail: [...state.newTail, ...tail, ...nudge, ...completionNudge, ...steerTail],
-          finalText: broke && finalText.length === 0 ? DEGENERATE_LOOP_STOP : finalText,
-          turnIndex,
-          malformedStreak: 0,
-          seen,
-          staleTurns: stale,
-          usage: addUsage(state.usage, usage),
-          lastUsage: planned ? state.lastUsage : Option.some(usage),
-          phase,
-          toolCalls: state.toolCalls + toolCalls.length,
-          toolFailures: state.toolFailures + toolResults.filter((tr) => !tr.ok).length,
-          corrections: state.corrections + (nudge.length > 0 ? 1 : 0),
+          _tag: "Responded" as const,
+          content, finishReason: outcome.finishReason, usage, tail, text, toolCalls, toolResults, planned,
           streamingHealthy: outcome.streamingHealthy,
-        } satisfies LoopState
-      }).pipe(
-        Effect.onExit((exit) => onEvent({ type: "turn_end", turnIndex: state.turnIndex, status: Exit.isSuccess(exit) ? "completed" : Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "failed" })),
+        }
+      })
+
+    type Executed = Effect.Success<ReturnType<typeof execute>>
+    type Malformed = Extract<Executed, { readonly _tag: "Malformed" }>
+    type Responded = Extract<Executed, { readonly _tag: "Responded" }>
+
+    /** The step's status: its execution's exit, nothing decided after it. */
+    const statusOf = (exit: Exit.Exit<Executed, unknown>): StepStatus => Exit.match(exit, {
+      onSuccess: (executed): StepStatus => executed._tag === "Malformed" ? "malformed" : "completed",
+      onFailure: (cause): StepStatus => Cause.hasInterruptsOnly(cause) ? "cancelled" : "failed",
+    })
+    const settle = (step: number, status: StepStatus) =>
+      (options.onStepSettled?.(step, status) ?? Effect.void).pipe(Effect.andThen(onEvent({ type: "turn_end", turnIndex: step, status })))
+
+    /**
+     * After a malformed step: feed the decode error back as a corrective
+     * turn and retry, bounded. The corrective is what the next step reads,
+     * so it is recorded under that step.
+     */
+    const recover = (state: LoopState, malformed: Malformed) => Effect.gen(function* () {
+      const streak = state.malformedStreak + 1
+      if (streak >= MAX_MALFORMED) return yield* Effect.fail(malformed.err)
+      const reason = malformed.err.reason
+      const desc = clip("description" in reason ? reason.description : reason.message, 600)
+      yield* Effect.logWarning(`recovering from a malformed response: ${desc}`)
+      yield* Metric.update(tagged(engineCorrections, { "engine.kind": "malformed" }), 1)
+      const corrective: AgentMessage = {
+        role: "user",
+        content: options.correctives?.malformed?.(malformed.toolNames, desc) ??
+          `Your previous reply could not be parsed: ${desc}\n\n` +
+          `This usually means you called a tool that doesn't exist or used the ` +
+          `wrong argument shape. The only tools available are: ${malformed.toolNames.join(", ")}. ` +
+          `Reply again using one of those tools, or plain text if you're done.`,
+      }
+      // A corrective turn is a turn: the step cap counts it too, so a
+      // malformed streak can never carry a run past its ceiling.
+      const recoveredIndex = state.turnIndex + 1
+      yield* options.onTail?.([corrective], recoveredIndex) ?? Effect.void
+      const capped = recoveredIndex >= maxSteps
+      yield* capped
+        ? Effect.logWarning(`step cap reached while recovering from a malformed response`)
+        : Effect.void
+      return {
+        ...state,
+        messages: [...state.messages, corrective],
+        newTail: [...state.newTail, corrective],
+        turnIndex: recoveredIndex,
+        malformedStreak: streak,
+        corrections: state.corrections + 1,
+        phase: capped ? "step-cap" : state.phase,
+      } satisfies LoopState
+    })
+
+    /**
+     * After a step that settled with a response: the breaker, completion,
+     * compaction and steering. What they append (a nudge, a steer) is the
+     * next step's input, recorded under it.
+     */
+    const decide = (state: LoopState, responded: Responded) => Effect.gen(function* () {
+      const { content, usage, tail, text, toolCalls, toolResults } = responded
+      const turnIndex = state.turnIndex + 1
+
+      // --- Degenerate-loop circuit breaker ---
+      // A turn whose progress signature was already seen produced nothing
+      // new; count consecutive stale turns, nudge once, then force-stop.
+      const sig = progressSignature(content, pollable)
+      const progress = foldProgress(state, sig)
+      const { stale, seen } = progress
+      const nudge: ReadonlyArray<AgentMessage> = progress.nudge
+        ? [{ role: "user", content: DEGENERATE_REPEAT_NUDGE }]
+        : []
+      yield* nudge.length > 0 ? (options.onTail?.(nudge, turnIndex) ?? Effect.void) : Effect.void
+      yield* nudge.length > 0
+        ? Metric.update(tagged(engineCorrections, { "engine.kind": "degenerate-nudge" }), 1)
+        : Effect.void
+
+      const finalText = text.length > 0 ? text : state.finalText
+      const completed = yield* options.isComplete?.(state.turnIndex) ?? Effect.succeed(false)
+      const requireMore = !completed && options.requireCompletion === true
+      const completionNudge: ReadonlyArray<AgentMessage> = requireMore && toolCalls.length === 0
+        ? [{ role: "user", content: options.correctives?.incomplete ?? "The host reports that required actions are incomplete. Your ordinary text is not a delivered result. Complete the requested work using the available tools, or use an explicit supported failure/clarification action if the evidence is missing." }]
+        : []
+      yield* completionNudge.length > 0 ? (options.onTail?.(completionNudge, turnIndex) ?? Effect.void) : Effect.void
+      const wantsMore = !completed && (requireMore || responded.finishReason === "tool-calls" && toolCalls.length > 0)
+      const broke = progress.broke
+      const phase = nextPhase({ broke, wantsMore, turnIndex, maxSteps })
+      yield* broke
+        ? Effect.logWarning(`breaking a degenerate tool-call loop after ${stale} stale turns`)
+        : Effect.void
+
+      // --- Within-run compaction (turn boundaries only) ---
+      // Consulted only while the run CONTINUES; the buffer rewrite is
+      // load-side (persisted history and `newTail` untouched). A plan that
+      // violates the assistant-boundary contract is ignored, never applied.
+      const nextMessages = [...state.messages, ...tail, ...nudge, ...completionNudge]
+      const plan =
+        phase === "continue" && options.compact !== undefined
+          ? yield* options.compact(nextMessages, usage)
+          : Option.none<CompactionPlan>()
+      const applied = Option.filter(
+        plan,
+        (p) =>
+          p.keepFrom > 0 &&
+          p.keepFrom < nextMessages.length &&
+          nextMessages[p.keepFrom]?.role === "assistant",
+      )
+      yield* Option.match(applied, {
+        onNone: () => Effect.void,
+        onSome: (p) =>
+          onEvent({
+            type: "compaction",
+            turnIndex: state.turnIndex,
+            tokens: usage.inputTokens,
+            kept: nextMessages.length - p.keepFrom,
+          }),
+      })
+
+      // --- Mid-turn steering (turn boundaries, running runs only) ---
+      // Consulted AFTER the fold so a steering message can never be
+      // compacted away before the model sees it.
+      const steered =
+        phase === "continue" && options.pendingInput !== undefined
+          ? yield* options.pendingInput()
+          : Option.none<string>()
+      const steerTail: ReadonlyArray<AgentMessage> = Option.match(steered, {
+        onNone: () => [],
+        onSome: (text) => [{ role: "user", content: text }],
+      })
+      yield* steerTail.length > 0 ? (options.onTail?.(steerTail, turnIndex) ?? Effect.void) : Effect.void
+
+      return {
+        messages: [
+          ...Option.match(applied, {
+            onNone: () => nextMessages,
+            onSome: (p) => [handoffToMessage(p.summary), ...nextMessages.slice(p.keepFrom)],
+          }),
+          ...steerTail,
+        ],
+        newTail: [...state.newTail, ...tail, ...nudge, ...completionNudge, ...steerTail],
+        finalText: broke && finalText.length === 0 ? DEGENERATE_LOOP_STOP : finalText,
+        turnIndex,
+        malformedStreak: 0,
+        seen,
+        staleTurns: stale,
+        usage: addUsage(state.usage, usage),
+        lastUsage: responded.planned ? state.lastUsage : Option.some(usage),
+        phase,
+        toolCalls: state.toolCalls + toolCalls.length,
+        toolFailures: state.toolFailures + toolResults.filter((tr) => !tr.ok).length,
+        corrections: state.corrections + (nudge.length > 0 ? 1 : 0),
+        streamingHealthy: responded.streamingHealthy,
+      } satisfies LoopState
+    })
+
+    /**
+     * One step, in two parts: it executes (the call, the tools, the tail)
+     * and settles once with that exit's status; then the loop decides what
+     * follows. A failure in the decision fails the run, not the step.
+     */
+    const step = (state: LoopState) =>
+      execute(state).pipe(
+        Effect.onExit((exit) => settle(state.turnIndex, statusOf(exit))),
+        Effect.flatMap((executed): Effect.Effect<LoopState, AiError.AiError, R> => Match.valueTags(executed, {
+          Malformed: (malformed) => recover(state, malformed),
+          Responded: (responded) => decide(state, responded),
+        })),
         Effect.provideService(CurrentAgentStep, Option.some(state.turnIndex)),
         Effect.withSpan("engine.turn", {
-        attributes: { "engine.turn": state.turnIndex, "engine.step": state.turnIndex + 1 },
-      }))
+          attributes: { "engine.turn": state.turnIndex, "engine.step": state.turnIndex + 1 },
+        }))
 
     /** Steps until the loop leaves `continue` (Effect runs the recursion stack-safely). */
     type Settled = LoopState & { readonly phase: Exclude<LoopState["phase"], "continue"> }

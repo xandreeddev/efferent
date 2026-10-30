@@ -1,10 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Response, Tool } from "effect/ai"
-import { Cause, Context, Effect, Option, Ref, Stream } from "effect"
+import { Cause, Context, Effect, Exit, Option, Ref, Stream } from "effect"
 import { addUsage, ConversationId, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, plannedCallIdOf, reasonOf, responseText, responseToAgentMessages, responseToolCalls, RunId, RunOrdinal, StepLoop, stepLoopConformance, toPromptMessages, TurnClosed, withToolCallIds, zeroUsage } from "@xandreed/core"
-import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
+import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, StepStatus, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
+
+/** A response the model could not form: its output, or a call's parameters, do not decode, or it names no tool. */
+const isMalformed = (error: unknown): boolean => AiError.isAiError(error) &&
+  ["InvalidOutputError", "ToolParameterValidationError", "ToolNotFoundError"].includes(error.reason._tag)
 
 /**
  * The smallest loop that honours the StepLoop contract, written directly on
@@ -55,12 +59,21 @@ const minimalLoop = StepLoop.of({
           Effect.provideService(CurrentAgentStep, Option.some(index)),
         )
       })
-      const response = yield* attempt.pipe(
+      const answered = yield* attempt.pipe(
         Effect.catch((error) => !Option.isSome(planned) && AiError.isAiError(error) && error.reason._tag === "InvalidRequestError" && /image/i.test(error.reason.message)
           ? request.onMediaRejected(error.reason.message).pipe(Effect.flatMap((retry) => retry ? attempt : Effect.fail(error)))
           : Effect.fail(error)),
+        Effect.map(Option.some),
+        Effect.catch((error) => isMalformed(error) ? Effect.succeed(Option.none()) : Effect.fail(error)),
         Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
       )
+      // A malformed step ends as such, without a verdict; its corrective is the next step's.
+      if (Option.isNone(answered)) {
+        yield* request.events.publish({ _tag: "step.ended", step: index, run, status: "malformed", results: [] })
+        yield* request.record(index + 1, [{ role: "user", content: "Your reply could not be parsed: call a tool that exists, or answer in text." }])
+        return yield* step(index + 1, text, usage)
+      }
+      const response = answered.value
       // A provider's id-less calls get ids of this run's own.
       const content: ReadonlyArray<Response.AnyPart> = withToolCallIds(response.content, index, request.run)
       const entries = yield* request.record(index, responseToAgentMessages(content))
@@ -92,6 +105,41 @@ const conform = (name: string, loop: Context.Service.Shape<typeof StepLoop>) => 
 
 conform("StepLoopLive", StepLoop.of({ ...STEP_LOOP, run: runSteps }))
 conform("a minimal loop", minimalLoop)
+
+/**
+ * `runSteps` made careless, as a loop that ends its steps in its completion
+ * check would be: a step ends when its completion is evaluated, with that
+ * evaluation's exit, a malformed step ends `completed`, and the loop's own
+ * messages are recorded under the step it is in.
+ */
+const carelessLoop = StepLoop.of({
+  id: "careless", version: "1",
+  run: (request) => {
+    const ended = (step: number, status: StepStatus) => request.events.publish({ _tag: "step.ended", step, run: request.run.ordinal, status, results: [] })
+    const endOnce = (event: Extract<TurnEvent, { readonly _tag: "step.ended" }>) =>
+      event.status === "completed" ? Effect.void : request.events.publish(event.status === "malformed" ? { ...event, status: "completed" } : event)
+    return runSteps({
+      ...request,
+      events: { ...request.events, publish: (event) => event._tag === "step.ended" ? endOnce(event) : request.events.publish(event) },
+      completion: (info) => request.completion(info).pipe(Effect.onExit((exit) => ended(info.stepIndex, Exit.isSuccess(exit) ? "completed" : "failed").pipe(Effect.orDie))),
+      record: (step, tail) => Effect.service(CurrentAgentStep).pipe(Effect.flatMap((current) => request.record(Option.getOrElse(current, () => step), tail))),
+    })
+  },
+})
+
+describe("a loop that ends its steps in its completion check", () => {
+  const checks = stepLoopConformance(carelessLoop)
+  test.each([
+    "ends each step once, and records nothing under a step after its step.ended (correctives, nudges and steers included)",
+    "a completion that fails after a completed step fails the run and leaves that step completed",
+    "a malformed step ends malformed, with no completion.evaluated, and the run goes on",
+  ])("fails the kit's check: %s", async (name) => {
+    const check = checks.find((candidate) => candidate.name === name)
+    expect(check).toBeDefined()
+    const exit = await Effect.runPromise(Effect.result(check?.run ?? Effect.void))
+    expect(exit._tag).toBe("Failure")
+  })
+})
 
 /** One run of `runSteps` over a model, no tools, a record that keeps nothing: the bus events and the trace content switch the model saw. */
 const runWith = (model: LanguageModel.LanguageModel, options: {
@@ -185,8 +233,8 @@ describe("runSteps failures", () => {
     expect(failed._tag === "HarnessError" ? failed.cause : null).toBe(down)
   })
 
-  // `step.started` reaches the loop as a typed failure, `assistant.message` as a defect behind its `never` callback.
-  test.each(["step.started", "assistant.message"] as const)("a turn's failure on %s (the writer's TurnClosed) fails the run with its own tag, not loop.failed", async (tag) => {
+  // `step.started` reaches the loop as a typed failure, `assistant.message` and `step.ended` as a defect behind their `never` callbacks.
+  test.each(["step.started", "assistant.message", "step.ended"] as const)("a turn's failure on %s (the writer's TurnClosed) fails the run with its own tag, not loop.failed", async (tag) => {
     const closed = new TurnClosed({ session: ConversationId.make("00000000-0000-4000-8000-0000000000d1"), turn: 1, reason: "cancelled" })
     const failed = await Effect.runPromise(Effect.flip(Effect.gen(function* () {
       const reads = yield* Ref.make<ReadonlyArray<boolean>>([])

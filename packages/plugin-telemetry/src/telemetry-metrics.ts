@@ -11,7 +11,7 @@ import { Metric } from "effect"
  * |---|---|---|
  * | `efferent.llm.tokens` | `efferent.model`, `efferent.token.kind` | tokens of each response, by billed kind (`input`, `cache_read`, `cache_write`, `reasoning`, `output`; they sum to the response's total) |
  * | `efferent.llm.cost` | `efferent.model` | what each priced response cost, in the prices' currency |
- * | `efferent.steps` | `efferent.step.status` | steps of the step loop, by how they ended (`completed`, `failed`, `cancelled`) |
+ * | `efferent.steps` | `efferent.step.status` | steps of the step loop, by how they ended (`completed`, `failed`, `cancelled`, or `malformed`: a response the model could not form, answered with a corrective turn) |
  * | `efferent.tool.calls` | `efferent.tool`, `efferent.ok` | tool calls whose handler ran, by result |
  * | `efferent.tool.duration` | `efferent.tool`, `efferent.ok` | those calls' time in milliseconds, from `tool.started` to the handler's exit |
  * | `efferent.tool.refused` | `efferent.tool`, `efferent.refusal.reason` | calls the tool registry refused before the handler ran |

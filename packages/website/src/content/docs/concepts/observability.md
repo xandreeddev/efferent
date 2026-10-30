@@ -221,7 +221,7 @@ spans), so series stay few:
 | --- | --- | --- |
 | `efferent.llm.tokens` | `efferent.model`, `efferent.token.kind` | each response's tokens by billed kind: `input` (uncached), `cache_read`, `cache_write`, `reasoning`, `output` (without reasoning); they sum to the response's `totalTokens` |
 | `efferent.llm.cost` | `efferent.model` | each priced response's cost, in the prices' currency |
-| `efferent.steps` | `efferent.step.status` | steps of the step loop, by how they ended |
+| `efferent.steps` | `efferent.step.status` | steps of the step loop, by how they ended: `completed`, `failed`, `cancelled`, or `malformed` (a response the model could not form, answered with a corrective turn) |
 | `efferent.tool.calls` | `efferent.tool`, `efferent.ok` | tool calls whose handler ran |
 | `efferent.tool.duration` | `efferent.tool`, `efferent.ok` | those calls' time, in milliseconds |
 | `efferent.tool.refused` | `efferent.tool`, `efferent.refusal.reason` | calls the registry refused before the handler ran |
