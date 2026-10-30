@@ -8,7 +8,7 @@ import type { WorkspaceToolContext } from "./read-tools.adapter.js"
 import { compileProtect, openWorkspace } from "./workspace-path.entity.functions.js"
 import { WORKSPACE_PERMISSIONS } from "./workspace-tools.entity.js"
 import type { WorkspaceSkillName, WorkspaceToolName, WorkspaceToolsConfig } from "./workspace-tools.entity.js"
-import { environmentText, skillOfTool } from "./workspace-tools.entity.functions.js"
+import { bashEnvironment, environmentText, skillOfTool } from "./workspace-tools.entity.functions.js"
 import { editTool, writeTool } from "./write-tools.adapter.js"
 
 /** The tools in the order they are registered (and listed in their skills). */
@@ -41,6 +41,8 @@ const invalid = (message: string) => new HarnessError({ code: "config.options", 
  * decoded, so a graph refuses them before activating anything). Tools are never
  * given guidance as skill instructions: it is in their descriptions and the
  * section, since an always-on skill's instructions never reach the model.
+ * Ripgrep requires FileSystem and Bash to see the same file tree; a host
+ * pairing an in-memory file system with a machine shell selects builtin.
  *
  * @public
  */
@@ -50,21 +52,33 @@ export const workspaceTools = Effect.fnUntraced(function* (config: WorkspaceTool
   const badExclude = config.exclude.find((glob) => Result.isFailure(compileGlob(glob, { dot: true })))
   if (badExclude !== undefined) return yield* Effect.fail(invalid(`exclude glob ${badExclude} is not usable`))
   const locks = yield* RcMap.make({ lookup: (_path: string) => Semaphore.make(1), idleTimeToLive: "1 minute" })
-  const hasBash = Option.isSome(yield* Effect.serviceOption(Bash))
+  const bash = yield* Effect.serviceOption(Bash)
+  const hasBash = Option.isSome(bash)
+  const probe = config.tools.includes("grep") && config.grepEngine !== "builtin"
+    ? yield* Option.match(bash, {
+      onNone: () => Effect.succeed(false),
+      onSome: (service) => service.exec("rg --version", { cwd: "/", timeoutMs: 5_000, ...bashEnvironment(config, Option.none()) }).pipe(
+        Effect.map((result) => result.termination === "exit" && Option.contains(result.exitCode, 0)),
+        Effect.catch((error) => Effect.logDebug("grep: ripgrep probe failed", error).pipe(Effect.as(false))),
+      ),
+    }) : false
+  if (config.tools.includes("grep") && config.grepEngine === "ripgrep" && !probe) return yield* Effect.fail(invalid("grepEngine ripgrep requires rg on the Bash service PATH"))
+  if (config.tools.includes("grep") && config.grepEngine === "auto" && !probe) yield* Effect.logDebug("grep: ripgrep is unavailable; using the builtin engine")
+  const resolved: WorkspaceToolsConfig = { ...config, grepEngine: probe ? "ripgrep" : "builtin" }
   const wanted = ORDER.filter((tool) => config.tools.includes(tool))
   if (wanted.includes("bash") && !hasBash) {
     yield* Effect.logWarning("@xandreed/plugin-workspace/tools: there is no Bash service, so the bash tool and the workspace.shell skill are left out (add localSystemPlugin, or a Bash, to have them)")
   }
   const enabled = wanted.filter((tool) => tool !== "bash" || hasBash)
-  const context: WorkspaceToolContext = { config, path, protect, locks }
+  const context: WorkspaceToolContext = { config: resolved, path, protect, locks }
   // The section reads the turn's workspace as the tools do, so it declares the same services.
   const section = definePromptSection({
-    id: "workspace.environment", version: "2", tier: "session", order: config.sectionOrder,
+    id: "workspace.environment", version: "3", tier: "session", order: config.sectionOrder,
     requires: WORKSPACE_SERVICES,
     render: () => openWorkspace(path).pipe(
       Effect.map((access) => access.root),
       Effect.catch(() => SessionEnvironment.pipe(Effect.map((environment) => path.resolve(environment.workspace)))),
-      Effect.map((root) => Option.some(environmentText(root, config, enabled))),
+      Effect.map((root) => Option.some(environmentText(root, resolved, enabled))),
     ),
   })
   return defineCapability({

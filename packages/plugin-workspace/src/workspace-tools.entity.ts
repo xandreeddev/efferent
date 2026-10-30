@@ -64,8 +64,11 @@ const Glob = Schema.String.check(Schema.makeFilter((glob: string) =>
  *   and the tail of a command's output `bash` keeps.
  * - `lsEntries`, `findResults`, `grepMatches`: the most entries, paths and
  *   matching lines the model gets (a call may ask for fewer).
- * - `grepLineChars`: lines are cut to this many characters before `grep`
- *   matches them, and shown cut.
+ * - `grepLineChars`: the displayed line width; builtin also cuts before matching.
+ * - `grepEngine`: auto probes for rg once, falling back to builtin; ripgrep
+ *   requires it. `grepTimeoutMs` bounds rg commands; the synchronous builtin
+ *   engine is not time-bounded. `grepIgnoreFiles` honours ignore files in rg
+ *   only (false searches ignored files too).
  * - `maxFileBytes`: the largest file `read`, `edit` and `grep` load, and
  *   the most of a command's output `bash` saves.
  * - `readImages`: `read` returns a PNG, JPEG, GIF or WebP image (by its
@@ -109,6 +112,9 @@ export const WorkspaceToolsConfig = Schema.Struct({
   findResults: between(1, 100_000),
   grepMatches: between(1, 10_000),
   grepLineChars: between(16, 100_000),
+  grepEngine: Schema.Literals(["auto", "ripgrep", "builtin"]),
+  grepTimeoutMs: atLeast(1),
+  grepIgnoreFiles: Schema.Boolean,
   maxFileBytes: between(1_024, 1_073_741_824),
   readImages: Schema.Boolean,
   fuzzyEdit: Schema.Boolean,
@@ -141,6 +147,9 @@ export const workspaceToolsDefaults: WorkspaceToolsConfig = {
   findResults: 1_000,
   grepMatches: 100,
   grepLineChars: 500,
+  grepEngine: "auto",
+  grepTimeoutMs: 30_000,
+  grepIgnoreFiles: false,
   maxFileBytes: 33_554_432,
   readImages: true,
   fuzzyEdit: true,
@@ -318,7 +327,9 @@ export type GrepUnreadable = typeof GrepUnreadable.Type
  * how many lines matched and in how many files, whether it stopped at the
  * limit, how many files it skipped (binary, larger than `maxFileBytes`, or
  * resolving outside the workspace), and the files it could not read
- * (`unreadable`, empty in results stored before it was recorded).
+ * (`unreadable`, empty in results stored before it was recorded). `timedOut`
+ * marks an incomplete ripgrep search (false in older results). Ripgrep counts
+ * only binary skips it reports; files pruned by its walk/size limit are not counted.
  *
  * @public
  */
@@ -331,6 +342,7 @@ export const GrepResult = Schema.Struct({
   truncated: Schema.Boolean,
   skipped: Schema.Int,
   unreadable: Schema.Array(GrepUnreadable).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
+  timedOut: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
 })
 export type GrepResult = typeof GrepResult.Type
 

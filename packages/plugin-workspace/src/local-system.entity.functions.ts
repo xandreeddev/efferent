@@ -36,6 +36,13 @@ export const fsReasonOf = (error: unknown): FsReason => Option.match(errorCodeOf
   onSome: (code) => reasons.get(code) ?? "Io",
 })
 
+/** POSIX os error numbers from rg diagnostics (Linux and macOS); other failures are I/O. */
+const rgReasons: ReadonlyMap<number, FsReason> = new Map([
+  [1, "Permission"], [13, "Permission"], [2, "NotFound"], [20, "NotDirectory"],
+  [21, "IsDirectory"], [22, "Invalid"], [36, "Invalid"], [40, "Invalid"], [62, "Invalid"], [63, "Invalid"],
+])
+export const rgReasonOf = (code: number): FsReason => rgReasons.get(code) ?? "Io"
+
 /**
  * Whether a write to a command's standard input failed only because the
  * command no longer reads it: it exited or closed its input first (`EPIPE`),

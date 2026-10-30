@@ -98,12 +98,19 @@ A coding turn reads and edits many times: raise tool discovery's
 
 These checks stop a model's mistakes. They do not contain a hostile one:
 `bash` runs any command the host process may run, and a path can change
-between its check and its use. Nor do they bound how long `grep` takes: its
-regular expression runs synchronously in the host process, and stopping the
-turn cannot interrupt it. Lines are cut to 500 characters before matching,
-and a pattern that repeats a repeating group (`(a+)+`) is refused, but
-other backtracking patterns (`(a|a)*`) can still hold the process on a
-hostile line. To run untrusted work, give the agent a
+between its check and its use. `grepEngine: "auto"` probes for `rg` once through `Bash` and uses it when
+available, including on a remote or container-backed Bash/FileSystem pair.
+Both services must see the same tree; select `"builtin"` for an in-memory or
+different FileSystem.
+`"ripgrep"` requires it; `"builtin"` keeps the JavaScript engine. Ripgrep uses
+its default syntax (no lookaround or backreferences), gets patterns on stdin,
+ignores ripgrep config files and stops after `grepTimeoutMs` (30 000 ms).
+`grepIgnoreFiles: true` honours `.gitignore`, `.ignore` and other ignore files;
+otherwise they are bypassed. Timeouts return partial results with `timedOut`
+and a note in grep view version 4. Builtin grep is not time-bounded: a turn
+cannot interrupt its synchronous expression. It refuses nested repetition but
+other backtracking patterns can still hold the process on a hostile line.
+To run untrusted work, give the agent a
 `FileSystem` and `Bash` that live in a container or a VM; the
 [conformance kits](/docs/concepts/conformance) check such adapters.
 
@@ -113,7 +120,8 @@ hostile line. To run untrusted work, give the agent a
   `[Showing lines 1-2000 of 5400. Use offset=2001 to continue.]`.
 - `ls`, `find` and `grep` stop at 500 entries, 1000 paths and 100 matching
   lines, and what `find` and `grep` show is cut to 2000 lines or 50 KB.
-  `grep` cuts lines to 500 characters before matching them.
+  `grep` shows lines cut to 500 characters. Ripgrep searches the whole line;
+  builtin cuts it before matching.
 - A file that is not valid UTF-8 is shown with U+FFFD in place of the bytes
   that are not, and a notice; `edit` refuses it.
 - `bash` keeps the last 2000 lines or 50 KB of a command's output. When there
@@ -184,7 +192,10 @@ The options are flat; every one has a default
 | `exclude` | `node_modules`, `.git`, `.efferent` | names (or, with a `/`, paths from the root) `find` and `grep` skip |
 | `maxLines`, `maxBytes` | 2000, 51 200 | the most `read`, `find` and `grep` show, and the tail `bash` keeps |
 | `lsEntries`, `findResults`, `grepMatches` | 500, 1000, 100 | caps on `ls`, `find` and `grep` |
-| `grepLineChars` | 500 | the width `grep` cuts lines to |
+| `grepLineChars` | 500 | displayed width; builtin also cuts before matching |
+| `grepEngine` | `"auto"` | probe for rg once; `"ripgrep"` requires it, `"builtin"` selects JavaScript |
+| `grepTimeoutMs` | 30000 | ripgrep search timeout |
+| `grepIgnoreFiles` | `false` | honour ignore files when using ripgrep |
 | `maxFileBytes` | 32 MB | the largest file `read`, `edit` and `grep` load (an image too), and the most of an output `bash` saves |
 | `readImages` | `true` | `read` returns PNG, JPEG, GIF and WebP files as images |
 | `fuzzyEdit` | `true` | the normalised fallback of `edit` |

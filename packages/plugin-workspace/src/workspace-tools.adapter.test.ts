@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises"
+import { spawnSync } from "node:child_process"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Option, Schema, Stream } from "effect"
@@ -37,7 +38,7 @@ const bench = (options: Partial<WorkspaceToolsConfig> = {}, planted: Readonly<Re
   const root = yield* temporary
   const outside = yield* temporary
   const bash = yield* Effect.service(Bash).pipe(Effect.provide(BashLive({ parentEnv: { ...process.env, ...planted }, exitGraceMs: 100 })))
-  const capability = yield* workspaceTools({ ...workspaceToolsDefaults, ...options }).pipe(Effect.provideService(Bash, bash))
+  const capability = yield* workspaceTools({ ...workspaceToolsDefaults, grepEngine: "builtin", ...options }).pipe(Effect.provideService(Bash, bash))
   const services = Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: root }), Context.add(Bash, bash))
   return { root, outside, capability, call: caller(capability, services) }
 })
@@ -373,21 +374,23 @@ describe("edit", () => {
   })
 })
 
+const tree = (root: string, outside: string) => Effect.gen(function* () {
+  yield* io(() => mkdir(join(root, "src/lib"), { recursive: true }))
+  yield* io(() => mkdir(join(root, "node_modules/dep"), { recursive: true }))
+  yield* io(() => mkdir(join(root, ".github")))
+  yield* io(() => writeFile(join(root, "src/main.ts"), "import { helper } from './lib/helper'\n// TODO: tidy\nhelper()\n"))
+  yield* io(() => writeFile(join(root, "src/lib/helper.ts"), "export const helper = () => 1 // todo\n"))
+  yield* io(() => writeFile(join(root, "src/lib/data.bin"), new Uint8Array([0x54, 0x4f, 0x44, 0x4f, 0, 1])))
+  yield* io(() => writeFile(join(root, "node_modules/dep/index.ts"), "// TODO hidden\n"))
+  yield* io(() => writeFile(join(root, ".github/ci.yml"), "# TODO ci\n"))
+  yield* io(() => writeFile(join(root, "README.md"), "# Readme\n"))
+  yield* io(() => writeFile(join(outside, "far.ts"), "// TODO far\n"))
+  yield* io(() => symlink(outside, join(root, "linked")))
+  yield* io(() => symlink(join(outside, "far.ts"), join(root, "src/far.ts")))
+})
+
 describe("ls, find and grep", () => {
-  const tree = (root: string, outside: string) => Effect.gen(function* () {
-    yield* io(() => mkdir(join(root, "src/lib"), { recursive: true }))
-    yield* io(() => mkdir(join(root, "node_modules/dep"), { recursive: true }))
-    yield* io(() => mkdir(join(root, ".github")))
-    yield* io(() => writeFile(join(root, "src/main.ts"), "import { helper } from './lib/helper'\n// TODO: tidy\nhelper()\n"))
-    yield* io(() => writeFile(join(root, "src/lib/helper.ts"), "export const helper = () => 1 // todo\n"))
-    yield* io(() => writeFile(join(root, "src/lib/data.bin"), new Uint8Array([0x54, 0x4f, 0x44, 0x4f, 0, 1])))
-    yield* io(() => writeFile(join(root, "node_modules/dep/index.ts"), "// TODO hidden\n"))
-    yield* io(() => writeFile(join(root, ".github/ci.yml"), "# TODO ci\n"))
-    yield* io(() => writeFile(join(root, "README.md"), "# Readme\n"))
-    yield* io(() => writeFile(join(outside, "far.ts"), "// TODO far\n"))
-    yield* io(() => symlink(outside, join(root, "linked")))
-    yield* io(() => symlink(join(outside, "far.ts"), join(root, "src/far.ts")))
-  })
+
 
   test("ls lists entries by name with their kinds", async () => {
     const seen = await scoped(Effect.gen(function* () {
@@ -791,4 +794,54 @@ test("workspace protect globs still reject an extra-root alias into .git, and do
   expect(seen.workspace).toBe("workspace config")
   expect(seen.external).toBe("explicit external change")
   expect(seen.found.paths.some((path) => path.includes("/.git/"))).toBe(false)
+})
+
+
+const hasRg = spawnSync("rg", ["--version"]).status === 0
+
+test.skipIf(!hasRg)("rg and builtin agree on ordinary text, globs, context, excludes, dot files and untraversed symlinks", async () => {
+  const seen = await scoped(Effect.gen(function* () {
+    const options = { maxFileBytes: 1024, exclude: ["node_modules", ".git", ".efferent", "src/generated"] }
+    const builtin = yield* bench({ ...options, grepEngine: "builtin" })
+    yield* tree(builtin.root, builtin.outside)
+    yield* io(() => writeFile(join(builtin.root, "large.txt"), "TODO".repeat(400)))
+    yield* io(() => mkdir(join(builtin.root, "src/generated")))
+    yield* io(() => writeFile(join(builtin.root, "src/generated/hidden.ts"), "TODO hidden"))
+    const bash = yield* Effect.service(Bash).pipe(Effect.provide(BashLive({ exitGraceMs: 100 })))
+    const capability = yield* workspaceTools({ ...workspaceToolsDefaults, ...options, grepEngine: "ripgrep" }).pipe(Effect.provideService(Bash, bash))
+    const services = Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: builtin.root }), Context.add(Bash, bash))
+    const rg = caller(capability, services)
+    const cases = [
+      { pattern: "todo", ignoreCase: true }, { pattern: "helper()", literal: true },
+      { pattern: "helper", glob: "*.ts" }, { pattern: "TODO", path: "src/main.ts", context: 1 },
+      { pattern: "TODO", path: "src", context: 1 }, { pattern: "absent" }, { pattern: "" },
+    ]
+    return yield* Effect.forEach(cases, (params) => Effect.gen(function* () {
+      const left = yield* succeeds(GrepResult)(builtin.call("grep", params))
+      const right = yield* succeeds(GrepResult)(rg("grep", params))
+      return { left: { lines: left.lines, matches: left.matches, files: left.files }, right: { lines: right.lines, matches: right.matches, files: right.files } }
+    }), { concurrency: 1 })
+  }))
+  seen.forEach(({ left, right }) => expect(right).toEqual(left))
+})
+
+test.skipIf(!hasRg)("rg honours ignore files only when requested, and searches beyond its display width", async () => {
+  const seen = await scoped(Effect.gen(function* () {
+    const state = yield* bench({ grepEngine: "ripgrep", grepLineChars: 16 })
+    yield* io(() => writeFile(join(state.root, ".ignore"), "ignored.txt\n"))
+    yield* io(() => writeFile(join(state.root, "ignored.txt"), "hit"))
+    yield* io(() => writeFile(join(state.root, "long.txt"), "x".repeat(30) + "needle"))
+    const all = yield* succeeds(GrepResult)(state.call("grep", { pattern: "hit" }))
+    const wide = yield* succeeds(GrepResult)(state.call("grep", { pattern: "needle", path: "long.txt" }))
+    const bash = yield* Effect.service(Bash).pipe(Effect.provide(BashLive({ exitGraceMs: 100 })))
+    const capability = yield* workspaceTools({ ...workspaceToolsDefaults, grepEngine: "ripgrep", grepIgnoreFiles: true }).pipe(Effect.provideService(Bash, bash))
+    const services = Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: state.root }), Context.add(Bash, bash))
+    const ignored = yield* succeeds(GrepResult)(caller(capability, services)("grep", { pattern: "hit" }))
+    const bad = yield* fails(state.call("grep", { pattern: "(?=lookaround)" }))
+    return { all, wide, ignored, bad }
+  }))
+  expect(seen.all.lines.map((line) => line.path)).toEqual(["ignored.txt"])
+  expect(seen.ignored.matches).toBe(0)
+  expect(seen.wide.lines).toEqual([{ path: "long.txt", line: 1, text: "x".repeat(16), match: true }])
+  expect(seen.bad.error).toBe("InvalidPattern")
 })

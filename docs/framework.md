@@ -1473,24 +1473,37 @@ these root and access restrictions. They apply to the six file tools;
 globs (`.git/**` and `.efferent/**` by default), relative to the workspace;
 they do not protect a writable extra root's own `.git` or `.efferent`
 directory. A path through an extra root into a protected workspace file is
-still refused. Use read-only roots for external reference trees. `find` and `grep` walk with
+still refused. Use read-only roots for external reference trees. `find` and builtin `grep` walk with
 `walkGlob`, which never enters a linked directory and prunes the `exclude`
 names (`node_modules`, `.git`, `.efferent`; an entry with a `/` is a path
 relative to the workspace root, wherever the walk starts; such path globs
 do not apply to a search outside it, while bare excluded names still do);
-`grep` resolves each file
-again before reading it. `read`, `write`, `edit` and `grep` refuse a pipe,
+builtin `grep` resolves each file
+again before reading it. The ripgrep engine resolves the target first and uses
+`--no-follow`; the same workspace-relative exclusions apply. `read`, `write`, `edit` and `grep` refuse a pipe,
 socket or device (`NotAFile`) rather than wait on it. These checks catch a
 model's mistakes. They are not a security boundary: a path can change
 between the check and its use, and `bash` runs any command the host process
-may run, reading and writing anything it can reach. Nor do they bound
-`grep`'s time: its regular expression runs synchronously in the host
-process, and interrupting the turn cannot stop it. Cutting lines to
-`grepLineChars` bounds patterns that match in linear time, and a pattern
-that repeats a repeating group (`(a+)+`, the usual exponential form) is
-refused with `InvalidPattern`, but other backtracking patterns (overlapping
-alternatives such as `(a|a)*`) can still hold the process for a long time
-on a hostile line. Commands get the configured `bashEnv` over an
+may run, reading and writing anything it can reach.
+
+`grepEngine: "auto"` (the default) probes for `rg` once over the supplied
+`Bash` service and uses ripgrep when available. It runs on the same machine as
+that service, including a container. The FileSystem and Bash services must see
+the same file tree; choose `"builtin"` for an in-memory or different FileSystem.
+`grepEngine: "ripgrep"` refuses activation
+if the probe fails; `"builtin"` selects the synchronous JavaScript engine.
+Ripgrep uses its default regular-expression syntax (no lookaround or
+backreferences), receives patterns on stdin and runs with `grepTimeoutMs`
+(30 000 ms by default). It ignores ripgrep configuration files and, unless
+`grepIgnoreFiles: true`, searches files hidden by ignore files too. With that
+option it honours `.gitignore`, `.ignore` and other ripgrep ignore rules.
+A timeout returns partial results with `timedOut: true` and a note in grep view
+version 4. Builtin `grep` is not time-bounded: its expression runs in the host
+process and cannot be interrupted. It cuts lines before matching and refuses
+nested repetition (`(a+)+`), but overlapping alternatives such as `(a|a)*` can
+still hold the process on a hostile line.
+
+Commands get the configured `bashEnv` over an
 allowlist of the host's variables (`bashEnvAllow`, the same names as
 `BASH_ENV_ALLOWLIST`), so provider keys stay out unless `bashInheritEnv`
 passes everything; `bashSessionEnv` adds `EFFERENT_SESSION_ID`,
@@ -1501,8 +1514,9 @@ agent a `FileSystem` and `Bash` that run inside a container or VM.
 (50 KB) and says which `offset` continues; a single longer line is shown cut.
 `ls`, `find` and `grep` stop at `lsEntries` (500), `findResults` (1000) and
 `grepMatches` (100), and what `find` and `grep` show the model is cut to
-`maxLines` and `maxBytes` too; `grep` cuts lines to `grepLineChars` (500)
-before matching them, and, searching a directory, takes at most a quarter of
+`maxLines` and `maxBytes` too; `grep` displays lines cut to `grepLineChars`
+(500). Ripgrep searches the whole line; builtin cuts before matching. Searching
+a directory takes at most a quarter of
 its limit from one file. Files over `maxFileBytes` (32 MB) or with a NUL
 byte in their first 8 KB are not read as text; a file that is not valid
 UTF-8 is shown with U+FFFD and a notice (`lossy`). A binary file whose
@@ -1562,7 +1576,8 @@ per-file lock, so two sessions editing one file wait for each other.
 `always` (`["read"]`; also `edit`, `shell`), `confine`, `workspaceAccess`
 (`write`), `roots` (`[]`), `protect`,
 `exclude`, `maxLines`, `maxBytes`, `lsEntries`, `findResults`,
-`grepMatches`, `grepLineChars`, `maxFileBytes`, `readImages` (`true`),
+`grepMatches`, `grepLineChars`, `grepEngine` (`auto`), `grepTimeoutMs`
+(30 000), `grepIgnoreFiles` (`false`), `maxFileBytes`, `readImages` (`true`),
 `fuzzyEdit`, `bashTimeoutMs`, `bashMaxTimeoutMs`, `bashEnv`,
 `bashInheritEnv` (`false`), `bashEnvAllow`, `bashSessionEnv`, `spillDir`
 (relative to the root; `null` saves nothing), `spillKeep`, `progressMs`,
