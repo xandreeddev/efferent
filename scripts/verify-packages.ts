@@ -555,6 +555,48 @@ ${workspaceJourney}
 `)
   const node = Bun.spawn(["node", "node-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await node.exited !== 0) process.exit(1)
+  // The file store's crash recovery on Node: the package's holder, run with node over the packed package, killed while it
+  // commits, then the directory read whole; and two node processes racing by compare-and-swap.
+  await writeFile(join(consumer, "session-files-holder.mjs"), await readFile(join(root, "packages/plugin-session-files/fixtures/session-files-holder.mjs"), "utf8"))
+  await writeFile(join(consumer, "files-crash.mjs"), `
+import { spawn } from "node:child_process"
+import { mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { Effect, Option } from "effect"
+import { ConversationId } from "@xandreed/core"
+import { makeSessionLogFiles } from "@xandreed/plugin-session-files"
+const root = await mkdtemp(join(tmpdir(), "efferent-node-crash-"))
+const withLog = (body) => Effect.runPromise(Effect.scoped(makeSessionLogFiles(root).pipe(Effect.flatMap(body))))
+const fresh = async () => { const id = ConversationId.make(crypto.randomUUID()); await withLog((log) => log.create({ id, owner: "node", origin: "user", createdAt: 0, meta: {}, parent: Option.none() })); return id }
+const holder = (...args) => new Promise((resolve, reject) => {
+  const child = spawn("node", ["session-files-holder.mjs", ...args], { stdio: ["pipe", "pipe", "inherit"] })
+  const said = []
+  child.stdout.setEncoding("utf8")
+  child.stdout.on("data", (chunk) => { said.push(...String(chunk).split("\\n").filter((line) => line.length > 0)); if (said.includes("ready")) resolve({ child, said }) })
+  child.on("exit", () => reject(new Error("the holder stopped before it was ready: " + said.join(" "))))
+})
+const exited = (child) => new Promise((resolve) => child.once("exit", (code, signal) => resolve(signal ?? code)))
+const crashed = await fresh()
+const writer = await holder("commit-loop", root, crashed, "5")
+await new Promise((resolve) => setTimeout(resolve, 300))
+writer.child.kill("SIGKILL")
+await exited(writer.child)
+const head = await withLog((log) => log.head(crashed))
+const events = await withLog((log) => log.read(crashed, { after: 0, limit: Option.none(), kinds: [] }))
+const wholeCommits = head.revision >= 1 && events.length === head.revision * 5 && events.every((event, index) => event.seq === index + 1 && event.data.commit === Math.floor(index / 5) + 1) && head.state.commit === head.revision
+if (!wholeCommits) { console.error("a node writer killed mid-commit left " + events.length + " events at revision " + head.revision); process.exit(1) }
+const raced = await fresh()
+const racers = await Promise.all([holder("cas-increments", root, raced, "100", "a"), holder("cas-increments", root, raced, "100", "b")])
+racers.forEach(({ child }) => child.stdin.write("go\\n"))
+await Promise.all(racers.map(({ child }) => exited(child)))
+const count = (await withLog((log) => log.head(raced))).state.count
+if (count !== 200) { console.error("two node processes racing by compare-and-swap counted " + count + ", not 200"); process.exit(1) }
+await rm(root, { recursive: true, force: true })
+console.log("On Node, the file store kept whole commits after a writer was killed mid-commit (revision " + head.revision + "), and two processes racing by compare-and-swap lost no update")
+`)
+  const filesCrash = Bun.spawn(["node", "files-crash.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+  if (await filesCrash.exited !== 0) process.exit(1)
 } else console.log("node not on PATH: skipped the Node import check")
 registry.stop(true)
 await writeFile(join(consumer, "evaluation-consumer.mjs"), await readFile(join(root, "scripts/evaluation-consumer.fixture.mjs"), "utf8"))

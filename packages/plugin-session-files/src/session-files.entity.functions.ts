@@ -25,6 +25,12 @@ export const revisionOfFile = (name: string): Option.Option<number> => {
   return match === null ? Option.none() : Option.some(Number(match[1]))
 }
 
+/** The revision a temporary commit file was written for (`<revision>.jsonl.<nonce>`); none for any other name. */
+export const revisionOfTemporary = (name: string): Option.Option<number> => {
+  const match = /^(\d{12})\.jsonl\./.exec(name)
+  return match === null ? Option.none() : Option.some(Number(match[1]))
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 /** Whether a name under `sessions/` is a session's directory: its id. Anything else (an editor's file, a network file system's `.nfs…`) is not read. */
