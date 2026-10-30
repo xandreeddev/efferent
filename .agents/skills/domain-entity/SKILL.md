@@ -1,6 +1,6 @@
 ---
 name: domain-entity
-description: Model domain data in efferent — entity/functions file pairs, Schema.Struct vs Schema.Class, tagged unions instead of boolean flags, invariants in the schema, branded ids, and how absence is encoded on the wire (OptionFromNullOr vs optionalKey). Read before creating or changing a *.entity.ts or *.entity.functions.ts, a stored payload or a config schema.
+description: Model domain data in efferent — entity/functions file pairs, Schema.Struct vs Schema.Class, tagged unions instead of boolean flags, invariants in the schema, branded ids, how absence is encoded on the wire (OptionFromNullOr vs optionalKey), and an aggregate's state as one tagged phase with pure transitions. Read before creating or changing a *.entity.ts or *.entity.functions.ts, a stored payload, a config schema or an adapter's state machine.
 ---
 
 # Model domain data
@@ -98,6 +98,30 @@ JSON has no `undefined`, and stored payloads outlive the code that wrote them.
 - A key added to a stored payload is optional to older records: skill `change-event`.
 - Functions return `Option`, never `A | undefined` (`effect/no-nullable-return`).
 
+## 7. Aggregates
+
+An aggregate whose rules span several facts keeps them as one tagged phase,
+not as loose `Ref`s and flags whose combinations nobody wrote down.
+
+- Declare the phase in the `.entity.ts`: a `Schema.Union` of
+  `Schema.TaggedStruct`s, `.pipe(Schema.toTaggedUnion("_tag"))`. Each
+  variant carries only what holds in it (a flag that matters while open is
+  a field of `Open`).
+- Write each transition as a pure function in the `.entity.functions.ts`:
+  the phase in, the next phase out, or a `Result` whose failure is the
+  refusal. Test them as a table, phase by phase.
+- The adapter applies a transition with `Ref.modify(ref, decide)`, then
+  runs what it planned: queue an item, settle the callers, publish an
+  event. Never inside the transition: an inline subscriber may call back
+  into the phase.
+- Never a `SynchronizedRef` that a consumer fiber transitions: a caller
+  holding a permit while it waits on that consumer deadlocks it. A
+  semaphore may order work (an admission), never guard the phase.
+- Plumbing that is no rule (`Deferred`s, queues, waiters) stays in the
+  adapter beside the phase.
+- Reference: plugin-sessions `src/turn-writer.entity.ts`, its
+  `.entity.functions.ts` and their table test.
+
 ## Checklist
 
 - [ ] Schemas and types in `.entity.ts`, behaviour in `.entity.functions.ts`
@@ -107,4 +131,5 @@ JSON has no `undefined`, and stored payloads outlive the code that wrote them.
 - [ ] Every invariant in the schema; functions trust the decoded type
 - [ ] Every id field branded
 - [ ] Absence encoded deliberately (`OptionFromNullOr` vs `optionalKey`)
+- [ ] An aggregate's state is one tagged phase, moved by pure transitions under `Ref.modify`
 - [ ] `bun run typecheck` (the gates) and the tests beside the functions file

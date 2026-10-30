@@ -863,6 +863,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `effect/branded-id-fields` covers `@xandreed/plugin-sessions`.
 - `TurnLive` keeps the turn's state as one tagged `TurnPhase`, moved by pure
   transitions in `turn-phase.entity.functions.ts`.
+- The sessions plugin's turn writer keeps its state as one tagged phase
+  (`WriterPhase`: open, ending, failed, closed, ended), moved by pure,
+  table-tested transitions with `Ref.modify` instead of nine separate
+  references; its writes, refusals and spans are unchanged. The
+  `domain-entity` skill gains an "Aggregates" section that names it as the
+  reference.
 
 ## 0.14.0 — 2026-10-29
 
