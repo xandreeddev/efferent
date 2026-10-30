@@ -293,7 +293,7 @@ export const draftOfTurnEvent = (turn: number, event: TurnEventType): Effect.Eff
   type Drafted = Effect.Effect<Option.Option<SessionDraft>, Schema.SchemaError>
   return TurnEvent.matchOrElse(event, {
     host: (host): Drafted => storedJson(host.data).pipe(Effect.map((data) => Option.some({ kind: host.name, turn: Option.some(turn), data }))),
-    "assistant.message": (message): Drafted => encodeStepUsage({ step: message.step, run: message.run, model: message.model, usage: message.usage }).pipe(
+    "assistant.message": (message): Drafted => encodeStepUsage({ step: message.step, run: message.run, model: message.model, usage: message.usage, finishReason: message.finishReason }).pipe(
       Effect.map((encoded) => Option.some({ kind: "step.usage", turn: Option.some(turn), data: { ...encoded } })),
     ),
   }, (stored): Drafted => encodeTurnEvent(stored).pipe(Effect.flatMap(({ _tag, ...data }) =>

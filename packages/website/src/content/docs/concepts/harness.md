@@ -120,8 +120,8 @@ host's or a plugin's error stores that error's code.
 Each admitted turn runs under an `agent.turn` span carrying
 `efferent.session.id`, `efferent.run.id` and `efferent.turn`, which every
 span under it repeats (the step loop's `engine.run` and `engine.turn`, the
-model call, each `tool.<name>` and the handler's own spans, each nested
-where it runs). It ends with `efferent.outcome`, the failure's code and the
+model call, each `loop.tool_call` with its `tool.<name>` and the handler's
+own spans, each nested where it runs). It ends with `efferent.outcome`, the failure's code and the
 turn's usage, and the metrics `efferent.turns` and `efferent.turn.duration`
 count it by outcome. The turn's metadata reaches the span only for the keys
 the agent names in `spanMeta`, and prompts and responses only when a run

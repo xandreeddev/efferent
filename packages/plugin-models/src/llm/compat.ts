@@ -4,10 +4,10 @@ import { Base64 } from "effect/encoding"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, reasonOf } from "@xandreed/core"
 import { strictJsonSchema, toolParametersSchema } from "@xandreed/core/internal"
 import type { ModelCallPolicy } from "@xandreed/core"
-import { finishReasonFromWire, sseStreamParts, usageFromCompletion } from "./sse.js"
+import { finishReasonFromWire, sseStreamParts, toolCallParams, usageFromCompletion } from "./sse.js"
 import type { UsageReading } from "./sse.js"
 import type { ChatCompletion } from "./chat-wire.entity.js"
-import { decodeChatCompletion, decodeToolArguments, gatewayErrorOf, isModelRejection, isQuotaExhausted } from "./chat-wire.entity.functions.js"
+import { decodeChatCompletion, gatewayErrorOf, isModelRejection, isQuotaExhausted } from "./chat-wire.entity.functions.js"
 import { publicReasoningEffort } from "./modelCatalog.js"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
@@ -357,17 +357,19 @@ export const fromChatCompletion = Effect.fnUntraced(function* (
   // silently drops the thinking (live-caught on kimi-k2.6).
   const reasoning = message.reasoning_content ?? message.reasoning
   const text = message.content
-  const toolCalls = yield* Effect.forEach(message.tool_calls ?? [], (tc) =>
-    decodeToolArguments(tc.function?.arguments ?? "{}").pipe(
+  const calls = message.tool_calls ?? []
+  // Decided before any call's arguments are read: a cut completion keeps its calls (`toolCallParams`).
+  const reason = finishReasonFromWire(Option.fromNullishOr(choice.finish_reason), calls.length > 0)
+  const toolCalls = yield* Effect.forEach(calls, (tc) =>
+    toolCallParams(tc.function?.arguments ?? "{}", reason, () =>
+      invalidOutput(moduleName, "generateText", `tool call ${tc.function?.name ?? "?"} carried unparseable JSON arguments`),
+    ).pipe(
       Effect.map((params): ResponseParts.ToolCallPartEncoded => ({
         type: "tool-call",
         id: tc.id ?? "",
         name: tc.function?.name ?? "",
         params,
       })),
-      Effect.mapError(() =>
-        invalidOutput(moduleName, "generateText", `tool call ${tc.function?.name ?? "?"} carried unparseable JSON arguments`),
-      ),
     ),
     { concurrency: 1 },
   )
@@ -381,8 +383,7 @@ export const fromChatCompletion = Effect.fnUntraced(function* (
     ...toolCalls,
     {
       type: "finish" as const,
-      reason:
-        toolCalls.length > 0 ? "tool-calls" : finishReasonFromWire(choice.finish_reason),
+      reason,
       usage: usageFromCompletion(body.usage, reading),
     },
   ]

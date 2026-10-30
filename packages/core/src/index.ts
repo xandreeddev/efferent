@@ -63,7 +63,7 @@ export type { ModelCallPolicy as ModelCallPolicyType } from "./domain/model-call
 export { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "./loop/modelPolicy.js"
 export { formatModelSelection, parseModelSelection } from "./domain/model-selection.entity.functions.js"
 export type { ToolCallSummary } from "./domain/tool-call-summary.entity.js"
-export { StepStatus, TurnEndReason, TurnEnding, TurnFailure, TurnOrigin, TurnOutcomeKind } from "./domain/turn-vocabulary.entity.js"
+export { FinishReason, StepStatus, TurnEndReason, TurnEnding, TurnFailure, TurnOrigin, TurnOutcomeKind } from "./domain/turn-vocabulary.entity.js"
 export { InvocationId, RunId, RunKey, RunOrdinal, RunRef } from "./domain/run.entity.js"
 export { plannedCallIdOf, toolCallIdOf } from "./domain/run.entity.functions.js"
 export { DirEntry, FileInfo, FileKind, FsError, FsReason, GlobOptions, GlobResult, ReadRange, RecursiveOptions, StatOptions, WriteOptions } from "./domain/file-system.entity.js"

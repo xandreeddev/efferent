@@ -474,9 +474,11 @@ and reasoning tokens.
 | configured endpoints and `local` credentials | as chat completions | as chat completions | `completion_tokens_details.reasoning_tokens`, whatever `standardOnly` says |
 
 A turn's usage leaves out utility model calls (memory digests and summaries)
-and provider attempts that never reached the loop as a decoded response (a
-malformed response the loop corrects, a retried or cut-off attempt). The models
-plugin's counters (`llm.usage.{input,output,cache_read,cache_write,reasoning}_tokens`
+and provider attempts the loop did not take as its step's response (a
+malformed response the loop corrects, an attempt the models plugin retried,
+a stream cut off after its first part). A response cut short (a finish
+reason such as `length`) is counted: its step publishes its
+`assistant.message`. The models plugin's counters (`llm.usage.{input,output,cache_read,cache_write,reasoning}_tokens`
 per `llm.model`) count every successful call it routes, utility calls included.
 Each step's `engine.turn` span carries its call's usage under the OpenTelemetry
 GenAI names (`gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`,

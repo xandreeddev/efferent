@@ -189,9 +189,10 @@ agent.turn.begin                 Agent.turn beginning the turn: session plugins 
 agent.turn                       Agent.turn, or a host's composition with traceTurn(writer)
 ├─ engine.run                    one run of the step loop (turn.run)
 │  └─ engine.turn                one step (engine.step is its one-based number)
-│     └─ LanguageModel.*         effect/ai's span of the model call
-│        ├─ providers.generate   the models plugin's call (model, usage, finish reason)
-│        │  └─ models.credentials  the call's credential, a token refresh included
+│     ├─ LanguageModel.*         effect/ai's span of the model call
+│     │  └─ providers.generate   the models plugin's call (model, usage, finish reason)
+│     │     └─ models.credentials  the call's credential, a token refresh included
+│     └─ loop.tool_call          one tool call the loop ran (engine.tool, engine.tool.call_id)
 │        └─ tool.<name>          the tool registry's call, refused calls included
 │           └─ (the handler's own spans)
 └─ turn.persist_reply            the turn's reply recorded as it ends (guardTurn), failed or not
@@ -248,8 +249,8 @@ providing them again (`replayableContext`): the parent span
 and log spans, the captured span's stack frame, and `CurrentTraceContent`
 (`Agent.turn` keeps one the turn's `TurnInput.services` carry, see trace
 content). A tool call stays
-under the model call that made it and a handler's spans under its
-`tool.<name>`, a host span wrapped around `turn.run` is the parent of its
+under its step, in its own `loop.tool_call` span, and a handler's spans under
+its `tool.<name>`, a host span wrapped around `turn.run` is the parent of its
 `engine.run`, a model layer built under a span does not pull its calls
 there, and annotations the host set where it built a layer or captured the
 turn's services (`Effect.annotateSpans`, `Effect.annotateLogs`) do not
@@ -277,8 +278,8 @@ messages.
 | `efferent.turns` | `efferent.outcome` | turns `Agent.turn` ran, once admitted |
 | `efferent.turn.duration` | `efferent.outcome` | each such turn's time from admission to its end, in milliseconds; for a turn the host began (its `TurnWriter` passed in), from when `Agent.turn` took it to when `Agent.turn` returned, before the host ends it |
 | `engine.runs` | `engine.outcome`, `engine.reason` | step-loop runs |
-| `engine.tool_calls` | `engine.tool`, `engine.ok` | tool results the loop received |
-| `engine.corrections` | `engine.kind`: `malformed`, `degenerate-nudge`, `stream-fallback`, `media-rejected` | the loop's self-corrections, a stream falling back and a step sent again without the images a provider refused included |
+| `engine.tool_calls` | `engine.tool`, `engine.ok` | tool results in a whole response: the calls the loop ran, and any the provider ran itself (a cut response's, answered without running, are not counted) |
+| `engine.corrections` | `engine.kind`: `malformed`, `reply-cut`, `degenerate-nudge`, `stream-fallback`, `media-rejected` | the loop's self-corrections (its answer to a reply cut at the output limit among them), a stream falling back and a step sent again without the images a provider refused included |
 | `llm.requests` | `llm.model`, `outcome` (`ok`, `error`), `fallback` (`true` for the fallback model's call, `false` otherwise; non-streamed calls only) | the models plugin's calls, after retries, utility calls included |
 | `llm.request.duration`, `llm.usage.*_tokens` | `llm.model` | the same calls' time and tokens |
 
@@ -304,7 +305,10 @@ calls, and the models plugin reads it per call (`EFFERENT_TRACE_CONTENT=1`
 still turns `llm.reasoning` on for the whole process). An image is never
 traced: a prompt's `file` part keeps its media type and the length of its
 data, a `Media` value its fingerprint. Hosts own consent, masking and
-exporter retention.
+exporter retention. A tool call's parameters are the exception: effect/ai's
+toolkit writes them, with the tool's name, on the span the call is handled
+under (`tool` and `parameters` on its `loop.tool_call`), whatever the run
+captures.
 
 ```ts
 const agent = yield* Agent.define({ ...config, captureTraceContent: false, spanMeta: ["requestId"] })
@@ -319,8 +323,9 @@ than leave paid work running in disconnected fibers.
 ## Token usage
 
 Every provider response the step loop handles is one `assistant.message`
-event carrying a `TokenUsage`, and is stored as one `step.usage` record
-(step, model, usage):
+event carrying a `TokenUsage` and why the response ended (`finishReason`),
+and is stored as one `step.usage` record (step, model, usage, and the finish
+reason since stored format 2; a record stored before has none):
 
 | Field | Counts |
 |---|---|
@@ -389,11 +394,12 @@ Where the counts appear:
 A turn's usage counts what the step loop received. It does not count calls
 outside the loop: a memory digester's or summarizer's `UtilityLlm` calls
 (their `UtilityCompletion.usage` goes to their caller; the models plugin's
-counters do include them). Nor does it count a provider attempt whose
-response never reached the loop as a decoded response: a malformed response
-the loop corrects, or an attempt that failed (one the models plugin retried,
-a stream cut off after its first part). A provider may bill those, so a
-turn's usage can be below the provider's invoice.
+counters do include them). Nor does it count a provider attempt the loop
+did not take as its step's response: a malformed response the loop
+corrects, or an attempt that failed (one the models plugin retried, a
+stream cut off after its first part). A provider may bill those, so a
+turn's usage can be below the provider's invoice. A response cut short is
+counted: its step publishes its `assistant.message`.
 
 Records written before 0.14.0 have no `cacheWriteTokens` or
 `reasoningTokens`; they decode with 0 (`step.usage`, the usage stamp on a
@@ -416,10 +422,11 @@ What each provider reports:
 `runLoop` accepts optional `initialStep: [{ name, params }]`. A host can classify
 from a finite plan set or construct a structured plan, validate the whole batch
 against its permissions and references, and persist its decision before calling
-the loop. The loop uses an in-memory Effect AI response to dispatch the batch
-through the ordinary argument decoder and instrumented toolkit without a provider
-request. The initial batch counts as step zero; completion, concurrency, events,
-errors and tail persistence follow the ordinary loop path.
+the loop. The loop uses an in-memory Effect AI response, ending `tool-calls`, to
+dispatch the batch through the same check of every call and the same instrumented
+toolkit as a provider's response, without a provider request. The initial batch
+counts as step zero; completion, concurrency, events, errors and tail persistence
+follow the ordinary loop path.
 
 ```ts
 const result = runLoop({
@@ -472,19 +479,109 @@ loop still validates/adopts tools through its normal host-controlled toolkit.
 Each step runs in two parts. It executes: the call, the tools and the tail,
 which `onTail(messages, step)` persists under the step. It settles:
 `onStepSettled(step, status)` runs exactly once, with that execution's exit
-(`completed`, `failed`, `cancelled`, or `malformed`). Then the loop decides:
-`isComplete(step)`, a query that is never asked after a malformed step, the
-degenerate-loop breaker, compaction and steering. A corrective, a nudge or a
-steer goes through `onTail` under the next step, and only when that step
-runs: a run the step cap, the breaker or completion ends records none. A
-`StepLoop`'s `RunResult` says the same as a union: `completed` with the
-reason `completed`, or `partial` with `step-cap` or `degenerate-loop`.
+(`completed`, `failed`, `cancelled`, `malformed` or `truncated`). Then the
+loop decides: `isComplete(step)`, a query that is never asked after a
+malformed or a truncated step, the degenerate-loop breaker, compaction and
+steering. A corrective, a nudge or a steer goes through `onTail` under the
+next step, and only when that step runs: a run the step cap, the breaker or
+completion ends records none. A `StepLoop`'s `RunResult` says the same as a
+union: `completed` with the reason `completed`, or `partial` with
+`step-cap` or `degenerate-loop`.
+
+**The step's response.** A provider's response ends with a finish reason
+(`FinishReason`, effect/ai's list), which says whether it is whole: `stop`
+(the model finished), `tool-calls` (it calls tools and waits for their
+results) and `pause` (the provider paused a long reply) are; `length` (the
+output limit), `content-filter`, `error` and `other` cut it short.
+`unknown` (the provider gave no finish reason) cuts it short only when it
+holds tool calls the loop would run (a call the provider ran itself,
+`providerExecuted`, is not one): a reply of text alone, or an empty one,
+without a finish reason completes as before. Every `assistant.message`
+carries the reason as `finishReason`, and its `step.usage` stores it, since
+stored format 2.
+
+The loop runs a response's tool calls itself: the model call is made with
+`disableToolCallResolution: true` and `toolCallValidation: "deferred"`, so
+it returns the response with its calls neither run nor checked. Once the
+response is whole, the loop checks every call it would run: it names a
+tool the step has, and its parameters decode with that tool's schema (a
+tool whose parameters are a JSON Schema, not an Effect Schema, checks its
+own). Only when all of them pass do the calls run, through the step's
+toolkit, up to `toolConcurrency` at once (`runLoop`'s default is 4; a
+turn's `limits.toolConcurrency` defaults to 1), their results in call order. When one does not, none of them runs: the step ends
+`malformed`, and the loop answers it with the corrective for the first call
+that failed (a tool the model does not have, or parameters that do not
+match, with what it wrote).
+
+A response cut short runs none of its calls, and its calls are not checked:
+each is answered, as the call's result, with a failure the model reads,
+`{ error: "ReplyCut", message }`, whose message says how the reply ended and
+that this call was not run (for a reply cut at the output limit, `Your reply
+reached the output limit, so this call was not run. Call it again if you
+still need it.`). The response and
+those answers are recorded under the step, its `assistant.message` is
+published, and it ends `truncated`, with no `completion.evaluated`.
+
+A reply cut at the output limit (`length`) is answered with a corrective of
+the loop's, a host note recorded under the next step, at most twice in a
+row (any step not cut resets the count, and a cut step likewise resets the
+loop's count of malformed replies in a row). A reply holding tool calls the
+loop would run is told that the calls it made were not run, and to call the
+tools it still needs again, fewer in one reply and with less text before
+them; any other is told to continue from where it stopped, in replies short
+enough to finish. The next step's input is then built as
+after any step the run goes on from: within-run compaction (`compact`, over
+the next messages and the cut step's usage, its plan applied only at an
+assistant message, with a `compaction` event), then steering
+(`pendingInput`, its message recorded under the next step). A third cut in
+a row, or any other cut, fails the run with a `HarnessError` of code
+`loop.truncated`. At the step cap, a reply cut at the output limit that
+would be answered ends the run `partial` instead, with no corrective
+recorded. A `pause` continues the run, as a call to tools does: the next
+step carries on the reply.
+
+A reply cut at the output limit while a tool call's arguments were still
+being written reaches the gate only where the provider adapter keeps the
+unfinished call: the models plugin's chat completions client does (with
+empty parameters, never run). effect/ai's Anthropic and OpenAI adapters
+fail such a reply before its finish part, with a
+`ToolParameterValidationError` for the call, so on those routes the loop
+answers it as a malformed reply, with its corrective, not as a cut one.
+
+**The run's text across a continuation.** The run's text (`finalText`,
+`RunResult.text`) is its last reply's. A reply the run continues, one cut
+at the output limit holding no tool call the loop would run (answered with
+the corrective to continue), or a paused one, is carried instead: the next reply that is
+neither sets the run's text to the carried text followed by its own, and
+the carry starts over (when both are empty, the run's text stays what it
+was). A cut reply that held tool calls the loop would run carries nothing:
+the model replies anew. When the step cap ends the run while text is
+carried, the run's text includes the carried text.
+
+**Finish reasons on the wire.** The models plugin's chat completions client
+(OpenCode's models other than `gpt-*`, `google`, configured endpoints and
+`local` credentials), settled and streamed, decides a response's finish
+reason from the wire's `finish_reason` before it decodes its tool calls'
+arguments. The word is read whatever its case: `stop`, `tool_calls`,
+`function_call`, `tool_use`, `tool_call`, `end_turn`, `stop_sequence` and `eos`, or none at all
+(`null`, or a stream that ended without one), mean the response ended on
+its own, `tool-calls` when it holds tool calls and `stop` when it does not;
+`length` and `max_tokens` are `length`; `content_filter` is
+`content-filter`; `error` and `insufficient_system_resource` are `error`;
+any other word is `other`. In a cut response, a tool call whose arguments
+do not parse is kept, with `{}` as its parameters, since the loop runs none
+of a cut reply's calls; in a whole one, such arguments still fail the
+response with an `InvalidOutputError`, which the loop answers as a
+malformed response.
 
 The callbacks run with the caller's services and fail with its error:
 `RunLoopOptions<Tools, E, R>`. A callback's failure fails the step it runs
 in (the step settles `failed`), or the run once the step settled, as that
-failure, typed; the run fails with `E` or a provider's `AiError`. The step
-loop passes a turn's `TurnError` through them as it is.
+failure, typed; the run fails with `E`, a provider's `AiError` or a
+`HarnessError` (`loop.truncated`, a reply cut short that the loop does not
+correct). The step loop passes a turn's `TurnError` through them as it is,
+and fails a turn's run with `loop.truncated` as it is too (a `HarnessError`
+is a `TurnError`).
 
 `@xandreed/evals` provides `DecisionTrial`, `SelectionObservation`,
 `compareDecisionTrials` and `selectionMetrics`. Comparisons pair case/repetition,
@@ -756,9 +853,12 @@ or an event the handler publishes, also stops the handler; the model never
 sees it as the tool's result). Within a step the order is `step.started`
 < `tool.*` < `step.ended` < `completion.evaluated`. Each step ends once, when
 its own call, tools and tail are done, with their status: `completed`,
-`failed`, `cancelled`, or `malformed` (a response the model could not form,
+`failed`, `cancelled`, `malformed` (a response the model could not form,
 a tool that does not exist or parameters that do not decode, which the loop
-answers with a corrective turn; it has no `assistant.message` and no
+answers with a corrective turn; none of its calls ran, and it has no
+`assistant.message` and no `completion.evaluated`), or `truncated` (a
+response cut short: its `assistant.message` says why in `finishReason`,
+none of its calls ran, each answered as cut, and it has no
 `completion.evaluated`). What the loop decides afterwards (the completion
 verdict, compaction, steering) cannot change that status: a completion that
 fails fails the run and leaves the step `completed`. Nothing is recorded

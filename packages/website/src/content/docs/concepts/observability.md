@@ -132,10 +132,11 @@ parent-linked.
 agent.turn.begin                 Agent.turn beginning the turn: session plugins activated, Sessions.begin
 agent.turn                       Agent.turn, or a host's composition with traceTurn(writer)
 ├─ engine.run                    one run of the step loop (turn.run)
-│  └─ engine.turn                one step
-│     └─ LanguageModel.*         effect/ai's span of the model call
-│        ├─ providers.generate   the models plugin's call (model, usage, finish reason)
-│        │  └─ models.credentials  the call's credential, a token refresh included
+│  └─ engine.turn                one step (engine.step is its one-based number)
+│     ├─ LanguageModel.*         effect/ai's span of the model call
+│     │  └─ providers.generate   the models plugin's call (model, usage, finish reason)
+│     │     └─ models.credentials  the call's credential, a token refresh included
+│     └─ loop.tool_call          one tool call the loop ran (engine.tool, engine.tool.call_id)
 │        └─ tool.<name>          the tool registry's call, refused calls included
 │           └─ (the handler's own spans)
 └─ turn.persist_reply            the turn's reply recorded as it ends (guardTurn), failed or not
@@ -221,7 +222,7 @@ spans), so series stay few:
 | --- | --- | --- |
 | `efferent.llm.tokens` | `efferent.model`, `efferent.token.kind` | each response's tokens by billed kind: `input` (uncached), `cache_read`, `cache_write`, `reasoning`, `output` (without reasoning); they sum to the response's `totalTokens` |
 | `efferent.llm.cost` | `efferent.model` | each priced response's cost, in the prices' currency |
-| `efferent.steps` | `efferent.step.status` | steps of the step loop, by how they ended: `completed`, `failed`, `cancelled`, or `malformed` (a response the model could not form, answered with a corrective turn) |
+| `efferent.steps` | `efferent.step.status` | steps of the step loop, by how they ended: `completed`, `failed`, `cancelled`, `malformed` (a response the model could not form, answered with a corrective turn), or `truncated` (a response cut short, none of whose tool calls ran) |
 | `efferent.tool.calls` | `efferent.tool`, `efferent.ok` | tool calls whose handler ran |
 | `efferent.tool.duration` | `efferent.tool`, `efferent.ok` | those calls' time, in milliseconds |
 | `efferent.tool.refused` | `efferent.tool`, `efferent.refusal.reason` | calls the registry refused before the handler ran |
@@ -258,7 +259,8 @@ turn-dependent plugins, before the turn's reply is recorded, so it never sees
 Like the turn's usage, it counts only responses the step loop received: not
 a memory strategy's utility calls (the models plugin's `llm.usage.*`
 counters do include them), a malformed response the loop corrected, or a
-failed attempt.
+failed attempt. A response cut short is counted: its step publishes its
+`assistant.message`.
 
 **A host's own turn.** `TurnTelemetryLive(options)` is the plugin's layer.
 A host composing its own turn builds it over the turn's `RunContext` and

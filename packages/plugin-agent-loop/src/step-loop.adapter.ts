@@ -18,11 +18,13 @@ export const STEP_LOOP = { id: "steps", version: "1" } as const
  * records the tail, and publishes `step.ended` once, when `runLoop` settles
  * the step (`onStepSettled`), with the recorded results and the status of
  * the step's own call, tools and tail (`malformed` for a response the model
- * could not form). Only then is the host's completion evaluated
- * (`completion.evaluated`; none after a malformed step), a query that ends
- * no step: a completion that fails fails the run and leaves the step
- * `completed`. A verdict that awaits tasks joins them and is evaluated once
- * more. The loop's own messages (a corrective, a nudge, a steer) are
+ * could not form, `truncated` for one cut short, none of whose tool calls
+ * ran). Only then is the host's completion evaluated (`completion.evaluated`;
+ * none after a malformed or truncated step), a query that ends no step: a
+ * completion that fails fails the run and leaves the step `completed`. A
+ * verdict that awaits tasks joins them and is evaluated once more. A reply
+ * cut short that `runLoop` does not correct fails the run with
+ * `loop.truncated`, a `HarnessError` it passes on as it is. The loop's own messages (a corrective, a nudge, a steer) are
  * recorded under the next step, so nothing is recorded under a step after
  * its `step.ended`. The plan for a step is computed once and serves the
  * model, the messages and the tool choice; a host-planned first batch runs
@@ -86,7 +88,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
       yield* request.events.publish({
         _tag: "assistant.message", step: message.turnIndex, run, text: message.text, reasoning: message.reasoning,
         model: Option.fromNullishOr(message.model), toolCalls: message.toolCalls.map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })),
-        usage: message.usage,
+        usage: message.usage, finishReason: message.finishReason,
       })
     }),
     stream_fallback: (fallback): Effect.Effect<void, TurnError> =>

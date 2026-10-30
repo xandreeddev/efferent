@@ -7,7 +7,9 @@
  * tell (a key, a type, an optionality, a check; not a description):
  * `bun run docs:generate` fingerprints them (`scripts/stored-format.ts`)
  * and fails on a change without a bump. Format 1 is the shapes as they
- * were when the version was declared.
+ * were when the version was declared; format 2 adds the step status
+ * `truncated` (`step.ended`) and the response's finish reason
+ * (`step.usage`'s `finishReason`).
  *
  * The sessions plugin stamps a session with the format of the release that
  * last wrote it, and refuses to write to, or run a turn over, a session a
@@ -17,4 +19,4 @@
  *
  * @public
  */
-export const STORED_FORMAT: number = 1
+export const STORED_FORMAT: number = 2

@@ -50,11 +50,27 @@ export const TurnEnding = Schema.Struct({ reason: TurnEndReason, failure: Schema
 export type TurnEnding = typeof TurnEnding.Type
 
 /**
+ * Why a provider's response ended, as effect/ai reports it: whole (`stop`,
+ * the model finished; `tool-calls`, it calls tools and waits for their
+ * results; `pause`, the provider paused a long reply), or cut short
+ * (`length`, the output limit; `content-filter`; `error`; `other`). `unknown`
+ * (the provider did not say) cuts short only a response holding tool calls
+ * the loop would run, and is whole otherwise (a reply of text alone, or an
+ * empty one). A cut response runs none of its tool calls: its step ends
+ * `truncated`.
+ */
+export const FinishReason = Schema.Literals(["stop", "length", "content-filter", "tool-calls", "error", "pause", "other", "unknown"])
+export type FinishReason = typeof FinishReason.Type
+
+/**
  * How one step of a run ended (`step.ended`): its call, its tools and its
  * tail done (`completed`), the call failed or something it ran did
- * (`failed`), interrupted (`cancelled`), or a response the model could not
+ * (`failed`), interrupted (`cancelled`), a response the model could not
  * form (a tool that does not exist, parameters that do not decode), which
- * the loop answers with a corrective turn (`malformed`).
+ * the loop answers with a corrective turn (`malformed`), or a response cut
+ * short (a finish reason but `stop`, `tool-calls` and `pause`, `unknown`
+ * only for a response holding tool calls the loop would run), recorded with
+ * none of its tool calls run, each answered as cut (`truncated`).
  */
-export const StepStatus = Schema.Literals(["completed", "failed", "cancelled", "malformed"])
+export const StepStatus = Schema.Literals(["completed", "failed", "cancelled", "malformed", "truncated"])
 export type StepStatus = typeof StepStatus.Type

@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Match, Stream } from "effect"
+import { Effect, Match, Option, Stream } from "effect"
 import { ToolCallId } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel } from "./compat.js"
-import { sseStreamParts } from "./sse.js"
+import { finishReasonFromWire, sseStreamParts } from "./sse.js"
 
 /**
  * The SSE state machine's spec: exact part sequences from canned wires,
@@ -117,6 +117,157 @@ describe("sseStreamParts", () => {
       { type: "tool-call", id: "b", name: "second", params: {} },
       { type: "finish", reason: "tool-calls", usage: zeroUsage },
     ])
+  })
+
+  test("a stream cut at the output limit keeps its tool calls and finishes on length", async () => {
+    const parts = await collect(
+      wire(
+        `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"echo","arguments":"{\\"value\\":\\"hi\\"}"}}]}}]}`,
+        `{"choices":[{"delta":{},"finish_reason":"length"}]}`,
+        `[DONE]`,
+      ),
+    )
+    expect(parts).toEqual([
+      { type: "tool-call", id: "c1", name: "echo", params: { value: "hi" } },
+      { type: "finish", reason: "length", usage: zeroUsage },
+    ])
+  })
+
+  /** Every word the wire's finish reason is read from, and how it reads: once with tool calls, once without. */
+  const finishWords: ReadonlyArray<string | null | undefined> = [
+    "stop", "tool_calls", "function_call", "tool_use", "tool_call", "end_turn", "stop_sequence", "eos",
+    "length", "max_tokens", "content_filter", "error", "insufficient_system_resource",
+    "STOP", "MAX_TOKENS", "recitation", null, undefined, "",
+  ]
+
+  test("the streamed finish reason is the wire's, read case-insensitively; a cut stays a cut when the stream holds tool calls", async () => {
+    const callChunk = `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"echo","arguments":"{}"}}]}}]}`
+    // An absent reason is a bare end of stream: no finish chunk and no [DONE].
+    const finishOf = async (finishReason: string | null | undefined, toolCalls: boolean) => {
+      const parts = await collect(
+        wire(
+          `{"choices":[{"delta":{"content":"ok"}}]}`,
+          ...(toolCalls ? [callChunk] : []),
+          ...(finishReason === undefined ? [] : [`{"choices":[{"delta":{},"finish_reason":${JSON.stringify(finishReason)}}]}`, `[DONE]`]),
+        ),
+      )
+      return parts.flatMap((part) => {
+        const p = part as { type: string; reason?: string }
+        return p.type === "finish" ? [p.reason] : []
+      })
+    }
+    const cases = finishWords.flatMap((word) => [[word, true] as const, [word, false] as const])
+    const seen = await Effect.runPromise(
+      Effect.forEach(cases, ([finishReason, toolCalls]) => Effect.tryPromise(() => finishOf(finishReason, toolCalls)), { concurrency: 1 }),
+    )
+    expect(cases.map(([finishReason, toolCalls], at) => [String(finishReason), toolCalls, seen[at]])).toEqual([
+      ["stop", true, ["tool-calls"]],
+      ["stop", false, ["stop"]],
+      ["tool_calls", true, ["tool-calls"]],
+      ["tool_calls", false, ["stop"]],
+      ["function_call", true, ["tool-calls"]],
+      ["function_call", false, ["stop"]],
+      ["tool_use", true, ["tool-calls"]],
+      ["tool_use", false, ["stop"]],
+      ["tool_call", true, ["tool-calls"]],
+      ["tool_call", false, ["stop"]],
+      ["end_turn", true, ["tool-calls"]],
+      ["end_turn", false, ["stop"]],
+      ["stop_sequence", true, ["tool-calls"]],
+      ["stop_sequence", false, ["stop"]],
+      ["eos", true, ["tool-calls"]],
+      ["eos", false, ["stop"]],
+      ["length", true, ["length"]],
+      ["length", false, ["length"]],
+      ["max_tokens", true, ["length"]],
+      ["max_tokens", false, ["length"]],
+      ["content_filter", true, ["content-filter"]],
+      ["content_filter", false, ["content-filter"]],
+      ["error", true, ["error"]],
+      ["error", false, ["error"]],
+      ["insufficient_system_resource", true, ["error"]],
+      ["insufficient_system_resource", false, ["error"]],
+      ["STOP", true, ["tool-calls"]],
+      ["STOP", false, ["stop"]],
+      ["MAX_TOKENS", true, ["length"]],
+      ["MAX_TOKENS", false, ["length"]],
+      ["recitation", true, ["other"]],
+      ["recitation", false, ["other"]],
+      ["null", true, ["tool-calls"]],
+      ["null", false, ["stop"]],
+      ["undefined", true, ["tool-calls"]],
+      ["undefined", false, ["stop"]],
+      ["", true, ["tool-calls"]],
+      ["", false, ["stop"]],
+    ])
+  })
+
+  test("finishReasonFromWire: a cut is never coerced; a settling word or none settles on the tool calls", () => {
+    const raws = finishWords.map((word) => Option.fromNullishOr(word))
+    expect(raws.map((raw) => [finishReasonFromWire(raw, true), finishReasonFromWire(raw, false)])).toEqual([
+      ["tool-calls", "stop"],
+      ["tool-calls", "stop"],
+      ["tool-calls", "stop"],
+      ["tool-calls", "stop"],
+      ["tool-calls", "stop"],
+      ["tool-calls", "stop"],
+      ["tool-calls", "stop"],
+      ["tool-calls", "stop"],
+      ["length", "length"],
+      ["length", "length"],
+      ["content-filter", "content-filter"],
+      ["error", "error"],
+      ["error", "error"],
+      ["tool-calls", "stop"],
+      ["length", "length"],
+      ["other", "other"],
+      ["tool-calls", "stop"],
+      ["tool-calls", "stop"],
+      ["tool-calls", "stop"],
+    ])
+  })
+
+  test("a blank finish reason on a later chunk keeps the reason an earlier chunk named", async () => {
+    const parts = await collect(
+      wire(
+        `{"choices":[{"delta":{"content":"x"},"finish_reason":"length"}]}`,
+        `{"choices":[{"delta":{},"finish_reason":""}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}`,
+        `[DONE]`,
+      ),
+    )
+    expect(parts.slice(-1)).toEqual([
+      {
+        type: "finish",
+        reason: "length",
+        usage: { inputTokens: { total: 1, uncached: 1, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 1, text: 1, reasoning: 0 } },
+      },
+    ])
+  })
+
+  test("a stream cut in the middle of a call's arguments keeps the call with params {} and ends on the cut", async () => {
+    const cutAt = (finishReason: string) =>
+      collect(
+        wire(
+          `{"choices":[{"delta":{"content":"Writing both files."}}]}`,
+          `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"write","arguments":"{\\"path\\":\\"a.txt\\",\\"content\\":\\"done\\"}"}}]}}]}`,
+          `{"choices":[{"delta":{"tool_calls":[{"index":1,"id":"c2","function":{"name":"write","arguments":"{\\"path\\":\\"b.txt\\","}}]}}]}`,
+          `{"choices":[{"delta":{"tool_calls":[{"index":1,"function":{"arguments":"\\"content\\":\\"half of the"}}]}}]}`,
+          `{"choices":[{"delta":{},"finish_reason":${JSON.stringify(finishReason)}}]}`,
+          `[DONE]`,
+        ),
+      )
+    const seen = await Effect.runPromise(
+      Effect.forEach(["length", "content_filter", "error", "recitation"], (reason) => Effect.tryPromise(() => cutAt(reason)), { concurrency: 1 }),
+    )
+    const cut = (reason: string) => [
+      { type: "text-start", id: "text-1" },
+      { type: "text-delta", id: "text-1", delta: "Writing both files." },
+      { type: "text-end", id: "text-1" },
+      { type: "tool-call", id: "c1", name: "write", params: { path: "a.txt", content: "done" } },
+      { type: "tool-call", id: "c2", name: "write", params: {} },
+      { type: "finish", reason, usage: zeroUsage },
+    ]
+    expect(seen).toEqual([cut("length"), cut("content-filter"), cut("error"), cut("other")])
   })
 
   test("a missing [DONE] still flushes: open chunks close, the finish lands", async () => {
@@ -266,6 +417,20 @@ describe("sseStreamParts", () => {
     )
     expect(exit._tag).toBe("Failure")
     expect(JSON.stringify(exit)).toContain("InvalidOutputError")
+  })
+
+  test("unparseable arguments in a stream that ended on its own still fail with the model's invalid output", async () => {
+    const call = `{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"echo","arguments":"{\\"value\\":\\"h"}}]}}]}`
+    const endings = ["stop", "tool_calls", "end_turn"].map((reason) => wire(call, `{"choices":[{"delta":{},"finish_reason":"${reason}"}]}`, `[DONE]`))
+    const failures = await Promise.all([...endings, wire(call)].map(failureOf))
+    const invalid = { _tag: "InvalidOutputError", description: "tool call echo carried unparseable JSON arguments" }
+    expect(failures.map((failure) => [failure.module, failure.method])).toEqual([
+      ["Test", "streamText"],
+      ["Test", "streamText"],
+      ["Test", "streamText"],
+      ["Test", "streamText"],
+    ])
+    failures.forEach((failure) => expect(failure.reason).toMatchObject(invalid))
   })
 
   test("round-trip parity: folded stream parts ≡ fromChatCompletion on the same completion", async () => {
