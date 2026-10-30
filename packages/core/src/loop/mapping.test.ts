@@ -6,6 +6,8 @@ import { responseModelOf, stampResponseModel } from "../domain/engine-stamp.enti
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
+import { plannedCallIdOf } from "../domain/run.entity.functions.js"
+import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { uncachedInputTokens } from "../domain/token-usage.entity.functions.js"
 import {
   assistantModel,
@@ -91,6 +93,18 @@ describe("withToolCallIds", () => {
     const calls = responseToolCalls(out)
     const results = responseToolResults(out)
     expect(calls[0]?.id).toBe(results[0]?.id)
+  })
+
+  test("with a run, the ids carry its turn and ordinal: the same step of two runs and two turns mints distinct ids", () => {
+    const content = [callPart("", "read", {}), resultPart("", "read", {})]
+    const idsOf = (turn: number, ordinal: number) => withToolCallIds(content, 1, { id: RunId.make("run-1"), turn, ordinal: RunOrdinal.make(ordinal) })
+      .map((p) => p.type === "tool-call" || p.type === "tool-result" ? p.id : undefined)
+    expect([idsOf(3, 0), idsOf(3, 1), idsOf(4, 0)]).toEqual([
+      ["3.0.1:read:0", "3.0.1:read:0"],
+      ["3.1.1:read:0", "3.1.1:read:0"],
+      ["4.0.1:read:0", "4.0.1:read:0"],
+    ])
+    expect(plannedCallIdOf({ id: RunId.make("run-1"), turn: 4, ordinal: RunOrdinal.make(1) }, 2)).toBe("4.1.planned:2")
   })
 })
 

@@ -2,7 +2,7 @@ import { Context } from "effect"
 import type { Effect, Option, Scope } from "effect"
 import type { MediaSlot } from "../domain/media.entity.js"
 import type { AgentMessage, ConversationId } from "../domain/message.entity.js"
-import type { RunId } from "../domain/run.entity.js"
+import type { RunId, RunOrdinal } from "../domain/run.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogQuery } from "../memory/memory-log.entity.functions.js"
@@ -102,15 +102,22 @@ export interface MaintainSignal {
 
 export interface MemorySession extends MemoryReader {
   readonly strategy: { readonly id: string; readonly version: string }
-  /** The pure render recipe of this session, saved with every outgoing request for version-independent replay. */
-  readonly renderRecipe: (stepContext: "tail" | "none") => Effect.Effect<MemoryRenderRecipe>
+  /**
+   * The pure render recipe of this session for run `run` of the turn (its
+   * step context is that run's), saved with every outgoing request for
+   * version-independent replay.
+   */
+  readonly renderRecipe: (stepContext: "tail" | "none", run: RunOrdinal) => Effect.Effect<MemoryRenderRecipe>
   readonly record: (bodies: ReadonlyArray<LogBody>, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /** The loop's appended messages → Message and ToolResult entries (views, and digests the strategy asks for, at write time). */
   readonly recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /** The only place compaction is decided; the decision is recorded before it applies. */
   readonly maintain: (signal: MaintainSignal) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
-  /** A pure fold of the log: what the next request sends. */
-  readonly build: (request: { readonly stepContext: "tail" | "none" }) => Effect.Effect<BuiltContext, HarnessError>
+  /**
+   * A pure fold of the log: what the next request of run `run` of the turn
+   * sends, its step context that run's latest (never an earlier run's).
+   */
+  readonly build: (request: { readonly stepContext: "tail" | "none"; readonly run: RunOrdinal }) => Effect.Effect<BuiltContext, HarnessError>
 }
 
 /** STRATEGY: how memory is kept, compacted and rebuilt. Swap this plugin to swap memory. */

@@ -1,7 +1,7 @@
 import { Clock, Effect, Option, Ref, Semaphore } from "effect"
 import { toolResultMedia } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
-import type { RunId } from "../domain/run.entity.js"
+import type { RunId, RunOrdinal } from "../domain/run.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
 import type { LogHandle, MaintainSignal, MemoryReader, MemorySession, ToolViews } from "../ports/memory.port.js"
@@ -13,6 +13,7 @@ import {
   buildContext,
   currentTurnOf,
   entryId,
+  latestRunOf,
   queryLog,
   rawTranscript,
   referenceTranscript,
@@ -85,8 +86,9 @@ export const openLogSession = Effect.fnUntraced(function* (
   const entries = yield* Ref.make(stored)
   const counter = yield* Ref.make(stored.filter((entry) => entry.runId === runId).length)
   const writing = yield* Semaphore.make(1)
-  const renderOptions = (all: ReadonlyArray<LogEntry>, stepContext: "tail" | "none"): RenderOptions => ({
-    ...policy.render, stepContext, strategy: policy.strategy.id, currentTurn: currentTurnOf(all), currentRun: runId,
+  /** A render of the log: the step context of run `run` of the turn; the latest run that recorded one when none is named. */
+  const renderOptions = (all: ReadonlyArray<LogEntry>, stepContext: "tail" | "none", run: RunOrdinal = latestRunOf(all, runId)): RenderOptions => ({
+    ...policy.render, stepContext, strategy: policy.strategy.id, currentTurn: currentTurnOf(all), currentRun: runId, run,
   })
   // One record at a time: ids, the stored order and the session's order agree (a request is
   // rebuilt from the stored entries up to its build's last one), and a refused append takes no id.
@@ -164,7 +166,7 @@ export const openLogSession = Effect.fnUntraced(function* (
   })
   return {
     strategy: policy.strategy,
-    renderRecipe: (stepContext) => Ref.get(entries).pipe(Effect.map((all) => renderOptions(all, stepContext))),
+    renderRecipe: (stepContext, run) => Ref.get(entries).pipe(Effect.map((all) => renderOptions(all, stepContext, run))),
     turn: Ref.get(entries).pipe(Effect.map(currentTurnOf)),
     entries: Ref.get(entries),
     query: (query) => Ref.get(entries).pipe(Effect.map((all) => queryLog(all, query))),
@@ -175,6 +177,6 @@ export const openLogSession = Effect.fnUntraced(function* (
     record,
     recordTail,
     maintain,
-    build: ({ stepContext }) => Ref.get(entries).pipe(Effect.map((all) => buildContext(all, renderOptions(all, stepContext)))),
+    build: ({ stepContext, run }) => Ref.get(entries).pipe(Effect.map((all) => buildContext(all, renderOptions(all, stepContext, run)))),
   } satisfies MemorySession
 })

@@ -4,7 +4,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Tracer } fro
 import { failureCode } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
-import { InvocationId } from "../domain/run.entity.js"
+import { InvocationId, RunOrdinal } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
 import { SessionLogError } from "../session/session-log.entity.js"
@@ -14,7 +14,7 @@ import { harnessDefectsAsFailures, makeTurnEvents, makeTurnTasks } from "./turn-
 import { defineHostEvent, onEvent, onTool, subscribeAll } from "./turn-event.entity.functions.js"
 import type { TurnEvent } from "./turn-event.entity.js"
 
-const started = (step: number): TurnEvent => ({ _tag: "step.started", step, planned: false, activeTools: [] })
+const started = (step: number): TurnEvent => ({ _tag: "step.started", step, run: RunOrdinal.make(0), planned: false, activeTools: [] })
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000e1")
 const Lookup = Tool.make("lookup", {
   parameters: Schema.Struct({ query: Schema.String }),

@@ -1,5 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
+import type { RunRef } from "../domain/run.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { MemoryReader, MemorySession } from "./memory.port.js"
 import type { TurnWriter } from "./sessions.port.js"
@@ -49,6 +50,15 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
   readonly requestSnapshot: Effect.Effect<RequestSnapshot, TurnError>
   /** The turn's number; fails with `turn.unstarted` before `persistMessage`. */
   readonly number: Effect.Effect<number, HarnessError>
+  /**
+   * Start a run of the step loop (`stepRequestOf` does, once per run): the
+   * turn's run id and number, and the run's ordinal, 0 for the turn's first
+   * run and one up for each later one. Its requests, step contexts and step
+   * events carry the ordinal, so each run rebuilds its own requests. Fails
+   * with `turn.unstarted` before `persistMessage`, and with `turn.closed`
+   * once the reply is recorded.
+   */
+  readonly startRun: Effect.Effect<RunRef, HarnessError>
   /**
    * Record TurnStarted, then publish `turn.started`, and return the turn's
    * number. Once: a second call fails with `turn.persisted`, unless memory

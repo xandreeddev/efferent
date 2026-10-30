@@ -3,7 +3,7 @@ import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaAt, mediaLabel, mediaSlotsOf
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage, ToolResultPart, UserContentPart } from "../domain/message.entity.js"
-import { RunId } from "../domain/run.entity.js"
+import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { handoffToMessage } from "../loop/mapping.js"
 import { clippedMarker, clipTo } from "../turn/model-text.js"
 import { attachmentsOf, userMessageText } from "../turn/user-message.entity.functions.js"
@@ -105,6 +105,8 @@ export interface RenderOptions {
   readonly strategy: string
   readonly currentTurn: number
   readonly currentRun: RunId
+  /** The run of the turn whose latest step context the render shows (`"tail"`): every run of a turn shares `currentRun`. */
+  readonly run: RunOrdinal
   /** Turn contexts are shown for the current turn only, or for every kept turn. */
   readonly turnContext: "current" | "all"
   /** Append the host's delivered reply when the model's own text differs. */
@@ -266,7 +268,8 @@ const toolResultPart = (entry: LogEntry, body: Extract<LogBody, { readonly _tag:
 export const renderLog = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<AgentMessage> => {
   const { applied, digests, kept, inline } = mediaPlan(entries, options)
   const pinned: ReadonlySet<string> = new Set(entries.flatMap((entry) => entry.body._tag === "ToolResult" && entry.body.pinned ? [String(entry.body.toolCallId)] : []))
-  const stepContext = options.stepContext === "none" ? [] : entries.filter((entry) => entry.body._tag === "StepContext" && entry.runId === options.currentRun).slice(-1)
+  const stepContext = options.stepContext === "none" ? [] : entries.filter((entry) =>
+    entry.body._tag === "StepContext" && entry.runId === options.currentRun && entry.body.run === options.run).slice(-1)
   const initial: RenderState = { out: [], lastText: new Map() }
   const body = entries.reduce((state: RenderState, entry): RenderState => {
     const b: LogBody = entry.body
@@ -330,9 +333,13 @@ export const buildContext = (entries: ReadonlyArray<LogEntry>, options: RenderOp
   }
 }
 
-/** The latest step context recorded by this run, if any. */
-export const stepContextOf = (entries: ReadonlyArray<LogEntry>, runId: RunId): Option.Option<string> =>
-  Option.fromNullishOr(entries.flatMap((entry) => entry.body._tag === "StepContext" && entry.runId === runId ? [entry.body.text] : []).at(-1))
+/** The latest step context recorded by this run of the turn `runId` began, if any. */
+export const stepContextOf = (entries: ReadonlyArray<LogEntry>, runId: RunId, run: RunOrdinal): Option.Option<string> =>
+  Option.fromNullishOr(entries.flatMap((entry) => entry.body._tag === "StepContext" && entry.runId === runId && entry.body.run === run ? [entry.body.text] : []).at(-1))
+
+/** The run of the latest step context the turn `runId` began recorded; 0 (its first run) when it recorded none. */
+export const latestRunOf = (entries: ReadonlyArray<LogEntry>, runId: RunId): RunOrdinal =>
+  entries.reduce((latest, entry) => entry.body._tag === "StepContext" && entry.runId === runId ? entry.body.run : latest, RunOrdinal.make(0))
 
 /** The number of the latest started turn (turns count from 1). */
 export const currentTurnOf = (entries: ReadonlyArray<LogEntry>): number =>

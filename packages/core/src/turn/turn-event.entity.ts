@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { DecisionRecord } from "../decision-record.entity.js"
-import { InvocationId, RunId } from "../domain/run.entity.js"
+import { InvocationId, RunId, RunKey } from "../domain/run.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { StepStatus, TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
@@ -40,11 +40,13 @@ export const TurnStartedEvent = Schema.TaggedStruct("turn.started", {
 
 export const StepStartedEvent = Schema.TaggedStruct("step.started", {
   step: Schema.Int,
+  /** The run of the turn the step belongs to (`StepRequest.run`): 0 for its first run. */
+  run: RunKey,
   /** Step zero of a host-planned batch: no provider call. */
   planned: Schema.Boolean,
   activeTools: Schema.Array(Schema.String),
 }).annotate({
-  description: "Published by the step loop as each step starts. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`.",
+  description: "Published by the step loop as each step starts. `run` is the run of the turn the step belongs to (0 for the turn's first run, one up for each later `Turn.run`; a record written before runs were counted reads 0), as on `step.ended`, `assistant.message`, `completion.evaluated`, `context.built` and `stream.fallback`: a step is named by its turn, run and step. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`.",
 })
 
 export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
@@ -119,6 +121,7 @@ export type StepResult = typeof StepResult.Type
 
 export const StepEndedEvent = Schema.TaggedStruct("step.ended", {
   step: Schema.Int,
+  run: RunKey,
   status: StepStatus,
   /** The step's recorded tool results, in log order. */
   results: Schema.Array(StepResult),
@@ -128,6 +131,7 @@ export const StepEndedEvent = Schema.TaggedStruct("step.ended", {
 
 export const CompletionEvaluatedEvent = Schema.TaggedStruct("completion.evaluated", {
   step: Schema.Int,
+  run: RunKey,
   verdict: CompletionVerdict,
 }).annotate({
   description: "Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.",
@@ -144,6 +148,7 @@ export const SkillsActivatedEvent = Schema.TaggedStruct("skills.activated", {
 export const ContextBuiltEvent = Schema.TaggedStruct("context.built", {
   step: Schema.Int,
   turn: Schema.Int,
+  run: RunKey,
   strategy: Schema.String,
   strategyVersion: Schema.String,
   fingerprint: Schema.String,
@@ -166,13 +171,14 @@ export const DecisionRecordedEvent = Schema.TaggedStruct("decision.recorded", {
 
 export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
   step: Schema.Int,
+  run: RunKey,
   text: Schema.String,
   reasoning: Schema.String,
   model: Schema.OptionFromNullOr(Schema.String),
   toolCalls: Schema.Array(Schema.Struct({ id: Schema.String, tool: Schema.String, input: Schema.Unknown })),
   usage: TokenUsage,
 }).annotate({
-  description: "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, model, usage): the content itself is memory's `memory.message`.",
+  description: "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage): the content itself is memory's `memory.message`.",
 })
 
 /** A streamed increment — transient: never journaled, restated by assistant.message. */
@@ -187,6 +193,7 @@ export const AssistantDeltaEvent = Schema.TaggedStruct("assistant.delta", {
 
 export const StreamFallbackEvent = Schema.TaggedStruct("stream.fallback", {
   step: Schema.Int,
+  run: RunKey,
   /** The stream's error or defect as text, cut to 300 characters. */
   message: Schema.String,
 }).annotate({

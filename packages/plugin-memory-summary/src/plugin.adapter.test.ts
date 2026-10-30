@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Fiber, Logger, Option, Ref, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { ConversationId, ConversationMemory, entryId, HarnessError, renderLog, RunId, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
+import { ConversationId, ConversationMemory, entryId, HarnessError, renderLog, RunId, RunOrdinal, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { memorySummaryDefaults, memorySummaryPlugin, SUMMARY_STRATEGY, summaryPolicy, summaryPrompt } from "./plugin.adapter.js"
 
@@ -20,7 +20,7 @@ const signal = { phase: "step" as const, lastUsage: Option.none(), budgetTokens:
 const config = { ...memorySummaryDefaults, summaryTimeoutMs: 5_000 }
 const maintain = (summarize: (prompt: string) => Effect.Effect<string, HarnessError>) => {
   const policy = summaryPolicy(config, summarize)
-  const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: RunId.make("run-4") })
+  const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: RunId.make("run-4"), run: RunOrdinal.make(0) })
   return policy.maintain({ entries: log, signal, turn: 4, runId: RunId.make("run-4"), render })
 }
 
@@ -168,7 +168,7 @@ describe("spans", () => {
   test("a step whose context stays under the trigger asks nothing, and opens no span", async () => {
     const { tracer, shown } = keeping()
     const policy = summaryPolicy(config, () => Effect.succeed("SUMMARY"))
-    const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: RunId.make("run-4") })
+    const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: RunId.make("run-4"), run: RunOrdinal.make(0) })
     const decided = await run(() => policy.maintain({ entries: log, signal: { ...signal, budgetTokens: 100_000 }, turn: 4, runId: RunId.make("run-4"), render }).pipe(Effect.withTracer(tracer)))
     expect([decided.actions, shown()]).toEqual([[], []])
   })

@@ -616,6 +616,20 @@ without a provider call), `model` (a model and prompt variant per step),
 those tasks and is evaluated once more. No provider call follows a complete
 verdict.
 
+A turn may run the step loop more than once (`turn.run` again, after the
+first run's verdict). Each run takes the turn's next ordinal
+(`TurnMemory.startRun`: 0 for the first, `RunRef` carries it with the
+turn's run id and number), and its step contexts, request headers and step
+events (`step.started`, `step.ended`, `assistant.message` and its stored
+`step.usage`, `completion.evaluated`, `context.built`, `stream.fallback`)
+carry it as `run`; a record written before runs were counted reads 0. A
+run's request shows that run's own step context, never an earlier run's,
+and each run's requests rebuild from their own headers. The ids the loop
+mints for a provider's tool calls that come without one are
+`<turn>.<ordinal>.<step>:<tool>:<n>` (`toolCallIdOf`), and those of a
+host-planned batch `<turn>.<ordinal>.planned:<n>` (`plannedCallIdOf`), so
+they differ across the runs and turns of a session.
+
 **The token budget.** `budgetTokens` is the target memory keeps each request
 under: the system prompt, the active tools' schemas and the messages,
 estimated together. It is not a provider limit, and nothing is cut to fit a
@@ -789,8 +803,11 @@ stream fallback checks the same contract again, and a failed check fails the
 step, streamed or not, instead of falling back. Host-planned batches make no
 provider request and create no request header.
 
-`replayModelRequest(events, runId, step)` reconstructs one historical request
-from the memory up to its header's cut, excluding later responses. It uses
+`replayModelRequest(events, runId, step, run?)` reconstructs one historical
+request, that of `step` in the run `run` of the turn (its ordinal: 0, the
+default, for a turn's first run and for every request stored before runs
+were counted), from the memory up to its header's cut, excluding later
+responses. It uses
 recorded tool schemas and render options, so changing installed plugins does
 not rewrite historical requests, and fails with `request.diverged`
 (`context`) when the events do not rebuild the context the header was
@@ -1318,7 +1335,9 @@ tasks, with the writer as the bus's first subscriber, then the memory
 session (opened where the layer is built, over the session's earlier turns)
 and `RunContext` (which carries the turn's `session`). It provides:
 
-- `TurnMemory`: the session, the turn's `number`, `persistMessage` (the
+- `TurnMemory`: the session, the turn's `number`, `startRun` (the next run
+  of the step loop, its ordinal counting from 0; `turn.closed` once the
+  reply is recorded), `persistMessage` (the
   turn's TurnStarted, stored when the turn began, is shown to memory, then
   `turn.started` is published; once, but a message memory failed to record
   can be taken again), `context(entry)` (before
@@ -1877,7 +1896,7 @@ decodes the events of one of the kinds in `StoredData` (`turn.started`,
 `request.prepared`) with that kind's schema and fails with the first
 `SchemaError`; a lookup by key goes through `readStoredKeys`, which decodes
 a `turn.started`'s `runId`, `key` and `entry` (`TurnStartedKeys`) or a
-`request.prepared`'s `runId` and `step` (`RequestPreparedKeys`), never a
+`request.prepared`'s `runId`, `run` and `step` (`RequestPreparedKeys`), never a
 user's message and its images. The framework's readers fail on a row that
 does not decode (plugin-sessions and plugin-tasks with `session.decode`, a
 turn with `memory.log` or `request.decode`) rather than skip it or read it

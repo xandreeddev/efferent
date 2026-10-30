@@ -2,6 +2,7 @@ import { Array as Arr, Effect, Option, Order, Schema } from "effect"
 import { Prompt, Tool } from "effect/ai"
 import type { LanguageModel } from "effect/ai"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
+import { RunOrdinal } from "../domain/run.entity.js"
 import type { RunId } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { isHarnessError } from "../harness/plugin.entity.functions.js"
@@ -127,11 +128,11 @@ export const modelRequestTools = (tools: ReadonlyArray<Tool.Any>): ReadonlyArray
 const requestDecode = (error: Schema.SchemaError) => new HarnessError({ code: "request.decode", message: error.message })
 
 /** The last `request.prepared` of this run and step, found by its keys alone (`readStoredKeys`). */
-const headerEventOf = (events: ReadonlyArray<SessionLogEvent>, runId: RunId, step: number): Effect.Effect<SessionLogEvent, HarnessError> =>
+const headerEventOf = (events: ReadonlyArray<SessionLogEvent>, runId: RunId, step: number, run: RunOrdinal): Effect.Effect<SessionLogEvent, HarnessError> =>
   readStoredKeys("request.prepared", events).pipe(
     Effect.mapError(requestDecode),
-    Effect.flatMap((headers) => Option.match(Option.fromNullishOr(headers.findLast((header) => header.keys.runId === runId && header.keys.step === step)), {
-      onNone: () => Effect.fail(new HarnessError({ code: "request.missing", message: `No durable request header for ${runId} step ${step}` })),
+    Effect.flatMap((headers) => Option.match(Option.fromNullishOr(headers.findLast((header) => header.keys.runId === runId && header.keys.run === run && header.keys.step === step)), {
+      onNone: () => Effect.fail(new HarnessError({ code: "request.missing", message: `No durable request header for ${runId} run ${run} step ${step}` })),
       onSome: (header) => Effect.succeed(header.event),
     })),
   )
@@ -140,8 +141,8 @@ const decodeHeader = (event: SessionLogEvent): Effect.Effect<ModelRequestHeader,
   Schema.decodeUnknownEffect(ModelRequestHeader)(event.data).pipe(Effect.mapError(requestDecode))
 
 /** Last header for this run and step, decoded from a fresh durable snapshot. */
-export const modelRequestHeaderOf = (events: ReadonlyArray<SessionLogEvent>, runId: RunId, step: number): Effect.Effect<ModelRequestHeader, HarnessError> =>
-  headerEventOf(events, runId, step).pipe(Effect.flatMap(decodeHeader))
+export const modelRequestHeaderOf = (events: ReadonlyArray<SessionLogEvent>, runId: RunId, step: number, run: RunOrdinal): Effect.Effect<ModelRequestHeader, HarnessError> =>
+  headerEventOf(events, runId, step, run).pipe(Effect.flatMap(decodeHeader))
 
 /** A model request as a dispatch check compares it: the Effect AI prompt, and the parts the header declares. */
 export interface ComparedModelRequest {
@@ -186,9 +187,14 @@ export const reconstructModelRequest = Effect.fnUntraced(function* (header: Mode
   }
 })
 
-/** Reconstruct one historical request from the events up to its header, excluding later responses and turns. */
-export const replayModelRequest = Effect.fnUntraced(function* (events: ReadonlyArray<SessionLogEvent>, runId: RunId, step: number) {
-  const found = yield* headerEventOf(events, runId, step)
+/**
+ * Reconstruct one historical request from the events up to its header,
+ * excluding later responses and turns: the request of `step` in the run
+ * `run` (its ordinal, 0 by default: a turn's first run, and every request
+ * stored before runs were counted) of the turn `runId` began.
+ */
+export const replayModelRequest = Effect.fnUntraced(function* (events: ReadonlyArray<SessionLogEvent>, runId: RunId, step: number, run: RunOrdinal = RunOrdinal.make(0)) {
+  const found = yield* headerEventOf(events, runId, step, run)
   const header = yield* decodeHeader(found)
   const entries = yield* entriesOfEvents(events.slice(0, events.indexOf(found) + 1)).pipe(
     Effect.mapError((error) => new HarnessError({ code: "request.memory", message: error.message })),

@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Effect, Schema } from "effect"
 
 /**
  * Names the run of one turn, as the host begins it (`NewTurn.runId`): memory
@@ -17,3 +17,22 @@ export type RunId = typeof RunId.Type
  */
 export const InvocationId = Schema.String.pipe(Schema.brand("InvocationId"))
 export type InvocationId = typeof InvocationId.Type
+
+/**
+ * Which run of the step loop within one turn: the turn's first run is 0,
+ * and each later `Turn.run` counts one up (`TurnMemory.startRun`). Every
+ * run of a turn shares its `RunId`; the ordinal tells their steps apart.
+ */
+export const RunOrdinal = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)).pipe(Schema.brand("RunOrdinal"))
+export type RunOrdinal = typeof RunOrdinal.Type
+
+/**
+ * A run's ordinal as stored, on a request header, a render recipe, a step
+ * context and the step events: a record written before runs were counted
+ * has none, and reads 0.
+ */
+export const RunKey = RunOrdinal.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0)))
+
+/** One run of the step loop: the turn's run id, the turn's number, and the run's ordinal within the turn. */
+export const RunRef = Schema.Struct({ id: RunId, turn: Schema.Int, ordinal: RunOrdinal })
+export type RunRef = typeof RunRef.Type

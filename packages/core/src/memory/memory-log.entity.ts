@@ -1,7 +1,7 @@
 import { Schema, SchemaTransformation } from "effect"
 import { Media, MediaSlot } from "../domain/media.entity.js"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
-import { RunId } from "../domain/run.entity.js"
+import { RunId, RunKey } from "../domain/run.entity.js"
 import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { DecisionId } from "../decision-record.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -141,7 +141,8 @@ export const LogBody = Schema.Union(
     digester: Schema.String,
     trigger: Schema.Literals(["write", "compaction"]),
   }),
-  Schema.TaggedStruct("StepContext", { step: Schema.Int, text: Schema.String }),
+  /** The step policy's context for one step of one run of the turn (`run`; an entry written before runs were counted reads 0). */
+  Schema.TaggedStruct("StepContext", { step: Schema.Int, run: RunKey, text: Schema.String }),
   Schema.TaggedStruct("ToolsActivated", {
     skills: Schema.Array(Schema.String),
     tools: Schema.Array(Schema.String),

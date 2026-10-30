@@ -44,11 +44,12 @@ Published once per turn when memory takes the user's message as turn `turn` (`Tu
 
 ### `step.started`
 
-Published by the step loop as each step starts. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`.
+Published by the step loop as each step starts. `run` is the run of the turn the step belongs to (0 for the turn's first run, one up for each later `Turn.run`; a record written before runs were counted reads 0), as on `step.ended`, `assistant.message`, `completion.evaluated`, `context.built` and `stream.fallback`: a step is named by its turn, run and step. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`.
 
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
+| `run` | `integer` (optional) |
 | `planned` | `boolean` |
 | `activeTools` | `Array<string>` |
 
@@ -114,6 +115,7 @@ Published by the step loop after the step's tail is recorded. `status` is comple
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
+| `run` | `integer` (optional) |
 | `status` | `"completed" \| "failed" \| "cancelled"` |
 | `results` | `Array<{ entry, toolCallId, tool, ok }>` |
 
@@ -124,6 +126,7 @@ Published by the step loop after `step.ended`, with the verdict of the host's co
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
+| `run` | `integer` (optional) |
 | `verdict` | `{ complete, awaiting, facts }` |
 
 ### `skills.activated`
@@ -144,6 +147,7 @@ Published before each provider call, once the step's context is built (none for 
 | --- | --- |
 | `step` | `integer` |
 | `turn` | `integer` |
+| `run` | `integer` (optional) |
 | `strategy` | `string` |
 | `strategyVersion` | `string` |
 | `fingerprint` | `string` |
@@ -164,11 +168,12 @@ Published by `recordDecision`, for example when `turn.tools.select` or `apply` r
 
 ### `assistant.message`
 
-Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, model, usage): the content itself is memory's `memory.message`.
+Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage): the content itself is memory's `memory.message`.
 
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
+| `run` | `integer` (optional) |
 | `text` | `string` |
 | `reasoning` | `string` |
 | `model` | `string \| null` |
@@ -193,6 +198,7 @@ Published by the step loop when a streamed provider call fails before its first 
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
+| `run` | `integer` (optional) |
 | `message` | `string` |
 
 ### `turn.ended`
@@ -232,17 +238,17 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `memory.skills` | Memory: the tool registry's skill activations | None: skill and tool names. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.compaction` | Memory: the memory strategy's compactions (window, summary); the turn, when a provider refuses an image (`OmitMedia`) | Conversation text: summaries and compact views; an `OmitMedia`'s `reason` quotes the provider's error (up to 500 characters). | `entry`, `runId`, `step`, `at`, `body` |
 | `turn.reply` | Memory, when the turn's reply is recorded (`TurnMemory.persistReply`) | The assistant's reply. | `entry`, `runId`, `step`, `at`, `body` |
-| `step.started` | The turn's bus (stored from `step.started`) | None: tool names. | `step`, `planned`, `activeTools` |
-| `step.ended` | The turn's bus (stored from `step.ended`) | None: entry ids and tool names. | `step`, `status`, `results` |
-| `step.usage` | The turn's bus (stored from `assistant.message`) | None: model name and token counts. | `step`, `model`, `usage` |
+| `step.started` | The turn's bus (stored from `step.started`) | None: tool names. | `step`, `run`, `planned`, `activeTools` |
+| `step.ended` | The turn's bus (stored from `step.ended`) | None: entry ids and tool names. | `step`, `run`, `status`, `results` |
+| `step.usage` | The turn's bus (stored from `assistant.message`) | None: model name and token counts. | `step`, `run`, `model`, `usage` |
 | `tool.started` | The turn's bus (stored from `tool.started`) | Tool input. | `step`, `invocationId`, `tool`, `input`, `labels`, `stage` |
 | `tool.refused` | The turn's bus (stored from `tool.refused`) | The refusal message, which may name missing permissions or quote the host's denial; the input is left out. | `step`, `invocationId`, `tool`, `reason`, `message` |
 | `tool.completed` | The turn's bus (stored from `tool.completed`) | None: input and result are left out. | `step`, `invocationId`, `tool`, `ok`, `durationMs`, `labels`, `stage` |
-| `completion.evaluated` | The turn's bus (stored from `completion.evaluated`) | The host's facts behind the verdict. | `step`, `verdict` |
-| `context.built` | The turn's bus (stored from `context.built`) | None: fingerprints, counts and tool names. | `step`, `turn`, `strategy`, `strategyVersion`, `fingerprint`, `systemFingerprint`, `estimatedTokens`, `reservedTokens`, `budgetTokens`, `compactions`, `activeTools` |
+| `completion.evaluated` | The turn's bus (stored from `completion.evaluated`) | The host's facts behind the verdict. | `step`, `run`, `verdict` |
+| `context.built` | The turn's bus (stored from `context.built`) | None: fingerprints, counts and tool names. | `step`, `turn`, `run`, `strategy`, `strategyVersion`, `fingerprint`, `systemFingerprint`, `estimatedTokens`, `reservedTokens`, `budgetTokens`, `compactions`, `activeTools` |
 | `decision.recorded` | The turn's bus (stored from `decision.recorded`) | Candidate descriptions; the context itself only as a hash. | `record` |
-| `stream.fallback` | The turn's bus (stored from `stream.fallback`) | The stream's error text, which may quote the provider's error. | `step`, `message` |
-| `request.prepared` | The turn, before each provider call (`TurnMemory.prepareRequest`) | The full system prompt text and every active tool declaration (and step context in `system` mode). | `version`, `runId`, `step`, `strategyVersion`, `system`, `render`, `through`, `contextFingerprint`, `tools`, `toolChoice`, `model`, `cacheKey`, `callPolicy` |
+| `stream.fallback` | The turn's bus (stored from `stream.fallback`) | The stream's error text, which may quote the provider's error. | `step`, `run`, `message` |
+| `request.prepared` | The turn, before each provider call (`TurnMemory.prepareRequest`) | The full system prompt text and every active tool declaration (and step context in `system` mode). | `version`, `runId`, `run`, `step`, `strategyVersion`, `system`, `render`, `through`, `contextFingerprint`, `tools`, `toolChoice`, `model`, `cacheKey`, `callPolicy` |
 | `turn.ended` | plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap | Failure messages, which may quote errors. | `reason`, `failure` |
 | `inbox.queued` | plugin-sessions: `Sessions.deliver` (a task's result, a host's item) | The item's content and source. | `id`, `source`, `content` |
 | `inbox.dropped` | plugin-sessions: the end of the last turn that took the item and failed | None: the item id. | `id`, `reason` |
@@ -253,7 +259,7 @@ A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's
 | --- | --- |
 | `memory.system` | `fingerprint`: `string`, `text`: `string`, `sections`: `Array<{ id, version, fingerprint }>` |
 | `memory.section` | `sectionId`: `string`, `version`: `string`, `text`: `string` |
-| `memory.step` | `step`: `integer`, `text`: `string` |
+| `memory.step` | `step`: `integer`, `run`: `integer`, `text`: `string` |
 | `memory.message` | `message`: `{ role, content, providerOptions }` |
 | `memory.tool-result` | `toolCallId`: `string`, `toolName`: `string`, `isError`: `boolean`, `encoded`: `unknown`, `view`: `string`, `viewVersion`: `string`, `subjects`: `Array<{ kind, id, label, data }>`, `artifacts`: `Array<{ id, kind, mediaType, url, alt }>`, `pinned`: `boolean`, `media`: `Array<{ path, fingerprint, mediaType, bytes }>`, `mediaNotes`: `Array<string>` |
 | `memory.digest` | `entry`: `string`, `version`: `string`, `mode`: `"select" \| "summarize"`, `keep`: `Array<string>`, `text`: `string`, `digester`: `string`, `trigger`: `"write" \| "compaction"` |
@@ -325,7 +331,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 
 | Code | Where | Meaning |
 | --- | --- | --- |
-| `turn.closed` | `Agent.turn`, the turn writer (`TurnClosed`) | The turn takes no more writes: someone else closed it (`cancelled`; `interrupted`, reaped; `removed`, its session removed), or it `ended` (its own end stored or under way, or its scope closed). The writer and `Agent.turn` fail with `TurnClosed`, whose `reason` says which; this is the code it stands for. |
+| `turn.closed` | `Agent.turn`, the turn writer (`TurnClosed`); a run started after the reply (`TurnMemory.startRun`) | The turn takes no more writes: someone else closed it (`cancelled`; `interrupted`, reaped; `removed`, its session removed), or it `ended` (its own end stored or under way, or its scope closed). The writer and `Agent.turn` fail with `TurnClosed`, whose `reason` says which; this is the code it stands for. A run of the step loop started once the turn's reply is recorded fails with a `HarnessError` of this code: the reply ends the turn's runs. |
 | `turn.failed` | stored `turn.ended` failure (`turnEndingOf`) | The turn failed with an error `harnessCodeOf` gives no code for (a tagged error without a `code`, or an untagged value, even one carrying a `code` such as a Node error's); the message is `<_tag>: <message>`, or the error as text (reason failed). |
 | `turn.defect` | stored `turn.ended` failure (`turnEndingOf`) | The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `TurnError` carried as a defect (a `HarnessError`, `TurnClosed`, ...) back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`. |
 | `turn.interrupted` | stored `turn.ended` failure | The turn was interrupted before it ended: its body (`turnEndingOf`), the scope its writer lived in, or its begin after the opening commit (reason interrupted). |
@@ -333,7 +339,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `turn.lease` | stored `turn.ended` failure | The turn's holder stopped writing and another instance reaped it (reason interrupted). |
 | `turn.budget` | a run of the step loop (`turn.run`, `runTurnLoop`) | The run's `budgetTokens` (the policy's, else the agent's) is not an integer of at least 1. |
 | `config.budget` | `Agent.define` | The agent's `budgetTokens` is not an integer of at least 1. |
-| `turn.unstarted` | the turn's memory | Memory was asked to record, or for the turn's number, before the user's message was taken. |
+| `turn.unstarted` | the turn's memory | Memory was asked to record, for the turn's number or to start a run, before the user's message was taken. |
 | `turn.persisted` | `TurnMemory.persistMessage` | The user's message was taken twice in one turn. |
 | `turn.numbering` | the turn's memory | Memory numbered the user's message differently from the turn the session stored. |
 | `events.reserved` | publishing a host event; a turn writer's `append` or `transact` and `Sessions.transact` (`ReservedKind`) | The host event's name, or the draft's kind, is one of the reserved kinds; only the framework's turn writes those (`frameworkDraft`). |

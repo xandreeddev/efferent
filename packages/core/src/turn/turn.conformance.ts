@@ -6,7 +6,7 @@ import type { ConformanceCheck } from "../conformance.entity.js"
 import { failureCode, pixelPng, sameUsage } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
-import { RunId } from "../domain/run.entity.js"
+import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { addUsage, tokenUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { IntentMatcher } from "../ports/capability.port.js"
@@ -17,6 +17,8 @@ import type { SessionLogEvent } from "../session/session-log.entity.js"
 import { InboxItemId } from "../session/sessions.entity.js"
 import type { SessionAddress, TurnBeginError, TurnError } from "../session/sessions.entity.js"
 import type { TurnRunner } from "../ports/turn.port.js"
+import { canonicalJson } from "../memory/memory-log.entity.functions.js"
+import { replayModelRequest } from "./model-request.entity.functions.js"
 import { UserMessage } from "./user-message.entity.js"
 
 const fail = (check: string) => (message: string) => Effect.fail(new ConformanceFailure({ check, message }))
@@ -89,8 +91,9 @@ const billedTotal = (count: number) => Array.from({ length: count }, (_, index) 
  * and the turn ended exactly once on success, failure and interrupt; tasks
  * are joined before the reply; a model-driven turn's `TurnResult.usage` is
  * what its stored `step.usage` records sum to (`turnUsageOf`); the user's
- * attachments reach the first request as image parts; the host layer
- * sees only earlier turns; a turn the runner begins and ends returns the
+ * attachments reach the first request as image parts; two runs of one
+ * turn each rebuild their own request from the stored events, the second
+ * never with the first's step context; the host layer sees only earlier turns; a turn the runner begins and ends returns the
  * inbox items its end left waiting (`TurnResult.pending`), for its caller
  * to drain; a turn that cannot begin (one begun while another is open)
  * fails with the refusal itself (`SessionBusy`), running and storing
@@ -108,9 +111,12 @@ const billedTotal = (count: number) => Array.from({ length: count }, (_, index) 
  * with the kit's own model, which answers with text only, under a policy
  * that completes after the first reply (`requireCompletion: false`, a
  * complete verdict); its expected counts follow the calls the model answered.
- * The attachments check runs the loop once with a model of its own that
- * records each request; it needs the composition's memory to admit one small
- * image (the memory plugins' defaults do; `maxMediaChars: 0` does not).
+ * The attachments check runs the loop once, and the runs check twice (with
+ * a step context only in the first run, at the end of the request, as the
+ * policy's default `stepContext: "tail"` puts it), with a model of its own
+ * that records each request; the attachments check needs the composition's
+ * memory to admit one small image (the memory plugins' defaults do;
+ * `maxMediaChars: 0` does not).
  */
 export const turnConformance = (
   runner: Effect.Effect<TurnRunner, HarnessError, Scope.Scope>,
@@ -250,6 +256,37 @@ export const turnConformance = (
         `the first request carried ${files.length} file parts, none of them the attached ${image.mediaType}`)
       const started = yield* startOf(yield* stored(session), "run-1")
       yield* expect("attachments", Option.exists(started, (event) => JSON.stringify(event.data.userMessage ?? null).includes(image.fingerprint)), "the stored turn.started does not hold the attachment")
+    })),
+    check("two runs of one turn each rebuild their own request, never with the other's step context", "runs", (turns, session) => Effect.gen(function* () {
+      const marker = "STEP OF THE FIRST RUN"
+      const requests = yield* Ref.make<ReadonlyArray<Prompt.Prompt>>([])
+      const model = yield* LanguageModel.make({
+        generateText: (options) => Ref.update(requests, (all) => [...all, options.prompt]).pipe(Effect.as<Array<Response.PartEncoded>>([
+          { type: "text", text: "done" },
+          { type: "finish", reason: "stop", usage: billedCall(0) },
+        ])),
+        streamText: () => Stream.die("the conformance model does not stream"),
+      })
+      const policy = (context: Option.Option<string>) => ({
+        limits: { streaming: false, maxSteps: 1, requireCompletion: false },
+        step: () => Effect.succeed({ context, toolChoice: Option.none() }),
+        completion: () => Effect.succeed({ complete: true, awaiting: [], facts: {} }),
+      })
+      yield* turns.turn({ ...input(session, "run-1"), services: Context.make(LanguageModel.LanguageModel, model) }, (turn) => Effect.gen(function* () {
+        yield* turn.run(policy(Option.some(marker)))
+        const second = yield* turn.run(policy(Option.none()))
+        return { outcome: "completed" as const, reply: Option.some(second.text) }
+      }))
+      const shows = (prompt: Prompt.Prompt) => canonicalJson(prompt.content).includes(marker)
+      const sent = (yield* Ref.get(requests)).map(shows)
+      yield* expect("runs", sent.join() === "true,false", `the step context of the turn's first run reached its two runs' requests as ${sent.join() || "none"}, not only the first's`)
+      const all = yield* stored(session)
+      const rebuilt = yield* Effect.forEach([0, 1], (ordinal) => replayModelRequest(all, RunId.make("run-1"), 0, RunOrdinal.make(ordinal)).pipe(
+        Effect.map((request) => shows(request.prompt)),
+        Effect.catch((error) => Effect.succeed(`not rebuilt (${error.code})`)),
+      ), { concurrency: 1 })
+      yield* expect("runs", rebuilt.join() === "true,false",
+        `the requests of the turn's two runs at step 0 rebuilt from the stored events as ${rebuilt.map((shown) => typeof shown === "string" ? shown : shown ? "with the first run's step context" : "without it").join(" and ")}`)
     })),
     check("the host layer is built before the message: it sees only earlier turns", "layer-before-message", (turns, session) => Effect.gen(function* () {
       const seen = yield* Ref.make<ReadonlyArray<string>>([])

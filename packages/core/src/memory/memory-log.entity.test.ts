@@ -5,11 +5,12 @@ import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage, ToolResultPart } from "../domain/message.entity.js"
-import { RunId } from "../domain/run.entity.js"
+import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
-  buildContext, canonicalJson, digestTranscript, emptyQuery, entriesSendingMedia, entryId, estimateMessageTokens, fingerprintOf, queryLog, rawTranscript, referenceTranscript, renderLog,
+  buildContext, canonicalJson, digestTranscript, emptyQuery, entriesSendingMedia, entryId, estimateMessageTokens, fingerprintOf, latestRunOf, queryLog, rawTranscript, referenceTranscript, renderLog,
+  stepContextOf,
 } from "./memory-log.entity.functions.js"
 import { LogBody, LogEntry } from "./memory-log.entity.js"
 
@@ -43,7 +44,7 @@ describe("the memory log's TurnStarted entry", () => {
     expect(encoded).toBe(canonicalJson(legacyEntry))
     expect(encoded).not.toContain("userMessage")
     const built = buildContext([entry], {
-      strategy: "test", currentTurn: 1, currentRun: RunId.make("run-1"), turnContext: "current", replies: true,
+      strategy: "test", currentTurn: 1, currentRun: RunId.make("run-1"), run: RunOrdinal.make(0), turnContext: "current", replies: true,
       stepContext: "tail", digests: false, media: { mode: "none", maxImages: 0, maxChars: 0 },
     })
     expect(built.messages).toEqual([{ role: "user", content: "hi" }])
@@ -52,6 +53,31 @@ describe("the memory log's TurnStarted entry", () => {
 
   test("a user message is never blank", () => {
     expect(Option.isNone(Schema.decodeUnknownOption(LogBody)({ _tag: "TurnStarted", prompt: "" }))).toBe(true)
+  })
+})
+
+describe("a step context", () => {
+  const [first, second] = [RunOrdinal.make(0), RunOrdinal.make(1)]
+  const stepContext = (index: number, run: RunOrdinal, text: string): LogEntry => ({
+    id: entryId(runOf(1), index), runId: runOf(1), turn: 1, step: 0, at: 0, body: { _tag: "StepContext", step: 0, run, text },
+  })
+  const turn: ReadonlyArray<LogEntry> = [
+    { id: entryId(runOf(1), 0), runId: runOf(1), turn: 1, step: 0, at: 0, body: { _tag: "TurnStarted", userMessage: new UserMessage({ text: "go" }) } },
+    stepContext(1, first, "FIRST RUN"),
+  ]
+  const tail = (entries: ReadonlyArray<LogEntry>, run: RunOrdinal) =>
+    renderLog(entries, { ...options(1, { mode: "none", maxImages: 0, maxChars: 0 }), run }).flatMap((message) => message.role === "user" ? [message.content] : [])
+
+  test("closes the render of its own run only: a later run of the turn that records none shows none", () => {
+    expect([tail(turn, first), tail(turn, second)]).toEqual([["go", "FIRST RUN"], ["go"]])
+    expect(tail([...turn, stepContext(2, second, "SECOND RUN")], second)).toEqual(["go", "SECOND RUN"])
+    expect([stepContextOf(turn, runOf(1), first), stepContextOf(turn, runOf(1), second)]).toEqual([Option.some("FIRST RUN"), Option.none()])
+    expect([latestRunOf([], runOf(1)), latestRunOf([...turn, stepContext(2, second, "SECOND RUN")], runOf(1))]).toEqual([first, second])
+  })
+
+  test("stored before runs were counted, it reads as the turn's first run's", () => {
+    const decoded = Schema.decodeUnknownOption(LogBody)({ _tag: "StepContext", step: 2, text: "old" })
+    expect(decoded).toEqual(Option.some({ _tag: "StepContext", step: 2, run: first, text: "old" }))
   })
 })
 
@@ -68,7 +94,7 @@ const replied = (turn: number): LogEntry => ({
   id: entryId(runOf(turn), 1), runId: runOf(turn), turn, step: 0, at: 0, body: { _tag: "TurnEnded", outcome: "completed", reply: Option.some(`reply ${turn}`) },
 })
 const options = (currentTurn: number, media: RenderOptions["media"]): RenderOptions => ({
-  strategy: "test", currentTurn, currentRun: runOf(currentTurn), turnContext: "current", replies: true, stepContext: "tail", digests: false, media,
+  strategy: "test", currentTurn, currentRun: runOf(currentTurn), run: RunOrdinal.make(0), turnContext: "current", replies: true, stepContext: "tail", digests: false, media,
 })
 const users = (messages: ReadonlyArray<AgentMessage>) => messages.flatMap((message) => message.role === "user" ? [message.content] : [])
 const log = [started(1, "first", [png]), replied(1), started(2, "second", [gif]), replied(2), started(3, "", [png, gif])]

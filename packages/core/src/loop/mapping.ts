@@ -4,6 +4,8 @@ import type { Prompt } from "effect/ai"
 import { ENGINE_KEY, ResponseStamp } from "../domain/engine-stamp.entity.js"
 import type { ToolCallSummary } from "../domain/loop-event.entity.js"
 import type { Media } from "../domain/media.entity.js"
+import { toolCallIdOf } from "../domain/run.entity.functions.js"
+import type { RunRef } from "../domain/run.entity.js"
 import { ProviderOptions, ToolCallId } from "../domain/message.entity.js"
 import type {
   AgentMessage,
@@ -176,38 +178,44 @@ export const toPromptMessages = (
  * Some providers (notably Gemini) return tool calls WITHOUT an id. An absent
  * id breaks durable UI identity (a live event and a later re-projection of
  * the same persisted message must compute the same key), so a deterministic
- * id — `<turnIndex>:<toolName>:<ordinalInTurn>` — is minted ONCE here, before
- * the content fans out into events and persisted messages. The Nth id-less
- * call and the Nth id-less result pair on the same ordinal, so the
+ * id is minted ONCE here, before the content fans out into events and
+ * persisted messages: `<turn>.<ordinal>.<step>:<toolName>:<n>` for a step of
+ * the run `run` (`toolCallIdOf`), distinct across the runs and turns of a
+ * session; `<step>:<toolName>:<n>` without a run, which repeats from one run
+ * to the next. `n` is the call's place among the step's calls. The Nth
+ * id-less call and the Nth id-less result pair on the same `n`, so the
  * call ↔ result pairing stays valid. A non-empty provider id is left as-is.
  *
  * Pure: returns new part objects; the input is never mutated.
  */
 export const withToolCallIds = (
   content: ReadonlyArray<Response.AnyPart>,
-  turnIndex: number,
-): ReadonlyArray<Response.AnyPart> =>
-  content
+  step: number,
+  run?: RunRef,
+): ReadonlyArray<Response.AnyPart> => {
+  const idOf = (tool: string, n: number) => run === undefined ? `${step}:${tool}:${n}` : toolCallIdOf(run, step, tool, n)
+  return content
     .reduce(
       (acc: { calls: number; results: number; out: ReadonlyArray<Response.AnyPart> }, part) => {
         if (part.type === "tool-call") {
           return {
             calls: acc.calls + 1,
             results: acc.results,
-            out: [...acc.out, part.id === "" ? { ...part, id: `${turnIndex}:${part.name}:${acc.calls}` } : part],
+            out: [...acc.out, part.id === "" ? { ...part, id: idOf(part.name, acc.calls) } : part],
           }
         }
         if (part.type === "tool-result") {
           return {
             calls: acc.calls,
             results: acc.results + 1,
-            out: [...acc.out, part.id === "" ? { ...part, id: `${turnIndex}:${part.name}:${acc.results}` } : part],
+            out: [...acc.out, part.id === "" ? { ...part, id: idOf(part.name, acc.results) } : part],
           }
         }
         return { ...acc, out: [...acc.out, part] }
       },
       { calls: 0, results: 0, out: [] },
     ).out
+}
 
 /** A result the model or a tool will still replace: effect/ai streams them before the final one. */
 const isSettled = (p: Response.AnyPart): boolean => p.type !== "tool-result" || !p.preliminary

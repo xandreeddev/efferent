@@ -9,6 +9,8 @@ import type { AgentMessage, AgentResult } from "@xandreed/core"
 import { addUsage, elideMediaData, isMediaValue, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
+import { plannedCallIdOf } from "@xandreed/core"
+import type { RunRef } from "@xandreed/core"
 import { extractModel, extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core"
 
 /**
@@ -39,6 +41,14 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
    * Effect AI decoder, instrumented toolkit and durable tail hooks, without
    * another provider request. Provider usage belongs to the host planner. */
   readonly initialStep?: ReadonlyArray<{ readonly name: keyof Tools & string; readonly params: unknown }>
+  /**
+   * The run this is (`StepRequest.run`): the ids minted for a provider's
+   * id-less tool calls are `<turn>.<ordinal>.<step>:<tool>:<n>` and a planned
+   * batch's `<turn>.<ordinal>.planned:<n>`, distinct across a session's runs
+   * and turns. Without it they are `<step>:<tool>:<n>` and `planned:0:<n>`,
+   * which repeat from one run to the next.
+   */
+  readonly run?: RunRef
   /** Host selection at a real provider boundary. Never called for initialStep.
    * The host may cache its choice for a run; tools and completion remain loop-owned. */
   readonly prepareModel?: (input: {
@@ -521,7 +531,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           const initial = Effect.gen(function* () {
             const provider = yield* LanguageModel.make({
               generateText: () => Effect.succeed([...(options.initialStep ?? []).map((call, index) => ({
-                type: "tool-call" as const, id: `planned:0:${index}`, name: call.name,
+                type: "tool-call" as const, id: options.run === undefined ? `planned:0:${index}` : plannedCallIdOf(options.run, index), name: call.name,
                 params: call.params, providerExecuted: false,
               })), { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: {}, outputTokens: {} } }]),
               streamText: () => Stream.empty,
@@ -599,7 +609,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
 
         // Mint deterministic ids for id-less tool calls BEFORE the content
         // fans out into events + persisted messages (durable UI identity).
-        const content = withToolCallIds(outcome.content, state.turnIndex)
+        const content = withToolCallIds(outcome.content, state.turnIndex, options.run)
         const usage = extractUsage(outcome.usage, content)
         yield* Effect.annotateCurrentSpan({
           "engine.step.finish_reason": outcome.finishReason,
