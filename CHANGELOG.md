@@ -1233,6 +1233,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/core/conformance` and the turn's bus and tasks from
   `@xandreed/core/engine`, which a `plugin-agent-loop-tests` boundaries layer
   grants to its tests only.
+- `@xandreed/sdk` runs `Agent.turn` on `@xandreed/core/engine`; its tests
+  import the kits from `@xandreed/core/conformance` and the tool schema from
+  `@xandreed/core/internal`.
 
 ### Deprecated
 

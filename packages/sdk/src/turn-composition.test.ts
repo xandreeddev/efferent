@@ -3,25 +3,27 @@ import { Context, Effect, Exit, Layer, Option, Stream, Tracer } from "effect"
 import type { Scope } from "effect"
 import { LanguageModel } from "effect/ai"
 import {
-  cacheKeyOf,
   CapabilitiesLive,
-  guardTurn,
   harnessDefectsAsFailures,
   HarnessError,
   Sessions,
-  openTurnTools,
   stackPlugins,
-  TurnLive,
-  turnConformance,
   TurnMemory,
-  turnOf,
   SessionLogMemoryLive,
   TurnAdmissionOpen,
-  traceTurn,
   turnEndingOf,
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
+import {
+  cacheKeyOf,
+  guardTurn,
+  openTurnTools,
+  TurnLive,
+  turnOf,
+  traceTurn,
+} from "@xandreed/core/engine"
+import { turnConformance } from "@xandreed/core/conformance"
 import type { Turn, TurnBeginError, TurnError, TurnInput, TurnOutcome, TurnResult, TurnServices, TurnWriter } from "@xandreed/core"
 import { StepLoopLive } from "@xandreed/plugin-agent-loop"
 import { MemoryDigestLive } from "@xandreed/plugin-memory-digest"

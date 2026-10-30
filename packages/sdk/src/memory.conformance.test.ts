@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option } from "effect"
-import { ConversationId, ConversationMemory, harnessCodeOf, inMemoryLog, MEDIA_LIMITS, memoryConformance, openLogSession, RunId, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { ConversationId, ConversationMemory, harnessCodeOf, MEDIA_LIMITS, openLogSession, RunId, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { inMemoryLog, memoryConformance } from "@xandreed/core/conformance"
 import type { MemoryPolicy, Plugin } from "@xandreed/core"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"

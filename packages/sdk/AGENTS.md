@@ -24,7 +24,7 @@ None of its own: the system prompt prefix is the host's (`AgentConfig.system`, a
 
 | Pinned text | Source | Pinned by |
 |---|---|---|
-| Every model request of the golden conversation: system prompts with the tool-discovery catalogue, tool descriptions and schemas (`load_skill`, `recall_context`, the host's), memory renderings (a `CompactViews` compaction, a digested result), seeded `load_skill` exchanges | `golden/agent-turn.model.json` | exact text, `src/agent.golden.test.ts:317`; over three storage backends, `src/agent.backends.test.ts` |
+| Every model request of the golden conversation: system prompts with the tool-discovery catalogue, tool descriptions and schemas (`load_skill`, `recall_context`, the host's), memory renderings (a `CompactViews` compaction, a digested result), seeded `load_skill` exchanges | `golden/agent-turn.model.json` | exact text, `src/agent.golden.test.ts:318`; over three storage backends, `src/agent.backends.test.ts` |
 | Every model request of a streamed conversation: signed and redacted thinking sent back with its provider metadata, by the next request, the journal's rebuild of it and a second agent | `golden/agent-stream.model.json` | exact text, `src/agent.stream-golden.test.ts` |
 
 The golden has no spill, dropped-turn or summary scenario: those texts are pinned, or not, in their plugins.
