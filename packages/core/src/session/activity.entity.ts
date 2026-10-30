@@ -38,3 +38,17 @@ export const ProcessActivity = Schema.Struct({
   busy: Schema.Boolean,
 })
 export type ProcessActivity = typeof ProcessActivity.Type
+
+/**
+ * How a graceful shutdown went (`shutdownGracefully`): whether the process
+ * was idle before the deadline, the turns it then interrupted (each ended
+ * `turn.shutdown`), and what was still in flight when it returned (`busy`
+ * false once every interrupted turn's scope has closed and every task has
+ * ended).
+ */
+export const ShutdownReport = Schema.Struct({
+  idle: Schema.Boolean,
+  interrupted: Schema.Array(ActiveTurn),
+  left: ProcessActivity,
+})
+export type ShutdownReport = typeof ShutdownReport.Type

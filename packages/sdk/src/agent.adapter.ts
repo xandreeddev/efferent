@@ -3,6 +3,7 @@ import type { Layer, Scope } from "effect"
 import {
   CurrentTraceContent,
   CapabilitiesLive,
+  DEFAULT_SHUTDOWN_DEADLINE,
   Capabilities,
   ConversationMemory,
   definePlugin,
@@ -16,12 +17,14 @@ import {
   replayableContext,
   SessionEnvironment,
   Sessions,
+  shutdownGracefully,
   StepLoop,
   TaskActivity,
   ToolRegistry,
   RunContext,
   TurnActivity,
   TurnEvents,
+  TurnShutdown,
   TurnTasks,
   TurnMemory,
   TurnPrompt,
@@ -36,6 +39,8 @@ import type {
   NewTurn,
   Plugin,
   ProcessActivity,
+  ShutdownOptions,
+  ShutdownReport,
   Turn,
   TurnBeginError,
   TurnClosed,
@@ -125,6 +130,13 @@ export interface AgentConfig {
    * (see `TurnTraceOptions`).
    */
   readonly spanMeta?: ReadonlyArray<string>
+  /**
+   * A graceful shutdown when the scope `Agent.define` ran in closes: before
+   * the agent's plugins close (its sessions plugin and its log with them),
+   * `Agent.shutdown` runs with these options and waits for it. Without it,
+   * closing that scope stops no turn first.
+   */
+  readonly shutdown?: ShutdownOptions
 }
 
 /** A defined agent: its graph is built; each turn is composed by the host. */
@@ -140,6 +152,19 @@ export interface Agent {
    * `processActivity` with the host's own services instead).
    */
   readonly activity: Effect.Effect<ProcessActivity>
+  /**
+   * Stop this agent's turns within a deadline, while its services are open
+   * (`shutdownGracefully` over the same runtime services `activity` reads):
+   * refuse every new begin (`TurnRefused`, reason `shutdown`), wait for the
+   * turns and tasks running, then close the turns still running at the
+   * deadline less its reserve as interrupted with `turn.shutdown`
+   * (resumable) and wait out the reserve. `options` default to
+   * `AgentConfig.shutdown`, else a deadline of `DEFAULT_SHUTDOWN_DEADLINE`.
+   * Begins stay refused afterwards: call it when the process is about to
+   * stop (a SIGTERM), then stop the host's request fibers and close the
+   * agent's scope.
+   */
+  readonly shutdown: (options?: ShutdownOptions) => Effect.Effect<ShutdownReport>
   /**
    * Run one turn: one the host began (its `TurnWriter`; the host ends it),
    * or one begun and ended here through the `Sessions` in the turn's
@@ -451,10 +476,18 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   }))) as Effect.Effect<TurnResult, TurnBeginError | TurnError | E, Exclude<R, A | TurnServices | Scope.Scope>>
 
   // The probes are the runtime's alone, wherever this is read (a turn's own services hold others).
-  const activity = processActivity.pipe(Effect.updateContext((current: Context.Context<never>) =>
-    Context.merge(Context.omit(TurnActivity, TaskActivity)(current), Context.pick(TurnActivity, TaskActivity)(runtime))))
+  const runtimeProbes = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.updateContext((current: Context.Context<never>) =>
+    Context.merge(Context.omit(TurnActivity, TaskActivity, TurnShutdown)(current), Context.pick(TurnActivity, TaskActivity, TurnShutdown)(runtime))))
+  const activity = runtimeProbes(processActivity)
+  const shutdown = (options?: ShutdownOptions) => runtimeProbes(shutdownGracefully(options ?? config.shutdown ?? { deadline: DEFAULT_SHUTDOWN_DEADLINE })).pipe(
+    Effect.tap((report) => report.left.busy
+      ? Effect.logWarning(`the agent stopped with ${report.left.openTurns.length + report.left.beginningTurns} turns and ${report.left.runningTasks} tasks still in flight`)
+      : Effect.void))
+  // Added after the runtime's plugins were activated in this scope, so it runs before they close.
+  const configured = config.shutdown
+  if (configured !== undefined) yield* Effect.addFinalizer(() => shutdown(configured).pipe(Effect.asVoid))
 
-  return { fingerprint: graphFingerprint(graph), activity, turn }
+  return { fingerprint: graphFingerprint(graph), activity, shutdown, turn }
 })
 
 export const Agent = { define: makeAgent }

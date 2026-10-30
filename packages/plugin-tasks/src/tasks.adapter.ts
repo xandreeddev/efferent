@@ -1,6 +1,7 @@
 import { Cause, Clock, Effect, Layer, Option, Ref, Schema } from "effect"
 import {
   ConversationId,
+  isShutdownRefusal,
   MemoryKindOf,
   reasonOf,
   RunId,
@@ -160,9 +161,12 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
         RunIdReused: () => Effect.void,
         // A task's turn resumes nothing: never raised here.
         NotResumable: () => Effect.void,
-        TurnRefused: (refused: TurnRefused) => recordEnd(child, {
-          taskId: task.taskId, outcome: "failed", reply: Option.none(), failure: Option.some({ code: "task.refused", message: refused.message }),
-        }),
+        // Refused by a shutdown, the task waits: the next process's reconcile runs it.
+        TurnRefused: (refused: TurnRefused) => isShutdownRefusal(refused)
+          ? Effect.logInfo("the background task waits: the process is shutting down").pipe(Effect.annotateLogs(taskIds(parent, task.taskId)))
+          : recordEnd(child, {
+            taskId: task.taskId, outcome: "failed", reply: Option.none(), failure: Option.some({ code: "task.refused", message: refused.message }),
+          }),
       }),
       Effect.asVoid,
     )

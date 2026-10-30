@@ -524,7 +524,7 @@ rmSync(kitCwd, { recursive: true, force: true })
 // The Sessions kit over the packed SessionsLive and in-memory log, each check under a TestClock of its own that the kit moves;
 // the TaskRunner, Tasks and ToolRegistry kits over InProcessTaskRunnerLive, TasksLive and the tool discovery plugin.
 const { TestClock } = await import("effect/testing")
-const { TaskActivity, TaskExecutor, Tasks, ToolRegistry, TurnActivity, TurnAdmission } = await import("@xandreed/core")
+const { TaskActivity, TaskExecutor, Tasks, ToolRegistry, TurnActivity, TurnAdmission, TurnShutdown } = await import("@xandreed/core")
 const { sessionsConformance, taskRunnerConformance, tasksConformance } = await import("@xandreed/core/conformance")
 const { toolRegistryConformance } = await import("@xandreed/sdk/conformance")
 const { SessionsLive, sessionsDefaults } = await import("@xandreed/plugin-sessions")
@@ -533,7 +533,7 @@ const { ToolDiscoveryLive, toolDiscoveryDefaults } = await import("@xandreed/plu
 const sharedLog = await Effect.runPromise(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
 const sessionsOver = (config, admission, liveness) => Layer.build(SessionsLive(config, liveness === undefined ? undefined : { liveness }).pipe(
   Layer.provide(Layer.merge(Layer.succeed(SessionLog, sharedLog), Layer.succeed(TurnAdmission, admission))))).pipe(
-  Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity) })))
+  Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown) })))
 const sessionChecks = sessionsConformance({
   leased: ({ ttlMs, admission }) => sessionsOver({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs, renew: "on-commit" } }, admission),
   processOwned: ({ self, running, admission }) => sessionsOver({ ...sessionsDefaults, ownership: { mode: "process" } }, admission,
@@ -546,7 +546,7 @@ const runnerKit = await runKit("TaskRunner", taskRunnerConformance(Layer.build(I
 const tasksKit = await runKit("Tasks", tasksConformance(({ runner, executor }) => Layer.build(TasksLive(tasksDefaults).pipe(Layer.provideMerge(Layer.mergeAll(
   SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, sharedLog), TurnAdmissionOpen))),
   Layer.succeed(TaskRunner, runner), Layer.succeed(TaskExecutor, executor))))).pipe(
-  Effect.map((context) => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks) })))))
+  Effect.map((context) => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks), shutdown: Context.getOption(context, TurnShutdown) })))))
 const registryKit = await runKit("ToolRegistry", toolRegistryConformance((capabilities, limits) => Layer.build(ToolDiscoveryLive({ ...toolDiscoveryDefaults, ...limits }).pipe(
   Layer.provide(Layer.succeed(Capabilities, capabilities)))).pipe(Effect.map((context) => Context.get(context, ToolRegistry)))))
 console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), both SessionLog kits over the file store in a directory (" + filesKit + " and " + filesRecovery + "), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + "), the Sessions kit over SessionsLive and the memory log (" + sessionsKit + "), the TaskRunner kit over InProcessTaskRunnerLive (" + runnerKit + "), the Tasks kit over TasksLive (" + tasksKit + ") and the ToolRegistry kit over the tool discovery plugin (" + registryKit + ")")

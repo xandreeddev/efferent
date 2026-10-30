@@ -162,7 +162,7 @@ export {
   TurnRefused,
 } from "./session/sessions.entity.js"
 export type { TurnError } from "./session/sessions.entity.js"
-export { isTurnError, resumeRefusal, sessionAttributes, turnAttributes, turnEndingOf } from "./session/sessions.entity.functions.js"
+export { isShutdownRefusal, isTurnError, resumeRefusal, sessionAttributes, shutdownRefusal, turnAttributes, turnEndingOf } from "./session/sessions.entity.functions.js"
 export type { ResumableTurn } from "./session/sessions.entity.functions.js"
 export { Sessions } from "./ports/sessions.port.js"
 export type { Decided, Decision, TurnDraft, TurnWriter } from "./ports/sessions.port.js"
@@ -180,9 +180,10 @@ export {
 } from "./session/tasks.entity.js"
 export { TaskExecutor, TaskRunner, Tasks } from "./ports/tasks.port.js"
 // what this process is busy with: open turns and running background work, for a `/ping` or a drain
-export { ActiveTurn, ProcessActivity, TurnsInFlight } from "./session/activity.entity.js"
-export { awaitIdle, processActivity } from "./session/activity.entity.functions.js"
-export { TaskActivity, TurnActivity } from "./ports/activity.port.js"
+export { ActiveTurn, ProcessActivity, ShutdownReport, TurnsInFlight } from "./session/activity.entity.js"
+export { awaitIdle, DEFAULT_SHUTDOWN_DEADLINE, DEFAULT_SHUTDOWN_RESERVE, processActivity, shutdownGracefully } from "./session/activity.entity.functions.js"
+export type { ShutdownOptions } from "./session/activity.entity.functions.js"
+export { TaskActivity, TurnActivity, TurnShutdown } from "./ports/activity.port.js"
 
 export { HarnessError, PLUGIN_API_VERSION, SUPPORTED_PLUGIN_API_VERSIONS } from "./harness/plugin.entity.js"
 export type { PartialOptions, Plugin, TypedPlugin } from "./harness/plugin.entity.js"

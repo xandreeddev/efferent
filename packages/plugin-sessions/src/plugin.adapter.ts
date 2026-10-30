@@ -1,4 +1,4 @@
-import { definePlugin, SessionLog, Sessions, TurnActivity, TurnAdmission } from "@xandreed/core"
+import { definePlugin, SessionLog, Sessions, TurnActivity, TurnAdmission, TurnShutdown } from "@xandreed/core"
 import { SessionsConfig, sessionsDefaults } from "./sessions-state.entity.js"
 import { SessionsLive } from "./sessions.adapter.js"
 
@@ -7,7 +7,8 @@ import { SessionsLive } from "./sessions.adapter.js"
  * turn at a time, leases by lease or by process, the inbox and forks. The
  * host admits every turn (TurnAdmissionOpen admits all). It also provides
  * `TurnActivity`, the turns this process holds open or is beginning
- * (`processActivity`, `awaitIdle`). By default a turn's lease is 60 s, renewed by its writes and
+ * (`processActivity`, `awaitIdle`), and `TurnShutdown`, which refuses its
+ * begins and closes its turns for a shutdown (`shutdownGracefully`). By default a turn's lease is 60 s, renewed by its writes and
  * by a keep-alive every 20 s.
  *
  * @public
@@ -16,9 +17,9 @@ export const sessionsPlugin = definePlugin({
   id: "@xandreed/plugin-sessions", version: "0.14.0", scope: "runtime",
   config: SessionsConfig, defaults: sessionsDefaults,
   requires: [SessionLog, TurnAdmission],
-  provides: [Sessions, TurnActivity],
+  provides: [Sessions, TurnActivity, TurnShutdown],
   layer: SessionsLive,
 })
-/** Sessions as a typed layer: provides Sessions and TurnActivity; requires SessionLog and TurnAdmission. */
+/** Sessions as a typed layer: provides Sessions, TurnActivity and TurnShutdown; requires SessionLog and TurnAdmission. */
 export const SessionsPluginLive = sessionsPlugin.live
 export default sessionsPlugin

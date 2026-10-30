@@ -7,6 +7,7 @@ import {
   awaitIdle,
   ConversationId,
   harnessCodeOf,
+  isShutdownRefusal,
   processActivity,
   RunId,
   SessionLog,
@@ -21,7 +22,7 @@ import {
   TurnRefused,
   UserMessage,
 } from "@xandreed/core"
-import type { ProcessActivity, SessionLogEvent, Turn } from "@xandreed/core"
+import type { ProcessActivity, SessionLogEvent, ShutdownOptions, Turn } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { sessionsDefaults, SessionsLive, sessionsPlugin, SessionsPluginLive } from "@xandreed/plugin-sessions"
@@ -50,11 +51,12 @@ const session = { id: ConversationId.make("00000000-0000-4000-8000-0000000000b1"
 const ask = (runId: string, text = "hello") => ({ session, userMessage: new UserMessage({ text }), runId: RunId.make(runId) })
 const onCommit: SessionsConfig = { ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 60_000, renew: "on-commit" } }
 
-const define = (extra: { readonly plugins?: ReadonlyArray<typeof sessionsPlugin>; readonly services?: Context.Context<never> } = {}) => Agent.define({
+const define = (extra: { readonly plugins?: ReadonlyArray<typeof sessionsPlugin>; readonly services?: Context.Context<never>; readonly shutdown?: ShutdownOptions } = {}) => Agent.define({
   plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, ...(extra.plugins ?? [])],
   turnServices: [LanguageModel.LanguageModel],
   limits: { streaming: false, maxSteps: 3 },
   ...(extra.services === undefined ? {} : { services: extra.services }),
+  ...(extra.shutdown === undefined ? {} : { shutdown: extra.shutdown }),
 })
 
 /** Run the loop until the model stops; the reply is its text. */
@@ -195,6 +197,101 @@ describe("a drain that times out: stop the requests, then close the services", (
       Effect.map((ended) => ended.map((end) => [end.reason, Option.getOrNull(Option.map(end.failure, (failure) => failure.code))])))
     expect(yield* stored(session.id)).toEqual([["interrupted", "turn.interrupted"]])
     expect(yield* stored(child.id)).toEqual([["interrupted", "turn.interrupted"]])
+  }))))
+})
+
+/** A log that refuses every commit once its layer's scope has closed, as a SQLite log does once its database is closed. */
+const closingLog = (store: Context.Service.Shape<typeof SessionLog>) => Layer.effect(SessionLog, Effect.gen(function* () {
+  const closed = yield* Ref.make(false)
+  yield* Effect.addFinalizer(() => Ref.set(closed, true))
+  return SessionLog.of({ ...store, commit: (id, input) => Ref.get(closed).pipe(Effect.flatMap((done) => done
+    ? Effect.fail(new SessionLogError({ code: "store.closed", message: "the log is closed" }))
+    : store.commit(id, input))) })
+}))
+
+/** Each `turn.ended` of a session, as `[reason, code]`. */
+const storedEndings = (store: Context.Service.Shape<typeof SessionLog>, id: ConversationId) => store.read(id, { after: 0, limit: Option.none(), kinds: ["turn.ended"] }).pipe(
+  Effect.flatMap((events) => Effect.forEach(events, turnEndedOf)),
+  Effect.map((ended) => ended.map((end) => [end.reason, Option.getOrNull(Option.map(end.failure, (failure) => failure.code))])))
+
+describe("a shutdown within a deadline: Agent.shutdown and AgentConfig.shutdown", () => {
+  test("a turn that ends within the deadline ends as it would; from then a new turn is refused as shutdown", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const services = yield* Layer.build(InProcessTaskRunnerLive().pipe(Layer.provideMerge(SessionsPluginLive().pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen))))))
+    const sessions = Context.get(services, Sessions)
+    yield* sessions.create({ owner: session.owner, id: session.id })
+    const agent = yield* define({ services })
+    const model = yield* answering("0 seconds", yield* Deferred.make<void>())
+    const turnServices = Context.make(LanguageModel.LanguageModel, model)
+    const started = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const inFlight = yield* Effect.forkChild(agent.turn({ turn: ask("run-1", "a long request"), services: turnServices }, (turn) =>
+      Deferred.succeed(started, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(turn.reply("finished")))))
+    yield* Deferred.await(started)
+    const stopping = yield* Effect.forkChild(agent.shutdown({ deadline: "25 seconds" }))
+    // Refused while the shutdown waits, before the host's admission is asked.
+    yield* Effect.yieldNow
+    const refused = yield* Effect.flip(agent.turn({ turn: ask("run-2", "too late"), services: turnServices }, runToEnd))
+    expect([codeOf(refused), refused._tag === "TurnRefused" && isShutdownRefusal(refused)]).toEqual(["turn.refused", true])
+    yield* Deferred.succeed(release, undefined)
+    expect((yield* Fiber.join(inFlight)).outcome).toBe("completed")
+    expect(yield* Fiber.join(stopping)).toEqual({ idle: true, interrupted: [], left: idle })
+    expect(endings(yield* sessions.read(session))).toEqual(["completed"])
+  }))))
+
+  test("at the deadline a request's turn and a task's turn still running are closed as turn.shutdown, stored while the log is open, and resumable", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = Context.get(yield* Layer.build(SessionLogMemoryLive), SessionLog)
+    const scope = yield* Scope.make()
+    const sessionsLayer = SessionsPluginLive({ ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(closingLog(store), TurnAdmissionOpen)))
+    const services = yield* Layer.build(InProcessTaskRunnerLive().pipe(Layer.provideMerge(sessionsLayer))).pipe(Scope.provide(scope))
+    const sessions = Context.get(services, Sessions)
+    const child = { id: ConversationId.make("00000000-0000-4000-8000-0000000000b3"), owner: session.owner }
+    yield* sessions.create({ owner: session.owner, id: session.id })
+    yield* sessions.create({ owner: child.owner, id: child.id })
+    const agent = yield* define({ services }).pipe(Scope.provide(scope))
+    const model = yield* answering("0 seconds", yield* Deferred.make<void>())
+
+    // A request whose turn never finishes, and a task whose turn never finishes until it is closed.
+    const requested = yield* Deferred.make<void>()
+    const request = yield* Effect.forkChild(agent.turn({ turn: ask("run-1"), services: Context.make(LanguageModel.LanguageModel, model) }, () =>
+      Deferred.succeed(requested, undefined).pipe(Effect.andThen(Effect.never))))
+    yield* Deferred.await(requested)
+    const tasked = yield* Deferred.make<void>()
+    yield* Context.get(services, TaskRunner).run(() => Effect.scoped(sessions.begin(child, { _tag: "User", userMessage: new UserMessage({ text: "work" }), runId: RunId.make("task-1"), key: "task-1", command: {} }).pipe(
+      Effect.tap(() => Deferred.succeed(tasked, undefined)),
+      Effect.flatMap((writer) => writer.closed))).pipe(Effect.ignore))
+    yield* Deferred.await(tasked)
+
+    const report = yield* agent.shutdown({ deadline: "200 millis", reserve: "100 millis" })
+    expect([report.idle, report.interrupted.map((turn) => [turn.session, turn.turn]), report.left]).toEqual([false, [[session.id, 1], [child.id, 1]], idle])
+    // The request's turn failed with its writer closed under it; the host's server would answer it now.
+    const exit = yield* Fiber.await(request)
+    expect(Exit.isFailure(exit) && Option.exists(Exit.findErrorOption(exit), (error) => error._tag === "TurnClosed")).toBe(true)
+    yield* Scope.close(scope, Exit.void)
+    expect(yield* storedEndings(store, session.id)).toEqual([["interrupted", "turn.shutdown"]])
+    expect(yield* storedEndings(store, child.id)).toEqual([["interrupted", "turn.shutdown"]])
+    // The next process resumes the interrupted turn at once: it is closed, not held.
+    const next = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, store), TurnAdmissionOpen)))), Sessions)
+    const resumed = yield* Effect.scoped(next.begin(session, { _tag: "User", userMessage: new UserMessage({ text: "Continue." }), runId: RunId.make("run-2"), key: "resume:1", command: {}, resumes: 1 }).pipe(
+      Effect.map((writer) => [writer.admitted.turn, writer.admitted.resumes])))
+    expect(resumed).toEqual([2, 1])
+  }))))
+
+  test("with AgentConfig.shutdown, closing the agent's scope shuts it down first, before its sessions plugin and the log close", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = Context.get(yield* Layer.build(SessionLogMemoryLive), SessionLog)
+    const scope = yield* Scope.make()
+    // The log closes with the agent's scope, after the agent's plugins: a turn still running when it closes could store no end.
+    const services = yield* Layer.build(Layer.merge(closingLog(store), TurnAdmissionOpen)).pipe(Scope.provide(scope))
+    const agent = yield* define({ plugins: [sessionsPlugin], services, shutdown: { deadline: "100 millis", reserve: "50 millis" } }).pipe(Scope.provide(scope))
+    const creator = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, store), TurnAdmissionOpen)))), Sessions)
+    yield* creator.create({ owner: session.owner, id: session.id })
+    const model = yield* answering("0 seconds", yield* Deferred.make<void>())
+    const requested = yield* Deferred.make<void>()
+    const request = yield* Effect.forkChild(agent.turn({ turn: ask("run-1"), services: Context.make(LanguageModel.LanguageModel, model) }, () =>
+      Deferred.succeed(requested, undefined).pipe(Effect.andThen(Effect.never))))
+    yield* Deferred.await(requested)
+    yield* Scope.close(scope, Exit.void)
+    expect(Exit.isFailure(yield* Fiber.await(request))).toBe(true)
+    expect(yield* storedEndings(store, session.id)).toEqual([["interrupted", "turn.shutdown"]])
   }))))
 })
 

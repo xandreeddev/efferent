@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
-import type { TurnsInFlight } from "../session/activity.entity.js"
+import type { ActiveTurn, TurnsInFlight } from "../session/activity.entity.js"
 
 /**
  * The turns this process has in flight, from the Sessions service that opens
@@ -30,3 +30,22 @@ export class TaskActivity extends Context.Service<TaskActivity, {
   /** Completes once none runs (at once when none does). */
   readonly idle: Effect.Effect<void>
 }>()("efferent/TaskActivity") {}
+
+/**
+ * How the Sessions that opens this process's turns stops for a shutdown
+ * (`SessionsLive` provides it). `refuse`: from now, every begin on it fails
+ * with `TurnRefused` of reason `shutdown` (`isShutdownRefusal`), a user's,
+ * an inbox's or a task's, while the turns already open run on and
+ * deliveries are still stored. `interrupt`: refuse, then close every turn
+ * it holds as interrupted with code `turn.shutdown`, storing each end while
+ * the log is open (resumable; its inbox items wait again with no attempt
+ * counted), and close its writer, so the turn's body is interrupted
+ * (`Agent.turn` races `TurnWriter.closed`) and its writes fail with
+ * `TurnClosed`; it returns the turns it closed. A turn whose begin was past
+ * its opening commit is closed so as soon as its writer is handed over. Both
+ * may be called more than once. `shutdownGracefully` calls them.
+ */
+export class TurnShutdown extends Context.Service<TurnShutdown, {
+  readonly refuse: Effect.Effect<void>
+  readonly interrupt: Effect.Effect<ReadonlyArray<ActiveTurn>>
+}>()("@xandreed/core/TurnShutdown") {}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Match, Option, PubSub, Stream } from "effect"
 import { TestClock } from "effect/testing"
-import { frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission } from "@xandreed/core"
+import { frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnShutdown } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
 import type { BeginTurn, JsonObject, SessionAddress, TurnError, TurnWriter } from "@xandreed/core"
 import type { ConformanceCheck, SessionsInstance, SessionsSubject } from "@xandreed/core/conformance"
@@ -37,7 +37,7 @@ const stampNewer = (log: Log) => (address: SessionAddress) => log.head(address.i
 const subjectOver = (log: Log, change: (instance: SessionsInstance) => SessionsInstance = (instance) => instance, renew: "none" | "on-commit" = "on-commit"): SessionsSubject => {
   const instance = (config: SessionsConfig, admission: Context.Service.Shape<typeof TurnAdmission>, liveness?: ProcessLiveness) =>
     Layer.build(SessionsLive(config, liveness === undefined ? undefined : { liveness }).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), Layer.succeed(TurnAdmission, admission))))).pipe(
-      Effect.map((context) => change({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity) })))
+      Effect.map((context) => change({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown) })))
   return {
     leased: ({ ttlMs, admission }) => instance({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs, renew } }, admission),
     processOwned: ({ self, running, admission }) => instance({ ...sessionsDefaults, ownership: { mode: "process" } }, admission, {
@@ -143,7 +143,7 @@ describe("the Sessions kit catches careless backends", () => {
         }))),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "takeover", "transact", "writer"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "shutdown", "takeover", "transact", "writer"])
   })
 
   test("one whose turn writers store the closing drafts at once, as a write before the end, fails only the closing check", async () => {
@@ -202,6 +202,27 @@ describe("the Sessions kit catches careless backends", () => {
   test("an instance without a TurnActivity passes, its activity unchecked", async () => {
     const unprobed = (instance: SessionsInstance): SessionsInstance => ({ ...instance, activity: Option.none() })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, unprobed)))).toEqual([])
+  })
+
+  test("one whose shutdown refuses but never closes the turns it holds fails only the shutdown check", async () => {
+    const lingering = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      shutdown: Option.map(instance.shutdown, (shutdown) => TurnShutdown.of({ refuse: shutdown.refuse, interrupt: shutdown.refuse.pipe(Effect.as([])) })),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lingering)))).toEqual(["shutdown"])
+  })
+
+  test("one whose shutdown refuses nothing fails only the shutdown check", async () => {
+    const open = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      shutdown: Option.some(TurnShutdown.of({ refuse: Effect.void, interrupt: Effect.succeed([]) })),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, open)))).toEqual(["shutdown"])
+  })
+
+  test("an instance without a TurnShutdown passes, its shutdown unchecked", async () => {
+    const unstoppable = (instance: SessionsInstance): SessionsInstance => ({ ...instance, shutdown: Option.none() })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, unstoppable)))).toEqual([])
   })
 
   test("one that ignores takeOver (it waits for the lease as for any begin) fails only the takeover check", async () => {

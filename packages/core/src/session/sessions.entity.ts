@@ -246,12 +246,19 @@ export class TurnClosed extends Schema.TaggedError<TurnClosed>()("TurnClosed", {
   reason: Schema.Literals(["cancelled", "interrupted", "removed", "ended"]),
 }) {}
 
-/** The host would not open the turn (a budget, a quota): nothing was opened or counted. */
+/**
+ * The host would not open the turn (a budget, a quota), or the process is
+ * shutting down (reason `shutdown`, `isShutdownRefusal`): nothing was
+ * opened or counted.
+ */
 export class TurnRefused extends Schema.TaggedError<TurnRefused>()("TurnRefused", {
   session: ConversationId,
   reason: Schema.String,
   message: Schema.String,
 }) {}
+
+/** The `reason` of the `TurnRefused` a Sessions answers every begin with once it is shutting down (`TurnShutdown`). */
+export const SHUTDOWN_REFUSAL = "shutdown"
 
 /**
  * Writes to the session kept conflicting: `attempts` commits in a row lost

@@ -159,7 +159,7 @@ Requires: none
 
 Scope: **runtime** · API 3 · Version 0.14.0
 
-Provides: `efferent/Sessions`, `efferent/TurnActivity`
+Provides: `efferent/Sessions`, `efferent/TurnActivity`, `@xandreed/core/TurnShutdown`
 
 Requires: `efferent/SessionLog`, `efferent/TurnAdmission`
 

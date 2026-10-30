@@ -4,7 +4,7 @@ import type { TurnEndReason, TurnEnding, TurnFailure, TurnOrigin, TurnOutcomeKin
 import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import { SessionLogError } from "./session-log.entity.js"
-import { ReservedKind, SessionContended, TurnClosed } from "./sessions.entity.js"
+import { ReservedKind, SessionContended, SHUTDOWN_REFUSAL, TurnClosed, TurnRefused } from "./sessions.entity.js"
 import type { AdmittedTurn, NotResumable, TurnError } from "./sessions.entity.js"
 
 const taggedTurnErrors = [TurnClosed, ReservedKind, SessionContended, SessionLogError].map((error) => Schema.is(Schema.Struct(error.fields)))
@@ -16,6 +16,13 @@ const taggedTurnErrors = [TurnClosed, ReservedKind, SessionContended, SessionLog
  * `harnessDefectsAsFailures` restores from a defect.
  */
 export const isTurnError = (value: unknown): value is TurnError => isHarnessError(value) || taggedTurnErrors.some((is) => is(value))
+
+/** The refusal of a begin while the process shuts down. */
+export const shutdownRefusal = (session: ConversationId): TurnRefused =>
+  new TurnRefused({ session, reason: SHUTDOWN_REFUSAL, message: "the process is shutting down; begin the turn again once it has restarted" })
+
+/** Whether a begin was refused because the process is shutting down (its turn may begin again once it has restarted). */
+export const isShutdownRefusal = (refused: TurnRefused): boolean => refused.reason === SHUTDOWN_REFUSAL
 
 /** The longest failure message a stored `turn.ended` keeps. */
 const MESSAGE_CHARS = 500

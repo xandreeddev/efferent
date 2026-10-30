@@ -2274,8 +2274,8 @@ that keeps prompts and tool input and output on the server, and shows
 
 A process that serves turns needs to say whether it is busy (a `/ping` a
 load balancer or a deploy reads) and to stop without cutting turns in half
-(a SIGTERM before a restart). Two optional ports in `@xandreed/core` count
-what this process has in flight:
+(a SIGTERM before a restart). Three optional ports in `@xandreed/core` count
+what this process has in flight and stop it:
 
 - `TurnActivity`: the turns its `Sessions` has in flight, read at one
   moment (`current`). A begin counts from the moment it is asked for,
@@ -2293,8 +2293,20 @@ what this process has in flight:
   the moment `run` hands it over until it ends. `InProcessTaskRunnerLive`
   provides it; a runner that hands work elsewhere (a serverless
   `waitUntil`) has none unless the host provides one.
+- `TurnShutdown`: how that `Sessions` stops. `refuse` makes every begin on
+  it fail from then with `TurnRefused` of reason `shutdown`
+  (`isShutdownRefusal`; code `turn.refused`, a host answers 503), a user's,
+  an inbox's or a task's, while the turns already open run on and
+  deliveries are still stored. `interrupt` refuses too, then closes every
+  turn the instance holds: each end is stored while the log is open, as
+  interrupted with the code `turn.shutdown`, its inbox items waiting again
+  with no attempt counted, and its writer is closed, so `Agent.turn`
+  interrupts the turn's body (it races `TurnWriter.closed`) and the turn
+  fails with `TurnClosed`. A begin whose opening commit landed before the
+  interrupt is closed the same way as soon as its writer is handed over.
+  `SessionsLive` and `SessionsPluginLive` provide it.
 
-`processActivity` reads both from the current services into a
+`processActivity` reads the first two from the current services into a
 `ProcessActivity`: `{ openTurns, beginningTurns, runningTasks, busy }` (a
 port that is not there counts nothing). `awaitIdle({ timeout })` waits
 until nothing is open, beginning or running at the same moment (a task that
@@ -2307,19 +2319,39 @@ come along), or a runtime-scoped sessions plugin in its graph. A `Sessions`
 passed only in a turn's services is not the agent's to see; read
 `processActivity` over the host's own services instead.
 
-The drain is four steps: stop admitting new turns, wait (bounded) until
-idle, stop the host's own request fibers, then close the scope the
-services live in. Admission is the host's: a `TurnAdmission` that refuses
-while draining makes every new turn, user's or inbox's or task's, fail to
-begin with `TurnRefused` (code `turn.refused`, a host answers 503). A request that got past the admission just before the flag
-was set is a begin in flight, so the wait covers it. A task that finishes
-while draining still stores its result and delivers it to its parent's
-inbox, where it waits (its reaction is refused) until the session is next
-drained.
+**A shutdown within a deadline.** `shutdownGracefully({ deadline, reserve
+})` stops this process's turns while its services are still open, in
+three steps: refuse every new begin (`TurnShutdown.refuse`); wait until
+idle (`awaitIdle`) for the deadline less its reserve; then, if anything is
+still running, close those turns (`TurnShutdown.interrupt`) and wait out
+the reserve for their scopes to close and for the tasks they stop to end.
+`deadline` is the whole time from the call; `reserve` is the part kept for
+the last step (`DEFAULT_SHUTDOWN_RESERVE`, 2 s, and never more than the
+deadline). It returns a `ShutdownReport`: whether the process was `idle`
+in time, the turns it `interrupted`, and what was still in flight when it
+returned (`left`, busy only when something ignored the interrupt). A
+`Sessions` without `TurnShutdown` is waited for and never interrupted.
+`agent.shutdown(options?)` is `shutdownGracefully` over the agent's runtime
+services, the same ones `agent.activity` reads; its options default to
+`AgentConfig.shutdown`, else a deadline of `DEFAULT_SHUTDOWN_DEADLINE`
+(25 s). Give `AgentConfig.shutdown` and closing the scope `Agent.define`
+ran in shuts the agent down first, before its plugins close (a sessions
+plugin in its graph, and the log under it). Begins stay refused once a
+shutdown started: it is for a process about to stop.
+
+A turn the shutdown closed is resumable like any interrupted turn: the next
+process begins it again with `resumes` (below) at once, without waiting for
+a lease to run out. A background task refused by the shutdown before its
+turn began stays pending, its child untouched, and the next process's
+`Tasks.reconcile` runs it; a task whose turn was closed ends interrupted
+(`task.lost`) and its notice waits in the parent's inbox. A task that
+finishes while the process stops still stores its result and delivers it,
+where it waits (its parent's reaction is refused) until the session is
+next drained.
 
 ```ts
 // Inside the host's Effect.gen, in the scope the process closes last.
-import { Effect, Layer, Ref } from "effect"
+import { Effect, Layer } from "effect"
 import { LanguageModel } from "effect/ai"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -2327,53 +2359,53 @@ import { SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive } from "@xandreed/plugin-tasks"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { Agent, awaitIdle, TurnAdmission, TurnRefused } from "@xandreed/sdk"
+import { Agent, isShutdownRefusal, TurnAdmissionOpen } from "@xandreed/sdk"
+import type { TurnBeginError } from "@xandreed/sdk"
 
-const draining = yield* Ref.make(false)
-const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
-  admit: (turn, open) => Effect.gen(function* () {
-    if (yield* Ref.get(draining)) return yield* Effect.fail(new TurnRefused({ session: turn.session.id, reason: "draining", message: "shutting down" }))
-    return yield* open
-  }),
-}))
-const sessions = SessionsPluginLive().pipe(Layer.provide(Layer.merge(SessionLogSqliteLive(".efferent/runtime/sessions.db"), admission)))
+const sessions = SessionsPluginLive().pipe(Layer.provide(Layer.merge(SessionLogSqliteLive(".efferent/runtime/sessions.db"), TurnAdmissionOpen)))
 // The runner on top of the sessions, not beside them: closing interrupts its tasks while the log is still open.
 const services = yield* Layer.build(InProcessTaskRunnerLive().pipe(Layer.provideMerge(sessions)))
-const agent = yield* Agent.define({ services, plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel] })
+const agent = yield* Agent.define({
+  services, plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel],
+  // Closing this scope shuts the agent down first (keep it below the platform's grace period).
+  shutdown: { deadline: "25 seconds" },
+})
 
 // GET /ping: 200 with the counts (a session id is the host's to show or not).
 const ping = agent.activity.pipe(Effect.map((now) => ({ busy: now.busy, openTurns: now.openTurns.length, runningTasks: now.runningTasks })))
 
-// On SIGTERM: stop admitting, wait at most 25 s; then the host stops its server, then closes the services' scope.
-const drain = Effect.gen(function* () {
-  yield* Ref.set(draining, true)
-  const left = yield* awaitIdle({ timeout: "25 seconds" }).pipe(Effect.provide(services))
-  if (left.busy) yield* Effect.logWarning(`stopping with ${left.openTurns.length + left.beginningTurns} turns and ${left.runningTasks} tasks in flight`)
-})
+// A turn that could not begin: 503 while the process stops, so the client retries against the next one.
+const statusOf = (refused: TurnBeginError) => refused._tag === "TurnRefused" && isShutdownRefusal(refused) ? 503 : 409
+
+// On SIGTERM: stop the turns within the deadline; then the host stops its server, then closes the services' scope.
+const onSigterm = agent.shutdown().pipe(Effect.tap((report) => report.left.busy
+  ? Effect.logWarning(`stopping with ${report.left.openTurns.length} turns and ${report.left.runningTasks} tasks in flight`)
+  : Effect.log(`stopped: ${report.interrupted.length} turns interrupted, resumable`)))
 ```
 
-What is still running when the wait ends needs the last two steps in that
-order. A turn's writer lives in the turn's own scope (`Agent.turn`'s, in
-the fiber serving the request), not in the services' scope, and
-`SessionsLive` holds no finalizer over it: closing the services does not
-stop that turn, it closes the log under it (`SessionLogSqliteLive` closes
-its database). So stop the host's request fibers first, interrupting or
-awaiting them (an HTTP server's shutdown, for one): a turn whose scope
-is interrupted while the log is open ends interrupted (`turn.interrupted`)
-and can be resumed. Then close the services. The task runner's layer
-interrupts its tasks when it closes and waits for them, and a task whose
-fiber is interrupted ends its child's turn the same way, provided the log
-is still open: build the runner on top of the sessions with
-`Layer.provideMerge`, as above, so it closes first. `Layer.mergeAll` closes
+What stops a turn is its writer closing under it (`Agent.turn` races it),
+so the host's request fibers end soon after the interrupt, each with its
+turn's `TurnClosed`; stop them (an HTTP server's shutdown) before closing
+the services. A turn begun outside `Agent.turn` stops at its next write
+unless the host races `TurnWriter.closed` the same way (the tasks plugin
+does). A turn's writer lives in the turn's own scope, not in the services'
+scope, and `SessionsLive` holds no finalizer over it: closing the services
+without a shutdown first does not stop that turn, it closes the log under
+it (`SessionLogSqliteLive` closes its database). A turn still running when
+its log closes cannot store its end: the next process reaps it as
+interrupted with `turn.lease`, under a lease once the lease runs out (until
+then a begin on that session fails with `SessionBusy`, unless it takes the
+session over), under process ownership at the first touch after the
+process is gone. Build the task runner on top of the sessions with
+`Layer.provideMerge`, as above, so it closes first; `Layer.mergeAll` closes
 its layers at the same time, and a task's end may then race the log's
-close. A turn still running when its log closes cannot store its end: the
-next process reaps it as interrupted with `turn.lease`, under a lease once
-the lease runs out (until then a begin on that session fails with
-`SessionBusy`), under process ownership at the first touch after the
-process is gone. Keep the wait below the platform's grace period (a
-container's stop timeout, say), with time left for those two steps.
-`packages/sdk/src/activity.test.ts` runs this recipe, including a drain
-that times out.
+close.
+
+A host may still drain by hand: a `TurnAdmission` that refuses while
+draining (its own `TurnRefused`), `awaitIdle({ timeout })`, then stop the
+request fibers and close the services. `packages/sdk/src/activity.test.ts`
+runs both, including a drain that times out and a shutdown that interrupts
+a request's turn and a task's turn at its deadline.
 
 ### Resuming a turn
 

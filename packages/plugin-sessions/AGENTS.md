@@ -1,6 +1,6 @@
 # @xandreed/plugin-sessions
 
-Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time (a user's, the inbox's or a background task's, `BeginTurn`'s three kinds, told apart once by `Match.valueTags` in `openTurn`), turns owned by a lease or by the process that began them, the inbox, forks, resumes, and `TurnActivity` (the turns this instance holds open or is beginning). The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
+Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time (a user's, the inbox's or a background task's, `BeginTurn`'s three kinds, told apart once by `Match.valueTags` in `openTurn`), turns owned by a lease or by the process that began them, the inbox, forks, resumes, `TurnActivity` (the turns this instance holds open or is beginning) and `TurnShutdown` (how it stops). The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
 
 ## Rules
 
@@ -15,6 +15,8 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 - Refuse a begin, never queue or replace one: `SessionBusy`, `TurnDuplicate`, `KeyConflict`, `RunIdReused`, `NotResumable`, `NothingPending`.
 - Count an inbox attempt only for a turn that wrote something; drop an item once `inbox.attempts` turns took it and failed.
 - Keep `TurnActivity` exact: a begin counts from the request until its writer is handed over, then the turn until the writer's scope closes (`awaitIdle` relies on it).
+- Close an open turn from outside through `closeOpen` (a cancel, a shutdown): one guarded commit that reaps a turn nobody holds instead, else stores its `turn.ended`, then closes this instance's writer of it with the same reason.
+- Stop for a shutdown in one phase (`stopping`: running, refusing, interrupting): once refusing, refuse every begin before the host's admission and again inside its opening plan (`shutdownRefusal`), never a delivery; once interrupting, close every turn this instance holds, and any begin whose writer is handed over after, as interrupted with `turn.shutdown` and no attempt counted (`closeForShutdown`), its writer closed even when the store refused the end.
 - A keep-alive is queued in order with the turn's writes: keep one `write` or `transact` shorter than the lease.
 - Signal `changes` through one hub per followed session, `PubSub.sliding(1)` held in an `RcMap` (released with its last follower): a commit wakes only its own session's followers, and a follower that does not pull holds one signal. Never `dropping` (it loses the last signal) nor a `SubscriptionRef` (it signals a follower on subscribing, before any commit).
 - Trace each `Sessions` call but `changes` as `sessions.<op>` (`Effect.fn`; the `onSession` pipeable puts `sessionAttributes` on its span and its logs), each writer commit as `turn_writer.commit` under the span of the call that queued it (`underCaller`: the writer's fiber was forked under the begin), and the writer's `flush` and `end` as `turn_writer.flush` and `turn_writer.end`, all with `turnAttributes`; the writer's fibers carry the turn's ids on their spans and logs. A log line names no id: the ids are its annotations. Trace nothing per append or per `write`.
@@ -30,14 +32,14 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
-| `sessionsPlugin` | `@xandreed/plugin-sessions` | runtime | `efferent/Sessions`, `efferent/TurnActivity` | none | `efferent/SessionLog`, `efferent/TurnAdmission` |
+| `sessionsPlugin` | `@xandreed/plugin-sessions` | runtime | `efferent/Sessions`, `efferent/TurnActivity`, `@xandreed/core/TurnShutdown` | none | `efferent/SessionLog`, `efferent/TurnAdmission` |
 
 ## Model-facing text
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:419` | exact, `src/sessions.adapter.test.ts:1304` (one item, `:1134`) |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:325` | exact, `src/sessions.adapter.test.ts:1285` |
+| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:460` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:363` | exact, `src/sessions.adapter.test.ts:1314` |
 
 ## Erasure files
 
@@ -48,7 +50,7 @@ None.
 | File | Role |
 |---|---|
 | `src/plugin.adapter.ts` | `sessionsPlugin`, `SessionsPluginLive` |
-| `src/sessions.adapter.ts` | `SessionsLive`: create, fork, begin, deliver, drain, cancel, remove, reaping, change signals, `TurnActivity` |
+| `src/sessions.adapter.ts` | `SessionsLive`: create, fork, begin, deliver, drain, cancel, remove, reaping, change signals, `TurnActivity`, `TurnShutdown` |
 | `src/turn-writer.adapter.ts` | the open turn's writer: queued, batched commits, lease renewal and keep-alive |
 | `src/turn-writer.entity.ts` | the writer's phase (`WriterPhase`, with the closing drafts held) and how an end begins (`EndStep`) |
 | `src/turn-writer.entity.functions.ts` | the writer's transitions: admit, hold the closing drafts, begin, plan, settle and withdraw an end, latch, close, the scope's own ending |

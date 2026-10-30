@@ -307,55 +307,59 @@ vocabulary and the inbox protocol.
 `SessionsPluginLive` also provides `TurnActivity` (the turns this process
 holds open, with session, turn and since when, and the begins still in
 progress, from before the host's admission until the writer is handed over)
-and `InProcessTaskRunnerLive` provides `TaskActivity` (the background work
-it runs). `processActivity` from `@xandreed/core` reads both into
+and `TurnShutdown` (how it stops), and `InProcessTaskRunnerLive` provides
+`TaskActivity` (the background work it runs). `processActivity` from
+`@xandreed/core` reads the activity into
 `{ openTurns, beginningTurns, runningTasks, busy }`, and `agent.activity`
 does so over the agent's runtime services: what a `/ping` reports.
 `awaitIdle({ timeout })` waits until nothing is open, beginning or running
 and returns the activity then (`busy: true` with what is left when the
-timeout comes first). A SIGTERM drain stops admitting turns, waits, stops
-the host's own request fibers, then closes the services' scope:
+timeout comes first).
+
+`agent.shutdown(options?)` stops the turns within a deadline, while the
+services are still open: it refuses every new begin (`TurnRefused`, reason
+`shutdown`: `isShutdownRefusal`, a 503), waits until idle for the deadline
+less its reserve (2 s by default), then closes the turns still running as
+interrupted with the code `turn.shutdown`, their ends stored while the log
+is open, and waits out the reserve. Each such turn's body is interrupted
+(`Agent.turn` races its writer closing) and it can be resumed at once by
+the next process. With `AgentConfig.shutdown`, closing the agent's scope
+runs it first:
 
 ```ts
 // Inside the host's Effect.gen, in the scope the process closes last.
-import { Effect, Layer, Ref } from "effect"
+import { Effect, Layer } from "effect"
 import { LanguageModel } from "effect/ai"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive } from "@xandreed/plugin-tasks"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { Agent, awaitIdle, SessionLogMemoryLive, TurnAdmission, TurnRefused } from "@xandreed/sdk"
+import { Agent, SessionLogMemoryLive, TurnAdmissionOpen } from "@xandreed/sdk"
 
-const draining = yield* Ref.make(false)
-const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
-  admit: (turn, open) => Effect.gen(function* () {
-    if (yield* Ref.get(draining)) return yield* Effect.fail(new TurnRefused({ session: turn.session.id, reason: "draining", message: "shutting down" }))
-    return yield* open
-  }),
-}))
-const sessions = SessionsPluginLive().pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, admission)))
+const sessions = SessionsPluginLive().pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))
 // The runner on top of the sessions: closing interrupts its tasks while the log is still open.
 const services = yield* Layer.build(InProcessTaskRunnerLive().pipe(Layer.provideMerge(sessions)))
-const agent = yield* Agent.define({ services, plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel] })
+const agent = yield* Agent.define({
+  services, plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin], turnServices: [LanguageModel.LanguageModel],
+  shutdown: { deadline: "25 seconds" },
+})
 
 // GET /ping
 const ping = agent.activity.pipe(Effect.map((now) => ({ busy: now.busy, openTurns: now.openTurns.length, runningTasks: now.runningTasks })))
 
-// SIGTERM: new turns fail with turn.refused; wait at most 25 s; then stop the server, then close the scope `services` lives in.
-const drain = Ref.set(draining, true).pipe(Effect.andThen(awaitIdle({ timeout: "25 seconds" }).pipe(Effect.provide(services))))
+// SIGTERM: stop the turns within 25 s; then stop the server, then close the scope `services` lives in.
+const onSigterm = agent.shutdown()
 ```
 
-Closing the services does not stop a turn still running: its writer lives
-in the turn's own scope, in the fiber serving the request, and the close
-only shuts the log under it. Stop the request fibers first (the server's
-shutdown): a turn interrupted while the log is open ends interrupted
-(`turn.interrupted`) and can be resumed. Closing the services then
-interrupts the runner's tasks before the log, so their turns end the same
-way. A turn whose end could not be stored is logged and let go of by its
-instance, which reaps it at its next begin; another process reaps it as
-interrupted (`turn.lease`) once its lease runs out. The framework guide's
-sessions section has the details.
+Closing the services without a shutdown does not stop a turn still
+running: its writer lives in the turn's own scope, in the fiber serving the
+request, and the close only shuts the log under it. A turn whose end could
+not be stored is logged and let go of by its instance, which reaps it at
+its next begin; another process reaps it as interrupted (`turn.lease`) once
+its lease runs out. A background task refused by a shutdown stays pending
+for the next process's `Tasks.reconcile`. The framework guide's sessions
+section has the details.
 
 The models plugin is runtime-scoped: `Agent.define` builds it once, and a
 turn's own services (a per-turn `LanguageModel`) win over it. With the default
