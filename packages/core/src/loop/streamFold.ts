@@ -138,10 +138,11 @@ const settle = (state: FoldState, part: Response.AnyPart): FoldState => ({
   entries: [...state.entries, { kind: "part", part }],
 })
 
-export const foldStreamParts = <E, R, R2 = never>(
+/** A failure of `onDelta` fails the fold with it. */
+export const foldStreamParts = <E, R, R2 = never, E2 = never>(
   parts: Stream.Stream<Response.AnyPart, E, R>,
-  onDelta: (delta: StreamDelta) => Effect.Effect<void, never, R2>,
-): Effect.Effect<FoldedTurn, E, R | R2> =>
+  onDelta: (delta: StreamDelta) => Effect.Effect<void, E2, R2>,
+): Effect.Effect<FoldedTurn, E | E2, R | R2> =>
   Stream.runFoldEffect(
     parts,
     (): FoldState => ({
@@ -149,7 +150,7 @@ export const foldStreamParts = <E, R, R2 = never>(
       finishReason: Option.none(),
       usage: Option.none(),
     }),
-    (state: FoldState, part): Effect.Effect<FoldState, never, R2> => {
+    (state: FoldState, part): Effect.Effect<FoldState, E2, R2> => {
       // Tool argument streaming: fan the deltas for incremental admission
       // AND keep the parts passing through as settled entries (the settled
       // content is byte-identical to the non-streamed path). The start part

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { Effect, Layer, Option, Ref, Schema, Stream, Tracer } from "effect"
+import { Data, Effect, Layer, Option, Ref, Schema, Stream, Tracer } from "effect"
 import { CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, Failure, mediaFromBase64 } from "@xandreed/core"
 import type { LoopEvent } from "@xandreed/core"
 import { DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
@@ -476,6 +476,48 @@ describe("runLoop settles each step once", () => {
     expect(await settledWith({ call: "fails", completion: "holds" })).toEqual({ failed: true, settled: ["0:failed"] })
     expect(await settledWith({ call: "answers", completion: "dies" })).toEqual({ failed: true, settled: ["0:completed"] })
     expect(await settledWith({ call: "answers", completion: "holds" })).toEqual({ failed: false, settled: ["0:completed"] })
+  })
+})
+
+describe("runLoop's callbacks fail with the caller's error", () => {
+  class Unrecorded extends Data.TaggedError("Unrecorded")<{ readonly step: number }> {}
+  const answers = () => [{ type: "text", text: "done" }, finish("stop")]
+
+  /** The run's failure, caught by its tag: a defect would reject the run instead. */
+  const caught = <A, R>(loop: Effect.Effect<A, AiError.AiError | Unrecorded, R>) => loop.pipe(
+    Effect.map(() => "completed"),
+    Effect.catchTag("Unrecorded", (error) => Effect.succeed(`Unrecorded at ${error.step}`)),
+  )
+
+  test("a failure in a step fails it and the run, typed; one after the step settled leaves it completed", async () => {
+    const outcome = (fails: "onTail" | "isComplete") => Effect.runPromise(Effect.gen(function* () {
+      const settled = yield* Ref.make<ReadonlyArray<string>>([])
+      const result = yield* caught(runLoop({
+        system: "sys", messages: [user("go")], toolkit: kit,
+        onTail: (_tail, step) => fails === "onTail" ? Effect.fail(new Unrecorded({ step })) : Effect.succeed([]),
+        onStepSettled: (step, status) => Ref.update(settled, (all) => [...all, `${step}:${status}`]),
+        isComplete: (step) => fails === "isComplete" ? Effect.fail(new Unrecorded({ step })) : Effect.succeed(true),
+      })).pipe(Effect.provide(handlers), Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel(answers)))
+      return { result, settled: yield* Ref.get(settled) }
+    }))
+    expect(await outcome("onTail")).toEqual({ result: "Unrecorded at 0", settled: ["0:failed"] })
+    expect(await outcome("isComplete")).toEqual({ result: "Unrecorded at 0", settled: ["0:completed"] })
+  })
+
+  test("a failure of the event sink on a streamed delta fails the step with it: the stream does not fall back", async () => {
+    const { result, seen } = await Effect.runPromise(Effect.gen(function* () {
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const result = yield* caught(runLoop({
+        system: "sys", messages: [user("go")], toolkit: kit, streaming: true,
+        onEvent: (event) => event.type === "assistant_delta"
+          ? Effect.fail(new Unrecorded({ step: event.turnIndex }))
+          : Ref.update(seen, (all) => [...all, event.type === "turn_end" ? `turn_end ${event.status}` : event.type]),
+      })).pipe(Effect.provide(handlers), Effect.provideServiceEffect(LanguageModel.LanguageModel, streamingModel(answers)))
+      return { result, seen: yield* Ref.get(seen) }
+    }))
+    // `streamingModel` dies on `generateText`: a fallback would reject the run.
+    expect(result).toBe("Unrecorded at 0")
+    expect(seen).toEqual(["turn_start", "turn_end failed"])
   })
 })
 

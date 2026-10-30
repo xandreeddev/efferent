@@ -135,6 +135,14 @@ describe("foldStreamParts", () => {
     expect(exit._tag).toBe("Failure")
   })
 
+  test("a failure of onDelta fails the fold with it, typed", async () => {
+    const folded: Effect.Effect<unknown, "unrendered"> = foldStreamParts(
+      Stream.fromIterable([part("text-delta", { id: "t", delta: "x" })]),
+      () => Effect.fail("unrendered" as const),
+    )
+    expect(await Effect.runPromise(Effect.flip(folded))).toBe("unrendered")
+  })
+
   test("Anthropic thinking keeps its signature (an empty delta's) and a redacted block (a start's), as the settled response has them", async () => {
     const signed = { anthropic: { info: { type: "thinking" as const, signature: "sig-1" } } }
     const redacted = { anthropic: { info: { type: "redacted_thinking" as const, redactedData: "opaque" } } }
