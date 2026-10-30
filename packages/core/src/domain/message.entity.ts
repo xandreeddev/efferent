@@ -17,6 +17,10 @@ export type ConversationId = typeof ConversationId.Type
 export const ToolCallId = Schema.String.pipe(Schema.brand("ToolCallId"))
 export type ToolCallId = typeof ToolCallId.Type
 
+/**
+ * @deprecated No package stores or reads it. Removed in the next minor
+ * release.
+ */
 export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
   conversationId: ConversationId,
   /** The absolute message position this fold covers (inclusive). */

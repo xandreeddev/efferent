@@ -1,0 +1,8 @@
+{
+  "model": "anthropic:claude-sonnet-5",
+  "fastModel": "anthropic:claude-haiku-5",
+  "sandbox": true,
+  "viMode": true,
+  "maxAttempts": 3,
+  "reasoningEffort": "high"
+}

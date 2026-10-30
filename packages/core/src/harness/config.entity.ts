@@ -13,11 +13,19 @@ export const PluginEntry = Schema.Struct({
 })
 export type PluginEntry = typeof PluginEntry.Type
 
+/**
+ * @deprecated A config's `profiles` entry, which `resolveGraph` refuses
+ * (`config.profile`). Removed in the next minor release.
+ */
 export const Profile = Schema.Struct({
   plugins: Schema.optional(Schema.Array(PluginEntry)),
   bindings: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   system: Schema.optional(Schema.String),
 })
+/**
+ * @deprecated A config's `profiles` entry, which `resolveGraph` refuses
+ * (`config.profile`). Removed in the next minor release.
+ */
 export type Profile = typeof Profile.Type
 
 /**
@@ -29,14 +37,28 @@ export type Profile = typeof Profile.Type
  */
 export const HarnessConfig = Schema.Struct({
   version: Schema.Literal(1),
+  /**
+   * @deprecated `resolveGraph` refuses a config that carries it
+   * (`config.profile`): fold the selected profile into the config before
+   * resolving it. Removed in the next minor release.
+   */
   profile: Schema.optional(Schema.String),
   plugins: Schema.optional(Schema.Array(PluginEntry)),
   bindings: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+  /**
+   * @deprecated `resolveGraph` refuses a config that carries it
+   * (`config.profile`): fold the selected profile into the config before
+   * resolving it. Removed in the next minor release.
+   */
   profiles: Schema.optional(Schema.Record(Schema.String, Profile)),
   system: Schema.optional(Schema.String),
 })
 export type HarnessConfig = typeof HarnessConfig.Type
 
+/**
+ * @deprecated What `defineAgent` takes; compose an agent with `Agent.define`
+ * (`@xandreed/sdk`). Removed in the next minor release.
+ */
 export interface AgentDefinition {
   readonly id: string
   readonly config: HarnessConfig

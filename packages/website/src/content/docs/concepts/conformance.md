@@ -6,8 +6,9 @@ description: The port contracts as runnable checks, to run against your own adap
 # Conformance kits
 
 A port says what its methods take and return; a conformance kit says what an
-implementation must do. `@xandreed/core` ships each contract as a list of
-checks, so a host that writes its own session store, sessions backend, task
+implementation must do. `@xandreed/core/conformance` ships each contract as a
+list of checks (the models plugin's credential and settings stores' from
+`@xandreed/core/models`), so a host that writes its own session store, sessions backend, task
 runner, tasks backend, tool registry, memory strategy, step loop, turn
 composition, file system, shell or model credential and settings store can
 prove it behaves like the first-party ones (`@xandreed/plugin-workspace`'s
@@ -65,7 +66,7 @@ Map the checks to tests in whatever runner you use. With Bun's test runner
 ```ts
 import { describe, expect, test } from "bun:test"
 import { Effect } from "effect"
-import { sessionLogConformance } from "@xandreed/core"
+import { sessionLogConformance } from "@xandreed/core/conformance"
 import { log } from "./my-session-log.js" // your SessionLog implementation
 
 describe("my session log conforms to the SessionLog contract", () => {
@@ -132,7 +133,7 @@ The SQLite log is the reference subject. `makeSessionLogSqlite(path)` is the
 scoped log `SessionLogSqliteLive` builds:
 
 ```ts
-import { sessionLogRecoveryConformance } from "@xandreed/core"
+import { sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import { makeSessionLogSqlite } from "@xandreed/plugin-session-sqlite"
 
 const checks = sessionLogRecoveryConformance({ open: makeSessionLogSqlite("/tmp/recovery.db"), callerClock: true })
@@ -199,8 +200,9 @@ same way, and `verify:packages` on Node:
 ```ts
 import { Context, Effect, Layer, Option } from "effect"
 import { TestClock } from "effect/testing"
-import { SessionLog, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
-import type { SessionsSubject } from "@xandreed/core"
+import { SessionLog, Sessions, TurnActivity, TurnAdmission } from "@xandreed/core"
+import { sessionsConformance } from "@xandreed/core/conformance"
+import type { SessionsSubject } from "@xandreed/core/conformance"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { ProcessLiveness, SessionsConfig } from "@xandreed/plugin-sessions"
 
@@ -348,7 +350,8 @@ runs the work in the caller failing `hand-over`, `outlives-caller`,
 
 ```ts
 import { Context, Effect, Layer } from "effect"
-import { TaskActivity, TaskRunner, taskRunnerConformance } from "@xandreed/core"
+import { TaskActivity, TaskRunner } from "@xandreed/core"
+import { taskRunnerConformance } from "@xandreed/core/conformance"
 import { InProcessTaskRunnerLive } from "@xandreed/plugin-tasks"
 
 const checks = taskRunnerConformance(Layer.build(InProcessTaskRunnerLive()).pipe(Effect.map((context) => ({
@@ -369,7 +372,8 @@ run it without a `TestClock`:
 
 ```ts
 import { Context, Effect, Layer } from "effect"
-import { SessionLog, Sessions, TaskExecutor, TaskRunner, Tasks, tasksConformance, TurnAdmissionOpen } from "@xandreed/core"
+import { SessionLog, Sessions, TaskExecutor, TaskRunner, Tasks, TurnAdmissionOpen } from "@xandreed/core"
+import { tasksConformance } from "@xandreed/core/conformance"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { TasksLive, tasksDefaults } from "@xandreed/plugin-tasks"
 
@@ -435,7 +439,8 @@ the open toolkit's handlers with another:
 
 ```ts
 import { Context, Effect, Layer } from "effect"
-import { Capabilities, ToolRegistry, toolRegistryConformance } from "@xandreed/core"
+import { Capabilities, ToolRegistry } from "@xandreed/core"
+import { toolRegistryConformance } from "@xandreed/core/conformance"
 import { toolDiscoveryDefaults, ToolDiscoveryLive } from "@xandreed/plugin-tool-discovery"
 
 const checks = toolRegistryConformance((capabilities, limits) =>
@@ -509,12 +514,13 @@ interface FileSystemFixture {
 }
 ```
 
-`@xandreed/core` runs the kit over its in-memory backend, giving it its own
+Core runs the kit over its in-memory backend, giving it its own
 tree for each check:
 
 ```ts
 import { Effect } from "effect"
-import { fileSystemConformance, makeMemoryFileSystem } from "@xandreed/core"
+import { makeMemoryFileSystem } from "@xandreed/core"
+import { fileSystemConformance } from "@xandreed/core/conformance"
 
 const checks = fileSystemConformance({
   open: makeMemoryFileSystem().pipe(
@@ -534,7 +540,7 @@ import { mkdtemp, rm, symlink } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect } from "effect"
-import { fileSystemConformance } from "@xandreed/core"
+import { fileSystemConformance } from "@xandreed/core/conformance"
 import { localFileSystem } from "@xandreed/plugin-workspace"
 
 const temporary = Effect.acquireRelease(
@@ -667,7 +673,7 @@ inherit from, which is how a test plants variables:
 ```ts
 import { Effect } from "effect"
 import type { Scope } from "effect"
-import { bashConformance } from "@xandreed/core"
+import { bashConformance } from "@xandreed/core/conformance"
 import { makeBash } from "@xandreed/plugin-workspace"
 
 declare const temporary: Effect.Effect<string, never, Scope.Scope> // as in the FileSystem kit above
@@ -724,8 +730,8 @@ over its memory store, on Bun and on Node:
 ```ts
 import { Effect, Layer } from "effect"
 import type { Scope } from "effect"
-import { authStoreConformance, AuthStore } from "@xandreed/core"
-import type { AuthStoreRefreshProbe } from "@xandreed/core"
+import { authStoreConformance, AuthStore } from "@xandreed/core/models"
+import type { AuthStoreRefreshProbe } from "@xandreed/core/models"
 import { LocalAuthStoreLive, ModelsTransport } from "@xandreed/plugin-models"
 import type { ModelsFetch } from "@xandreed/plugin-models"
 

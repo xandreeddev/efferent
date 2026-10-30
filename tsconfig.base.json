@@ -28,6 +28,18 @@
       "@xandreed/core": [
         "packages/core/src/index.ts"
       ],
+      "@xandreed/core/conformance": [
+        "packages/core/src/conformance/index.ts"
+      ],
+      "@xandreed/core/internal": [
+        "packages/core/src/internal/index.ts"
+      ],
+      "@xandreed/core/engine": [
+        "packages/core/src/engine/index.ts"
+      ],
+      "@xandreed/core/models": [
+        "packages/core/src/models/index.ts"
+      ],
       "@xandreed/foundry": [
         "packages/foundry/src/index.ts"
       ],

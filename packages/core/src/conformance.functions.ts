@@ -10,8 +10,9 @@ import type { SessionHeader, SessionLogEvent } from "./session/session-log.entit
 import { randomUuid } from "./internal/random-id.entity.functions.js"
 
 /*
- * The helpers the conformance kits share. Private to core: the kits are
- * exported from the index, these are not.
+ * The helpers the conformance kits share. `check` is exported with the kits
+ * (`@xandreed/core/conformance`), for a kit outside core; the others are
+ * private to core.
  */
 
 /** A `ConformanceFailure` by its tag and fields, whichever copy of core made it. */

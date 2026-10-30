@@ -108,7 +108,8 @@ for the span tree, the metrics and serverless flushing.
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores them
 in a SQLite file on Bun, and any other store can implement the `SessionLog` port.
 
-Core ships the port contracts as conformance kits, checks any test runner can
+Core ships the port contracts as conformance kits (`@xandreed/core/conformance`;
+the models plugin's from `@xandreed/core/models`), checks any test runner can
 run against your own implementation: `sessionLogConformance` and
 `sessionLogRecoveryConformance` (reopening, two handles, interrupted commits,
 a handle whose scope never closed) for a session store,
@@ -237,7 +238,7 @@ Bun, whose fetch applies a proxy from the environment by itself, only
 
 | Package | Responsibility |
 | --- | --- |
-| `@xandreed/core` | Shared schemas, ports, messages and protocol helpers |
+| `@xandreed/core` | Shared schemas, ports, messages and protocol helpers; the conformance kits in `@xandreed/core/conformance` |
 | `@xandreed/runtime` | Plugin graph validation and scoped activation |
 | `@xandreed/sdk` | `Agent.define` and `Agent.turn`: the agent's plugin graph and its turns, over durable sessions |
 | `@xandreed/plugin-agent-loop` | The agent step loop |
@@ -275,12 +276,14 @@ package's manifest version and matching internal dependency versions,
 leaving test code out. The consumer check accepts only a build of `HEAD`
 from a clean tree (`--allow-dirty` accepts one of uncommitted changes), and
 only when what each published entry exports is what `api/` records
-(`bun run api:update` rewrites it from a fresh build). It installs local
+(`bun run api:update` rewrites it from a fresh build) and each package's
+declarations import only itself, its dependencies and peers. It installs local
 tarballs outside the monorepo, checks they installed one copy of
 `@xandreed/core` and of `effect`, runs a composable agent's turn, a session
 fork, an eval composition and a SQLite
-session log with a background task on Bun, then imports every Node-capable
-package on Node, and runs the `FileSystem` and `Bash` kits over the local
+session log with a background task on Bun, then imports every published
+entry of every Node-capable package on Node (a deep import of core is
+refused), and runs the `FileSystem` and `Bash` kits over the local
 adapters, loads a `SKILL.md` tree through the skills directory plugin, and
 runs an agent turn that reads, edits and runs a command through the
 workspace tools, and flushes a turn's span and usage metric through the

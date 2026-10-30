@@ -38,7 +38,7 @@ Read one before writing one:
    with `limits: { streaming: false }`. A reply is a list of parts:
    `{ type: "tool-call", id, name, params }` then
    `{ type: "finish", reason: "tool-calls", usage }`; a final answer is
-   `textReply(text)` from `@xandreed/core`.
+   `textReply(text)` from `@xandreed/core/conformance`.
 2. Sessions in memory: build `SessionsLive(sessionsDefaults)` over
    `Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)` with `Layer.build`,
    take `Sessions` from it, and `sessions.create({ owner, id })` with a fixed

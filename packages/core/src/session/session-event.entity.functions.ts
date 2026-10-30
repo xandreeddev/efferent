@@ -23,6 +23,8 @@ import type { TurnEndedData as TurnEnded, TurnStartedData as TurnStarted } from 
 import { storedJson } from "./session-log.entity.functions.js"
 import { JsonObject as JsonObjectSchema } from "./session-log.entity.js"
 import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.entity.js"
+// The declarations this module emits name the user message through this import, not another package.
+import type { UserMessage } from "../turn/user-message.entity.js"
 
 const encodeEntry = Schema.encodeEffect(LogEntry)
 const decodeEntry = Schema.decodeUnknownEffect(LogEntry)

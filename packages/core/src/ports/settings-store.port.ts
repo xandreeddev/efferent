@@ -22,7 +22,15 @@ export class EngineSettings extends Schema.Class<EngineSettings>("EngineSettings
   codeModel: optionField(Schema.String),
   fastModel: optionField(Schema.String),
   fallbackModel: optionField(Schema.String),
+  /**
+   * @deprecated No package reads it; a settings file that holds it still
+   * decodes. Removed in the next minor release.
+   */
   sandbox: optionField(Schema.Boolean),
+  /**
+   * @deprecated No package reads it; a settings file that holds it still
+   * decodes. Removed in the next minor release.
+   */
   viMode: optionField(Schema.Boolean),
   maxAttempts: optionField(Schema.Number),
   budgetMillis: optionField(Schema.Number),

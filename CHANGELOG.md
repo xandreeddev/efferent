@@ -202,6 +202,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `effect`, so a host installs exactly one copy, and dependencies that cannot
   share one fail the install with a peer conflict instead of loading a
   second copy. npm 7+, pnpm and Bun install a missing peer themselves.
+- Import the kits from `@xandreed/core/conformance`, the credential and
+  settings stores from `@xandreed/core/models`, and `TurnLive` and the
+  turn's lifecycle functions from `@xandreed/core/engine`; your editor marks
+  each root import that has moved. `@xandreed/core/internal` is for the
+  framework's own packages: it carries no semver.
 
 ### Breaking
 
@@ -657,6 +662,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   opened.
 - `@xandreed/core`: `foldStreamParts`' `onDelta` may fail; the fold fails
   with its error.
+- `@xandreed/core` has four more entries. `@xandreed/core/conformance` holds
+  every port kit, `ConformanceCheck`, `ConformanceFailure` and `check`, the
+  helper a kit's checks are built with; it is semver like the root.
+  `@xandreed/core/models` holds the credential and settings stores
+  (`AuthStore`, `Credential`, `AuthError`, `SettingsStore`,
+  `EngineSettings`, `SETTINGS_KEYS`, `SettingsError`) and their kits; it
+  moves into `@xandreed/plugin-models` in the next minor release.
+  `@xandreed/core/engine` holds the turn engine (`TurnLive` and the turn's
+  run, lifecycle and bus); it moves into `@xandreed/sdk` in the next minor
+  release. `@xandreed/core/internal` holds the provider mapping, stream fold
+  and tool schemas the first-party packages share, with no semver.
 
 ### Changed
 
@@ -947,6 +963,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The models plugin's routed `LanguageModel` and `UtilityLlm` no longer
   apply settings from where they were built to their calls: a call uses its
   own call policy, prompt cache key, log annotations and `ConfigProvider`.
+- `@xandreed/core`'s published declarations no longer import
+  `@xandreed/sdk`, which core does not depend on: a host that installs core
+  without the sdk gets every type.
 
 ### Repository
 
@@ -1171,6 +1190,63 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   name declared under `src/internal/` or `src/engine/`.
 - `verify:packages` checks that the packed consumer installed exactly one
   copy of `@xandreed/core` and of `effect`.
+- `verify:packages` fails when a package's built declarations import
+  anything but the package itself, its dependencies and peers and the
+  runtime's modules, naming the file and the import; the packed consumer
+  imports every published entry on Node and checks a deep import of core is
+  refused.
+- The boundaries gate restricts `@xandreed/core/internal` to the agent loop,
+  the models plugin and the sdk, `@xandreed/core/engine` to the sdk and
+  `@xandreed/core/models` to the models plugin.
+
+### Deprecated
+
+Each name below still works from `@xandreed/core` (and `@xandreed/sdk`,
+which re-exports it) until the next minor release, which removes it from
+the root.
+
+- Import from `@xandreed/core/conformance`: `ConformanceCheck`,
+  `ConformanceFailure`, `bashConformance` (`BashFixture`, `BashSubject`),
+  `fileSystemConformance` (`FileSystemFixture`, `FileSystemSubject`),
+  `inMemoryLog`, `memoryConformance`, `modelCatalogConformance`,
+  `probeCall`, `sessionLogConformance`, `sessionLogRecoveryConformance`
+  (`SessionLogSubject`), `sessionsConformance` (`SessionsInstance`,
+  `SessionsProcess`, `SessionsSubject`), `stepLoopConformance`,
+  `taskRunnerConformance`, `tasksConformance` (`TaskRunnerFixture`,
+  `TasksDependencies`, `TasksFixture`), `textReply`,
+  `toolRegistryConformance` (`ToolRegistryLimits`), `turnConformance`.
+- Import from `@xandreed/core/models`: `AuthError`, `AuthStore`,
+  `Credential`, `EngineSettings`, `SETTINGS_KEYS`, `SettingsError`,
+  `SettingsStore`, `ModelRole`, `SettingsKey`, `authStoreConformance`
+  (`AuthStoreConformanceOptions`, `AuthStoreRefreshProbe`),
+  `settingsStoreConformance` (`SettingsStoreConformanceOptions`).
+- Import from `@xandreed/core/engine`: `TurnLive`, `cacheKeyOf`,
+  `runTurnLoop`, `schemaTokens`, `stepRequestOf` (`TurnRunServices`),
+  `finishTurn`, `guardTurn`, `openTurnTools`, `settleTurn`, `traceTurn`,
+  `traceTurnBegin` (`TurnBeginTrace`, `TurnTraceOptions`), `turnOf`,
+  `turnTools`, `makeTurnEvents`, `makeTurnTasks`.
+- Import from `@xandreed/core/internal`: `extractUsage`, `foldStreamParts`
+  (`FoldedTurn`, `StreamDelta`), `handoffToMessage`, `responseReasoning`,
+  `responseText`, `responseToAgentMessages`, `responseToolCalls`,
+  `responseToolResults` (`ToolResultSummary`), `safeKeepFrom`,
+  `strictJsonSchema`, `toolParametersSchema`, `toPromptMessages`,
+  `withToolCallIds`, `withUsageOnAssistant`.
+- Removed in the next minor release, with nothing to import instead: the
+  session chassis (`makeSession`, `Session`, `SeqEvent`; compose with
+  `Agent.define` and run turns with `Agent.turn`), the spec pipeline's
+  vocabulary (`SpecDoc`, `SpecSlug`, `SpecStatus`, `SpecCheck`,
+  `SpecLimits`, `SpecGates`, `DEFAULT_SPEC_LIMITS`, `renderSpecSection`,
+  `SpecDocParseError`, `decodeSpecDocText`, `encodeSpecDocText`, `specSlug`,
+  `uniqueSlug`, `parseFrontmatter`), the MCP bridge (`McpClient`,
+  `McpError`, `McpToolDescriptor`, `McpCallOutcome`, `McpCall`,
+  `McpDescribe`, `McpBridge`, `McpBridgedTool`, `buildMcpBridge`,
+  `emptyMcpBridge`), `AgentFailure` (with `AgentFailureCategory`,
+  `toAgentFailure` and `toolResultFailure`; use `harnessCodeOf` and
+  `reasonOf`), `Checkpoint`, `DecisionOutcome`, `defineAgent`,
+  `defineConfig` and `AgentDefinition`, a config's `profile` and `profiles`
+  (with `Profile`, which `resolveGraph` already refuses), and the
+  `EngineSettings` keys `sandbox` and `viMode`, which no package reads (a
+  settings file that holds them still decodes).
 
 ## 0.14.0 — 2026-10-29
 

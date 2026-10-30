@@ -57,9 +57,11 @@ export class Thing extends Context.Service<Thing, {
   opens a fresh instance per check (`BashSubject.open`). In core, build checks
   with `check`, `expect`, `fail`, `freshId` and `eventually` from
   `packages/core/src/conformance.functions.ts`; checks fail with
-  `ConformanceFailure` (exported from `@xandreed/core`).
-- Export the kit from `src/index.ts`: kits ship, so hosts can prove their own
-  adapters. Never import a module whose name ends in `testing.ts` from a kit:
+  `ConformanceFailure` (`@xandreed/core/conformance`, which exports `check`
+  too, for a kit outside core).
+- Export the kit from the package's entry, core's from
+  `src/conformance/index.ts` (`@xandreed/core/conformance`): kits ship, so
+  hosts can prove their own adapters. Never import a module whose name ends in `testing.ts` from a kit:
   the build drops those files.
 - A contract change starts as a new or changed check in the kit.
 - Self-test it with careless stubs: fakes that must fail every check, plus a
@@ -100,7 +102,7 @@ export class Thing extends Context.Service<Thing, {
 - [ ] Schemas and errors in the entity file; `R = never`; `Option` for absence
 - [ ] New key `@xandreed/<package>/<Name>`; no existing key renamed
 - [ ] Methods are `Effect.fn("<thing>.<method>")`
-- [ ] Kit exported from `index.ts` and self-tested against careless stubs
+- [ ] Kit exported from its entry (core: `src/conformance/index.ts`) and self-tested against careless stubs
 - [ ] Every adapter runs the kit on Bun and, packed, on Node
 - [ ] One foreign-error mapping per adapter; no provider types escape
 - [ ] docs:generate, CHANGELOG, typecheck, tests
