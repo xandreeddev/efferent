@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
 import type { Schema } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import type { JsonObject, SessionLogEvent } from "../session/session-log.entity.js"
 import { modelRequestHeaderOf } from "./model-request.entity.functions.js"
 
@@ -16,7 +17,7 @@ const header = (runId: Schema.Json, step: Schema.Json, system: Schema.Json): Jso
 const prepared = (seq: number, data: JsonObject): SessionLogEvent => ({ session, seq, turn: Option.some(1), kind: "request.prepared", at: 0, data })
 
 /** The header found for run-1's step 0, or the code it failed with. */
-const found = (events: ReadonlyArray<SessionLogEvent>) => Effect.runPromise(modelRequestHeaderOf(events, "run-1", 0).pipe(
+const found = (events: ReadonlyArray<SessionLogEvent>) => Effect.runPromise(modelRequestHeaderOf(events, RunId.make("run-1"), 0).pipe(
   Effect.match({ onFailure: (error) => error.code, onSuccess: (decoded) => decoded.system }),
 ))
 

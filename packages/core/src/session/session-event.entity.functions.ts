@@ -1,4 +1,5 @@
 import { Effect, Option, Schema, Struct } from "effect"
+import { RunId } from "../domain/run.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
@@ -171,7 +172,7 @@ export const turnEndedOf = (event: SessionLogEvent): Effect.Effect<TurnEnded, Sc
  */
 export const StoredMemoryData = <Body extends Schema.Top>(body: Body) => Schema.Struct({
   entry: EntryId,
-  runId: Schema.String,
+  runId: RunId,
   step: Schema.Int,
   at: Schema.Number,
   body,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option, Tracer } from "effect"
-import { ConversationId, ConversationMemory, entryId, HarnessError, estimateMessageTokens, renderLog, RunContext, ToolCallId, toolParametersSchema, UserMessage } from "@xandreed/core"
+import { ConversationId, ConversationMemory, entryId, estimateMessageTokens, HarnessError, renderLog, RunContext, RunId, ToolCallId, toolParametersSchema, UserMessage } from "@xandreed/core"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { memoryWindowPlugin, RECALL_PAGE_CHARS, recallCapability, recallPage, spillPreview, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
@@ -13,7 +13,7 @@ const views: ToolViews = {
   compact: (_tool, encoded) => Effect.succeed(Option.some(`(compact ${String(encoded).length})`)),
   digest: () => Effect.succeed(Option.none()),
 }
-const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(`run-${turn}`, seq), runId: `run-${turn}`, turn, step: 0, at: seq, body })
+const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(RunId.make(`run-${turn}`), seq), runId: RunId.make(`run-${turn}`), turn, step: 0, at: seq, body })
 const result = (seq: number, turn: number, view: string, toolName = "lookup"): LogEntry => at(seq, turn, {
   _tag: "ToolResult", toolCallId: ToolCallId.make(`c${seq}`), toolName, isError: false, encoded: view, view, viewVersion: "1", subjects: [], artifacts: [], pinned: false,
 })
@@ -24,9 +24,9 @@ const log = (big: string): ReadonlyArray<LogEntry> => [
   at(4, 2, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "second question" }) }), call(5, 2, 6), result(6, 2, big),
 ]
 const policy = windowPolicy(config)
-const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: "run-2" })
+const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: RunId.make("run-2") })
 const maintain = (entries: ReadonlyArray<LogEntry>, budgetTokens: number, phase: "turn-start" | "step" = "turn-start") =>
-  Effect.runPromise(Effect.result(policy.maintain({ entries, signal: { phase, lastUsage: Option.none(), budgetTokens, views }, turn: 2, runId: "run-2", render })))
+  Effect.runPromise(Effect.result(policy.maintain({ entries, signal: { phase, lastUsage: Option.none(), budgetTokens, views }, turn: 2, runId: RunId.make("run-2"), render })))
 
 describe("window memory policy", () => {
   test("at turn start, earlier tool results switch to their compact views", async () => {
@@ -95,8 +95,8 @@ describe("spans", () => {
       const conversation = ConversationId.make("00000000-0000-4000-8000-0000000005c1")
       const readable: LogHandle = { read: Effect.succeed(log("x")), append: () => Effect.void }
       const unreadable: LogHandle = { ...readable, read: Effect.fail(new HarnessError({ code: "memory.log", message: "the log is gone" })) }
-      yield* memory.open({ conversation, runId: "run-2", log: readable }).pipe(Effect.withSpan("host.turn"))
-      yield* Effect.exit(memory.open({ conversation, runId: "run-2", log: unreadable }))
+      yield* memory.open({ conversation, runId: RunId.make("run-2"), log: readable }).pipe(Effect.withSpan("host.turn"))
+      yield* Effect.exit(memory.open({ conversation, runId: RunId.make("run-2"), log: unreadable }))
     })).pipe(Effect.withTracer(tracer)))
     expect(spans.map((span) => [span.name, span.status._tag === "Ended" ? span.status.exit._tag : "open"])).toEqual([
       ["host.turn", "Success"], ["memory.open", "Success"], ["memory.open", "Failure"],

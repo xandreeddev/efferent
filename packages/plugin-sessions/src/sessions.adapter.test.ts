@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { awaitIdle, frameworkDraft, HarnessError, harnessCodeOf, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, traceTurnBegin, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
+import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, traceTurnBegin, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsPluginLive } from "./plugin.adapter.js"
 import { processLiveness } from "./process-liveness.adapter.js"
@@ -14,7 +14,7 @@ type Service = Context.Service.Shape<typeof Sessions>
 
 const owner = "owner-1"
 const say = (text: string, key = text, command: JsonObject = {}): BeginTurn =>
-  ({ _tag: "User", userMessage: new UserMessage({ text }), runId: `run-${key}`, key, command })
+  ({ _tag: "User", userMessage: new UserMessage({ text }), runId: RunId.make(`run-${key}`), key, command })
 
 /** Sessions instances over one shared log: as if on several servers. */
 const instancesOver = (log: Log, ...configs: ReadonlyArray<SessionsConfig>) => Effect.forEach(configs, (config) =>
@@ -76,16 +76,16 @@ describe("one turn at a time", () => {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
     const under = (runId: string, key: string, resumes?: number): BeginTurn =>
-      ({ _tag: "User", userMessage: new UserMessage({ text: key }), runId, key, command: {}, ...(resumes === undefined ? {} : { resumes }) })
+      ({ _tag: "User", userMessage: new UserMessage({ text: key }), runId: RunId.make(runId), key, command: {}, ...(resumes === undefined ? {} : { resumes }) })
     const refusal = (at: SessionAddress, input: BeginTurn) => Effect.flip(Effect.scoped(sessions!.begin(at, input))).pipe(
-      Effect.map((error) => error._tag === "RunIdReused" ? [error._tag, error.runId, error.turn] : [error._tag]))
+      Effect.map((error): ReadonlyArray<string | number> => error._tag === "RunIdReused" ? [error._tag, error.runId, error.turn] : [error._tag]))
     yield* Effect.scoped(sessions!.begin(address, under("run-a", "k1")).pipe(Effect.flatMap((writer) => writer.end({ reason: "cancelled", failure: Option.none() }))))
     // The same key is still the same turn; a new key, a resume of the cancelled turn or an inbox turn under the run id is not.
     expect(yield* refusal(address, under("run-a", "k1"))).toEqual(["TurnDuplicate"])
     expect(yield* refusal(address, under("run-a", "k2"))).toEqual(["RunIdReused", "run-a", 1])
     expect(yield* refusal(address, under("run-a", "resume:1", 1))).toEqual(["RunIdReused", "run-a", 1])
-    yield* sessions!.deliver(address, { id: "i1", source: { kind: "task" }, content: "the result of i1" })
-    expect(yield* refusal(address, { _tag: "Inbox", runId: "run-a" })).toEqual(["RunIdReused", "run-a", 1])
+    yield* sessions!.deliver(address, { id: InboxItemId.make("i1"), source: { kind: "task" }, content: "the result of i1" })
+    expect(yield* refusal(address, { _tag: "Inbox", runId: RunId.make("run-a") })).toEqual(["RunIdReused", "run-a", 1])
     expect([(yield* sessions!.get(address)).turns, (yield* sessions!.get(address)).pending]).toEqual([1, 1])
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "turn.ended@1", "inbox.queued"])
     // A fork inherits its parent's turns up to the fork point, and their run ids with them.
@@ -103,7 +103,7 @@ describe("one turn at a time", () => {
     const pixel = yield* mediaFromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==", { name: "pixel.png" })
     const careless = { ...pixel, mediaType: "image/gif" as const, bytes: 1, fingerprint: MediaFingerprint.make("00000000deadbeef") }
     const asked = (attachments: ReadonlyArray<typeof pixel>, key = "k1"): BeginTurn =>
-      ({ _tag: "User", userMessage: new UserMessage({ text: "", attachments }), runId: `run-${key}`, key, command: {} })
+      ({ _tag: "User", userMessage: new UserMessage({ text: "", attachments }), runId: RunId.make(`run-${key}`), key, command: {} })
     const writer = yield* sessions!.begin(address, asked([careless]))
     expect(writer.admitted.userMessage.attachments).toEqual([pixel])
     expect(writer.started.data.userMessage).toEqual({ text: "", attachments: [pixel] })
@@ -140,7 +140,7 @@ describe("one turn at a time", () => {
   test("the host's meta is stored when given and shown on the writer, and a retry with other meta is the same turn", () => withLog((log) => Effect.gen(function* () {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
-    const meta = (value: JsonObject): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text: "find alpha" }), runId: "run-k1", key: "k1", command: {}, meta: value })
+    const meta = (value: JsonObject): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text: "find alpha" }), runId: RunId.make("run-k1"), key: "k1", command: {}, meta: value })
     const writer = yield* sessions!.begin(address, meta({ request: "r1", tenant: "acme" }))
     expect(writer.admitted.meta).toEqual({ request: "r1", tenant: "acme" })
     expect(writer.started.data.meta).toEqual({ request: "r1", tenant: "acme" })
@@ -490,7 +490,7 @@ describe("leases", () => {
       expect(Option.map((yield* other.get(address)).open, (open) => open.turn)).toEqual(Option.some(1))
       const busy = yield* Effect.flip(other.begin(address, say(`second ${index}`)))
       expect([busy._tag, busy._tag === "SessionBusy" ? busy.turn : null]).toEqual(["SessionBusy", 1])
-      yield* other.deliver(address, { id: `i${index}`, source: {}, content: "a notice" })
+      yield* other.deliver(address, { id: InboxItemId.make(`i${index}`), source: {}, content: "a notice" })
     }), { discard: true })
     yield* writer.append([{ kind: "answer.published", data: {} }])
     expect((yield* writer.end({ reason: "completed", failure: Option.none() })).pending).toBe(3)
@@ -754,12 +754,12 @@ describe("cancel and removal", () => {
   test("a turn nobody holds any more is reaped by a cancel as by a delivery: in either order it ends interrupted and its items wait again", () => withLog((log) => Effect.gen(function* () {
     const short = lease(1_000, "on-commit")
     const [holder, other] = yield* instancesOver(log, short, short)
-    const item = { id: "i1", source: { kind: "task" }, content: "the result of i1" }
+    const item = { id: InboxItemId.make("i1"), source: { kind: "task" }, content: "the result of i1" }
     // An inbox turn whose holder stopped: it took the item, and its lease ran out.
     const crashed = Effect.gen(function* () {
       const address = yield* created(holder!)
       yield* holder!.deliver(address, item)
-      yield* holder!.begin(address, { _tag: "Inbox", runId: `run-${address.id}` })
+      yield* holder!.begin(address, { _tag: "Inbox", runId: RunId.make(`run-${address.id}`) })
       yield* TestClock.adjust("2 seconds")
       return address
     })
@@ -948,11 +948,11 @@ describe("contention and a broken log", () => {
     const address = yield* created(sessions!)
     const held = yield* created(sessions!)
     const writer = yield* sessions!.begin(held, say("held"))
-    yield* sessions!.deliver(address, { id: "i1", source: {}, content: "waiting" })
+    yield* sessions!.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "waiting" })
     yield* Ref.set(conflicting, true)
     const contended = [
       yield* Effect.flip(sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: undefined }))),
-      yield* Effect.flip(sessions!.deliver(address, { id: "i2", source: {}, content: "another" })),
+      yield* Effect.flip(sessions!.deliver(address, { id: InboxItemId.make("i2"), source: {}, content: "another" })),
       yield* Effect.flip(Effect.scoped(sessions!.begin(address, say("one")))),
       yield* Effect.flip(sessions!.drain(address, () => Effect.void)),
       yield* Effect.flip(sessions!.cancel(held, writer.admitted.turn)),
@@ -1021,7 +1021,7 @@ describe("contention and a broken log", () => {
 })
 
 describe("the inbox", () => {
-  const item = (id: string) => ({ id, source: { kind: "task", task: id }, content: `[Background task ${id} completed]\n<task-output>done ${id}</task-output>` })
+  const item = (id: string) => ({ id: InboxItemId.make(id), source: { kind: "task", task: id }, content: `[Background task ${id} completed]\n<task-output>done ${id}</task-output>` })
   const record = (text: string) => (writer: { readonly append: (drafts: ReadonlyArray<{ readonly kind: string; readonly data: JsonObject }>) => Effect.Effect<void, unknown> }) =>
     writer.append([{ kind: "answer.published", data: { text } }]).pipe(Effect.orDie)
 
@@ -1198,7 +1198,7 @@ describe("the inbox", () => {
 
 describe("resuming a turn", () => {
   const resume = (turn: number, text = "Continue.", key = `resume:${turn}`): BeginTurn =>
-    ({ _tag: "User", userMessage: new UserMessage({ text }), runId: `run-${key}-${text}`, key, command: {}, resumes: turn })
+    ({ _tag: "User", userMessage: new UserMessage({ text }), runId: RunId.make(`run-${key}-${text}`), key, command: {}, resumes: turn })
   const completed = (writer: TurnWriter) => writer.end({ reason: "completed", failure: Option.none() })
   /** The turn the begin opened and the turn it resumes, as admitted and as stored; the begin's scope closes the turn. */
   const opened = (sessions: Service, address: SessionAddress, input: BeginTurn) => Effect.scoped(sessions.begin(address, input).pipe(
@@ -1245,7 +1245,7 @@ describe("resuming a turn", () => {
     // Reaped earlier, by another begin's touch (a delivery): still interrupted, still resumable.
     yield* first!.begin(address, say("abandoned again"))
     yield* TestClock.adjust("2 seconds")
-    yield* second!.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    yield* second!.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "a notice" })
     expect(yield* opened(second!, address, resume(5))).toEqual([6, 5, 5])
     const ended = yield* sessions!.read(address, { kinds: ["turn.ended"] })
     expect(ended.map((event) => [Option.getOrNull(event.turn), event.data.reason, (event.data.failure as JsonObject | null)?.code ?? null])).toEqual([
@@ -1257,7 +1257,7 @@ describe("resuming a turn", () => {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
     yield* sessions!.begin(address, say("stop me"))
-    yield* sessions!.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    yield* sessions!.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "a notice" })
     yield* sessions!.cancel(address, 1)
     expect((yield* sessions!.drain(address, () => Effect.void)).turns).toBe(1)
     expect(yield* opened(sessions!, address, resume(1))).toEqual([3, 1, 1])
@@ -1273,7 +1273,7 @@ describe("resuming a turn", () => {
     yield* Effect.scoped(sessions!.begin(address, say("left open")))
     expect(yield* refusal(sessions!, address, resume(2))).toEqual(["NotResumable", 2, "finished"])
     // An inbox turn is never resumed, even when it was interrupted.
-    yield* sessions!.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    yield* sessions!.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "a notice" })
     yield* sessions!.drain(address, () => Effect.interrupt, { maxTurns: 1 })
     expect(yield* refusal(sessions!, address, resume(3))).toEqual(["NotResumable", 3, "inbox"])
     // A cancelled turn a later user's turn followed is superseded.
@@ -1408,7 +1408,7 @@ describe("admission", () => {
       yield* writer.end({ reason: "completed", failure: Option.none() })
     }))
     expect((yield* Effect.flip(Effect.scoped(sessions.begin(address, say("one", "k1")))))._tag).toBe("TurnDuplicate")
-    yield* sessions.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    yield* sessions.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "a notice" })
     yield* Ref.set(refusing, true)
     expect((yield* Effect.flip(Effect.scoped(sessions.begin(address, say("two", "k2")))))._tag).toBe("TurnRefused")
     expect((yield* sessions.drain(address, () => Effect.void)).turns).toBe(0)
@@ -1429,7 +1429,7 @@ describe("admission", () => {
     const address = yield* created(sessions)
     const ended = (writer: TurnWriter) => writer.end({ reason: "completed", failure: Option.none() })
     yield* Effect.scoped(sessions.begin(address, { ...say("one", "k1"), meta: { tenant: "acme" } }).pipe(Effect.flatMap(ended)))
-    yield* sessions.deliver(address, { id: "i1", source: {}, content: "a notice" })
+    yield* sessions.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "a notice" })
     const drained = yield* Ref.make<ReadonlyArray<unknown>>([])
     yield* sessions.drain(address, (writer) => Ref.set(drained, [writer.admitted.origin, writer.admitted.meta, writer.started.data.meta]), { maxTurns: 1, meta: { source: "drain" } })
     expect(yield* Ref.get(drained)).toEqual(["inbox", { source: "drain" }, { source: "drain" }])
@@ -1447,8 +1447,8 @@ describe("admission", () => {
     }))
     const sessions = yield* Effect.service(Sessions).pipe(Effect.provide(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), stalls)))))
     const address = yield* created(sessions)
-    yield* sessions.deliver(address, { id: "i1", source: {}, content: "a notice" })
-    const beginning = yield* Effect.forkChild(Effect.scoped(sessions.begin(address, { _tag: "Inbox", runId: "run-late" })))
+    yield* sessions.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "a notice" })
+    const beginning = yield* Effect.forkChild(Effect.scoped(sessions.begin(address, { _tag: "Inbox", runId: RunId.make("run-late") })))
     yield* Deferred.await(committed)
     yield* Fiber.interrupt(beginning)
     expect(Option.isNone((yield* sessions.get(address)).open)).toBe(true)
@@ -1492,7 +1492,7 @@ describe("traces and logs", () => {
       yield* sessions!.read(address)
       yield* sessions!.lookup(address, "k1")
       yield* sessions!.transact(address, () => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: undefined }))
-      yield* sessions!.deliver(address, { id: "i1", source: {}, content: "a notice" })
+      yield* sessions!.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "a notice" })
       yield* sessions!.drain(address, () => Effect.void, { maxTurns: 1 })
       const scope = yield* Scope.make()
       const writer = yield* sessions!.begin(address, say("hello")).pipe(Scope.provide(scope))
@@ -1524,7 +1524,7 @@ describe("traces and logs", () => {
     const [sessions] = yield* instancesOver(log, sessionsDefaults)
     const address = yield* created(sessions!)
     yield* Effect.scoped(Effect.gen(function* () {
-      const writer = yield* sessions!.begin(address, say("hello")).pipe(traceTurnBegin({ session: address.id, runId: "run-hello", origin: "user" }))
+      const writer = yield* sessions!.begin(address, say("hello")).pipe(traceTurnBegin({ session: address.id, runId: RunId.make("run-hello"), origin: "user" }))
       yield* Effect.gen(function* () {
         yield* writer.append([{ kind: "note", data: { n: 1 } }]).pipe(Effect.withSpan("host.step"))
         yield* writer.flush
@@ -1567,7 +1567,7 @@ describe("traces and logs", () => {
       }))
       const { sessions } = yield* withActivity(log, sessionsDefaults, admission)
       const address = yield* created(sessions)
-      yield* sessions.deliver(address, { id: "i1", source: {}, content: "a notice" })
+      yield* sessions.deliver(address, { id: InboxItemId.make("i1"), source: {}, content: "a notice" })
       yield* sessions.drain(address, () => Effect.fail(new HarnessError({ code: "host.failed", message: "the reaction gave up" })), { maxTurns: 1 })
       const runId = (yield* sessions.read(address, { kinds: ["turn.started"] }))[0]?.data.runId
       yield* Ref.set(refusing, true)

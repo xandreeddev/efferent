@@ -9,6 +9,7 @@ import {
   Failure,
   harnessCodeOf,
   onTool,
+  RunId,
   SessionLogMemoryLive,
   Sessions,
   subscribeAll,
@@ -120,7 +121,7 @@ const cancelledMidToolCall = Effect.gen(function* () {
 
   // 1. ask: the model looks alpha up (a whole step), then calls fetch_page, which hangs.
   const first = yield* scripted([call("c1", "lookup", { query: "alpha" }), call("c2", "fetch_page", { id: "record-alpha-a" })])
-  const asking = yield* Effect.forkChild(agent.turn({ turn: { session, userMessage: message, runId: "run-1" }, services: services(first.model) }, deliverAnswer))
+  const asking = yield* Effect.forkChild(agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-1") }, services: services(first.model) }, deliverAnswer))
   yield* Deferred.await(fetching)
 
   // 2. cancel while fetch_page runs: the turn fails with TurnClosed (turn.closed).
@@ -144,14 +145,14 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
 
       // 3. resume turn 1 with the same message: memory keeps turn 1's whole steps.
       const second = yield* scripted([call("c3", "fetch_page", { id: "record-alpha-a" }), call("c4", "deliver", { text: "PAGE of record-alpha-a" })])
-      const resumed = yield* agent.turn({ turn: { session, userMessage: message, runId: "run-2", resumes: 1 }, services: services(second.model) }, (turn) =>
+      const resumed = yield* agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-2"), resumes: 1 }, services: services(second.model) }, (turn) =>
         deliverAnswer(turn).pipe(Effect.map((outcome) => ({ ...outcome, reply: Option.map(outcome.reply, (text) => `${text} (turn ${turn.turn} resumes ${turn.admitted.resumes ?? "nothing"})`) }))))
 
       // 4. retry the resume (a client retrying the request): the turn already begun is the answer.
-      const retried = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: "run-3", resumes: 1 }, services: services(second.model) }, deliverAnswer))
+      const retried = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-3"), resumes: 1 }, services: services(second.model) }, deliverAnswer))
 
       // 5. resume the finished turn 2: refused, nothing opened.
-      const refused = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: "run-4", resumes: 2 }, services: services(second.model) }, deliverAnswer))
+      const refused = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-4"), resumes: 2 }, services: services(second.model) }, deliverAnswer))
 
       return {
         cancelled, asked, afterCancel, resumed, retried, refused,
@@ -204,17 +205,17 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
       const { agent, sessions, services } = yield* cancelledMidToolCall
 
       // 3. resume turn 1 while the provider is down: the resuming turn fails.
-      const failed = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: "run-2", resumes: 1 }, services: services(yield* down) }, deliverAnswer))
+      const failed = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-2"), resumes: 1 }, services: services(yield* down) }, deliverAnswer))
 
       // 4. retry with the default key: that failed turn is the answer.
       const again = yield* scripted([call("c3", "fetch_page", { id: "record-alpha-a" }), call("c4", "deliver", { text: "PAGE of record-alpha-a" })])
-      const duplicate = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: "run-3", resumes: 1 }, services: services(again.model) }, deliverAnswer))
+      const duplicate = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-3"), resumes: 1 }, services: services(again.model) }, deliverAnswer))
 
       // 5. try the resume again with a new key: the failed resume does not stand in the way.
-      const retried = yield* agent.turn({ turn: { session, userMessage: message, runId: "run-4", key: "resume:1:2", resumes: 1 }, services: services(again.model) }, deliverAnswer)
+      const retried = yield* agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-4"), key: "resume:1:2", resumes: 1 }, services: services(again.model) }, deliverAnswer)
 
       // 6. once a resume completed, turn 1 is answered: a further resume is refused.
-      const answered = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: "run-5", key: "resume:1:3", resumes: 1 }, services: services(again.model) }, deliverAnswer))
+      const answered = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-5"), key: "resume:1:3", resumes: 1 }, services: services(again.model) }, deliverAnswer))
 
       return { failed, duplicate, retried, answered, prompt: (yield* Ref.get(again.prompts))[0] ?? "", all: yield* sessions.read(session) }
     })))

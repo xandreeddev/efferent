@@ -3,6 +3,7 @@ import {
   ConversationId,
   MemoryKindOf,
   reasonOf,
+  RunId,
   SessionExists,
   Sessions,
   TaskConflict,
@@ -82,14 +83,14 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     Effect.forEach(startedOf(events), (started) => viewOf(parent, started, delivered), { concurrency: 1 })))))
 
   /** The task as its parent started it, and where it stands. */
-  const recordOf = (parent: SessionAddress, taskId: string) => Effect.gen(function* () {
+  const recordOf = (parent: SessionAddress, taskId: ConversationId) => Effect.gen(function* () {
     const events = yield* parentRecords(parent)
     const started = startedOf(events).find((record) => record.taskId === taskId)
     return started === undefined ? yield* Effect.fail(new TaskMissing({ session: parent.id, taskId }))
       : { started, task: yield* viewOf(parent, started, yield* deliveredOf(events)) }
   })
 
-  const taskOf = (parent: SessionAddress, taskId: string) => recordOf(parent, taskId).pipe(Effect.map(({ task }) => task))
+  const taskOf = (parent: SessionAddress, taskId: ConversationId) => recordOf(parent, taskId).pipe(Effect.map(({ task }) => task))
 
   /** The task's result in its child, recorded outside a turn (a child the host would not admit): unless it has ended. */
   const recordEnd = (child: SessionAddress, result: Result) => sessions.transact(child, () => Effect.gen(function* () {
@@ -119,7 +120,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     const child = childOf(parent, task.child)
     return Effect.scoped(Effect.gen(function* () {
       const writer = yield* sessions.begin(child, {
-        _tag: "User", userMessage: new UserMessage({ text: task.instructions }), runId: yield* Effect.sync(() => crypto.randomUUID()),
+        _tag: "User", userMessage: new UserMessage({ text: task.instructions }), runId: RunId.make(yield* Effect.sync(() => crypto.randomUUID())),
         key: deliveryId(task.taskId), command: { task: task.taskId }, meta,
       })
       // A cancel that landed after the task was read, before its turn began.
@@ -199,7 +200,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
   })
 
   /** Deliver the task if it finished and was not delivered, then let the parent react to what waits, its turns begun with the starter's `meta`. */
-  const settle = (parent: SessionAddress, taskId: string, meta: JsonObject, deadline: Option.Option<number>) => Effect.gen(function* () {
+  const settle = (parent: SessionAddress, taskId: ConversationId, meta: JsonObject, deadline: Option.Option<number>) => Effect.gen(function* () {
     const task = yield* taskOf(parent, taskId)
     if (!isFinished(task.status) || task.delivered) return
     const delivered = yield* deliverNotice(parent, task)
@@ -290,7 +291,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
       Effect.die(new Error(`task ${taskId} was started but is not in ${parent.id}`))))
   })
 
-  const cancel = (parent: SessionAddress, taskId: string) => Effect.gen(function* () {
+  const cancel = (parent: SessionAddress, taskId: ConversationId) => Effect.gen(function* () {
     const task = yield* taskOf(parent, taskId)
     if (!isActive(task.status)) return false
     const child = childOf(parent, task.child)

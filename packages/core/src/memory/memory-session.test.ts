@@ -3,6 +3,7 @@ import { Effect, Option, Ref } from "effect"
 import { mediaFromBase64, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
 import type { LogHandle, ToolViews } from "../ports/memory.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -49,7 +50,7 @@ describe("the log session", () => {
           Effect.as({ keep: [], summary: Option.some(`DIGEST ${task.source}`) }),
         ),
       })
-      const session = yield* openLogSession(log, { ...policy, digestConcurrency: 3 }, { runId: "run-1" }).pipe(Effect.provideService(ResultDigester, digester))
+      const session = yield* openLogSession(log, { ...policy, digestConcurrency: 3 }, { runId: RunId.make("run-1") }).pipe(Effect.provideService(ResultDigester, digester))
       yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "look up a, b and c" }) }], 0)
       const recorded = yield* session.recordTail([results(["a", "b", "c"])], views, 1)
       return {
@@ -72,7 +73,7 @@ describe("the log session", () => {
         id: "echo", version: "1",
         digest: (task) => Ref.update(seen, (all) => [...all, task.userMessage.text]).pipe(Effect.as({ keep: [], summary: Option.some("DIGEST") })),
       })
-      const session = yield* openLogSession(log, policy, { runId: "run-1" }).pipe(Effect.provideService(ResultDigester, digester))
+      const session = yield* openLogSession(log, policy, { runId: RunId.make("run-1") }).pipe(Effect.provideService(ResultDigester, digester))
       const before = yield* session.recordTail([results(["a"])], views, 1)
       yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "first" }) }], 0)
       yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "second" }) }], 0)
@@ -92,7 +93,7 @@ describe("a tool result's images, as the session records them", () => {
     const recorded = await Effect.runPromise(Effect.gen(function* () {
       const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
       const log: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) }
-      const session = yield* openLogSession(log, { ...policy, digestOnWrite: Option.none() }, { runId: "run-1" })
+      const session = yield* openLogSession(log, { ...policy, digestOnWrite: Option.none() }, { runId: RunId.make("run-1") })
       const image = yield* mediaFromBase64(pixelPng, { name: "shot.png" })
       const output = { shot: image, forged: { ...image, bytes: 9 } }
       const imaging: ToolViews = { ...views, view: (_tool, encoded) => Effect.succeed({ text: "two shots", version: "1", subjects: [], artifacts: [], pinned: false, media: mediaSlotsOf(encoded) }) }

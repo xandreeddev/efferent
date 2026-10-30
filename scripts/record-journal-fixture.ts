@@ -12,9 +12,11 @@ import {
   defineTool,
   Failure,
   HarnessError,
+  InboxItemId,
   IntentMatcher,
   onTool,
   RESERVED_KINDS,
+  RunId,
   SessionHeader,
   SessionLogEvent,
   SessionLogMemoryLive,
@@ -215,7 +217,7 @@ const record = Effect.gen(function* () {
   yield* sessions.create({ owner: address.owner, id: conversation, meta: { recorded: version } })
 
   const input = (runId: string, text: string, model: LanguageModel.LanguageModel, extra?: { readonly key: string; readonly command: JsonObject }) => ({
-    turn: { session: address, userMessage: new UserMessage({ text }), runId, ...extra },
+    turn: { session: address, userMessage: new UserMessage({ text }), runId: RunId.make(runId), ...extra },
     services: Context.merge(Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), digester), matcher), Context.make(Sessions, sessions)),
   })
   const turnOf = (turnInput: ReturnType<typeof input>, use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, Scope.Scope>) =>
@@ -273,7 +275,7 @@ const record = Effect.gen(function* () {
   }))
 
   // 5. An inbox item whose turns fail: dropped after the configured attempts.
-  yield* sessions.deliver(address, { id: "reminder-1", source: { kind: "host", channel: "fixture" }, content: "Remind the user about record-alpha-b." })
+  yield* sessions.deliver(address, { id: InboxItemId.make("reminder-1"), source: { kind: "host", channel: "fixture" }, content: "Remind the user about record-alpha-b." })
   yield* sessions.drain(address, () => Effect.fail(new HarnessError({ code: "host.unavailable", message: "the reminder could not be handled" })))
 
   // 6. A background task that completes: its result is delivered to the inbox and the parent reacts.

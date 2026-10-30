@@ -3,6 +3,7 @@ import { elideMediaData, IMAGE_TOKEN_ESTIMATE, mediaAt, mediaLabel, mediaSlotsOf
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage, ToolResultPart, UserContentPart } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { handoffToMessage } from "../loop/mapping.js"
 import { clippedMarker, clipTo } from "../turn/model-text.js"
 import { attachmentsOf, userMessageText } from "../turn/user-message.entity.functions.js"
@@ -39,7 +40,7 @@ export const estimateTokens = (text: string): number => Math.ceil(text.length / 
 export const estimateMessageTokens = (messages: ReadonlyArray<AgentMessage>): number =>
   messages.reduce((sum, message) => sum + estimateTokens(canonicalJson(elideMediaData(message))) + mediaSlotsOf(message).length * IMAGE_TOKEN_ESTIMATE, 0)
 
-export const entryId = (runId: string, index: number): EntryId => EntryIdSchema.make(`${runId}:${index}`)
+export const entryId = (runId: RunId, index: number): EntryId => EntryIdSchema.make(`${runId}:${index}`)
 
 /** Recorded digests by result entry; the latest digest of an entry wins. */
 const digestsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyMap<string, string> =>
@@ -103,7 +104,7 @@ export interface RenderOptions {
   /** Only this strategy's compaction entries apply. */
   readonly strategy: string
   readonly currentTurn: number
-  readonly currentRun: string
+  readonly currentRun: RunId
   /** Turn contexts are shown for the current turn only, or for every kept turn. */
   readonly turnContext: "current" | "all"
   /** Append the host's delivered reply when the model's own text differs. */
@@ -330,7 +331,7 @@ export const buildContext = (entries: ReadonlyArray<LogEntry>, options: RenderOp
 }
 
 /** The latest step context recorded by this run, if any. */
-export const stepContextOf = (entries: ReadonlyArray<LogEntry>, runId: string): Option.Option<string> =>
+export const stepContextOf = (entries: ReadonlyArray<LogEntry>, runId: RunId): Option.Option<string> =>
   Option.fromNullishOr(entries.flatMap((entry) => entry.body._tag === "StepContext" && entry.runId === runId ? [entry.body.text] : []).at(-1))
 
 /** The number of the latest started turn (turns count from 1). */
@@ -421,7 +422,7 @@ export const rewrittenBy = (entries: ReadonlyArray<LogEntry>, strategy: string):
 
 /** A hypothetical compaction entry, for estimating a render before recording it. */
 export const pendingCompaction = (strategy: { readonly id: string; readonly version: string }, action: CompactionAction, index: number): LogEntry => ({
-  id: EntryIdSchema.make(`pending:${index}`), runId: "", turn: 0, step: 0, at: 0,
+  id: EntryIdSchema.make(`pending:${index}`), runId: RunId.make(""), turn: 0, step: 0, at: 0,
   body: { _tag: "Compaction", strategy: strategy.id, version: strategy.version, action },
 })
 

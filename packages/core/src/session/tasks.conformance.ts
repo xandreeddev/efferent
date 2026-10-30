@@ -1,6 +1,7 @@
 import { Clock, Context, Deferred, Effect, Exit, Fiber, FiberSet, Option, Ref, Scope } from "effect"
 import type { ConformanceCheck, ConformanceFailure } from "../conformance.entity.js"
 import { check, eventually, expect, fail, freshId, kindsOf, settles } from "../conformance.functions.js"
+import { RunId } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { TaskActivity } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
@@ -9,6 +10,7 @@ import type { Tasks } from "../ports/tasks.port.js"
 import type { TurnOutcome } from "../ports/turn.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import type { SessionLogError, SessionLogEvent, SessionMissing } from "./session-log.entity.js"
+import { InboxItemId } from "./sessions.entity.js"
 import type { AdmittedTurn, SessionAddress, SessionContended } from "./sessions.entity.js"
 import type { TaskView } from "./tasks.entity.js"
 
@@ -189,7 +191,7 @@ const FILL = 256
  * once it is full, false when it took `FILL` items without refusing any.
  */
 const fillInbox = (sessions: Context.Service.Shape<typeof Sessions>, parent: SessionAddress, n = 0): Effect.Effect<boolean, SessionMissing | SessionContended | SessionLogError> =>
-  n >= FILL ? Effect.succeed(false) : sessions.deliver(parent, { id: `fill-${n}`, source: { kind: "conformance", id: `fill-${n}` }, content: `filler ${n}` }).pipe(
+  n >= FILL ? Effect.succeed(false) : sessions.deliver(parent, { id: InboxItemId.make(`fill-${n}`), source: { kind: "conformance", id: `fill-${n}` }, content: `filler ${n}` }).pipe(
     Effect.as(false),
     Effect.catchTag("InboxFull", () => Effect.succeed(true)),
     Effect.flatMap((full) => full ? Effect.succeed(true) : fillInbox(sessions, parent, n + 1)),
@@ -335,7 +337,7 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
 
     scoped("a result that arrives during the parent's turn waits for it, and a fork's history is the parent's up to its last closed turn", "after-turn", (owner) => Effect.gen(function* () {
       const h = yield* harness(owner)
-      const say = (text: string) => ({ _tag: "User" as const, userMessage: new UserMessage({ text }), runId: `run-${text}`, key: text, command: {} })
+      const say = (text: string) => ({ _tag: "User" as const, userMessage: new UserMessage({ text }), runId: RunId.make(`run-${text}`), key: text, command: {} })
       yield* Effect.scoped(h.sessions.begin(h.parent, say("one")).pipe(Effect.tap((writer) => writer.end(done))))
       const open = yield* Effect.acquireRelease(Scope.make(), (scope) => Scope.close(scope, Exit.void))
       const writer = yield* h.sessions.begin(h.parent, say("two")).pipe(Scope.provide(open))
@@ -378,7 +380,8 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       yield* expect("cancel", reasons(yield* h.read({ id: view.child, owner })) === "cancelled", "the child's turn did not end cancelled")
       yield* expect("cancel", (yield* h.reactions).length === 0 && ofKind(yield* h.read(h.parent), "inbox.queued").length === 0, "the cancelled task delivered something")
       yield* expect("cancel", !(yield* h.tasks.cancel(h.parent, view.taskId)), "cancelling a cancelled task answered true")
-      const unknown = [yield* Effect.flip(h.tasks.cancel(h.parent, "no-such-task")), yield* Effect.flip(h.tasks.status(h.parent, "no-such-task"))]
+      const stranger = yield* freshId
+      const unknown = [yield* Effect.flip(h.tasks.cancel(h.parent, stranger)), yield* Effect.flip(h.tasks.status(h.parent, stranger))]
       yield* expect("cancel", unknown.every((error) => error._tag === "TaskMissing"), `an unknown task gave ${unknown.map((error) => error._tag).join()}`)
     })),
 

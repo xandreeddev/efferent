@@ -4,6 +4,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Tracer } fro
 import { failureCode } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
+import { InvocationId } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
 import { SessionLogError } from "../session/session-log.entity.js"
@@ -22,7 +23,7 @@ const Lookup = Tool.make("lookup", {
   failureMode: "return",
 })
 const completed = (tool: string, input: unknown, result: unknown): TurnEvent => ({
-  _tag: "tool.completed", step: 0, invocationId: "i1", tool, input, ok: true, result, encoded: result, durationMs: 1, labels: {}, stage: Option.none(),
+  _tag: "tool.completed", step: 0, invocationId: InvocationId.make("i1"), tool, input, ok: true, result, encoded: result, durationMs: 1, labels: {}, stage: Option.none(),
 })
 const run = <A, E>(effect: Effect.Effect<A, E, never>) => Effect.runPromise(Effect.result(effect))
 

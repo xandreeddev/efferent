@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
 import fc from "fast-check"
 import { ConversationId } from "../domain/message.entity.js"
+import { InvocationId, RunId } from "../domain/run.entity.js"
 import { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -11,6 +12,7 @@ import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, readStored, readStoredKeys, StoredData, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
 import { JOURNAL_KINDS, MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
 import type { JsonObject, SessionDraft, SessionLogEvent } from "./session-log.entity.js"
+import { InboxItemId } from "./sessions.entity.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-00000000e3e3")
 const goldenPath = `${import.meta.dir}/../../../sdk/golden/agent-turn.model.json`
@@ -68,7 +70,7 @@ describe("the memory log stored as session events", () => {
 
   test("every compaction, a digest on compaction and a user-role message read back unchanged", async () => {
     const id = (n: number) => EntryId.make(`run-9:${n}`)
-    const entry = (n: number, turn: number, body: LogBody): LogEntry => ({ id: id(n), runId: "run-9", turn, step: n % 3, at: 1_000 + n, body })
+    const entry = (n: number, turn: number, body: LogBody): LogEntry => ({ id: id(n), runId: RunId.make("run-9"), turn, step: n % 3, at: 1_000 + n, body })
     const entries: ReadonlyArray<LogEntry> = [
       entry(0, 1, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "keep { \"z\": 1, \"a\": 2 } verbatim" }) }),
       entry(1, 1, { _tag: "Message", message: { role: "user", content: "a corrective nudge" } }),
@@ -104,17 +106,17 @@ describe("the turn's bus events as stored", () => {
   })
   test("a completed tool drops its input and result; transient and duplicated events are not stored", () => {
     const completed: TurnEvent = {
-      _tag: "tool.completed", step: 0, invocationId: "i", tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 },
+      _tag: "tool.completed", step: 0, invocationId: InvocationId.make("i"), tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 },
       durationMs: 5, labels: {}, stage: Option.none(),
     }
     const stored = Option.getOrThrow(storedOf(1, completed))
     expect(Object.keys(stored.data).sort()).toEqual(["durationMs", "invocationId", "labels", "ok", "stage", "step", "tool"])
     const skipped: ReadonlyArray<TurnEvent> = [
       { _tag: "assistant.delta", step: 0, channel: "text", id: "d", delta: "x" },
-      { _tag: "tool.progress", step: 0, invocationId: "i", tool: "build", channel: "stdout", text: "compiling" },
-      { _tag: "tool.progress", step: 0, invocationId: "i", tool: "build", channel: "status", text: "3 of 7" },
+      { _tag: "tool.progress", step: 0, invocationId: InvocationId.make("i"), tool: "build", channel: "stdout", text: "compiling" },
+      { _tag: "tool.progress", step: 0, invocationId: InvocationId.make("i"), tool: "build", channel: "status", text: "3 of 7" },
       { _tag: "skills.activated", skills: [], tools: [], source: "always" },
-      { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.none(), usage: zeroUsage },
+      { _tag: "turn.ended", runId: RunId.make("r"), turn: 1, outcome: "completed", reply: Option.none(), usage: zeroUsage },
     ]
     expect(skipped.map((event) => storedOf(1, event)).every(Option.isNone)).toBe(true)
   })
@@ -127,7 +129,7 @@ describe("the turn's bus events as stored", () => {
   test("a stored event's data is JSON: undefined fields are dropped, a value JSON cannot hold fails with the SchemaError", () => {
     // Host data its type refuses (not JSON), as a host in plain JavaScript can still publish it.
     const host = Option.map(storedOf(2, { _tag: "host", name: "answer.published", data: { id: "a", draft: undefined, nested: { at: undefined, n: 1 } } as never }), (draft) => draft.data)
-    const started = Option.map(storedOf(1, { _tag: "tool.started", step: 0, invocationId: "i", tool: "lookup", input: { q: "x", page: undefined }, labels: {}, stage: Option.none() }), (draft) => draft.data.input)
+    const started = Option.map(storedOf(1, { _tag: "tool.started", step: 0, invocationId: InvocationId.make("i"), tool: "lookup", input: { q: "x", page: undefined }, labels: {}, stage: Option.none() }), (draft) => draft.data.input)
     expect([Option.getOrNull(host), Option.getOrNull(started)]).toStrictEqual([{ id: "a", nested: { n: 1 } }, { q: "x" }])
     const big = Effect.runSync(Effect.result(draftOfTurnEvent(1, { _tag: "host", name: "answer.published", data: { big: 1n } as never })))
     expect(big._tag === "Failure" ? big.failure._tag : "stored").toBe("SchemaError")
@@ -139,7 +141,7 @@ describe("the turn's bus events as stored", () => {
     expect(results.map((result) => result._tag === "Failure" ? result.failure._tag : "stored")).toEqual(["SchemaError", "SchemaError"])
   })
   test("a refused tool call is stored without its input; a stream fallback whole", () => {
-    const refused: TurnEvent = { _tag: "tool.refused", step: 1, invocationId: "run-1:call:3", tool: "archive", input: { id: "secret" }, reason: "forbidden", message: "archive requires records.write" }
+    const refused: TurnEvent = { _tag: "tool.refused", step: 1, invocationId: InvocationId.make("run-1:call:3"), tool: "archive", input: { id: "secret" }, reason: "forbidden", message: "archive requires records.write" }
     const fallback: TurnEvent = { _tag: "stream.fallback", step: 0, message: "the gateway closed the stream" }
     expect([refused, fallback].map((event) => Option.map(storedOf(4, event), (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data]))).toEqual([
       Option.some(["tool.refused", 4, { step: 1, invocationId: "run-1:call:3", tool: "archive", reason: "forbidden", message: "archive requires records.write" }]),
@@ -199,9 +201,9 @@ describe("the journal's schemas", () => {
     const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
     const events: ReadonlyArray<TurnEvent> = [
       { _tag: "assistant.message", step: 1, text: "hello", reasoning: "", model: Option.none(), toolCalls: [], usage },
-      { _tag: "tool.completed", step: 0, invocationId: "i", tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 }, durationMs: 5, labels: {}, stage: Option.none() },
+      { _tag: "tool.completed", step: 0, invocationId: InvocationId.make("i"), tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 }, durationMs: 5, labels: {}, stage: Option.none() },
       { _tag: "step.started", step: 0, planned: false, activeTools: ["lookup"] },
-      { _tag: "tool.refused", step: 0, invocationId: "i", tool: "lookup", input: { q: 1 }, reason: "call-limit", message: "limit" },
+      { _tag: "tool.refused", step: 0, invocationId: InvocationId.make("i"), tool: "lookup", input: { q: 1 }, reason: "call-limit", message: "limit" },
       { _tag: "stream.fallback", step: 0, message: "no stream" },
     ]
     const stored = events.flatMap((event) => Option.toArray(storedOf(1, event)))
@@ -210,7 +212,7 @@ describe("the journal's schemas", () => {
     ])
   })
   test("a memory entry decodes as its kind's envelope; the inbox records decode as written", async () => {
-    const entry: LogEntry = { id: EntryId.make("r:1"), runId: "r", turn: 1, step: 0, at: 5, body: { _tag: "StepContext", step: 0, text: "STEP 0" } }
+    const entry: LogEntry = { id: EntryId.make("r:1"), runId: RunId.make("r"), turn: 1, step: 0, at: 5, body: { _tag: "StepContext", step: 0, text: "STEP 0" } }
     const draft = Option.getOrThrow(await Effect.runPromise(draftOfEntry(entry)))
     expect([draft.kind, decodes(draft.kind, draft.data), decodes("memory.message", draft.data)]).toEqual(["memory.step", true, false])
     expect(decodes("inbox.queued", { id: "a", source: {}, content: "hello" })).toBe(true)
@@ -220,8 +222,8 @@ describe("the journal's schemas", () => {
   test("the events recorded elsewhere are not stored from the bus", () => {
     expect([...RECORDED_ELSEWHERE]).toEqual(["turn.started", "turn.ended", "skills.activated"])
     const recordedElsewhere: ReadonlyArray<TurnEvent> = [
-      { _tag: "turn.started", runId: "r", turn: 1, userMessage: new UserMessage({ text: "hello" }), meta: {} },
-      { _tag: "turn.ended", runId: "r", turn: 1, outcome: "completed", reply: Option.some("hi"), usage: zeroUsage },
+      { _tag: "turn.started", runId: RunId.make("r"), turn: 1, userMessage: new UserMessage({ text: "hello" }), meta: {} },
+      { _tag: "turn.ended", runId: RunId.make("r"), turn: 1, outcome: "completed", reply: Option.some("hi"), usage: zeroUsage },
       { _tag: "skills.activated", skills: ["s"], tools: ["t"], source: "host" },
     ]
     expect(recordedElsewhere.map((event) => event._tag)).toEqual([...RECORDED_ELSEWHERE])
@@ -274,7 +276,7 @@ describe("a stored turn.started and its user message", () => {
 
   test("a text-only message is stored as before; one with images stores them and reads back as the memory's entry", async () => {
     const draft = (userMessage: UserMessage) => Effect.runPromise(turnStartedDraft(1, {
-      runId: "run-1", key: "k", origin: "user", userMessage, command: {}, claimed: [], entry: EntryId.make("run-1:0"), at: 7,
+      runId: RunId.make("run-1"), key: "k", origin: "user", userMessage, command: {}, claimed: [], entry: EntryId.make("run-1:0"), at: 7,
     }))
     expect((await draft(new UserMessage({ text: "hello" }))).data.userMessage).toEqual({ text: "hello" })
     const withImage = await draft(new UserMessage({ text: "", attachments: [pixel] }))
@@ -307,8 +309,8 @@ describe("stored events read by their kind", () => {
     ]
     const queued = await Effect.runPromise(readStored("inbox.queued", events))
     expect(queued.map((stored) => [stored.event.seq, stored.data])).toEqual([
-      [1, { id: "a", source: { kind: "task" }, content: "first" }],
-      [3, { id: "b", source: {}, content: "" }],
+      [1, { id: InboxItemId.make("a"), source: { kind: "task" }, content: "first" }],
+      [3, { id: InboxItemId.make("b"), source: {}, content: "" }],
     ])
     const ended = await Effect.runPromise(readStored("turn.ended", [event(4, "turn.ended", { reason: "failed", failure: { code: "turn.defect", message: "boom" } })]))
     expect(ended.map((stored) => stored.data.failure)).toEqual([Option.some({ code: "turn.defect", message: "boom" })])
@@ -328,11 +330,11 @@ describe("stored events read by their kind", () => {
     expect(await failed(readStored("turn.started", starts))).toBe(true)
     const keys = await Effect.runPromise(readStoredKeys("turn.started", starts))
     expect(keys.map((found) => [found.event.seq, found.keys])).toEqual([
-      [1, { runId: "run-1", key: "k", entry: EntryId.make("run-1:0") }],
-      [2, { runId: "run-2", key: "k2", entry: EntryId.make("run-2:0") }],
+      [1, { runId: RunId.make("run-1"), key: "k", entry: EntryId.make("run-1:0") }],
+      [2, { runId: RunId.make("run-2"), key: "k2", entry: EntryId.make("run-2:0") }],
     ])
     const headers = await Effect.runPromise(readStoredKeys("request.prepared", [event(3, "request.prepared", { ...header("run-1", 2, "system"), system: 42 })]))
-    expect(headers.map((found) => found.keys)).toEqual([{ runId: "run-1", step: 2 }])
+    expect(headers.map((found) => found.keys)).toEqual([{ runId: RunId.make("run-1"), step: 2 }])
     expect(await failed(readStored("request.prepared", headers.map((found) => found.event)))).toBe(true)
     // A key that does not decode fails the lookup.
     expect(await failed(readStoredKeys("turn.started", [event(4, "turn.started", { ...started, key: 7 })]))).toBe(true)

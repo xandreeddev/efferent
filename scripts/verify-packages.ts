@@ -135,7 +135,7 @@ const workspaceTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function*
   streamText: () => Stream.die("not scripted"),
  })
  const view = yield* sessions.create({ owner: "consumer" })
- return yield* agent.turn({ turn: { session: { id: view.header.id, owner: "consumer" }, userMessage: new UserMessage({ text: "make it oat milk" }), runId: "workspace-1" }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
+ return yield* agent.turn({ turn: { session: { id: view.header.id, owner: "consumer" }, userMessage: new UserMessage({ text: "make it oat milk" }), runId: RunId.make("workspace-1") }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
   (turn) => turn.tools.select(turn.userMessage).pipe(Effect.andThen(turn.run({})), Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
 })))
 const workspaceNotes = await readFile(join(workspaceRoot, "notes.md"), "utf8")
@@ -160,7 +160,7 @@ import { connect, createServer } from "node:net"
 import type { Socket } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { awaitIdle, Bash, bashConformance, Capabilities, FileSystem, fileSystemConformance, makeMemoryFileSystem, Sessions, SessionEnvironment, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskActivity, TaskExecutor, Tasks, TurnActivity, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { awaitIdle, Bash, bashConformance, Capabilities, FileSystem, fileSystemConformance, makeMemoryFileSystem, RunId, Sessions, SessionEnvironment, SessionLogMemoryLive, sessionLogRecoveryConformance, TaskActivity, TaskExecutor, Tasks, TurnActivity, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { TurnWriter } from "@xandreed/core"
 import { modelsPlugin } from "@xandreed/plugin-models"
 import { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
@@ -184,12 +184,12 @@ const turned = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const view = yield* sessions.create({ owner: "consumer" })
  const address = { id: view.header.id, owner: "consumer" }
  const admittedMeta = yield* Ref.make<unknown>(null)
- const outcome = yield* agent.turn({ turn: { session: address, userMessage: new UserMessage({ text: "world" }), runId: "run-1", meta: { request: "r-1" } }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
+ const outcome = yield* agent.turn({ turn: { session: address, userMessage: new UserMessage({ text: "world" }), runId: RunId.make("run-1"), meta: { request: "r-1" } }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
   (turn) => Ref.set(admittedMeta, turn.admitted.meta).pipe(Effect.andThen(turn.run({})), Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
  const started = yield* sessions.read(address, { kinds: ["turn.started"] })
  const fork = yield* sessions.fork(address, { origin: "fork", inherit: true })
- yield* Effect.scoped(sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "world" }), runId: "run-2", key: "run-2", command: {} }).pipe(Effect.andThen(sessions.cancel(address, 2))))
- const resumed = yield* agent.turn({ turn: { session: address, userMessage: new UserMessage({ text: "Continue." }), runId: "run-3", resumes: 2 }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
+ yield* Effect.scoped(sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "world" }), runId: RunId.make("run-2"), key: "run-2", command: {} }).pipe(Effect.andThen(sessions.cancel(address, 2))))
+ const resumed = yield* agent.turn({ turn: { session: address, userMessage: new UserMessage({ text: "Continue." }), runId: RunId.make("run-3"), resumes: 2 }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
   (turn) => turn.reply("resumes " + String(turn.admitted.resumes)))
  const resumedStart = (yield* sessions.read(address, { kinds: ["turn.started"] })).at(-1)?.data
  return { outcome, forked: fork.header.parent, meta: JSON.stringify([yield* Ref.get(admittedMeta), started[0]?.data.meta]), resume: JSON.stringify([Option.getOrNull(resumed.reply), resumedStart?.key, resumedStart?.resumes]) }
@@ -213,7 +213,7 @@ const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const view = yield* sessions.create({ owner: "consumer" })
  const address = { id: view.header.id, owner: "consumer" }
  const pending = yield* Effect.scoped(Effect.gen(function*(){
-  const writer = yield* sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "hello" }), runId: "run-1", key: "k1", command: {} })
+  const writer = yield* sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "hello" }), runId: RunId.make("run-1"), key: "k1", command: {} })
   yield* tasks.start(address, { instructions: "the answer", mode: "fork" })
   return (yield* writer.end({ reason: "completed", failure: Option.none() })).pending
  }))
@@ -407,7 +407,7 @@ const turn = await runKit("turn", turnConformance(agent, turnServices))
 const { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } = await import("node:fs/promises")
 const { tmpdir } = await import("node:os")
 const { join } = await import("node:path")
-const { Bash, bashConformance, Capabilities, FileSystem, SessionEnvironment, UserMessage } = await import("@xandreed/core")
+const { Bash, bashConformance, Capabilities, FileSystem, RunId, SessionEnvironment, UserMessage } = await import("@xandreed/core")
 const { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceToolsPlugin } = await import("@xandreed/plugin-workspace")
 // The busy signal on Node: an open turn and a running task count, and awaitIdle sees both settle.
 const { awaitIdle, processActivity, TaskRunner } = await import("@xandreed/core")
@@ -418,7 +418,7 @@ const busy = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const sessions = Context.get(services, Sessions)
   const view = yield* sessions.create({ owner: "node" })
   const scope = yield* Scope.make()
-  const writer = yield* sessions.begin({ id: view.header.id, owner: "node" }, { _tag: "User", userMessage: new UserMessage({ text: "hello" }), runId: "run-1", key: "k1", command: {} }).pipe(Scope.provide(scope))
+  const writer = yield* sessions.begin({ id: view.header.id, owner: "node" }, { _tag: "User", userMessage: new UserMessage({ text: "hello" }), runId: RunId.make("run-1"), key: "k1", command: {} }).pipe(Scope.provide(scope))
   const release = yield* Deferred.make()
   yield* Context.get(services, TaskRunner).run(() => Deferred.await(release))
   const during = yield* processActivity.pipe(Effect.provide(services))

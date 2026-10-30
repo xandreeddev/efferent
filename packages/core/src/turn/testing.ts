@@ -1,5 +1,6 @@
 import { Effect, Option, Ref } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
+import type { RunId } from "../domain/run.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 import type { TurnDraft, TurnWriter } from "../ports/sessions.port.js"
 import { turnStartedDraft } from "../session/session-event.entity.functions.js"
@@ -13,7 +14,7 @@ import { UserMessage } from "./user-message.entity.js"
  * turn is never closed from outside.
  */
 export const recordingTurnWriter = (input: {
-  readonly runId: string
+  readonly runId: RunId
   readonly text: string
   readonly turn?: number
   readonly history?: ReadonlyArray<SessionLogEvent>

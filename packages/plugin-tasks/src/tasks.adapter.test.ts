@@ -6,7 +6,9 @@ import {
   ConversationId,
   frameworkDraft,
   HarnessError,
+  InboxItemId,
   ReservedKind,
+  RunId,
   SessionContended,
   SessionLog,
   SessionLogError,
@@ -32,7 +34,9 @@ type SessionsService = Context.Service.Shape<typeof Sessions>
 type LogService = Context.Service.Shape<typeof SessionLog>
 
 const owner = "owner-1"
-const say = (text: string, key = text): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text }), runId: `run-${key}`, key, command: {} })
+/** A task id no parent started. */
+const NO_TASK = ConversationId.make("00000000-0000-4000-8000-00000000dead")
+const say = (text: string, key = text): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text }), runId: RunId.make(`run-${key}`), key, command: {} })
 const ended = { reason: "completed", failure: Option.none() } as const
 const kinds = (events: ReadonlyArray<SessionLogEvent>) => events.map((event) => `${event.kind}${Option.match(event.turn, { onNone: () => "", onSome: (turn) => `@${turn}` })}`)
 
@@ -313,7 +317,7 @@ describe("cancel and removal", () => {
     yield* quick.idle
     expect(yield* quick.tasks.cancel(quick.parent, done.taskId)).toBe(false)
     expect((yield* quick.tasks.status(quick.parent, done.taskId)).status).toBe("completed")
-    expect((yield* Effect.flip(quick.tasks.cancel(quick.parent, "no-such-task")))._tag).toBe("TaskMissing")
+    expect((yield* Effect.flip(quick.tasks.cancel(quick.parent, NO_TASK)))._tag).toBe("TaskMissing")
   })))
 
   test("a task whose turn is cancelled under it is logged as stopped, with how its turn was closed, not as a failure", () => {
@@ -556,7 +560,7 @@ describe("spans and logs", () => {
       yield* h.tasks.list(h.parent)
       yield* h.tasks.cancel(h.parent, task.taskId)
       yield* h.tasks.reconcile(h.parent)
-      expect((yield* Effect.flip(h.tasks.status(h.parent, "no-such-task")))._tag).toBe("TaskMissing")
+      expect((yield* Effect.flip(h.tasks.status(h.parent, NO_TASK)))._tag).toBe("TaskMissing")
       const ids = (span: Tracer.NativeSpan) => [span.attributes.get("efferent.session.id"), span.attributes.get("efferent.task.id")]
       const ended = (span: Tracer.NativeSpan) => span.status._tag === "Ended" ? span.status.exit._tag : "open"
       expect(spans.filter((span) => span.name.startsWith("task")).map((span) => [span.name, ...ids(span), ended(span)])).toEqual([
@@ -566,7 +570,7 @@ describe("spans and logs", () => {
         ["tasks.list", h.parent.id, undefined, "Success"],
         ["tasks.cancel", h.parent.id, task.taskId, "Success"],
         ["tasks.reconcile", h.parent.id, undefined, "Success"],
-        ["tasks.status", h.parent.id, "no-such-task", "Failure"],
+        ["tasks.status", h.parent.id, NO_TASK, "Failure"],
       ])
     }).pipe(Effect.withTracer(tracer)))
   })
@@ -577,7 +581,7 @@ describe("spans and logs", () => {
       const h = yield* harness()
       const open = yield* Scope.make()
       yield* h.sessions.begin(h.parent, say("busy")).pipe(Scope.provide(open))
-      yield* Effect.forEach(Array.from({ length: sessionsDefaults.inbox.maxPending }, (_, index) => `note-${index}`), (id) =>
+      yield* Effect.forEach(Array.from({ length: sessionsDefaults.inbox.maxPending }, (_, index) => InboxItemId.make(`note-${index}`)), (id) =>
         h.sessions.deliver(h.parent, { id, source: { kind: "host" }, content: "a note" }), { concurrency: 1, discard: true })
       const task = yield* h.tasks.start(h.parent, { instructions: "into a full inbox", mode: "spawn" })
       yield* h.idle

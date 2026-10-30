@@ -23,7 +23,7 @@
  */
 import { Database } from "bun:sqlite"
 import { Cause, Context, Deferred, Effect, Exit, Layer, Option, Ref, Stream } from "effect"
-import { ConversationId, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { ConversationId, RunId, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { SessionLog } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { SessionsConfig } from "@xandreed/plugin-sessions"
@@ -91,7 +91,7 @@ const holdTurn = (session: ConversationId, owner: string, ownership: string) => 
   const sessions = Context.get(yield* Layer.build(SessionsLive(config).pipe(Layer.provide(Layer.merge(SessionLogSqliteLive(path), TurnAdmissionOpen)))), Sessions)
   yield* sessions.create({ owner, id: session })
   yield* sessions.begin({ id: session, owner }, {
-    _tag: "User", userMessage: new UserMessage({ text: "held by a process that is about to stop" }), runId: "run-held", key: "held", command: {},
+    _tag: "User", userMessage: new UserMessage({ text: "held by a process that is about to stop" }), runId: RunId.make("run-held"), key: "held", command: {},
   })
   yield* say("ready")
   // A pending timer keeps the process alive (Effect.never alone would let it exit) until it is killed.

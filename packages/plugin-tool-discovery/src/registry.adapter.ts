@@ -17,6 +17,7 @@ import {
   fingerprintOf,
   HarnessError,
   IntentMatcher,
+  InvocationId,
   isHarnessError,
   isTurnError,
   mediaSlotsOf,
@@ -286,7 +287,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       const isOwn = own.includes(entry)
       // The call's id first: a refused call has one too, and its `tool.refused` carries it.
       const sequence = yield* Ref.getAndUpdate(invocation, (value) => value + 1)
-      const invocationId = `${run.runId}:call:${sequence}`
+      const invocationId = InvocationId.make(`${run.runId}:call:${sequence}`)
       const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => 0)
       /** Publish the refusal, then fail the call with it: the model reads it as the call's result. */
       const refuse = (reason: ToolRefusalReason, error: string, message: string) =>

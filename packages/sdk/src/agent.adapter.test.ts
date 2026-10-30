@@ -5,26 +5,27 @@ import {
   ConversationId,
   CurrentModelCallPolicy,
   CurrentPromptCacheKey,
-  describeModel,
   DecisionRecord,
   defineCapability,
   defineHostEvent,
   definePlugin,
   defineSkill,
   defineTool,
+  describeModel,
   Failure,
-  HarnessError,
   harnessCodeOf,
+  HarnessError,
   IntentMatcher,
   Media,
   MediaFingerprint,
   mediaFromBase64,
   mediaLabel,
   onTool,
-  RunContext,
   replayModelRequest,
-  SessionLog,
+  RunContext,
+  RunId,
   SessionContended,
+  SessionLog,
   SessionLogError,
   SessionLogMemoryLive,
   Sessions,
@@ -33,11 +34,11 @@ import {
   TaskActivity,
   TaskExecutor,
   Tasks,
+  tokenUsage,
   ToolRegistry,
   TurnAdmissionOpen,
   TurnEvents,
   TurnMemory,
-  tokenUsage,
   TurnTasks,
   turnUsageOf,
   UserMessage,
@@ -164,7 +165,7 @@ const sessionOver = (log: Layer.Layer<SessionLog> = SessionLogMemoryLive) => Eff
 type Journal = Effect.Success<ReturnType<typeof sessionOver>>
 const inMemorySession = sessionOver()
 const inputFor = (journal: Journal, runId: string, text: string, model: LanguageModel.LanguageModel, services: Context.Context<never> = Context.empty()) => ({
-  turn: { session: journal.address, userMessage: new UserMessage({ text }), runId },
+  turn: { session: journal.address, userMessage: new UserMessage({ text }), runId: RunId.make(runId) },
   services: Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), services), Context.make(Sessions, journal.sessions)),
 })
 const named = (events: ReadonlyArray<SessionLogEvent>, name: string) => events.filter((event) => event.kind === name)
@@ -308,7 +309,7 @@ describe("Agent.turn", () => {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* inMemorySession
       const { model } = yield* scripted([])
-      yield* journal.sessions.begin(journal.address, { _tag: "User", userMessage: new UserMessage({ text: "first" }), runId: "run-1", key: "run-1", command: {} })
+      yield* journal.sessions.begin(journal.address, { _tag: "User", userMessage: new UserMessage({ text: "first" }), runId: RunId.make("run-1"), key: "run-1", command: {} })
       const ran = yield* Ref.make(false)
       const answer = yield* agent.turn(inputFor(journal, "run-2", "second", model), (turn) => Ref.set(ran, true).pipe(Effect.andThen(turn.reply("never")))).pipe(
         Effect.map(() => "ran"),
@@ -693,7 +694,7 @@ describe("Agent.turn", () => {
       const events = yield* journal.stored
       // Diagnostics are deliberately absent: reconstruction depends on protocol and memory facts.
       const retained = events.filter((event) => event.kind !== "context.built" && event.kind !== "step.usage")
-      const requests = yield* Effect.forEach([0, 1, 2], (step) => replayModelRequest(retained, "run-1", step))
+      const requests = yield* Effect.forEach([0, 1, 2], (step) => replayModelRequest(retained, RunId.make("run-1"), step))
       return { seen: yield* Ref.get(seen), requests, events }
     })))
     expect(requests.map((request) => JSON.stringify(request.prompt.content))).toEqual(seen.map((request) => request.prompt))
@@ -999,8 +1000,8 @@ describe("Agent.turn", () => {
       // A fork's own log without its parent's history: the second turn's events alone.
       const own = events.filter((event) => Option.contains(event.turn, 2))
       return {
-        complete: yield* Effect.result(replayModelRequest(events, "run-2", 0)),
-        partial: yield* Effect.result(replayModelRequest(own, "run-2", 0)),
+        complete: yield* Effect.result(replayModelRequest(events, RunId.make("run-2"), 0)),
+        partial: yield* Effect.result(replayModelRequest(own, RunId.make("run-2"), 0)),
       }
     })))
     expect(complete._tag).toBe("Success")
@@ -1076,7 +1077,7 @@ describe("a turn's metadata", () => {
       const { model } = yield* scripted([])
       const input = inputFor(journal, "run-1", "hello", model)
       yield* agent.turn({ ...input, turn: { ...input.turn, key: "client-1", meta: { attempt: 1 } } }, (turn) => turn.reply("Hello there."))
-      return yield* Effect.result(agent.turn({ ...input, turn: { ...input.turn, runId: "run-2", key: "client-1", meta: { attempt: 2 } } }, (turn) => turn.reply("Hello again.")))
+      return yield* Effect.result(agent.turn({ ...input, turn: { ...input.turn, runId: RunId.make("run-2"), key: "client-1", meta: { attempt: 2 } } }, (turn) => turn.reply("Hello again.")))
     })))
     expect(exit._tag === "Failure" ? codeOf(exit.failure) : "none").toBe("turn.duplicate")
   })
@@ -1088,7 +1089,7 @@ describe("resuming a turn", () => {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* inMemorySession
       const { model } = yield* scripted([])
-      yield* journal.sessions.begin(journal.address, { _tag: "User", userMessage: new UserMessage({ text: "find alpha" }), runId: "run-1", key: "run-1", command: {} })
+      yield* journal.sessions.begin(journal.address, { _tag: "User", userMessage: new UserMessage({ text: "find alpha" }), runId: RunId.make("run-1"), key: "run-1", command: {} })
       yield* journal.sessions.cancel(journal.address, 1)
       const seen = yield* Ref.make<ReadonlyArray<unknown>>([])
       const note = (label: string, value: unknown) => Ref.update(seen, (all) => [...all, [label, value]])
@@ -1101,7 +1102,7 @@ describe("resuming a turn", () => {
         yield* note("turn", [turn.admitted.resumes ?? null, turn.admitted.key, turn.turn])
         return yield* turn.reply("Resumed.")
       }))
-      const retried = yield* Effect.flip(agent.turn({ ...resumed, turn: { ...resumed.turn, runId: "run-3" } }, (turn) => turn.reply("Again.")))
+      const retried = yield* Effect.flip(agent.turn({ ...resumed, turn: { ...resumed.turn, runId: RunId.make("run-3") } }, (turn) => turn.reply("Again.")))
       const started = named(yield* journal.stored, "turn.started").map((event) => [event.data.key, event.data.resumes ?? null])
       return { seen: yield* Ref.get(seen), started, retried: codeOf(retried) }
     })))
@@ -1174,7 +1175,7 @@ describe("a turn's images", () => {
       yield* agent.turn(inputFor(journal, "run-2", "and now?", model), (turn) =>
         turn.run({ limits: { requireCompletion: false } }).pipe(Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
       const events = yield* journal.stored
-      const replayed = yield* replayModelRequest(events, "run-1", 0)
+      const replayed = yield* replayModelRequest(events, RunId.make("run-1"), 0)
       return { outcome, seen: yield* Ref.get(seen), events, replayed, pixel }
     })))
     expect([outcome.outcome, outcome.reply]).toEqual(["completed", Option.some("a pixel")])
@@ -1250,7 +1251,7 @@ describe("images a tool returns", () => {
         Effect.andThen(turn.run({ limits: { requireCompletion: false } })),
         Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })),
       ))
-    return { outcome, events: yield* journal.stored, replayed: yield* replayModelRequest(yield* journal.stored, "run-1", 1) }
+    return { outcome, events: yield* journal.stored, replayed: yield* replayModelRequest(yield* journal.stored, RunId.make("run-1"), 1) }
   })
 
   test("reach the next request as image parts of the tool result; the session log stores each image once, where the tool put it", async () => {

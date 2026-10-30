@@ -1,6 +1,7 @@
 import { Schema } from "effect"
 import { AttachmentRejected } from "../domain/media.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -16,10 +17,19 @@ import { JsonObject, SessionHeader, SessionListCursor, SessionLogError, SessionM
 export const SessionAddress = Schema.Struct({ id: ConversationId, owner: Schema.Trimmed.check(Schema.isNonEmpty()) })
 export type SessionAddress = typeof SessionAddress.Type
 
+/**
+ * An inbox item's id, as its sender gives it: trimmed and non-empty. Stable:
+ * delivering the same id twice stores it once. A stored one
+ * (`inbox.queued`, `inbox.dropped`) carries the same brand and is read back
+ * as stored.
+ */
+export const InboxItemId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("InboxItemId"))
+export type InboxItemId = typeof InboxItemId.Type
+
 /** Something delivered to a session for a later turn (a background task's result). */
 export const InboxItem = Schema.Struct({
   /** Stable: delivering the same id twice stores it once. */
-  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  id: InboxItemId,
   /** Who sent it and why, for the host and the UI. */
   source: JsonObject,
   /** What the turn that takes it shows the model, framed by the sender. */
@@ -30,7 +40,7 @@ export type InboxItem = typeof InboxItem.Type
 /** The turn a session has open. */
 export const OpenTurn = Schema.Struct({
   turn: Schema.Int,
-  runId: Schema.String,
+  runId: RunId,
   key: Schema.String,
   origin: TurnOrigin,
   /** The writer holding it (one Sessions instance). */
@@ -85,7 +95,7 @@ const Resumes = Schema.optionalKey(Schema.Int)
 export const BeginTurn = Schema.Union([
   Schema.TaggedStruct("User", {
     userMessage: UserMessage,
-    runId: Schema.String,
+    runId: RunId,
     /** The host's idempotency key (e.g. the client's command id). */
     key: Schema.String,
     command: JsonObject,
@@ -93,7 +103,7 @@ export const BeginTurn = Schema.Union([
     /** The turn this one resumes (see `NotResumable` for which turns can be). */
     resumes: Resumes,
   }),
-  Schema.TaggedStruct("Inbox", { runId: Schema.String, meta: TurnMeta }),
+  Schema.TaggedStruct("Inbox", { runId: RunId, meta: TurnMeta }),
 ])
 export type BeginTurn = typeof BeginTurn.Type
 
@@ -101,7 +111,7 @@ export type BeginTurn = typeof BeginTurn.Type
 export const AdmittedTurn = Schema.Struct({
   session: SessionAddress,
   turn: Schema.Int,
-  runId: Schema.String,
+  runId: RunId,
   key: Schema.String,
   origin: TurnOrigin,
   userMessage: UserMessage,
@@ -159,7 +169,7 @@ export class NotResumable extends Schema.TaggedError<NotResumable>()("NotResumab
  */
 export class RunIdReused extends Schema.TaggedError<RunIdReused>()("RunIdReused", {
   session: ConversationId,
-  runId: Schema.String,
+  runId: RunId,
   turn: Schema.Int,
 }) {}
 

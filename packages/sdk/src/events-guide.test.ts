@@ -16,6 +16,7 @@ import {
   harnessCodeOf,
   onEvent,
   onTool,
+  RunId,
   SessionLogMemoryLive,
   Sessions,
   subscribeAll,
@@ -321,7 +322,7 @@ export const turnRoute = (host: Host, owner: string, id: string, request: Reques
     const push = yield* clientPush(writer)
     const started = yield* Deferred.make<void, TurnBeginError | TurnError>() // done by `use`, or failed as the turn did before it started
     const newTurn = {
-      session: address, userMessage: new UserMessage({ text: body.text }), runId: crypto.randomUUID(),
+      session: address, userMessage: new UserMessage({ text: body.text }), runId: RunId.make(crypto.randomUUID()),
       ...Option.match(key, { onNone: () => ({}), onSome: (value) => ({ key: value }) }),
       ...(body.resumes === undefined ? {} : { resumes: body.resumes }),
     }
@@ -483,7 +484,7 @@ const hostWith = (model: LanguageModel.LanguageModel, log: Layer.Layer<SessionLo
   return host
 })
 const ask = (text: string, extra: { readonly resumes?: number } = {}) => ({
-  turn: { session: address, userMessage: new UserMessage({ text }), runId: crypto.randomUUID(), ...extra },
+  turn: { session: address, userMessage: new UserMessage({ text }), runId: RunId.make(crypto.randomUUID()), ...extra },
 })
 
 /** The waitUntil of a test: the work it was handed, awaited at the end. */
@@ -716,7 +717,7 @@ describe("serving turns over HTTP", () => {
 
   test("a cancelled turn is resumed, a keyless retry of the resume gets its stored answer, resuming it again under another key is 409 turn.not-resumable", () => run(Effect.gen(function* () {
     const host = yield* hostWith(yield* scripted([says("Resumed.")]))
-    yield* Effect.scoped(host.sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "find alpha" }), runId: "run-1", key: "k-1", command: {} }).pipe(
+    yield* Effect.scoped(host.sessions.begin(address, { _tag: "User", userMessage: new UserMessage({ text: "find alpha" }), runId: RunId.make("run-1"), key: "k-1", command: {} }).pipe(
       Effect.andThen(host.sessions.cancel(address, 1))))
     const { waitUntil, settled } = background()
     const turns = `/sessions/${sessionId}/turns`

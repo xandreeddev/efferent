@@ -77,6 +77,11 @@ see a file by its suffix, so the suffix decides which rules apply.
   `BRANDED_IDS_CLEAN` names; follow it everywhere.
 - Mint a value with `EntryId.make(…)` where it is created; decode it where it
   arrives.
+- A brand adds no runtime check. Branding a field that is already stored
+  adds none either, so old records still decode (`RunId` is
+  `Schema.String.pipe(Schema.brand("RunId"))`); an input keeps its checks
+  under the same brand as its stored form (`InboxItemId` is trimmed and
+  non-empty, `inbox.queued` stores it unchecked).
 
 ## 6. Absence on the wire
 

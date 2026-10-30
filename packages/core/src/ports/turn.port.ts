@@ -1,5 +1,6 @@
 import type { Context, Effect, Layer, Option, Scope } from "effect"
 import type { ConversationId } from "../domain/message.entity.js"
+import type { RunId } from "../domain/run.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import type { SkillDefinition } from "../harness/capability.entity.js"
@@ -100,7 +101,7 @@ export interface TurnTools {
 /** One admitted turn, composed by the host (see `Agent.turn`). */
 export interface Turn {
   readonly conversation: ConversationId
-  readonly runId: string
+  readonly runId: RunId
   readonly turn: number
   readonly userMessage: UserMessage
   /** The admitted turn as the session began it, the host's `meta` included (`RunContext.admitted`). */
@@ -130,7 +131,7 @@ export interface NewTurn {
   readonly session: SessionAddress
   /** The user's message; when resuming, what the model sees after the resumed turn's steps (its own message again, or "Continue."). */
   readonly userMessage: UserMessage
-  readonly runId: string
+  readonly runId: RunId
   /** The idempotency key; `resume:<n>` when resuming turn `n`, the run id otherwise. */
   readonly key?: string
   /** The host's input beside the message, part of the key's fingerprint. */

@@ -9,6 +9,7 @@ import {
   ConversationId,
   definePlugin,
   ProviderId,
+  RunId,
   SessionEnvironment,
   SessionLogMemoryLive,
   Sessions,
@@ -61,7 +62,7 @@ const replyOf = (during: (services: Context.Context<never>) => Effect.Effect<voi
 })
 
 const turnInput = (sessions: typeof Sessions.Service, runId: string, services: Context.Context<never> = Context.empty()) => ({
-  turn: { session: { id: conversation, owner: "test" }, userMessage: new UserMessage({ text: `question ${runId}` }), runId },
+  turn: { session: { id: conversation, owner: "test" }, userMessage: new UserMessage({ text: `question ${runId}` }), runId: RunId.make(runId) },
   services: Context.merge(services, Context.make(Sessions, sessions)),
 })
 

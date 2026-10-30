@@ -6,6 +6,7 @@ import type { ConformanceCheck } from "../conformance.entity.js"
 import { failureCode, pixelPng, sameUsage } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import type { AgentMessage } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { addUsage, tokenUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { IntentMatcher } from "../ports/capability.port.js"
@@ -13,6 +14,7 @@ import { RunContext } from "../ports/run-context.port.js"
 import { Sessions } from "../ports/sessions.port.js"
 import { entriesOfEvents, readStored, readStoredKeys, turnUsageOf } from "../session/session-event.entity.functions.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
+import { InboxItemId } from "../session/sessions.entity.js"
 import type { SessionAddress, TurnBeginError, TurnError } from "../session/sessions.entity.js"
 import type { TurnRunner } from "../ports/turn.port.js"
 import { UserMessage } from "./user-message.entity.js"
@@ -140,7 +142,7 @@ export const turnConformance = (
     })).pipe(Effect.catch((error) => error._tag === "ConformanceFailure" ? Effect.fail(error) : fail(id)(`${failureCode(error)}: ${error.message}`))),
   })
   const input = (session: Session, runId: string) => ({
-    turn: { session: session.address, userMessage: new UserMessage({ text: `the message of ${runId}` }), runId }, services: Context.empty(),
+    turn: { session: session.address, userMessage: new UserMessage({ text: `the message of ${runId}` }), runId: RunId.make(runId) }, services: Context.empty(),
   })
   const reply = (text: string) => Effect.succeed({ outcome: "completed" as const, reply: Option.some(text) })
 
@@ -235,7 +237,7 @@ export const turnConformance = (
         streamText: () => Stream.die("the conformance model does not stream"),
       })
       const userMessage = new UserMessage({ text: "what is this?", attachments: [image] })
-      yield* turns.turn({ turn: { session: session.address, userMessage, runId: "run-1" }, services: Context.make(LanguageModel.LanguageModel, model) }, (turn) =>
+      yield* turns.turn({ turn: { session: session.address, userMessage, runId: RunId.make("run-1") }, services: Context.make(LanguageModel.LanguageModel, model) }, (turn) =>
         turn.run({
           limits: { streaming: false, maxSteps: 1, requireCompletion: false },
           completion: () => Effect.succeed({ complete: true, awaiting: [], facts: {} }),
@@ -264,7 +266,7 @@ export const turnConformance = (
     })),
     check("a turn the runner begins and ends returns the inbox items left waiting for it, one delivered while it ran", "pending", (turns, session) => Effect.gen(function* () {
       const result = yield* turns.turn(input(session, "run-1"), () => session.sessions.deliver(session.address, {
-        id: "conformance-result", source: { kind: "conformance" }, content: "a result delivered while the turn ran",
+        id: InboxItemId.make("conformance-result"), source: { kind: "conformance" }, content: "a result delivered while the turn ran",
       }).pipe(Effect.mapError(sessionFailure), Effect.andThen(reply("delivered"))))
       yield* expect("pending", result.pending === 1, `the turn returned pending ${result.pending ?? "absent"} with one item delivered while it ran (its caller drains what waits)`)
       const waiting = (yield* session.sessions.get(session.address).pipe(Effect.mapError(sessionFailure))).pending

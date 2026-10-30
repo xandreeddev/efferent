@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Option } from "effect"
 import { TestClock } from "effect/testing"
-import { frameworkDraft, HarnessError, harnessCodeOf, isHarnessError, isTurnError, SessionLog, SessionLogMemoryLive, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
+import { frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
 import type { ConformanceCheck, SessionsInstance, SessionsSubject, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
@@ -123,7 +123,7 @@ describe("the Sessions kit catches careless backends", () => {
       sessions: Sessions.of({
         ...instance.sessions,
         begin: (address, input) => instance.sessions.begin(address, input).pipe(
-          Effect.catchTag("RunIdReused", () => instance.sessions.begin(address, { ...input, runId: `${input.runId}:again` }))),
+          Effect.catchTag("RunIdReused", () => instance.sessions.begin(address, { ...input, runId: RunId.make(`${input.runId}:again`) }))),
       }),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, renaming)))).toEqual(["run-id"])

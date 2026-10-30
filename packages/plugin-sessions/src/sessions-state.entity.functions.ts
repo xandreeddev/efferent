@@ -1,6 +1,6 @@
 import { Effect, Option, Schema } from "effect"
 import { InboxDroppedData, InboxQueuedData } from "@xandreed/core"
-import type { InboxItem, JsonObject, OpenTurn, SessionHead, SessionView, TurnEndReason } from "@xandreed/core"
+import type { InboxItem, InboxItemId, JsonObject, OpenTurn, SessionHead, SessionView, TurnEndReason } from "@xandreed/core"
 import { SessionsState } from "./sessions-state.entity.js"
 import type { HeldTurn, HolderProcess, InboxSlot, ProcessLiveness, SessionsState as State } from "./sessions-state.entity.js"
 
@@ -32,7 +32,7 @@ export const queuedData = (item: InboxItem): Effect.Effect<JsonObject, Schema.Sc
   Effect.map(encodeQueued({ id: item.id, source: item.source, content: item.content }), (encoded) => ({ ...encoded }))
 
 /** What `inbox.dropped` stores of an item as many turns took and failed as the inbox allows. */
-export const droppedData = (id: string): Effect.Effect<JsonObject, Schema.SchemaError> =>
+export const droppedData = (id: InboxItemId): Effect.Effect<JsonObject, Schema.SchemaError> =>
   Effect.map(encodeDropped({ id, reason: "attempts" }), (encoded) => ({ ...encoded }))
 
 /**
@@ -111,7 +111,7 @@ const finished = (reason: TurnEndReason): boolean => reason === "completed" || r
  * did not try its items — interrupted before it wrote anything — returns
  * them to wait without counting an attempt.
  */
-export const closedState = (state: State, reason: TurnEndReason, maxAttempts: number, tried: boolean): { readonly state: State; readonly dropped: ReadonlyArray<string> } => {
+export const closedState = (state: State, reason: TurnEndReason, maxAttempts: number, tried: boolean): { readonly state: State; readonly dropped: ReadonlyArray<InboxItemId> } => {
   const turn = Option.map(state.open, (open) => open.turn)
   const taken = (slot: InboxSlot): boolean => Option.isSome(slot.claimedBy) && Option.contains(turn, slot.claimedBy.value)
   const counted = tried || reason !== "interrupted"

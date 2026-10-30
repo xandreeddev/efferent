@@ -1,7 +1,7 @@
 import { LanguageModel, Tool } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Context, Effect, Layer, Metric, Option, Ref, Schema, Stream, Tracer } from "effect"
-import { ConversationId, defineCapability, defineSkill, defineTool, Failure, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { ConversationId, defineCapability, defineSkill, defineTool, Failure, RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
 import type { ModelPrice, Turn, TurnBeginError, TurnError, TurnOutcome, TurnResult } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -108,7 +108,7 @@ export const scriptedTurn = (options: {
   yield* sessions.create({ owner: address.owner, id: conversation }).pipe(Effect.orDie)
   const model = yield* scripted
   const turn = agent.turn({
-    turn: { session: address, userMessage: new UserMessage({ text: "archive alpha" }), runId: "run-1" },
+    turn: { session: address, userMessage: new UserMessage({ text: "archive alpha" }), runId: RunId.make("run-1") },
     services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
   }, runToEnd)
   return yield* (options.tracer === undefined ? turn : turn.pipe(Effect.withTracer(options.tracer)))

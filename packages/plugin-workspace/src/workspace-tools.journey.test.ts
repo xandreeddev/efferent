@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { LanguageModel } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
-import { ConversationId, HarnessError, onEvent, onTool, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, TurnToolbox, UserMessage } from "@xandreed/core"
+import { ConversationId, HarnessError, onEvent, onTool, RunId, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, TurnToolbox, UserMessage } from "@xandreed/core"
 import type { Turn, TurnEventOf } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -110,7 +110,7 @@ const turnOver = (root: string, grants: ReadonlyArray<string>, script: ReadonlyA
     return { outcome: result.outcome, reply: Option.some(result.text) }
   })
   const outcome = yield* agent.turn({
-    turn: { session: address, userMessage: new UserMessage({ text }), runId: "run-1" },
+    turn: { session: address, userMessage: new UserMessage({ text }), runId: RunId.make("run-1") },
     services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)),
   }, work)
   return { outcome, requests: yield* Ref.get(seen), progress: yield* Ref.get(progress), probed: yield* Ref.get(probed), diffs: yield* Ref.get(diffs), stored: yield* sessions.read(address).pipe(Effect.orDie) }

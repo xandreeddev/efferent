@@ -1,6 +1,7 @@
 import { Schema, SchemaTransformation } from "effect"
 import { Media, MediaSlot } from "../domain/media.entity.js"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { DecisionId } from "../decision-record.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -153,7 +154,7 @@ export type LogBody = typeof LogBody.Type
 
 export const LogEntry = Schema.Struct({
   id: EntryId,
-  runId: Schema.String,
+  runId: RunId,
   turn: Schema.Int,
   step: Schema.Int,
   at: Schema.Number,

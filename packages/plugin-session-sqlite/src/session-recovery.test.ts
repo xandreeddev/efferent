@@ -6,7 +6,7 @@ import { join } from "node:path"
 import { Context, Effect, Fiber, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { ConversationId, errorCodeOf, isStoreBusy, SessionLogEvent, Sessions, turnEndedOf, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { ConversationId, errorCodeOf, isStoreBusy, RunId, SessionLogEvent, Sessions, TurnAdmissionOpen, turnEndedOf, UserMessage } from "@xandreed/core"
 import type { BeginTurn, SessionHeader, SessionLog, SessionLogError } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { SessionsConfig } from "@xandreed/plugin-sessions"
@@ -188,7 +188,7 @@ describe("two processes racing by compare-and-swap", () => {
 
 describe("a turn whose holder process was killed", () => {
   const owner = "owner-recovery"
-  const say = (text: string): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text }), runId: `run-${text}`, key: text, command: {} })
+  const say = (text: string): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text }), runId: RunId.make(`run-${text}`), key: text, command: {} })
   const sessionsOver = (path: string, config: SessionsConfig) =>
     Layer.build(SessionsLive(config).pipe(Layer.provide(Layer.merge(SessionLogSqliteLive(path), TurnAdmissionOpen)))).pipe(Effect.map(Context.get(Sessions)))
   /** The turn the next begin reaped: turn 1 ended as interrupted, by `turn.lease`, and turn 2 open. */

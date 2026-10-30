@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Option, Schema } from "effect"
 import { AttachmentRejected } from "../domain/media.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { AuthError } from "../ports/auth-store.port.js"
 import { SessionLogError, SessionMissing } from "../session/session-log.entity.js"
 import {
@@ -30,7 +31,7 @@ const tagged = [
   new SessionBusy({ session, turn: 2 }),
   new TurnDuplicate({ session, turn: 2, open: true }),
   new KeyConflict({ session, key: "k", turn: 2 }),
-  new RunIdReused({ session, runId: "r", turn: 2 }),
+  new RunIdReused({ session, runId: RunId.make("r"), turn: 2 }),
   new NothingPending({ session }),
   new NotResumable({ session, turn: 2, reason: "finished" }),
   new TurnRefused({ session, reason: "quota", message: "over quota" }),

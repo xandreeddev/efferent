@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Fiber, Logger, Option, Ref, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { ConversationId, ConversationMemory, entryId, HarnessError, renderLog, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
+import { ConversationId, ConversationMemory, entryId, HarnessError, renderLog, RunId, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { memorySummaryDefaults, memorySummaryPlugin, SUMMARY_STRATEGY, summaryPolicy, summaryPrompt } from "./plugin.adapter.js"
 
-const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(`run-${turn}`, seq), runId: `run-${turn}`, turn, step: 0, at: seq, body })
+const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(RunId.make(`run-${turn}`), seq), runId: RunId.make(`run-${turn}`), turn, step: 0, at: seq, body })
 /** Four turns of about 1,000 characters each: past the trigger of a 1,000-token budget, with only the last turn kept. */
 const log: ReadonlyArray<LogEntry> = [1, 2, 3, 4].flatMap((turn) => [
   at(turn * 2, turn, { _tag: "TurnStarted", userMessage: new UserMessage({ text: `question ${turn}` }) }),
@@ -20,8 +20,8 @@ const signal = { phase: "step" as const, lastUsage: Option.none(), budgetTokens:
 const config = { ...memorySummaryDefaults, summaryTimeoutMs: 5_000 }
 const maintain = (summarize: (prompt: string) => Effect.Effect<string, HarnessError>) => {
   const policy = summaryPolicy(config, summarize)
-  const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: "run-4" })
-  return policy.maintain({ entries: log, signal, turn: 4, runId: "run-4", render })
+  const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: RunId.make("run-4") })
+  return policy.maintain({ entries: log, signal, turn: 4, runId: RunId.make("run-4"), render })
 }
 
 /** Run with the test clock, collecting what is logged. */
@@ -85,7 +85,7 @@ describe("a summarizer that fails or stalls", () => {
       const handle: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) }
       const built = yield* memorySummaryPlugin.build(config, Context.empty())
       const memory = Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
-      const session = yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b1"), runId: "run-4", log: handle }).pipe(
+      const session = yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b1"), runId: RunId.make("run-4"), log: handle }).pipe(
         Effect.provideService(UtilityLlm, utility))
       const first = yield* Effect.forkChild(session.maintain(signal))
       yield* TestClock.adjust("5 seconds")
@@ -106,7 +106,7 @@ describe("a summarizer that fails or stalls", () => {
       const handle: LogHandle = { read: Effect.succeed(log), append: () => Effect.void }
       const built = yield* memorySummaryPlugin.build(config, Context.empty())
       const memory = Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
-      const session = yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b2"), runId: "run-4", log: handle }).pipe(
+      const session = yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b2"), runId: RunId.make("run-4"), log: handle }).pipe(
         Effect.provideService(UtilityLlm, utility))
       return { recorded: yield* session.maintain(signal), logged }
     })))
@@ -119,7 +119,7 @@ describe("a summarizer that fails or stalls", () => {
       const handle: LogHandle = { read: Effect.succeed(log), append: () => Effect.void }
       const built = yield* memorySummaryPlugin.build(config, Context.empty())
       const memory = Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
-      const session = yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b3"), runId: "run-4", log: handle }).pipe(
+      const session = yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b3"), runId: RunId.make("run-4"), log: handle }).pipe(
         Effect.provideService(UtilityLlm, utility))
       return yield* session.maintain(signal)
     })))
@@ -144,7 +144,7 @@ describe("spans", () => {
       const handle: LogHandle = { read: Effect.succeed(log), append: () => Effect.void }
       const built = yield* memorySummaryPlugin.build(config, Context.empty())
       const memory = Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
-      const open = memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b4"), runId: "run-4", log: handle })
+      const open = memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b4"), runId: RunId.make("run-4"), log: handle })
       // Without a UtilityLlm the open fails.
       yield* Effect.exit(open)
       const session = yield* open.pipe(Effect.provideService(UtilityLlm, utility))
@@ -168,8 +168,8 @@ describe("spans", () => {
   test("a step whose context stays under the trigger asks nothing, and opens no span", async () => {
     const { tracer, shown } = keeping()
     const policy = summaryPolicy(config, () => Effect.succeed("SUMMARY"))
-    const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: "run-4" })
-    const decided = await run(() => policy.maintain({ entries: log, signal: { ...signal, budgetTokens: 100_000 }, turn: 4, runId: "run-4", render }).pipe(Effect.withTracer(tracer)))
+    const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: SUMMARY_STRATEGY.id, currentTurn: 4, currentRun: RunId.make("run-4") })
+    const decided = await run(() => policy.maintain({ entries: log, signal: { ...signal, budgetTokens: 100_000 }, turn: 4, runId: RunId.make("run-4"), render }).pipe(Effect.withTracer(tracer)))
     expect([decided.actions, shown()]).toEqual([[], []])
   })
 })

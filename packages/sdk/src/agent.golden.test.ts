@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { LanguageModel, Prompt, Tool } from "effect/ai"
 import { Clock, Context, Effect, Layer, Option, Ref, Schema, Scope, Stream } from "effect"
 import { join } from "node:path"
-import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, isHarnessError, LogEntry, onTool, RunContext, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm, toolParametersSchema } from "@xandreed/core"
+import { ConversationId, CurrentPromptCacheKey, defineCapability, defineHostEvent, defineSkill, defineTool, entriesOfEvents, Failure, HarnessError, IntentMatcher, isHarnessError, LogEntry, onTool, RunContext, RunId, SessionLog, SessionLogMemoryLive, Sessions, subscribeAll, toolParametersSchema, TurnAdmissionOpen, UserMessage, UtilityCompletion, UtilityLlm } from "@xandreed/core"
 import type { Turn, TurnError, TurnEvent, TurnInput, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
@@ -202,7 +202,7 @@ export const runGolden = (
   const observerScope = yield* Effect.scope
 
   const input = (runId: string, text: string, model: LanguageModel.LanguageModel) => ({
-    turn: { session: address, userMessage: new UserMessage({ text }), runId },
+    turn: { session: address, userMessage: new UserMessage({ text }), runId: RunId.make(runId) },
     services: Context.merge(Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), digester), matcher), Context.make(Sessions, sessions)),
   })
 

@@ -1,5 +1,5 @@
 import { Cause, Effect, Exit, Option, Schema } from "effect"
-import { framed, harnessCodeOf, isHarnessError, readStored, reasonOf, SessionLogError } from "@xandreed/core"
+import { framed, harnessCodeOf, InboxItemId, isHarnessError, readStored, reasonOf, SessionLogError } from "@xandreed/core"
 import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnError, TurnFailure, TurnOutcome } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskOutcome, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started } from "./task-records.entity.js"
@@ -8,7 +8,7 @@ const decodeStarted = Schema.decodeUnknownOption(TaskStarted)
 const decodeResult = Schema.decodeUnknownOption(TaskResult)
 
 /** The inbox id a task's result is delivered under: once per task. */
-export const deliveryId = (taskId: string): string => `task:${taskId}`
+export const deliveryId = (taskId: string): InboxItemId => InboxItemId.make(`task:${taskId}`)
 
 const FINISHED: ReadonlyArray<TaskStatus> = TaskOutcome.literals
 

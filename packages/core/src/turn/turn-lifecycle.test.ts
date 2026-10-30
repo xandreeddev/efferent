@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Logger, Option, References, Tracer } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { tokenUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { TurnWriter } from "../ports/sessions.port.js"
@@ -15,7 +16,7 @@ const session = ConversationId.make("00000000-0000-4000-8000-0000000000c1")
 /** A writer of turn 3 of `session`: `traceTurn` reads only what was admitted. */
 const writerWith = (meta: JsonObject, resumes?: number): TurnWriter => ({
   admitted: {
-    session: { id: session, owner: "test" }, turn: 3, runId: "run-3", key: "run-3", origin: "inbox",
+    session: { id: session, owner: "test" }, turn: 3, runId: RunId.make("run-3"), key: "run-3", origin: "inbox",
     userMessage: new UserMessage({ text: "hello" }), command: {}, claimed: [], meta,
     ...(resumes === undefined ? {} : { resumes }),
   },
@@ -101,7 +102,7 @@ describe("traceTurn", () => {
 })
 
 describe("traceTurnBegin", () => {
-  const begin = { session, runId: "run-3", origin: "user" } as const
+  const begin = { session, runId: RunId.make("run-3"), origin: "user" } as const
   const keeping = (spans: Array<Tracer.NativeSpan>) => Tracer.make({
     span: (options) => {
       const span = new Tracer.NativeSpan(options)

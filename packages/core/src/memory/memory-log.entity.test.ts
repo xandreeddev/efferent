@@ -5,12 +5,16 @@ import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage, ToolResultPart } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
   buildContext, canonicalJson, digestTranscript, emptyQuery, entriesSendingMedia, entryId, estimateMessageTokens, fingerprintOf, queryLog, rawTranscript, referenceTranscript, renderLog,
 } from "./memory-log.entity.functions.js"
 import { LogBody, LogEntry } from "./memory-log.entity.js"
+
+/** The run of turn `turn`, as these logs name it. */
+const runOf = (turn: number) => RunId.make(`run-${turn}`)
 
 /** A TurnStarted entry exactly as earlier releases stored it: the user's message under `prompt`. */
 const legacyEntry = { id: "run-1:0", runId: "run-1", turn: 1, step: 0, at: 1_700_000_000_000, body: { _tag: "TurnStarted", prompt: "hi" } }
@@ -39,7 +43,7 @@ describe("the memory log's TurnStarted entry", () => {
     expect(encoded).toBe(canonicalJson(legacyEntry))
     expect(encoded).not.toContain("userMessage")
     const built = buildContext([entry], {
-      strategy: "test", currentTurn: 1, currentRun: "run-1", turnContext: "current", replies: true,
+      strategy: "test", currentTurn: 1, currentRun: RunId.make("run-1"), turnContext: "current", replies: true,
       stepContext: "tail", digests: false, media: { mode: "none", maxImages: 0, maxChars: 0 },
     })
     expect(built.messages).toEqual([{ role: "user", content: "hi" }])
@@ -57,14 +61,14 @@ const png = Effect.runSync(mediaFromBase64(pixelPng, { name: "a.png" }))
 const gif = Effect.runSync(mediaFromBase64(pixelGif, { name: "b.gif" }))
 
 const started = (turn: number, text: string, attachments: ReadonlyArray<Media>): LogEntry => ({
-  id: entryId(`run-${turn}`, 0), runId: `run-${turn}`, turn, step: 0, at: 0,
+  id: entryId(runOf(turn), 0), runId: runOf(turn), turn, step: 0, at: 0,
   body: { _tag: "TurnStarted", userMessage: new UserMessage(attachments.length === 0 ? { text } : { text, attachments }) },
 })
 const replied = (turn: number): LogEntry => ({
-  id: entryId(`run-${turn}`, 1), runId: `run-${turn}`, turn, step: 0, at: 0, body: { _tag: "TurnEnded", outcome: "completed", reply: Option.some(`reply ${turn}`) },
+  id: entryId(runOf(turn), 1), runId: runOf(turn), turn, step: 0, at: 0, body: { _tag: "TurnEnded", outcome: "completed", reply: Option.some(`reply ${turn}`) },
 })
 const options = (currentTurn: number, media: RenderOptions["media"]): RenderOptions => ({
-  strategy: "test", currentTurn, currentRun: `run-${currentTurn}`, turnContext: "current", replies: true, stepContext: "tail", digests: false, media,
+  strategy: "test", currentTurn, currentRun: runOf(currentTurn), turnContext: "current", replies: true, stepContext: "tail", digests: false, media,
 })
 const users = (messages: ReadonlyArray<AgentMessage>) => messages.flatMap((message) => message.role === "user" ? [message.content] : [])
 const log = [started(1, "first", [png]), replied(1), started(2, "second", [gif]), replied(2), started(3, "", [png, gif])]
@@ -130,7 +134,7 @@ const shot = (turn: number, index: number, images: ReadonlyArray<Media>, view = 
   const encoded = { images }
   const slots = mediaSlotsOf(encoded)
   return {
-    id: entryId(`run-${turn}`, 10 + index), runId: `run-${turn}`, turn, step: 1, at: 0,
+    id: entryId(runOf(turn), 10 + index), runId: runOf(turn), turn, step: 1, at: 0,
     body: {
       _tag: "ToolResult", toolCallId: ToolCallId.make(`c${turn}.${index}`), toolName: "screenshot", isError: false, encoded,
       view, viewVersion: "1", subjects: [], artifacts: [], pinned: false, ...(slots.length === 0 ? {} : { media: slots }),
@@ -179,7 +183,7 @@ describe("a tool result with images in the memory log", () => {
 
   test("a result shown through a compaction or a digest shows its images as label lines", () => {
     const entries = [started(1, "look", []), shot(1, 0, [png])]
-    const compacted: LogEntry = { id: entryId("run-1", 20), runId: "run-1", turn: 1, step: 2, at: 0, body: { _tag: "Compaction", strategy: "test", version: "1", action: { _tag: "CompactViews", entries: [entries[1]!.id], texts: ["(a shot)"] } } }
+    const compacted: LogEntry = { id: entryId(RunId.make("run-1"), 20), runId: RunId.make("run-1"), turn: 1, step: 2, at: 0, body: { _tag: "Compaction", strategy: "test", version: "1", action: { _tag: "CompactViews", entries: [entries[1]!.id], texts: ["(a shot)"] } } }
     const parts = results(renderLog([...entries, compacted], options(1, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })))
     expect([parts[0]?.output, sentOf(parts[0])]).toEqual([`(a shot)\n${mediaLabel(png)}`, []])
   })
@@ -191,7 +195,7 @@ describe("a tool result with images in the memory log", () => {
     const entries = [started(1, "look", []), noted]
     const viewed = results(renderLog(entries, options(1, { mode: "none", maxImages: 8, maxChars: 20_000_000 })))
     expect(viewed[0]?.output).toBe(`shot 1.0\n${note}`)
-    const compacted: LogEntry = { id: entryId("run-1", 20), runId: "run-1", turn: 1, step: 2, at: 0, body: { _tag: "Compaction", strategy: "test", version: "1", action: { _tag: "CompactViews", entries: [noted.id], texts: ["(a shot)"] } } }
+    const compacted: LogEntry = { id: entryId(RunId.make("run-1"), 20), runId: RunId.make("run-1"), turn: 1, step: 2, at: 0, body: { _tag: "Compaction", strategy: "test", version: "1", action: { _tag: "CompactViews", entries: [noted.id], texts: ["(a shot)"] } } }
     const parts = results(renderLog([...entries, compacted], options(1, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })))
     expect(parts[0]?.output).toBe(`(a shot)\n${note}\n${mediaLabel(png)}`)
   })
@@ -201,7 +205,7 @@ describe("a tool result with images in the memory log", () => {
     const render = options(1, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })
     expect(entriesSendingMedia(entries, render)).toEqual([entries[0]!.id, entries[1]!.id])
     const omit: LogEntry = {
-      id: entryId("run-1", 30), runId: "run-1", turn: 1, step: 1, at: 0,
+      id: entryId(RunId.make("run-1"), 30), runId: RunId.make("run-1"), turn: 1, step: 1, at: 0,
       body: { _tag: "Compaction", strategy: "another", version: "1", action: { _tag: "OmitMedia", entries: [entries[1]!.id], reason: "image exceeds 5 MB maximum" } },
     }
     const after = [...entries, omit]
@@ -226,7 +230,7 @@ describe("a tool result with images in the memory log", () => {
 })
 
 describe("a pinned exchange", () => {
-  const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(`run-${turn}`, seq), runId: `run-${turn}`, turn, step: 0, at: seq, body })
+  const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(runOf(turn), seq), runId: runOf(turn), turn, step: 0, at: seq, body })
   const call = (id: string, providerExecuted: boolean) =>
     ({ type: "tool-call" as const, toolCallId: ToolCallId.make(id), toolName: providerExecuted ? "web_search" : "load_skill", input: {}, providerExecuted })
   const exchange: AgentMessage = {
@@ -251,7 +255,7 @@ describe("a pinned exchange", () => {
 })
 
 describe("the summarizer's transcript", () => {
-  const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(`run-${turn}`, seq), runId: `run-${turn}`, turn, step: 0, at: seq, body })
+  const at = (seq: number, turn: number, body: LogBody): LogEntry => ({ id: entryId(runOf(turn), seq), runId: runOf(turn), turn, step: 0, at: seq, body })
   const asked = (seq: number, turn: number, text: string) => at(seq, turn, { _tag: "TurnStarted", userMessage: new UserMessage({ text }) })
   const said = (seq: number, turn: number, text: string) => at(seq, turn, { _tag: "Message", message: { role: "assistant", content: [{ type: "text", text }] } })
   const found = (seq: number, turn: number, view: string) => at(seq, turn, {

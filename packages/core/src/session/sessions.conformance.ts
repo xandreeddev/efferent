@@ -3,6 +3,7 @@ import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
+import { RunId } from "../domain/run.entity.js"
 import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import type { TurnActivity } from "../ports/activity.port.js"
@@ -12,7 +13,7 @@ import { UserMessage } from "../turn/user-message.entity.js"
 import { TurnEndedData } from "./session-event.entity.js"
 import { frameworkDraft } from "./session-event.entity.functions.js"
 import type { JsonObject, SessionLogEvent } from "./session-log.entity.js"
-import { TurnRefused } from "./sessions.entity.js"
+import { InboxItemId, TurnRefused } from "./sessions.entity.js"
 import type { AdmittedTurn, BeginTurn, InboxItem, SessionAddress, TurnError } from "./sessions.entity.js"
 
 type Service = Context.Service.Shape<typeof Sessions>
@@ -70,11 +71,11 @@ const LONG = 600_000
 const SHORT = 1_000
 
 const say = (text: string, key = text, command: JsonObject = {}): BeginTurn =>
-  ({ _tag: "User", userMessage: new UserMessage({ text }), runId: `run-${key}`, key, command })
+  ({ _tag: "User", userMessage: new UserMessage({ text }), runId: RunId.make(`run-${key}`), key, command })
 const resume = (turn: number, key = `resume:${turn}`): BeginTurn =>
-  ({ _tag: "User", userMessage: new UserMessage({ text: "Continue." }), runId: `run-${key}`, key, command: {}, resumes: turn })
+  ({ _tag: "User", userMessage: new UserMessage({ text: "Continue." }), runId: RunId.make(`run-${key}`), key, command: {}, resumes: turn })
 const completed: TurnEnding = { reason: "completed", failure: Option.none() }
-const item = (id: string): InboxItem => ({ id, source: { kind: "conformance", id }, content: `the result of ${id}` })
+const item = (id: string): InboxItem => ({ id: InboxItemId.make(id), source: { kind: "conformance", id }, content: `the result of ${id}` })
 
 const turnOf = (event: SessionLogEvent): number => Option.getOrElse(event.turn, () => 0)
 const decodeEnded = Schema.decodeUnknownOption(TurnEndedData)
@@ -290,13 +291,13 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     scoped("a run id names one turn: a begin under one an earlier turn of the session, or of the history a fork inherits, was begun with is RunIdReused and opens nothing", "run-id", (owner) => Effect.gen(function* () {
       const { sessions } = yield* leased()
       const address = yield* created(sessions, owner)
-      const under = (runId: string, key: string): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text: key }), runId, key, command: {} })
+      const under = (runId: string, key: string): BeginTurn => ({ _tag: "User", userMessage: new UserMessage({ text: key }), runId: RunId.make(runId), key, command: {} })
       const reused = (at: SessionAddress, input: BeginTurn) => Effect.scoped(sessions.begin(at, input)).pipe(Effect.match({
         onFailure: (error) => error._tag === "RunIdReused" ? `RunIdReused:${error.runId}:${error.turn}` : error._tag,
         onSuccess: (writer) => `opened turn ${writer.admitted.turn}`,
       }))
       yield* Effect.scoped(sessions.begin(address, under("run-once", "k1")).pipe(Effect.tap((writer) => writer.end(completed))))
-      const again = [yield* reused(address, under("run-once", "k1")), yield* reused(address, under("run-once", "k2")), yield* reused(address, { _tag: "Inbox", runId: "run-once" })]
+      const again = [yield* reused(address, under("run-once", "k1")), yield* reused(address, under("run-once", "k2")), yield* reused(address, { _tag: "Inbox", runId: RunId.make("run-once") })]
       yield* expect("run-id", again.join() === "TurnDuplicate,RunIdReused:run-once:1,RunIdReused:run-once:1",
         `the same key, a new key and an inbox turn under a used run id gave ${again.join()}`)
       const view = yield* sessions.get(address)
@@ -357,7 +358,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const address = yield* created(sessions, owner)
       const image = yield* mediaFromBase64(pixelPng, { name: "pixel.png" })
       const asked = (attachments: ReadonlyArray<typeof image>, key: string): BeginTurn =>
-        ({ _tag: "User", userMessage: new UserMessage({ text: "what is this?", attachments }), runId: `run-${key}`, key, command: {} })
+        ({ _tag: "User", userMessage: new UserMessage({ text: "what is this?", attachments }), runId: RunId.make(`run-${key}`), key, command: {} })
       const rejected = yield* refusal(sessions, address, asked([{ ...image, data: "aGVsbG8gd29ybGQ=" }], "k1"))
       yield* expect("attachments", rejected === "AttachmentRejected", `an image that is text gave ${rejected}`)
       const view = yield* sessions.get(address)
@@ -371,7 +372,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
     scoped("an inbox turn with nothing waiting is NothingPending and opens nothing; a drain then runs none", "nothing-pending", (owner) => Effect.gen(function* () {
       const { sessions } = yield* leased()
       const address = yield* created(sessions, owner)
-      const refused = yield* refusal(sessions, address, { _tag: "Inbox", runId: "run-inbox" })
+      const refused = yield* refusal(sessions, address, { _tag: "Inbox", runId: RunId.make("run-inbox") })
       yield* expect("nothing-pending", refused === "NothingPending", `an inbox turn with nothing waiting gave ${refused}`)
       const ran = yield* Ref.make(0)
       const drained = yield* sessions.drain(address, () => Ref.update(ran, (count) => count + 1))
@@ -464,7 +465,7 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const stopped = Effect.gen(function* () {
         const address = yield* created(holder.sessions, owner)
         yield* holder.sessions.deliver(address, item("i1"))
-        yield* holder.sessions.begin(address, { _tag: "Inbox", runId: `run-${address.id}` })
+        yield* holder.sessions.begin(address, { _tag: "Inbox", runId: RunId.make(`run-${address.id}`) })
         yield* subject.advance(SHORT * 2)
         return address
       })
