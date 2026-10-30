@@ -8,6 +8,7 @@ import type { LoopToolChoice } from "./loop.js"
 import { emptyLedger } from "./step-ledger.entity.js"
 import { cachedPlan, planned, recorded, replanned, resultsOf, started, used } from "./step-ledger.entity.functions.js"
 
+/** @public */
 export const STEP_LOOP = { id: "steps", version: "1" } as const
 
 /**
@@ -157,7 +158,11 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
 
 export const StepLoopLive = Layer.succeed(StepLoop, StepLoop.of({ ...STEP_LOOP, run: runSteps }))
 
-/** The step loop as a runtime plugin; the turn supplies everything per run. */
+/**
+ * The step loop as a runtime plugin; the turn supplies everything per run.
+ *
+ * @public
+ */
 export const stepLoopPlugin = definePlugin({
   id: "@xandreed/plugin-agent-loop/steps", version: "0.14.0", scope: "runtime",
   config: Schema.Struct({}), defaults: {},

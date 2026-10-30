@@ -22,6 +22,8 @@ import { extractUsage, handoffToMessage, responseReasoning, responseText, respon
  * (never split a tool-call from its results) — `safeKeepFrom` guarantees it;
  * the loop ignores a plan that violates the contract (the run continues
  * unfolded, best-effort).
+ *
+ * @public
  */
 export interface CompactionPlan {
   readonly summary: string
@@ -43,6 +45,8 @@ export interface CompactionPlan {
  * a callback's failure fails the step it runs in (its status `failed`), or
  * the run once the step settled, as that failure, typed. The run fails
  * with `E` or a provider's `AiError`.
+ *
+ * @public
  */
 export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
   /** A host-validated first batch. Runs as step zero through the ordinary
@@ -176,7 +180,11 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
   readonly pendingInput?: () => Effect.Effect<Option.Option<string>, E, R>
 }
 
-/** What the loop knows about the step it is about to take. */
+/**
+ * What the loop knows about the step it is about to take.
+ *
+ * @public
+ */
 export interface StepView {
   readonly stepIndex: number
   /** Active tool names, in activation order. */
@@ -184,9 +192,12 @@ export interface StepView {
   readonly lastUsage: Option.Option<TokenUsage>
 }
 
+/** @public */
 export type LoopToolChoice = "required" | { readonly tool: string }
 
+/** @public */
 export const DEFAULT_MAX_STEPS = 100
+/** @public */
 export const DEFAULT_TOOL_CONCURRENCY = 4
 
 /**
@@ -273,12 +284,14 @@ const MAX_MALFORMED = 3
 const REPEAT_NUDGE_AT = 3
 const REPEAT_BREAK_AT = 5
 
+/** @public */
 export const DEGENERATE_REPEAT_NUDGE =
   "You've called the same tool(s) and gotten the same result several times in " +
   "a row — you're looping without making progress. STOP repeating that call. " +
   "Take a DIFFERENT concrete action toward the task; if you're genuinely " +
   "stuck, say what's blocking you and stop."
 
+/** @public */
 export const DEGENERATE_LOOP_STOP =
   "[stopped: repeated the same tool call with no progress — the run was looping]"
 
@@ -312,6 +325,7 @@ const progressSignature = (
   ).join("|")
 }
 
+/** @public */
 export type Phase = "continue" | "completed" | "step-cap" | "degenerate-loop"
 
 /**
@@ -319,6 +333,8 @@ export type Phase = "continue" | "completed" | "step-cap" | "degenerate-loop"
  * PURE, so the nudge-at-3 / break-at-5 policy is tested without a scripted
  * model. An empty signature (no tool calls, or only pollable ones) leaves
  * the count untouched: a turn that did nothing is not a turn that repeated.
+ *
+ * @public
  */
 export const foldProgress = (
   state: { readonly seen: ReadonlySet<string>; readonly staleTurns: number },
@@ -341,7 +357,10 @@ export const foldProgress = (
 
 /** THE decision after a turn — the only model-driven edge is `wantsMore`
  *  (the provider said "tool-calls" and there were some); the breaker and
- *  the cap are the harness's, and they outrank it in that order. */
+ *  the cap are the harness's, and they outrank it in that order.
+ *
+ * @public
+ */
 export const nextPhase = (facts: {
   readonly broke: boolean
   readonly wantsMore: boolean
@@ -387,6 +406,7 @@ const tracedJson = (value: unknown): string => JSON.stringify(value, (_key, fiel
       ? { ...field, data: `[${field.data.length} base64 characters]` }
       : field)
 
+/** @public */
 export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = never>(
   options: RunLoopOptions<Tools, E, R>,
 ) =>
