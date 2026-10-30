@@ -5,14 +5,14 @@ import { CurrentTraceContent, freezeModelRequest, replayableContext } from "@xan
 import { foldStreamParts } from "@xandreed/core/internal"
 import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import type { LoopEvent, StepStatus } from "@xandreed/core"
-import type { AgentMessage, AgentResult } from "@xandreed/core"
+import type { AgentMessage, AgentResult, StepStatus } from "@xandreed/core"
 import { addUsage, clipTo, elideMediaData, framed, hostNote, isMediaValue, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
 import { plannedCallIdOf, responseModelOf } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
 import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
+import type { LoopEvent } from "./loop-event.entity.js"
 
 /**
  * A mid-run fold the `compact` callback hands back: everything before

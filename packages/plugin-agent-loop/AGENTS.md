@@ -23,6 +23,7 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 
 - `runLoop` with its types (`RunLoopOptions`, `CompactionPlan`, `StepView`, `LoopToolChoice`, `Phase`), `foldProgress`, `nextPhase`, `DEFAULT_MAX_STEPS`, `DEFAULT_TOOL_CONCURRENCY`, `DEGENERATE_REPEAT_NUDGE`, `DEGENERATE_LOOP_STOP` (`src/loop.ts`).
 - `stepLoopPlugin` (also the default export), `StepLoopLive`, `runSteps`, `STEP_LOOP` (`src/step-loop.adapter.ts`).
+- `LoopEvent`, the loop's event vocabulary: what `runLoop` hands its `onEvent` sink, and what `runSteps` turns into the turn's events (`src/loop-event.entity.ts`).
 
 The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests, the scripts and the docs import `stepLoopPlugin`, `StepLoopLive` and `runSteps`, and the rest, which no first-party package imports, are tagged `@public` at their declarations (`stepLoopPlugin`'s tag covers the default export).
 
@@ -50,6 +51,7 @@ Steering text (`pendingInput`) is the host's; the fold's summary message is core
 | File | Role |
 |---|---|
 | `src/loop.ts` | `runLoop`, the pure decisions, metrics and span attributes |
+| `src/loop-event.entity.ts` | `LoopEvent`, the events of a run |
 | `src/step-loop.adapter.ts` | `runSteps`, `StepLoopLive`, the plugin |
 | `src/step-ledger.entity.ts`, `src/step-ledger.entity.functions.ts` | `StepLedger`, what `runSteps` keeps across a run's steps, and its pure updates |
 | `src/index.ts` | the public exports |

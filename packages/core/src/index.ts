@@ -62,7 +62,7 @@ export type { ModelCatalogEntry as ModelCatalogEntryType } from "./domain/model-
 export type { ModelCallPolicy as ModelCallPolicyType } from "./domain/model-call-policy.entity.js"
 export { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "./loop/modelPolicy.js"
 export { formatModelSelection, parseModelSelection } from "./domain/model-selection.entity.functions.js"
-export type { LoopEvent, ToolCallSummary } from "./domain/loop-event.entity.js"
+export type { ToolCallSummary } from "./domain/tool-call-summary.entity.js"
 export { StepStatus, TurnEndReason, TurnEnding, TurnFailure, TurnOrigin, TurnOutcomeKind } from "./domain/turn-vocabulary.entity.js"
 export { InvocationId, RunId, RunKey, RunOrdinal, RunRef } from "./domain/run.entity.js"
 export { plannedCallIdOf, toolCallIdOf } from "./domain/run.entity.functions.js"

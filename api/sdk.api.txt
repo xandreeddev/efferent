@@ -471,7 +471,6 @@ type JsonObject
 type KeyedKind
 type LogBody
 type LogEntry
-type LoopEvent
 type Media
 type MediaFingerprint
 type MediaSlot

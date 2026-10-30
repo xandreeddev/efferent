@@ -120,10 +120,11 @@ tags; versions 1 and 2 still load. A `TurnRunner` (`Agent.turn`) fails a
 turn that cannot begin with its `TurnBeginError` as it is, never a
 `HarnessError` made from it (`turnConformance` checks `SessionBusy`).
 
-The step loop lives in `@xandreed/plugin-agent-loop`, plugin activation in
-`@xandreed/runtime`, sessions in `@xandreed/plugin-sessions`, and the
-composable agent (`Agent.define`, `Agent.turn`) in `@xandreed/sdk`. Foundry
-is independent and supplies deterministic verification when a host chooses it.
+The step loop and its event vocabulary (`LoopEvent`) live in
+`@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,
+sessions in `@xandreed/plugin-sessions`, and the composable agent
+(`Agent.define`, `Agent.turn`) in `@xandreed/sdk`. Foundry is independent and
+supplies deterministic verification when a host chooses it.
 
 Port contracts ship as conformance kits (`*.conformance.ts`, each exported
 from `src/conformance/index.ts`, the models plugin's from
