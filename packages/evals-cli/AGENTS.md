@@ -22,7 +22,9 @@ The `efferent-eval` command line over `@xandreed/evals`: it loads an app's `eval
 - `runCliMain(program, host?)` with `nodeProcess` (`CliProcess`): runs a command as the main fiber with signal handling, for an app's own entry point.
 - `loadEvaluationApp(path, args)`: imports a configuration module (an `EvaluationApp`, or a function of the arguments returning one) and decodes its default export with `parseEvaluationApp`.
 - `EvaluationRunStoreFsLive(directory)`: the file-backed `EvaluationRunStore`; `fileIo`, `readText`, `readJson`, `readRun`, `writeJson`.
-- The `efferent-eval` bin (`src/main.ts`); subpath `@xandreed/evals-cli/*` maps to `src/*.ts`.
+- The `efferent-eval` bin (`src/main.ts`).
+
+The root is the package's only entry: there are no subpaths, and every name a module publishes is the root's. It names each export, and `quality/exports-have-consumers` checks each one: the packed consumer (`scripts/evaluation-consumer.fixture.mjs`) imports `evaluationCli`, and the rest, which no first-party code imports, are tagged `@public` at their declarations.
 
 ## Model-facing text
 

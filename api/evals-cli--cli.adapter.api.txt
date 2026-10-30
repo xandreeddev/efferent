@@ -1,3 +1,0 @@
-const cliArguments
-const evaluationCli
-interface CliOptions

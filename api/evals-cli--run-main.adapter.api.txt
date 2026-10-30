@@ -1,3 +1,0 @@
-const nodeProcess
-const runCliMain
-interface CliProcess

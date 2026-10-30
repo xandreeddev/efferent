@@ -30,6 +30,7 @@ import {
 } from "./adapters/evaluation-store.fs.adapter.js"
 import { loadEvaluationApp } from "./config-loader.adapter.js"
 
+/** @public */
 export interface CliOptions {
   readonly config?: EvaluationApp
   readonly exporters?: ReadonlyArray<ExporterRegistration>
@@ -42,6 +43,7 @@ const tokensOf = (args: ReadonlyArray<string>) =>
       ? [arg.slice(0, arg.indexOf("=")), arg.slice(arg.indexOf("=") + 1)]
       : [arg]
   )
+/** @public */
 export const cliArguments = (raw: ReadonlyArray<string>) => {
   const args = tokensOf(raw)
   const command = args[0] ?? "help"

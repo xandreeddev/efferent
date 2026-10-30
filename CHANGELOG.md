@@ -209,6 +209,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   framework's own packages: it carries no semver.
 - Import `AuthStore`, `SettingsStore` and the rest of the models storage
   from `@xandreed/plugin-models` rather than `@xandreed/core`.
+- `@xandreed/evals-cli` has no subpath imports: import from the package
+  root, which exports the same names. `@xandreed/evals-cli/cli.adapter`
+  becomes `@xandreed/evals-cli`, and so do `/run-main.adapter`,
+  `/config-loader.adapter` and `/adapters/evaluation-store.fs.adapter` (with
+  or without `.js`). The `efferent-eval` bin is unchanged.
 
 ### Breaking
 
@@ -524,6 +529,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `runLoop`'s callbacks fail with `E`: a callback's failure fails its step,
   or the run once the step settled, as that failure, typed. The run fails
   with `E` or a provider's `AiError`.
+- `@xandreed/evals-cli` drops its `./*` export: a subpath import such as
+  `@xandreed/evals-cli/cli.adapter` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
+  The root exports every name those modules published.
 
 ### Added
 
@@ -1261,6 +1269,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   and `quality/exports-have-consumers` checks the root and `./stats`
   (`CURATED_ENTRIES`): the exports no first-party code imports are tagged
   `@public`. Its API is unchanged.
+- `@xandreed/evals-cli` names each export of its root instead of
+  `export *`, and `quality/exports-have-consumers` checks it
+  (`CURATED_ENTRIES`); the exports no first-party code imports are tagged
+  `@public`.
 
 ### Deprecated
 

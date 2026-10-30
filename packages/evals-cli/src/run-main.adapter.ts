@@ -1,7 +1,11 @@
 import { Effect, Exit, Runtime } from "effect"
 import type { EvaluationError } from "@xandreed/evals"
 
-/** What a command line needs of its process: the stop signals, the exit code and an error line. */
+/**
+ * What a command line needs of its process: the stop signals, the exit code and an error line.
+ *
+ * @public
+ */
 export interface CliProcess {
   readonly once: (signal: "SIGINT" | "SIGTERM", listener: () => void) => unknown
   readonly off: (signal: "SIGINT" | "SIGTERM", listener: () => void) => unknown
@@ -9,6 +13,7 @@ export interface CliProcess {
   readonly printError: (line: string) => void
 }
 
+/** @public */
 export const nodeProcess: CliProcess = {
   once: (signal, listener) => process.once(signal, listener),
   off: (signal, listener) => process.off(signal, listener),
@@ -27,6 +32,8 @@ const signals = ["SIGINT", "SIGTERM"] as const
  * process. The exit code is the command's own (2 for a failed blocking gate),
  * 1 after a typed failure (printed as `code: message`) or a defect, 130 after
  * an interruption.
+ *
+ * @public
  */
 export const runCliMain = (program: Effect.Effect<number, EvaluationError>, host: CliProcess = nodeProcess): void =>
   Runtime.makeRunMain(({ fiber, teardown }) => {
