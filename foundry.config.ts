@@ -415,6 +415,25 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun:test"
             ]
       },
+      // The step loop's tests build a turn's bus and tasks from the engine (`makeTurnEvents`, `makeTurnTasks`).
+      {
+            "name": "plugin-agent-loop-tests",
+            "path": "packages/plugin-agent-loop/src/**/*.test.ts",
+            "canImport": [
+                  "plugin-agent-loop",
+                  "core",
+                  "core/internal",
+                  "core/engine"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "node:",
+                  "bun",
+                  "bun:",
+            ]
+      },
       {
             "name": "plugin-agent-loop",
             "path": "packages/plugin-agent-loop/src/**",

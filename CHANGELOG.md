@@ -1220,6 +1220,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/core/internal`, granted to its tests only.
 - `@xandreed/plugin-telemetry`'s tests build their bus with `makeTurnEvents`
   from `@xandreed/core/engine`, granted to its tests only.
+- `@xandreed/plugin-agent-loop` imports the provider mapping and stream fold
+  from `@xandreed/core/internal`; its tests import the step-loop kit from
+  `@xandreed/core/conformance` and the turn's bus and tasks from
+  `@xandreed/core/engine`, which a `plugin-agent-loop-tests` boundaries layer
+  grants to its tests only.
 
 ### Deprecated
 
