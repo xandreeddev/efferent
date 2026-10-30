@@ -156,5 +156,19 @@ requires in its type. In the root profile each runs over every package
 which runs in the two provider-neutral packages, core and the agent loop
 (`PROVIDER_NEUTRAL`).
 
+The `quality` pack's `quality/exports-have-consumers` is the one rule
+that reads past the file it checks. Each file its include names is an
+entry of the package whose package.json holds it (a file no `exports`
+subpath points at is a finding), and each export needs a use by one of
+the entry's specifiers in another package's source, a file under
+`scripts/` or a TypeScript or JavaScript code block of the markdown (a
+changelog aside), or a `@public` tag; `export *` fails, and so does a
+`@deprecated` export that is still used. It builds one index of those
+uses per gate run from the `workspace` every rule's context carries (the
+root and the program's source files), reading the scripts and the
+markdown through `ts.sys`. Its include lists entry files, never globs
+over a package (`CURATED_ENTRIES` in the root config); the vendored
+`quality` pack does not carry it.
+
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

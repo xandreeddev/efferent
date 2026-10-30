@@ -388,9 +388,10 @@ describe("effect-idioms gate over fixtures", () => {
     ])
   })
 
-  test("clean.ts passes every rule but the role suffix (a fixture's name states no role)", async () => {
+  test("clean.ts passes every rule but the role suffix (a fixture's name states no role) and the entry rule (no package holds it)", async () => {
+    const placeRules = ["architecture/role-suffix-required", "quality/exports-have-consumers"]
     const findings = await findingsFor(
-      allBuiltinRules.map((r) => String(r.id)).filter((id) => id !== "architecture/role-suffix-required"),
+      allBuiltinRules.map((r) => String(r.id)).filter((id) => !placeRules.includes(id)),
       ["clean.ts"],
     )
     expect(findings).toEqual([])

@@ -27,6 +27,7 @@ import { noProviderNamespace } from "./providerNamespace.js"
 import { noSilentIgnore } from "./silentFailures.js"
 import { noUnknownRequirements } from "./unknownRequirements.js"
 import { effectArchitectureRules } from "./effectArchitecture.js"
+import { exportsHaveConsumers } from "./exportsHaveConsumers.js"
 
 /**
  * Packs are a LIBRARY, not builtins: the platform ships engines, never
@@ -83,10 +84,11 @@ export const effectPack: RulePack = {
 }
 
 /** Paradigm-neutral factory-integrity rules — each defends the harness's
- *  own threat model (gaming the gates), not a style opinion. */
+ *  own threat model (gaming the gates), not a style opinion — and the one
+ *  that keeps a package's published surface to what is used or documented. */
 export const qualityPack: RulePack = {
   name: "quality",
-  rules: [noSkippedTests, noEmptyCatch],
+  rules: [noSkippedTests, noEmptyCatch, exportsHaveConsumers],
 }
 
 /** Ports-and-adapters file roles for an Effect-native inner core. */

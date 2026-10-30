@@ -20,6 +20,7 @@ import { noOptionUnwrap } from "./optionUnwrap.js"
 import { noProviderNamespace } from "./providerNamespace.js"
 import { noSilentIgnore } from "./silentFailures.js"
 import { noUnknownRequirements } from "./unknownRequirements.js"
+import { exportsHaveConsumers } from "./exportsHaveConsumers.js"
 import {
   contextTagsLiveInPorts,
   contractsContainNoBehavior,
@@ -69,6 +70,7 @@ export {
   requireConcurrencyOption,
   noOptionUnwrap,
   noUnknownRequirements,
+  exportsHaveConsumers,
   contextTagsLiveInPorts,
   contractsContainNoBehavior,
   effectArchitectureRules,

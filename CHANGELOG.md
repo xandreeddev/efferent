@@ -667,6 +667,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `TurnPrompt.turnSections` fails with `turn.unstarted` before
   `persistMessage`, even when the turn has no turn-tier sections, and does
   nothing after the reply.
+- `@xandreed/foundry`: rule checks receive the workspace (its root and the
+  program's source files) as `RuleContext.workspace`, beside the file and
+  the checker.
 
 ### Fixed
 
@@ -1143,6 +1146,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `tsconfig.base.json` maps each subpath the repo imports explicitly; the
   wildcard aliases are gone, so in-repo code can no longer deep-import what
   the published packages refuse.
+- New gate rule `quality/exports-have-consumers`: every export of a package
+  entry needs a first-party consumer (another package, a script or a
+  documentation code block) or a `@public` tag; an entry may not use
+  `export *`, and first-party code may not import an export marked
+  `@deprecated`. It ships enabled for no entry; entries join
+  `CURATED_ENTRIES` in `foundry.config.ts` as their surface is curated.
 
 ## 0.14.0 — 2026-10-29
 
