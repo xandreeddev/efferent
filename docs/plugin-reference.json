@@ -327,7 +327,8 @@
     "defaults": {
       "shell": "bash",
       "killBackground": true,
-      "exitGraceMs": 500
+      "exitGraceMs": 500,
+      "parentEnv": null
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -344,12 +345,26 @@
           "type": "integer",
           "minimum": 0,
           "maximum": 60000
+        },
+        "parentEnv": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
         "shell",
         "killBackground",
-        "exitGraceMs"
+        "exitGraceMs",
+        "parentEnv"
       ],
       "additionalProperties": true
     }
@@ -487,6 +502,8 @@
         "read"
       ],
       "confine": true,
+      "workspaceAccess": "write",
+      "roots": [],
       "protect": [
         ".git/**",
         ".efferent/**"
@@ -560,6 +577,37 @@
         },
         "confine": {
           "type": "boolean"
+        },
+        "workspaceAccess": {
+          "type": "string",
+          "enum": [
+            "read",
+            "write"
+          ]
+        },
+        "roots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "access": {
+                "type": "string",
+                "enum": [
+                  "read",
+                  "write"
+                ]
+              }
+            },
+            "required": [
+              "path",
+              "access"
+            ],
+            "additionalProperties": true
+          }
         },
         "protect": {
           "type": "array",
@@ -675,6 +723,8 @@
         "tools",
         "always",
         "confine",
+        "workspaceAccess",
+        "roots",
         "protect",
         "exclude",
         "maxLines",

@@ -1169,6 +1169,13 @@ passed through: `resolveBashEnv` keeps `BASH_ENV_ALLOWLIST` (`PATH`, `HOME`,
 matches a prefix), then sets `env` over it, so provider keys never reach a
 command by default.
 
+`localSystemPlugin` accepts `parentEnv`, the host's base environment for
+shell lookup and command inheritance. Its default, `null`, reads the agent
+process's environment; an explicit map replaces it. Each command still goes
+through `resolveBashEnv` and its requested inheritance policy. The workspace
+plugin builds each child command's options through `bashEnvironment`, so
+`bashEnv`, `bashEnvAllow` and the optional session variables share one path.
+
 The local adapters are POSIX only (Linux and macOS; CI runs Linux): they
 rely on `/`-rooted paths and process groups, so they do not work on
 Windows. `BashLive(options)` runs `<shell> -c <command>` with the command
@@ -1424,7 +1431,7 @@ turn whose services lack one fails to open its tools with
 | `bash` | `workspace.shell` (`shell.exec`) | `command`, `timeout` (seconds), `stdin` | the output's tail, exit code, signal, termination, the spill file |
 
 A failure is data the model reads in the same run (`{ error, message }`:
-`NotFound`, `OutsideWorkspace`, `Protected`, `NoMatch`, `AmbiguousMatch`,
+`NotFound`, `OutsideWorkspace`, `ReadOnly`, `Protected`, `NoMatch`, `AmbiguousMatch`,
 `OverlappingEdits`, `WouldEmpty`, `FileTooLarge`, `InvalidPattern`,
 `NotUtf8`, `NotAFile`, `AlreadyExists`, `AccessDenied`, `FileSystemError`,
 …; a file-system failure's `FsReason` stays the port's, and the model reads
@@ -1448,14 +1455,27 @@ skill (a warning is logged). A coding turn reads and edits a lot: raise tool
 discovery's `maxCallsPerRun` (64 by default) for such hosts, to 200 or more.
 
 **A guardrail, not a sandbox.** With `confine` (the default), a path is
-resolved against the root and refused when it is written outside it or its
-real location is (links resolved, through the nearest ancestor that exists,
+resolved against the workspace root and refused when its written or real
+location is outside every allowed root (links resolved, through the nearest
+ancestor that exists,
 so a new file under a linked directory is checked too; a link to a missing
-target is never written through). `write` and `edit` refuse the `protect`
-globs (`.git/**` and `.efferent/**` by default). `find` and `grep` walk with
+target is never written through). `workspaceAccess` is `write` by default;
+set it to `read` to refuse workspace changes. `roots` adds directories as
+`{ path, access: "read" | "write" }`, absolute or relative to the workspace.
+The longest matching real root controls writes (`ReadOnly` when it permits
+only reads); a later root wins an equal-path tie. An extra root that cannot
+be opened as a directory is skipped and logged. `confine: false` disables
+these root and access restrictions. They apply to the six file tools;
+`bash` remains unconfined. `write` and `edit` refuse the `protect`
+globs (`.git/**` and `.efferent/**` by default), relative to the workspace;
+they do not protect a writable extra root's own `.git` or `.efferent`
+directory. A path through an extra root into a protected workspace file is
+still refused. Use read-only roots for external reference trees. `find` and `grep` walk with
 `walkGlob`, which never enters a linked directory and prunes the `exclude`
 names (`node_modules`, `.git`, `.efferent`; an entry with a `/` is a path
-relative to the root, wherever the walk starts); `grep` resolves each file
+relative to the workspace root, wherever the walk starts; such path globs
+do not apply to a search outside it, while bare excluded names still do);
+`grep` resolves each file
 again before reading it. `read`, `write`, `edit` and `grep` refuse a pipe,
 socket or device (`NotAFile`) rather than wait on it. These checks catch a
 model's mistakes. They are not a security boundary: a path can change
@@ -1536,7 +1556,8 @@ mode. Both hold a
 per-file lock, so two sessions editing one file wait for each other.
 
 `WorkspaceToolsConfig` is flat: `tools`,
-`always` (`["read"]`; also `edit`, `shell`), `confine`, `protect`,
+`always` (`["read"]`; also `edit`, `shell`), `confine`, `workspaceAccess`
+(`write`), `roots` (`[]`), `protect`,
 `exclude`, `maxLines`, `maxBytes`, `lsEntries`, `findResults`,
 `grepMatches`, `grepLineChars`, `maxFileBytes`, `readImages` (`true`),
 `fuzzyEdit`, `bashTimeoutMs`, `bashMaxTimeoutMs`, `bashEnv`,

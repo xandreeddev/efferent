@@ -21,22 +21,24 @@ export const LocalSystemConfig = Schema.Struct({
   shell: Schema.NonEmptyString,
   killBackground: Schema.Boolean,
   exitGraceMs: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 60_000 }))),
+  /** The host's base environment, or null to inherit from the agent process. Filtered per command by `resolveBashEnv`. */
+  parentEnv: Schema.NullOr(Schema.Record(Schema.String, Schema.String)),
 })
 export type LocalSystemConfig = typeof LocalSystemConfig.Type
 
 /** @public */
-export const localSystemDefaults: LocalSystemConfig = { shell: "bash", killBackground: true, exitGraceMs: 500 }
+export const localSystemDefaults: LocalSystemConfig = { shell: "bash", killBackground: true, exitGraceMs: 500, parentEnv: null }
 
 /**
  * `BashLive`'s options: the plugin's configuration, each part optional, and
  * `parentEnv`, the environment commands inherit from (filtered by
  * `resolveBashEnv`) and the shell is looked up on; `process.env` when not
- * given.
+ * given or null.
  *
  * @public
  */
-export type BashLiveOptions = Partial<LocalSystemConfig> & {
-  readonly parentEnv?: Readonly<Record<string, string | undefined>>
+export type BashLiveOptions = Partial<Omit<LocalSystemConfig, "parentEnv">> & {
+  readonly parentEnv?: Readonly<Record<string, string | undefined>> | null
 }
 
 /** How a spawned process ended, as Node reports it, and whether the adapter killed it for running past its timeout. */

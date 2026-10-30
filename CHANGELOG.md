@@ -10,6 +10,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A host writing a whole `LocalSystemConfig` adds `parentEnv: null` (or
+  spreads `localSystemDefaults`). A whole `WorkspaceToolsConfig` adds
+  `workspaceAccess: "write"` and `roots: []` (or spreads its defaults).
 - A custom `ToolRegistry` carries the toolkit handler context's optional
   `toolCallId` onto `CurrentToolInvocation` and every `tool.*` event, and
   reruns `toolRegistryConformance` (new check `provider-call-id`).
@@ -924,6 +927,17 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- `@xandreed/plugin-workspace`: `localSystemPlugin.parentEnv` sets the
+  host's base environment for shell lookup and per-command inheritance.
+  `workspaceToolsPlugin` gains `workspaceAccess` and extra `roots`, each
+  readable or writable; the most specific real root decides writes,
+  including paths through symbolic links. Read-only writes return
+  `ReadOnly`. The `workspace.environment` section (version 2) describes the
+  configured roots and access, and says shell commands are unconfined.
+  These file-tool guards apply with `confine`;
+  bash remains unconfined. `protect` and path-shaped `exclude` globs stay
+  relative to the workspace; bare excluded names apply at every search
+  root. Defaults preserve the existing environment and workspace access.
 - `@xandreed/core`, `@xandreed/plugin-tool-discovery`: the provider's call
   id reaches tool handlers as `CurrentToolInvocation.toolCallId`, every
   `tool.*` event and `onTool` subscribers. Direct toolkit calls may omit

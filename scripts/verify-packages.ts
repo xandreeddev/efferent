@@ -138,6 +138,9 @@ console.log("The skills directory plugin read a SKILL.md tree over the packed lo
  */
 const workspaceJourney = `
 const workspaceRoot = await realpath(await mkdtemp(join(tmpdir(), "efferent-workspace-")))
+const workspaceReferences = await realpath(await mkdtemp(join(tmpdir(), "efferent-references-")))
+const workspaceReference = join(workspaceReferences, "reference.txt")
+await writeFile(workspaceReference, "reference facts")
 await writeFile(join(workspaceRoot, "notes.md"), "- buy milk\\n")
 const workspacePixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
 await writeFile(join(workspaceRoot, "chart.png"), Buffer.from(workspacePixel, "base64"))
@@ -145,8 +148,10 @@ const workspaceUsage = { inputTokens: { total: 3 }, outputTokens: { total: 1 } }
 const workspaceCalls = [
  { name: "read", params: { path: "notes.md" } },
  { name: "load_skill", params: { skills: ["workspace.edit", "workspace.shell"] } },
+ { name: "read", params: { path: workspaceReference } },
+ { name: "write", params: { path: workspaceReference, content: "replacement" } },
  { name: "edit", params: { path: "notes.md", edits: [{ oldText: "milk", newText: "oat milk" }] } },
- { name: "bash", params: { command: "cat notes.md -; echo \\"$WORKSPACE_PROBE\\"", stdin: "from stdin\\n" } },
+ { name: "bash", params: { command: "cat notes.md -; echo \\"$WORKSPACE_PROBE\\"; printf 'parent=%s:%s\\\\n' \\"$HOME\\" \\"$WORKSPACE_PARENT\\"", stdin: "from stdin\\n" } },
  { name: "read", params: { path: "chart.png" } },
 ]
 const workspaceScript = JSON.parse(JSON.stringify([
@@ -157,8 +162,10 @@ const workspacePrompts = JSON.parse("[]")
 const workspaceTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
  const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
  const agent = yield* Agent.define({
-  plugins: [memoryWindowPlugin, { plugin: toolDiscoveryPlugin, options: { grants: ["fs.write", "shell.exec"] } }, stepLoopPlugin, localSystemPlugin, { plugin: workspaceToolsPlugin, options: { bashEnv: { WORKSPACE_PROBE: "probe" } } }],
-  turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 7 }, workspace: workspaceRoot,
+  plugins: [memoryWindowPlugin, { plugin: toolDiscoveryPlugin, options: { grants: ["fs.write", "shell.exec"] } }, stepLoopPlugin,
+   { plugin: localSystemPlugin, options: { parentEnv: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: workspaceRoot, WORKSPACE_PARENT: "hidden" } } },
+   { plugin: workspaceToolsPlugin, options: { roots: [{ path: workspaceReferences, access: "read" }], bashEnv: { WORKSPACE_PROBE: "probe" } } }],
+  turnServices: [LanguageModel.LanguageModel], limits: { streaming: false, maxSteps: 9 }, workspace: workspaceRoot,
  })
  const model = yield* LanguageModel.make({
   generateText: (options) => Effect.sync(() => workspaceScript[workspacePrompts.push(JSON.stringify(options.prompt.content)) - 1]),
@@ -169,18 +176,20 @@ const workspaceTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function*
   (turn) => turn.tools.select(turn.userMessage).pipe(Effect.andThen(turn.run({})), Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
 })))
 const workspaceNotes = await readFile(join(workspaceRoot, "notes.md"), "utf8")
+const workspaceReferenceAfter = await readFile(workspaceReference, "utf8")
 await rm(workspaceRoot, { recursive: true, force: true })
+await rm(workspaceReferences, { recursive: true, force: true })
 const workspaceLast = String(workspacePrompts[workspacePrompts.length - 1] ?? "")
 // The image read's tool result: its text the one-line view (no base64), the image a file part of its modelOutput.
 const workspaceRead = [...JSON.parse(workspaceLast || "[]")].filter((message) => message.role === "tool").flatMap((message) => [...message.content])
  .find((part) => part.result === "[Image chart.png (image/png, 70 B).]")
 const workspaceImageSent = workspaceRead !== undefined && [...(workspaceRead.modelOutput ?? [])].some((output) => output.type === "file" && output.mediaType === "image/png" && output.data === workspacePixel)
-if (workspaceTurn.outcome !== "completed" || workspaceNotes !== "- buy oat milk\\n" || !workspaceLast.includes("- buy oat milk\\\\nfrom stdin\\\\nprobe\\\\n[Exit code 0.]")
- || !workspaceImageSent) {
+if (workspaceTurn.outcome !== "completed" || workspaceNotes !== "- buy oat milk\\n" || !workspaceLast.includes("- buy oat milk\\\\nfrom stdin\\\\nprobe\\\\nparent=" + workspaceRoot + ":\\\\n[Exit code 0.]")
+ || workspaceReferenceAfter !== "reference facts" || !workspaceLast.includes("reference facts") || !workspaceLast.includes("ReadOnly") || !workspaceImageSent) {
  console.error("The workspace tools journey failed: " + JSON.stringify({ outcome: workspaceTurn.outcome, notes: workspaceNotes, last: workspaceLast.slice(-600) }))
  process.exit(1)
 }
-console.log("The workspace tools read, edited and ran a command (stdin, host variable) and read an image in an Agent.turn on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
+console.log("The workspace tools read, edited and ran a command (stdin, host base environment), enforced an extra read root and read an image in an Agent.turn on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
 `
 await writeFile(join(consumer, "verify.ts"), `
 import { Context, Deferred, Effect, Layer, Option, Ref, Schema, Stream } from "effect"

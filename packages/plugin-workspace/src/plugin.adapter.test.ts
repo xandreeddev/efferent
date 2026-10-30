@@ -45,3 +45,17 @@ describe("localSystemPlugin", () => {
     expect([missing.code, missing.message.includes("no executable efferent-no-such-shell")]).toEqual(["plugin.activation", true])
   })
 })
+
+test("the local plugin uses the host's parent environment for shell lookup and command inheritance", async () => {
+  const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const context = yield* Layer.build(LocalSystemPluginLive({ parentEnv: { PATH: "/usr/bin:/bin", HOME: "/host-home", EFFERENT_X: "from-host" } }))
+    const root = yield* temporary
+    const bash = Context.get(context, Bash)
+    const command = "printf '%s|%s' \"$HOME\" \"${EFFERENT_X-unset}\""
+    const filtered = yield* bash.exec(command, { cwd: root })
+    const inherited = yield* bash.exec(command, { cwd: root, inheritEnv: true })
+    const missing = yield* Effect.flip(Layer.build(LocalSystemPluginLive({ parentEnv: { PATH: "/no-such-host-bin" } })))
+    return [filtered.stdout, inherited.stdout, missing._tag === "BashError" ? missing.reason : missing.code, missing.message.includes("no executable bash")]
+  })))
+  expect(seen).toEqual(["/host-home|unset", "/host-home|from-host", "ShellMissing", true])
+})

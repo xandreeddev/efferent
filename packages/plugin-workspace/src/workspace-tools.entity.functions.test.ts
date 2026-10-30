@@ -178,33 +178,33 @@ describe("the workspace.environment section", () => {
   test("with every tool, under the defaults, word for word", () => {
     expect(environmentText("/work", workspaceToolsDefaults, every)).toBe([
       "## Workspace",
-      "The workspace is /work. Give paths relative to it; the tools refuse paths that lead outside it.",
+      "The workspace is /work. Give paths relative to it; the file tools refuse paths that lead outside it.",
       "read shows a file 2000 lines or 50 KB at a time; continue with the offset it gives.",
       "find and grep never look inside node_modules, .git, .efferent.",
       "edit replaces exact text: read the file first and copy the text to change from it.",
-      "write and edit leave .git/**, .efferent/** alone.",
-      "bash runs commands in the workspace root with a 120 s timeout. When their output is cut, the whole of it is saved to a file under .efferent/runtime/tool-output that read can open.",
+      "write and edit leave .git/**, .efferent/** alone in the workspace.",
+      "bash runs commands in the workspace root with a 120 s timeout. When their output is cut, the whole of it is saved to a file under .efferent/runtime/tool-output that read can open. Shell commands are not confined by the file tools' roots or read-only access.",
     ].join("\n"))
   })
 
   test("a line for each enabled tool; without confine, protect or spillDir their clauses go, and so does the exclude line when nothing is excluded", () => {
     expect(environmentText("/work", workspaceToolsDefaults, ["read", "ls"])).toBe([
       "## Workspace",
-      "The workspace is /work. Give paths relative to it; the tools refuse paths that lead outside it.",
+      "The workspace is /work. Give paths relative to it; the file tools refuse paths that lead outside it.",
       "read shows a file 2000 lines or 50 KB at a time; continue with the offset it gives.",
     ].join("\n"))
     expect(environmentText("/work", workspaceToolsDefaults, ["grep", "write"])).toBe([
       "## Workspace",
-      "The workspace is /work. Give paths relative to it; the tools refuse paths that lead outside it.",
+      "The workspace is /work. Give paths relative to it; the file tools refuse paths that lead outside it.",
       "find and grep never look inside node_modules, .git, .efferent.",
-      "write and edit leave .git/**, .efferent/** alone.",
+      "write and edit leave .git/**, .efferent/** alone in the workspace.",
     ].join("\n"))
     expect(environmentText("/work", { ...workspaceToolsDefaults, confine: false, protect: [], exclude: [], spillDir: null, bashTimeoutMs: 30_000 }, every)).toBe([
       "## Workspace",
       "The workspace is /work. Give paths relative to it.",
       "read shows a file 2000 lines or 50 KB at a time; continue with the offset it gives.",
       "edit replaces exact text: read the file first and copy the text to change from it.",
-      "bash runs commands in the workspace root with a 30 s timeout.",
+      "bash runs commands in the workspace root with a 30 s timeout. Shell commands are not confined by the file tools' roots or read-only access.",
     ].join("\n"))
   })
 })
@@ -325,4 +325,30 @@ describe("result views", () => {
       "(ran make: killed by SIGTERM)", "(ran make: killed by a signal)", "(ran make: stopped before it finished)",
     ])
   })
+})
+
+test("the environment text states extra read and write roots and a read-only workspace exactly", () => {
+  expect(environmentText("/work", { ...workspaceToolsDefaults, workspaceAccess: "read", roots: [
+    { path: "../references", access: "read" }, { path: "/shared", access: "read" }, { path: "drafts", access: "write" },
+  ] }, ["read", "write"])).toBe([
+    "## Workspace",
+    "The workspace is /work. Give paths relative to it; the file tools refuse paths that lead outside it and the allowed roots.",
+    "The file tools may also read ../references and /shared. The file tools may also read and change drafts. Extra roots are relative to the workspace unless absolute.",
+    "write and edit change nothing in the workspace unless a writable extra root permits it.",
+    "read shows a file 2000 lines or 50 KB at a time; continue with the offset it gives.",
+    "write and edit leave .git/**, .efferent/** alone in the workspace.",
+  ].join("\n"))
+  expect(environmentText("/work", { ...workspaceToolsDefaults, roots: [{ path: "/shared", access: "write" }] }, ["ls"])).toBe([
+    "## Workspace",
+    "The workspace is /work. Give paths relative to it; the file tools refuse paths that lead outside it and the allowed roots.",
+    "The file tools may also read and change /shared. Extra roots are relative to the workspace unless absolute.",
+  ].join("\n"))
+})
+
+test("a shell-only environment states that shell commands are unconfined and advertises no file-tool grants", () => {
+  expect(environmentText("/work", { ...workspaceToolsDefaults, workspaceAccess: "read", spillDir: null, roots: [{ path: "/references", access: "read" }] }, ["bash"])).toBe([
+    "## Workspace",
+    "The workspace is /work. Give paths relative to it.",
+    "bash runs commands in the workspace root with a 120 s timeout. Shell commands are not confined by the file tools' roots or read-only access.",
+  ].join("\n"))
 })

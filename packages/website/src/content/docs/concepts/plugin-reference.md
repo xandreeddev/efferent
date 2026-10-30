@@ -355,7 +355,8 @@ Requires: none
 {
   "shell": "bash",
   "killBackground": true,
-  "exitGraceMs": 500
+  "exitGraceMs": 500,
+  "parentEnv": null
 }
 ```
 
@@ -377,12 +378,26 @@ Requires: none
       "type": "integer",
       "minimum": 0,
       "maximum": 60000
+    },
+    "parentEnv": {
+      "anyOf": [
+        {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
     }
   },
   "required": [
     "shell",
     "killBackground",
-    "exitGraceMs"
+    "exitGraceMs",
+    "parentEnv"
   ],
   "additionalProperties": true
 }
@@ -526,6 +541,8 @@ Optional: `@xandreed/core/Bash`
     "read"
   ],
   "confine": true,
+  "workspaceAccess": "write",
+  "roots": [],
   "protect": [
     ".git/**",
     ".efferent/**"
@@ -604,6 +621,37 @@ Optional: `@xandreed/core/Bash`
     },
     "confine": {
       "type": "boolean"
+    },
+    "workspaceAccess": {
+      "type": "string",
+      "enum": [
+        "read",
+        "write"
+      ]
+    },
+    "roots": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "access": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write"
+            ]
+          }
+        },
+        "required": [
+          "path",
+          "access"
+        ],
+        "additionalProperties": true
+      }
     },
     "protect": {
       "type": "array",
@@ -719,6 +767,8 @@ Optional: `@xandreed/core/Bash`
     "tools",
     "always",
     "confine",
+    "workspaceAccess",
+    "roots",
     "protect",
     "exclude",
     "maxLines",

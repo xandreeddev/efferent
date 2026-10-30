@@ -3,6 +3,7 @@ import { ImageMediaType, MEDIA_LIMITS, mediaFromBytes, sniffImageType } from "@x
 import type { AttachmentRejectedReason, BashOptions, FsReason, Media } from "@xandreed/core"
 import { renderSearchLines } from "./text-search.entity.functions.js"
 import { formatBytes, headLines, mediaTypeOf } from "./text-window.entity.functions.js"
+import type { WorkspaceAccessMode } from "./workspace-path.entity.js"
 import { FindParams, GrepParams, LsParams, ReadParams } from "./workspace-tools.entity.js"
 import type { BashToolResult, EditResult, FindResult, GrepResult, LsResult, ReadResult, WorkspaceSkillName, WorkspaceToolName, WorkspaceToolsConfig, WriteResult } from "./workspace-tools.entity.js"
 
@@ -60,14 +61,24 @@ export const toolDescriptions = (config: WorkspaceToolsConfig): Readonly<Record<
 /** The text of the `workspace.environment` section: where the workspace is and how the enabled tools behave there. */
 export const environmentText = (root: string, config: WorkspaceToolsConfig, tools: ReadonlyArray<WorkspaceToolName>): string => {
   const has = (tool: WorkspaceToolName) => tools.includes(tool)
+  const fileTools = tools.some((tool) => tool !== "bash")
+  const extra = (access: WorkspaceAccessMode) => config.roots.filter((root) => root.access === access).map((root) => root.path)
+  const readable = extra("read")
+  const writable = extra("write")
+  const rootAccess = [
+    ...(readable.length > 0 ? [`read ${inWords(readable, "and")}`] : []),
+    ...(writable.length > 0 ? [`read and change ${inWords(writable, "and")}`] : []),
+  ]
   return [
     "## Workspace",
-    `The workspace is ${root}. Give paths relative to it${config.confine ? "; the tools refuse paths that lead outside it." : "."}`,
+    `The workspace is ${root}. Give paths relative to it${config.confine && fileTools ? config.roots.length === 0 ? "; the file tools refuse paths that lead outside it." : "; the file tools refuse paths that lead outside it and the allowed roots." : "."}`,
+    ...(config.confine && fileTools && rootAccess.length > 0 ? [`${rootAccess.map((access) => `The file tools may also ${access}.`).join(" ")} Extra roots are relative to the workspace unless absolute.`] : []),
+    ...(config.confine && config.workspaceAccess === "read" && (has("write") || has("edit")) ? ["write and edit change nothing in the workspace unless a writable extra root permits it."] : []),
     ...(has("read") ? [`read shows a file ${config.maxLines} lines or ${formatBytes(config.maxBytes)} at a time; continue with the offset it gives.`] : []),
     ...((has("find") || has("grep")) && config.exclude.length > 0 ? [`find and grep never look inside ${config.exclude.join(", ")}.`] : []),
     ...(has("edit") ? ["edit replaces exact text: read the file first and copy the text to change from it."] : []),
-    ...(has("write") || has("edit") ? [config.protect.length === 0 ? "" : `write and edit leave ${config.protect.join(", ")} alone.`] : []),
-    ...(has("bash") ? [`bash runs commands in the workspace root with a ${seconds(config.bashTimeoutMs)} timeout.${config.spillDir === null ? "" : " When their output is cut, the whole of it is saved to a file under " + config.spillDir + " that read can open."}`] : []),
+    ...(has("write") || has("edit") ? [config.protect.length === 0 ? "" : `write and edit leave ${config.protect.join(", ")} alone in the workspace.`] : []),
+    ...(has("bash") ? [`bash runs commands in the workspace root with a ${seconds(config.bashTimeoutMs)} timeout.${config.spillDir === null ? "" : " When their output is cut, the whole of it is saved to a file under " + config.spillDir + " that read can open."} Shell commands are not confined by the file tools' roots or read-only access.`] : []),
   ].filter((line) => line.length > 0).join("\n")
 }
 

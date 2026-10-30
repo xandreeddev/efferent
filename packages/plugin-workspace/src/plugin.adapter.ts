@@ -10,8 +10,8 @@ import { WorkspaceToolsConfig, workspaceToolsDefaults } from "./workspace-tools.
  * The machine the agent runs on as its `FileSystem` and `Bash`: the local
  * disk (`FileSystemLive`) and commands run with the configured shell
  * (`BashLive`), built once per agent. Activation fails when the shell is not
- * installed. Commands inherit the host process's environment through
- * `resolveBashEnv`'s allowlist.
+ * installed. Commands inherit `parentEnv` (the host process's environment
+ * when null) through `resolveBashEnv`'s allowlist.
  */
 export const localSystemPlugin = definePlugin({
   id: "@xandreed/plugin-workspace/local", version: "0.14.0", scope: "runtime",

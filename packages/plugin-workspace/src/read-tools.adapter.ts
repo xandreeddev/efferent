@@ -5,7 +5,7 @@ import { defineTool, Failure, FileSystem, SessionEnvironment, SubjectId } from "
 import type { RegisteredTool, Subject } from "@xandreed/core"
 import { compilePattern, searchText } from "./text-search.entity.functions.js"
 import { decodeText, formatBytes, lineWindow, looksBinary, mediaTypeOf } from "./text-window.entity.functions.js"
-import { displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget } from "./workspace-path.entity.functions.js"
+import { displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget, withinAnyRoot } from "./workspace-path.entity.functions.js"
 import type { ProtectRule, WorkspaceAccess } from "./workspace-path.entity.functions.js"
 import type { WorkspaceTarget } from "./workspace-path.entity.js"
 import { FindResult, GrepResult, LsResult, ReadResult } from "./workspace-tools.entity.js"
@@ -51,7 +51,7 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
   tool: ReadTool(config),
   requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
-    const access = yield* openWorkspace(path)
+    const access = yield* openWorkspace(path, config)
     const target = yield* resolveTarget(access, params.path, { confine: config.confine })
     const info = yield* access.fs.stat(target.path).pipe(Effect.mapError(fsFailure(target.display)))
     if (info.kind === "directory") return yield* Effect.fail(failure("IsDirectory", `${target.display} is a directory; use ls to list it`))
@@ -80,7 +80,7 @@ export const lsTool = ({ config, path }: WorkspaceToolContext): RegisteredTool =
   tool: LsTool(config),
   requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
-    const access = yield* openWorkspace(path)
+    const access = yield* openWorkspace(path, config)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
     const entries = yield* access.fs.list(target.path).pipe(Effect.mapError((error) => error.reason === "NotDirectory"
       ? failure("NotDirectory", `${target.display} is not a directory; use read to see a file`) : fsFailure(target.display)(error)))
@@ -96,7 +96,7 @@ export const findTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
   tool: FindTool(config),
   requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
-    const access = yield* openWorkspace(path)
+    const access = yield* openWorkspace(path, config)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
     const limit = params.limit ?? config.findResults
     const found = yield* access.fs.glob(params.pattern, { cwd: target.path, exclude: walkExcludes(access, target, config.exclude), dot: true, onlyFiles: true, limit }).pipe(
@@ -130,7 +130,7 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
   tool: GrepTool(config),
   requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
-    const access = yield* openWorkspace(path)
+    const access = yield* openWorkspace(path, config)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
     const pattern = yield* Effect.fromResult(compilePattern(params.pattern, { literal: params.literal ?? false, ignoreCase: params.ignoreCase ?? false }))
     const info = yield* access.fs.stat(target.path).pipe(Effect.mapError(fsFailure(target.display)))
@@ -151,7 +151,7 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
       if (state.matches >= limit) return Effect.succeed({ ...state, truncated: true })
       const read = Effect.gen(function* () {
         const real = yield* access.fs.realPath(file.path)
-        if (config.confine && !isWithin(access.root, real)) return Option.none<Uint8Array>()
+        if (config.confine && !withinAnyRoot(access, real)) return Option.none<Uint8Array>()
         const found = yield* access.fs.stat(real)
         if (found.kind !== "file" || found.size > config.maxFileBytes) return Option.none<Uint8Array>()
         const bytes = yield* access.fs.readBytes(real)

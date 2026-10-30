@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Path, Result } from "effect"
+import fc from "fast-check"
 import { FileSystem, FsError, makeMemoryFileSystem, SessionEnvironment } from "@xandreed/core"
 import type { FsReason } from "@xandreed/core"
+import type { WorkspaceAllowedRoot } from "./workspace-path.entity.js"
 import { checkWritable, compileProtect, displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget, workspaceMissing } from "./workspace-path.entity.functions.js"
 
 /** A workspace at /work in memory, reached through a link at /link, with a secret beside it and links in and out. */
@@ -140,4 +142,84 @@ describe("excludesBelow", () => {
     expect(excludesBelow(["{src/gen,lib/gen}"], Option.some("src"))).toEqual(["{src/gen,lib/gen}"])
     expect(excludesBelow(["src/{gen,out}"], Option.some("src"))).toEqual(["./{gen,out}"])
   })
+})
+
+describe("allowed roots", () => {
+  const roots = [{ path: "../secret", access: "read" as const }]
+  const target = (input: string, intent: "read" | "write", options: { readonly roots?: ReadonlyArray<WorkspaceAllowedRoot>; readonly workspaceAccess?: "read" | "write"; readonly confine?: boolean } = {}) =>
+    Effect.runPromise(opened("/work").pipe(
+      Effect.flatMap((access) => openWorkspace(access.path, { roots: options.roots ?? roots, workspaceAccess: options.workspaceAccess ?? "write" }).pipe(
+        Effect.provideService(FileSystem, access.fs), Effect.provideService(SessionEnvironment, { workspace: "/work" }),
+      )),
+      Effect.flatMap((access) => resolveTarget(access, input, { confine: options.confine ?? true, intent })),
+      Effect.result,
+    ))
+
+  test("an extra read root permits reads and refuses writes, including paths through a workspace symlink", async () => {
+    const read = await target("/secret/key", "read")
+    expect(read).toEqual(Result.succeed({ path: "/secret/key", display: "/secret/key" }))
+    expect(await target("out-link", "read")).toEqual(Result.succeed({ path: "/secret/key", display: "out-link" }))
+    expect(await target("/secret/new/file", "write")).toEqual(Result.fail({ error: "ReadOnly", message: "/secret/new/file is under /secret, which the workspace tools may read but not change" }))
+    expect(await target("out-link", "write")).toEqual(Result.fail({ error: "ReadOnly", message: "out-link is under /secret, which the workspace tools may read but not change" }))
+  })
+
+  test("the workspace may be read-only, and explicit nested roots take precedence by their longest real path", async () => {
+    expect(await target("src/main.ts", "write", { workspaceAccess: "read" })).toEqual(Result.fail({ error: "ReadOnly", message: "src/main.ts is under the workspace root, which the workspace tools may read but not change" }))
+    expect(await target("src/main.ts", "write", { workspaceAccess: "read", roots: [{ path: "src", access: "write" }] })).toEqual(Result.succeed({ path: "/work/src/main.ts", display: "src/main.ts" }))
+    expect(await target("src/main.ts", "write", { roots: [{ path: "src", access: "read" }] })).toEqual(Result.fail({ error: "ReadOnly", message: "src/main.ts is under src, which the workspace tools may read but not change" }))
+  })
+
+  test("outside refusals name the allowed extra roots; turning confinement off leaves all file access unrestricted", async () => {
+    expect(await target("/other", "read")).toEqual(Result.fail({ error: "OutsideWorkspace", message: "/other is outside the workspace and its allowed roots (/secret); use a path under one of them" }))
+    expect(await target("/secret/key", "write", { confine: false })).toEqual(Result.succeed({ path: "/secret/key", display: "/secret/key" }))
+  })
+
+  test("a missing extra root is ignored, never widening access", async () => {
+    expect(await target("/nowhere/file", "read", { roots: [{ path: "/nowhere", access: "write" }] })).toEqual(Result.fail({
+      error: "OutsideWorkspace", message: "/nowhere/file is outside the workspace; use a path under its root",
+    }))
+  })
+
+  test("extra-root boundaries hold for direct paths, symlinks and similarly named sibling directories", async () => {
+    await fc.assert(fc.asyncProperty(fc.stringMatching(/^[a-z]{1,12}$/), fc.boolean(), async (name, allowed) => {
+      const result = await Effect.runPromise(Effect.gen(function* () {
+        const root = `/extra/${name}`
+        const fs = yield* makeMemoryFileSystem({
+          "/work/main": "main", "/work/alias": { symlink: `${root}/file` },
+          [`${root}/file`]: "allowed", [`${root}-other/file`]: "outside",
+        })
+        const path = yield* Effect.service(Path.Path).pipe(Effect.provide(Path.layer))
+        const access = yield* openWorkspace(path, { workspaceAccess: "write", roots: allowed ? [{ path: root, access: "read" }] : [] }).pipe(
+          Effect.provideService(FileSystem, fs), Effect.provideService(SessionEnvironment, { workspace: "/work" }),
+        )
+        return yield* Effect.forEach([`${root}/file`, "alias", `${root}-other/file`, "main"], (input) =>
+          resolveTarget(access, input, { confine: true }).pipe(Effect.result, Effect.map(Result.isSuccess)))
+      }))
+      expect(result).toEqual([allowed, allowed, false, true])
+    }))
+  })
+})
+
+test("a link escaping every configured root is refused with its display path and the allowed roots", async () => {
+  const failure = await Effect.runPromise(Effect.gen(function* () {
+    const fs = yield* makeMemoryFileSystem({ "/work/escape": { symlink: "/outside/file" }, "/outside/file": "secret", "/allowed/file": "reference" })
+    const path = yield* Effect.service(Path.Path).pipe(Effect.provide(Path.layer))
+    const access = yield* openWorkspace(path, { workspaceAccess: "write", roots: [{ path: "/allowed", access: "read" }] }).pipe(
+      Effect.provideService(FileSystem, fs), Effect.provideService(SessionEnvironment, { workspace: "/work" }),
+    )
+    return yield* Effect.flip(resolveTarget(access, "escape", { confine: true }))
+  }))
+  expect(failure).toEqual({ error: "OutsideWorkspace", message: "escape leads outside the workspace and its allowed roots (/allowed) through a symbolic link" })
+})
+
+test("an explicit later root controls an equal-real-path tie, including aliases", async () => {
+  const result = await Effect.runPromise(Effect.gen(function* () {
+    const fs = yield* makeMemoryFileSystem({ "/work/src/file": "source", "/alias": { symlink: "/work/src" } })
+    const path = yield* Effect.service(Path.Path).pipe(Effect.provide(Path.layer))
+    const access = yield* openWorkspace(path, { workspaceAccess: "read", roots: [
+      { path: "src", access: "read" }, { path: "/alias", access: "write" },
+    ] }).pipe(Effect.provideService(FileSystem, fs), Effect.provideService(SessionEnvironment, { workspace: "/work" }))
+    return yield* resolveTarget(access, "src/file", { confine: true, intent: "write" })
+  }))
+  expect(result).toEqual({ path: "/work/src/file", display: "src/file" })
 })

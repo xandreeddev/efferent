@@ -68,8 +68,8 @@ export const writeTool = (context: WorkspaceToolContext): RegisteredTool => defi
   tool: WriteTool(toolDescriptions(context.config).write),
   requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
-    const access = yield* openWorkspace(context.path)
-    const target = yield* resolveTarget(access, params.path, { confine: context.config.confine })
+    const access = yield* openWorkspace(context.path, context.config)
+    const target = yield* resolveTarget(access, params.path, { confine: context.config.confine, intent: "write" })
     yield* checkWritable(access, target, context.protect)
     return yield* holding(context, target.path)(Effect.gen(function* () {
       const before = yield* existing(access, target)
@@ -98,8 +98,8 @@ export const editTool = (context: WorkspaceToolContext): RegisteredTool => defin
   requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
     const { config } = context
-    const access = yield* openWorkspace(context.path)
-    const target = yield* resolveTarget(access, params.path, { confine: config.confine })
+    const access = yield* openWorkspace(context.path, context.config)
+    const target = yield* resolveTarget(access, params.path, { confine: config.confine, intent: "write" })
     yield* checkWritable(access, target, context.protect)
     return yield* holding(context, target.path)(Effect.gen(function* () {
       const before = yield* existing(access, target)

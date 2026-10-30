@@ -68,19 +68,33 @@ A coding turn reads and edits many times: raise tool discovery's
 ## A guardrail, not a sandbox
 
 - Paths are resolved against the workspace root. With `confine` (the
-  default) a path that leads outside it is refused, whether written with
+  default) a path that leads outside it and the configured extra roots is
+  refused, whether written with
   `..`, as an absolute path or through a symbolic link, including a new file
   under a linked directory.
+- `workspaceAccess: "read"` makes the workspace read-only. `roots` adds
+  directories as `{ path, access: "read" | "write" }`, absolute or relative
+  to the workspace. The longest matching real root controls writes; a later
+  root wins an equal-path tie. A write into a read root returns `ReadOnly`.
+  An extra root that cannot be opened as a directory is logged and skipped.
+  `confine: false` disables these root and access restrictions.
 - `write` and `edit` refuse the `protect` globs: `.git/**` and
-  `.efferent/**` by default.
+  `.efferent/**` by default, relative to the workspace. They do not protect
+  a writable extra root's own `.git` or `.efferent` directory. An alias from
+  an extra root into a protected workspace file is still refused. Use
+  read-only roots for external reference trees.
 - `find` and `grep` never enter linked directories or the `exclude` names
   (`node_modules`, `.git`, `.efferent`; an entry with a `/` is a path
-  relative to the root, wherever the search starts).
+  relative to the workspace root, wherever the search starts; those path
+  globs do not apply outside the workspace, while bare names still do).
 - `read`, `write`, `edit` and `grep` refuse a pipe, socket or device
   (`NotAFile`) rather than wait on it.
 - Commands get the variables in `bashEnv` and an allowlist of the host's
   (`PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_*`, `TERM`, `SHELL`,
   `TMPDIR`, `TZ`), never the host's API keys unless `bashInheritEnv` is set.
+  `localSystemPlugin.parentEnv` replaces the base environment used for
+  shell lookup and inheritance; `null` (the default) uses the agent process's
+  environment. `bash` remains unconfined by the file tools' roots.
 
 These checks stop a model's mistakes. They do not contain a hostile one:
 `bash` runs any command the host process may run, and a path can change
@@ -164,7 +178,8 @@ The options are flat; every one has a default
 | --- | --- | --- |
 | `tools` | all seven | the tools to register |
 | `always` | `["read"]` | skills on from the first step: `read`, `edit`, `shell` |
-| `confine` | `true` | refuse paths outside the workspace |
+| `confine` | `true` | enforce the workspace and extra roots' access policy |
+| `workspaceAccess`, `roots` | `write`, `[]` | workspace access and extra readable or writable roots |
 | `protect` | `.git/**`, `.efferent/**` | globs `write` and `edit` refuse |
 | `exclude` | `node_modules`, `.git`, `.efferent` | names (or, with a `/`, paths from the root) `find` and `grep` skip |
 | `maxLines`, `maxBytes` | 2000, 51 200 | the most `read`, `find` and `grep` show, and the tail `bash` keeps |
@@ -181,3 +196,15 @@ The options are flat; every one has a default
 | `environmentSection`, `sectionOrder` | `true`, 800 | the system-prompt section about the workspace |
 
 The local adapters run on Linux and macOS, on Node 24 and Bun.
+
+A host can supply the base environment and grant a read-only reference
+root beside a writable workspace:
+
+```ts
+import { localSystemPlugin, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
+
+const plugins = [
+  { plugin: localSystemPlugin, options: { parentEnv: { PATH: "/usr/bin:/bin", HOME: "/srv/agent", LANG: "C.UTF-8" } } },
+  { plugin: workspaceToolsPlugin, options: { roots: [{ path: "/srv/references", access: "read" }], bashEnvAllow: ["PATH", "HOME", "LANG"] } },
+]
+```
