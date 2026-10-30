@@ -141,6 +141,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `command.task`.
 - Build `Tasks` beside the agent:
   `TasksLive(cfg).pipe(Layer.provide(agentTaskExecutor(agent, { services })))`.
+- A custom `StepLoop` records nothing under a step it never starts: at the
+  step cap or after a complete verdict, it drops the corrective or nudge it
+  would have sent. Rerun `stepLoopConformance`.
 
 ### Breaking
 
@@ -763,6 +766,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   its reply as failed (text kept), not completed beside a failed end.
 - A writer whose scope closes holding a completed or partial reply ends the
   turn with that outcome instead of `turn.unended`.
+- A run that ends at the step cap, or that a complete verdict ends, no
+  longer stores a corrective or a degenerate-loop nudge under a step that
+  never runs; that leftover user message used to stay in the stored
+  conversation and reach the next turn's history. `runLoop`'s `newTail` no
+  longer carries it, and a run's `engine.corrections` counts only
+  correctives the model was sent.
 
 ### Repository
 

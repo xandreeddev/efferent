@@ -416,6 +416,48 @@ describe("runLoop settles each step once", () => {
     ])
   })
 
+  /** A run's record, `[step, role]` for each message `onTail` received, the steps it started, and its tail's roles. */
+  const recordOf = async (
+    options: { readonly maxSteps?: number; readonly requireCompletion?: boolean; readonly isComplete?: (step: number) => Effect.Effect<boolean> },
+    script: (call: number) => ReadonlyArray<unknown>,
+  ) => {
+    const log: Array<readonly [number, string]> = []
+    const started: Array<number> = []
+    const result = await run(runLoop({
+      system: "sys", messages: [user("go")], toolkit: kit, ...options,
+      onEvent: (event) => Effect.sync(() => void (event.type === "turn_start" && started.push(event.turnIndex))),
+      onTail: (tail, step) => Effect.sync(() => {
+        log.push(...tail.map((m) => [step, m.role] as const))
+        return [] as ReadonlyArray<number>
+      }),
+    }), script)
+    return { log, started, reason: result.reason, tail: result.newTail.map((m) => m.role) }
+  }
+  const echoed = (call: number) => [{ type: "tool-call", id: `c${call}`, name: "echo", params: { value: "same" } }, finish("tool-calls")]
+
+  test("records nothing under a step that never runs: the step cap ends a run with a completion corrective due", async () => {
+    const { log, started, reason, tail } = await recordOf(
+      { maxSteps: 2, requireCompletion: true, isComplete: () => Effect.succeed(false) },
+      () => [{ type: "text", text: "I will" }, finish("stop")],
+    )
+    expect([reason, started]).toEqual(["step-cap", [0, 1]])
+    expect(log).toEqual([[0, "assistant"], [1, "user"], [1, "assistant"]])
+    expect(tail).toEqual(["assistant", "user", "assistant"])
+  })
+
+  test.each([
+    ["the step cap, a malformed corrective due", { maxSteps: 2 }, (call: number) => call === 0
+      ? echoed(call)
+      : [{ type: "tool-call", id: "m1", name: "not_a_tool", params: {} }, finish("tool-calls")], "step-cap"],
+    ["the step cap, a degenerate-loop nudge due", { maxSteps: 4 }, echoed, "step-cap"],
+    ["a complete verdict, a degenerate-loop nudge due", { isComplete: (step: number) => Effect.succeed(step >= 3) }, echoed, "completed"],
+  ] as const)("records nothing under a step that never runs: %s", async (_name, options, script, reason) => {
+    const ran = await recordOf(options, script)
+    expect(ran.reason).toBe(reason)
+    expect(ran.log.filter(([step]) => !ran.started.includes(step))).toEqual([])
+    expect(ran.tail.at(-1)).not.toBe("user")
+  })
+
   test("a step whose call fails settles failed; one whose completion dies afterwards stays completed", async () => {
     const settledWith = (options: { readonly call: "fails" | "answers"; readonly completion: "dies" | "holds" }) => Effect.runPromise(Effect.gen(function* () {
       const settled = yield* Ref.make<ReadonlyArray<string>>([])

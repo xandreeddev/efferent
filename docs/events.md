@@ -291,7 +291,8 @@ What settles, and when:
   `step.ended.results`. The response is malformed: its step ends
   `malformed`, without `assistant.message` or `completion.evaluated`, the
   loop's correction is recorded as a `memory.message` (a user message)
-  under the next step, and the model is asked again.
+  under the next step, and the model is asked again; at the step cap the
+  run ends `partial` instead, and no correction is recorded.
 
 <!-- snippet: packages/sdk/src/events-guide.test.ts#tools -->
 ```ts

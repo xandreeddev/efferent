@@ -6,7 +6,7 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 
 - Keep the decisions pure and tested alone: `foldProgress` (nudge at 3 stale steps, stop at 5) and `nextPhase` (the breaker, then completion, then the step cap).
 - Only the model's own undecodable output (`InvalidOutputError`, `ToolParameterValidationError`, `ToolNotFoundError`) gets a corrective turn, bounded by `MAX_MALFORMED`; a provider's `InvalidResponseError` fails the step.
-- A corrective turn counts against `maxSteps`, and every appended message (corrective, nudge, steering) goes through `onTail` before the next call, under the next step: `onTail(messages, step)` records a step's own tail under it, and nothing under it after it settled.
+- A corrective turn counts against `maxSteps`, and every appended message (corrective, nudge, steering) goes through `onTail` before the next call, under the next step, and only when that step runs: `onTail(messages, step)` records a step's own tail under it, nothing under it after it settled, and nothing under a step the run never takes (a run the step cap, the breaker or completion ends drops the corrective or nudge it would have sent).
 - A step runs in two parts. It executes (the call, the tools, the tail), then settles: `onStepSettled(step, status)` runs exactly once, with that execution's exit (`completed`, `failed`, `cancelled`, or `malformed` for a response the model could not form). Only then does the loop decide: `isComplete(step)` (a query, never asked after a malformed step), the breaker, compaction, steering. A decision that fails fails the run, never the settled step.
 - `runSteps` publishes `step.ended` from `onStepSettled` and nowhere else, keeps what it carries across steps in one `Ref<StepLedger>` (the plan cache, the last usage, each step's recorded results, the steps started) updated by the pure functions of `step-ledger.entity.functions.ts`, and returns `RunResult`'s union (`completed`/`completed`, or `partial` with `step-cap` or `degenerate-loop`).
 - Progress is keyed on results, not arguments, and pollable tools never count toward the breaker.
@@ -30,16 +30,16 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `DEGENERATE_REPEAT_NUDGE` (a user-role message) | `src/loop.ts:266-270` | by reference only, `src/loop.test.ts:231`; wording unpinned |
-| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:272-273` | unpinned |
-| Default malformed corrective (`Your previous reply could not be parsed: …`) | `src/loop.ts:672-675` | contains, `src/loop.test.ts:188`, `:206` |
-| Default incomplete corrective (`The host reports that required actions are incomplete. …`) | `src/loop.ts:723` | unpinned |
+| `DEGENERATE_REPEAT_NUDGE` (a user-role message) | `src/loop.ts:268-272` | by reference only, `src/loop.test.ts:231`; wording unpinned |
+| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:274-275` | unpinned |
+| Default malformed corrective (`Your previous reply could not be parsed: …`) | `src/loop.ts:681-684` | contains, `src/loop.test.ts:188`, `:206` |
+| Default incomplete corrective (`The host reports that required actions are incomplete. …`) | `src/loop.ts:735` | unpinned |
 
 Steering text (`pendingInput`) is the host's; the fold's summary message is core's `handoffToMessage`.
 
 ## Erasure files
 
-`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:455`) and the tool choice into its tool-name union (`:461`).
+`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:457`) and the tool choice into its tool-name union (`:463`).
 
 ## Layout
 
@@ -52,8 +52,8 @@ Steering text (`pendingInput`) is the host's; the fold's summary message is core
 
 ## Tests
 
-- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:99`), its self-test (`runSteps` made careless, ending its steps in its completion check, must fail the settle checks), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
-- `src/loop.test.ts`: scripted-model runs (correctives, breaker, cap, settling each step once, the compact seam, steering, streaming parity and fallback, image refusals, a host's initial batch, spans) and the pure decisions (`:743`).
+- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:100`), its self-test (`runSteps` made careless, ending its steps in its completion check and recording a corrective under a step the cap stops it from taking, must fail the settle checks), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
+- `src/loop.test.ts`: scripted-model runs (correctives, breaker, cap, settling each step once, nothing recorded under a step that never runs, the compact seam, steering, streaming parity and fallback, image refusals, a host's initial batch, spans) and the pure decisions (`:785`).
 - `src/step-ledger.entity.functions.test.ts`: the ledger's updates.
 - The sdk golden composes `stepLoopPlugin`.
 - Run: `bun test packages/plugin-agent-loop packages/sdk/src/agent.golden.test.ts`.
