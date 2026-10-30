@@ -202,8 +202,15 @@ that turn. That reaches the turn's own code only. The plugin's `LanguageModel`,
 `UtilityLlm` and `ModelCatalog` were built with the plugin's `AuthStore` and
 `SettingsStore`, so a per-turn `AuthStore` or `SettingsStore` does not change
 the credentials or models they use; to change those for one turn, give the
-turn its own `LanguageModel`. The `SessionEnvironment` (the workspace) and
-`HostCredentials` the plugin reads come from
+turn its own `LanguageModel`. The routed `LanguageModel` and the `UtilityLlm`
+read the plugin's `endpoints` and `ModelsTransport` once, when they are
+built; everything else a call carries is the call's own (its call policy,
+prompt cache key, trace content and log annotations), never what was in
+force where the plugin was built. A host composing `LanguageModelLive`,
+`LanguageModelSelectionLive` or `UtilityLlmLive` itself provides
+`CurrentModelEndpoints` and `ModelsTransport` to the layer, not around a
+call. The `SessionEnvironment` (the workspace) and `HostCredentials` the
+plugin reads come from
 `Agent.define({ workspace, services })`; a session-scoped plugin providing
 either is refused when the agent is defined.
 
