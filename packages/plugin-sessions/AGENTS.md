@@ -1,6 +1,6 @@
 # @xandreed/plugin-sessions
 
-Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time (a user's, the inbox's or a background task's, `BeginTurn`'s three kinds, told apart once by `Match.valueTags` in `openTurn`), turns owned by a lease or by the process that began them, the inbox, forks, resumes, `TurnActivity` (the turns this instance holds open or is beginning) and `TurnShutdown` (how it stops). The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
+Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time (`BeginTurn`'s direct User, Queued user input, Inbox notices or Task, told apart by `Match.valueTags` in `askedOf`), turns owned by a lease or by the process that began them, the inbox, forks, resumes, `TurnActivity` (the turns this instance holds open or is beginning) and `TurnShutdown` (how it stops). The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
 
 ## Rules
 
@@ -12,8 +12,12 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 - Keep the writer's state in its one phase (`WriterPhase`: open, ending, failed, closed, ended; open and ending carry the closing drafts): move it only by the pure transitions of `src/turn-writer.entity.functions.ts` under `Ref.modify`, then run what the transition planned (queue an item, commit the end, settle the callers). Never a `SynchronizedRef`: the consumer fiber latches failures while an admitter holds the admission permit, blocked on a full queue; the `admission` semaphore only orders admissions.
 - Raise the writer's failures as `TurnError`'s tags, never as a `HarnessError` of their codes: `TurnClosed` with its reason (`ended` for its own end or a closed scope), `ReservedKind`, `SessionContended`, the log's own `SessionLogError`; a `HarnessError` only for the writer's own state (`session.encode`, `session.state`) and a write that died (`session.defect`), with its `cause`. Match them with `Effect.catchTag`, never by code.
 - Judge an open turn by its own record (a lease end, or none and its holder process) through `isHeld`, never by the reading instance's ownership; a begin with `takeOver` (the host's word that the holder is gone) closes a turn still held in its opening commit (`reaped`), with `turn.takeover` and no attempt counted, and closes this instance's own writer of it at once.
-- Refuse a begin, never queue or replace one: `SessionBusy`, `TurnDuplicate`, `KeyConflict`, `RunIdReused`, `NotResumable`, `NothingPending`.
-- Count an inbox attempt only for a turn that wrote something; drop an item once `inbox.attempts` turns took it and failed.
+- Refuse a busy begin, never replace the open turn: `SessionBusy`, `TurnDuplicate`, `KeyConflict`, `RunIdReused`, `NotResumable`, `NothingPending`. Save user work explicitly through `enqueue`; it does not begin a turn.
+- Normalize queued messages before storage. One input id names its normalized message, delivery and source forever: identical enqueue returns false even after completion; another payload or an id used by a notice is `InputConflict`. Keep the payload only in `inbox.queued.input` (legacy `content` empty), with its delivery marker in the head; never duplicate attachment bytes in the head.
+- A Queued begin claims exactly its named input in the opening CAS, with origin user, its exact message and no claimed notices. Resolve its actual initial or retry key before admission, then recheck its pending claim in the opening plan. Carry full provenance on `AdmittedTurn.input`, only its id on `turn.started.input` and `TurnToAdmit.input`; include identity in the key fingerprint.
+- Reclaim a queued input when an ordinary User begin resumes its root, in the same opening commit. A successful resume acknowledges it once; a failed resume returns it. A manually resumed cancellation keeps provenance without recreating an acknowledged slot.
+- Keep `Inbox` begins and `admitted.claimed` notice-only. `drain` selects `all`, `inputs` or `notices`; queued inputs run singly in enqueue order, with either delivery value currently starting a queued user turn. All selects the oldest waiting kind, and an Inbox then takes the notice batch.
+- Count notice attempts by the existing write/interruption rules; drop a notice once `inbox.attempts` turns took it and failed. Queued input is never dropped by attempts: failed, partial and interrupted turns return it; completion or explicit cancellation acknowledges it. Preserve the absent delivery marker of legacy notice slots.
 - Keep `TurnActivity` exact: a begin counts from the request until its writer is handed over, then the turn until the writer's scope closes (`awaitIdle` relies on it).
 - Close an open turn from outside through `closeOpen` (a cancel, a shutdown): one guarded commit that reaps a turn nobody holds instead, else stores its `turn.ended`, then closes this instance's writer of it with the same reason.
 - Run a turn's time limit (the begin's `timeLimitMs`, else `turns.timeLimitMs`) as a fiber in the turn's scope, from when its writer is handed over: past it, close the turn as interrupted with `turn.time-limit`, an attempt counted, its writer's `TurnClosed` `timed-out` (`closeForTimeLimit`); the scope's close stops the timer.
@@ -27,6 +31,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 ## Public surface
 
 - `sessionsPlugin` (also the default export) and `SessionsPluginLive` (its `.live` layer); `SessionsLive(config, { liveness })` for hosts that compose layers; `processLiveness` (type `ProcessLiveness`).
+- Core contracts implemented here: `Sessions.enqueue`, `BeginTurn.Queued`, `QueuedInput` and `InputDelivery`; the core entry exports those schemas and `InputConflict`. `drain.take` defaults to all; reaction-only hosts select notices.
 - Config: `SessionsConfig`, `sessionsDefaults` (a 60 s lease, a keep-alive every 20 s, a turn time limit of 6 hours), `Ownership`; `HolderProcess`, where a process-owned turn's holder runs (what `ProcessLiveness.current` returns). The state the plugin keeps in the session head (`SessionsState`, `HeldTurn`, `InboxSlot`) is its own and stays inside the package.
 
 The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests, the scripts and the docs import `sessionsPlugin`, `SessionsPluginLive`, `SessionsLive`, `SessionsConfig`, `sessionsDefaults` and `ProcessLiveness`, and the rest are tagged `@public` at their declarations (`sessionsPlugin`'s tag covers the default export).
@@ -39,8 +44,8 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:460` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:363` | exact, `src/sessions.adapter.test.ts:1314` |
+| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:518` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:408` | exact, `src/sessions.adapter.test.ts:1314` |
 
 ## Erasure files
 
@@ -51,7 +56,7 @@ None.
 | File | Role |
 |---|---|
 | `src/plugin.adapter.ts` | `sessionsPlugin`, `SessionsPluginLive` |
-| `src/sessions.adapter.ts` | `SessionsLive`: create, fork, begin, deliver, drain, cancel, remove, reaping, change signals, `TurnActivity`, `TurnShutdown` |
+| `src/sessions.adapter.ts` | `SessionsLive`: create, fork, begin, enqueue, deliver, selected drains, cancel, remove, reaping, change signals, `TurnActivity`, `TurnShutdown` |
 | `src/turn-writer.adapter.ts` | the open turn's writer: queued, batched commits, lease renewal and keep-alive |
 | `src/turn-writer.entity.ts` | the writer's phase (`WriterPhase`, with the closing drafts held) and how an end begins (`EndStep`) |
 | `src/turn-writer.entity.functions.ts` | the writer's transitions: admit, hold the closing drafts, begin, plan, settle and withdraw an end, latch, close, the scope's own ending |
@@ -63,9 +68,10 @@ None.
 ## Tests
 
 - `src/sessions.adapter.test.ts`: one turn at a time, leases, activity, cancel and removal, check then append, contention and a broken log, the inbox, resuming, forks, admission, and the spans and log annotations, over the in-memory log.
-- `src/turn-writer.entity.functions.test.ts`: the writer's transitions, as tables, phase by phase.
+- `src/turn-writer.entity.functions.test.ts`: the writer's transitions, as tables, phase by phase. `src/sessions-state.entity.functions.test.ts` distinguishes bounded notice attempts from retained queued input and cancellation acknowledgments.
 - `src/sessions.conformance.test.ts`: core's `sessionsConformance` over the in-memory log, and the kit's self-tests (careless instances that must fail the named checks, a writer raising its refusals as `HarnessError` codes and one storing its closing drafts at once among them).
 - `packages/sdk/src/sessions-begin-trace.test.ts`: under a begin traced as `Agent.turn` traces it (the sdk's `traceTurnBegin`), the begin holds only its own work and the writer's commits nest under the calls that asked for them, with the turn's ids.
+- `packages/sdk/src/queued-input.journey.test.ts`: normalized queued attachments through a prebegun writer and real agent, plus an interrupted queued root reclaimed by an explicit user resume.
 - Elsewhere: plugin-session-sqlite runs the same kit and its crash tests over SQLite; the sdk journeys and golden (`packages/sdk/src/resume.journey.test.ts`, `agent.golden.test.ts`) compose `SessionsLive`; `verify:packages` runs the kit on Node over the packed package.
 - Run: `bun test packages/plugin-sessions packages/plugin-session-sqlite`.
 

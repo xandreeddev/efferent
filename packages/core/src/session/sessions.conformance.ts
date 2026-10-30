@@ -11,10 +11,11 @@ import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
 import { TurnAdmission } from "../ports/turn-admission.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { TurnEndedData } from "./session-event.entity.js"
+import { readStored } from "./session-event.entity.functions.js"
 import { frameworkDraft } from "./session-event.entity.functions.js"
 import type { JsonObject, SessionLogEvent } from "./session-log.entity.js"
 import { InboxItemId, TurnRefused } from "./sessions.entity.js"
-import type { AdmittedTurn, BeginTurn, InboxItem, SessionAddress, TurnError } from "./sessions.entity.js"
+import type { AdmittedTurn, BeginTurn, InboxItem, QueuedInput, SessionAddress, TurnError } from "./sessions.entity.js"
 
 type Service = Context.Service.Shape<typeof Sessions>
 type Admission = Context.Service.Shape<typeof TurnAdmission>
@@ -91,6 +92,9 @@ const resume = (turn: number, key = `resume:${turn}`): BeginTurn =>
   ({ _tag: "User", userMessage: new UserMessage({ text: "Continue." }), runId: RunId.make(`run-${key}`), key, command: {}, resumes: turn })
 const completed: TurnEnding = { reason: "completed", failure: Option.none() }
 const item = (id: string): InboxItem => ({ id: InboxItemId.make(id), source: { kind: "conformance", id }, content: `the result of ${id}` })
+
+const queued = (id: string, delivery: QueuedInput["delivery"] = "next"): QueuedInput => ({ id: InboxItemId.make(id), userMessage: new UserMessage({ text: `queued message ${id}` }), delivery, source: { kind: "conformance", id } })
+const fromQueue = (input: string, runId: string): BeginTurn => ({ _tag: "Queued", input: InboxItemId.make(input), runId: RunId.make(runId) })
 
 const turnOf = (event: SessionLogEvent): number => Option.getOrElse(event.turn, () => 0)
 const decodeEnded = Schema.decodeUnknownOption(TurnEndedData)
@@ -682,6 +686,182 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       const last = endings(yield* sessions.read(address, { kinds: ["turn.ended"] })).split(",").at(-1)
       yield* expect("inbox", last === `${claimTurn}:cancelled:none`, `the cancelled inbox turn was closed as ${last ?? "nothing"}`)
       yield* expect("inbox", (yield* sessions.drain(address, () => Effect.void)).turns === 0, "a drain took again an item whose turn was cancelled")
+    })),
+
+    scoped("queued input is stored once, starts one user turn with its exact message and attachments, and is acknowledged once", "queued-input", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      const image = yield* mediaFromBase64(pixelPng)
+      const input: QueuedInput = { ...queued("q1"), userMessage: new UserMessage({ text: "inspect the queued image", attachments: [image] }) }
+      const delivered = [yield* sessions.enqueue(address, input), yield* sessions.enqueue(address, input)]
+      yield* expect("queued-input", delivered.map((answer) => `${answer.enqueued}:${answer.pending}`).join() === "true:1,false:1", `enqueue answered ${canonicalJson(delivered)}`)
+      const inbox = yield* refusal(sessions, address, { _tag: "Inbox", runId: RunId.make("notice-only") })
+      yield* expect("queued-input", inbox === "NothingPending" && (yield* sessions.get(address)).pending === 1, `an inbox begin over input gave ${inbox}`)
+      const writer = yield* sessions.begin(address, fromQueue("q1", "queued-first"))
+      yield* expect("queued-input", writer.admitted.origin === "user" && writer.admitted.key === "input:q1" && writer.admitted.claimed.length === 0
+        && canonicalJson(writer.admitted.userMessage) === canonicalJson(input.userMessage) && canonicalJson(writer.admitted.input) === canonicalJson(input)
+        && writer.started.data.input === input.id, "the queued turn lost its user origin, exact input, provenance or attachment")
+      const queuedRecords = yield* readStored("inbox.queued", yield* sessions.read(address, { kinds: ["inbox.queued"] }))
+      yield* expect("queued-input", queuedRecords.length === 1 && queuedRecords[0]?.data.content === ""
+        && canonicalJson(queuedRecords[0]?.data.input?.userMessage) === canonicalJson(input.userMessage), "the input was not stored once in the additive input form")
+      yield* writer.end(completed)
+      const again = yield* sessions.enqueue(address, input)
+      const sameRun = yield* refusal(sessions, address, fromQueue("q1", "queued-first"))
+      const duplicate = yield* refusal(sessions, address, fromQueue("q1", "queued-after-end"))
+      yield* expect("queued-input", !again.enqueued && again.pending === 0 && sameRun === "TurnDuplicate" && duplicate === "TurnDuplicate", `after completion enqueue gave ${canonicalJson(again)}, same-run begin ${sameRun}, new-run begin ${duplicate}`)
+    })),
+
+    scoped("a queued input id cannot change its message, delivery or source, or collide with a notice, even after completion", "input-conflict", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      const input = queued("immutable")
+      yield* sessions.enqueue(address, input)
+      const before = (yield* sessions.read(address)).length
+      const changes = [
+        { ...input, userMessage: new UserMessage({ text: "another message" }) },
+        { ...input, delivery: "steer" as const },
+        { ...input, source: { kind: "another sender" } },
+      ]
+      const conflicts = yield* Effect.forEach(changes, (changed) => Effect.result(sessions.enqueue(address, changed)), { concurrency: 1 })
+      yield* expect("input-conflict", conflicts.every((result) => result._tag === "Failure" && result.failure._tag === "InputConflict" && result.failure.id === input.id), `changed inputs gave ${conflicts.map((result) => result._tag === "Failure" ? result.failure._tag : "accepted").join()}`)
+      yield* expect("input-conflict", (yield* sessions.read(address)).length === before, "conflicting inputs wrote events")
+      yield* Effect.scoped(sessions.begin(address, fromQueue("immutable", "immutable-first")).pipe(Effect.tap((writer) => writer.end(completed))))
+      const after = yield* Effect.result(sessions.enqueue(address, changes[0]!))
+      yield* expect("input-conflict", after._tag === "Failure" && after.failure._tag === "InputConflict", "a completed input's id was reused for another message")
+      yield* sessions.deliver(address, item("notice-id"))
+      const notice = yield* Effect.result(sessions.enqueue(address, queued("notice-id")))
+      yield* expect("input-conflict", notice._tag === "Failure" && notice.failure._tag === "InputConflict", "an input silently collided with a notice id")
+      const untouched = yield* sessions.deliver(address, { ...item("immutable"), content: "a notice cannot replace input" })
+      yield* expect("input-conflict", !untouched.delivered && (yield* sessions.read(address, { kinds: ["inbox.queued"] })).length === 2, "a notice replaced a recorded input")
+    })),
+
+    scoped("queued input survives failures beyond a notice's attempt ceiling and a new instance, partial stays pending, and completion or cancellation acknowledges it", "queued-retry", (owner) => Effect.gen(function* () {
+      const first = yield* leased()
+      const address = yield* created(first.sessions, owner)
+      const input = queued("retry")
+      yield* first.sessions.enqueue(address, input)
+      const attempts = yield* Effect.forEach(Array.from({ length: 12 }, (_, index) => index), (index) => Effect.scoped(Effect.gen(function* () {
+        const writer = yield* first.sessions.begin(address, fromQueue("retry", `retry-${index}`))
+        yield* expect("queued-retry", writer.admitted.input?.id === input.id && writer.admitted.userMessage.text === input.userMessage.text, "an input retry lost its immutable input")
+        yield* writer.end({ reason: "failed", failure: Option.some({ code: "conformance.retry", message: "try again" }) })
+        return writer.admitted.key
+      })), { concurrency: 1 })
+      const reopened = yield* leased()
+      yield* expect("queued-retry", new Set(attempts).size === attempts.length && (yield* reopened.sessions.get(address)).pending === 1
+        && (yield* reopened.sessions.read(address, { kinds: ["inbox.dropped"] })).length === 0, "failed attempts dropped the input, reused a key or disappeared after reopen")
+      yield* Effect.scoped(reopened.sessions.begin(address, fromQueue("retry", "retry-partial")).pipe(Effect.tap((writer) => writer.end({ reason: "partial", failure: Option.none() }))))
+      yield* expect("queued-retry", (yield* reopened.sessions.get(address)).pending === 1, "a partial reply silently acknowledged queued input")
+      const reply = (writer: TurnWriter) => writer.closing([frameworkDraft("turn.reply", {
+        entry: `${writer.admitted.runId}:1`, runId: writer.admitted.runId, step: 0, at: 0,
+        body: { outcome: "partial", reply: "the step cap left work unfinished" },
+      })])
+      const beforeDrain = (yield* reopened.sessions.get(address)).turns
+      const partialDrain = yield* reopened.sessions.drain(address, reply, { take: "inputs", maxTurns: 1 })
+      const partialEnd = endings(yield* reopened.sessions.read(address, { kinds: ["turn.ended"] })).split(",").at(-1)
+      const heldReplies = yield* reopened.sessions.read(address, { kinds: ["turn.reply"] })
+      yield* expect("queued-retry", partialDrain.turns === 1 && (yield* reopened.sessions.get(address)).pending === 1
+        && partialEnd === `${beforeDrain + 1}:partial:none` && heldReplies.length === 1,
+      "a successful drain callback's held partial reply was lost or acknowledged the unfinished input")
+      yield* reopened.sessions.drain(address, (writer) => reply(writer).pipe(Effect.andThen(Effect.fail("the callback failed after holding its partial reply"))), { take: "inputs", maxTurns: 1 })
+      const failedEnd = endings(yield* reopened.sessions.read(address, { kinds: ["turn.ended"] })).split(",").at(-1)
+      yield* expect("queued-retry", (yield* reopened.sessions.get(address)).pending === 1 && failedEnd === `${beforeDrain + 2}:failed:turn.failed`,
+        "a held partial reply hid the drain callback's failure or acknowledged the input")
+      yield* Effect.scoped(reopened.sessions.begin(address, fromQueue("retry", "retry-complete")).pipe(Effect.tap((writer) => writer.end(completed))))
+      yield* expect("queued-retry", (yield* reopened.sessions.get(address)).pending === 0, "completion did not acknowledge input")
+      yield* reopened.sessions.enqueue(address, queued("cancelled"))
+      const cancelling = yield* reopened.sessions.begin(address, fromQueue("cancelled", "queue-cancel"))
+      const cancelled = yield* reopened.sessions.cancel(address, cancelling.admitted.turn)
+      yield* expect("queued-retry", cancelled.cancelled && cancelled.pending === 0, "explicit cancellation left input to run again")
+      const continued = yield* reopened.sessions.begin(address, resume(cancelling.admitted.turn, "queue-manual-continue"))
+      yield* continued.end(completed)
+      yield* expect("queued-retry", (yield* reopened.sessions.get(address)).pending === 0, "manually resuming cancelled queued input recreated an acknowledged queue slot")
+    })),
+
+    scoped("a user resume reclaims its interrupted queued input, including a failed resume, so successful completion leaves nothing to drain twice", "queued-resume", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      yield* sessions.enqueue(address, queued("resume-input"))
+      const original = yield* sessions.begin(address, fromQueue("resume-input", "queue-root"))
+      yield* original.end({ reason: "interrupted", failure: Option.some({ code: "turn.interrupted", message: "the holder stopped" }) })
+      const failed = yield* sessions.begin(address, resume(original.admitted.turn, "queue-resume-failed"))
+      yield* expect("queued-resume", failed.admitted.input?.id === InboxItemId.make("resume-input") && failed.started.data.input === "resume-input", "the resume did not claim its original queued input")
+      yield* failed.end({ reason: "failed", failure: Option.some({ code: "conformance.retry", message: "retry the resume" }) })
+      const successor = yield* leased()
+      const resumed = yield* successor.sessions.begin(address, resume(original.admitted.turn, "queue-resume-done"))
+      yield* expect("queued-resume", resumed.admitted.input?.id === InboxItemId.make("resume-input") && resumed.admitted.claimed.length === 0, "the second resume lost input or treated it as a notice")
+      yield* resumed.end(completed)
+      const drained = yield* successor.sessions.drain(address, () => Effect.void, { take: "inputs" })
+      yield* expect("queued-resume", drained.turns === 0 && (yield* successor.sessions.get(address)).pending === 0, `successful resume left ${drained.turns} duplicate input turns`)
+      yield* expect("queued-resume", (yield* successor.sessions.read(address, { kinds: ["inbox.queued"] })).length === 1, "resuming wrote the input into the queue again")
+    })),
+
+    scoped("drain selects inputs or notices without mixing messages, preserves queued order and attachments, and leaves busy or unknown input untouched", "drain-take", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      yield* sessions.enqueue(address, queued("input-1"))
+      yield* sessions.deliver(address, item("notice-1"))
+      yield* sessions.enqueue(address, queued("input-2", "steer"))
+      yield* sessions.deliver(address, item("notice-2"))
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const observe = (writer: TurnWriter) => Ref.update(seen, (all) => [...all, `${writer.admitted.origin}:${writer.admitted.input?.id ?? writer.admitted.claimed.map((value) => value.id).join("+")}`])
+      const notices = yield* sessions.drain(address, observe, { take: "notices", maxTurns: 1 })
+      yield* expect("drain-take", notices.turns === 1 && (yield* Ref.get(seen)).join() === "inbox:notice-1+notice-2" && (yield* sessions.get(address)).pending === 2, "notice-only drain consumed user input or changed notice batching")
+      const first = yield* sessions.drain(address, (writer) => observe(writer).pipe(Effect.andThen(sessions.enqueue(address, queued("input-3")))), { take: "inputs", maxTurns: 1 })
+      const rest = yield* sessions.drain(address, observe, { take: "inputs", maxTurns: 5 })
+      yield* expect("drain-take", first.turns === 1 && rest.turns === 2 && (yield* Ref.get(seen)).join() === "inbox:notice-1+notice-2,user:input-1,user:input-2,user:input-3", "input-only drain merged inputs, lost one delivered during a turn or broke delivery order")
+      const selection = yield* created(sessions, owner)
+      yield* sessions.deliver(selection, item("older-notice"))
+      yield* sessions.enqueue(selection, queued("selected-input"))
+      const selected = yield* sessions.drain(selection, observe, { take: "inputs", maxTurns: 1 })
+      yield* expect("drain-take", selected.turns === 1 && (yield* Ref.get(seen)).at(-1) === "user:selected-input" && (yield* sessions.get(selection)).pending === 1, "input-only drain consumed an older notice instead of queued input")
+      const held = yield* sessions.begin(address, say("held while input waits"))
+      yield* sessions.enqueue(address, queued("busy-input"))
+      yield* expect("drain-take", (yield* sessions.drain(address, observe, { take: "inputs" })).turns === 0 && (yield* sessions.get(address)).pending === 1, "a drain consumed input while a turn was open")
+      yield* held.end(completed)
+      const unknown = yield* refusal(sessions, address, fromQueue("unknown-input", "unknown-run"))
+      yield* expect("drain-take", unknown === "NothingPending" && (yield* sessions.get(address)).pending === 1, `an unknown queued id gave ${unknown} or claimed another input`)
+      yield* sessions.deliver(address, item("all-notice"))
+      const all = yield* sessions.drain(address, observe, { take: "all", maxTurns: 5 })
+      yield* expect("drain-take", all.turns === 2 && (yield* sessions.get(address)).pending === 0, "all did not drain both remaining input and notices")
+    })),
+
+    scoped("concurrent enqueue and queued begins over separate instances store each input once and claim it to at most one turn", "queued-race", (owner) => Effect.gen(function* () {
+      const [one, two] = [yield* leased(), yield* leased()]
+      const address = yield* created(one.sessions, owner)
+      const results = yield* Effect.all([one.sessions.enqueue(address, queued("shared")), two.sessions.enqueue(address, queued("shared"))], { concurrency: 2 })
+      yield* expect("queued-race", results.filter((result) => result.enqueued).length === 1, "two instances both enqueued the same id or neither stored it")
+      yield* Effect.all([one.sessions.enqueue(address, queued("left")), two.sessions.enqueue(address, queued("right"))], { concurrency: 2 })
+      const attempts = yield* Effect.all([Effect.result(one.sessions.begin(address, fromQueue("shared", "race-one"))), Effect.result(two.sessions.begin(address, fromQueue("shared", "race-two")))], { concurrency: 2 })
+      const writers = attempts.flatMap((result) => result._tag === "Success" ? [result.success] : [])
+      const refusals = attempts.flatMap((result) => result._tag === "Failure" ? [result.failure._tag] : [])
+      yield* expect("queued-race", writers.length === 1 && refusals.every((tag) => tag === "SessionBusy" || tag === "TurnDuplicate"), `queued begin race opened ${writers.length} writers, refusals ${refusals.join()}`)
+      const records = yield* one.sessions.read(address, { kinds: ["inbox.queued"] })
+      yield* expect("queued-race", records.length === 3 && (yield* two.sessions.get(address)).pending === 2, "enqueue/claim CAS lost distinct input or recorded a duplicate")
+      yield* writers[0]!.end(completed)
+    })),
+
+    scoped("queued admission sees the actual attempt key and input identity, and a refusal leaves the input pending", "queued-admission", (owner) => Effect.gen(function* () {
+      const seen = yield* Ref.make<ReadonlyArray<{ readonly key: string; readonly input: Option.Option<InboxItemId> }>>([])
+      const refuse = yield* Ref.make(false)
+      const admission = TurnAdmission.of({ admit: Effect.fnUntraced(function* (turn, open) {
+        yield* Ref.update(seen, (all) => [...all, { key: turn.key, input: Option.fromNullishOr(turn.input) }])
+        if (yield* Ref.get(refuse)) return yield* Effect.fail(new TurnRefused({ session: turn.session.id, reason: "conformance", message: "not now" }))
+        return yield* open
+      }) })
+      const { sessions } = yield* leased(LONG, admission)
+      const address = yield* created(sessions, owner)
+      yield* sessions.enqueue(address, queued("admitted-input"))
+      const first = yield* sessions.begin(address, { ...fromQueue("admitted-input", "admitted-first"), meta: { request: "one" } })
+      yield* first.end({ reason: "failed", failure: Option.none() })
+      const second = yield* sessions.begin(address, { ...fromQueue("admitted-input", "admitted-next"), meta: { request: "two" } })
+      yield* second.end({ reason: "failed", failure: Option.none() })
+      const admissions = yield* Ref.get(seen)
+      yield* expect("queued-admission", admissions.map((turn) => turn.key).join() === [first.admitted.key, second.admitted.key].join()
+        && admissions.every((turn) => Option.contains(turn.input, InboxItemId.make("admitted-input")))
+        && first.admitted.meta.request === "one" && second.admitted.meta.request === "two", "admission saw a guessed attempt key, lost input identity, or meta changed immutable input")
+      yield* Ref.set(refuse, true)
+      const refused = yield* refusal(sessions, address, fromQueue("admitted-input", "admitted-refused"))
+      yield* expect("queued-admission", refused === "TurnRefused" && (yield* sessions.get(address)).pending === 1, `admission refused as ${refused} and consumed input`)
     })),
 
     scoped("a turn whose lease ran out is shown closed, left alone by a drain with nothing waiting, reaped as interrupted by the next begin, and its writer refused", "lease", (owner) => Effect.gen(function* () {

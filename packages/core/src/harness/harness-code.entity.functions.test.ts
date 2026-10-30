@@ -5,6 +5,8 @@ import { ConversationId } from "../domain/message.entity.js"
 import { RunId } from "../domain/run.entity.js"
 import { SessionLogError, SessionMissing } from "../session/session-log.entity.js"
 import {
+  InboxItemId,
+  InputConflict,
   KeyConflict,
   NothingPending,
   NotResumable,
@@ -33,6 +35,7 @@ class StoreUnreadable extends Schema.TaggedError<StoreUnreadable>()("StoreUnread
 /** One of each tagged error `TAGGED_CODES` names, as the framework raises it. */
 const tagged = [
   new AttachmentRejected({ reason: "Empty", message: "no bytes" }),
+  new InputConflict({ session, id: InboxItemId.make("input-1") }),
   new SessionBusy({ session, turn: 2 }),
   new TurnDuplicate({ session, turn: 2, open: true }),
   new KeyConflict({ session, key: "k", turn: 2 }),
