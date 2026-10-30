@@ -884,7 +884,13 @@ stays inside its package, with nothing deprecated first:
   `list` and `read` still read it. `sessionsConformance` checks the refusal
   for a subject that gives `newerFormat`. Journal fixtures record their
   `storedFormat`.
-
+- `@xandreed/plugin-models`: the `thinkingPrefixMismatch` option
+  (`provider-default`, `drop_block`, `error`; default `provider-default`,
+  which sends nothing). For a Claude model that binds thinking to the
+  conversation (Fable 5.1, Opus, Sonnet and Haiku 5.5 and later), any other
+  value sends `thinking.block_binding.prefix_mismatch_behavior` with its
+  beta, and the thinking blocks the provider then drops are counted as
+  `llm.thinking.dropped` (by reason), put on the call's span and logged.
 - `reasonOf(cause)` in `@xandreed/core`: a cause as one line of text that is
   safe for reports, stored records and model-facing failures (`code:
   message`, `interrupted`, or the defect's message; never a stack).
@@ -1204,6 +1210,14 @@ Model-visible text (exact pins and the compaction golden updated):
 
 ### Fixed
 
+- `@xandreed/plugin-models`: an Anthropic subscription request no longer
+  replaces the client's `anthropic-beta` header with the subscription's
+  betas: they are added to it, so a document or a structured output keeps
+  its own beta.
+- `@xandreed/plugin-models`: a stream whose reply is signed thinking alone
+  (a signature delta, a redacted block) is no longer read as empty, and a
+  failure after it is final, never retried: the stream fold keeps that
+  thinking as content.
 - Failure text no longer carries stack traces or the local paths in them. A
   failed trial, grade or assessment records `code: message`, `interrupted`,
   or the defect's message, so `report.json`, CLI output and the Langfuse and

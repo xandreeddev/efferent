@@ -912,7 +912,16 @@ A streamed step stores the assistant message a non-streamed one stores: its
 text and reasoning parts keep their provider metadata (Anthropic's thinking
 signature and redacted thinking, the `itemId` and `encryptedContent` of an
 OpenAI Responses reasoning item), so the later requests of the session, and
-their replays, send that reasoning back either way. That metadata is stored
+their replays, send that reasoning back either way. Claude Fable 5.1, and
+Opus, Sonnet and Haiku 5.5 and later, bind each thinking block to the
+conversation before it: a block sent back after an earlier part of the
+conversation changed (the step context, a compaction, a tool activated
+mid-run) is refused by an account that enforces the binding. The models
+plugin's `thinkingPrefixMismatch` says what such a request asks for:
+`provider-default` (the default) sends nothing; `drop_block` has the provider
+drop that block and the later ones for the request, counted as
+`llm.thinking.dropped` and logged; `error` has it refuse the request. The
+models that do not bind are sent neither. That metadata is stored
 as JSON in `providerOptions` (`ProviderOptions`, keyed by provider), less
 core's own `engine` key (`ENGINE_KEY`), which no request carries. A model
 that sends each call on to another, such as the settings-backed router,

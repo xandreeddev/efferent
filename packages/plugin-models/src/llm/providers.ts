@@ -1,8 +1,8 @@
 import { LanguageModel, Prompt } from "effect/ai"
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
-import { HttpClient, HttpClientRequest } from "effect/http"
-import { Config, Effect, Match, Option, Predicate, Redacted } from "effect"
+import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
+import { Config, Effect, Match, Metric, Option, Predicate, Redacted, Ref, Stream } from "effect"
 import type { Context, Schema, Scope } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, modelRequestDescriptorOf } from "@xandreed/core"
 import { AuthError } from "../ports/auth-store.port.js"
@@ -22,6 +22,10 @@ import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import type { ModelEndpoint, ModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import type { WebSocketProxy } from "../ports/models-transport.port.js"
+import { CurrentThinkingPrefixMismatch } from "../ports/thinking-binding.port.js"
+import { THINKING_BINDING_BETA } from "./thinking-binding.entity.js"
+import type { ThinkingPrefixMismatch } from "./thinking-binding.entity.js"
+import { bindingFor, droppedInBody, droppedInMessageStart, firstEventData, mergeBetas } from "./thinking-binding.entity.functions.js"
 
 /**
  * Per-provider `LanguageModel` construction. Built PER REQUEST from a
@@ -73,21 +77,75 @@ const withImageLabels = (model: LanguageModel.LanguageModel): LanguageModel.Lang
   }
 }
 
+/**
+ * Every request with `betas` added to its `anthropic-beta` header, after
+ * the ones the client set itself (`mergeBetas`): a beta is never sent by
+ * replacing the header, which would drop the client's own.
+ */
+const withAnthropicBetas = (betas: ReadonlyArray<string>) => (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  betas.length === 0
+    ? client
+    : client.pipe(HttpClient.mapRequest((req) => HttpClientRequest.setHeader(req, "anthropic-beta", mergeBetas(Option.fromNullishOr(req.headers["anthropic-beta"]), betas))))
+
 // Anthropic OAuth authenticates as a subscription: Bearer + Claude Code beta
-// flags, never `x-api-key`.
+// flags (added to the client's own), never `x-api-key`.
 const anthropicOAuthTransform =
   (access: Redacted.Redacted<string>) =>
   (client: HttpClient.HttpClient): HttpClient.HttpClient =>
     client.pipe(
-      HttpClient.mapRequest((req) =>
-        req.pipe(
-          HttpClientRequest.setHeaders({
-            Authorization: `Bearer ${Redacted.value(access)}`,
-            "anthropic-beta": ANTHROPIC_OAUTH_BETA,
-          }),
-        ),
-      ),
+      HttpClient.mapRequest((req) => HttpClientRequest.setHeader(req, "Authorization", `Bearer ${Redacted.value(access)}`)),
+      withAnthropicBetas(ANTHROPIC_OAUTH_BETA.split(",")),
     )
+
+const llmThinkingDropped = Metric.counter("llm.thinking.dropped", {
+  description: "thinking blocks the provider dropped from a request whose conversation changed before them",
+  incremental: true,
+})
+
+/** Thinking blocks the provider dropped from a request: on the call's span, counted by reason, and a warning. */
+const reportDropped = (label: string) => (reasons: ReadonlyArray<string>): Effect.Effect<void> =>
+  reasons.length === 0
+    ? Effect.void
+    : Effect.gen(function* () {
+        yield* Effect.annotateCurrentSpan("llm.thinking.dropped", reasons.length)
+        yield* Effect.forEach(reasons, (reason) => Metric.update(Metric.withAttributes(llmThinkingDropped, { "llm.model": label, reason }), 1), { concurrency: 1, discard: true })
+        yield* Effect.logWarning(`the provider dropped ${reasons.length} thinking block(s) from the request: the conversation before them changed (${[...new Set(reasons)].join(", ")})`)
+      })
+
+/**
+ * A body stream that, as it passes through unchanged, reads its first event
+ * and reports the thinking blocks the provider dropped (its
+ * `message_start`). Nothing is held beyond that first event.
+ */
+const peekedFirstEvent = <E>(body: Stream.Stream<Uint8Array, E>, report: (reasons: ReadonlyArray<string>) => Effect.Effect<void>) => Effect.gen(function* () {
+  const decoder = new TextDecoder()
+  // The text before the first event's end while it has not come whole; none once it was read.
+  const pending = yield* Ref.make(Option.some(""))
+  const read = (bytes: Uint8Array) => Ref.modify(pending, (seen): [Option.Option<string>, Option.Option<string>] => Option.match(seen, {
+    onNone: () => [Option.none(), Option.none()],
+    onSome: (before) => {
+      const text = before + decoder.decode(bytes, { stream: true })
+      const first = firstEventData(text)
+      return Option.isSome(first) ? [first, Option.none()] : [Option.none(), Option.some(text)]
+    },
+  })).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (data) => report(droppedInMessageStart(data)) })))
+  return yield* body.pipe(Stream.tap(read), Stream.toReadableStreamEffect())
+})
+
+/**
+ * The client with each response's `input_transformations` read and the
+ * dropped thinking blocks reported (`reportDropped`): a settled body read
+ * whole and handed on as it was, a stream peeked at its first event as it
+ * passes. A body that does not say what it changed reports nothing, and
+ * the report never fails a call.
+ */
+const reportingDroppedThinking = (label: string) => (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  HttpClient.transformResponse(client, Effect.flatMap((response) => {
+    const rebuilt = (body: BodyInit) => HttpClientResponse.fromWeb(response.request, new Response(body, { status: response.status, headers: new Headers(Object.entries(response.headers)) }))
+    return (response.headers["content-type"] ?? "").includes("text/event-stream")
+      ? Effect.map(peekedFirstEvent(response.stream, reportDropped(label)), rebuilt)
+      : response.text.pipe(Effect.tap((text) => reportDropped(label)(droppedInBody(text))), Effect.map(rebuilt))
+  }))
 
 const claudeCodePrompt = Prompt.make([{ role: "system", content: CLAUDE_CODE_SYSTEM }])
 
@@ -205,13 +263,16 @@ export interface ProviderServices {
   readonly endpoints: ModelEndpoints
   readonly transport: Transport
   readonly sessions: Option.Option<OpenAiCodexSessions>
+  /** What a request to a model that binds thinking says about a changed prefix (`thinkingPrefixMismatch`). */
+  readonly thinkingPrefixMismatch: ThinkingPrefixMismatch
 }
 
-/** The provider services where this runs: `CurrentModelEndpoints`, `ModelsTransport` if provided, `CurrentOpenAiCodexSessions`. */
+/** The provider services where this runs: `CurrentModelEndpoints`, `ModelsTransport` if provided, `CurrentOpenAiCodexSessions`, `CurrentThinkingPrefixMismatch`. */
 export const providerServices: Effect.Effect<ProviderServices> = Effect.all({
   endpoints: Effect.service(CurrentModelEndpoints),
   transport: Effect.serviceOption(ModelsTransport),
   sessions: Effect.service(CurrentOpenAiCodexSessions),
+  thinkingPrefixMismatch: Effect.service(CurrentThinkingPrefixMismatch),
 }, { concurrency: 1 })
 
 /** The compat client's `fetchImpl`: the transport's fetch, or (no transport) the global one. */
@@ -296,25 +357,57 @@ interface RouteCall {
   readonly key: Redacted.Redacted<string>
   readonly transport: Transport
   readonly sessions: Option.Option<OpenAiCodexSessions>
+  readonly thinkingPrefixMismatch: ThinkingPrefixMismatch
 }
 
-/** Anthropic's Messages API over an API key, or over the subscription's OAuth token, whose calls take the Claude Code block first. */
-const anthropicModel = ({ selection, credential, key }: RouteCall): Building<RouteModel> => {
+/**
+ * The request fields the SDK's types do not have yet: a thinking binding
+ * (`block_binding`, sent with its beta). Cast once, here.
+ */
+interface ThinkingBindingConfig {
+  readonly thinking: { readonly type: "adaptive"; readonly block_binding: { readonly prefix_mismatch_behavior: "drop_block" | "error" } }
+}
+
+/**
+ * Anthropic's Messages API over an API key, or over the subscription's OAuth
+ * token, whose calls take the Claude Code block first. A model that binds
+ * thinking to the conversation, under a `thinkingPrefixMismatch` other than
+ * `provider-default`, is sent the binding (adaptive thinking with
+ * `block_binding`, and its beta) and has the thinking blocks the provider
+ * drops reported; the descriptor records the binding.
+ */
+const anthropicModel = ({ selection, model, credential, key, thinkingPrefixMismatch }: RouteCall): Building<RouteModel> => {
   const oauth = credential?.type === "oauth"
+  const binding = bindingFor(model.bindsThinking, thinkingPrefixMismatch)
+  const bound = (client: HttpClient.HttpClient) => Option.match(binding, {
+    onNone: () => client,
+    onSome: () => client.pipe(withAnthropicBetas([THINKING_BINDING_BETA]), reportingDroppedThinking(`${selection.provider}:${selection.modelId}`)),
+  })
+  const config = Option.match(binding, {
+    onNone: () => ({}),
+    onSome: (behavior): ThinkingBindingConfig => ({ thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: behavior } } }),
+  })
   return (
     oauth
       ? AnthropicClient.make({
           apiKey: undefined,
-          transformClient: anthropicOAuthTransform(key),
+          transformClient: (client) => bound(anthropicOAuthTransform(key)(client)),
         })
-      : AnthropicClient.make({ apiKey: key })
+      : AnthropicClient.make({ apiKey: key, transformClient: bound })
   ).pipe(
     Effect.flatMap((client) =>
-      AnthropicLanguageModel.make({ model: selection.modelId }).pipe(
+      AnthropicLanguageModel.make({ model: selection.modelId, config: config as never }).pipe(
         Effect.provideService(AnthropicClient.AnthropicClient, client),
       ),
     ),
-    Effect.map((svc) => ({ svc, settings: Option.some({ systemPrelude: oauth ? CLAUDE_CODE_SYSTEM : null }), prependClaudeCode: oauth })),
+    Effect.map((svc) => ({
+      svc,
+      settings: Option.some({
+        systemPrelude: oauth ? CLAUDE_CODE_SYSTEM : null,
+        ...Option.match(binding, { onNone: () => ({}), onSome: (behavior) => ({ thinkingPrefixMismatch: behavior }) }),
+      }),
+      prependClaudeCode: oauth,
+    })),
   )
 }
 
@@ -381,14 +474,14 @@ const buildBuiltInProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
-  { transport, sessions }: ProviderServices,
+  { transport, sessions, thinkingPrefixMismatch }: ProviderServices,
 ): Building<Built> =>
   Option.match(profileOf(selection.provider), {
     onNone: () => Effect.fail(notWired(selection)),
     onSome: (profile) => Option.match(Option.fromNullishOr(key), {
       onNone: () => Effect.fail(missingKey(selection)),
       onSome: (found) => {
-        const call: RouteCall = { selection, model: profile.modelOf(selection.modelId), credential, key: found, transport, sessions }
+        const call: RouteCall = { selection, model: profile.modelOf(selection.modelId), credential, key: found, transport, sessions, thinkingPrefixMismatch }
         const route = profile.routeOf(selection.modelId)
         const built: Building<RouteModel> = Match.valueTags(route, {
           anthropic: () => anthropicModel(call),

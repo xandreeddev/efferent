@@ -1,15 +1,20 @@
 import { describe, expect, it } from "bun:test"
-import { ConfigProvider, Effect, Option, Redacted } from "effect"
+import { ConfigProvider, Effect, Exit, Metric, Option, Redacted, Schema, Stream } from "effect"
 import { Prompt } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, parseModelSelection, ToolCallId } from "@xandreed/core"
-import { toPromptMessages } from "@xandreed/core/internal"
+import { foldStreamParts, responseToAgentMessages, toPromptMessages } from "@xandreed/core/internal"
 import type { AgentMessage, ModelCallPolicy } from "@xandreed/core"
 import type { Credential } from "../ports/auth-store.port.js"
 import { buildProvider, chatCompletionsUrl, OPENCODE_RESPONSES_API_URL, prependClaudeCode, usesOpenCodeResponses, withAnthropicCacheBreakpoints } from "./providers.js"
+import type { BuiltProvider } from "./providers.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import type { ModelEndpoints } from "../ports/model-endpoints.port.js"
+import { CurrentThinkingPrefixMismatch } from "../ports/thinking-binding.port.js"
+import { ANTHROPIC_OAUTH_BETA } from "../auth/anthropicOAuth.js"
+import { THINKING_BINDING_BETA } from "./thinking-binding.entity.js"
+import type { ThinkingPrefixMismatch } from "./thinking-binding.entity.js"
 import { OPENAI_CODEX_API_URL, toOpenAiCodexRequestBody } from "./openAiCodex.js"
 import { isOpenAiCodexControlEvent, normalizeOpenAiCodexWebSocketEvent, openAiCodexUuidV7 } from "./openAiCodexWebSocket.js"
 
@@ -323,5 +328,160 @@ describe("call options", () => {
       routeOf("anthropic:claude-sonnet-5", { anthropic: { url: "http://127.0.0.1:1/v1" } }),
       routeOf("ollama:qwen3", {}, { type: "local", baseUrl: "http://127.0.0.1:1/v1" }),
     ])).toEqual(["anthropic", "openai-responses", "openai-responses", "compat", "compat", "openai-codex", "compat", "compat"])
+  })
+})
+
+describe("thinking on the wire", () => {
+  interface Sent { readonly url: string; readonly beta: string; readonly body: Record<string, unknown> }
+
+  /** A Messages API reply: settled JSON, or a server-sent stream of `events`. */
+  const settled = (content: ReadonlyArray<Record<string, unknown>>, extra: Record<string, unknown> = {}) => () => Response.json({
+    id: "msg_1", type: "message", role: "assistant", model: "claude-opus-5-5", content, stop_reason: "end_turn", stop_sequence: null,
+    usage: { input_tokens: 10, output_tokens: 2 }, ...extra,
+  })
+  const streamed = (events: ReadonlyArray<Record<string, unknown>>) => () => new Response(
+    events.map((event) => `event: ${String(event["type"])}\ndata: ${JSON.stringify(event)}\n\n`).join(""),
+    { headers: { "content-type": "text/event-stream" } },
+  )
+
+  /** Build the selection's model under `mismatch` and run `call` through a fetch that records each request and gives `reply`. */
+  const exchange = <A>(model: string, options: {
+    readonly reply: () => Response
+    readonly call: (svc: BuiltProvider["svc"]) => Effect.Effect<A, unknown>
+    readonly mismatch?: ThinkingPrefixMismatch
+    readonly credential?: Credential
+  }) => {
+    const sent: Array<Sent> = []
+    const fetch = ((input: unknown, init?: { readonly body?: unknown; readonly headers?: HeadersInit }) => {
+      const body = typeof init?.body === "string" ? init.body : new TextDecoder().decode(init?.body as Uint8Array)
+      sent.push({ url: String(input), beta: new Headers(init?.headers).get("anthropic-beta") ?? "", body: JSON.parse(body) as Record<string, unknown> })
+      return Promise.resolve(options.reply())
+    }) as typeof globalThis.fetch
+    return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const selection = yield* Effect.fromOption(parseModelSelection(model))
+      const built = yield* buildProvider(selection, options.credential, Redacted.make("test-key"))
+      const result = yield* Effect.exit(options.call(built.svc))
+      const descriptor = yield* modelRequestDescriptorOf(built.svc)
+      return { sent, result, descriptor }
+    })).pipe(
+      Effect.provideService(CurrentThinkingPrefixMismatch, options.mismatch ?? "provider-default"),
+      Effect.provideService(ModelsTransport, ModelsTransport.of({ fetch })),
+      Effect.provide(FetchHttpClient.layer),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    ))
+  }
+
+  /** An earlier turn whose reply thought (signed), thought redacted, then called a tool; then the tool's result. */
+  const replayed = Prompt.make([
+    { role: "user", content: "list the files" },
+    {
+      role: "assistant",
+      content: [
+        { type: "reasoning", text: "I should list them.", options: { anthropic: { info: { type: "thinking", signature: "sig/+=abc-0123" } } } },
+        { type: "reasoning", text: "", options: { anthropic: { info: { type: "redacted_thinking", redactedData: "redacted+/=xyz" } } } },
+        { type: "tool-call", id: "toolu_1", name: "ls", params: { path: "." }, providerExecuted: false },
+      ],
+    },
+    { role: "tool", content: [{ type: "tool-result", id: "toolu_1", name: "ls", isFailure: false, result: "a.txt" }] },
+  ] as Prompt.RawInput)
+
+  it("a stored reply's signed and redacted thinking go back byte for byte, in order, before its tool call", async () => {
+    const { sent } = await exchange("anthropic:claude-opus-5-5", { reply: settled([{ type: "text", text: "done" }]), call: (svc) => svc.generateText({ prompt: replayed }) })
+    const assistant = (sent[0]?.body["messages"] as ReadonlyArray<{ readonly role: string; readonly content: ReadonlyArray<Record<string, unknown>> }>)[1]
+    expect(assistant?.content.map((block) => block["type"])).toEqual(["thinking", "redacted_thinking", "tool_use"])
+    expect(assistant?.content[0]).toMatchObject({ type: "thinking", thinking: "I should list them.", signature: "sig/+=abc-0123" })
+    expect(assistant?.content[1]).toEqual({ type: "redacted_thinking", data: "redacted+/=xyz" })
+  })
+
+  const thinkingContent = [
+    { type: "thinking", thinking: "Let me think.", signature: "sig-stream" },
+    { type: "redacted_thinking", data: "redacted-stream" },
+    { type: "text", text: "ok" },
+  ]
+  const thinkingEvents: ReadonlyArray<Record<string, unknown>> = [
+    { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude-opus-5-5", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } } },
+    { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "", signature: "" } },
+    { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Let me think." } },
+    { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig-stream" } },
+    { type: "content_block_stop", index: 0 },
+    { type: "content_block_start", index: 1, content_block: { type: "redacted_thinking", data: "redacted-stream" } },
+    { type: "content_block_stop", index: 1 },
+    { type: "content_block_start", index: 2, content_block: { type: "text", text: "" } },
+    { type: "content_block_delta", index: 2, delta: { type: "text_delta", text: "ok" } },
+    { type: "content_block_stop", index: 2 },
+    { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 5 } },
+    { type: "message_stop" },
+  ]
+
+  it("a streamed reply folds to the thinking a settled one keeps: the same reasoning, signature and redacted data", async () => {
+    const reasoningOf = (messages: ReadonlyArray<AgentMessage>) => messages.flatMap((message) =>
+      typeof message.content === "string" ? [] : message.content.flatMap((part) => part.type === "reasoning" ? [{ text: part.text, metadata: "providerOptions" in part ? part.providerOptions : undefined }] : []))
+    const fromSettled = await exchange("anthropic:claude-opus-5-5", {
+      reply: settled(thinkingContent),
+      call: (svc) => svc.generateText({ prompt: "hi" }).pipe(Effect.map((response) => responseToAgentMessages(response.content))),
+    })
+    const fromStream = await exchange("anthropic:claude-opus-5-5", {
+      reply: streamed(thinkingEvents),
+      call: (svc) => foldStreamParts(svc.streamText({ prompt: "hi" }), () => Effect.void).pipe(Effect.map((folded) => responseToAgentMessages(folded.content))),
+    })
+    const settledReasoning = Exit.match(fromSettled.result, { onFailure: () => [], onSuccess: reasoningOf })
+    expect(settledReasoning.length).toBe(2)
+    expect(Exit.match(fromStream.result, { onFailure: () => [], onSuccess: reasoningOf })).toEqual(settledReasoning)
+  })
+
+  const blockBinding = (sent: Sent) => (sent.body["thinking"] as Record<string, unknown> | undefined)?.["block_binding"]
+
+  it("the binding is sent, with its beta, only to a model that binds thinking and only when the plugin asks; the descriptor records it", async () => {
+    const off = await exchange("anthropic:claude-opus-5-5", { reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
+    expect([off.sent[0]?.body["thinking"], off.sent[0]?.beta.includes(THINKING_BINDING_BETA)]).toEqual([undefined, false])
+    const on = await exchange("anthropic:claude-opus-5-5", { mismatch: "drop_block", reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
+    expect(on.sent[0]?.body["thinking"]).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } })
+    expect(on.sent[0]?.beta.split(",")).toContain(THINKING_BINDING_BETA)
+    expect(Option.map(on.descriptor, (value) => value.settings)).toEqual(Option.some({ systemPrelude: null, thinkingPrefixMismatch: "drop_block" }))
+    const refusing = await exchange("anthropic:claude-sonnet-5-5", { mismatch: "error", reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
+    expect(blockBinding(refusing.sent[0]!)).toEqual({ prefix_mismatch_behavior: "error" })
+    const older = await exchange("anthropic:claude-opus-4-8", { mismatch: "drop_block", reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
+    expect([older.sent[0]?.body["thinking"], older.sent[0]?.beta.includes(THINKING_BINDING_BETA)]).toEqual([undefined, false])
+    expect(Option.map(older.descriptor, (value) => value.settings)).toEqual(Option.some({ systemPrelude: null }))
+  })
+
+  it("the subscription route adds its betas to the client's own, the binding's included, instead of replacing them", async () => {
+    const oauth: Credential = { type: "oauth", access: Redacted.make("access"), refresh: Redacted.make("refresh"), expires: 4_102_444_800_000 }
+    const { sent } = await exchange("anthropic:claude-opus-5-5", {
+      credential: oauth,
+      mismatch: "drop_block",
+      reply: settled([{ type: "text", text: "ok" }]),
+      // A document part has the client add a beta of its own (its PDF and text documents).
+      call: (svc) => svc.generateText({ prompt: Prompt.make([{ role: "user", content: [{ type: "text", text: "read it" }, { type: "file", mediaType: "text/plain", data: "aGVsbG8=" }] }] as Prompt.RawInput) }),
+    })
+    const betas = sent[0]?.beta.split(",") ?? []
+    expect(betas).toEqual(expect.arrayContaining([...ANTHROPIC_OAUTH_BETA.split(","), THINKING_BINDING_BETA]))
+    expect(betas.length).toBeGreaterThan(ANTHROPIC_OAUTH_BETA.split(",").length + 1)
+    expect(new Set(betas).size).toBe(betas.length)
+  })
+
+  const droppedCount = (label: string, reason: string) => Effect.runPromise(Metric.value(Metric.withAttributes(
+    Metric.counter("llm.thinking.dropped", { description: "thinking blocks the provider dropped from a request whose conversation changed before them", incremental: true }),
+    { "llm.model": label, reason },
+  ))).then((state) => state.count)
+
+  it("the thinking blocks the provider dropped are counted by reason, from a settled body and from a stream's first event; the reply is unchanged", async () => {
+    const dropped = [{ type: "thinking_dropped", reason: "prefix_binding_mismatch" }, { type: "thinking_dropped", reason: "prefix_binding_mismatch" }, { type: "thinking_mismatch_allowed" }]
+    const before = await droppedCount("anthropic:claude-fable-5-1", "prefix_binding_mismatch")
+    const plain = await exchange("anthropic:claude-fable-5-1", {
+      mismatch: "drop_block",
+      reply: settled([{ type: "text", text: "ok" }], { input_transformations: dropped }),
+      call: (svc) => svc.generateText({ prompt: "hi" }).pipe(Effect.map((response) => response.text)),
+    })
+    expect(Exit.match(plain.result, { onFailure: () => "failed", onSuccess: (text) => text })).toBe("ok")
+    expect(await droppedCount("anthropic:claude-fable-5-1", "prefix_binding_mismatch")).toBe(before + 2)
+    const [start, ...rest] = thinkingEvents
+    const stream = await exchange("anthropic:claude-fable-5-1", {
+      mismatch: "drop_block",
+      reply: streamed([{ ...start, message: { ...(start?.["message"] as Record<string, unknown>), input_transformations: dropped.slice(0, 1) } }, ...rest]),
+      call: (svc) => Stream.runCollect(svc.streamText({ prompt: "hi" })).pipe(Effect.map((parts) => Array.from(parts).filter((part) => part.type === "text-delta").map((part) => part.delta).join(""))),
+    })
+    expect(Exit.match(stream.result, { onFailure: () => "failed", onSuccess: (text) => text })).toBe("ok")
+    expect(await droppedCount("anthropic:claude-fable-5-1", "prefix_binding_mismatch")).toBe(before + 3)
   })
 })

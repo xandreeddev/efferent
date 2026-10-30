@@ -253,12 +253,19 @@ export const retryableLlm =
       )
     })
 
+/** A part that carries its provider's metadata (a thinking block's signature, a redacted block's data). */
+const carriesMetadata = (part: unknown): boolean =>
+  Predicate.hasProperty(part, "metadata") && Predicate.isObject(part.metadata) && Object.keys(part.metadata).length > 0
+
 /** Content-part identity, on the stream vocabulary: a non-empty
- *  text/reasoning delta or a tool call. The retry gate arms on it, the
+ *  text/reasoning delta, a tool call, or a reasoning part that carries
+ *  provider metadata (a signature-only delta, a redacted block's start),
+ *  which the stream fold keeps as content. The retry gate arms on it, the
  *  empty guard counts it — S1 guarantees empty deltas never reach here. */
 const isStreamContentPart = (part: unknown): boolean => {
   const type = partType(part)
   if (type === "tool-call") return true
+  if ((type === "reasoning-start" || type === "reasoning-delta" || type === "reasoning-end") && carriesMetadata(part)) return true
   return (
     (type === "text-delta" || type === "reasoning-delta") &&
     Predicate.hasProperty(part, "delta") &&

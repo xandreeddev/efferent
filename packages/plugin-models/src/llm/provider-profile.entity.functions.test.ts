@@ -239,6 +239,18 @@ describe("the profile table", () => {
   it("a listed model's profile is its family's: the table's catalog and its rule agree", () => {
     expect(Object.values(PROVIDER_PROFILES).flatMap((profile) => profile.models.map((model) => [model, profile.modelOf(model.id)])))
       .toEqual(Object.values(PROVIDER_PROFILES).flatMap((profile) => profile.models.map((model) => [model, model])))
-    expect(modelProfileOf("openai-codex:gpt-5.3-codex-spark")).toEqual(Option.some({ id: "gpt-5.3-codex-spark", images: false, efforts: ["low", "medium", "high", "xhigh"] }))
+    expect(modelProfileOf("openai-codex:gpt-5.3-codex-spark")).toEqual(Option.some({ id: "gpt-5.3-codex-spark", images: false, efforts: ["low", "medium", "high", "xhigh"], bindsThinking: false }))
+  })
+
+  it("Claude binds thinking to the conversation from Fable 5.1 and Opus, Sonnet and Haiku 5.5, every later version and dated id included; no other model does", () => {
+    const binds = (selection: string) => Option.match(modelProfileOf(selection), { onNone: () => "none", onSome: (profile) => profile.bindsThinking })
+    expect([
+      "anthropic:claude-fable-5-1", "anthropic:claude-opus-5-5", "anthropic:claude-sonnet-5-5", "anthropic:claude-haiku-5-5",
+      "anthropic:claude-opus-5-5-20261001", "anthropic:claude-fable-5-2", "anthropic:claude-sonnet-6", "anthropic:claude-opus-6-1",
+    ].map(binds)).toEqual([true, true, true, true, true, true, true, true])
+    expect([
+      "anthropic:claude-fable-5", "anthropic:claude-opus-4-8", "anthropic:claude-sonnet-5", "anthropic:claude-haiku-4-5", "anthropic:claude-haiku-4-5-20251001",
+      "anthropic:claude-opus-5", "anthropic:claude-mythos-5-1", "openai:gpt-5.5", "openai-codex:gpt-5.6-sol", "opencode:glm-5.2", "google:gemini-3.1-pro",
+    ].map(binds)).toEqual([false, false, false, false, false, false, false, false, false, false, false])
   })
 })
