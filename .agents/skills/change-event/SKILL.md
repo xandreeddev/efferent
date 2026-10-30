@@ -103,4 +103,4 @@ the diff. The events guide (`docs/events.md`) quotes regions of
 - [ ] `JOURNAL`, `RECORDED_AS`, error-code tables updated; docs:generate output in the diff
 - [ ] Recorder scenario writes any new journal kind
 - [ ] Goldens re-recorded on purpose and reviewed; CHANGELOG entry
-- [ ] `env -u HTTP_PROXY -u HTTPS_PROXY bun test packages/core/src/turn packages/core/src/session packages/sdk/src`
+- [ ] `env -u HTTP_PROXY -u HTTPS_PROXY bun test packages/core/src/turn packages/core/src/engine packages/core/src/session packages/sdk/src`

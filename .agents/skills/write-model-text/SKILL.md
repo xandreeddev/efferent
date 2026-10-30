@@ -18,7 +18,7 @@ cached prefixes. Treat a wording change like an API change.
 | Skill `instructions` | `defineSkill` or a SKILL.md body | only through `load_skill` or a matcher seed; never for an `always: true` skill (tool discovery activates it but shows no instructions; `skillsDirectoryPlugin`'s `workspace.skills.always` section is the one exception) |
 | `Failure { error, message }` | a handler failure with `failureMode: "return"` | the tool result |
 | Result views and compact forms | beside the descriptions (`plugin-workspace/src/workspace-tools.entity.functions.ts`) | tool results; the compact form in older turns |
-| Correctives, host notes, compaction handoffs | `plugin-agent-loop/src/loop.ts`, `core/src/memory/*`, `core/src/loop/mapping.ts` | user-role messages |
+| Correctives, host notes, compaction handoffs | `plugin-agent-loop/src/loop.ts`, `core/src/memory/*`, `core/src/internal/mapping.entity.functions.ts` | user-role messages |
 | Utility prompts | `summaryPrompt` (plugin-memory-summary), `digestPrompt` (plugin-memory-digest) | a `UtilityLlm` completion |
 
 ## 2. Write it
@@ -64,7 +64,7 @@ exported from `@xandreed/core`); never hand-roll a frame or a marker.
   leaves a counted `clippedMarker`, `[… 1234 characters clipped]`, never a
   bare `…`.
 - House examples: `summaryPrompt` (`plugin-memory-summary/src/plugin.adapter.ts`),
-  `handoffToMessage` (`core/src/loop/mapping.ts`), the task result in
+  `handoffToMessage` (`core/src/internal/mapping.entity.functions.ts`), the task result in
   `plugin-tasks/src/task.entity.functions.ts`.
 
 ## 4. Tier, order, version

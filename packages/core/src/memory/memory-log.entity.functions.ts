@@ -4,11 +4,11 @@ import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage, ToolResultPart, UserContentPart } from "../domain/message.entity.js"
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
-import { handoffToMessage } from "../loop/mapping.js"
+import { handoffToMessage } from "../internal/mapping.entity.functions.js"
 import { clippedMarker, clipTo } from "../turn/model-text.js"
 import { attachmentsOf, userMessageText } from "../turn/user-message.entity.functions.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
-import type { ArtifactRef, BuiltContext, CompactionAction, EntryId, LogBody, LogEntry, Subject } from "./memory-log.entity.js"
+import type { ArtifactRef, BuiltContext, CompactionAction, EntryId, LogBody, LogEntry, LogQuery, Subject } from "./memory-log.entity.js"
 import { EntryId as EntryIdSchema } from "./memory-log.entity.js"
 
 /** Key-sorted JSON: identical values always serialize to identical bytes. */
@@ -385,15 +385,6 @@ export const rawTranscript = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<A
     }
     return []
   }))
-
-export interface LogQuery {
-  readonly kinds: ReadonlyArray<LogBody["_tag"]>
-  readonly turns: Option.Option<{ readonly from: number; readonly to: number }>
-  readonly tool: Option.Option<string>
-  readonly subject: Option.Option<{ readonly kind: string; readonly id: Option.Option<string> }>
-  readonly text: Option.Option<string>
-  readonly limit: Option.Option<number>
-}
 
 export const emptyQuery: LogQuery = {
   kinds: [], turns: Option.none(), tool: Option.none(), subject: Option.none(), text: Option.none(), limit: Option.none(),

@@ -32,7 +32,8 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 - `foundry` runs the gates (development tooling); `website` is the docs site. Neither is published.
 
 The `boundaries` layers in `foundry.config.ts` enforce the direction (a
-`<name>-tests` layer before a package's widens it for tests). Everything but
+`<name>-tests` layer before a package's widens it for tests); inside core,
+layers by role do (`packages/core/AGENTS.md`). Everything but
 `plugin-session-sqlite` (`bun:sqlite`) also loads on Node 24. Session data
 defaults to `.efferent/runtime`: never delete old local data to reset it.
 Build output goes under `.artifacts`.

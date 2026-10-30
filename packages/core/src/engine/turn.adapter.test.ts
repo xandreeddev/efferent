@@ -17,9 +17,9 @@ import type { RunTools } from "../ports/tool-registry.port.js"
 import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
 import { TurnMemory, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnOutcome } from "../ports/turn.port.js"
-import { recordingTurnWriter } from "./testing.js"
+import { recordingTurnWriter } from "../turn/testing.js"
 import { TurnLive } from "./turn.adapter.js"
-import { guardTurn, openTurnTools, traceTurn } from "./turn-lifecycle.js"
+import { guardTurn, openTurnTools, traceTurn } from "./turn-lifecycle.usecase.functions.js"
 
 const policy: MemoryPolicy = {
   strategy: { id: "test", version: "1" },

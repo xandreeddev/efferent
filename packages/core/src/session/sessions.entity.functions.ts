@@ -1,10 +1,11 @@
 import { Cause, Exit, Formatter, Option, Predicate, Result, Schema } from "effect"
+import type { ConversationId } from "../domain/message.entity.js"
 import type { TurnEndReason, TurnEnding, TurnFailure, TurnOrigin, TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import { isHarnessError } from "../harness/plugin.entity.functions.js"
 import { SessionLogError } from "./session-log.entity.js"
 import { ReservedKind, SessionContended, TurnClosed } from "./sessions.entity.js"
-import type { NotResumable, TurnError } from "./sessions.entity.js"
+import type { AdmittedTurn, NotResumable, TurnError } from "./sessions.entity.js"
 
 const taggedTurnErrors = [TurnClosed, ReservedKind, SessionContended, SessionLogError].map((error) => Schema.is(Schema.Struct(error.fields)))
 
@@ -119,3 +120,23 @@ export const resumeRefusal = (target: number, turns: ReadonlyArray<ResumableTurn
       : stopped(found.ended) ? Option.none()
       : Option.some("finished" as const),
   })
+
+/**
+ * A session's id as span attributes and log annotations: `efferent.session.id`.
+ * Ids belong there, not in a log line's text.
+ */
+export const sessionAttributes = (session: ConversationId): Record<string, unknown> => ({
+  "efferent.session.id": session,
+})
+
+/**
+ * A turn's ids as span attributes and log annotations: `efferent.session.id`,
+ * `efferent.run.id` and `efferent.turn`. Every span under the turn's
+ * `agent.turn` carries them (`traceTurn`), and `Agent.turn` annotates the
+ * turn's logs with them.
+ */
+export const turnAttributes = (admitted: AdmittedTurn): Record<string, unknown> => ({
+  ...sessionAttributes(admitted.session.id),
+  "efferent.run.id": admitted.runId,
+  "efferent.turn": admitted.turn,
+})

@@ -10,9 +10,9 @@ import { CurrentTraceContent } from "../loop/traceContent.js"
 import { SessionLogError } from "../session/session-log.entity.js"
 import { turnEndingOf } from "../session/sessions.entity.functions.js"
 import { ReservedKind, SessionContended, TurnClosed } from "../session/sessions.entity.js"
-import { harnessDefectsAsFailures, makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
-import { defineHostEvent, onEvent, onTool, subscribeAll } from "./turn-event.entity.functions.js"
-import type { TurnEvent } from "./turn-event.entity.js"
+import { harnessDefectsAsFailures, makeTurnEvents, makeTurnTasks } from "./turn-bus.adapter.js"
+import { defineHostEvent, onEvent, onTool, subscribeAll } from "../turn/turn-event.entity.functions.js"
+import type { TurnEvent } from "../turn/turn-event.entity.js"
 
 const started = (step: number): TurnEvent => ({ _tag: "step.started", step, run: RunOrdinal.make(0), planned: false, activeTools: [] })
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000e1")

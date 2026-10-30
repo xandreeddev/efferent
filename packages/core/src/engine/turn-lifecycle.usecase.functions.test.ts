@@ -8,8 +8,8 @@ import type { TurnWriter } from "../ports/sessions.port.js"
 import type { TurnResult } from "../ports/turn.port.js"
 import type { JsonObject } from "../session/session-log.entity.js"
 import { SessionBusy } from "../session/sessions.entity.js"
-import { sessionAttributes, traceTurn, traceTurnBegin, turnAttributes } from "./turn-lifecycle.js"
-import { UserMessage } from "./user-message.entity.js"
+import { traceTurn, traceTurnBegin } from "./turn-lifecycle.usecase.functions.js"
+import { UserMessage } from "../turn/user-message.entity.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000c1")
 
@@ -156,12 +156,5 @@ describe("traceTurnBegin", () => {
     })
     await Effect.runPromise(Effect.logInfo("beginning").pipe(Effect.as(writerWith({})), traceTurnBegin(begin), Effect.provide(Logger.layer([logger]))))
     expect(annotations).toEqual([{ "efferent.session.id": session, "efferent.run.id": "run-3" }])
-  })
-})
-
-describe("turnAttributes and sessionAttributes", () => {
-  test("name a turn's ids and a session's id under the keys spans and logs share", () => {
-    expect(turnAttributes(writerWith({}).admitted)).toEqual({ "efferent.session.id": session, "efferent.run.id": "run-3", "efferent.turn": 3 })
-    expect(sessionAttributes(session)).toEqual({ "efferent.session.id": session })
   })
 })

@@ -1,6 +1,6 @@
 import type { Tool } from "effect/ai"
 import { Context, Effect, Option } from "effect"
-import { strictJsonSchema, toolParametersSchema } from "../loop/toolSchema.js"
+import { strictJsonSchema, toolParametersSchema } from "../internal/tool-schema.entity.functions.js"
 import type { Capability, PromptContext, PromptSection, RegisteredTool, ToolDefinition, ToolViewInput } from "../ports/capability.port.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
 import { CapabilityId, CapabilityToolId, SkillId, SkillReferenceId } from "./capability.entity.js"
