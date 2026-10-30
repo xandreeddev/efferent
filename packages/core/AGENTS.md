@@ -4,6 +4,37 @@ Shared schemas, service ports, message codecs and protocol helpers. Runtime
 dependencies are Effect and the provider-neutral effect/ai contracts only.
 No provider SDKs, filesystem IO, runtime graph, terminal, or host imports.
 
+`src/loop` holds the References a step reads (`CurrentPromptCacheKey`,
+`CurrentModelCallPolicy`, `CurrentAgentStep`, `CurrentTraceContent` with
+`replayableContext`, `CurrentPromptProvenance`). `src/internal` holds what
+the agent loop, the models plugin and the sdk share with core: the provider
+mapping (`mapping.entity.functions.ts`), the stream fold, tool schemas, and
+the JSON, glob and id helpers. `src/engine` holds the turn engine:
+`TurnLive` (`turn.adapter.ts`), a turn's run and lifecycle
+(`turn-run.usecase.functions.ts`, `turn-lifecycle.usecase.functions.ts`) and
+its bus (`turn-bus.adapter.ts`). `src/index.ts` exports every name the root
+always has; a root entry may not re-export what `internal/` or `engine/`
+declares (`scripts/api-snapshot.ts`), so the block at its end declares each
+of those names again: the same value, or a type of the same shape.
+
+The boundaries gate (`foundry.config.ts`) layers core by a file's role; a
+file is in the first layer whose glob matches it:
+
+| Layer | Files | May import |
+|---|---|---|
+| `core-model` | `*.entity.ts`; the References in `loop/` | nothing of core |
+| `core-ports` | `ports/**` | model |
+| `core-logic` | `*.entity.functions.ts`, `internal/**`, `turn/model-text.ts` | model, ports |
+| `core` | everything else: adapters, harness, the memory session, prompt sections; and the entry, `index.ts`, which re-exports every layer | model, ports, logic |
+| `core-engine` | `engine/**` | model, ports, logic, core |
+| `core-kits` | `*.conformance.ts` | model, ports, logic, core, engine: the step-loop and registry kits run turns over the engine |
+| `core-tests` | `*.test.ts` | every layer, and `fast-check` and `bun:test`, which no other layer imports |
+
+A port that needs a type from a functions file gets it from the entity file
+(`LogQuery` is in `memory-log.entity.ts`); what code beneath the engine needs
+does not live in it (`sessionAttributes` and `turnAttributes`, which the
+in-memory log and the sessions plugin use, are session functions).
+
 Plugin and configuration contracts live in `src/harness`; service tags live in
 `src/ports`. Entity files contain schemas and derived types. Behavior belongs
 in paired `.functions.ts` modules. `definePlugin` bridges typed Layers at the
@@ -122,7 +153,7 @@ around work that runs somewhere else, goes through `replayableContext`
 (`src/loop/traceContent.ts`): the services tool handlers, policy and loop
 callbacks run with (the registry, `stepRequestOf`, `turnOf`, `runLoop`),
 a model layer's dependencies (the models plugin), the services of
-`Agent.turn`'s input, bus subscribers (`turn-bus.ts`), a live layer's
+`Agent.turn`'s input, bus subscribers (`engine/turn-bus.adapter.ts`), a live layer's
 dependencies (`makeLiveLayer`) and the session chassis's (`makeSession`).
 It drops the trace and log state of the place it was captured: the parent
 span, so spans nest where the replayed work runs; the span annotations and
@@ -139,9 +170,9 @@ from its spans or a tool handler's logs.
 
 Span attributes and log annotations share their keys: `turnAttributes`
 (`efferent.session.id`, `efferent.run.id`, `efferent.turn`) and
-`sessionAttributes` (`src/turn/turn-lifecycle.ts`). `traceTurn` opens
-`agent.turn`; `traceTurnBegin` opens `agent.turn.begin`, its sibling, around
-a begin. Put no span between `traceTurn` and `guardTurn`: a failed turn's
+`sessionAttributes` (`src/session/sessions.entity.functions.ts`). `traceTurn`
+(`src/engine/turn-lifecycle.usecase.functions.ts`) opens `agent.turn`;
+`traceTurnBegin` opens `agent.turn.begin`, its sibling, around a begin. Put no span between `traceTurn` and `guardTurn`: a failed turn's
 usage goes on the span current where `guardTurn` runs.
 
 Core's own spans are `Effect.fn` and few: `turn.persist_reply` (`TurnLive`'s

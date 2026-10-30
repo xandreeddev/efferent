@@ -21,7 +21,7 @@ import {
   withToolCallIds,
   withUsageOnAssistant,
   handoffToMessage,
-} from "./mapping.js"
+} from "./mapping.entity.functions.js"
 
 const assistantMsg: AgentMessage = { role: "assistant", content: [{ type: "text", text: "a" }] }
 const toolMsg: AgentMessage = {

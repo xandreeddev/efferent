@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Schema } from "effect"
 import { Tool } from "effect/ai"
-import { strictJsonSchema, toolParametersSchema } from "./toolSchema.js"
+import { strictJsonSchema, toolParametersSchema } from "./tool-schema.entity.functions.js"
 
 describe("strictJsonSchema", () => {
   test("an optional key is absent, never null; an explicit null stays", () => {

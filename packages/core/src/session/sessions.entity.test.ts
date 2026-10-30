@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Exit, Option, Schema } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
+import { RunId } from "../domain/run.entity.js"
 import type { TurnEndReason } from "../domain/turn-vocabulary.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { UserMessage } from "../turn/user-message.entity.js"
 import { SessionLogError } from "./session-log.entity.js"
 import { ReservedKind, SessionBusy, SessionContended, TurnClosed } from "./sessions.entity.js"
-import { resumeRefusal, turnEndingOf } from "./sessions.entity.functions.js"
+import type { AdmittedTurn } from "./sessions.entity.js"
+import { resumeRefusal, sessionAttributes, turnAttributes, turnEndingOf } from "./sessions.entity.functions.js"
 import type { ResumableTurn } from "./sessions.entity.functions.js"
 
 class Untold extends Schema.TaggedError<Untold>()("Untold", { attempt: Schema.Number }) {}
@@ -130,5 +133,18 @@ describe("resumeRefusal", () => {
     expect(resumeRefusal(1, [user(1, "partial")])).toEqual(Option.some("finished"))
     expect(resumeRefusal(1, [user(1, "failed")])).toEqual(Option.some("finished"))
     expect(resumeRefusal(1, [user(1)])).toEqual(Option.some("finished"))
+  })
+})
+
+describe("turnAttributes and sessionAttributes", () => {
+  const session = ConversationId.make("00000000-0000-4000-8000-0000000000c1")
+  const admitted: AdmittedTurn = {
+    session: { id: session, owner: "test" }, turn: 3, runId: RunId.make("run-3"), key: "run-3", origin: "inbox",
+    userMessage: new UserMessage({ text: "hello" }), command: {}, claimed: [], meta: {},
+  }
+
+  test("name a turn's ids and a session's id under the keys spans and logs share", () => {
+    expect(turnAttributes(admitted)).toEqual({ "efferent.session.id": session, "efferent.run.id": "run-3", "efferent.turn": 3 })
+    expect(sessionAttributes(session)).toEqual({ "efferent.session.id": session })
   })
 })

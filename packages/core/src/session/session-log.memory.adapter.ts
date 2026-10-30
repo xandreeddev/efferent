@@ -4,7 +4,7 @@ import { SessionLog } from "../ports/session-log.port.js"
 import { LeaseExpired, RevisionConflict, SessionExists, SessionLogError, SessionMissing } from "./session-log.entity.js"
 import type { JsonObject, SessionCommitted, SessionHead, SessionHeader, SessionLogEvent } from "./session-log.entity.js"
 import { storedJson } from "./session-log.entity.functions.js"
-import { sessionAttributes } from "../turn/turn-lifecycle.js"
+import { sessionAttributes } from "./sessions.entity.functions.js"
 
 /** A head as stored (its `now` is added when read) and the session's events. */
 interface Stored {

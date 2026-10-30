@@ -6,7 +6,7 @@ import { ProviderId } from "../domain/model-selection.entity.js"
 import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import type { AuthStore, Credential } from "../ports/auth-store.port.js"
-import { randomUuid } from "../util/random-id.js"
+import { randomUuid } from "../internal/random-id.entity.functions.js"
 
 type Store = Context.Service.Shape<typeof AuthStore>
 

@@ -121,7 +121,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = []
 const UNKNOWN_JSON_EDGES = [
   "packages/core/src/mcp/bridge.ts",
   "packages/core/src/harness/config.entity.ts",
-  "packages/core/src/util/json.ts",
+  "packages/core/src/internal/json.entity.functions.ts",
 ]
 
 /**
@@ -183,12 +183,9 @@ const UNKNOWN_REQUIREMENT_EDGES = [
 const ROLELESS_FILES = [
   "packages/core/src/conformance.functions.ts",
   "packages/core/src/loop/cacheKey.ts",
-  "packages/core/src/loop/mapping.ts",
   "packages/core/src/loop/modelPolicy.ts",
   "packages/core/src/loop/promptProvenance.ts",
   "packages/core/src/loop/stepContext.ts",
-  "packages/core/src/loop/streamFold.ts",
-  "packages/core/src/loop/toolSchema.ts",
   "packages/core/src/loop/traceContent.ts",
   "packages/core/src/mcp/bridge.ts",
   "packages/core/src/memory/memory-session.ts",
@@ -198,12 +195,6 @@ const ROLELESS_FILES = [
   "packages/core/src/spec/frontmatter.ts",
   "packages/core/src/turn/model-text.ts",
   "packages/core/src/turn/prompt-sections.ts",
-  "packages/core/src/turn/turn-bus.ts",
-  "packages/core/src/turn/turn-lifecycle.ts",
-  "packages/core/src/turn/turn-run.ts",
-  "packages/core/src/util/glob.ts",
-  "packages/core/src/util/json.ts",
-  "packages/core/src/util/random-id.ts",
   "packages/evals/src/cli.functions.ts",
   "packages/evals/src/contracts/evaluation-app.contract.functions.ts",
   "packages/evals/src/contracts/evaluation-app.contract.ts",
@@ -389,17 +380,26 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "evals-langsmith-tests", path: "packages/evals-langsmith/src/**/*.test.ts", canImport: ["evals-langsmith", "evals"], externals: ["effect", "langsmith", "node:", "bun:test"] },
       { name: "evals-langsmith", path: "packages/evals-langsmith/src/**", canImport: ["evals"], externals: ["effect", "langsmith", "node:", "bun:test"] },
       {name:"evals",path:"packages/evals/src/**",canImport:[],externals:["effect","effect/ai","@noble/hashes/","node:","bun:test"]},
-      {
-            "name": "core",
-            "path": "packages/core/src/**",
-            "canImport": [],
-            "externals": [
-                  "effect",
-                  "effect/ai",
-                  "fast-check",
-                  "bun:test"
-            ]
-      },
+      // Core's layers, by a file's role rather than its folder; a glob takes no
+      // alternatives, so a layer may need several entries. From the bottom:
+      // the model (entities, and the References in `loop/`) imports nothing of
+      // core; the ports, the model; the logic (entity functions, `internal/`,
+      // the model-text frames), both; `core` (adapters, harness, the memory
+      // session, prompt sections), those three; the turn engine (`engine/`),
+      // those four; the kits, the engine too, since two of them run turns over
+      // it. The entry, `index.ts`, is `core` too (what `@xandreed/core`
+      // reaches), and re-exports every layer.
+      { name: "core-tests", path: "packages/core/src/**/*.test.ts", canImport: ["core-model", "core-ports", "core-logic", "core", "core-engine", "core-kits"], externals: ["effect", "effect/ai", "fast-check", "bun:test"] },
+      { name: "core", path: "packages/core/src/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-engine", "core-kits"], externals: ["effect", "effect/ai"] },
+      { name: "core-model", path: "packages/core/src/**/*.entity.ts", canImport: [], externals: ["effect", "effect/ai"] },
+      { name: "core-model", path: "packages/core/src/loop/*.ts", canImport: [], externals: ["effect", "effect/ai"] },
+      { name: "core-ports", path: "packages/core/src/ports/**", canImport: ["core-model"], externals: ["effect", "effect/ai"] },
+      { name: "core-logic", path: "packages/core/src/**/*.entity.functions.ts", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
+      { name: "core-logic", path: "packages/core/src/internal/**", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
+      { name: "core-logic", path: "packages/core/src/turn/model-text.ts", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
+      { name: "core-engine", path: "packages/core/src/engine/**", canImport: ["core-model", "core-ports", "core-logic", "core"], externals: ["effect", "effect/ai"] },
+      { name: "core-kits", path: "packages/core/src/**/*.conformance.ts", canImport: ["core-model", "core-ports", "core-logic", "core", "core-engine"], externals: ["effect", "effect/ai"] },
+      { name: "core", path: "packages/core/src/**", canImport: ["core-model", "core-ports", "core-logic"], externals: ["effect", "effect/ai"] },
       {
             "name": "foundry",
             "path": "packages/foundry/src/**",

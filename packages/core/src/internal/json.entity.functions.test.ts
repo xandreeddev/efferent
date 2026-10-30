@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { asJsonRecord } from "./json.js"
+import { asJsonRecord } from "./json.entity.functions.js"
 
 describe("asJsonRecord", () => {
   test("a parsed JSON object reads as itself", () => {

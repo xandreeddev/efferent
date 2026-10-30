@@ -675,6 +675,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/foundry`: rule checks receive the workspace (its root and the
   program's source files) as `RuleContext.workspace`, beside the file and
   the checker.
+- Core's source is laid out by role, with no change to its API: the
+  provider mapping, the stream fold, tool schemas and the JSON, glob and id
+  helpers are in `src/internal/`, and the turn engine (`TurnLive`, a turn's
+  run, lifecycle and bus) is in `src/engine/`. `@xandreed/core` and
+  `@xandreed/sdk` export the same names as before (`api/` is unchanged).
+  The boundaries gate now layers core by role (model, ports, logic, core,
+  engine, kits, tests; `packages/core/AGENTS.md` has the table), so a port,
+  an entity or a helper that imports the engine fails `bun run typecheck`.
 
 ### Fixed
 

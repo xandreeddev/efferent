@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test"
 import { Context, Effect, Option, Schema } from "effect"
 import { Tool } from "effect/ai"
-import { strictJsonSchema, toolParametersSchema } from "../loop/toolSchema.js"
+import { strictJsonSchema, toolParametersSchema } from "../internal/tool-schema.entity.functions.js"
 import type { PromptContext, PromptSection } from "../ports/capability.port.js"
 import { SessionEnvironment } from "../ports/harness.port.js"
 import { catalogOf, defineCapability, definePromptSection, defineSkill, defineTool, resolveCapabilities } from "./capability.entity.functions.js"

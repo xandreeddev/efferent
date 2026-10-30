@@ -1,5 +1,5 @@
 import { Chunk, Effect } from "effect"
-import { compileGlob } from "../util/glob.js"
+import { compileGlob } from "../internal/glob.entity.functions.js"
 import { FsError } from "./file-system.entity.js"
 import type { DirEntry, GlobOptions, GlobResult } from "./file-system.entity.js"
 

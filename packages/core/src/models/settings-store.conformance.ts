@@ -7,7 +7,7 @@ import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { SETTINGS_KEYS } from "../ports/settings-store.port.js"
 import type { EngineSettings, ModelRole, SettingsKey, SettingsStore } from "../ports/settings-store.port.js"
-import { randomUuid } from "../util/random-id.js"
+import { randomUuid } from "../internal/random-id.entity.functions.js"
 
 type Store = Context.Service.Shape<typeof SettingsStore>
 type Field = keyof Pick<EngineSettings, "model" | "codeModel" | "fastModel" | SettingsKey>

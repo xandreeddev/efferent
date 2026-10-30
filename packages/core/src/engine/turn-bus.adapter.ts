@@ -5,8 +5,8 @@ import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
 import type { SubscribeOptions, TurnEventsService, TurnTasksService } from "../ports/turn-events.port.js"
 import { isTurnError } from "../session/sessions.entity.functions.js"
 import type { TurnError } from "../session/sessions.entity.js"
-import type { TurnEvent } from "./turn-event.entity.js"
-import { randomUuid } from "../util/random-id.js"
+import type { TurnEvent } from "../turn/turn-event.entity.js"
+import { randomUuid } from "../internal/random-id.entity.functions.js"
 
 interface Subscriber {
   readonly id: number

@@ -1,6 +1,6 @@
 import { Context, Effect, Option, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
-import { toolParametersSchema } from "../loop/toolSchema.js"
+import { toolParametersSchema } from "../internal/tool-schema.entity.functions.js"
 import { isBudgetTokens } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { canonicalJson, entriesSendingMedia, estimateTokens, fingerprintOf } from "../memory/memory-log.entity.functions.js"
@@ -14,8 +14,8 @@ import type { TurnPolicy } from "../ports/turn.port.js"
 import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
 import type { TurnError } from "../session/sessions.entity.js"
-import type { CompletionVerdict } from "./turn-event.entity.js"
-import type { MemoryRenderRecipe } from "./model-request.entity.js"
+import type { CompletionVerdict } from "../turn/turn-event.entity.js"
+import type { MemoryRenderRecipe } from "../turn/model-request.entity.js"
 import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
 import { CurrentModelCallPolicy } from "../loop/modelPolicy.js"
 import { CurrentTraceContent, replayableContext } from "../loop/traceContent.js"
@@ -26,7 +26,7 @@ import {
   modelRequestTools,
   reconstructModelRequest,
   resolveModelRequest,
-} from "./model-request.entity.functions.js"
+} from "../turn/model-request.entity.functions.js"
 
 /** What a step's plan decided before it built the context: the model choice, the system prompt, the directive. */
 interface StepDecision {

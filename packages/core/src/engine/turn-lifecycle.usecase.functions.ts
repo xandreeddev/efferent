@@ -12,10 +12,10 @@ import { TurnMemory, TurnToolbox } from "../ports/turn-scope.port.js"
 import type { TurnRunOptions } from "../ports/turn-scope.port.js"
 import type { Turn, TurnOutcome, TurnResult, TurnTools } from "../ports/turn.port.js"
 import type { AdmittedTurn, TurnError } from "../session/sessions.entity.js"
-import { turnEndingOf } from "../session/sessions.entity.functions.js"
-import { harnessDefectsAsFailures } from "./turn-bus.js"
-import { runTurnLoop } from "./turn-run.js"
-import type { TurnRunServices } from "./turn-run.js"
+import { sessionAttributes, turnAttributes, turnEndingOf } from "../session/sessions.entity.functions.js"
+import { harnessDefectsAsFailures } from "./turn-bus.adapter.js"
+import { runTurnLoop } from "./turn-run.usecase.functions.js"
+import type { TurnRunServices } from "./turn-run.usecase.functions.js"
 
 const failed: TurnOutcome = { outcome: "failed", reply: Option.none() }
 
@@ -198,26 +198,6 @@ export interface TurnTraceOptions {
    */
   readonly spanMeta?: ReadonlyArray<string>
 }
-
-/**
- * A session's id as span attributes and log annotations: `efferent.session.id`.
- * Ids belong there, not in a log line's text.
- */
-export const sessionAttributes = (session: ConversationId): Record<string, unknown> => ({
-  "efferent.session.id": session,
-})
-
-/**
- * A turn's ids as span attributes and log annotations: `efferent.session.id`,
- * `efferent.run.id` and `efferent.turn`. Every span under the turn's
- * `agent.turn` carries them (`traceTurn`), and `Agent.turn` annotates the
- * turn's logs with them.
- */
-export const turnAttributes = (admitted: AdmittedTurn): Record<string, unknown> => ({
-  ...sessionAttributes(admitted.session.id),
-  "efferent.run.id": admitted.runId,
-  "efferent.turn": admitted.turn,
-})
 
 const metaAttribute = (value: unknown): unknown =>
   typeof value === "string" || typeof value === "number" || typeof value === "boolean" ? value : JSON.stringify(value)

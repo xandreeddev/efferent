@@ -94,11 +94,6 @@ export { FileSystem } from "./ports/file-system.port.js"
 export { Bash } from "./ports/bash.port.js"
 export { UtilityCompletion, UtilityError, UtilityLlm } from "./ports/utility-llm.port.js"
 
-// util
-export { asJsonRecord, decodeJsonLines, parseJsonOption, parseJsonWarn } from "./util/json.js"
-export { compileGlob, globMatcher } from "./util/glob.js"
-export type { GlobMatcher, GlobMatchOptions } from "./util/glob.js"
-
 // workspace: the in-memory FileSystem backend and the FileSystem and Bash contracts
 export { FileSystemMemoryLive, makeMemoryFileSystem } from "./workspace/file-system.memory.adapter.js"
 export type { MemoryFileSystem, MemorySeed } from "./workspace/file-system.memory.adapter.js"
@@ -108,27 +103,8 @@ export { bashConformance } from "./workspace/bash.conformance.js"
 export type { BashFixture, BashSubject } from "./workspace/bash.conformance.js"
 
 // loop
-export {
-  assistantModel,
-  assistantUsage,
-  extractUsage,
-  handoffToMessage,
-  safeKeepFrom,
-  responseReasoning,
-  responseText,
-  responseToAgentMessages,
-  responseToolCalls,
-  responseToolResults,
-  toPromptMessages,
-  withToolCallIds,
-  withUsageOnAssistant,
-} from "./loop/mapping.js"
-export type { ToolResultSummary } from "./loop/mapping.js"
 export { CurrentPromptCacheKey } from "./loop/cacheKey.js"
 export { CurrentTraceContent, replayableContext } from "./loop/traceContent.js"
-export { foldStreamParts } from "./loop/streamFold.js"
-export { strictJsonSchema, toolParametersSchema } from "./loop/toolSchema.js"
-export type { FoldedTurn, StreamDelta } from "./loop/streamFold.js"
 export { McpCallOutcome, McpClient, McpError, McpToolDescriptor } from "./ports/mcp-client.port.js"
 export { buildMcpBridge, emptyMcpBridge, McpCall, McpDescribe } from "./mcp/bridge.js"
 export type { McpBridge, McpBridgedTool } from "./mcp/bridge.js"
@@ -153,7 +129,7 @@ export { turnUsageOf } from "./session/session-event.entity.functions.js"
 export { readStored, readStoredKeys, RequestPreparedKeys, StoredData, StoredKeys, TurnStartedKeys } from "./session/session-event.entity.functions.js"
 export type { KeyedKind, Stored, StoredKeysOf, StoredKind } from "./session/session-event.entity.functions.js"
 export * from "./session/sessions.entity.js"
-export { isTurnError, resumeRefusal, turnEndingOf } from "./session/sessions.entity.functions.js"
+export { isTurnError, resumeRefusal, sessionAttributes, turnAttributes, turnEndingOf } from "./session/sessions.entity.functions.js"
 export type { ResumableTurn } from "./session/sessions.entity.functions.js"
 export * from "./ports/sessions.port.js"
 export * from "./ports/turn-admission.port.js"
@@ -232,7 +208,6 @@ export { StreamFallbackEvent, ToolRefusalReason, ToolRefusedEvent, TURN_EVENT_NA
 export * from "./turn/turn-event.entity.functions.js"
 export * from "./turn/model-request.entity.js"
 export * from "./turn/model-request.entity.functions.js"
-export * from "./turn/turn-bus.js"
 export * from "./ports/turn-events.port.js"
 export * from "./ports/step-loop.port.js"
 export * from "./ports/turn.port.js"
@@ -240,11 +215,6 @@ export type { TurnResult } from "./ports/turn.port.js"
 export * from "./ports/turn-scope.port.js"
 export * from "./turn/prompt-sections.js"
 export { clippedMarker, clipTo, escapeFrame, framed, hostNote } from "./turn/model-text.js"
-export * from "./turn/turn.adapter.js"
-export * from "./turn/turn-run.js"
-export * from "./turn/turn-lifecycle.js"
-export { sessionAttributes, traceTurn, traceTurnBegin, turnAttributes } from "./turn/turn-lifecycle.js"
-export type { TurnBeginTrace, TurnTraceOptions } from "./turn/turn-lifecycle.js"
 export * from "./decision-record.entity.functions.js"
 export { CollectSkillFilesOptions, SkillFile, SkillFileIssue, SkillFilesOptions, SkillTree, SkillTreeEntry } from "./harness/skill-files.entity.js"
 export { collectSkillFiles, readSkillFiles, skillIssuesText, skillsFromFiles } from "./harness/skill-files.entity.functions.js"
@@ -260,3 +230,67 @@ export type { AuthStoreConformanceOptions, AuthStoreRefreshProbe } from "./model
 export { settingsStoreConformance } from "./models/settings-store.conformance.js"
 export type { SettingsStoreConformanceOptions } from "./models/settings-store.conformance.js"
 export { modelCatalogConformance } from "./models/model-catalog.conformance.js"
+
+// The provider mapping, stream fold, tool schemas and JSON, glob and id helpers
+// (`internal/`), and the turn engine (`engine/`), under the names the root has
+// always exported. A root entry may not re-export what those folders declare
+// (`scripts/api-snapshot.ts`), so each name is declared here: the same value,
+// or a type of the same shape.
+import * as glob from "./internal/glob.entity.functions.js"
+import * as json from "./internal/json.entity.functions.js"
+import * as mapping from "./internal/mapping.entity.functions.js"
+import * as streamFold from "./internal/stream-fold.entity.functions.js"
+import * as toolSchema from "./internal/tool-schema.entity.functions.js"
+import * as turnBus from "./engine/turn-bus.adapter.js"
+import * as turnLifecycle from "./engine/turn-lifecycle.usecase.functions.js"
+import * as turnRun from "./engine/turn-run.usecase.functions.js"
+import * as turnAdapter from "./engine/turn.adapter.js"
+
+export const asJsonRecord: typeof json.asJsonRecord = json.asJsonRecord
+export const decodeJsonLines: typeof json.decodeJsonLines = json.decodeJsonLines
+export const parseJsonOption: typeof json.parseJsonOption = json.parseJsonOption
+export const parseJsonWarn: typeof json.parseJsonWarn = json.parseJsonWarn
+export const compileGlob: typeof glob.compileGlob = glob.compileGlob
+export const globMatcher: typeof glob.globMatcher = glob.globMatcher
+export interface GlobMatcher extends glob.GlobMatcher {}
+export interface GlobMatchOptions extends glob.GlobMatchOptions {}
+
+export const assistantModel: typeof mapping.assistantModel = mapping.assistantModel
+export const assistantUsage: typeof mapping.assistantUsage = mapping.assistantUsage
+export const extractUsage: typeof mapping.extractUsage = mapping.extractUsage
+export const handoffToMessage: typeof mapping.handoffToMessage = mapping.handoffToMessage
+export const safeKeepFrom: typeof mapping.safeKeepFrom = mapping.safeKeepFrom
+export const responseReasoning: typeof mapping.responseReasoning = mapping.responseReasoning
+export const responseText: typeof mapping.responseText = mapping.responseText
+export const responseToAgentMessages: typeof mapping.responseToAgentMessages = mapping.responseToAgentMessages
+export const responseToolCalls: typeof mapping.responseToolCalls = mapping.responseToolCalls
+export const responseToolResults: typeof mapping.responseToolResults = mapping.responseToolResults
+export const toPromptMessages: typeof mapping.toPromptMessages = mapping.toPromptMessages
+export const withToolCallIds: typeof mapping.withToolCallIds = mapping.withToolCallIds
+export const withUsageOnAssistant: typeof mapping.withUsageOnAssistant = mapping.withUsageOnAssistant
+export interface ToolResultSummary extends mapping.ToolResultSummary {}
+export const foldStreamParts: typeof streamFold.foldStreamParts = streamFold.foldStreamParts
+export interface FoldedTurn extends streamFold.FoldedTurn {}
+export interface StreamDelta extends streamFold.StreamDelta {}
+export const strictJsonSchema: typeof toolSchema.strictJsonSchema = toolSchema.strictJsonSchema
+export const toolParametersSchema: typeof toolSchema.toolParametersSchema = toolSchema.toolParametersSchema
+
+export const harnessDefectsAsFailures: typeof turnBus.harnessDefectsAsFailures = turnBus.harnessDefectsAsFailures
+export const makeTurnEvents: typeof turnBus.makeTurnEvents = turnBus.makeTurnEvents
+export const makeTurnTasks: typeof turnBus.makeTurnTasks = turnBus.makeTurnTasks
+export const TurnLive: typeof turnAdapter.TurnLive = turnAdapter.TurnLive
+export type TurnRunServices = turnRun.TurnRunServices
+export const cacheKeyOf: typeof turnRun.cacheKeyOf = turnRun.cacheKeyOf
+export const runTurnLoop: typeof turnRun.runTurnLoop = turnRun.runTurnLoop
+export const schemaTokens: typeof turnRun.schemaTokens = turnRun.schemaTokens
+export const stepRequestOf: typeof turnRun.stepRequestOf = turnRun.stepRequestOf
+export const finishTurn: typeof turnLifecycle.finishTurn = turnLifecycle.finishTurn
+export const guardTurn: typeof turnLifecycle.guardTurn = turnLifecycle.guardTurn
+export const openTurnTools: typeof turnLifecycle.openTurnTools = turnLifecycle.openTurnTools
+export const settleTurn: typeof turnLifecycle.settleTurn = turnLifecycle.settleTurn
+export const traceTurn: typeof turnLifecycle.traceTurn = turnLifecycle.traceTurn
+export const traceTurnBegin: typeof turnLifecycle.traceTurnBegin = turnLifecycle.traceTurnBegin
+export const turnOf: typeof turnLifecycle.turnOf = turnLifecycle.turnOf
+export const turnTools: typeof turnLifecycle.turnTools = turnLifecycle.turnTools
+export interface TurnBeginTrace extends turnLifecycle.TurnBeginTrace {}
+export interface TurnTraceOptions extends turnLifecycle.TurnTraceOptions {}

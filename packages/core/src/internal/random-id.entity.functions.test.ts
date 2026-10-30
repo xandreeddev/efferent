@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Random, Schema } from "effect"
-import { randomUuid } from "./random-id.js"
+import { randomUuid } from "./random-id.entity.functions.js"
 
 describe("randomUuid", () => {
   test("is a version-4 UUID drawn from Random, so a seed repeats it", () => {

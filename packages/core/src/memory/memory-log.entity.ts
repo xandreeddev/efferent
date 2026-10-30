@@ -1,4 +1,5 @@
 import { Schema, SchemaTransformation } from "effect"
+import type { Option } from "effect"
 import { Media, MediaSlot } from "../domain/media.entity.js"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
 import { RunId, RunKey } from "../domain/run.entity.js"
@@ -192,3 +193,13 @@ export const BuiltContext = Schema.Struct({
   through: Schema.OptionFromNullOr(EntryId),
 })
 export type BuiltContext = typeof BuiltContext.Type
+
+/** What `MemoryReader.query` selects from a log (`queryLog`); `emptyQuery` selects every entry. */
+export interface LogQuery {
+  readonly kinds: ReadonlyArray<LogBody["_tag"]>
+  readonly turns: Option.Option<{ readonly from: number; readonly to: number }>
+  readonly tool: Option.Option<string>
+  readonly subject: Option.Option<{ readonly kind: string; readonly id: Option.Option<string> }>
+  readonly text: Option.Option<string>
+  readonly limit: Option.Option<number>
+}

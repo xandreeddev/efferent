@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Stream } from "effect"
 import { Response } from "effect/ai"
 import fc from "fast-check"
-import { foldStreamParts } from "./streamFold.js"
-import type { StreamDelta } from "./streamFold.js"
+import { foldStreamParts } from "./stream-fold.entity.functions.js"
+import type { StreamDelta } from "./stream-fold.entity.functions.js"
 
 /** The fold's spec: ordered slots, kept provider metadata, empty-chunk drops,
  *  settled passthrough, finish extraction — the settled shape `step()` reads,

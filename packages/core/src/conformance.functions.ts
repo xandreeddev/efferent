@@ -7,7 +7,7 @@ import { zeroUsage } from "./domain/token-usage.entity.functions.js"
 import type { TokenUsage } from "./domain/token-usage.entity.js"
 import { harnessCodeOf } from "./harness/harness-code.entity.functions.js"
 import type { SessionHeader, SessionLogEvent } from "./session/session-log.entity.js"
-import { randomUuid } from "./util/random-id.js"
+import { randomUuid } from "./internal/random-id.entity.functions.js"
 
 /*
  * The helpers the conformance kits share. Private to core: the kits are
