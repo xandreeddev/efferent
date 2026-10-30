@@ -23,7 +23,9 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 ## Public surface
 
 - `sessionsPlugin` (also the default export) and `SessionsPluginLive` (its `.live` layer); `SessionsLive(config, { liveness })` for hosts that compose layers; `processLiveness` (type `ProcessLiveness`).
-- Config and stored state: `SessionsConfig`, `sessionsDefaults` (a 60 s lease, a keep-alive every 20 s), `Ownership`, `SessionsState`, `HeldTurn`, `HolderProcess`, `InboxSlot`.
+- Config: `SessionsConfig`, `sessionsDefaults` (a 60 s lease, a keep-alive every 20 s), `Ownership`; `HolderProcess`, where a process-owned turn's holder runs (what `ProcessLiveness.current` returns). The state the plugin keeps in the session head (`SessionsState`, `HeldTurn`, `InboxSlot`) is its own and stays inside the package.
+
+The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests, the scripts and the docs import `sessionsPlugin`, `SessionsPluginLive`, `SessionsLive`, `SessionsConfig`, `sessionsDefaults` and `ProcessLiveness`, and the rest are tagged `@public` at their declarations (`sessionsPlugin`'s tag covers the default export).
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|

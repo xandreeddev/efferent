@@ -18,6 +18,7 @@ const optionField = <A, I>(schema: Schema.Codec<A, I>) =>
     Schema.withConstructorDefault(Effect.succeed(Option.none())),
   )
 
+/** @public */
 export class EngineSettings extends Schema.Class<EngineSettings>("EngineSettings")({
   model: optionField(Schema.String),
   codeModel: optionField(Schema.String),
@@ -31,6 +32,7 @@ export class EngineSettings extends Schema.Class<EngineSettings>("EngineSettings
   fastReasoningEffort: optionField(ReasoningEffort),
 }) {}
 
+/** @public */
 export class SettingsError extends Schema.TaggedError<SettingsError>()("SettingsError", {
   message: Schema.String,
   /**
@@ -40,11 +42,18 @@ export class SettingsError extends Schema.TaggedError<SettingsError>()("Settings
   code: Schema.optionalKey(Schema.Literal("settings.corrupt")),
 }) {}
 
-/** The three model roles a selection can be persisted under. */
+/**
+ * The three model roles a selection can be persisted under.
+ *
+ * @public
+ */
 export type ModelRole = "general" | "code" | "fast"
 
 /** The non-role keys the keyed setter may write — a closed vocabulary, so a
- *  typo can never land a dead key in the user's config. */
+ *  typo can never land a dead key in the user's config.
+ *
+ * @public
+ */
 export const SETTINGS_KEYS = [
   "fallbackModel",
   "maxAttempts",
@@ -53,6 +62,7 @@ export const SETTINGS_KEYS = [
   "codeReasoningEffort",
   "fastReasoningEffort",
 ] as const
+/** @public */
 export type SettingsKey = (typeof SETTINGS_KEYS)[number]
 
 /**

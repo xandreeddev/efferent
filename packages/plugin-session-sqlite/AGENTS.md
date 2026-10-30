@@ -20,6 +20,8 @@ Core's `SessionLog` port in one SQLite file (`session_heads` and `session_log_ev
 - `sessionSqlitePlugin` (also the default export): the log plus `TurnAdmissionOpen`; `sessionLogSqlitePlugin`: the log alone, for hosts with their own admission.
 - `makeSessionLogSqlite(path)` (scoped `SessionLog` service) and `SessionLogSqliteLive(path)` (its layer).
 
+The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests, the scripts and the docs import the plugins, `makeSessionLogSqlite` and `SessionLogSqliteLive`, and the default export is tagged `@public` (`src/index.ts`).
+
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
 | `sessionSqlitePlugin` | `@xandreed/plugin-session-sqlite` | runtime | `efferent/SessionLog`, `efferent/TurnAdmission` | none | none |

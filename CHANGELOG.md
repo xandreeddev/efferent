@@ -812,6 +812,48 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   memory, model requests, stored payloads and journal kinds, References,
   the in-memory file system) is imported from `@xandreed/core`, and its kits
   from `@xandreed/core/conformance`.
+The plugin packages export their host API only: the plugins, their layers,
+configs and defaults, ports, adapters, errors and kits. What no host needs
+stays inside its package, with nothing deprecated first:
+
+- `@xandreed/plugin-models`: the OpenAI-compatible client is imported from
+  `@xandreed/plugin-models/compat` only (`makeCompatLanguageModel`,
+  `CompatConfig`, `toChatMessages`, `ChatMessageOptions`,
+  `promptWithImageLabels`); `./compat` no longer exports `fromChatCompletion`,
+  `toChatTools` or `thinkingParams`. The root drops what routes and sends a
+  call: the provider builders (`buildProvider`, `chatCompletionsUrl`,
+  `endpointOwnKey`, `prependClaudeCode`, `withAnthropicCacheBreakpoints`,
+  `usesOpenCodeResponses`, `OPENCODE_CHAT_URL`,
+  `OPENCODE_RESPONSES_API_URL`), retries and budgets (`classifyLlmError`,
+  `ErrorClass`, `retryableLlm`, `rejectEmptyResponse`, `makeCallBudget`,
+  `CallBudget`, `MAX_HONORED_RETRY_AFTER_MS`), `generateWith`,
+  `configuredModelCatalog` (the `ModelCatalog` of
+  `ConfiguredModelCatalogLive` lists the same models), `UsageReading`, the
+  subscription's wire (`makeOpenAiCodexLanguageModel`,
+  `toOpenAiCodexRequestBody`, `OPENAI_CODEX_API_URL`,
+  `makeOpenAiCodexSessions`, `OpenAiCodexSessions`,
+  `normalizeOpenAiCodexWebSocketEvent`, `openAiCodexRefusal`,
+  `openAiCodexUuidV7`, `OPENAI_CODEX_SESSION_CAPACITY`, `OpenAiErrorBody`,
+  and `OpenAiCodexWebSocketHttpClient`: build one with
+  `makeOpenAiCodexWebSocketHttpClient(Option.none())`), the proxy's
+  resolution (`resolveProxy`, `proxyFor`, `parseNoProxy`, `bypassesProxy`,
+  `isLoopback`, `redactCredentials`, `ProxyConfig`, `ProxyEnvironment`,
+  `NoProxyRule`, `PROXY_VARIABLES`, `BUN_WEBSOCKET_PROXY_VERSION`,
+  `NODE_WEBSOCKET_PROXY_VERSION`) and `transportFetch`, the OAuth protocol's
+  constants and helpers (`ANTHROPIC_OAUTH_BETA`, `CLAUDE_CODE_SYSTEM`,
+  `generatePkce`, `Pkce`, `OPENAI_CODEX_CLIENT_ID`,
+  `OPENAI_CODEX_CALLBACK_PORT`, `OPENAI_CODEX_CALLBACK_PATH`,
+  `OPENAI_CODEX_REDIRECT_URI`, `openAiCodexAccountId`: a sign-in's
+  `beginAnthropicOAuth` or `beginOpenAiCodexOAuth` result carries its
+  callback port and path), and the credential helpers `authPaths`,
+  `credentialsOf` and `toCredentialInput`.
+- `@xandreed/plugin-memory-digest`: `digestPrompt`, `keysOf`, `outcomeOf`.
+- `@xandreed/plugin-tool-discovery`: `catalogText`, `skillInstructions`.
+- `@xandreed/plugin-sessions`: `SessionsState`, `HeldTurn`, `InboxSlot`, the
+  state the plugin keeps in a session's head.
+- `@xandreed/plugin-tasks`: `noticeOf`.
+- `@xandreed/plugin-telemetry`: `tokenCounts`, `TokenKind`.
+- `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
 
@@ -1763,6 +1805,13 @@ Model-visible text (exact pins and the compaction golden updated):
 - The README, the framework guide and the website's getting-started, SDK and
   core pages import a host's names from `@xandreed/sdk`, and the packed
   consumers of `verify:packages` do too, on Node and on Bun.
+- `quality/exports-have-consumers` checks every published entry: the plugin
+  packages' roots and `@xandreed/plugin-models/compat` (now an entry file of
+  its own, `src/compat/index.ts`) join `CURATED_ENTRIES`. Each entry names
+  its exports, and the host API no first-party code imports is tagged
+  `@public` at its declaration (a plugin's tag covers its default export).
+- The registration gate requires each package's root entry in
+  `CURATED_ENTRIES`, so a new package is checked from its first change.
 
 ### Deprecated
 

@@ -15,6 +15,8 @@ import { generateOver, layerProviderServices, throughTransport, withConfiguredEf
  * never park a turn. Like the routed model, it reads its provider services
  * once, where it is built: built over a `ModelsTransport`, its calls go
  * through it.
+ *
+ * @public
  */
 export const UtilityLlmLive = Layer.effect(
   UtilityLlm,

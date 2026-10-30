@@ -15,6 +15,8 @@ const Secret = Schema.RedactedFromValue(Schema.String)
  * in the clear, so existing credentials keep working. Store a credential
  * through `Schema.encodeEffect(Credential)`, never `JSON.stringify`, which
  * writes `"<redacted>"` in place of each secret.
+ *
+ * @public
  */
 export const Credential = Schema.Union(
   [Schema.Struct({ type: Schema.Literal("api_key"), key: Secret }),

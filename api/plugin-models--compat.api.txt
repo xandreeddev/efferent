@@ -1,8 +1,5 @@
-const fromChatCompletion
 const makeCompatLanguageModel
 const promptWithImageLabels
-const thinkingParams
 const toChatMessages
-const toChatTools
 interface ChatMessageOptions
 interface CompatConfig

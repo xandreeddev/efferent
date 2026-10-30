@@ -2,9 +2,6 @@ const MemoryDigestConfig
 const MemoryDigestLive
 const UTILITY_DIGESTER
 const default
-const digestPrompt
-const keysOf
 const memoryDigestDefaults
 const memoryDigestPlugin
-const outcomeOf
 type MemoryDigestConfig

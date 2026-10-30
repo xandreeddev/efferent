@@ -8,9 +8,15 @@ import type { SkillRoot, SkillsDirectoryConfig, SkillsFound } from "./skills-dir
  * is `ALWAYS_SECTION_ID`: read several directories with one plugin instance
  * and several `roots`. Two instances would contribute two capabilities, and
  * two sections, with the same id in `context.built` and turn records.
+ *
+ * @public
  */
 export const SKILLS_CAPABILITY_ID = "@xandreed/plugin-workspace/skills"
-/** The static section with the always-on skills' instructions. */
+/**
+ * The static section with the always-on skills' instructions.
+ *
+ * @public
+ */
 export const ALWAYS_SECTION_ID = "workspace.skills.always"
 
 const inRoot = (root: string, path: string): string => root.endsWith("/") ? `${root}${path}` : `${root}/${path}`
@@ -71,7 +77,11 @@ export const alwaysSkillsText = (skills: ReadonlyArray<SkillDefinition>): Option
   ].join("\n\n"))
 }
 
-/** The skills as one capability, with the always-on section when `alwaysSection` is set and some skill is always on. */
+/**
+ * The skills as one capability, with the always-on section when `alwaysSection` is set and some skill is always on.
+ *
+ * @public
+ */
 export const skillsCapability = (skills: ReadonlyArray<SkillDefinition>, config: Pick<SkillsDirectoryConfig, "alwaysSection" | "sectionOrder">): Capability => {
   // The text is the skills', made here: the section reads no service when it renders.
   const section = Option.filter(alwaysSkillsText(skills), () => config.alwaysSection).pipe(Option.map((text) => definePromptSection({

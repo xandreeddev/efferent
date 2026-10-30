@@ -236,5 +236,9 @@ export const makeBash = Effect.fnUntraced(function* (options: BashLiveOptions = 
   })
 })
 
-/** The local `Bash` (`makeBash`) as a layer; building it fails with `ShellMissing` when the shell is not installed. */
+/**
+ * The local `Bash` (`makeBash`) as a layer; building it fails with `ShellMissing` when the shell is not installed.
+ *
+ * @public
+ */
 export const BashLive = (options: BashLiveOptions = {}): Layer.Layer<Bash, BashError> => Layer.effect(Bash, makeBash(options))

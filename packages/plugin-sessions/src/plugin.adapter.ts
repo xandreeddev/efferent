@@ -9,6 +9,8 @@ import { SessionsLive } from "./sessions.adapter.js"
  * `TurnActivity`, the turns this process holds open or is beginning
  * (`processActivity`, `awaitIdle`). By default a turn's lease is 60 s, renewed by its writes and
  * by a keep-alive every 20 s.
+ *
+ * @public
  */
 export const sessionsPlugin = definePlugin({
   id: "@xandreed/plugin-sessions", version: "0.14.0", scope: "runtime",

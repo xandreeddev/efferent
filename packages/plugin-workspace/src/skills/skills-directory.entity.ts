@@ -44,6 +44,8 @@ const count = (maximum: number) => Schema.Int.pipe(Schema.check(Schema.isBetween
  * - `alwaysSection`: render the instructions of the skills marked `always`
  *   in a static system-prompt section (tool discovery activates always-on
  *   skills but never shows their instructions), at `sectionOrder`.
+ *
+ * @public
  */
 export const SkillsDirectoryConfig = Schema.Struct({
   roots: Schema.Array(Schema.NonEmptyString),
@@ -60,6 +62,7 @@ export const SkillsDirectoryConfig = Schema.Struct({
 })
 export type SkillsDirectoryConfig = typeof SkillsDirectoryConfig.Type
 
+/** @public */
 export const skillsDirectoryDefaults: SkillsDirectoryConfig = {
   roots: [".agents/skills"],
   required: false,

@@ -37,9 +37,17 @@ import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 // arrives — the old line streamed, where first-byte came fast. The timeout
 // exists to catch hung sockets; at 120s it would classify a healthy slow
 // thinking turn as transient and retry it into the same wall.
-/** One attempt, until its response is complete. */
+/**
+ * One attempt, until its response is complete.
+ *
+ * @public
+ */
 export const LLM_REQUEST_TIMEOUT_MS = 300_000
-/** One routed call: its attempts, their backoff and the fallback rung. */
+/**
+ * One routed call: its attempts, their backoff and the fallback rung.
+ *
+ * @public
+ */
 export const LLM_CALL_BUDGET_MS = 600_000
 export const MAX_HONORED_RETRY_AFTER_MS = 60_000
 

@@ -21,7 +21,9 @@ Background tasks: core's `Tasks` port over `Sessions`, where a task is one turn 
 ## Public surface
 
 - `tasksPlugin` (also the default export) and `TasksPluginLive` (its `.live` layer); `TasksLive(config)`, `InProcessTaskRunnerLive({ maxMs })`, `tasksCapability`.
-- Records and config: `TASK_STARTED`, `TASK_RESULT`, `TASK_CANCELLED`, `TaskStarted`, `TaskStarter`, `TaskResult`, `TaskCancelled`, `TaskOutcome`, `TasksConfig`, `tasksDefaults` (`maxRunning: 2`, `tools: false`, `replyChars: 12_000`); `deliveryId`, `noticeOf`.
+- Records and config: `TASK_STARTED`, `TASK_RESULT`, `TASK_CANCELLED`, `TaskStarted`, `TaskStarter`, `TaskResult`, `TaskCancelled`, `TaskOutcome`, `TasksConfig`, `tasksDefaults` (`maxRunning: 2`, `tools: false`, `replyChars: 12_000`); `deliveryId`. The notice text (`noticeOf`) stays inside the package.
+
+The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests and the scripts import the plugin, the adapters, the records and `deliveryId`, and the rest are tagged `@public` at their declarations (`tasksPlugin`'s tag covers the default export).
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|

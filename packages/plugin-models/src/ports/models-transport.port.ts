@@ -18,6 +18,8 @@ export type ModelsFetch = (input: string | URL, init?: RequestInit) => Promise<R
  * the runtime cannot use (`Proxy` outside Bun, `Agent` on Bun, whose `ws`
  * stand-in takes neither) fails the call rather than connecting past the
  * proxy.
+ *
+ * @public
  */
 export type WebSocketProxy =
   | { readonly _tag: "Agent"; readonly agent: Agent }

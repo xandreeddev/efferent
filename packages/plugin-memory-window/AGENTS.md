@@ -16,6 +16,8 @@ Windowed conversation memory: a `ConversationMemory` over core's memory log that
 
 - `memoryWindowPlugin` (also the default export) and `MemoryWindowLive` (its `.live` layer); `MemoryWindowConfig`, `memoryWindowDefaults`, `WINDOW_STRATEGY`, `windowPolicy`, `recallCapability`.
 
+The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests and the scripts import `memoryWindowPlugin` and `MemoryWindowLive`, and the rest, which no first-party code imports, are tagged `@public` at their declarations (`memoryWindowPlugin`'s tag covers the default export).
+
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
 | `memoryWindowPlugin` | `@xandreed/plugin-memory-window` | runtime | `efferent/ConversationMemory` | `efferent/Capabilities` (`recallCapability`) | none |
@@ -24,11 +26,11 @@ Windowed conversation memory: a `ConversationMemory` over core's memory log that
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `recall_context` description | `src/plugin.adapter.ts:107` | exact, `src/plugin.adapter.test.ts:63`; sdk golden; sdk compaction golden |
-| `locator` and `offset` descriptions | `src/plugin.adapter.ts:109-110` | exact, `src/plugin.adapter.test.ts:64`; sdk golden; sdk compaction golden |
-| Spill preview (`[… N more characters kept out of context; call recall_context …]`) | `src/plugin.adapter.ts:62` | exact, `src/plugin.adapter.test.ts:58`; sdk compaction golden |
-| Page continuation (`[… N more characters; call recall_context …]`) | `src/plugin.adapter.ts:122` | exact, `src/plugin.adapter.test.ts:75` |
-| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:139`, `:141` | exact, `src/plugin.adapter.test.ts:78`, `:77` |
+| `recall_context` description | `src/plugin.adapter.ts:114` | exact, `src/plugin.adapter.test.ts:63`; sdk golden; sdk compaction golden |
+| `locator` and `offset` descriptions | `src/plugin.adapter.ts:116-117` | exact, `src/plugin.adapter.test.ts:64`; sdk golden; sdk compaction golden |
+| Spill preview (`[… N more characters kept out of context; call recall_context …]`) | `src/plugin.adapter.ts:65` | exact, `src/plugin.adapter.test.ts:58`; sdk compaction golden |
+| Page continuation (`[… N more characters; call recall_context …]`) | `src/plugin.adapter.ts:129` | exact, `src/plugin.adapter.test.ts:75` |
+| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:150`, `:152` | exact, `src/plugin.adapter.test.ts:78`, `:77` |
 
 ## Erasure files
 

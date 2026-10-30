@@ -16,7 +16,9 @@ Core's `ToolRegistry` over every contributed capability: it registers the tools 
 
 ## Public surface
 
-- `toolDiscoveryPlugin` (also the default export) and `ToolDiscoveryLive` (its `.live` layer); `ToolDiscoveryConfig`, `toolDiscoveryDefaults`; `makeRegistry`, `catalogText`, `skillInstructions`; the type `DiscoveryConfig`.
+- `toolDiscoveryPlugin` (also the default export) and `ToolDiscoveryLive` (its `.live` layer); `ToolDiscoveryConfig`, `toolDiscoveryDefaults`; `makeRegistry` (its options are the type `DiscoveryConfig`). The tier texts (`catalogText`, `skillInstructions`) stay inside the package.
+
+The root names each export, and `quality/exports-have-consumers` checks each one: the sdk's tests and the scripts import `toolDiscoveryPlugin`, `ToolDiscoveryLive`, `toolDiscoveryDefaults`, `makeRegistry` and `DiscoveryConfig`, and the rest are tagged `@public` at their declarations (`toolDiscoveryPlugin`'s tag covers the default export).
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|

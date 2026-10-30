@@ -14,7 +14,9 @@ The `ResultDigester` that runs tools' digest tasks (select the items to keep, or
 
 ## Public surface
 
-- `memoryDigestPlugin` (also the default export) and `MemoryDigestLive` (its `.live` layer); `MemoryDigestConfig`, `memoryDigestDefaults`, `UTILITY_DIGESTER`, `digestPrompt`, `keysOf`, `outcomeOf`.
+- `memoryDigestPlugin` (also the default export) and `MemoryDigestLive` (its `.live` layer); `MemoryDigestConfig`, `memoryDigestDefaults`, `UTILITY_DIGESTER`. The prompt and the reading of a reply (`digestPrompt`, `keysOf`, `outcomeOf`) stay inside the package.
+
+The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests and the scripts import `memoryDigestPlugin` and `MemoryDigestLive`, and the rest, which no first-party code imports, are tagged `@public` at their declarations (`memoryDigestPlugin`'s tag covers the default export).
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
@@ -26,9 +28,9 @@ All of it goes to the digester (the utility model); the task's own `instructions
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Select: data rule and reply format | `src/plugin.adapter.ts:33`, `:36` | exact, `src/plugin.adapter.test.ts:27` |
-| Summarize: identifiers to keep, data rule, `Reply with the summary only.` | `src/plugin.adapter.ts:40`, `:41`, `:44` | exact, `src/plugin.adapter.test.ts:38` |
-| `<user-request>`, `<result-items>`, `<tool-result>` frames and `[key]` item lines | `src/plugin.adapter.ts:29`, `:35`, `:43` | exact, `src/plugin.adapter.test.ts:27`, `:38`; clip sizes `:50` |
+| Select: data rule and reply format | `src/plugin.adapter.ts:36`, `:39` | exact, `src/plugin.adapter.test.ts:27` |
+| Summarize: identifiers to keep, data rule, `Reply with the summary only.` | `src/plugin.adapter.ts:43`, `:44`, `:47` | exact, `src/plugin.adapter.test.ts:38` |
+| `<user-request>`, `<result-items>`, `<tool-result>` frames and `[key]` item lines | `src/plugin.adapter.ts:32`, `:38`, `:46` | exact, `src/plugin.adapter.test.ts:27`, `:38`; clip sizes `:50` |
 
 ## Erasure files
 

@@ -20,7 +20,11 @@ export const OPENAI_CODEX_REDIRECT_URI = `http://localhost:${OPENAI_CODEX_CALLBA
 const SCOPE = "openid profile email offline_access"
 const ACCOUNT_CLAIM = "https://api.openai.com/auth"
 
-/** The tokens a sign-in or a refresh grants, `Redacted` from the token response on, and the account id read from the access token. */
+/**
+ * The tokens a sign-in or a refresh grants, `Redacted` from the token response on, and the account id read from the access token.
+ *
+ * @public
+ */
 export interface OpenAiCodexTokens {
   readonly access: Redacted.Redacted<string>
   readonly refresh: Redacted.Redacted<string>
@@ -28,6 +32,7 @@ export interface OpenAiCodexTokens {
   readonly accountId?: string
 }
 
+/** @public */
 export interface OpenAiCodexOAuthBegin {
   readonly verifier: string
   readonly state: string
@@ -92,6 +97,7 @@ const postToken = (
     }))),
   )
 
+/** @public */
 export const beginOpenAiCodexOAuth: Effect.Effect<OpenAiCodexOAuthBegin> =
   Effect.gen(function* () {
     const pkce = yield* generatePkce
@@ -114,7 +120,11 @@ export const beginOpenAiCodexOAuth: Effect.Effect<OpenAiCodexOAuthBegin> =
     return { verifier: pkce.verifier, state, authorizeUrl: url.toString(), callbackPort: OPENAI_CODEX_CALLBACK_PORT, callbackPath: OPENAI_CODEX_CALLBACK_PATH }
   })
 
-/** Exchange the authorization code for tokens, `Redacted` (ready for `AuthStore.set`). */
+/**
+ * Exchange the authorization code for tokens, `Redacted` (ready for `AuthStore.set`).
+ *
+ * @public
+ */
 export const exchangeOpenAiCodexCode = (
   code: string,
   verifier: string,
@@ -122,7 +132,11 @@ export const exchangeOpenAiCodexCode = (
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
   postToken({ grant_type: "authorization_code", client_id: OPENAI_CODEX_CLIENT_ID, code, code_verifier: verifier, redirect_uri: OPENAI_CODEX_REDIRECT_URI }, "code exchange", options, Option.none())
 
-/** Refresh an expired (or near-expiry) access token; the refresh token is unwrapped only into the request form. */
+/**
+ * Refresh an expired (or near-expiry) access token; the refresh token is unwrapped only into the request form.
+ *
+ * @public
+ */
 export const refreshOpenAiCodexToken = (
   refreshToken: Redacted.Redacted<string>,
   options: TokenRequestOptions = {},

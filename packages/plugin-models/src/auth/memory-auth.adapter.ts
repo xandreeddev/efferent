@@ -10,7 +10,11 @@ import { isSameToken, resolveSlotKey } from "./credential-refresh.entity.functio
 import type { CredentialSlot } from "./credential-refresh.entity.functions.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
 
-/** How the in-memory store reaches the OAuth token endpoints. */
+/**
+ * How the in-memory store reaches the OAuth token endpoints.
+ *
+ * @public
+ */
 export interface MemoryAuthOptions {
   /** The fetch token refreshes go through; default: the `ModelsTransport`'s when the layer is built over one, else the global fetch. */
   readonly fetch?: ModelsFetch
@@ -40,6 +44,8 @@ interface ProviderLocks {
  * credential it refreshed (compare-and-set under the provider's lock): a
  * logout during a stalled token request stays a logout, and the host never
  * receives the refreshed token.
+ *
+ * @public
  */
 export const MemoryAuthStoreLive = (
   seed: ReadonlyMap<string, Credential> = new Map(),

@@ -27,6 +27,8 @@ const isRecorded = TurnEvent.isAnyOf(RECORDED)
  * (`efferent.stream.fallback`), and keeps the turn's running cost in
  * `efferent.cost` (priced responses only). A response with no usage (a
  * host-planned step 0) records nothing. Recording never fails the turn.
+ *
+ * @public
  */
 export const TurnTelemetryLive = (options: Partial<TelemetryOptions> = {}): Layer.Layer<never, never, RunContext | TurnEvents> =>
   Layer.effectDiscard(Effect.gen(function* () {

@@ -48,6 +48,7 @@ const writeKey = (
   }))
 }
 
+/** @public */
 export const LocalSettingsStoreLive = (cwd: string, home: string) =>
   Layer.succeed(SettingsStore, {
     load: Effect.forEach(configPaths(cwd, home), readConfig, { concurrency: 1 }).pipe(

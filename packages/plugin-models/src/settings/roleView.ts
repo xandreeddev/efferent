@@ -8,6 +8,8 @@ import { EngineSettings, SettingsStore } from "../ports/settings-store.port.js"
  * LanguageModel router above all — runs on that role WITHOUT knowing roles
  * exist. Compose it under `LanguageModelLive` for the scope that should use
  * the role (e.g. the forge implementor on "code"); writes pass through.
+ *
+ * @public
  */
 export const roleModelView = (
   role: "code" | "fast",

@@ -9,10 +9,18 @@ import { RefreshableProvider } from "./credential-refresh.entity.js"
 import type { OAuthCredential } from "./credential-refresh.entity.js"
 import { refreshOpenAiCodexToken } from "./openAiCodexOAuth.js"
 
-/** Refresh this many ms before the recorded expiry. */
+/**
+ * Refresh this many ms before the recorded expiry.
+ *
+ * @public
+ */
 export const REFRESH_SKEW_MS = 60_000
 
-/** Whether an OAuth credential can still be used at `now`: more than the skew before its expiry. */
+/**
+ * Whether an OAuth credential can still be used at `now`: more than the skew before its expiry.
+ *
+ * @public
+ */
 export const isUsableAt = (credential: OAuthCredential, now: number): boolean => credential.expires > now + REFRESH_SKEW_MS
 
 /**
@@ -21,6 +29,8 @@ export const isUsableAt = (credential: OAuthCredential, now: number): boolean =>
  * and expiry (and account id, where the provider sends one), its tokens
  * `Redacted`. A provider with no refresh flow fails with an `AuthError`
  * naming it.
+ *
+ * @public
  */
 export const refreshCredential = (
   provider: string,

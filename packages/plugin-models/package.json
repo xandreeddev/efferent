@@ -6,7 +6,7 @@
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./compat": "./src/llm/compat.ts",
+    "./compat": "./src/compat/index.ts",
     "./conformance": "./src/conformance/index.ts"
   },
   "dependencies": {

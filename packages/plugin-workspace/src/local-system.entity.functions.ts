@@ -28,6 +28,8 @@ const reasons: ReadonlyMap<string, FsReason> = new Map<string, FsReason>([
  * and `EPERM` `Permission`; `EINVAL`, a symbolic link loop (`ELOOP`), a
  * name too long and an unusable argument (a path with a NUL byte) are
  * `Invalid`; anything else, or no code at all, is `Io`.
+ *
+ * @public
  */
 export const fsReasonOf = (error: unknown): FsReason => Option.match(errorCodeOf(error), {
   onNone: (): FsReason => "Io",

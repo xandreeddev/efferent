@@ -41,6 +41,8 @@ const invalid = (message: string) => new HarnessError({ code: "config.options", 
  * decoded, so a graph refuses them before activating anything). Tools are never
  * given guidance as skill instructions: it is in their descriptions and the
  * section, since an always-on skill's instructions never reach the model.
+ *
+ * @public
  */
 export const workspaceTools = Effect.fnUntraced(function* (config: WorkspaceToolsConfig): Effect.fn.Return<Capability, HarnessError, Scope.Scope> {
   const path = yield* Effect.service(Path.Path).pipe(Effect.provide(Path.layer))

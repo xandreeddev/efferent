@@ -10,11 +10,19 @@ const secret = Schema.Redacted(Schema.String).annotate({
   message: "a secret must be a Redacted value (Redacted.make(...)); JSON configuration names an environment variable in credentialEnv instead",
 })
 
-/** The provider account an OAuth credential is for (the ChatGPT account of an `openai-codex` subscription). */
+/**
+ * The provider account an OAuth credential is for (the ChatGPT account of an `openai-codex` subscription).
+ *
+ * @public
+ */
 export const AccountId = Schema.String.pipe(Schema.brand("AccountId"))
 export type AccountId = typeof AccountId.Type
 
-/** The installation an OAuth credential was issued to, when its provider names one. */
+/**
+ * The installation an OAuth credential was issued to, when its provider names one.
+ *
+ * @public
+ */
 export const InstallationId = Schema.String.pipe(Schema.brand("InstallationId"))
 export type InstallationId = typeof InstallationId.Type
 
@@ -38,7 +46,11 @@ export const CredentialInput = Schema.Union([
 })
 export type CredentialInput = typeof CredentialInput.Type
 
-/** Credentials by provider id. */
+/**
+ * Credentials by provider id.
+ *
+ * @public
+ */
 export const CredentialInputs = Schema.Record(Schema.String, CredentialInput).annotate({
   message: "credentials maps provider ids to credentials",
 })

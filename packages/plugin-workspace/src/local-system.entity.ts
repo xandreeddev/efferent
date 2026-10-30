@@ -14,6 +14,8 @@ import { Schema } from "effect"
  * output pipes close then, so a background process kept with
  * `killBackground: false` must have its own output (`cmd > log 2>&1 &`):
  * one still writing to the command's dies of `SIGPIPE` or gets `EPIPE`.
+ *
+ * @public
  */
 export const LocalSystemConfig = Schema.Struct({
   shell: Schema.NonEmptyString,
@@ -22,6 +24,7 @@ export const LocalSystemConfig = Schema.Struct({
 })
 export type LocalSystemConfig = typeof LocalSystemConfig.Type
 
+/** @public */
 export const localSystemDefaults: LocalSystemConfig = { shell: "bash", killBackground: true, exitGraceMs: 500 }
 
 /**
@@ -29,6 +32,8 @@ export const localSystemDefaults: LocalSystemConfig = { shell: "bash", killBackg
  * `parentEnv`, the environment commands inherit from (filtered by
  * `resolveBashEnv`) and the shell is looked up on; `process.env` when not
  * given.
+ *
+ * @public
  */
 export type BashLiveOptions = Partial<LocalSystemConfig> & {
   readonly parentEnv?: Readonly<Record<string, string | undefined>>

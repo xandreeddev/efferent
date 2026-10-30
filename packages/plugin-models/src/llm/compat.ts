@@ -53,6 +53,7 @@ const gatewayFailure = (
   return AiError.reasonFromHttpStatus({ status, http, description: body.slice(0, 500) })
 }
 
+/** @public */
 export interface CompatConfig {
   /** Module name for `AiError` provenance (e.g. "OpenCode"). */
   readonly moduleName: string
@@ -157,7 +158,11 @@ const userText = (message: Prompt.UserMessage): string => {
   return [text, ...labels].filter(nonEmpty).join("\n")
 }
 
-/** How `toChatMessages` writes a request. */
+/**
+ * How `toChatMessages` writes a request.
+ *
+ * @public
+ */
 export interface ChatMessageOptions {
   /** Send images as `image_url` parts (default false: label lines). */
   readonly images?: boolean
@@ -487,6 +492,7 @@ const failStatus = (
     )
   })
 
+/** @public */
 export const makeCompatLanguageModel = (
   config: CompatConfig,
 ): Effect.Effect<LanguageModel.LanguageModel> =>
