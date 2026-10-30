@@ -18,6 +18,11 @@ the same way (`provideDeclared` under the tool's name, so the erased
 `RegisteredTool.handler` needs nothing), and keeps the declared keys,
 References aside, as `RegisteredTool.requires`: a registry checks them
 when it opens a run's tools (`toolRegistryConformance`).
+`definePromptSection` does the same for a section's `render` (its keys are
+`PromptSection.requires`), so `PromptSection.render` needs nothing and the
+turn renders sections where it is called, with no context of its own: a
+section that reads services is built with it, and a render that lacks one
+fails with `requires.missing`.
 
 Tell a `HarnessError` (or another tagged error) by its tag and fields, with
 `isHarnessError` (`src/harness/plugin.entity.functions.ts`), never with

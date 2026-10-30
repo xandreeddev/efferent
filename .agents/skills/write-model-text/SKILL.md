@@ -13,7 +13,7 @@ cached prefixes. Treat a wording change like an API change.
 | Text | Defined | Reaches the model as |
 |---|---|---|
 | Tool `description`, parameter `.annotate({ description })` | `Tool.make` in the capability's `*.adapter.ts`, or a pure `toolDescriptions(config)` in `*.entity.functions.ts` when it embeds config | the tool schema, on every step the tool is active |
-| `PromptSection` (`id`, `version`, `tier`, `order`, `render`) | a capability's sections | system prompt: host `system`, then `static`, then `session` sections, each by `order` then `id` (`orderSections`, `core/src/turn/prompt-sections.ts`); `turn` sections become per-turn user messages |
+| `PromptSection` (`id`, `version`, `tier`, `order`, `render`) | a capability's sections; `definePromptSection` with `requires` for one whose `render` reads services | system prompt: host `system`, then `static`, then `session` sections, each by `order` then `id` (`orderSections`, `core/src/turn/prompt-sections.ts`); `turn` sections become per-turn user messages |
 | Skill `summary` | `defineSkill` | one catalogue line, loadable skills only |
 | Skill `instructions` | `defineSkill` or a SKILL.md body | only through `load_skill` or a matcher seed; never for an `always: true` skill (tool discovery activates it but shows no instructions; `skillsDirectoryPlugin`'s `workspace.skills.always` section is the one exception) |
 | `Failure { error, message }` | a handler failure with `failureMode: "return"` | the tool result |

@@ -32,10 +32,6 @@ import type { Transition } from "./turn-phase.entity.functions.js"
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
 
-/** Contributed sections' requirements are erased: they render with the services of their caller. */
-const inCaller = <A, E>(effect: Effect.Effect<A, E, unknown>): Effect.Effect<A, E> =>
-  Effect.flatMap(Effect.context<never>(), (context) => effect.pipe(Effect.provide(context)) as Effect.Effect<A, E>)
-
 /**
  * A bus event as the turn stores it, when it is stored. A host event may not
  * take a name only the framework writes (`events.reserved`); an event its
@@ -259,8 +255,9 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
 
   const promptContext = (tools: RunTools, variant: Option.Option<string>) =>
     tools.active.pipe(Effect.map((active): PromptContext => ({ variant, active, skills: tools.skills })))
+  // Each section reads the services it declares (`definePromptSection`) from where it renders: the caller's.
   const rendered = (tools: RunTools, variant: Option.Option<string>, tiers: (section: PromptSection) => boolean) =>
-    inCaller(promptContext(tools, variant).pipe(Effect.flatMap((context) => renderSections(sections.filter(tiers), context))))
+    promptContext(tools, variant).pipe(Effect.flatMap((context) => renderSections(sections.filter(tiers), context)))
   const lastSystem = yield* Ref.make(Option.fromNullishOr((yield* session.entries).flatMap((entry: LogEntry) =>
     entry.body._tag === "SystemPrepared" ? [entry.body.fingerprint] : []).at(-1)))
   const systems = yield* Ref.make(new Map<string, string>())

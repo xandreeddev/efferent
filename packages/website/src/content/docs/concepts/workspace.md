@@ -30,7 +30,8 @@ The workspace is `Agent.define`'s `workspace` (the process's directory by
 default). Each call uses the `FileSystem`, `Bash` and `SessionEnvironment` of
 the turn it runs in. The tools declare them (`bash` alone needs `Bash`), so a
 turn whose services lack one fails to open its tools with
-`requires.missing`, naming the tool and the service.
+`requires.missing`, naming the tool and the service. The
+`workspace.environment` section reads and declares the same services.
 
 ## The tools
 

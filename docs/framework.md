@@ -1113,6 +1113,24 @@ sections, then the `session` sections, each tier by `order`, then by `id` in
 code-unit order, so the prompt's bytes are the same on every machine. `turn`
 sections are recorded as turn context when the first run starts.
 
+A section renders where the turn renders its prompt, with the run's
+services. A section written as a plain `PromptSection` reads none (its
+`render` needs nothing); one that reads services is built with
+`definePromptSection` and lists them in `requires`, like a tool: a `render`
+that reads another does not compile, and one rendered without a declared
+service fails with `requires.missing`, naming the section and the service:
+
+```ts
+import { Effect, Option } from "effect"
+import { definePromptSection, SessionEnvironment } from "@xandreed/core"
+
+const workspaceNote = definePromptSection({
+  id: "app.workspace", version: "1", tier: "session", order: 100,
+  requires: [SessionEnvironment],
+  render: () => SessionEnvironment.pipe(Effect.map((environment) => Option.some(`The workspace is ${environment.workspace}.`))),
+})
+```
+
 ### Skills from a directory
 
 A skill can be a directory with a `SKILL.md` in it, the Agent Skills
@@ -1217,7 +1235,8 @@ A failure is data the model reads in the same run (`{ error, message }`:
 `NotAFile`, …); a non-zero
 exit, a signal and a timeout are `bash` results, not failures. The
 `workspace.environment` section (tier `session`, order `sectionOrder`) tells
-the model where the workspace is and how the enabled tools behave; the
+the model where the workspace is and how the enabled tools behave; it reads
+and declares the same services as the tools. The
 skills have no instructions, since an always-on skill's instructions never
 reach the model.
 

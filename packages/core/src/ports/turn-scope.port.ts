@@ -96,7 +96,11 @@ export class TurnToolbox extends Context.Service<TurnToolbox, {
   readonly tools: Effect.Effect<RunTools, HarnessError>
 }>()("efferent/TurnToolbox") {}
 
-/** The turn's prompt assembly: the system prompt per variant, and the turn-tier sections. */
+/**
+ * The turn's prompt assembly: the system prompt per variant, and the
+ * turn-tier sections. Each section reads the services it declares from the
+ * caller's; one the caller lacks fails the render with `requires.missing`.
+ */
 export class TurnPrompt extends Context.Service<TurnPrompt, {
   /**
    * The system prompt of one variant: the prefix and the static and session
