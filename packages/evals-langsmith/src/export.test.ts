@@ -1,6 +1,6 @@
 import { EvaluationExport, type EvaluationRun } from "@xandreed/evals"
 import { expect, test } from "bun:test"
-import { Effect, Layer, Predicate } from "effect"
+import { Effect, Exit, Fiber, Layer, Predicate } from "effect"
 import {
   EvaluationServicesLive,
   EvaluationRunStore,
@@ -161,4 +161,53 @@ test("an export is one eval.export span naming the exporter and the run", async 
     )
   )
   expect(named("eval.export").map((span) => [span.attributes.get("eval.exporter"), span.attributes.get("eval.run.id")])).toEqual([["langsmith", "fixture-run"]])
+})
+
+/** A stand-in that takes every request and never answers. */
+const silentStub = () => {
+  const received = Promise.withResolvers<void>()
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: () => {
+      received.resolve()
+      return new Promise<Response>(() => {})
+    }
+  })
+  // Not awaited: the stop stays pending until every handler has answered, and these never do.
+  const stop = () => {
+    void server.stop(true)
+  }
+  return { url: `http://127.0.0.1:${server.port}`, received: received.promise, stop }
+}
+
+test("an export the service never answers fails as provider once its timeoutMs passes", async () => {
+  const stub = silentStub()
+  const run = await report()
+  const started = performance.now()
+  const timedOut = await Effect.runPromise(
+    EvaluationExport.use((port) => port.exportRun(run)).pipe(
+      Effect.provide(langsmithExporter({ apiUrl: stub.url, apiKey: "fixture", project: "fixture", timeoutMs: 200 }).layer),
+      Effect.flip,
+      Effect.ensuring(Effect.sync(stub.stop))
+    )
+  )
+  expect(timedOut.code).toBe("provider")
+  expect(timedOut.message).toBe("LangSmith export: not finished within 200 ms")
+  expect(performance.now() - started).toBeLessThan(2_000)
+})
+
+test("an interrupted export returns at once, without waiting for its requests", async () => {
+  const stub = silentStub()
+  const run = await report()
+  const fiber = Effect.runFork(
+    EvaluationExport.use((port) => port.exportRun(run)).pipe(
+      Effect.provide(langsmithExporter({ apiUrl: stub.url, apiKey: "fixture", project: "fixture" }).layer)
+    )
+  )
+  await stub.received
+  const started = performance.now()
+  await Effect.runPromise(Fiber.interrupt(fiber)).finally(stub.stop)
+  expect(performance.now() - started).toBeLessThan(1_000)
+  expect(Exit.hasInterrupts(await Effect.runPromise(Fiber.await(fiber)))).toBe(true)
 })

@@ -1,6 +1,6 @@
 import { EvaluationExport } from "@xandreed/evals"
 import { expect, test } from "bun:test"
-import { Effect, Layer } from "effect"
+import { Effect, Exit, Fiber, Layer } from "effect"
 import {
   EvaluationServicesLive,
   EvaluationRunStore,
@@ -145,4 +145,63 @@ test("an export is one eval.export span naming the exporter and the run, failed 
     )
   )
   expect(named("eval.export").map((span) => [span.attributes.get("eval.exporter"), span.attributes.get("eval.run.id")])).toEqual([["langfuse", "fixture-run"]])
+})
+
+const fixtureReport = () =>
+  Effect.runPromise(
+    runEvaluation(fixture(), "fixture-run", { ids: [], split: "validation" }).pipe(
+      Effect.provide(EvaluationServicesLive(fixture())),
+      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void }))
+    )
+  )
+
+/** A stand-in that takes every request and never answers; `aborted` settles when the client gives one up. */
+const silentStub = () => {
+  const received = Promise.withResolvers<void>()
+  const aborted = Promise.withResolvers<boolean>()
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request) => {
+      request.signal.addEventListener("abort", () => aborted.resolve(request.signal.aborted))
+      received.resolve()
+      return new Promise<Response>(() => {})
+    }
+  })
+  // Not awaited: the stop stays pending until every handler has answered, and these never do.
+  const stop = () => {
+    void server.stop(true)
+  }
+  return { url: `http://127.0.0.1:${server.port}`, received: received.promise, aborted: aborted.promise, stop }
+}
+
+test("an export the service never answers fails as provider once its timeoutMs passes", async () => {
+  const stub = silentStub()
+  const run = await fixtureReport()
+  const started = performance.now()
+  const timedOut = await Effect.runPromise(
+    EvaluationExport.use((port) => port.exportRun(run)).pipe(
+      Effect.provide(langfuseExporter({ baseUrl: stub.url, publicKey: "fixture", secretKey: "fixture", timeoutMs: 200 }).layer),
+      Effect.flip,
+      Effect.ensuring(Effect.sync(stub.stop))
+    )
+  )
+  expect(timedOut.code).toBe("provider")
+  expect(timedOut.message).toBe("Langfuse export: not finished within 200 ms")
+  expect(performance.now() - started).toBeLessThan(2_000)
+})
+
+test("interrupting an export aborts its ingestion requests", async () => {
+  const stub = silentStub()
+  const run = await fixtureReport()
+  const fiber = Effect.runFork(
+    EvaluationExport.use((port) => port.exportRun(run)).pipe(
+      Effect.provide(langfuseExporter({ baseUrl: stub.url, publicKey: "fixture", secretKey: "fixture" }).layer)
+    )
+  )
+  await stub.received
+  await Effect.runPromise(Fiber.interrupt(fiber))
+  const aborted = await stub.aborted.finally(stub.stop)
+  expect(aborted).toBe(true)
+  expect(Exit.hasInterrupts(await Effect.runPromise(Fiber.await(fiber)))).toBe(true)
 })

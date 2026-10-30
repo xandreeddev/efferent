@@ -15,7 +15,12 @@ export interface LangSmithExportOptions {
   readonly apiKey: string
   readonly project: string
   readonly webUrl?: string
+  /** The bound on one whole export, the flush included; 300 000 when absent. */
+  readonly timeoutMs?: number
 }
+const EXPORT_TIMEOUT_MS = 300_000
+/** One request's own bound (the client's `timeout_ms`); the client does not resend a request that timed out. */
+const REQUEST_TIMEOUT_MS = 30_000
 const remoteId = (id: string) => {
   const hex = createHash("sha256").update(id).digest("hex")
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`
@@ -38,6 +43,16 @@ const upsert = (create: () => Promise<unknown>, update: () => Promise<unknown>) 
     Effect.mapError(providerError),
     Effect.asVoid
   )
+/**
+ * An export that outlasts `timeoutMs` fails as `provider`. The client takes
+ * no signal per request, so an interrupted export stops waiting for the
+ * requests in flight; each attempt still ends within `timeout_ms`.
+ */
+const bounded = (timeoutMs: number) => <A, R>(effect: Effect.Effect<A, EvaluationError, R>) =>
+  Effect.timeoutOrElse(effect, {
+    duration: timeoutMs,
+    orElse: () => Effect.fail(new EvaluationError({ code: "provider", message: `LangSmith export: not finished within ${timeoutMs} ms` }))
+  })
 
 /**
  * Every value sent is read from the run as its schema encodes it (an absent
@@ -64,7 +79,8 @@ const exportService = (options: LangSmithExportOptions) => ({
       const client = new Client({
         apiUrl: options.apiUrl,
         apiKey: options.apiKey,
-        autoBatchTracing: false
+        autoBatchTracing: false,
+        timeout_ms: REQUEST_TIMEOUT_MS
       })
       const project = yield* sdk(() =>
         client.createProject({
@@ -160,7 +176,8 @@ const exportService = (options: LangSmithExportOptions) => ({
         mappings
       }
     },
-    (effect, run) => Effect.annotateCurrentSpan("eval.run.id", run.id).pipe(Effect.andThen(effect))
+    (effect, run) => Effect.annotateCurrentSpan("eval.run.id", run.id).pipe(Effect.andThen(effect)),
+    bounded(options.timeoutMs ?? EXPORT_TIMEOUT_MS)
   )
 })
 export const EvaluationExportLangSmithLive = (

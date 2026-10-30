@@ -15,11 +15,22 @@ export interface LangfuseExportOptions {
   readonly publicKey: string
   readonly secretKey: string
   readonly project?: string
+  /** The bound on one whole export, every batch included; 300 000 when absent. */
+  readonly timeoutMs?: number
 }
 /** Ingestion batches in flight at once. */
 const EXPORT_CONCURRENCY = 4
+const EXPORT_TIMEOUT_MS = 300_000
+/** One ingestion request's own bound, and how often the client resends it after a 408, 429 or 5xx. */
+const REQUEST_OPTIONS = { timeoutInSeconds: 30, maxRetries: 2 }
 const remoteId = (id: string) =>
   createHash("sha256").update(id).digest("hex").slice(0, 32)
+/** An export that outlasts `timeoutMs` fails as `provider`; the interruption aborts its requests in flight. */
+const bounded = (timeoutMs: number) => <A, R>(effect: Effect.Effect<A, EvaluationError, R>) =>
+  Effect.timeoutOrElse(effect, {
+    duration: timeoutMs,
+    orElse: () => Effect.fail(new EvaluationError({ code: "provider", message: `Langfuse export: not finished within ${timeoutMs} ms` }))
+  })
 const exportService = (options: LangfuseExportOptions) => ({
   exportRun: Effect.fn("eval.export", { attributes: { "eval.exporter": "langfuse" } })(
     function* (run: EvaluationRun): Effect.fn.Return<ExportReceipt, EvaluationError> {
@@ -99,7 +110,10 @@ const exportService = (options: LangfuseExportOptions) => ({
       )
       const responses = yield* Effect.forEach(
         batches,
-        (batch) => Effect.tryPromise({ try: () => client.api.ingestion.batch({ batch }), catch: failed }),
+        (batch) => Effect.tryPromise({
+          try: (signal) => client.api.ingestion.batch({ batch }, { ...REQUEST_OPTIONS, abortSignal: signal }),
+          catch: failed
+        }),
         { concurrency: EXPORT_CONCURRENCY }
       )
       const errors = responses.flatMap((response) => response.errors)
@@ -120,7 +134,8 @@ const exportService = (options: LangfuseExportOptions) => ({
         mappings
       }
     },
-    (effect, run) => Effect.annotateCurrentSpan("eval.run.id", run.id).pipe(Effect.andThen(effect))
+    (effect, run) => Effect.annotateCurrentSpan("eval.run.id", run.id).pipe(Effect.andThen(effect)),
+    bounded(options.timeoutMs ?? EXPORT_TIMEOUT_MS)
   )
 })
 export const EvaluationExportLangfuseLive = (options: LangfuseExportOptions) =>
