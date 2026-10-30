@@ -5,8 +5,7 @@ import { RunId } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { TaskActivity } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
-import { TaskExecutor, TaskRunner } from "../ports/tasks.port.js"
-import type { Tasks } from "../ports/tasks.port.js"
+import { TaskExecutor, TaskRunner, Tasks } from "../ports/tasks.port.js"
 import type { TurnOutcome } from "../ports/turn.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import type { SessionLogError, SessionLogEvent, SessionMissing } from "./session-log.entity.js"
@@ -176,12 +175,21 @@ interface ChildTurn {
   readonly task: TaskView
   /** The child's history before the turn, as `kind@turn`. */
   readonly history: string
+  /** Its task's status in the `Tasks` the turn ran with (`no Tasks` without one, a failure's tag). */
+  readonly found: string
 }
 
 const ofKind = (events: ReadonlyArray<SessionLogEvent>, kind: string) => events.filter((event) => event.kind === kind)
 /** What a start failed with, as its tag, or `started`. */
 const startOutcome = <E extends { readonly _tag: string }>(start: Effect.Effect<TaskView, E>) => start.pipe(Effect.match({ onFailure: (error) => error._tag, onSuccess: () => "started" }))
 const reasons = (events: ReadonlyArray<SessionLogEvent>) => ofKind(events, "turn.ended").map((event) => String(event.data.reason)).join()
+
+/** What `look` finds in the `Tasks` the executor's turn runs with: `no Tasks` without one, a failure's tag. */
+const inTasks = <E extends { readonly _tag: string }>(look: (tasks: Context.Service.Shape<typeof Tasks>) => Effect.Effect<string, E>) =>
+  Effect.serviceOption(Tasks).pipe(Effect.flatMap(Option.match({
+    onNone: () => Effect.succeed("no Tasks"),
+    onSome: (tasks) => look(tasks).pipe(Effect.catch((error) => Effect.succeed(error._tag))),
+  })))
 
 /** The most items the kit delivers to fill a parent's inbox. */
 const FILL = 256
@@ -222,7 +230,9 @@ const fillInbox = (sessions: Context.Service.Shape<typeof Sessions>, parent: Ses
  * conforming runner runs it; or dropped, as by a runner that died) and
  * `TaskExecutor` (a child turn answers
  * `found: <instructions>` unless the check says otherwise; a reaction
- * records the turn it ran on). The checks wait up to two seconds on the live
+ * records the turn it ran on). The executor's turns run with the `Tasks`
+ * whose work they are: the child's turn finds its task running in it, and
+ * the parent's reaction finds the task finished. The checks wait up to two seconds on the live
  * clock for background work to end, so run the kit on the live clock.
  */
 export const tasksConformance = (make: (dependencies: TasksDependencies) => Effect.Effect<TasksFixture, unknown, Scope.Scope>): ReadonlyArray<ConformanceCheck> => {
@@ -234,17 +244,25 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
     const dropping = yield* Ref.make(false)
     const turns = yield* Ref.make<ReadonlyArray<ChildTurn>>([])
     const reactions = yield* Ref.make<ReadonlyArray<AdmittedTurn>>([])
+    // The statuses each reaction the backend ran found in the Tasks it ran with (the kit's own drains call `react` directly).
+    const reactionsFound = yield* Ref.make<ReadonlyArray<string>>([])
     const runner = TaskRunner.of({
       run: (work) => Ref.get(dropping).pipe(Effect.flatMap((drop) => drop ? Effect.void
         : FiberSet.run(fibers, work(Option.none()).pipe(Effect.updateContext((_: Context.Context<never>) => built))).pipe(Effect.asVoid))),
     })
     const react = (writer: TurnWriter) => Ref.update(reactions, (all) => [...all, writer.admitted])
     const executor = TaskExecutor.of({
-      turn: (writer, task) => writer.history([]).pipe(
-        Effect.flatMap((history) => Ref.update(turns, (all) => [...all, { admitted: writer.admitted, task, history: kindsOf(history) }])),
+      turn: (writer, task) => Effect.all([
+        writer.history([]),
+        inTasks((tasks) => tasks.status({ id: task.parent, owner: writer.admitted.session.owner }, task.taskId).pipe(Effect.map((seen) => seen.status))),
+      ], { concurrency: 1 }).pipe(
+        Effect.flatMap(([history, found]) => Ref.update(turns, (all) => [...all, { admitted: writer.admitted, task, history: kindsOf(history), found }])),
         Effect.andThen(childTurn(writer, task)),
       ),
-      react,
+      react: (writer) => inTasks((tasks) => tasks.list(writer.admitted.session).pipe(Effect.map((listed) => listed.map((task) => task.status).join()))).pipe(
+        Effect.flatMap((found) => Ref.update(reactionsFound, (all) => [...all, found])),
+        Effect.andThen(react(writer)),
+      ),
     })
     const fixture = yield* make({ runner, executor })
     const parent = yield* fixture.sessions.create({ owner }).pipe(Effect.map((view): SessionAddress => ({ id: view.header.id, owner })))
@@ -254,6 +272,7 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       dropping,
       turns: Ref.get(turns),
       reactions: Ref.get(reactions),
+      reactionsFound: Ref.get(reactionsFound),
       react,
       /** Wait until every piece of work handed over has ended. */
       idle: (id: string) => FiberSet.awaitEmpty(fibers).pipe(within(id, `the background work did not end within ${WAIT}`)),
@@ -388,6 +407,16 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       const stranger = yield* freshId
       const unknown = [yield* Effect.flip(h.tasks.cancel(h.parent, stranger)), yield* Effect.flip(h.tasks.status(h.parent, stranger))]
       yield* expect("cancel", unknown.every((error) => error._tag === "TaskMissing"), `an unknown task gave ${unknown.map((error) => error._tag).join()}`)
+    })),
+
+    scoped("the executor's turns run with the Tasks whose work they are: the child's turn finds its task running in it, the parent's reaction finds it finished", "executor-tasks", (owner) => Effect.gen(function* () {
+      const h = yield* harness(owner)
+      yield* h.tasks.start(h.parent, { instructions: "where am I", mode: "spawn" })
+      yield* h.idle("executor-tasks")
+      const child = (yield* h.turns).map((turn) => turn.found).join()
+      const reacted = (yield* h.reactionsFound).join()
+      yield* expect("executor-tasks", child === "running" && reacted === "completed",
+        `through the Tasks they ran with, the child's turn found its task [${child}] and the parent's reactions found [${reacted}], not [running] and [completed]: the turns' start_task and task_status would not find it`)
     })),
 
     scoped("a task does not start tasks; a host's own fork of the conversation may", "depth", (owner) => Effect.gen(function* () {

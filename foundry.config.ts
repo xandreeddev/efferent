@@ -162,10 +162,8 @@ const PROVIDER_NAMESPACE_EDGES = ["packages/core/src/domain/engine-stamp.entity.
 const UNKNOWN_REQUIREMENT_EDGES = [
   "packages/core/src/ports/capability.port.ts",
   "packages/core/src/ports/turn.port.ts",
-  "packages/core/src/harness/capability.entity.functions.ts",
   "packages/core/src/turn/prompt-sections.ts",
   "packages/core/src/turn/turn.adapter.ts",
-  "packages/plugin-tool-discovery/src/registry.adapter.ts",
   "packages/sdk/src/agent.adapter.ts",
 ]
 

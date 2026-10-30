@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
-import { ConversationId, RunId, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
-import type { SessionLogEvent, Turn } from "@xandreed/core"
+import { ConversationId, RunId, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage, zeroUsage } from "@xandreed/core"
+import type { SessionLogEvent, Turn, TurnRunner } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
@@ -17,7 +17,9 @@ import { agentTaskExecutor } from "./task-executor.adapter.js"
  * runs through the same agent (`agentTaskExecutor`), its result is
  * delivered to the parent's inbox while the parent's turn is still open, the
  * turn's end counts it as `pending`, and the caller's drain lets the parent
- * answer it.
+ * answer it. The executor's turns open the tasks capability's tools with
+ * the `Tasks` that runs them: a task's own `start_task` is refused for
+ * depth, and the parent's reaction may start another task.
  */
 
 const usage = { inputTokens: { total: 100 }, outputTokens: { total: 10 } }
@@ -34,6 +36,23 @@ const scripted = (script: ReadonlyArray<Part>) => Effect.gen(function* () {
     streamText: () => Stream.die("not scripted") as never,
   })
   return { prompts, model }
+})
+
+/**
+ * A provider that answers by the last message of each request (as JSON), for
+ * turns that run concurrently in the background; it keeps those messages in
+ * the order they came.
+ */
+const routed = (answer: (last: string) => Part) => Effect.gen(function* () {
+  const lasts = yield* Ref.make<ReadonlyArray<string>>([])
+  const model = yield* LanguageModel.make({
+    generateText: (options) => {
+      const last = JSON.stringify(options.prompt.content.at(-1) ?? null)
+      return Ref.update(lasts, (all) => [...all, last]).pipe(Effect.as(answer(last) as never))
+    },
+    streamText: () => Stream.die("not scripted") as never,
+  })
+  return { lasts, model }
 })
 
 const session = { id: ConversationId.make("00000000-0000-4000-8000-0000000000ab"), owner: "journey" }
@@ -78,7 +97,8 @@ describe("journey: a background task through the agent", () => {
       const beforeDrain = yield* sessions.read(session)
 
       // 2. the caller drains what the turn's end left waiting: the parent answers the task's result.
-      const drained = yield* sessions.drain(session, Context.get(built, TaskExecutor).react)
+      // The caller's drain runs the executor's reaction with its own Tasks, as the tasks plugin runs its turns.
+      const drained = yield* sessions.drain(session, Context.get(built, TaskExecutor).react).pipe(Effect.provideService(Tasks, tasks))
       return {
         asked, task: task!, childEvents, beforeDrain, drained,
         afterDrain: yield* sessions.read(session),
@@ -132,5 +152,78 @@ describe("journey: a background task through the agent", () => {
     expect(ofKind(observed.parent, "turn.reply").map((event) => (event.data.body as { readonly reply: string | null }).reply)).toEqual([`heard task:${observed.task.taskId}`])
     expect(ofKind(observed.parent, "turn.ended").map((event) => event.data.reason)).toEqual(["completed"])
     expect(observed.prompts).toEqual([])
+  })
+
+  test("the executor runs each turn with the Tasks it is called with among the turn's services, for a runner that reads only those", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const found = yield* Ref.make<ReadonlyArray<string>>([])
+      // A runner that answers with what the turn's services hold: the statuses of the session's tasks in their Tasks.
+      const runner: TurnRunner = {
+        turn: (input) => Option.match(Context.getOption(input.services, Tasks), {
+          onNone: () => Effect.succeed("no Tasks"),
+          onSome: (tasks) => tasks.list(session).pipe(Effect.map((listed) => listed.map((task) => task.status).join()), Effect.orDie),
+        }).pipe(
+          Effect.tap((seen) => Ref.update(found, (all) => [...all, seen])),
+          Effect.map((seen) => ({ outcome: "completed" as const, reply: Option.some(seen), usage: zeroUsage })),
+        ),
+      }
+      const { tasks, idle } = yield* tasksBeside(() => agentTaskExecutor(runner, { services: Context.empty() }))
+      yield* tasks.start(session, { instructions: "anything", mode: "spawn" })
+      yield* idle
+      return yield* Ref.get(found)
+    })))
+    // The child's turn, then the parent's reaction to its result.
+    expect(observed).toEqual(["running", "completed"])
+  })
+
+  test("a task's own turn opens the tasks tools, and its start_task is refused for depth: the task completes with the model's answer and starts nothing", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const background = yield* routed((last) =>
+        last.includes(`"role":"tool"`) ? text("I may not start one.")
+          : last.includes("look up alpha") ? call("c1", "start_task", { instructions: "look deeper", mode: "spawn" })
+            : text("heard"))
+      const { sessions, tasks, idle } = yield* tasksBeside((agent) => agentTaskExecutor(agent, { services: Context.make(LanguageModel.LanguageModel, background.model) }))
+      const task = yield* tasks.start(session, { instructions: "look up alpha", mode: "spawn" })
+      yield* idle
+      return {
+        task: yield* tasks.status(session, task.taskId),
+        listed: (yield* tasks.list(session)).map((each) => each.taskId),
+        child: yield* sessions.read({ id: task.child, owner: session.owner }),
+        lasts: yield* Ref.get(background.lasts),
+      }
+    })))
+    const { task, listed, child, lasts } = observed
+    expect(ofKind(child, "turn.started").map((event) => event.data.origin)).toEqual(["task"])
+    expect(ofKind(child, "turn.ended").map((event) => event.data.reason)).toEqual(["completed"])
+    expect([task.status, Option.getOrNull(task.reply), task.delivered]).toEqual(["completed", "I may not start one.", true])
+    expect(listed).toEqual([task.taskId])
+    // What the model was answered for its start_task: the depth refusal, as a tool failure.
+    expect(lasts[1]).toContain("TaskRefused")
+    expect(lasts[1]).toContain("a background task cannot start another task")
+  })
+
+  test("the parent's reaction to a result opens the tasks tools, and its start_task starts a task, which runs and is answered in turn", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const background = yield* routed((last) =>
+        last.includes(`"role":"tool"`) ? text("I started another task.")
+          : last.includes("look up alpha") ? text("alpha is 42")
+            : last.includes("look up beta") ? text("beta is 7")
+              : last.includes("alpha is 42") ? call("c1", "start_task", { instructions: "look up beta", mode: "spawn" })
+                : last.includes("beta is 7") ? text("Both are found.")
+                  : text("unrouted"))
+      const { sessions, tasks, idle } = yield* tasksBeside((agent) => agentTaskExecutor(agent, { services: Context.make(LanguageModel.LanguageModel, background.model) }))
+      yield* tasks.start(session, { instructions: "look up alpha", mode: "spawn" })
+      yield* idle
+      return { listed: yield* tasks.list(session), parent: yield* sessions.read(session) }
+    })))
+    const { listed, parent } = observed
+    expect(listed.map((task) => [task.instructions, task.status, Option.getOrNull(task.reply), task.delivered]))
+      .toEqual([["look up alpha", "completed", "alpha is 42", true], ["look up beta", "completed", "beta is 7", true]])
+    const reactions = ofKind(parent, "turn.started")
+    expect(reactions.map((event) => [event.data.origin, Option.getOrNull(event.turn)])).toEqual([["inbox", 1], ["inbox", 2]])
+    const [, second] = ofKind(parent, "task.started")
+    expect(second?.data).toMatchObject({ instructions: "look up beta", mode: "spawn", meta: {}, startedBy: { turn: 1 } })
+    expect(ofKind(parent, "turn.reply").map((event) => (event.data.body as { readonly reply: string | null }).reply)).toEqual(["I started another task.", "Both are found."])
+    expect(ofKind(parent, "turn.ended").map((event) => event.data.reason)).toEqual(["completed", "completed"])
   })
 })

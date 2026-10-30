@@ -170,6 +170,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`Context.merge(services, tools.handlers)`), and a custom `StepLoop` drops
   its cast: `request.tools.toolkit.pipe(Effect.provide(request.handlers))`
   type-checks as is.
+- List what a tool handler reads, `RunContext` included:
+  `defineTool({ tool, requires: [RunContext, Tasks], handler })`. A custom
+  `ToolRegistry` checks each tool's `requires` when it opens a run's tools;
+  `toolRegistryConformance` checks it.
+- A host that calls a `TaskExecutor` itself, for example draining a parent
+  with `sessions.drain(address, executor.react)`, provides its `Tasks`:
+  `.pipe(Effect.provideService(Tasks, tasks))`. Custom executors need no
+  change.
 
 ### Breaking
 
@@ -452,6 +460,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/core`: `RunTools.handlers`, `StepRequest.handlers` and
   `McpBridge.handlers` are typed `Context<ToolHandlers>` (new export)
   instead of `Context<never>`.
+- `@xandreed/core`: `defineTool` takes `requires`, the services its handler
+  reads (a Reference needs no entry); a handler reading an unlisted service
+  no longer compiles. `RegisteredTool.handler` requires nothing, and
+  `RegisteredTool.requires` lists the declared keys.
+- A run lacking a service one of its tools declares fails to open its tools
+  with `requires.missing`, naming the tool and the service, before its
+  first step (it used to fail that call mid-turn as a `ToolDefect`).
+- `@xandreed/core`: `TaskExecutor.turn` and `react` require `Tasks`; the
+  tasks plugin provides its own around the turns it hands over, and
+  `agentTaskExecutor` adds it to the turn's services. `tasksConformance`
+  checks it (`executor-tasks`).
 
 ### Added
 
@@ -587,6 +606,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `makeCallBudget`.
 - `@xandreed/core` exports `provideDeclared` and `ServiceKeys`, and the
   published codes include `requires.missing`.
+- `toolRegistryConformance` checks the open's `requires.missing`, and that
+  a handler sees its declared services as they were where the tools were
+  opened.
 
 ### Changed
 
@@ -854,6 +876,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   it, and follower streams end when the Sessions layer closes.
 - The summary memory declares the `UtilityLlm` it reads each turn as
   `optional`.
+- `start_task`, `task_status`, `recall_context` and the workspace tools
+  declare the services they read.
+- A background task's turns, run by `agentTaskExecutor`, carry the `Tasks`
+  that started them: a task's own `start_task` is refused for depth, and the
+  parent's reaction to a result may start another task. Before, the turns
+  had no `Tasks`, so a call to a task tool died mid-turn.
 
 ### Repository
 

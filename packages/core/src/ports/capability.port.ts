@@ -64,7 +64,7 @@ export interface ToolViewInput<Result, Params> {
   readonly media?: (result: Result, params: Params) => ReadonlyArray<Media>
 }
 
-/** A typed tool definition as its author writes it (see `defineTool`). */
+/** A typed tool definition as its author writes it (see `defineTool`); `R` is the services its handler reads. */
 export interface ToolDefinition<T extends Tool.Any, R> {
   readonly tool: T
   readonly handler: (params: Tool.Parameters<T>) => Effect.Effect<Tool.Success<T>, Tool.Failure<T>, R>
@@ -72,10 +72,17 @@ export interface ToolDefinition<T extends Tool.Any, R> {
   readonly annotations: ToolAnnotations
 }
 
-/** The erased form the registry consumes; its requirements are provided per run. */
+/**
+ * The erased form the registry consumes. The handler reads only the
+ * services `requires` names, from where it runs (a run's tools run where
+ * they were opened); `defineTool` checks them by key on each call, and a
+ * registry checks them when it opens a run's tools.
+ */
 export interface RegisteredTool {
   readonly tool: Tool.Any
-  readonly handler: (params: unknown) => Effect.Effect<unknown, unknown, unknown>
+  /** The keys of the services the handler reads; a Reference, which has a default, is not among them. */
+  readonly requires?: ReadonlyArray<string>
+  readonly handler: (params: unknown) => Effect.Effect<unknown, unknown>
   readonly view: Option.Option<ToolViewDefinition<unknown, unknown>>
   readonly annotations: ToolAnnotations
 }

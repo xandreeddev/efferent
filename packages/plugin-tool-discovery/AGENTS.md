@@ -4,6 +4,7 @@ Core's `ToolRegistry` over every contributed capability: it registers the tools 
 
 ## Rules
 
+- `open` checks every registered tool's `requires` against the services it captures before it sets anything up: a missing one fails the open with `requires.missing`, naming each tool and service, so no handler finds one missing mid-turn.
 - A call refused before its handler runs goes through `refuse`: it publishes `tool.refused` and returns `{ error, message }` as the call's result, for the model to correct.
 - Only `skills.unknown` and `capability.forbidden` are refusals of an activation (`refusalCodes`); any other failure there, such as the store's, is the turn's.
 - A handler's defect reaches the model as `ToolDefect` with the first line of its message (at most 300 characters); the whole cause goes to the log only.
@@ -25,16 +26,16 @@ Core's `ToolRegistry` over every contributed capability: it registers the tools 
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `load_skill` description | `src/registry.adapter.ts:69` | sdk golden |
-| `read_skill_reference` description | `src/registry.adapter.ts:77` | unpinned |
-| Catalogue heading and lines (`catalogText`) | `src/registry.adapter.ts:115-121` | sdk golden |
-| Skill instructions (`skillInstructions`: `## id`, `Tools:`, `References (read_skill_reference):`, `Now available:`), also for matcher-seeded exchanges | `src/registry.adapter.ts:106-112` | sdk golden; exact, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:188` |
-| `ToolInactive` messages | `src/registry.adapter.ts:296-297` | exact (not loaded), `packages/plugin-workspace/src/workspace-tools.journey.test.ts:183`; not available: unpinned |
-| `ToolCallLimit` message | `src/registry.adapter.ts:308` | exact, `packages/sdk/src/agent.trace.test.ts:239` |
-| `Forbidden`, `CallLimit` messages; `Denied` carries the policy's | `src/registry.adapter.ts:300`, `:306`, `:303` | codes only, `src/registry.adapter.test.ts:300`; the denial's text, `:324` |
-| `ToolDefect` message | `src/registry.adapter.ts:325` | exact, `src/registry.adapter.test.ts:350` |
-| `SkillLoadLimit`, `UnknownReference` messages; `Unknown skills: …` | `src/registry.adapter.ts:264`, `:276`, `:246` | unpinned |
-| `SkillNotLoaded` message | `src/registry.adapter.ts:275` | contains, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:260` |
+| `load_skill` description | `src/registry.adapter.ts:71` | sdk golden |
+| `read_skill_reference` description | `src/registry.adapter.ts:79` | unpinned |
+| Catalogue heading and lines (`catalogText`) | `src/registry.adapter.ts:117-122` | sdk golden |
+| Skill instructions (`skillInstructions`: `## id`, `Tools:`, `References (read_skill_reference):`, `Now available:`), also for matcher-seeded exchanges | `src/registry.adapter.ts:108-114` | sdk golden; exact, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:188` |
+| `ToolInactive` messages | `src/registry.adapter.ts:308-309` | exact (not loaded), `packages/plugin-workspace/src/workspace-tools.journey.test.ts:183`; not available: unpinned |
+| `ToolCallLimit` message | `src/registry.adapter.ts:320` | exact, `packages/sdk/src/agent.trace.test.ts:239` |
+| `Forbidden`, `CallLimit` messages; `Denied` carries the policy's | `src/registry.adapter.ts:312`, `:318`, `:315` | codes only, `src/registry.adapter.test.ts:305`; the denial's text, `:329` |
+| `ToolDefect` message | `src/registry.adapter.ts:337` | exact, `src/registry.adapter.test.ts:381` |
+| `SkillLoadLimit`, `UnknownReference` messages; `Unknown skills: …` | `src/registry.adapter.ts:276`, `:288`, `:258` | unpinned |
+| `SkillNotLoaded` message | `src/registry.adapter.ts:287` | contains, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:260` |
 
 ## Erasure files
 
@@ -51,7 +52,7 @@ None. The toolkit is built from tools known only at run time (`Toolkit.make` ove
 ## Tests
 
 - `src/registry.conformance.test.ts` runs core's `toolRegistryConformance` against the plugin, with self-tests of careless registries that must fail.
-- `src/registry.adapter.test.ts`: invocations and progress, subscriber failures, refusals, defects, the matcher's choice, `load_skill`, image views, digest tasks.
+- `src/registry.adapter.test.ts`: invocations and progress, subscriber failures, refusals, an open lacking declared services, defects, the matcher's choice, `load_skill`, image views, digest tasks.
 - The sdk golden composes it; the workspace journey and skills tests drive `load_skill` and `read_skill_reference` end to end.
 - Run: `bun test packages/plugin-tool-discovery packages/sdk/src/agent.golden.test.ts`.
 

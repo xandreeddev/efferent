@@ -25,8 +25,8 @@ transports (see [render kits](#render-kits)).
 | `sessionLogRecoveryConformance(subject)` | reopening, several open handles, interrupted commits, a handle whose scope never closed, the exact `notAfter` boundary | a way to open a `SessionLog` |
 | `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; a reused run id (`RunIdReused`) opening nothing; `meta` stored and admitted; every `NotResumable` reason; a task's turn (origin `task`, its `TaskRef`) admitted, stored, keyed and never resumed; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds, refused to a turn's writer too unless the framework's turn wrote them; cancel and removal, and a turn nobody holds reaped alike by a cancel or a delivery; the inbox; a write renewing a lease, a lease that ran out and a dead process holder reaped; a turn judged as it was taken, not by the reader's ownership; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
 | `taskRunnerConformance(make, { interruptsOnClose? })` | `run` hands the work over and returns, the work runs once, outlives its caller, is told a deadline not in the past and runs without the caller's services; `TaskActivity` counts it from the hand-over; closing the runner's scope interrupts it | a way to make a `TaskRunner` (and its `TaskActivity`) |
-| `tasksConformance(make)` | a task runs as one turn of a child session (spawn empty, fork with the parent's closed turns), its result reaches the parent's inbox once and the parent reacts once, after the turn in flight; `task.started` once per task, a second start runs nothing, the same id with other instructions `TaskConflict` and an id naming another session `SessionExists`; the child's turn a task's (origin `task`); a failed task says why; cancel; no task starts tasks, a host's fork may; `reconcile` starting a task that never ran and delivering a result whose delivery was lost | a way to build `Sessions` and `Tasks` over the kit's runner and executor |
-| `toolRegistryConformance(make)` | the catalog, activation (always-on, on demand, unknown, ungranted, only growing), concurrent `load_skill` calls each leaving their tools active, activated once, one invocation id per call minted before the checks, `CurrentToolInvocation` and the opener's services in the handler, events published on the run's bus only (never written to the journal by the registry), `PermissionGrants`, a `tool.refused` for each reason (`inactive`, `forbidden`, `denied`, `call-limit`, `tool-call-limit`) | a way to build a `ToolRegistry` over the kit's capabilities |
+| `tasksConformance(make)` | a task runs as one turn of a child session (spawn empty, fork with the parent's closed turns), its result reaches the parent's inbox once and the parent reacts once, after the turn in flight; `task.started` once per task, a second start runs nothing, the same id with other instructions `TaskConflict` and an id naming another session `SessionExists`; the child's turn a task's (origin `task`); a failed task says why; cancel; the executor's turns run with the backend's `Tasks` (the child finds its task running, the reaction finds it finished); no task starts tasks, a host's fork may; `reconcile` starting a task that never ran and delivering a result whose delivery was lost | a way to build `Sessions` and `Tasks` over the kit's runner and executor |
+| `toolRegistryConformance(make)` | the catalog, activation (always-on, on demand, unknown, ungranted, only growing), concurrent `load_skill` calls each leaving their tools active, activated once, one invocation id per call minted before the checks, `CurrentToolInvocation` and the opener's services in the handler, the services a tool declares (`requires.missing` when the run lacks one, the opener's when it has them), events published on the run's bus only (never written to the journal by the registry), `PermissionGrants`, a `tool.refused` for each reason (`inactive`, `forbidden`, `denied`, `call-limit`, `tool-call-limit`) | a way to build a `ToolRegistry` over the kit's capabilities |
 | `memoryConformance(memory, services)` | own entry ids, a log that reads back exactly after a reopen, views and artifacts kept, a pure build, the step context only when asked and only its own run's, append-only maintenance, a message's images through a reopen (the current turn's built as image parts, an earlier turn's as image parts or label lines), a tool result's images stored once and the current turn's built as the result's images | a memory strategy |
 | `stepLoopConformance(loop)` | per-step event order, each step ended once with nothing recorded under it after its `step.ended` (correctives, nudges and steers are the next step's), nothing recorded under a step that never starts (the step cap or a complete verdict ending the run with a corrective or a nudge due), a step whose completion fails afterwards still `completed`, a malformed step ended `malformed` with no `completion.evaluated`, validation before dispatch, planned batches, forced tool choices, no call after completion, the run's usage (the sum of its `assistant.message` usage), the step cap, the request's `captureTraceContent` reaching its model calls as `CurrentTraceContent`, the request's `cacheKey` reaching its dispatch checks and model calls as `CurrentPromptCacheKey`, a request refused over an image planned again and sent once more when `onMediaRejected` answers true (failing when it answers false), a streamed step's reasoning reaching the next request with its provider metadata (signed and redacted thinking) as a non-streamed one's does, planned and id-less tool calls given ids distinct across two runs of a turn and two turns, with the request's run ordinal on every step event | a `StepLoop` |
 | `turnConformance(runner, services)` | the writer first, the message before the matcher's history, the reply and the end exactly once, tasks joined before the reply, a model-driven turn's usage equal to its stored `step.usage` records (`turnUsageOf`), the user's attachments stored with the turn and reaching the first request as image parts, two runs of one turn each rebuilding their own request from the stored events (the second never with the first's step context), the host layer seeing only earlier turns, a turn it begins returning the inbox items left waiting (`pending`), a turn that cannot begin failing with the refusal itself (`SessionBusy`) and running nothing, an interrupted turn ending at once while a background reaction to its reply is stuck, a background reaction publishing past its queue's size not hanging the turn | a turn composition |
@@ -362,7 +362,8 @@ const checks = taskRunnerConformance(Layer.build(InProcessTaskRunnerLive()).pipe
 fiber the kit waits for, with the services there were when the check built
 the runner and none of its caller's, or dropped, as by a runner that died)
 and executor (a child turn answers `found: <instructions>` unless the check
-says otherwise; a reaction records the turn it ran on). Like the runner
+says otherwise; a reaction records the turn it ran on; both look up the
+task in the `Tasks` they run with, which must be the backend's). Like the runner
 kit, it waits up to two seconds on the live clock for background work, so
 run it without a `TestClock`:
 
@@ -424,12 +425,13 @@ and sessions that begin the child's turn as a user's fail `run`.
 ## The ToolRegistry kit
 
 `toolRegistryConformance(make)` checks a `ToolRegistry`. `make` builds one
-over the kit's capabilities (four tools and three skills: an always-on one,
-one needing the `kit.vault` permission, one loaded on demand) with at most
-`maxCallsPerRun` calls per turn and no permission granted by default. Each
-check runs a turn over core's `TurnLive`, with a writer that keeps the
-turn's events in memory, and calls the tools through the open toolkit's
-handlers:
+over the kit's capabilities (five tools and three skills: an always-on one,
+one needing the `kit.vault` permission, one loaded on demand; one tool
+declares the `SessionEnvironment` it reads) with at most `maxCallsPerRun`
+calls per turn and no permission granted by default. Each check runs a turn
+over core's `TurnLive`, with a writer that keeps the turn's events in
+memory, opens the tools with a `SessionEnvironment` and calls them through
+the open toolkit's handlers with another:
 
 ```ts
 import { Context, Effect, Layer } from "effect"
@@ -459,6 +461,11 @@ const checks = toolRegistryConformance((capabilities, limits) =>
   as `CurrentToolInvocation` and the services where the tools were opened,
   not the caller's; the events are published on the run's bus only, so
   `tool.progress` never reaches the journal.
+- **requires-missing**: a run lacking a service a tool declares (here the
+  `SessionEnvironment`) fails to open its tools with `requires.missing`,
+  naming the tool and the service.
+- **requires-opened**: a handler sees the services it declares as they are
+  where the tools were opened, not where it is called.
 - **grants**: the turn's `PermissionGrants` let a skill that needs them be
   activated and its tools run.
 - **refused-inactive**, **refused-forbidden**, **refused-denied**,
@@ -479,8 +486,10 @@ the turn's own journaling.
 The plugin's registry passes them; its tests show a registry that ignores
 the turn's call limit failing `refused-call-limit`, one that activates every
 skill when the tools open failing `activation`, `invocation` and
-`refused-inactive`, and one whose catalog drops the permissions failing
-`catalog`.
+`refused-inactive`, one whose catalog drops the permissions failing
+`catalog`, one that opens the tools without checking what they declare
+failing `requires-missing`, and one that opens them over services of its
+own failing `requires-missing` and `requires-opened`.
 
 ## The FileSystem kit
 

@@ -1,6 +1,6 @@
-import { Effect, Layer, Option } from "effect"
-import type { Context, Scope } from "effect"
-import { isTurnError, TaskExecutor } from "@xandreed/core"
+import { Context, Effect, Layer, Option } from "effect"
+import type { Scope } from "effect"
+import { isTurnError, TaskExecutor, Tasks } from "@xandreed/core"
 import type { TaskView, Turn, TurnError, TurnOutcome, TurnRunner, TurnServices, TurnWriter } from "@xandreed/core"
 
 /** What a task's turn runs once it is composed: a `use` of `Agent.turn`, with the turn's services. */
@@ -16,17 +16,22 @@ const oneRun = (turn: Turn): Effect.Effect<TurnOutcome, TurnError> => turn.tools
  * A turn the tasks plugin began, run through the agent: its writer is
  * handed over, so nothing is begun here and the plugin ends the turn. A
  * begin refusal cannot happen then: one would be a broken runner, a defect.
+ * The turn's services are the host's with the `Tasks` the executor is
+ * called with, so the turn's task tools (`start_task`, `task_status`) find
+ * the `Tasks` whose work the turn is.
  */
-const runOn = (agent: TurnRunner, services: Context.Context<never>, writer: TurnWriter, use: TurnUse) =>
-  agent.turn({ turn: writer, services }, use).pipe(
-    Effect.catch((error) => isTurnError(error) ? Effect.fail(error) : Effect.die(error)),
-    Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: result.reply })),
-  )
+const runOn = (agent: TurnRunner, services: Context.Context<never>, writer: TurnWriter, use: TurnUse) => Tasks.pipe(
+  Effect.flatMap((tasks) => agent.turn({ turn: writer, services: Context.add(services, Tasks, tasks) }, use)),
+  Effect.catch((error) => isTurnError(error) ? Effect.fail(error) : Effect.die(error)),
+  Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: result.reply })),
+)
 
 /**
  * The `TaskExecutor` that runs a task's turns through an agent (`Agent.turn`,
  * or any `TurnRunner`) with the turn's `services` (its model, the host's
- * per-turn ports): the child's one turn with `child` and the parent's
+ * per-turn ports) and the `Tasks` it is called with (the tasks plugin's
+ * own), so a turn's `start_task` and `task_status` work: the child's one
+ * turn with `child` and the parent's
  * reaction to a result with `react`, each by default the turn's skills
  * selected for its message, then one run of the step loop, whose text is the
  * reply. The tasks plugin begins and ends those turns; this only runs them.

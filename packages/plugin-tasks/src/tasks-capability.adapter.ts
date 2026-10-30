@@ -30,6 +30,7 @@ export const tasksCapability = defineCapability({
   tools: [
     defineTool({
       tool: StartTask,
+      requires: [RunContext, Tasks],
       handler: ({ instructions, mode }) => Effect.gen(function* () {
         const run = yield* RunContext
         const tasks = yield* Tasks
@@ -41,6 +42,7 @@ export const tasksCapability = defineCapability({
     }),
     defineTool({
       tool: TaskStatusTool,
+      requires: [RunContext, Tasks],
       handler: ({ taskId }) => Effect.gen(function* () {
         const run = yield* RunContext
         const tasks = yield* Tasks

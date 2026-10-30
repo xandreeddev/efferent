@@ -126,8 +126,9 @@ export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Opti
 /**
  * The registry over every capability. Built once; each turn opens it
  * where its services are, which the handlers then run with: the RunContext
- * (events, memory), and the optional IntentMatcher, PermissionGrants and
- * ActionPolicy of that turn. Every call gets its invocation id first; a call
+ * (events, memory), the services each tool declares (all there, or the open
+ * fails with `requires.missing`), and the optional IntentMatcher,
+ * PermissionGrants and ActionPolicy of that turn. Every call gets its invocation id first; a call
  * refused before its handler runs (an inactive tool, a missing permission,
  * a denial, a call limit) publishes `tool.refused` and fails with the
  * refusal, which the model reads as the call's result.
@@ -223,6 +224,12 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
     // What the handlers run with: everything where the tools are opened, but the span there:
     // a call's spans nest under the step that makes it, a handler's under its `tool.*` span.
     const runServices = replayableContext(yield* Effect.context<never>())
+    // Every service a tool declares is here, or the run does not open: no handler finds one missing mid-turn.
+    const missing = registered.flatMap((entry) => {
+      const absent = (entry.requires ?? []).filter((key) => !runServices.mapUnsafe.has(key))
+      return absent.length === 0 ? [] : [`${entry.tool.name} requires ${absent.join(", ")}`]
+    })
+    if (missing.length > 0) return yield* Effect.fail(harness("requires.missing", missing.join("; ")))
     const matcher = yield* Effect.serviceOption(IntentMatcher)
     const policy = yield* Effect.serviceOption(ActionPolicy)
     const grants = yield* Option.match(yield* Effect.serviceOption(PermissionGrants), {
@@ -283,7 +290,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       return found.text
     })
 
-    const wrap = (entry: RegisteredTool, handler: (params: unknown) => Effect.Effect<unknown, unknown, unknown>) => (params: unknown) => Effect.gen(function* () {
+    const wrap = (entry: RegisteredTool, handler: RegisteredTool["handler"]) => (params: unknown) => Effect.gen(function* () {
       const name = entry.tool.name
       const isOwn = own.includes(entry)
       // The call's id first: a refused call has one too, and its `tool.refused` carries it.
@@ -347,7 +354,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       return yield* ok ? Effect.succeed(value) : Effect.fail(value)
     }).pipe(Effect.withSpan(`tool.${entry.tool.name}`), Effect.provide(runServices))
 
-    const handlerOf = (entry: RegisteredTool): ((params: unknown) => Effect.Effect<unknown, unknown, unknown>) =>
+    const handlerOf = (entry: RegisteredTool): RegisteredTool["handler"] =>
       entry.tool.name === LoadSkill.name ? (params) => loadSkill(params as { readonly skills: ReadonlyArray<string> })
         : entry.tool.name === ReadSkillReference.name ? (params) => readReference(params as { readonly skill: string; readonly reference: string })
           : entry.handler

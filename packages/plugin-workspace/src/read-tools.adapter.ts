@@ -1,7 +1,7 @@
 import { Tool } from "effect/ai"
 import { Effect, Option, Result } from "effect"
 import type { Path, RcMap, Semaphore } from "effect"
-import { defineTool, Failure, SubjectId } from "@xandreed/core"
+import { defineTool, Failure, FileSystem, SessionEnvironment, SubjectId } from "@xandreed/core"
 import type { RegisteredTool, Subject } from "@xandreed/core"
 import { compilePattern, searchText } from "./text-search.entity.functions.js"
 import { decodeText, formatBytes, lineWindow, looksBinary, mediaTypeOf } from "./text-window.entity.functions.js"
@@ -19,6 +19,9 @@ export interface WorkspaceToolContext {
   readonly protect: ReadonlyArray<ProtectRule>
   readonly locks: RcMap.RcMap<string, Semaphore.Semaphore>
 }
+
+/** The services every workspace tool reads on each call: the file system, and the session's workspace on it (`bash` reads `Bash` too). */
+export const WORKSPACE_SERVICES = [FileSystem, SessionEnvironment] as const
 
 export const failure = (error: string, message: string): Failure => ({ error, message })
 
@@ -46,6 +49,7 @@ const GrepTool = (config: WorkspaceToolsConfig) =>
 /** `read`: a window of a text file's lines, an image (`readImages`), or what a binary file is. */
 export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: ReadTool(config),
+  requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path)
     const target = yield* resolveTarget(access, params.path, { confine: config.confine })
@@ -74,6 +78,7 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
 /** `ls`: a directory's entries by name, at most `lsEntries` of them. */
 export const lsTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: LsTool(config),
+  requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
@@ -89,6 +94,7 @@ export const lsTool = ({ config, path }: WorkspaceToolContext): RegisteredTool =
 /** `find`: the files under a directory whose path matches a glob, as paths relative to the workspace root. */
 export const findTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: FindTool(config),
+  requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })
@@ -122,6 +128,7 @@ interface Searched {
  */
 export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: GrepTool(config),
+  requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path)
     const target = yield* resolveTarget(access, params.path ?? ".", { confine: config.confine })

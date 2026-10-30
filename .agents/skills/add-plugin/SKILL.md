@@ -79,7 +79,10 @@ export default tasksPlugin
   may need only what `requires` lists (a Reference needs no entry): one that
   needs another service does not compile, so declare it rather than widen a
   type. Read an `optional` service with `Effect.serviceOption`, and list in
-  `optional` a service the plugin reads that way per turn too.
+  `optional` a service the plugin reads that way per turn too. A tool lists
+  the services its handler reads in `defineTool`'s `requires` (one it reads
+  without listing does not compile); a run lacking one fails to open its
+  tools with `requires.missing`.
 - Export `<thing>Plugin`, `<Thing>PluginLive = <thing>Plugin.live`, the
   config schema and the defaults; `export default` the package's main plugin.
 - A plugin builds only its own services from what it requires. Agents are

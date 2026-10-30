@@ -9,7 +9,7 @@ import type { WorkspaceAccess } from "./workspace-path.entity.functions.js"
 import type { WorkspaceTarget } from "./workspace-path.entity.js"
 import { EditParams, EditResult, WORKSPACE_PERMISSIONS, WriteParams, WriteResult } from "./workspace-tools.entity.js"
 import { compactEdit, compactWrite, renderEdit, renderWrite, toolDescriptions } from "./workspace-tools.entity.functions.js"
-import { failure, fileSubjects, notAFile } from "./read-tools.adapter.js"
+import { failure, fileSubjects, notAFile, WORKSPACE_SERVICES } from "./read-tools.adapter.js"
 import type { WorkspaceToolContext } from "./read-tools.adapter.js"
 
 const WriteTool = (description: string) => Tool.make("write", { description, parameters: WriteParams, success: WriteResult, failure: Failure, failureMode: "return" })
@@ -66,6 +66,7 @@ const save = (access: WorkspaceAccess, target: WorkspaceTarget, content: string,
 /** `write`: create a file, or replace all of one, through a temporary file and a rename (see `save`). */
 export const writeTool = (context: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: WriteTool(toolDescriptions(context.config).write),
+  requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(context.path)
     const target = yield* resolveTarget(access, params.path, { confine: context.config.confine })
@@ -94,6 +95,7 @@ export const writeTool = (context: WorkspaceToolContext): RegisteredTool => defi
  */
 export const editTool = (context: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: EditTool(toolDescriptions(context.config).edit),
+  requires: WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
     const { config } = context
     const access = yield* openWorkspace(context.path)
