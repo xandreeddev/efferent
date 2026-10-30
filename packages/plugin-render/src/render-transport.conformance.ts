@@ -3,6 +3,7 @@ import { canonicalJson, ConformanceFailure } from "@xandreed/core"
 import { FeedHeartbeat, FeedReady, FeedRecord } from "./domain/feed-frame.entity.js"
 import type { FeedFrame, FeedOptions, JournalRecord } from "./domain/feed-frame.entity.js"
 import { decodeSocketFrame, decodeSse } from "./domain/feed-frame.entity.functions.js"
+import { PrincipalId, ThreadId } from "./domain/render-output.entity.js"
 import type { RenderError } from "./domain/render-surface.entity.js"
 import type { FeedProjection, JournalTail, RenderFeed, RenderTransport, SocketPeer, SsePeer } from "./ports/render.port.js"
 import type { ConformanceCheck } from "./render-surface.conformance.js"
@@ -52,7 +53,7 @@ export const makeMemoryJournal = Effect.fnUntraced(function* (initial: ReadonlyA
 })
 
 const project: FeedProjection = (record) => Effect.succeed(record.kind === "hidden" ? Option.none() : Option.some({ event: record.kind, data: record.data }))
-const feedScope = { threadId: "thread", principalId: "guest" }
+const feedScope = { threadId: ThreadId.make("thread"), principalId: PrincipalId.make("guest") }
 const record = (sequence: number, kind = "message.updated"): JournalRecord => ({ sequence, kind, data: { sequence } })
 const collect = (stream: Stream.Stream<FeedFrame, RenderError>) => Stream.runCollect(stream).pipe(Effect.map((chunk) => Array.from(chunk)))
 const sequences = (frames: ReadonlyArray<FeedFrame>) => frames.flatMap((frame) => frame._tag === "FeedRecord" ? [frame.sequence] : [])

@@ -760,7 +760,7 @@ Authorize before writing the response: a feed refused later still answers
 ```ts
 import { Duration, Effect, Option, Schema } from "effect"
 import { ConversationId, turnBeginCodes } from "@xandreed/sdk"
-import { sseHeaders, SseTransport } from "@xandreed/plugin-render"
+import { PrincipalId, sseHeaders, SseTransport, ThreadId } from "@xandreed/plugin-render"
 import type { SsePeer } from "@xandreed/plugin-render"
 
 /**
@@ -806,7 +806,7 @@ export const eventsRoute = (host: Host, owner: string, id: string, request: Requ
     yield* host.sessions.get({ id: session.value, owner })
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
     const writer = writable.getWriter()
-    const frames = host.feed.frames({ threadId: session.value, principalId: owner }, cursorOf(request), clientProjection)
+    const frames = host.feed.frames({ threadId: ThreadId.make(session.value), principalId: PrincipalId.make(owner) }, cursorOf(request), clientProjection)
     waitUntil(Effect.runPromise(SseTransport.serve(frames, webSsePeer(writer, request.signal)).pipe(Effect.ensuring(closeStream(writer)))))
     return new Response(readable, { headers: sseHeaders })
   }).pipe(Effect.catchTags({

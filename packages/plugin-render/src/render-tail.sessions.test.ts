@@ -2,10 +2,13 @@ import { expect, test } from "bun:test"
 import { Effect, Layer, Option, Stream } from "effect"
 import { ConversationId, SessionMissing, Sessions } from "@xandreed/core"
 import type { SessionAddress, SessionLogEvent } from "@xandreed/core"
+import { PrincipalId, ThreadId } from "./domain/render-output.entity.js"
 import { JournalTail } from "./ports/render.port.js"
 import { SessionsJournalTailLive } from "./render-tail.sessions.adapter.js"
 
 const id = ConversationId.make("00000000-0000-4000-8000-00000000fee0")
+/** The feed of session `id`, read as `owner`. */
+const feedOf = (owner: string, threadId: string = id) => ({ threadId: ThreadId.make(threadId), principalId: PrincipalId.make(owner) })
 const stored: ReadonlyArray<SessionLogEvent> = [
   { session: id, seq: 1, turn: Option.some(1), kind: "turn.started", at: 0, data: { runId: "r" } },
   { session: id, seq: 2, turn: Option.some(1), kind: "canvas.planned", at: 0, data: { page: "p" } },
@@ -33,20 +36,20 @@ const tailOver = (owner: string, asked: Array<SessionAddress>) =>
 test("a session's events are the feed's records, read as the feed's principal", async () => {
   const asked: Array<SessionAddress> = []
   const tail = tailOver("owner-1", asked)
-  const records = await Effect.runPromise(tail.read({ threadId: id, principalId: "owner-1" }, 1))
+  const records = await Effect.runPromise(tail.read(feedOf("owner-1"), 1))
   expect(records).toEqual([{ sequence: 2, kind: "canvas.planned", data: { page: "p" }, turn: 1 }])
   expect(asked).toEqual([{ id, owner: "owner-1" }])
 })
 
 test("another owner, or a name that is not a session, reads nothing", async () => {
   const tail = tailOver("owner-1", [])
-  const stranger = await Effect.runPromise(Effect.flip(tail.read({ threadId: id, principalId: "someone-else" }, 0)))
-  const invalid = await Effect.runPromise(Effect.flip(tail.read({ threadId: "not-a-session", principalId: "owner-1" }, 0)))
+  const stranger = await Effect.runPromise(Effect.flip(tail.read(feedOf("someone-else"), 0)))
+  const invalid = await Effect.runPromise(Effect.flip(tail.read(feedOf("owner-1", "not-a-session"), 0)))
   expect([stranger.code, invalid.code]).toEqual(["forbidden", "invalid"])
 })
 
 test("the session's commits wake the feed", async () => {
   const tail = tailOver("owner-1", [])
-  const woken = await Effect.runPromise(Stream.runCount(Option.getOrThrow(Option.fromNullishOr(tail.changes))({ threadId: id, principalId: "owner-1" })))
+  const woken = await Effect.runPromise(Stream.runCount(Option.getOrThrow(Option.fromNullishOr(tail.changes))(feedOf("owner-1"))))
   expect(woken).toBe(1)
 })

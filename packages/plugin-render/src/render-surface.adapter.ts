@@ -1,12 +1,13 @@
 import { Deferred, Effect, Layer, Option, Ref, Schema, Stream, Semaphore } from "effect"
 import { UiOutputProposal } from "./domain/render-output.entity.js"
-import type { UiOutputReceipt } from "./domain/render-output.entity.js"
+import type { OperationId, UiOutputReceipt } from "./domain/render-output.entity.js"
 import { RenderError, RenderNode, RenderSnapshot, SurfaceCompleted, SurfaceFrozen, SurfacePlanned } from "./domain/render-surface.entity.js"
-import type { FreezeReason, PublishResult, RenderSnapshotInput, SurfaceScope, SurfaceState } from "./domain/render-surface.entity.js"
+import type { FreezeReason, PublishResult, RenderSnapshotInput, SurfaceScope, SurfaceState, VersionId } from "./domain/render-surface.entity.js"
 import {
   describeError,
   fillOperationIdOf,
   fromOutputError,
+  isConflictRefusal,
   isFrozenRefusal,
   missingNodesOf,
   operationIdOf,
@@ -24,6 +25,9 @@ import type { RenderOpenOptions, RenderSurface } from "./ports/render.port.js"
 const invalid = (message: string) => new RenderError({ code: "invalid", message })
 
 const unique = (values: ReadonlyArray<string>): ReadonlyArray<string> => [...new Set(values)]
+
+/** What a plan came to: stored, refused on a frozen surface, or beaten by another writer. */
+type PlanOutcome = "planned" | "frozen" | "stale"
 
 /**
  * One surface for one message: versions (`<messageId>:v<generation>`),
@@ -47,7 +51,7 @@ export const openSurface = (
   const updateState = (change: (state: SurfaceProgress["state"]) => SurfaceProgress["state"]) =>
     Ref.update(progress, (current) => ({ ...current, state: change(current.state) }))
 
-  const commitNode = (versionId: string, operationId: string, node: RenderNode): Effect.Effect<UiOutputReceipt, RenderError> => Effect.gen(function* () {
+  const commitNode = (versionId: VersionId, operationId: OperationId, node: RenderNode): Effect.Effect<UiOutputReceipt, RenderError> => Effect.gen(function* () {
     const proposal = proposalOf(operationId, node)
     const json = yield* Schema.encodeEffect(Schema.fromJsonString(UiOutputProposal))(proposal).pipe(
       Effect.mapError(() => invalid("A component must be serializable")),
@@ -64,7 +68,7 @@ export const openSurface = (
     state: { ...value.state, components: unique([...value.state.components, node.release.component]) },
   }))
 
-  const commitNodes = (versionId: string, generation: number, nodes: ReadonlyArray<RenderNode>) => Effect.forEach(nodes, (node) =>
+  const commitNodes = (versionId: VersionId, generation: number, nodes: ReadonlyArray<RenderNode>) => Effect.forEach(nodes, (node) =>
     commitNode(versionId, operationIdOf(scope.runId, scope.surfaceId, generation, node.nodeId), node).pipe(Effect.andThen(recordCommitted(node))),
   { concurrency: 1, discard: true })
 
@@ -85,14 +89,25 @@ export const openSurface = (
     yield* Ref.update(progress, (value) => ({ ...value, frozenRecorded: true, state: { ...value.state, frozen: true } }))
   })
 
-  const markComplete = (versionId: string, generation: number) => store.complete(scope, SurfaceCompleted.make({
+  const markComplete = (versionId: VersionId, generation: number) => store.complete(scope, SurfaceCompleted.make({
     ...identity, versionId, generation, phase: "complete", frozen: false,
   })).pipe(Effect.andThen(updateState((state) => ({ ...state, completed: true }))))
 
-  const publishNow = (input: RenderSnapshotInput): Effect.Effect<PublishResult, RenderError> => Effect.gen(function* () {
-    const snapshot = yield* Schema.decodeUnknownEffect(RenderSnapshot)(input, { onExcessProperty: "error", reportInput: true }).pipe(
+  /** Another writer moved the surface: its progress is refolded from the store, the stale view dropped. */
+  const rehydrate = store.hydrate(scope).pipe(Effect.flatMap((latest) => Ref.set(progress, progressOf(scope.surfaceId, scope.messageId, latest))))
+
+  const publishNow = (input: RenderSnapshotInput): Effect.Effect<PublishResult, RenderError> =>
+    Schema.decodeUnknownEffect(RenderSnapshot)(input, { onExcessProperty: "error", reportInput: true }).pipe(
       Effect.mapError((error) => invalid(`Invalid snapshot: ${error.message}`)),
+      Effect.flatMap((snapshot) => publishSnapshot(snapshot, true)),
     )
+
+  /**
+   * Plans the next generation from the progress held. A plan another writer
+   * beat (`conflict`) re-hydrates and decides again, once (`retry`): the
+   * same content resumes that writer's version, other content plans the next.
+   */
+  const publishSnapshot = (snapshot: RenderSnapshot, retry: boolean): Effect.Effect<PublishResult, RenderError> => Effect.gen(function* () {
     const current = yield* Ref.get(progress)
     if (current.state.frozen) return yield* recordFrozenCompletion.pipe(Effect.andThen(snapshotResult(true)))
     const signature = signatureOf(snapshot)
@@ -115,10 +130,12 @@ export const openSurface = (
       placeholders: snapshot.placeholders,
       signature,
     })).pipe(
-      Effect.as(true),
-      Effect.catchIf(isFrozenRefusal, () => Effect.succeed(false)),
+      Effect.as<PlanOutcome>("planned"),
+      Effect.catchIf(isFrozenRefusal, () => Effect.succeed<PlanOutcome>("frozen")),
+      Effect.catchIf((error) => retry && isConflictRefusal(error), () => Effect.succeed<PlanOutcome>("stale")),
     )
-    if (!planned) {
+    if (planned === "stale") return yield* rehydrate.pipe(Effect.andThen(publishSnapshot(snapshot, false)))
+    if (planned === "frozen") {
       yield* updateState((state) => ({ ...state, frozen: true }))
       return yield* recordFrozenCompletion.pipe(Effect.andThen(snapshotResult(true)))
     }
@@ -134,7 +151,7 @@ export const openSurface = (
   })
 
   /** Identical content keeps its version: commit what is still missing (same operation ids), then complete. */
-  const resume = (versionId: string, current: SurfaceProgress, snapshot: RenderSnapshot): Effect.Effect<PublishResult, RenderError> => Effect.gen(function* () {
+  const resume = (versionId: VersionId, current: SurfaceProgress, snapshot: RenderSnapshot): Effect.Effect<PublishResult, RenderError> => Effect.gen(function* () {
     const missing = missingNodesOf(current, snapshot)
     yield* commitNodes(versionId, current.state.generation, missing)
     if (snapshot.phase === "complete" && !current.state.completed) yield* markComplete(versionId, current.state.generation)

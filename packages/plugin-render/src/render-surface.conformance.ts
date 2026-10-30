@@ -1,8 +1,8 @@
 import { Effect, Option, Ref, Schema, Stream } from "effect"
-import { canonicalJson, ConformanceFailure } from "@xandreed/core"
-import { UiOutputError } from "./domain/render-output.entity.js"
+import { canonicalJson, ConformanceFailure, RunId } from "@xandreed/core"
+import { NodeId, OperationId, PrincipalId, RenderMessageId, ThreadId, UiOutputError } from "./domain/render-output.entity.js"
 import type { UiOutputProposal } from "./domain/render-output.entity.js"
-import { SurfaceCommitted, SurfaceCompleted, SurfaceFrozen, SurfacePlanned } from "./domain/render-surface.entity.js"
+import { SurfaceCommitted, SurfaceCompleted, SurfaceFrozen, SurfaceId, SurfacePlanned, VersionId } from "./domain/render-surface.entity.js"
 import type { RenderError, RenderNode, RenderSnapshotInput, SurfaceRecord, SurfaceScope } from "./domain/render-surface.entity.js"
 import type { UiOutputAdmission } from "./ports/render-output.port.js"
 import type { Render, RenderOpenOptions, RenderStore } from "./ports/render.port.js"
@@ -23,13 +23,23 @@ export interface SurfaceSubject {
 const release = (component: string) => ({
   component, version: "1", definitionHash: "a".repeat(64), rendererRelease: "1", tokensHash: "b".repeat(64), layoutVersion: "1",
 })
-const node = (nodeId: string, component = "card"): RenderNode => ({ nodeId, release: release(component), props: { title: nodeId }, evidence: [`${nodeId}-fact`] })
+const node = (nodeId: string, component = "card"): RenderNode => ({ nodeId: NodeId.make(nodeId), release: release(component), props: { title: nodeId }, evidence: [`${nodeId}-fact`] })
 const snapshot = (nodes: ReadonlyArray<RenderNode>, phase: "partial" | "complete" = "partial", placeholders: ReadonlyArray<string> = []): RenderSnapshotInput => ({
   phase, spec: { layout: "stack", order: nodes.map((entry) => entry.nodeId) }, nodes, placeholders,
 })
 /** The run id follows the message only: two threads or surfaces of one message share it, as unrelated hosts' runs may. */
 const scopeOf = (messageId = "message-1", threadId = "thread", surfaceId = "page"): SurfaceScope => ({
-  threadId, runId: `run-${messageId}`, messageId, principalId: "guest", fence: 1, surfaceId, baseVersion: Option.none(),
+  threadId: ThreadId.make(threadId), runId: RunId.make(`run-${messageId}`), messageId: RenderMessageId.make(messageId), principalId: PrincipalId.make("guest"),
+  fence: 1, surfaceId: SurfaceId.make(surfaceId), baseVersion: Option.none(),
+})
+const version = (versionId: string) => VersionId.make(versionId)
+/** The plan of a generation as a writer that is up to date makes it (`<messageId>:v<generation>`), for the store checks. */
+const plannedAt = (generation: number, messageId = "message-1", surfaceId = "page") => SurfacePlanned.make({
+  surfaceId: SurfaceId.make(surfaceId), messageId: RenderMessageId.make(messageId), versionId: version(`${messageId}:v${generation}`), generation,
+  baseVersionId: Option.none(), phase: "partial", spec: {}, nodes: [], placeholders: [], signature: `${messageId}-${generation}`,
+})
+const frozenAt = (versionId: Option.Option<string>, messageId = "message-1") => SurfaceFrozen.make({
+  surfaceId: SurfaceId.make("page"), messageId: RenderMessageId.make(messageId), versionId: Option.map(versionId, version), reason: "interaction",
 })
 const detached: RenderOpenOptions = { fork: (_tag, work) => Effect.forkDetach(work).pipe(Effect.asVoid) }
 const allow: typeof UiOutputAdmission.Service = { validate: () => Effect.void }
@@ -48,7 +58,7 @@ const isCommitted = Schema.is(SurfaceCommitted)
 const isCompleted = Schema.is(SurfaceCompleted)
 const isFrozen = Schema.is(SurfaceFrozen)
 const planned = (records: ReadonlyArray<SurfaceRecord>) => records.filter(isPlanned)
-const committedIn = (records: ReadonlyArray<SurfaceRecord>, versionId: string) =>
+const committedIn = (records: ReadonlyArray<SurfaceRecord>, versionId: string): ReadonlyArray<string> =>
   records.flatMap((record) => isCommitted(record) && record.versionId === versionId ? [record.nodeId] : [])
 
 /** Admission that refuses node `b` once, as a restarting dependency would, and admits it afterwards. */
@@ -72,7 +82,7 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const surface = yield* render.open(scopeOf(), detached)
       const first = yield* surface.publish(snapshot([node("a")]))
       const second = yield* surface.publish(snapshot([node("a")]))
-      yield* expect(first.changed && Option.contains(first.version, "message-1:v1"), "the first publish opens message-1:v1")
+      yield* expect(first.changed && Option.contains(first.version, version("message-1:v1")), "the first publish opens message-1:v1")
       yield* expect(!second.changed && second.generation === 1, "the same content keeps generation 1")
     }),
   },
@@ -85,7 +95,7 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const surface = yield* render.open(scopeOf(), detached)
       yield* surface.publish(snapshot([node("a")]))
       const second = yield* surface.publish(snapshot([node("a"), node("b")]))
-      yield* expect(Option.contains(second.version, "message-1:v2") && second.generation === 2, "the changed content opens message-1:v2")
+      yield* expect(Option.contains(second.version, version("message-1:v2")) && second.generation === 2, "the changed content opens message-1:v2")
       const ids = yield* Ref.get(operations)
       yield* expect(canonicalJson(ids) === canonicalJson(["run-message-1:render:page:1:a", "run-message-1:render:page:2:a", "run-message-1:render:page:2:b"]),
         `operation ids are per surface, generation and node, got ${canonicalJson(ids)}`)
@@ -115,11 +125,11 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const scope = scopeOf()
       const surface = yield* render.open(scope, detached)
       yield* surface.publish(snapshot([node("a")]))
-      yield* store.freeze(scope, SurfaceFrozen.make({ surfaceId: "page", messageId: "message-1", versionId: Option.some("message-1:v1"), reason: "interaction" }))
+      yield* store.freeze(scope, frozenAt(Option.some("message-1:v1")))
       const late = yield* surface.publish(snapshot([node("b")]))
       yield* surface.publish(snapshot([node("c")]))
       const records = yield* store.hydrate(scope)
-      yield* expect(late.frozen && !late.changed && Option.contains(late.version, "message-1:v1"), "the publish reports the frozen version")
+      yield* expect(late.frozen && !late.changed && Option.contains(late.version, version("message-1:v1")), "the publish reports the frozen version")
       yield* expect(planned(records).length === 1, "no generation is planned after the freeze")
       yield* expect(records.filter((record) => isCompleted(record) && record.frozen && record.phase === "partial").length === 1, "one frozen, partial completion")
     }),
@@ -197,7 +207,7 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const published = yield* second.publish(snapshot([node("a")], "complete"))
       const receipts = (yield* store.hydrate(theirs)).flatMap((record) => isCommitted(record) ? [record.receipt.threadId] : [])
       yield* expect(second.records.length === 0 && fresh.generation === 0 && !fresh.frozen, "another thread's records are not hydrated")
-      yield* expect(published.changed && !published.frozen && Option.contains(published.version, "answer:v1"), "the second thread opens its own answer:v1")
+      yield* expect(published.changed && !published.frozen && Option.contains(published.version, version("answer:v1")), "the second thread opens its own answer:v1")
       yield* expect(canonicalJson(receipts) === canonicalJson(["thread-b"]), `the second thread's commit is its own, got ${canonicalJson(receipts)}`)
       yield* expect(canonicalJson(yield* store.hydrate(mine)) === before, "the first thread's records are unchanged")
     }),
@@ -215,7 +225,7 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const records = yield* store.hydrate(scope)
       const state = yield* surface.state
       yield* expect(failure.code === "unavailable", "the first attempt fails on b")
-      yield* expect(retry.changed && Option.contains(retry.version, "message-1:v1"), "the retry commits into message-1:v1")
+      yield* expect(retry.changed && Option.contains(retry.version, version("message-1:v1")), "the retry commits into message-1:v1")
       yield* expect(canonicalJson(committedIn(records, "message-1:v1")) === canonicalJson(["a", "b"]),
         `every node is committed, got ${canonicalJson(committedIn(records, "message-1:v1"))}`)
       yield* expect(planned(records).length === 1 && records.filter(isCompleted).length === 1, "one generation, completed once")
@@ -312,7 +322,7 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const again = yield* render.open(scopeOf(), detached)
       const state = yield* again.state
       const repeat = yield* again.publish(snapshot([node("a")]))
-      yield* expect(state.generation === 1 && Option.contains(state.version, "message-1:v1"), "the reopened surface is at message-1:v1")
+      yield* expect(state.generation === 1 && Option.contains(state.version, version("message-1:v1")), "the reopened surface is at message-1:v1")
       yield* expect(!repeat.changed, "republishing the same content is deduplicated after reopening")
       yield* expect(again.records.length > 0, "the hydrated records are exposed")
     }),
@@ -335,10 +345,10 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const expect = holds("the store commits idempotently and conflicts on different content")
       const { store } = yield* subject.make(allow)
       const scope = scopeOf()
-      const proposal = { operationId: "op-1", nodeId: "a", release: release("card"), props: { title: "a" }, evidence: ["a-fact"] }
-      const first = yield* store.commit(scope, { versionId: "message-1:v1", proposal })
-      const retry = yield* store.commit(scope, { versionId: "message-1:v1", proposal })
-      const conflict = yield* failureOf("conflict")(store.commit(scope, { versionId: "message-1:v1", proposal: { ...proposal, props: { title: "b" } } }))
+      const proposal = { ...node("a"), operationId: OperationId.make("op-1") }
+      const first = yield* store.commit(scope, { versionId: version("message-1:v1"), proposal })
+      const retry = yield* store.commit(scope, { versionId: version("message-1:v1"), proposal })
+      const conflict = yield* failureOf("conflict")(store.commit(scope, { versionId: version("message-1:v1"), proposal: { ...proposal, props: { title: "b" } } }))
       yield* expect(canonicalJson(first) === canonicalJson(retry), "a retried commit returns the same receipt")
       yield* expect(conflict.code === "conflict", "a different proposal under the same operation id conflicts")
     }),
@@ -349,17 +359,86 @@ export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray
       const expect = holds("the store refuses to plan a frozen surface")
       const { store } = yield* subject.make(allow)
       const scope = scopeOf()
-      yield* store.freeze(scope, SurfaceFrozen.make({ surfaceId: "page", messageId: "message-1", versionId: Option.some("message-1:v1"), reason: "interaction" }))
-      const failure = yield* failureOf("frozen plan")(store.plan(scope, SurfacePlanned.make({
-        surfaceId: "page", messageId: "message-1", versionId: "message-1:v2", generation: 2, baseVersionId: Option.none(),
-        phase: "partial", spec: {}, nodes: [], placeholders: [], signature: "x",
-      })))
+      yield* store.freeze(scope, frozenAt(Option.none()))
+      const failure = yield* failureOf("frozen plan")(store.plan(scope, plannedAt(1)))
       yield* expect(failure.code === "frozen", "planning a frozen surface fails with frozen")
-      const other = yield* store.plan(scopeOf("message-2"), SurfacePlanned.make({
-        surfaceId: "page", messageId: "message-2", versionId: "message-2:v1", generation: 1, baseVersionId: Option.none(),
-        phase: "partial", spec: {}, nodes: [], placeholders: [], signature: "y",
-      })).pipe(Effect.result)
+      const other = yield* store.plan(scopeOf("message-2"), plannedAt(1, "message-2")).pipe(Effect.result)
       yield* expect(other._tag === "Success", "a freeze only binds its own message")
+    }),
+  },
+  {
+    name: "two writers of one message never plan the same version",
+    run: Effect.gen(function* () {
+      const expect = holds("two writers of one message never plan the same version")
+      const { render, store } = yield* subject.make(allow)
+      const scope = scopeOf()
+      const retried = { ...scope, runId: RunId.make("run-message-1-retry") }
+      const first = yield* render.open(scope, detached)
+      const second = yield* render.open(retried, detached)
+      const third = yield* render.open(retried, detached)
+      yield* first.publish(snapshot([node("a")]))
+      const other = yield* second.publish(snapshot([node("b")]))
+      const same = yield* third.publish(snapshot([node("b")]))
+      const versions = planned(yield* store.hydrate(scope)).map((record) => record.versionId)
+      yield* expect(other.changed && Option.contains(other.version, version("message-1:v2")), "a writer opened before the first publish plans message-1:v2")
+      yield* expect(!same.changed && Option.contains(same.version, version("message-1:v2")), "a writer with the same content resumes message-1:v2")
+      yield* expect(canonicalJson(versions) === canonicalJson(["message-1:v1", "message-1:v2"]), `each version is planned once, got ${canonicalJson(versions)}`)
+      yield* expect((yield* third.state).generation === 2, "the writer's state follows the store")
+    }),
+  },
+  {
+    name: "a lower fence is forbidden on all four writes",
+    run: Effect.gen(function* () {
+      const expect = holds("a lower fence is forbidden on all four writes")
+      const { render, store } = yield* subject.make(allow)
+      const stale = scopeOf()
+      const current = { ...stale, runId: RunId.make("run-message-1-next"), fence: 2 }
+      yield* (yield* render.open(current, detached)).publish(snapshot([node("a")]))
+      const before = canonicalJson(yield* store.hydrate(current))
+      const refusals = yield* Effect.forEach([
+        store.plan(stale, plannedAt(2)),
+        store.commit(stale, { versionId: version("message-1:v1"), proposal: { ...node("b"), operationId: OperationId.make("op-stale") } }),
+        store.complete(stale, SurfaceCompleted.make({
+          surfaceId: stale.surfaceId, messageId: stale.messageId, versionId: version("message-1:v1"), generation: 1, phase: "complete", frozen: false,
+        })),
+        store.freeze(stale, frozenAt(Option.some("message-1:v1"))),
+      ], (write) => failureOf("lower fence")(write), { concurrency: 1 })
+      const published = yield* failureOf("lower fence publish")((yield* render.open(stale, detached)).publish(snapshot([node("b")])))
+      const after = canonicalJson(yield* store.hydrate(current))
+      const elsewhere = yield* Effect.forEach([
+        store.plan(scopeOf("message-2"), plannedAt(1, "message-2")),
+        store.plan(scopeOf("message-1", "thread", "panel"), plannedAt(1, "message-1", "panel")),
+      ], (write) => Effect.result(write), { concurrency: 1 })
+      const codes = refusals.map((error) => error.code)
+      yield* expect(canonicalJson(codes) === canonicalJson(["forbidden", "forbidden", "forbidden", "forbidden"]),
+        `plan, commit, complete and freeze are forbidden, got ${canonicalJson(codes)}`)
+      yield* expect(published.code === "forbidden", `a surface under the lower fence fails its publish, got ${published.code}`)
+      yield* expect(after === before, "nothing is stored under the lower fence")
+      yield* expect(elsewhere.every((result) => result._tag === "Success"), "a fence binds only its own surface and message")
+    }),
+  },
+  {
+    name: "the store refuses a plan that skips or repeats a generation",
+    run: Effect.gen(function* () {
+      const expect = holds("the store refuses a plan that skips or repeats a generation")
+      const { store } = yield* subject.make(allow)
+      const scope = scopeOf()
+      const skippedFirst = yield* failureOf("skipped generation")(store.plan(scope, plannedAt(2)))
+      yield* store.plan(scope, plannedAt(1))
+      const repeated = yield* failureOf("repeated generation")(store.plan(scope, plannedAt(1)))
+      const skipped = yield* failureOf("skipped generation")(store.plan(scope, plannedAt(3)))
+      yield* store.plan(scope, plannedAt(2))
+      const generations = planned(yield* store.hydrate(scope)).map((record) => record.generation)
+      const elsewhere = yield* Effect.forEach([
+        store.plan(scopeOf("message-2"), plannedAt(1, "message-2")),
+        store.plan(scopeOf("message-1", "thread", "panel"), plannedAt(1, "message-1", "panel")),
+        store.plan(scopeOf("message-1", "thread-b"), plannedAt(1)),
+      ], (write) => Effect.result(write), { concurrency: 1 })
+      const codes = [skippedFirst, repeated, skipped].map((error) => error.code)
+      yield* expect(canonicalJson(codes) === canonicalJson(["conflict", "conflict", "conflict"]),
+        `a skipped or repeated generation conflicts, got ${canonicalJson(codes)}`)
+      yield* expect(canonicalJson(generations) === canonicalJson([1, 2]), `generations 1 and 2 are planned once each, got ${canonicalJson(generations)}`)
+      yield* expect(elsewhere.every((result) => result._tag === "Success"), "generations count per surface, message and thread")
     }),
   },
 ]

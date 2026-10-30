@@ -31,7 +31,7 @@ import {
 import type { Capability, SessionAddress, SessionLog, Turn, TurnBeginError, TurnError, TurnEvent, TurnEventOf, TurnEventsService, TurnOutcome } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
-import { decodeSse, RenderFeed, RenderFeedLive, renderFeedDefaults, SessionsJournalTailLive, sseHeaders, SseTransport } from "@xandreed/plugin-render"
+import { decodeSse, PrincipalId, RenderFeed, RenderFeedLive, renderFeedDefaults, SessionsJournalTailLive, sseHeaders, SseTransport, ThreadId } from "@xandreed/plugin-render"
 import type { FeedOptions, FeedPayload, FeedProjection, SsePeer } from "@xandreed/plugin-render"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
@@ -423,7 +423,7 @@ export const eventsRoute = (host: Host, owner: string, id: string, request: Requ
     yield* host.sessions.get({ id: session.value, owner })
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>()
     const writer = writable.getWriter()
-    const frames = host.feed.frames({ threadId: session.value, principalId: owner }, cursorOf(request), clientProjection)
+    const frames = host.feed.frames({ threadId: ThreadId.make(session.value), principalId: PrincipalId.make(owner) }, cursorOf(request), clientProjection)
     waitUntil(Effect.runPromise(SseTransport.serve(frames, webSsePeer(writer, request.signal)).pipe(Effect.ensuring(closeStream(writer)))))
     return new Response(readable, { headers: sseHeaders })
   }).pipe(Effect.catchTags({
@@ -769,7 +769,7 @@ describe("serving turns over HTTP", () => {
     const host = yield* hostWith(yield* scripted([]))
     const { readable, writable } = new TransformStream<Uint8Array, Uint8Array>() // nobody reads it
     const started = Date.now()
-    const frames = host.feed.frames({ threadId: sessionId, principalId: owner }, 0, clientProjection)
+    const frames = host.feed.frames({ threadId: ThreadId.make(sessionId), principalId: PrincipalId.make(owner) }, 0, clientProjection)
     yield* SseTransport.serve(frames, webSsePeer(writable.getWriter(), new AbortController().signal, "50 millis"))
     // Unbounded, the first write would wait as long as the client stays connected: the feed checks maxDurationMs only between polls.
     expect(Date.now() - started).toBeLessThan(1_000)

@@ -117,6 +117,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   turn's run, `InboxItemId.make(...)` for `deliver`, `ConversationId.make(...)`
   (or a decode) for a task id. `replayModelRequest`, `modelRequestHeaderOf`,
   `entryId` and `stepContextOf` take a `RunId`.
+- Host render stores: add both checks inside the write's transaction and
+  rerun `renderSurfaceConformance`; records are unchanged. Mint scope and
+  feed ids with `.make` (`ThreadId.make(…)`, `RunId.make(…)`, …), and give
+  each newer writer of a message a higher `fence`.
 
 ### Breaking
 
@@ -330,6 +334,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `inbox.queued`/`inbox.dropped`), and `Tasks.status`/`cancel`,
   `TaskConflict` and `TaskMissing` take a `ConversationId`. Brands are
   type-only: stored data is unchanged and every journal still decodes.
+- `@xandreed/plugin-render`: the `RenderStore` contract's `plan` checks the
+  generation, and `plan`/`commit`/`complete`/`freeze` check the fence;
+  `renderSurfaceConformance` has three new checks.
+- `@xandreed/plugin-render`: render ids are branded (`ThreadId`,
+  `PrincipalId`, `RenderMessageId`, `SurfaceId`, `VersionId`, `NodeId`,
+  `OperationId`, `RevisionId`), `UiOutputScope.runId` is core's `RunId`,
+  and `SseRecordFields` decodes `id` as `sequence` (the wire is unchanged).
 
 ### Added
 
@@ -672,6 +683,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   record the user's message, and the context entries given before it are
   kept; `TurnToolbox.open` (`openTurnTools`) can be called again after a
   failed open. Both used to refuse with `turn.persisted` / `tools.opened`.
+- Render: two writers of one message no longer plan the same version: a
+  store refuses a plan whose generation is not the next (`conflict`), and a
+  publish re-reads the surface once and resumes or plans the next version.
+- Render: `scope.fence` is enforced; a write under a fence lower than one
+  the store accepted for the surface and message is `forbidden`.
 
 ### Repository
 
