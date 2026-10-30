@@ -58,12 +58,14 @@ export {
 } from "./llm/providers.js"
 export {
   classifyLlmError,
+  LLM_CALL_BUDGET_MS,
   LLM_REQUEST_TIMEOUT_MS,
+  makeCallBudget,
   MAX_HONORED_RETRY_AFTER_MS,
   rejectEmptyResponse,
   retryableLlm,
 } from "./llm/retry.js"
-export type { ErrorClass } from "./llm/retry.js"
+export type { CallBudget, ErrorClass } from "./llm/retry.js"
 export { generateWith, LanguageModelLive, LanguageModelSelectionLive } from "./llm/router.js"
 export {
   configuredModelCatalog,

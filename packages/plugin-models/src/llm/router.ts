@@ -1,7 +1,7 @@
 import { AiError, LanguageModel } from "effect/ai"
-import type { Response } from "effect/ai"
+import type { Response, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Cause, Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Predicate, Ref, References, Stream } from "effect"
+import { Cause, Clock, Config, Context, Deferred, Duration, Effect, Layer, Metric, Option, Predicate, Ref, References, Stream } from "effect"
 import { AuthError, AuthStore, CurrentModelCallPolicy, CurrentTraceContent, describeModel, extractUsage, formatModelSelection, harnessError, parseModelSelection, reasonOf, replayableContext, resolvingModel, SettingsStore, stampPartModel, stampResponseModel, storedJson } from "@xandreed/core"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "@xandreed/core"
@@ -12,11 +12,13 @@ import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import { transportFetch } from "../transport/models-transport.adapter.js"
 import {
-  isTransientLlmError,
+  canTryAgain,
+  makeCallBudget,
   rejectEmptyResponse,
   retryableLlm,
   retryableLlmStream,
 } from "./retry.js"
+import type { CallBudget } from "./retry.js"
 
 /**
  * The routed `LanguageModel`: every call re-reads the settings selection and
@@ -26,7 +28,9 @@ import {
  * resolves the selection once (`resolveModelRequest`): its request header
  * and every attempt of the step, a stream's fallback included, use that
  * selection, and a switch applies from the next step. Each call rides the
- * timeout + transient-retry + empty-response guards from `retry.ts`.
+ * timeout + transient-retry + empty-response guards from `retry.ts`; a
+ * settled call's attempts and fallback rung share one `CallBudget`, and the
+ * call is final once it hands a tool call to its toolkit.
  */
 
 const configError = (message: string): AiError.AiError =>
@@ -271,13 +275,45 @@ const providerStream = (selection: ModelSelection) =>
       Stream.withSpan("providers.generate", { attributes: modelAttributes(selection) }),
     )
 
+const isToolkitWithHandler = (value: unknown): value is Toolkit.WithHandler<Record<string, Tool.Any>> =>
+  Predicate.hasProperty(value, "tools") && Predicate.hasProperty(value, "handle") && Predicate.isFunction(value.handle)
+
+/** The toolkit, its every call first marking the routed call handed off. */
+const handingOff = <Tools extends Record<string, Tool.Any>>(
+  toolkit: Toolkit.WithHandler<Tools>,
+  handedOff: Deferred.Deferred<void>,
+): Toolkit.WithHandler<Tools> => ({
+  tools: toolkit.tools,
+  handle: (name, params, toolCallId, parseOptions) =>
+    Deferred.succeed(handedOff, undefined).pipe(Effect.andThen(toolkit.handle(name, params, toolCallId, parseOptions))),
+})
+
+/**
+ * A call's options with its toolkit watched for the hand-off: the first tool
+ * call it hands to the toolkit, which starts that tool's handler, completes
+ * `budget.handedOff`, and the call is final from then on (`retryableLlm`,
+ * {@link withFallbackRung}). A yieldable `Toolkit` is watched once it
+ * resolves; options without a toolkit are returned as they are.
+ */
+export const withHandOff = <O extends PromptOptions>(options: O, budget: CallBudget): O => {
+  if (!Predicate.hasProperty(options, "toolkit")) return options
+  const toolkit = options.toolkit
+  const watched = Effect.isEffect(toolkit)
+    ? Effect.map(toolkit, (resolved) => isToolkitWithHandler(resolved) ? handingOff(resolved, budget.handedOff) : resolved)
+    : isToolkitWithHandler(toolkit) ? handingOff(toolkit, budget.handedOff) : toolkit
+  return { ...options, toolkit: watched }
+}
+
 /** Build + call one provider generateText for an explicit selection.
  *  `isFallback` only labels telemetry — the fallback rung must be visible
- *  in Grafana without changing the metric identities. */
+ *  in Grafana without changing the metric identities. `budget` is the
+ *  routed call's, shared with its fallback rung; a call made without one
+ *  gets its own. */
 export const generateWith = <O extends PromptOptions>(
   selection: ModelSelection,
   options: O,
   isFallback = false,
+  budget?: CallBudget,
 ): Effect.Effect<
   { readonly content: ReadonlyArray<unknown>; readonly usage: unknown },
   AiError.AiError,
@@ -286,17 +322,18 @@ export const generateWith = <O extends PromptOptions>(
   Effect.gen(function* () {
     const label = formatModelSelection(selection)
     const traced = yield* tracedContent
+    const bound = budget ?? (yield* makeCallBudget())
     const built = yield* providerFor(selection)
     return yield* (
       built.svc.generateText(
-        shapeOptions(built, options) as never,
+        shapeOptions(built, withHandOff(options, bound)) as never,
       ) as Effect.Effect<{
         readonly content: ReadonlyArray<Response.AnyPart>
         readonly usage: unknown
       }, AiError.AiError>
     ).pipe(
       rejectEmptyResponse(label),
-      retryableLlm(label),
+      retryableLlm(label, bound),
       Effect.map((res) => stampResponse(res, label)),
       // The span carries the WHOLE turn: what finished, what it cost, and
       // the (clipped) thinking — a trace answers "what did the model do"
@@ -318,22 +355,25 @@ export const generateWith = <O extends PromptOptions>(
   }).pipe(Effect.scoped, providerCall(selection))
 
 /** Build + call one provider generateObject for an explicit selection: the
- *  resolution, option shaping, retries and telemetry of {@link generateWith}
- *  (an object has no empty response to reject and no message to stamp). */
+ *  resolution, option shaping, budget, retries and telemetry of
+ *  {@link generateWith} (an object has no empty response to reject and no
+ *  message to stamp). */
 export const objectWith = <O extends PromptOptions>(
   selection: ModelSelection,
   options: O,
   isFallback = false,
+  budget?: CallBudget,
 ): Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const label = formatModelSelection(selection)
+    const bound = budget ?? (yield* makeCallBudget())
     const built = yield* providerFor(selection)
     // The schema's decoding services are the caller's, erased with its options.
     const call: Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError> = built.svc.generateObject(
-      shapeOptions(built, options) as never,
+      shapeOptions(built, withHandOff(options, bound)) as never,
     ) as never
     return yield* call.pipe(
-      retryableLlm(label),
+      retryableLlm(label, bound),
       Effect.tap((res) =>
         Effect.annotateCurrentSpan({
           "llm.finish_reason": String(res.finishReason),
@@ -347,22 +387,25 @@ export const objectWith = <O extends PromptOptions>(
 
 /**
  * The fallback rung: run the primary; if it fails TRANSIENT after the fast
- * retries exhausted and a DIFFERENT fallback selection is configured, run
- * the call once more there. Permanent errors (bad request, decode) pass
- * through — a fallback can't fix those; an unset or identical fallback is a
- * no-op. Exported pure-in-shape so the rung's decision table is testable
- * without building providers.
+ * retries exhausted, while the call's budget may still try again (no tool
+ * call handed off, its deadline not come: `canTryAgain`), and a DIFFERENT
+ * fallback selection is configured, run the call once more there, within
+ * the same budget. Permanent errors (bad request, decode) pass through — a
+ * fallback can't fix those; an unset or identical fallback is a no-op.
+ * Exported pure-in-shape so the rung's decision table is testable without
+ * building providers.
  */
 export const withFallbackRung = <A, E, R>(
   primary: ModelSelection,
   fallback: Option.Option<ModelSelection>,
   call: (selection: ModelSelection, isFallback: boolean) => Effect.Effect<A, E, R>,
+  budget: CallBudget,
 ): Effect.Effect<A, E, R> =>
   call(primary, false).pipe(
     Effect.catch((error) =>
-      Effect.flatMap(isTransientLlmError(error), (transient) =>
+      Effect.flatMap(canTryAgain(budget)(error), (again) =>
         Option.match(
-          Option.filter(fallback, (fb) => transient && formatModelSelection(fb) !== formatModelSelection(primary)),
+          Option.filter(fallback, (fb) => again && formatModelSelection(fb) !== formatModelSelection(primary)),
           {
             onNone: () => Effect.fail(error),
             onSome: (fb) =>
@@ -543,22 +586,25 @@ const selectionModel = (
   http: HttpClient.HttpClient,
   fetch: Option.Option<typeof globalThis.fetch>,
 ): LanguageModel.LanguageModel => {
+  // One budget per routed call, shared by its attempts and its fallback rung.
   const service = {
     [LanguageModel.TypeId]: LanguageModel.TypeId,
     generateText: (options: PromptOptions) =>
-      withConfiguredEffort(
-        withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback)),
-        effort,
-      ).pipe(
+      makeCallBudget().pipe(
+        Effect.flatMap((budget) => withConfiguredEffort(
+          withFallbackRung(primary, fallback, (selection, isFallback) => generateWith(selection, options, isFallback, budget), budget),
+          effort,
+        )),
         withFetch(fetch),
         Effect.provide(context),
         Effect.provideService(HttpClient.HttpClient, http),
       ) as never,
     generateObject: ((options: PromptOptions) =>
-      withConfiguredEffort(
-        withFallbackRung(primary, fallback, (selection, isFallback) => objectWith(selection, options, isFallback)),
-        effort,
-      ).pipe(
+      makeCallBudget().pipe(
+        Effect.flatMap((budget) => withConfiguredEffort(
+          withFallbackRung(primary, fallback, (selection, isFallback) => objectWith(selection, options, isFallback, budget), budget),
+          effort,
+        )),
         withFetch(fetch),
         Effect.provide(context),
         Effect.provideService(HttpClient.HttpClient, http),
