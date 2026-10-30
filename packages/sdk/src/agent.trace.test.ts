@@ -193,13 +193,15 @@ describe("a turn's trace", () => {
     expect(read(one(spans, "host.request"), ids)).toEqual([undefined, undefined, undefined])
   })
 
-  test("spans nest where their work runs: the run under the host's span in use, tool calls under the model call, handler spans under their tool", async () => {
+  test("spans nest where their work runs: the run under the host's span in use, each tool call under its own loop.tool_call in its step, handler spans under their tool", async () => {
     const { spans } = await Effect.runPromise(traced())
     expect(parentName(spans, one(spans, "engine.run"))).toBe("host.use")
     const toolSpans = spans.filter((span) => span.name.startsWith("tool."))
     expect(toolSpans.map((span) => span.name).sort()).toEqual(["tool.archive", "tool.archive", "tool.lookup"])
-    expect(toolSpans.filter((span) => !ancestors(spans, span).some((above) => above.name === "engine.turn" || above.name.startsWith("LanguageModel."))).map((span) => span.name)).toEqual([])
-    expect(toolSpans.map((span) => parentName(spans, span))).toEqual(toolSpans.map(() => expect.stringMatching(/^(engine\.turn|LanguageModel\.)/)))
+    expect(toolSpans.filter((span) => !ancestors(spans, span).some((above) => above.name === "engine.turn")).map((span) => span.name)).toEqual([])
+    // The loop runs each call itself, once its response is whole: under its own span in the step, never under the model call.
+    expect(toolSpans.map((span) => parentName(spans, span))).toEqual(toolSpans.map(() => "loop.tool_call"))
+    expect(named(spans, "loop.tool_call").every((span) => parentName(spans, span) === "engine.turn")).toBe(true)
     expect(parentName(spans, one(spans, "lookup.query"))).toBe("tool.lookup")
     expect(named(spans, "engine.turn").every((span) => parentName(spans, span) === "engine.run")).toBe(true)
   })

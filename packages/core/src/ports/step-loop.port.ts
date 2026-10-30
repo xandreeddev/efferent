@@ -88,7 +88,7 @@ export interface StepRequest {
    * with; any other `plan` of a step asks the policy again.
    */
   readonly onMediaRejected: (reason: string) => Effect.Effect<boolean, TurnError>
-  /** The host's verdict after a step that settled with a response (not after a malformed one); its failure fails the run, not the step. */
+  /** The host's verdict after a step that settled with a whole response (not after a malformed or a truncated one); its failure fails the run, not the step. */
   readonly completion: (step: StepInfo) => Effect.Effect<CompletionVerdict, HarnessError>
   readonly steering: Effect.Effect<Option.Option<string>, HarnessError>
   readonly correctives: Option.Option<Correctives>
@@ -160,9 +160,20 @@ export type RunResult = {
  * `stepLoopConformance`): per step `step.started` < `tool.*` < `step.ended`
  * (after the tail is recorded) < `completion.evaluated`; each step that
  * started ends once, with the status of its own call, tools and tail
- * (`completed`, `failed`, `cancelled`, or `malformed` for a response the
- * model could not form, which gets no `completion.evaluated`), so a
- * completion that fails afterwards leaves it `completed`; nothing is
+ * (`completed`, `failed`, `cancelled`, `malformed` for a response the
+ * model could not form, or `truncated` for one cut short, neither of which
+ * gets a `completion.evaluated`), so a completion that fails afterwards
+ * leaves it `completed`; every `assistant.message` carries its response's
+ * finish reason; a response cut short (a finish reason but `stop`,
+ * `tool-calls` and `pause`; `unknown` only when it holds tool calls the
+ * loop would run) runs none of its tool calls, settled or streamed, and
+ * answers each with a recorded failure; a reply cut at the output limit is
+ * answered with a corrective of the loop's under the next step, at most
+ * twice in a row, and a third, or any other cut, fails the run with
+ * `loop.truncated`; a paused reply goes on to the next step; the text of a
+ * reply the run continues (a paused one, or one of text alone cut at the
+ * output limit) is carried into `RunResult.text`, ahead of the reply that
+ * finishes it; nothing is
  * recorded under a step after its `step.ended` (the loop's own messages,
  * a corrective, a nudge or a steer, are the next step's), and nothing
  * under a step that never starts (a run the step cap or a complete verdict

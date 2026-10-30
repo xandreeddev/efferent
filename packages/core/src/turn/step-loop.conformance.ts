@@ -6,6 +6,8 @@ import type { ConformanceCheck } from "../conformance.entity.js"
 import { sameUsage } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
+import type { FinishReason, StepStatus } from "../domain/turn-vocabulary.entity.js"
+import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
@@ -80,6 +82,34 @@ const streamedThinkingProbeCall = (id: string, n: number): ReadonlyArray<StreamP
 ]
 const streamedText = (text: string): ReadonlyArray<StreamPart> =>
   [{ type: "text-start", id: "t" }, { type: "text-delta", id: "t", delta: text }, { type: "text-end", id: "t" }, { type: "finish", reason: "stop", usage }]
+/**
+ * A reply cut short for `reason` after it called `probe` twice (`<prefix>1`, `<prefix>2`), the same parts
+ * settled and streamed: streamed one part at a time, the second call arrives after the first, and the
+ * finish that says the reply was cut after both.
+ */
+const cutParts = (reason: FinishReason, prefix: string) => [
+  { type: "tool-call" as const, id: `${prefix}1`, name: Probe.name, params: { n: 1 }, providerExecuted: false },
+  { type: "tool-call" as const, id: `${prefix}2`, name: Probe.name, params: { n: 2 }, providerExecuted: false },
+  { type: "finish" as const, reason, usage },
+]
+const cutCalls = (reason: FinishReason, prefix: string): ReadonlyArray<Part> => cutParts(reason, prefix)
+const streamedCutCalls = (reason: FinishReason, prefix: string): ReadonlyArray<StreamPart> => cutParts(reason, prefix)
+/** A reply the provider paused, for its next call to continue. */
+const pausedReply = (text: string): ReadonlyArray<Part> => [{ type: "text", text }, { type: "finish", reason: "pause", usage }]
+/** A reply of text alone, with no tool call, cut short for `reason`. */
+const cutText = (reason: FinishReason, text: string): ReadonlyArray<Part> => [{ type: "text", text }, { type: "finish", reason, usage }]
+/** `reply` as a provider that ended it without saying why gives it: with no finish part, its finish reason reads `unknown`. */
+const unfinished = (reply: ReadonlyArray<Part>): ReadonlyArray<Part> => reply.filter((part) => part.type !== "finish")
+/** `reply` with a finish part that says `unknown`. */
+const finishedUnknown = (reply: ReadonlyArray<Part>): ReadonlyArray<Part> =>
+  reply.map((part) => part.type === "finish" ? { ...part, reason: "unknown" as const } : part)
+/** `reply` after a text part of `text`, as a model writes before its calls. */
+const afterText = (text: string, reply: ReadonlyArray<Part>): ReadonlyArray<Part> => [{ type: "text", text }, ...reply]
+/** A reply of `text` and a call the provider ran itself (`providerExecuted`), with no finish part: it holds no call for the loop to run. */
+const providerExecutedReply = (text: string): ReadonlyArray<Part> =>
+  [{ type: "text", text }, { type: "tool-call", id: "pe1", name: Probe.name, params: { n: 1 }, providerExecuted: true }]
+/** The reasons but the output limit a reply can be cut short for: the loop corrects none of them. */
+const UNCORRECTED_CUTS: ReadonlyArray<FinishReason> = ["content-filter", "error", "other"]
 
 /** A provider's usage with every count: cache reads and writes inside the input, reasoning inside the output. */
 const billed = (input: number, output: number) => ({
@@ -123,7 +153,7 @@ interface Scenario {
   readonly planned?: (step: number) => Effect.Effect<void>
   /** The request's `limits.streaming` (off by default). */
   readonly streaming?: boolean
-  /** What the provider streams for each call, the streamed twin of `script`; without it, the provider does not stream. */
+  /** What the provider streams for each call, one part at a time with a yield on each, the streamed twin of `script`; without it, the provider does not stream. */
   readonly stream?: ReadonlyArray<ReadonlyArray<StreamPart>>
   /** Each plan holds the messages recorded so far after the user's, as a memory renders them (only the user's by default). */
   readonly replay?: boolean
@@ -208,7 +238,11 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     ),
     streamText: (options) => stream === undefined
       ? Stream.die("the conformance provider does not stream")
-      : Stream.unwrap(called(options).pipe(Effect.map((index) => Stream.fromIterable(stream[index] ?? streamedText("done"))))),
+      // One part per chunk, the fiber yielding on each, as a provider streams them over the wire: what a part
+      // sets off (a tool handler that effect/ai's own resolution forks once the next part arrives) gets to
+      // start before the finish arrives.
+      : Stream.unwrap(called(options).pipe(Effect.map((index) =>
+        Stream.fromIterable(stream[index] ?? streamedText("done"), { chunkSize: 1 }).pipe(Stream.tap(() => Effect.yieldNow))))),
   })
   const invocations = yield* Ref.make(0)
   const handlers = yield* typed.toHandlers({
@@ -322,16 +356,93 @@ const expect = (check: string, holds: boolean, message: string): Effect.Effect<v
 const stepOf = (event: TurnEvent): Option.Option<number> => "step" in event ? Option.some(event.step) : Option.none()
 const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step: number) =>
   events.findIndex((event) => event._tag === tag && Option.contains(stepOf(event), step))
+/** The status of each `step.ended`, in order. */
+const statusesOf = (events: ReadonlyArray<TurnEvent>): ReadonlyArray<StepStatus> =>
+  events.flatMap((event) => event._tag === "step.ended" ? [event.status] : [])
+/** The finish reason of each `assistant.message`, in order. */
+const finishReasonsOf = (events: ReadonlyArray<TurnEvent>): ReadonlyArray<FinishReason> =>
+  events.flatMap((event) => event._tag === "assistant.message" ? [event.finishReason] : [])
+/** Whether a run failed with the framework's `code`. */
+const failedWith = (result: Result.Result<RunResult, TurnError>, code: string): boolean =>
+  Result.match(result, { onFailure: (error) => Option.contains(harnessCodeOf(error), code), onSuccess: () => false })
+/** How a run ended, in words. */
+const endingOf = (result: Result.Result<RunResult, TurnError>): string => Result.match(result, {
+  onFailure: (error) => `failed with ${Option.getOrElse(harnessCodeOf(error), () => error._tag)}: ${error.message}`,
+  onSuccess: (done) => `ended ${done.outcome} with ${JSON.stringify(done.text)}`,
+})
+
+/**
+ * What a run shows whose first reply, cut at the output limit, called
+ * `probe` twice (`cut1`, `cut2`), and whose next reply is `done`: no handler
+ * ran; each call is answered by a recorded failure, which `step.ended` lists
+ * as not ok; the step ended `truncated`, with no `completion.evaluated`; its
+ * `assistant.message` carried `length`; the next request held a user message
+ * of the loop's, recorded under the next step, after those results; and the
+ * run completed with `done`.
+ */
+const expectCut = (check: string, observed: Observed) => Effect.gen(function* () {
+  const { events, prompts, recorded, result, steps } = observed
+  const toolEvents = events.filter((event) => event._tag === "tool.started" || event._tag === "tool.completed").length
+  yield* expect(check, steps.handled.length === 0 && toolEvents === 0,
+    `the cut reply's calls ran: ${steps.handled.length} probe handler calls, ${toolEvents} tool events`)
+  const answers = recorded.flatMap((entry) => entry.step === 0 && entry.body._tag === "ToolResult"
+    ? [{ entry: String(entry.id), call: String(entry.body.toolCallId), failed: entry.body.isError }]
+    : [])
+  yield* expect(check, answers.map((answer) => answer.call).join() === "cut1,cut2" && answers.every((answer) => answer.failed),
+    `the cut reply's calls cut1, cut2 were answered ${JSON.stringify(answers)}, not with a failure each`)
+  const ends = events.flatMap((event) => event._tag === "step.ended" && event.step === 0 ? [event] : [])
+  const listed = ends.flatMap((event) => event.results.map((listedResult) => ({ entry: String(listedResult.entry), ok: listedResult.ok })))
+  yield* expect(check, ends.map((event) => event.status).join() === "truncated"
+    && listed.map((entry) => entry.entry).join() === answers.map((answer) => answer.entry).join() && listed.every((entry) => !entry.ok),
+    `step 0 ended ${JSON.stringify(ends.map((event) => event.status))}, listing ${JSON.stringify(listed)}, not truncated with its ${answers.length} answers not ok`)
+  yield* expect(check, indexOf(events, "completion.evaluated", 0) < 0, "the cut step's completion was evaluated")
+  yield* expect(check, finishReasonsOf(events).join() === "length,stop",
+    `the assistant messages carried the finish reasons ${JSON.stringify(finishReasonsOf(events))}, not [length,stop]`)
+  const next = prompts[1]?.content ?? []
+  const answered = next.findIndex((message) => message.role === "tool" && message.content.some((part) => part.type === "tool-result" && part.id === "cut2"))
+  const corrective = next.findLastIndex((message) => message.role === "user")
+  const recordedUnderNext = recorded.some((entry) => entry.step === 1 && entry.body._tag === "Message" && entry.body.message.role === "user")
+  yield* expect(check, prompts.length === 2 && answered >= 0 && corrective > answered && recordedUnderNext,
+    `the request after the cut reply held ${JSON.stringify(next.map((message) => message.role))}, ${recordedUnderNext ? "" : "nothing of the loop's recorded under step 1, "}not a user message after the cut calls' results`)
+  yield* expect(check, result.outcome === "completed" && result.text === "done", `the run ended ${result.outcome} with ${JSON.stringify(result.text)}, not completed with "done"`)
+})
 
 /**
  * The `StepLoop` contract, as checks any implementation must pass:
  * per-step event order, recorded results on `step.ended`, each step ended
  * once with nothing recorded under it after its `step.ended` (the loop's
- * correctives, nudges and steers are the next step's), nothing recorded
- * under a step that never starts (the step cap or a complete verdict ending
- * the run with a corrective or a nudge due), a step whose
+ * correctives, nudges and steers are the next step's, the corrective after
+ * a reply cut at the output limit among them), nothing recorded under a
+ * step that never starts (the step cap or a complete verdict ending the run
+ * with a corrective or a nudge due, the cap at a reply cut at the output
+ * limit, of text alone or with calls, included), a step whose
  * completion fails afterwards still `completed`, a malformed step ended
- * `malformed` with no `completion.evaluated`, planned batches
+ * `malformed` with no `completion.evaluated`, a reply cut short (a finish
+ * reason but `stop`, `tool-calls` and `pause`; `unknown`, the provider
+ * giving none, only in a reply with tool calls to run) running none of its
+ * tool calls, settled or streamed one part at a time (a call followed by
+ * another part before the finish included), each answered by a recorded
+ * failure that `step.ended` lists as not ok, its step ended `truncated` with
+ * no `completion.evaluated` (`cut`, `cut-stream`), a reply cut at the output
+ * limit answered with a corrective of the loop's, after its calls' results
+ * in the next request and recorded under the next step, at most twice in a
+ * row: a third, or a reply cut for any other reason (`content-filter`,
+ * `error`, `other`; one of text alone included), fails the run with
+ * `loop.truncated` (`cut-fail`), a malformed or a whole step between cuts
+ * at the output limit restarting their count in a row, and a cut step the
+ * count of malformed steps in a row (malformed, cut, malformed, malformed
+ * goes on) (`cut-reset`), a reply that calls a tool with no finish reason
+ * failing the run the same way, while a text reply with none, one beside a
+ * call the provider ran itself (no call for the loop to run) included,
+ * completes it (`cut-unknown`), a reply of text alone cut at the
+ * output limit ending its step `truncated` and answered with a corrective
+ * to go on from it (not the one after a cut reply's calls), its text the
+ * start of the run's, the next reply's following it, and the run's text when
+ * the step cap ends the run there, while the text of a reply cut with calls
+ * in it is not carried: the run's text is the next reply's (`cut-text`), a
+ * paused reply going on to the next step, its text the start of the run's
+ * (`pause`), every `assistant.message` carrying its response's finish
+ * reason (`finish`), planned batches
  * without a provider call, forced tool choices, awaiting verdicts, no call
  * after completion, the run's usage, the step cap, each of
  * `StepLoopReferences` provided whatever the caller's, around the run and
@@ -340,8 +451,9 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * `cacheKey` and `callPolicy` to its dispatch checks and model calls as
  * `CurrentPromptCacheKey` and `CurrentModelCallPolicy`, which the dispatch
  * check compares with the request's header, `CurrentEmptyResponseTolerance`
- * false to its model calls until the run has executed a tool call and true
- * after, the current step to its tool handlers and model calls as
+ * false to its model calls until the run has executed a tool call (a cut
+ * reply's calls, answered unrun, are none) and true after, the current
+ * step to its tool handlers and model calls as
  * `CurrentAgentStep`, its step events numbered alike), a request refused
  * over an image planned again and sent once more when `onMediaRejected`
  * answers true, failing the step when it answers false,
@@ -400,11 +512,11 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
     name: "ends each step once, and records nothing under a step after its step.ended (correctives, nudges and steers included)",
     run: Effect.gen(function* () {
       const check = "settled"
-      // A malformed step, a stop the host finds incomplete, a steer, a tool call, then the reply.
+      // A malformed step, a reply cut at the output limit, a stop the host finds incomplete, steers, a tool call, then the reply.
       const { events, records } = yield* observe(loop, {
-        script: [malformedCall("m1"), textReply("not yet"), probeCall("c1", 1), textReply("done")],
-        requireCompletion: true, steering: ["steer"],
-        completion: (step) => Effect.succeed({ complete: step >= 3, awaiting: [], facts: {} }),
+        script: [malformedCall("m1"), cutCalls("length", "cut"), textReply("not yet"), probeCall("c1", 1), textReply("done")],
+        requireCompletion: true, steering: ["steer", "steer again"],
+        completion: (step) => Effect.succeed({ complete: step >= 4, awaiting: [], facts: {} }),
       })
       const startedSteps = events.flatMap((event) => event._tag === "step.started" ? [event.step] : [])
       const endedSteps = events.flatMap((event) => event._tag === "step.ended" ? [event.step] : [])
@@ -424,6 +536,9 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
       // The cap ends a run the host still finds incomplete, and one whose last step was malformed.
       { maxSteps: 2, requireCompletion: true, script: [textReply("not yet"), textReply("still not")] },
       { maxSteps: 2, script: [probeCall("c1", 1), malformedCall("m1")] },
+      // The cap ends a run at a reply cut at the output limit, of text alone and with calls: no corrective follows it.
+      { maxSteps: 1, script: [cutText("length", "The answer is ")] },
+      { maxSteps: 1, script: [cutCalls("length", "cut")] },
       // A complete verdict ends a run that repeats the same call.
       { script: [probeCall("c1", 1), probeCall("c2", 1), probeCall("c3", 1), probeCall("c4", 1)], completion: (step: number) => Effect.succeed({ complete: step >= 3, awaiting: [], facts: {} }) },
     ] satisfies ReadonlyArray<Scenario>, (scenario) => Effect.gen(function* () {
@@ -455,6 +570,137 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
         `step 0 ended ${JSON.stringify(endsOf(0))}, step 1 ${JSON.stringify(endsOf(1))}`)
       yield* expect("malformed", indexOf(events, "completion.evaluated", 0) < 0 && result.outcome === "completed" && result.text === "done",
         `the malformed step's completion was ${indexOf(events, "completion.evaluated", 0) < 0 ? "not " : ""}evaluated; the run ${result.outcome} with ${JSON.stringify(result.text)}`)
+    }),
+  },
+  {
+    name: "a reply cut at the output limit runs none of its tool calls, answers each as cut, ends its step truncated and is answered with a corrective",
+    run: observe(loop, { replay: true, script: [cutCalls("length", "cut"), textReply("done")] }).pipe(Effect.flatMap((observed) => expectCut("cut", observed))),
+  },
+  {
+    name: "a streamed reply cut at the output limit runs none of its tool calls, not even one that arrived before the next",
+    run: observe(loop, {
+      replay: true, streaming: true,
+      script: [cutCalls("length", "cut"), textReply("done")],
+      stream: [streamedCutCalls("length", "cut"), streamedText("done")],
+    }).pipe(Effect.flatMap((observed) => expectCut("cut-stream", observed))),
+  },
+  {
+    name: "a reply cut short but at the output limit (content-filter, error, other) fails the run with loop.truncated, and so does a third reply in a row cut at the output limit, after two correctives",
+    run: Effect.gen(function* () {
+      const check = "cut-fail"
+      yield* Effect.forEach(UNCORRECTED_CUTS, (reason) => Effect.gen(function* () {
+        const cut = yield* observeRun(loop, { script: [cutCalls(reason, "cut"), textReply("done")] })
+        yield* expect(check, failedWith(cut.result, "loop.truncated") && cut.providerCalls.length === 1,
+          `after a reply cut short (${reason}), the run ${endingOf(cut.result)} after ${cut.providerCalls.length} provider calls, not failed with loop.truncated after 1`)
+        yield* expect(check, statusesOf(cut.events).join() === "truncated" && cut.steps.handled.length === 0 && indexOf(cut.events, "completion.evaluated", 0) < 0,
+          `after a reply cut short (${reason}), the steps ended ${JSON.stringify(statusesOf(cut.events))} (not [truncated]), ${cut.steps.handled.length} probe handler calls ran, and the cut step's completion was ${indexOf(cut.events, "completion.evaluated", 0) < 0 ? "not " : ""}evaluated`)
+        // A reply of text alone cut short is cut as well: its text is not the run's answer.
+        const cutAlone = yield* observeRun(loop, { script: [cutText(reason, "The answer is "), textReply("done")] })
+        yield* expect(check, failedWith(cutAlone.result, "loop.truncated") && cutAlone.providerCalls.length === 1
+          && statusesOf(cutAlone.events).join() === "truncated" && indexOf(cutAlone.events, "completion.evaluated", 0) < 0,
+          `after a reply of text alone cut short (${reason}), the run ${endingOf(cutAlone.result)} after ${cutAlone.providerCalls.length} provider calls, its steps ended ${JSON.stringify(statusesOf(cutAlone.events))} and the cut step's completion was ${indexOf(cutAlone.events, "completion.evaluated", 0) < 0 ? "not " : ""}evaluated, not failed with loop.truncated after 1 truncated step`)
+      }), { concurrency: 1, discard: true })
+      const thrice = yield* observeRun(loop, { script: [cutCalls("length", "a"), cutCalls("length", "b"), cutCalls("length", "c"), textReply("done")] })
+      const correctives = thrice.recorded.flatMap((entry) => entry.body._tag === "Message" && entry.body.message.role === "user" ? [entry.step] : [])
+      yield* expect(check, failedWith(thrice.result, "loop.truncated") && thrice.providerCalls.length === 3,
+        `after three replies in a row cut at the output limit, the run ${endingOf(thrice.result)} after ${thrice.providerCalls.length} provider calls, not failed with loop.truncated after 3`)
+      yield* expect(check, statusesOf(thrice.events).join() === "truncated,truncated,truncated" && thrice.steps.handled.length === 0 && correctives.join() === "1,2",
+        `the steps ended ${JSON.stringify(statusesOf(thrice.events))}, ${thrice.steps.handled.length} probe handler calls ran, and the loop's correctives were recorded under the steps ${JSON.stringify(correctives)}, not [1,2]`)
+    }),
+  },
+  {
+    name: "a malformed or a whole step between replies cut at the output limit restarts their count in a row, and a cut step restarts the count of malformed steps in a row",
+    run: Effect.forEach([
+      // Two cuts, a step that is no cut, then a third: the count restarted, so it is answered with a corrective too.
+      { between: "a malformed step between replies cut at the output limit", script: [cutCalls("length", "a"), cutCalls("length", "b"), malformedCall("m1"), cutCalls("length", "c"), textReply("done")], ends: "truncated,truncated,malformed,truncated,completed" },
+      { between: "a probe call between replies cut at the output limit", script: [cutCalls("length", "a"), cutCalls("length", "b"), probeCall("p1", 1), cutCalls("length", "c"), textReply("done")], ends: "truncated,truncated,completed,truncated,completed" },
+      // Three malformed steps, a cut after the first: no more than two of them in a row.
+      { between: "a reply cut at the output limit between malformed steps", script: [malformedCall("m1"), cutCalls("length", "a"), malformedCall("m2"), malformedCall("m3"), textReply("done")], ends: "malformed,truncated,malformed,malformed,completed" },
+    ], ({ between, script, ends }) => Effect.gen(function* () {
+      const { events, providerCalls, result } = yield* observeRun(loop, { script })
+      yield* expect("cut-reset", Result.isSuccess(result) && result.success.outcome === "completed" && result.success.text === "done"
+        && providerCalls.length === script.length && statusesOf(events).join() === ends,
+        `with ${between}, the run ${endingOf(result)} after ${providerCalls.length} provider calls, its steps ended ${JSON.stringify(statusesOf(events))}, `
+        + `not completed with "done" after ${script.length}, its steps ended [${ends}]`)
+    }), { concurrency: 1, discard: true }),
+  },
+  {
+    name: "a reply of text alone cut at the output limit ends its step truncated and is answered with a corrective to go on from it, and the run's text is that reply's followed by the next one's",
+    run: Effect.gen(function* () {
+      const check = "cut-text"
+      const { events, prompts, recorded, result } = yield* observe(loop, { replay: true, script: [cutText("length", "The answer is "), textReply("forty-two.")] })
+      yield* expect(check, statusesOf(events).join() === "truncated,completed" && indexOf(events, "completion.evaluated", 0) < 0,
+        `the steps ended ${JSON.stringify(statusesOf(events))} (not [truncated,completed]), and the cut step's completion was ${indexOf(events, "completion.evaluated", 0) < 0 ? "not " : ""}evaluated`)
+      yield* expect(check, finishReasonsOf(events).join() === "length,stop",
+        `the assistant messages carried the finish reasons ${JSON.stringify(finishReasonsOf(events))}, not [length,stop]`)
+      /** The user messages the loop recorded under step 1 of a run: its corrective after the cut reply. */
+      const correctivesOf = (entries: ReadonlyArray<LogEntry>) => entries.flatMap((entry) =>
+        entry.step === 1 && entry.body._tag === "Message" && entry.body.message.role === "user" ? [canonicalJson(entry.body.message.content)] : [])
+      const next = prompts[1]?.content ?? []
+      const cutAt = next.findIndex((message) => message.role === "assistant" && message.content.some((part) => part.type === "text" && part.text === "The answer is "))
+      const correctiveAt = next.findLastIndex((message) => message.role === "user")
+      const corrective = correctivesOf(recorded)
+      // The corrective after a reply cut with calls in it, which says to call them again: there were none.
+      const called = correctivesOf((yield* observe(loop, { replay: true, script: [cutCalls("length", "cut"), textReply("done")] })).recorded)
+      yield* expect(check, prompts.length === 2 && cutAt >= 0 && correctiveAt > cutAt && corrective.length === 1 && called.length === 1 && corrective[0] !== called[0],
+        `the request after the cut reply held ${JSON.stringify(next.map((message) => message.role))} (the cut reply at ${cutAt}, the last user message at ${correctiveAt}), with ${JSON.stringify(corrective)} recorded under step 1, `
+        + `not a corrective after the cut reply other than the one after a cut reply's calls (${JSON.stringify(called)})`)
+      yield* expect(check, result.outcome === "completed" && result.text === "The answer is forty-two.",
+        `the run ended ${result.outcome} with ${JSON.stringify(result.text)}, not completed with "The answer is forty-two."`)
+      // The step cap ends the run at the cut reply: its text is the run's.
+      const capped = (yield* observe(loop, { maxSteps: 1, script: [cutText("length", "The answer is ")] })).result
+      yield* expect(check, capped.outcome === "partial" && capped.reason === "step-cap" && capped.text === "The answer is ",
+        `with one step, the run ended ${capped.outcome}/${capped.reason} with ${JSON.stringify(capped.text)} after the cut reply, not partial/step-cap with "The answer is "`)
+      // A reply cut at the output limit with calls in it is replied to anew: its text is not carried into the next reply's.
+      const withCalls = (yield* observe(loop, { script: [afterText("Let me check. ", cutCalls("length", "cut")), textReply("done")] })).result
+      yield* expect(check, withCalls.outcome === "completed" && withCalls.text === "done",
+        `after a reply of text and calls cut at the output limit, the run ended ${withCalls.outcome} with ${JSON.stringify(withCalls.text)}, not completed with the next reply's "done" alone`)
+    }),
+  },
+  {
+    name: "a reply calling a tool with no finish reason from the provider runs none of its calls, ends its step truncated and fails the run with loop.truncated; a text reply without one completes the run",
+    run: Effect.gen(function* () {
+      const check = "cut-unknown"
+      yield* Effect.forEach([
+        { form: "with no finish part", reply: unfinished(probeCall("u1", 1)) },
+        { form: "whose finish says unknown", reply: finishedUnknown(probeCall("u1", 1)) },
+      ], ({ form, reply }) => Effect.gen(function* () {
+        const { events, providerCalls, result, steps } = yield* observeRun(loop, { script: [reply, textReply("done")] })
+        const toolEvents = events.filter((event) => event._tag === "tool.started" || event._tag === "tool.completed").length
+        yield* expect(check, steps.handled.length === 0 && toolEvents === 0 && statusesOf(events).join() === "truncated" && indexOf(events, "completion.evaluated", 0) < 0,
+          `after a reply calling probe ${form}, ${steps.handled.length} probe handler calls ran, ${toolEvents} tool events were published, the steps ended ${JSON.stringify(statusesOf(events))} (not [truncated]), and the cut step's completion was ${indexOf(events, "completion.evaluated", 0) < 0 ? "not " : ""}evaluated`)
+        yield* expect(check, failedWith(result, "loop.truncated") && providerCalls.length === 1 && finishReasonsOf(events).join() === "unknown",
+          `after a reply calling probe ${form}, the run ${endingOf(result)} after ${providerCalls.length} provider calls, its assistant messages carrying ${JSON.stringify(finishReasonsOf(events))}, not failed with loop.truncated after 1, carrying [unknown]`)
+      }), { concurrency: 1, discard: true })
+      yield* Effect.forEach([
+        { form: "a text reply with no finish part", script: [unfinished(textReply("all done"))], text: "all done", ends: "completed" },
+        { form: "a text reply whose finish says unknown", script: [finishedUnknown(textReply("all done"))], text: "all done", ends: "completed" },
+        // A call the provider ran itself is no call for the loop to run.
+        { form: "a reply of text and a provider-executed call with no finish part", script: [providerExecutedReply("all done")], text: "all done", ends: "completed" },
+        // The empty reply that says a run of tool calls is done.
+        { form: "an empty reply after a probe call", script: [probeCall("c1", 1), []], text: "", ends: "completed,completed" },
+      ], ({ form, script, text, ends }) => Effect.gen(function* () {
+        const { events, result } = yield* observeRun(loop, { script })
+        yield* expect(check, Result.isSuccess(result) && result.success.outcome === "completed" && result.success.text === text && statusesOf(events).join() === ends,
+          `after ${form}, the run ${endingOf(result)} and its steps ended ${JSON.stringify(statusesOf(events))}, not completed with ${JSON.stringify(text)}, its steps ended [${ends}]`)
+      }), { concurrency: 1, discard: true })
+    }),
+  },
+  {
+    name: "a reply the provider paused does not end the run: its step completes, the next one runs, and the run's text is the paused reply's followed by the next one's",
+    run: Effect.gen(function* () {
+      const { events, providerCalls, result } = yield* observe(loop, { script: [pausedReply("Part one, "), textReply("part two.")] })
+      const started = events.flatMap((event) => event._tag === "step.started" ? [event.step] : [])
+      yield* expect("pause", started.join() === "0,1" && statusesOf(events).join() === "completed,completed" && providerCalls.length === 2 && result.outcome === "completed" && result.text === "Part one, part two.",
+        `after a paused reply, the steps started ${JSON.stringify(started)} and ended ${JSON.stringify(statusesOf(events))} after ${providerCalls.length} provider calls; the run ended ${result.outcome} with ${JSON.stringify(result.text)}, not "Part one, part two."`)
+    }),
+  },
+  {
+    name: "every assistant.message carries its response's finish reason",
+    run: Effect.gen(function* () {
+      const { events } = yield* observe(loop, { script: [probeCall("c1", 1), textReply("done")] })
+      yield* expect("finish", finishReasonsOf(events).join() === "tool-calls,stop",
+        `a probe call and a text reply published the finish reasons ${JSON.stringify(finishReasonsOf(events))}, not [tool-calls,stop]`)
     }),
   },
   {
@@ -549,10 +795,10 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
   {
     name: "provides CurrentEmptyResponseTolerance to its model calls: false until the run has executed a tool call, true after, whatever the caller's",
     run: Effect.gen(function* () {
-      // A malformed step executes no tool call; the probe's step does, and so does a planned batch.
-      const { tolerance } = yield* observe(loop, { script: [malformedCall("m1"), probeCall("c1", 1), textReply("done")], ambientTolerance: true })
-      yield* expect("tolerance", tolerance.join() === "false,false,true",
-        `under a caller's tolerance, a malformed step, a probe call and a reply read ${JSON.stringify(tolerance)}, not [false,false,true]`)
+      // A malformed step executes no tool call, nor does a reply cut short, its calls answered unrun; the probe's step does, and so does a planned batch.
+      const { tolerance } = yield* observe(loop, { script: [malformedCall("m1"), cutCalls("length", "cut"), probeCall("c1", 1), textReply("done")], ambientTolerance: true })
+      yield* expect("tolerance", tolerance.join() === "false,false,false,true",
+        `under a caller's tolerance, a malformed step, a reply with calls cut at the output limit, a probe call and a reply read ${JSON.stringify(tolerance)}, not [false,false,false,true]`)
       const planned = yield* observe(loop, { initial: { calls: [{ name: Probe.name, params: { n: 0 } }], skills: [] }, script: [textReply("done")] })
       yield* expect("tolerance", planned.tolerance.join() === "true",
         `the reply after a planned batch read ${JSON.stringify(planned.tolerance)}, not [true]`)

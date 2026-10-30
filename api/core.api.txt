@@ -108,6 +108,7 @@ const Failure
 const FileInfo
 const FileKind
 const FileSystemMemoryLive
+const FinishReason
 const FsReason
 const GlobOptions
 const GlobResult
@@ -463,6 +464,7 @@ type EntryId
 type Failure
 type FileInfo
 type FileKind
+type FinishReason
 type FsReason
 type GlobOptions
 type GlobResult

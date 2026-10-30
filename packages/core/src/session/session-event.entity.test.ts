@@ -163,10 +163,10 @@ const later = RunOrdinal.make(2)
 
 describe("the turn's bus events as stored", () => {
   const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
-  test("an assistant message keeps only its step, run, model and usage; memory holds the content", () => {
-    const event: TurnEvent = { _tag: "assistant.message", step: 1, run: later, text: "hello", reasoning: "", model: Option.some("m"), toolCalls: [], usage }
+  test("an assistant message keeps only its step, run, model, usage and finish reason; memory holds the content", () => {
+    const event: TurnEvent = { _tag: "assistant.message", step: 1, run: later, text: "hello", reasoning: "", model: Option.some("m"), toolCalls: [], usage, finishReason: "length" }
     const stored = storedOf(3, event)
-    expect(Option.map(stored, (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data])).toEqual(Option.some(["step.usage", 3, { step: 1, run: 2, model: "m", usage }]))
+    expect(Option.map(stored, (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data])).toEqual(Option.some(["step.usage", 3, { step: 1, run: 2, model: "m", usage, finishReason: "length" }]))
   })
   test("a completed tool drops its input and result; transient and duplicated events are not stored", () => {
     const completed: TurnEvent = {
@@ -264,7 +264,7 @@ describe("the journal's schemas", () => {
   test("what the bus stores decodes with its kind's schema, and nothing it omits is required", () => {
     const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
     const events: ReadonlyArray<TurnEvent> = [
-      { _tag: "assistant.message", step: 1, run, text: "hello", reasoning: "", model: Option.none(), toolCalls: [], usage },
+      { _tag: "assistant.message", step: 1, run, text: "hello", reasoning: "", model: Option.none(), toolCalls: [], usage, finishReason: "stop" },
       { _tag: "tool.completed", step: 0, invocationId: InvocationId.make("i"), tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 }, durationMs: 5, labels: {}, stage: Option.none() },
       { _tag: "step.started", step: 0, run, planned: false, activeTools: ["lookup"] },
       { _tag: "tool.refused", step: 0, invocationId: InvocationId.make("i"), tool: "lookup", input: { q: 1 }, reason: "call-limit", message: "limit" },

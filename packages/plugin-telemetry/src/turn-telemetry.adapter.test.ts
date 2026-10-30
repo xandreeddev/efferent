@@ -109,8 +109,8 @@ describe("TurnTelemetryLive in a host's own composition", () => {
   const run = RunOrdinal.make(0)
   const published: ReadonlyArray<TurnEvent> = [
     { _tag: "step.started", step: 1, run, planned: false, activeTools: [] },
-    { _tag: "assistant.message", step: 0, run, text: "", reasoning: "", model: Option.none(), toolCalls: [], usage: tokenUsage({ inputTokens: 0, outputTokens: 0 }) },
-    { _tag: "assistant.message", step: 1, run, text: "hi", reasoning: "", model: Option.none(), toolCalls: [], usage },
+    { _tag: "assistant.message", step: 0, run, text: "", reasoning: "", model: Option.none(), toolCalls: [], usage: tokenUsage({ inputTokens: 0, outputTokens: 0 }), finishReason: "tool-calls" },
+    { _tag: "assistant.message", step: 1, run, text: "hi", reasoning: "", model: Option.none(), toolCalls: [], usage, finishReason: "stop" },
     { _tag: "tool.completed", step: 1, invocationId: InvocationId.make("run-7:call:1"), tool: "probe", input: {}, ok: false, result: "no", encoded: "no", durationMs: 12, labels: {}, stage: Option.none() },
     { _tag: "stream.fallback", step: 1, run, message: "cut off" },
     { _tag: "step.ended", step: 1, run, status: "failed", results: [] },

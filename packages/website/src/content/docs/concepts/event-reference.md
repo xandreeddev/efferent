@@ -110,18 +110,18 @@ Published by the tool registry when a handler returned or failed (`ok`). `result
 
 ### `step.ended`
 
-Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, or malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older).
+Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: none of its tool calls ran, the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`), or truncated (a response cut short: its `assistant.message` carries its finish reason, none of its tool calls ran, each is answered as cut, and the step has no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls and a truncated step's cut calls (not ok) included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older, and records with status truncated, like malformed ones, are not read by releases before stored format 2).
 
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
 | `run` | `integer` (optional) |
-| `status` | `"completed" \| "failed" \| "cancelled" \| "malformed"` |
+| `status` | `"completed" \| "failed" \| "cancelled" \| "malformed" \| "truncated"` |
 | `results` | `Array<{ entry, toolCallId, tool, ok }>` |
 
 ### `completion.evaluated`
 
-Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.
+Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed or truncated step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.
 
 | Field | Type |
 | --- | --- |
@@ -168,7 +168,7 @@ Published by `recordDecision`, for example when `turn.tools.select` or `apply` r
 
 ### `assistant.message`
 
-Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage): the content itself is memory's `memory.message`.
+Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`.
 
 | Field | Type |
 | --- | --- |
@@ -179,6 +179,7 @@ Published by the step loop once per provider response, after that step's tools r
 | `model` | `string \| null` |
 | `toolCalls` | `Array<{ id, tool, input }>` |
 | `usage` | `{ inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens }` |
+| `finishReason` | `"stop" \| "length" \| "content-filter" \| "tool-calls" \| "error" \| "pause" \| "other" \| "unknown"` |
 
 ### `assistant.delta`
 
@@ -240,7 +241,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `turn.reply` | Memory, when the turn's reply is recorded (`TurnMemory.persistReply`), held for the turn's closing commit: stored with its `turn.ended`, right before it | The assistant's reply. | `entry`, `runId`, `step`, `at`, `body` |
 | `step.started` | The turn's bus (stored from `step.started`) | None: tool names. | `step`, `run`, `planned`, `activeTools` |
 | `step.ended` | The turn's bus (stored from `step.ended`) | None: entry ids and tool names. | `step`, `run`, `status`, `results` |
-| `step.usage` | The turn's bus (stored from `assistant.message`) | None: model name and token counts. | `step`, `run`, `model`, `usage` |
+| `step.usage` | The turn's bus (stored from `assistant.message`) | None: model name, token counts and finish reason. | `step`, `run`, `model`, `usage`, `finishReason` |
 | `tool.started` | The turn's bus (stored from `tool.started`) | Tool input. | `step`, `invocationId`, `tool`, `input`, `labels`, `stage` |
 | `tool.refused` | The turn's bus (stored from `tool.refused`) | The refusal message, which may name missing permissions or quote the host's denial; the input is left out. | `step`, `invocationId`, `tool`, `reason`, `message` |
 | `tool.completed` | The turn's bus (stored from `tool.completed`) | None: input and result are left out. | `step`, `invocationId`, `tool`, `ok`, `durationMs`, `labels`, `stage` |
@@ -368,6 +369,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `tools.unavailable` | the turn's tools | The tools were used before `openTurnTools` opened them. |
 | `loop.model` | the step loop | The turn's services carry no `LanguageModel`. |
 | `loop.failed` | the step loop | The loop failed with an error that is not a `HarnessError` (the model call's own error, for example); the message is that error's message, without its tag (`messagesOf`), and the error is the cause. |
+| `loop.truncated` | the step loop, a run failing | The model's reply was cut short (its finish reason is not `stop`, `tool-calls` or `pause`; `unknown`, no finish reason given, cuts only a reply with tool calls the loop would run), and the run stops: a cut other than the output limit (`content-filter`, `error`, `other`, `unknown`), or more replies in a row cut at the output limit than the loop answers with correctives (2). The cut step is recorded, its status `truncated`, and none of its tool calls ran. `runLoop` fails with it as a `HarnessError`, and the step loop passes it on as it is. |
 | `request.encode` | the turn, before each provider call | The request header did not encode. |
 | `request.missing` | before each provider call | No stored `request.prepared` header for the step. |
 | `request.decode` | before each provider call | The step's stored `request.prepared` header did not decode. |

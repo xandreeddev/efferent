@@ -652,7 +652,7 @@
     },
     {
       "name": "step.ended",
-      "description": "Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, or malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older).",
+      "description": "Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: none of its tool calls ran, the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`), or truncated (a response cut short: its `assistant.message` carries its finish reason, none of its tool calls ran, each is answered as cut, and the step has no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls and a truncated step's cut calls (not ok) included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older, and records with status truncated, like malformed ones, are not read by releases before stored format 2).",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -672,7 +672,7 @@
         },
         {
           "name": "status",
-          "type": "\"completed\" | \"failed\" | \"cancelled\" | \"malformed\"",
+          "type": "\"completed\" | \"failed\" | \"cancelled\" | \"malformed\" | \"truncated\"",
           "required": true
         },
         {
@@ -707,7 +707,8 @@
               "completed",
               "failed",
               "cancelled",
-              "malformed"
+              "malformed",
+              "truncated"
             ]
           },
           "results": {
@@ -747,12 +748,12 @@
           "results"
         ],
         "additionalProperties": true,
-        "description": "Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, or malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older)."
+        "description": "Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: none of its tool calls ran, the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`), or truncated (a response cut short: its `assistant.message` carries its finish reason, none of its tool calls ran, each is answered as cut, and the step has no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls and a truncated step's cut calls (not ok) included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older, and records with status truncated, like malformed ones, are not read by releases before stored format 2)."
       }
     },
     {
       "name": "completion.evaluated",
-      "description": "Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.",
+      "description": "Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed or truncated step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -828,7 +829,7 @@
           "verdict"
         ],
         "additionalProperties": true,
-        "description": "Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`."
+        "description": "Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed or truncated step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`."
       }
     },
     {
@@ -1224,7 +1225,7 @@
     },
     {
       "name": "assistant.message",
-      "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage): the content itself is memory's `memory.message`.",
+      "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -1269,6 +1270,11 @@
         {
           "name": "usage",
           "type": "{ inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens }",
+          "required": true
+        },
+        {
+          "name": "finishReason",
+          "type": "\"stop\" | \"length\" | \"content-filter\" | \"tool-calls\" | \"error\" | \"pause\" | \"other\" | \"unknown\"",
           "required": true
         }
       ],
@@ -1430,6 +1436,19 @@
               "cacheReadTokens"
             ],
             "additionalProperties": true
+          },
+          "finishReason": {
+            "type": "string",
+            "enum": [
+              "stop",
+              "length",
+              "content-filter",
+              "tool-calls",
+              "error",
+              "pause",
+              "other",
+              "unknown"
+            ]
           }
         },
         "required": [
@@ -1439,10 +1458,11 @@
           "reasoning",
           "model",
           "toolCalls",
-          "usage"
+          "usage",
+          "finishReason"
         ],
         "additionalProperties": true,
-        "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage): the content itself is memory's `memory.message`."
+        "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`."
       }
     },
     {
@@ -3943,7 +3963,7 @@
         },
         {
           "name": "status",
-          "type": "\"completed\" | \"failed\" | \"cancelled\" | \"malformed\"",
+          "type": "\"completed\" | \"failed\" | \"cancelled\" | \"malformed\" | \"truncated\"",
           "required": true
         },
         {
@@ -3973,7 +3993,8 @@
               "completed",
               "failed",
               "cancelled",
-              "malformed"
+              "malformed",
+              "truncated"
             ]
           },
           "results": {
@@ -4017,7 +4038,7 @@
     {
       "kind": "step.usage",
       "writer": "The turn's bus (stored from `assistant.message`)",
-      "sensitive": "None: model name and token counts.",
+      "sensitive": "None: model name, token counts and finish reason.",
       "fields": [
         {
           "name": "step",
@@ -4038,6 +4059,11 @@
           "name": "usage",
           "type": "{ inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens }",
           "required": true
+        },
+        {
+          "name": "finishReason",
+          "type": "\"stop\" | \"length\" | \"content-filter\" | \"tool-calls\" | \"error\" | \"pause\" | \"other\" | \"unknown\"",
+          "required": false
         }
       ],
       "body": [],
@@ -4166,6 +4192,19 @@
               "cacheReadTokens"
             ],
             "additionalProperties": true
+          },
+          "finishReason": {
+            "type": "string",
+            "enum": [
+              "stop",
+              "length",
+              "content-filter",
+              "tool-calls",
+              "error",
+              "pause",
+              "other",
+              "unknown"
+            ]
           }
         },
         "required": [
@@ -5607,6 +5646,11 @@
       "code": "loop.failed",
       "where": "the step loop",
       "meaning": "The loop failed with an error that is not a `HarnessError` (the model call's own error, for example); the message is that error's message, without its tag (`messagesOf`), and the error is the cause."
+    },
+    {
+      "code": "loop.truncated",
+      "where": "the step loop, a run failing",
+      "meaning": "The model's reply was cut short (its finish reason is not `stop`, `tool-calls` or `pause`; `unknown`, no finish reason given, cuts only a reply with tool calls the loop would run), and the run stops: a cut other than the output limit (`content-filter`, `error`, `other`, `unknown`), or more replies in a row cut at the output limit than the loop answers with correctives (2). The cut step is recorded, its status `truncated`, and none of its tool calls ran. `runLoop` fails with it as a `HarnessError`, and the step loop passes it on as it is."
     },
     {
       "code": "request.encode",

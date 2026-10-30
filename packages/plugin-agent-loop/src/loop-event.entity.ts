@@ -1,4 +1,4 @@
-import type { StepStatus, TokenUsage, ToolCallSummary } from "@xandreed/core"
+import type { FinishReason, StepStatus, TokenUsage, ToolCallSummary } from "@xandreed/core"
 
 /**
  * The loop's event vocabulary — everything a driver needs to render a run
@@ -46,6 +46,8 @@ export type LoopEvent =
       readonly model?: string
       readonly toolCalls: ReadonlyArray<ToolCallSummary>
       readonly usage: TokenUsage
+      /** Why the response ended: a cut one (`length`, `content-filter`, …) ran none of its tool calls. */
+      readonly finishReason: FinishReason
       /** The assistant message's absolute store position, when persisted —
        *  the durable identity a UI keys its rail block on. */
       readonly position?: number

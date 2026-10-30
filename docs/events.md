@@ -109,10 +109,15 @@ What the frames mean:
   `assistant.message.toolCalls` and `step.ended.results` carry as well).
 - `assistant.message` is published once per provider response, after the
   step's tools have run: it restates the step's text. Replace the step's
-  deltas with it. A step that ends `malformed` (`step.ended.status`) has
-  none: the model could not form its response (a tool that does not exist,
-  parameters that do not decode), and the loop answered it with a
-  correction, so drop that step's deltas.
+  deltas with it. Its `finishReason` says why the response ended: `stop`,
+  `tool-calls` and `pause` are whole; `length` (the output limit),
+  `content-filter`, `error` and `other` cut it short, and so does
+  `unknown` (no finish reason given) when the response holds tool calls
+  the loop would run. A cut response ran none of its tool calls, and its
+  step ends `truncated`. A step that ends `malformed` (`step.ended.status`)
+  has no `assistant.message`: the model could not form its response (a
+  tool that does not exist, parameters that do not decode), and the loop
+  answered it with a correction, so drop that step's deltas.
 - `stream.fallback`: the provider's stream failed before its first part.
   The step, and every later step of the run, is answered without
   streaming: no more deltas, and the text arrives with `assistant.message`.
@@ -288,13 +293,21 @@ What settles, and when:
 - `step.ended.results` lists the step's recorded tool results (memory entry,
   call id, tool, `ok`), refused calls included as not ok: one place to see
   every call the registry handled that did not succeed.
-- A call to a tool that does not exist, or whose parameters do not decode,
-  never reaches the registry: no tool event, and no entry in
-  `step.ended.results`. The response is malformed: its step ends
-  `malformed`, without `assistant.message` or `completion.evaluated`, the
-  loop's correction is recorded as a `memory.message` (a user message)
-  under the next step, and the model is asked again; at the step cap the
-  run ends `partial` instead, and no correction is recorded.
+- In a whole response, a call to a tool that does not exist, or whose
+  parameters do not decode, never reaches the registry: no tool event, and
+  no entry in `step.ended.results`. The response is malformed and none of
+  its calls runs, the others included: its step ends `malformed`, without
+  `assistant.message` or `completion.evaluated`, the loop's correction is
+  recorded as a `memory.message` (a user message) under the next step, and
+  the model is asked again; at the step cap the run ends `partial` instead,
+  and no correction is recorded.
+- A call in a response cut short (its `assistant.message.finishReason`
+  cuts it, as above), whatever its tool and parameters, never reaches the
+  registry either: no tool event. Its result, which the model reads, is
+  the failure `{ error: "ReplyCut", message }` (the message says how the
+  reply ended and that this call was not run), listed in
+  `step.ended.results` as not ok; the step ends `truncated`, without
+  `completion.evaluated`.
 
 <!-- snippet: packages/sdk/src/events-guide.test.ts#tools -->
 ```ts

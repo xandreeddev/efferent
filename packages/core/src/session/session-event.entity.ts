@@ -1,7 +1,7 @@
 import { Schema } from "effect"
 import { RunId, RunKey } from "../domain/run.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
-import { TurnEnding, TurnOrigin } from "../domain/turn-vocabulary.entity.js"
+import { FinishReason, TurnEnding, TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
 import { TURN_EVENT_NAMES } from "../turn/turn-event.entity.js"
@@ -98,8 +98,9 @@ export type InboxDroppedData = typeof InboxDroppedData.Type
 
 /**
  * One step's provider response as stored (`step.usage`): its step, run (a
- * record written before runs were counted reads 0), model and token usage.
- * The rest of `assistant.message` is memory's `memory.message`.
+ * record written before runs were counted reads 0), model, token usage and
+ * why it ended (absent in records stored before format 2). The rest of
+ * `assistant.message` is memory's `memory.message`.
  *
  * @public
  */
@@ -108,6 +109,7 @@ export const StepUsageData = Schema.Struct({
   run: RunKey,
   model: Schema.OptionFromNullOr(Schema.String),
   usage: TokenUsage,
+  finishReason: Schema.optionalKey(FinishReason),
 })
 export type StepUsageData = typeof StepUsageData.Type
 

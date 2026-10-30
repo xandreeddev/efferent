@@ -1,6 +1,6 @@
 import { AiError } from "effect/ai"
 import type { Response } from "effect/ai"
-import { Cause, Effect, Option, Result, Stream } from "effect"
+import { Cause, Effect, Match, Option, Result, Schema, Stream } from "effect"
 import { reasonOf } from "@xandreed/core"
 import type { CompletionUsage, StreamChunk, StreamToolCall } from "./chat-wire.entity.js"
 import { chunkErrorOf, decodeStreamChunk, decodeToolArguments, isQuotaExhausted } from "./chat-wire.entity.functions.js"
@@ -56,14 +56,65 @@ export const usageFromCompletion = (usage: CompletionUsage | null | undefined, r
   }
 }
 
-export const finishReasonFromWire = (
-  raw: string | null | undefined,
-): "stop" | "length" | "content-filter" | "tool-calls" => {
-  if (raw === "tool_calls") return "tool-calls"
-  if (raw === "length") return "length"
-  if (raw === "content_filter") return "content-filter"
-  return "stop"
+/** The finish reasons that cut a response short, as `@effect/ai` names them. */
+type WireCut = "length" | "content-filter" | "error" | "other"
+
+/** A wire response's finish reason: one that ended on its own (`stop`, `tool-calls`) or a cut. */
+export type WireFinishReason = "stop" | "tool-calls" | WireCut
+
+/**
+ * How a `finish_reason` word ends a response, read case-insensitively:
+ * settled, the model ended its reply (`stop`, `tool_calls`,
+ * `function_call`, `tool_use`, `tool_call`, `end_turn`, `stop_sequence`,
+ * `eos`: the words OpenAI-compatible upstreams pass through from their
+ * models, Anthropic's and Cohere's among them), or the cut it names
+ * (`length` and `max_tokens`, the output limit; `content_filter`; `error`
+ * and `insufficient_system_resource`). Any other word is the cut `other`.
+ */
+const endOfWord = (word: string): "settled" | WireCut =>
+  Match.value(word.trim().toLowerCase()).pipe(
+    Match.whenOr("stop", "tool_calls", "function_call", "tool_use", "tool_call", "end_turn", "stop_sequence", "eos", () => "settled" as const),
+    Match.whenOr("length", "max_tokens", () => "length" as const),
+    Match.when("content_filter", () => "content-filter" as const),
+    Match.whenOr("error", "insufficient_system_resource", () => "error" as const),
+    Match.orElse(() => "other" as const),
+  )
+
+/** A `finish_reason` that names something: absent, `null` and a blank word name nothing. */
+const namedReason = (raw: string | null | undefined): Option.Option<string> =>
+  Option.filter(Option.fromNullishOr(raw), (word) => word.trim().length > 0)
+
+/**
+ * The wire's `finish_reason` as `@effect/ai`'s finish reason, for the settled
+ * and the streamed parser alike, decided before any tool call's arguments are
+ * read. A response that ended on its own (a settling word, or no reason at
+ * all, as on a stream that ended without one) finishes on `tool-calls` when
+ * it holds tool calls, else on `stop`. A cut stays a cut whatever the
+ * response holds, so the loop runs no call of a cut reply.
+ */
+export const finishReasonFromWire = (raw: Option.Option<string>, hasToolCalls: boolean): WireFinishReason => {
+  const end = Option.match(Option.flatMap(raw, namedReason), { onNone: () => "settled" as const, onSome: endOfWord })
+  return end === "settled" ? (hasToolCalls ? "tool-calls" : "stop") : end
 }
+
+/**
+ * A tool call's params from its wire arguments, once the response's finish
+ * reason is known. Arguments that do not parse fail a response that ended on
+ * its own with the model's invalid output (`invalid`: the loop's corrective
+ * path). A cut response's call is kept with params `{}`: its arguments may
+ * end mid-JSON, and the loop answers each call of a cut reply as cut and
+ * never runs it.
+ */
+export const toolCallParams = (
+  args: string,
+  reason: WireFinishReason,
+  invalid: () => AiError.AiError,
+): Effect.Effect<Schema.Json, AiError.AiError> =>
+  decodeToolArguments(args).pipe(
+    Effect.catchTag("SchemaError", () =>
+      reason === "stop" || reason === "tool-calls" ? Effect.fail(invalid()) : Effect.succeed({}),
+    ),
+  )
 
 interface ToolCallAccum {
   readonly id: string
@@ -214,46 +265,39 @@ const applyChunk = (
   const next: SseState = {
     ...folded,
     toolCalls: (delta?.tool_calls ?? []).reduce(mergeToolFragment, folded.toolCalls),
-    finishReason:
-      typeof choice?.finish_reason === "string"
-        ? Option.some(choice.finish_reason)
-        : folded.finishReason,
+    // The last reason that names something: a blank one on a later chunk keeps it.
+    finishReason: Option.orElse(namedReason(choice?.finish_reason), () => folded.finishReason),
     usage: chunk.usage !== null && chunk.usage !== undefined ? Option.some(chunk.usage) : folded.usage,
   }
   return Effect.succeed([next, parts])
 }
 
-/** The end-of-stream flush: close open chunks, emit the accumulated tool
- *  calls (unparseable arguments are an invalid output — the loop's
- *  corrective path), then the finish with the folded usage. */
+/** The end-of-stream flush: close open chunks, decide the finish reason,
+ *  emit the accumulated tool calls (unparseable arguments are an invalid
+ *  output — the loop's corrective path — unless the reply was cut:
+ *  `toolCallParams`), then the finish with the folded usage. */
 const flush = (moduleName: string, reading: UsageReading, state: SseState): Effect.Effect<Emit, AiError.AiError> =>
   state.flushed
     ? Effect.succeed([state, []])
     : Effect.gen(function* () {
         const [closed, closeParts] = emitThen(closeText(state), closeReasoning)
+        const reason = finishReasonFromWire(closed.finishReason, closed.toolCalls.length > 0)
         const toolParts = yield* Effect.forEach(closed.toolCalls, (call, index) =>
-          decodeToolArguments(call.args.length > 0 ? call.args : "{}").pipe(
+          toolCallParams(call.args.length > 0 ? call.args : "{}", reason, () =>
+            malformed(moduleName, `tool call ${call.name.length > 0 ? call.name : "?"} carried unparseable JSON arguments`),
+          ).pipe(
             Effect.map((params): Part => ({
               type: "tool-call",
               id: call.id.length > 0 ? call.id : `call_${index}`,
               name: call.name,
               params,
             })),
-            Effect.mapError(() =>
-              malformed(
-                moduleName,
-                `tool call ${call.name.length > 0 ? call.name : "?"} carried unparseable JSON arguments`,
-              ),
-            ),
           ),
           { concurrency: 1 },
         )
         const finish: Part = {
           type: "finish",
-          reason:
-            toolParts.length > 0
-              ? "tool-calls"
-              : Option.match(closed.finishReason, { onNone: () => "stop" as const, onSome: finishReasonFromWire }),
+          reason,
           // No usage on the stream is a usage of nothing.
           usage: usageFromCompletion(Option.getOrElse(closed.usage, (): CompletionUsage => ({})), reading),
         }

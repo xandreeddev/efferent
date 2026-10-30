@@ -3,7 +3,7 @@ import { DecisionRecord } from "../decision-record.entity.js"
 import { InvocationId, RunId, RunKey } from "../domain/run.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
-import { StepStatus, TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
+import { FinishReason, StepStatus, TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { ActivationSource, EntryId } from "../memory/memory-log.entity.js"
 import { JsonObject } from "../session/session-log.entity.js"
 import { UserMessage } from "./user-message.entity.js"
@@ -134,7 +134,7 @@ export const StepEndedEvent = Schema.TaggedStruct("step.ended", {
   /** The step's recorded tool results, in log order. */
   results: Schema.Array(StepResult),
 }).annotate({
-  description: "Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, or malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older).",
+  description: "Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: none of its tool calls ran, the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`), or truncated (a response cut short: its `assistant.message` carries its finish reason, none of its tool calls ran, each is answered as cut, and the step has no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls and a truncated step's cut calls (not ok) included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older, and records with status truncated, like malformed ones, are not read by releases before stored format 2).",
 })
 
 /** @public */
@@ -143,7 +143,7 @@ export const CompletionEvaluatedEvent = Schema.TaggedStruct("completion.evaluate
   run: RunKey,
   verdict: CompletionVerdict,
 }).annotate({
-  description: "Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.",
+  description: "Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed or truncated step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.",
 })
 
 /** @public */
@@ -190,8 +190,9 @@ export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
   model: Schema.OptionFromNullOr(Schema.String),
   toolCalls: Schema.Array(Schema.Struct({ id: ToolCallId, tool: Schema.String, input: Schema.Unknown })),
   usage: TokenUsage,
+  finishReason: FinishReason,
 }).annotate({
-  description: "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage): the content itself is memory's `memory.message`.",
+  description: "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls, the token usage (input with its cache reads and writes inside, output with its reasoning inside) and why the response ended (`finishReason`: `stop`, `tool-calls` and `pause` are whole, `unknown` cuts a response only when it holds tool calls the loop would run, and any other reason cuts it; a cut one ran none of its tool calls, and its step ends `truncated`). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage, finish reason): the content itself is memory's `memory.message`.",
 })
 
 /** The id that groups the streamed increments of one content part (a text, a reasoning, a tool call's params), as the provider's stream names it. */

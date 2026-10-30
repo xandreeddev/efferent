@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { Data, Effect, Layer, Match, Option, Ref, Schema, Stream, Tracer } from "effect"
-import { CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, Failure, hostNote, mediaFromBase64 } from "@xandreed/core"
+import { Data, Duration, Effect, Layer, Match, Option, Ref, Result, Schema, SchemaGetter, Stream, Tracer } from "effect"
+import { CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, Failure, HarnessError, hostNote, mediaFromBase64, ToolCallId } from "@xandreed/core"
+import type { AgentMessage, FinishReason, TokenUsage } from "@xandreed/core"
 import type { LoopEvent } from "./loop-event.entity.js"
-import { DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
+import { DEFAULT_TOOL_CONCURRENCY, DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
+import type { CompactionPlan } from "./loop.js"
+import { lengthCorrective, replyCutFailure } from "./response-gate.entity.functions.js"
 
 /** A scripted provider: call N returns `script(N)`'s encoded parts. */
 const scriptedModel = (script: (call: number) => ReadonlyArray<unknown>) =>
@@ -60,7 +63,7 @@ const streamingModel = (script: (call: number) => ReadonlyArray<unknown>) =>
     })
   })
 
-const finish = (reason: "stop" | "tool-calls") => ({
+const finish = (reason: FinishReason) => ({
   type: "finish" as const,
   reason,
   usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } },
@@ -171,9 +174,9 @@ describe("runLoop", () => {
   })
 
   test("a wrong-shaped tool call is recovered — corrective feedback, then success", async () => {
-    // In @effect/ai 0.35 a wrong-shaped param set fails at RESPONSE decode
-    // (before Toolkit.handle), so recovery rides the loop's corrective path —
-    // same outcome as a hallucinated name: the turn survives, the model fixes.
+    // The loop checks every call's parameters before any call runs: a
+    // wrong-shaped set is a malformed response, answered with the corrective,
+    // same as a hallucinated name: the turn survives, the model fixes it.
     const result = await run(
       runLoop({ system: "sys", messages: [user("go")], toolkit: kit }),
       (call) =>
@@ -204,10 +207,11 @@ describe("runLoop", () => {
           : [{ type: "text", text: "recovered" }, finish("stop")],
     )
     expect(result.finalText).toBe("recovered")
-    const corrective = result.newTail.find(
-      (m) => m.role === "user" && typeof m.content === "string" && m.content.startsWith("[Host note: your previous reply could not be decoded"),
-    )
-    expect(corrective).toBeDefined()
+    expect(result.newTail.filter((m) => m.role === "user")).toEqual([{
+      role: "user",
+      content: "[Host note: your previous reply called a tool you do not have; its name follows, as you wrote it. "
+        + "The tools you can call are: echo. Reply again with one of them, its parameters as its schema gives them, or in plain text if you are done.]\n\n<tool-name>\nnot_a_tool\n</tool-name>",
+    }])
   })
 
   test("the degenerate-loop breaker nudges once, then force-stops as partial", async () => {
@@ -486,7 +490,7 @@ describe("runLoop's callbacks fail with the caller's error", () => {
   const answers = () => [{ type: "text", text: "done" }, finish("stop")]
 
   /** The run's failure, caught by its tag: a defect would reject the run instead. */
-  const caught = <A, R>(loop: Effect.Effect<A, AiError.AiError | Unrecorded, R>) => loop.pipe(
+  const caught = <A, R>(loop: Effect.Effect<A, AiError.AiError | HarnessError | Unrecorded, R>) => loop.pipe(
     Effect.map(() => "completed"),
     Effect.catchTag("Unrecorded", (error) => Effect.succeed(`Unrecorded at ${error.step}`)),
   )
@@ -1121,6 +1125,32 @@ test("the run's usage sums its steps; each step's span carries its call's usage,
   expect([...(runSpan?.attributes.keys() ?? [])].filter((key) => key.startsWith("gen_ai."))).toEqual([])
 })
 
+test("each tool call runs under its own loop.tool_call span, its handler's spans under it; without trace content the step's span carries no call's parameters", async () => {
+  const spans: Array<Tracer.NativeSpan> = []
+  await Effect.runPromise(runLoop({ system: "sys", messages: [user("go")], toolkit: kit }).pipe(
+    Effect.provide(kit.toLayer({ echo: ({ value }) => Effect.succeed({ echoed: value }).pipe(Effect.withSpan(`echo.${value}`)) })),
+    Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((call) => call === 0
+      ? [{ type: "tool-call", id: "c1", name: "echo", params: { value: "a" } }, { type: "tool-call", id: "c2", name: "echo", params: { value: "b" } }, finish("tool-calls")]
+      : [{ type: "text", text: "done" }, finish("stop")])),
+    Effect.withTracer(capturingTracer(spans)),
+  ))
+  const idOf = (span: Tracer.NativeSpan | undefined): string => span?.spanId ?? "missing"
+  const parentId = (span: Tracer.NativeSpan | undefined): string => Option.getOrElse(Option.flatMap(Option.fromNullishOr(span), (child) => Option.map(child.parent, (parent) => parent.spanId)), () => "none")
+  const steps = spans.filter((span) => span.name === "engine.turn")
+  // The step's span: neither effect/ai's annotation of a call (`tool`, `parameters`) nor the step's content.
+  expect(steps.map((span) => ["tool", "parameters", "engine.step.input", "engine.step.output"].filter((key) => span.attributes.has(key)))).toEqual([[], []])
+  const callSpan = (id: string) => spans.find((span) => span.name === "loop.tool_call" && span.attributes.get("engine.tool.call_id") === id)
+  expect(spans.filter((span) => span.name === "loop.tool_call")).toHaveLength(2)
+  // Each call's own span, under the step that ran it, holds that call's annotation alone: none overwrites another's.
+  expect(["c1", "c2"].map((id) => [callSpan(id)?.attributes.get("engine.tool"), callSpan(id)?.attributes.get("parameters"), parentId(callSpan(id))])).toEqual([
+    ["echo", { value: "a" }, idOf(steps[0])],
+    ["echo", { value: "b" }, idOf(steps[0])],
+  ])
+  expect([parentId(spans.find((span) => span.name === "echo.a")), parentId(spans.find((span) => span.name === "echo.b"))]).toEqual([
+    idOf(callSpan("c1")), idOf(callSpan("c2")),
+  ])
+})
+
 
 test("native prompt instructions preserve messages and provider metadata", async () => {
   const instructions = Prompt.make([{ role: "system", content: "shared" }, { role: "system", content: "model-specific", options: { google: { fixture: true } } }])
@@ -1212,7 +1242,7 @@ describe("the loop's own text, exactly as the model reads it", () => {
   test("the malformed corrective: a host note with what went wrong and the step's tools; the parameters' report framed and clipped, a decoder's dump never", async () => {
     expect(await correctiveAfter("the reply is not valid JSON")).toEqual([{
       role: "user",
-      content: "[Host note: your previous reply could not be decoded, which usually means it called a tool you do not have or gave a call parameters of the wrong shape. "
+      content: "[Host note: your previous reply could not be decoded, which usually means a tool call's arguments were not valid JSON. "
         + "The tools you can call are: echo. Reply again with one of them, its parameters as its schema gives them, or in plain text if you are done.]",
     }])
     expect(await correctiveFor({ type: "tool-call", id: "c1", name: "echo", params: { wrong: true } })).toEqual([{
@@ -1253,5 +1283,372 @@ describe("the loop's own text, exactly as the model reads it", () => {
       content: "[Host note: the host reports that the required work is not complete, so a reply in text does not finish this turn. "
         + "Complete it with the tools you can call; if it cannot be completed, use one of them that reports why, when there is one.]",
     }])
+  })
+})
+
+describe("runLoop gates each response on its finish reason", () => {
+  type EchoHandler = (params: { readonly value: string }, context: Toolkit.HandlerContext<typeof Echo>) => Effect.Effect<{ readonly echoed: string }>
+  const echoBack: EchoHandler = ({ value }) => Effect.succeed({ echoed: value })
+
+  /** A prompt's messages as `role: text`, a part other than text by its type. */
+  const promptView = (prompt: Prompt.Prompt): ReadonlyArray<string> => prompt.content.map((message) =>
+    `${message.role}: ${typeof message.content === "string" ? message.content : message.content.map((part) => part.type === "text" ? part.text : `<${part.type}>`).join("")}`)
+
+  /** A scripted provider, as `scriptedModel`, that also keeps the view of each request's prompt. */
+  const promptedModel = (script: (call: number) => ReadonlyArray<unknown>, prompts: Array<ReadonlyArray<string>>) => Effect.gen(function* () {
+    const calls = yield* Ref.make(0)
+    return yield* LanguageModel.make({
+      generateText: (request) => Ref.getAndUpdate(calls, (n) => n + 1).pipe(
+        Effect.tap(() => Effect.sync(() => void prompts.push(promptView(request.prompt)))),
+        Effect.map((n) => script(n) as never),
+      ),
+      streamText: () => Stream.die("not scripted") as never,
+    })
+  })
+
+  /**
+   * A run over `script`, settled or streamed: how it ended (its outcome, or the code and message of the
+   * HarnessError it failed with), the values the echo handler ran with, `[step, message]` for each message
+   * `onTail` received (and `[step, role]` for each), each step's settled status, the run's events, and the
+   * view of each settled request's prompt.
+   */
+  const gated = (
+    script: (call: number) => ReadonlyArray<unknown>,
+    options: {
+      readonly streaming?: boolean
+      readonly toolConcurrency?: number
+      readonly echo?: EchoHandler
+      readonly maxSteps?: number
+      readonly compact?: (messages: ReadonlyArray<AgentMessage>, lastTurnUsage: TokenUsage) => Effect.Effect<Option.Option<CompactionPlan>>
+      readonly pendingInput?: () => Effect.Effect<Option.Option<string>>
+      readonly requireCompletion?: boolean
+      readonly isComplete?: (step: number) => Effect.Effect<boolean>
+    } = {},
+  ) => Effect.runPromise(Effect.gen(function* () {
+    const ran: Array<string> = []
+    const log: Array<readonly [number, AgentMessage]> = []
+    const settled: Array<string> = []
+    const prompts: Array<ReadonlyArray<string>> = []
+    const { events, onEvent } = collect()
+    const result = yield* runLoop({
+      system: "sys", messages: [user("go")], toolkit: kit, onEvent, streaming: options.streaming ?? false,
+      ...(options.toolConcurrency === undefined ? {} : { toolConcurrency: options.toolConcurrency }),
+      ...(options.maxSteps === undefined ? {} : { maxSteps: options.maxSteps }),
+      ...(options.compact === undefined ? {} : { compact: options.compact }),
+      ...(options.pendingInput === undefined ? {} : { pendingInput: options.pendingInput }),
+      ...(options.requireCompletion === undefined ? {} : { requireCompletion: options.requireCompletion }),
+      ...(options.isComplete === undefined ? {} : { isComplete: options.isComplete }),
+      onTail: (tail, step) => Effect.sync(() => {
+        log.push(...tail.map((message) => [step, message] as const))
+        return [] as ReadonlyArray<number>
+      }),
+      onStepSettled: (step, status) => Effect.sync(() => void settled.push(`${step}:${status}`)),
+    }).pipe(
+      Effect.provide(kit.toLayer({
+        echo: (params, context) => Effect.sync(() => void ran.push(params.value)).pipe(Effect.andThen((options.echo ?? echoBack)(params, context))),
+      })),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, options.streaming === true ? streamingModel(script) : promptedModel(script, prompts)),
+      Effect.result,
+    )
+    const end = Result.match(result, {
+      onSuccess: (done) => ({ outcome: done.outcome, reason: done.reason, finalText: done.finalText }),
+      onFailure: (error) => Match.valueTags(error, {
+        HarnessError: (harness) => ({ code: harness.code, message: harness.message }),
+        AiError: (ai) => ({ aiError: ai.message }),
+      }),
+    })
+    return { end, ran, log, settled, events, prompts, roles: log.map(([step, message]) => [step, message.role] as const) }
+  }))
+
+  const echoCall = (id: string, params: unknown) => ({ type: "tool-call", id, name: "echo", params })
+  /** An echo call's result as the tail records it. */
+  const echoResult = (id: string, output: unknown, isError: boolean) => ({ type: "tool-result" as const, toolCallId: ToolCallId.make(id), toolName: "echo", output, isError })
+  const answers = [{ type: "text", text: "done" }, finish("stop")]
+  const toolStarts = (events: ReadonlyArray<LoopEvent>) => events.filter((event) => event.type === "tool_start")
+  const userMessages = (log: ReadonlyArray<readonly [number, AgentMessage]>) => log.filter(([, message]) => message.role === "user")
+  const toolMessages = (log: ReadonlyArray<readonly [number, AgentMessage]>) => log.filter(([, message]) => message.role === "tool")
+
+  test("a reply cut at the output limit runs none of its calls: each is answered as cut, the step settles truncated, the next step reads the corrective", async () => {
+    const gate = await gated((call) => call === 0
+      // The second call's parameters do not decode: a cut reply's calls are answered as cut, never checked.
+      ? [{ type: "text", text: "I will echo" }, echoCall("c1", { value: "a" }), echoCall("c2", { wrong: true }), finish("length")]
+      : answers)
+    expect(gate.ran).toEqual([])
+    expect(toolStarts(gate.events)).toEqual([])
+    expect(gate.settled).toEqual(["0:truncated", "1:completed"])
+    expect(gate.roles).toEqual([[0, "assistant"], [0, "tool"], [1, "user"], [1, "assistant"]])
+    expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
+      echoResult("c1", { error: "ReplyCut", message: "Your reply reached the output limit, so this call was not run. Call it again if you still need it." }, true),
+      echoResult("c2", { error: "ReplyCut", message: "Your reply reached the output limit, so this call was not run. Call it again if you still need it." }, true),
+    ] }]])
+    expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: "[Host note: your previous reply reached the output limit and was cut short, so the tool calls it made were not run: their results say so. Call the tools you still need again, fewer in one reply and with less text before them.]" }]])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
+  })
+
+  test("a reply in text cut at the output limit is asked to continue, and the run's text is that reply's followed by the next one's", async () => {
+    const gate = await gated((call) => call === 0 ? [{ type: "text", text: "The first half" }, finish("length")] : [{ type: "text", text: "the rest" }, finish("stop")])
+    expect(gate.settled).toEqual(["0:truncated", "1:completed"])
+    expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: "[Host note: your previous reply reached the output limit and was cut short. Continue from where it stopped, in replies short enough to finish.]" }]])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "The first halfthe rest" })
+  })
+
+  test("two replies in text cut at the output limit, then a stop: the run's text is the three in order", async () => {
+    const gate = await gated((call) => [
+      [{ type: "text", text: "One, " }, finish("length")],
+      [{ type: "text", text: "two, " }, finish("length")],
+    ][call] ?? [{ type: "text", text: "three." }, finish("stop")])
+    expect(gate.settled).toEqual(["0:truncated", "1:truncated", "2:completed"])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "One, two, three." })
+  })
+
+  test("a reply cut at the output limit that held calls is not carried: the next reply is a new one", async () => {
+    const gate = await gated((call) => call === 0
+      ? [{ type: "text", text: "Calling echo" }, echoCall("c1", { value: "a" }), finish("length")]
+      : [{ type: "text", text: "done anew" }, finish("stop")])
+    expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: lengthCorrective(true) }]])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done anew" })
+  })
+
+  test("the step cap ending a run while text is carried: the run's text holds it", async () => {
+    const cutAtCap = await gated((call) => [{ type: "text", text: call === 0 ? "One, " : "two" }, finish("length")], { maxSteps: 2 })
+    expect(cutAtCap.settled).toEqual(["0:truncated", "1:truncated"])
+    expect(cutAtCap.end).toEqual({ outcome: "partial", reason: "step-cap", finalText: "One, two" })
+    const pausedAtCap = await gated((call) => [{ type: "text", text: call === 0 ? "Part one, " : "part two" }, finish("pause")], { maxSteps: 2 })
+    expect(pausedAtCap.end).toEqual({ outcome: "partial", reason: "step-cap", finalText: "Part one, part two" })
+    // A malformed reply at the cap: the carried text alone.
+    const malformedAtCap = await gated((call) => call === 0
+      ? [{ type: "text", text: "The first half" }, finish("length")]
+      : [{ type: "tool-call", id: "m1", name: "not_a_tool", params: {} }, finish("tool-calls")], { maxSteps: 2 })
+    expect(malformedAtCap.settled).toEqual(["0:truncated", "1:malformed"])
+    expect(malformedAtCap.end).toEqual({ outcome: "partial", reason: "step-cap", finalText: "The first half" })
+  })
+
+  test("a reply cut at the output limit, answered: the next step's input is compacted and steered as after any step", async () => {
+    const compacted: Array<readonly [ReadonlyArray<string>, number]> = []
+    const steers = ["the host's steer"]
+    const gate = await gated((call) => call === 0 ? [{ type: "text", text: "The first half" }, finish("length")] : answers, {
+      // Fold everything before the cut reply.
+      compact: (messages, lastTurnUsage) => Effect.sync(() => {
+        compacted.push([messages.map((message) => message.role), lastTurnUsage.inputTokens])
+        return Option.some({ summary: "THE MID-RUN SUMMARY", keepFrom: messages.findIndex((message) => message.role === "assistant") })
+      }),
+      pendingInput: () => Effect.sync(() => Option.fromNullishOr(steers.shift())),
+    })
+    // Consulted over the buffer the next step would send (the corrective last), with the cut step's usage.
+    expect(compacted).toEqual([[["user", "assistant", "user"], 10]])
+    expect(gate.events.flatMap((event) => event.type === "compaction" ? [[event.turnIndex, event.tokens, event.kept]] : [])).toEqual([[0, 10, 2]])
+    // The steer lands after the corrective, both recorded under the next step.
+    expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: lengthCorrective(false) }], [1, { role: "user", content: "the host's steer" }]])
+    // The next request: the summary in place of the user's first message, the cut reply kept, the corrective, then the steer.
+    const [system, summary, ...kept] = gate.prompts[1] ?? []
+    expect(system).toBe("system: sys")
+    expect(summary).toContain("THE MID-RUN SUMMARY")
+    expect(kept).toEqual(["assistant: The first half", `user: ${lengthCorrective(false)}`, "user: the host's steer"])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "The first halfdone" })
+  })
+
+  test("a third reply in a row cut at the output limit fails the run with loop.truncated, after two correctives", async () => {
+    const gate = await gated(() => [{ type: "text", text: "cut" }, finish("length")])
+    expect(gate.end).toEqual({ code: "loop.truncated", message: "the model's replies reached the output limit 3 times in a row, the last at step 2, after 2 correctives" })
+    expect(gate.settled).toEqual(["0:truncated", "1:truncated", "2:truncated"])
+    expect(gate.roles).toEqual([[0, "assistant"], [1, "user"], [1, "assistant"], [2, "user"], [2, "assistant"]])
+    expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: lengthCorrective(false) }], [2, { role: "user", content: lengthCorrective(false) }]])
+  })
+
+  test("a whole response resets the count of cuts in a row", async () => {
+    const cut = [{ type: "text", text: "cut" }, finish("length")]
+    const gate = await gated((call) => [cut, cut, [echoCall("c1", { value: "x" }), finish("tool-calls")], cut, cut][call] ?? answers)
+    expect(gate.settled).toEqual(["0:truncated", "1:truncated", "2:completed", "3:truncated", "4:truncated", "5:completed"])
+    expect(userMessages(gate.log).map(([step]) => step)).toEqual([1, 2, 4, 5])
+    // The whole response ends the first continuation ("cutcut"), which the last one's two cuts and its stop continue.
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "cutcutdone" })
+  })
+
+  test("a malformed reply between cuts at the output limit resets the count of cuts in a row, and a cut one the count of malformed ones", async () => {
+    const cut = (call: number) => [echoCall(`c${call}`, { value: "x" }), finish("length")]
+    const malformed = (call: number) => [{ type: "tool-call", id: `m${call}`, name: "not_a_tool", params: {} }, finish("tool-calls")]
+    // A third cut, not in a row: the run goes on.
+    const cuts = await gated((call) => [cut, cut, malformed, cut][call]?.(call) ?? answers)
+    expect(cuts.settled).toEqual(["0:truncated", "1:truncated", "2:malformed", "3:truncated", "4:completed"])
+    expect(cuts.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
+    // A third malformed reply, not in a row: the run goes on.
+    const malformedOnes = await gated((call) => [malformed, malformed, cut, malformed, malformed][call]?.(call) ?? answers)
+    expect(malformedOnes.settled).toEqual(["0:malformed", "1:malformed", "2:truncated", "3:malformed", "4:malformed", "5:completed"])
+    expect(malformedOnes.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
+  })
+
+  test("a provider-executed call alone in a reply cut at the output limit: no ReplyCut result, and the corrective for a reply in text", async () => {
+    const gate = await gated((call) => call === 0
+      ? [{ type: "text", text: "Searching" }, { type: "tool-call", id: "p1", name: "web_search", params: { query: "x" }, providerExecuted: true }, finish("length")]
+      : answers)
+    expect(gate.settled).toEqual(["0:truncated", "1:completed"])
+    expect(toolMessages(gate.log)).toEqual([])
+    expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: lengthCorrective(false) }]])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "Searchingdone" })
+  })
+
+  test("a reply with no finish reason from the provider: one in text, or an empty one after tool calls, completes; one holding a call is cut", async () => {
+    const text = await gated(() => [{ type: "text", text: "no finish" }])
+    expect(text.settled).toEqual(["0:completed"])
+    expect(text.end).toEqual({ outcome: "ok", reason: "completed", finalText: "no finish" })
+    const empty = await gated((call) => call === 0 ? [echoCall("c1", { value: "a" }), finish("tool-calls")] : [])
+    expect(empty.ran).toEqual(["a"])
+    expect(empty.settled).toEqual(["0:completed", "1:completed"])
+    expect(empty.end).toEqual({ outcome: "ok", reason: "completed", finalText: "" })
+    const calls = await gated(() => [echoCall("c1", { value: "a" })])
+    expect(calls.ran).toEqual([])
+    expect(calls.settled).toEqual(["0:truncated"])
+    expect(calls.end).toEqual({ code: "loop.truncated", message: "the model's reply at step 0 ended before the provider said it was complete" })
+  })
+
+  test.each([
+    ["content-filter", "the model's reply at step 0 was stopped by the provider's content filter"],
+    ["error", "the model's reply at step 0 was cut off by an error at the provider"],
+    ["other", "the model's reply at step 0 was cut short for a reason the provider did not name"],
+    ["unknown", "the model's reply at step 0 ended before the provider said it was complete"],
+  ] as const)("a reply cut by %s fails the run at once with loop.truncated, its calls unrun", async (reason, message) => {
+    const gate = await gated(() => [echoCall("c1", { value: "a" }), finish(reason)])
+    expect(gate.end).toEqual({ code: "loop.truncated", message })
+    expect(gate.ran).toEqual([])
+    expect(gate.settled).toEqual(["0:truncated"])
+    expect(gate.events.filter((event) => event.type === "turn_start")).toHaveLength(1)
+    expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
+      echoResult("c1", replyCutFailure(reason), true),
+    ] }]])
+    expect(userMessages(gate.log)).toEqual([])
+  })
+
+  test("a streamed reply cut at the output limit runs none of its two calls", async () => {
+    const gate = await gated((call) => call === 0
+      ? [{ type: "text", text: "two calls" }, echoCall("c1", { value: "a" }), echoCall("c2", { value: "b" }), finish("length")]
+      : answers, { streaming: true })
+    expect(gate.ran).toEqual([])
+    expect(toolStarts(gate.events)).toEqual([])
+    expect(gate.events.some((event) => event.type === "stream_fallback")).toBe(false)
+    expect(gate.settled).toEqual(["0:truncated", "1:completed"])
+    expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
+      echoResult("c1", replyCutFailure("length"), true),
+      echoResult("c2", replyCutFailure("length"), true),
+    ] }]])
+    expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: lengthCorrective(true) }]])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
+  })
+
+  test("a paused reply continues to the next step, and the run's text is that reply's followed by the next one's", async () => {
+    const gate = await gated((call) => call === 0 ? [{ type: "text", text: "Part one, " }, finish("pause")] : [{ type: "text", text: "part two." }, finish("stop")])
+    expect(gate.settled).toEqual(["0:completed", "1:completed"])
+    expect(gate.roles).toEqual([[0, "assistant"], [1, "assistant"]])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "Part one, part two." })
+  })
+
+  test("a paused reply under requireCompletion gets no completion corrective: the next request ends on it, and the run's text is both parts", async () => {
+    const gate = await gated((call) => call === 0 ? [{ type: "text", text: "Part one, " }, finish("pause")] : [{ type: "text", text: "part two." }, finish("stop")], {
+      requireCompletion: true,
+      // The host's work is not complete after the paused reply, only after the one that finishes it.
+      isComplete: (step) => Effect.succeed(step >= 1),
+    })
+    expect(gate.settled).toEqual(["0:completed", "1:completed"])
+    expect(userMessages(gate.log)).toEqual([])
+    expect(gate.prompts[1]).toEqual(["system: sys", "user: go", "assistant: Part one, "])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "Part one, part two." })
+  })
+
+  test.each([
+    ["has parameters that do not decode", { value: 7 }, "echo", "[Host note: your previous reply called echo with parameters that do not match its schema; what did not match follows, and it may quote your reply. "
+      + "The tools you can call are: echo. Reply again with one of them, its parameters as its schema gives them, or in plain text if you are done.]\n\n<parameter-errors>\nExpected string\n  at [\"value\"]\n</parameter-errors>"],
+    ["names a tool the step does not have", { value: "b" }, "not_a_tool", "[Host note: your previous reply called a tool you do not have; its name follows, as you wrote it. "
+      + "The tools you can call are: echo. Reply again with one of them, its parameters as its schema gives them, or in plain text if you are done.]\n\n<tool-name>\nnot_a_tool\n</tool-name>"],
+    ["is named constructor, which the step's tools inherit as an object but is no tool", {}, "constructor", "[Host note: your previous reply called a tool you do not have; its name follows, as you wrote it. "
+      + "The tools you can call are: echo. Reply again with one of them, its parameters as its schema gives them, or in plain text if you are done.]\n\n<tool-name>\nconstructor\n</tool-name>"],
+  ] as const)("a whole response whose second call %s runs neither call and is answered as malformed", async (_what, params, name, corrective) => {
+    const gate = await gated((call) => call === 0
+      ? [echoCall("c1", { value: "fine" }), { type: "tool-call", id: "c2", name, params }, finish("tool-calls")]
+      : [{ type: "text", text: "fixed" }, finish("stop")])
+    expect(gate.ran).toEqual([])
+    expect(toolStarts(gate.events)).toEqual([])
+    expect(gate.settled).toEqual(["0:malformed", "1:completed"])
+    // Nothing of the malformed step is recorded: the corrective and the next reply are step 1's.
+    expect(gate.roles).toEqual([[1, "user"], [1, "assistant"]])
+    expect(userMessages(gate.log)).toEqual([[1, { role: "user", content: corrective }]])
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "fixed" })
+  })
+
+  test.each([
+    [1, 1],
+    [2, 2],
+    [undefined, DEFAULT_TOOL_CONCURRENCY],
+  ] as const)("a whole response's calls run with toolConcurrency %p (%p at once), their results in call order", async (toolConcurrency, atOnce) => {
+    const values = ["a", "b", "c", "d", "e"]
+    const inFlight = { now: 0, most: 0 }
+    // The later a call, the sooner it ends: the results come back out of order.
+    const gate = await gated((call) => call === 0 ? [...values.map((value, n) => echoCall(`c${n}`, { value })), finish("tool-calls")] : answers, {
+      ...(toolConcurrency === undefined ? {} : { toolConcurrency }),
+      echo: ({ value }) => Effect.sync(() => {
+        inFlight.now = inFlight.now + 1
+        inFlight.most = Math.max(inFlight.most, inFlight.now)
+      }).pipe(
+        Effect.andThen(Effect.sleep(Duration.millis((values.length - values.indexOf(value)) * 5))),
+        Effect.andThen(Effect.sync(() => {
+          inFlight.now = inFlight.now - 1
+        })),
+        Effect.as({ echoed: value }),
+      ),
+    })
+    expect(inFlight.most).toBe(atOnce)
+    expect(gate.ran).toEqual(values)
+    expect(toolMessages(gate.log).flatMap(([, message]) => message.role === "tool" ? message.content.map((part) => [part.toolCallId, part.output]) : [])).toEqual(
+      values.map((value, n) => [`c${n}`, { echoed: value }]),
+    )
+    expect(gate.end).toEqual({ outcome: "ok", reason: "completed", finalText: "done" })
+  })
+
+  test("a tool that reports preliminary results is answered with its final one alone", async () => {
+    const gate = await gated((call) => call === 0 ? [echoCall("c1", { value: "ping" }), finish("tool-calls")] : answers, {
+      echo: ({ value }, context) => context.preliminary({ echoed: "working" }).pipe(
+        Effect.andThen(context.preliminary({ echoed: "almost" })),
+        Effect.as({ echoed: value }),
+      ),
+    })
+    expect(toolMessages(gate.log)).toEqual([[0, { role: "tool", content: [
+      echoResult("c1", { echoed: "ping" }, false),
+    ] }]])
+    expect(gate.events.flatMap((event) => event.type === "tool_end" ? [event.result] : [])).toEqual([{ echoed: "ping" }])
+  })
+
+  test("each assistant_message carries its response's finish reason", async () => {
+    const gate = await gated((call) => [
+      [echoCall("c1", { value: "a" }), finish("tool-calls")],
+      [{ type: "text", text: "cut" }, finish("length")],
+      [{ type: "text", text: "Part one" }, finish("pause")],
+    ][call] ?? answers)
+    expect(gate.events.flatMap((event) => event.type === "assistant_message" ? [event.finishReason] : [])).toEqual(["tool-calls", "length", "pause", "stop"])
+    expect(gate.events.flatMap((event) => event.type === "turn_end" ? [event.status] : [])).toEqual(["completed", "truncated", "completed", "completed"])
+  })
+})
+
+describe("the loop checks a call's parameters as the toolkit decodes them", () => {
+  // A tool whose parameters decode in an Effect (asynchronously), as effect/ai's toolkit allows.
+  const Later = Tool.make("later", {
+    description: "Echo a value decoded later.",
+    parameters: Schema.Struct({
+      value: Schema.String.pipe(Schema.decodeTo(Schema.String, {
+        decode: SchemaGetter.transformEffect((text: string) => Effect.succeed(text).pipe(Effect.delay("1 millis"))),
+        encode: SchemaGetter.transform((text: string) => text),
+      })),
+    }),
+    success: Schema.String,
+  })
+  const laterKit = Toolkit.make(Later)
+  const laterHandlers = laterKit.toLayer({ later: ({ value }) => Effect.succeed(`got ${value}`) })
+
+  test("a whole response calling a tool whose parameters decode asynchronously runs it, and the run goes on", async () => {
+    const result = await Effect.runPromise(runLoop({ system: "sys", messages: [{ role: "user", content: "go" }], toolkit: laterKit }).pipe(
+      Effect.provide(laterHandlers),
+      Effect.provideServiceEffect(LanguageModel.LanguageModel, scriptedModel((call) => call === 0
+        ? [{ type: "tool-call", id: "c1", name: "later", params: { value: "x" }, providerExecuted: false }, { type: "finish", reason: "tool-calls", usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } }]
+        : [{ type: "text", text: "done" }, { type: "finish", reason: "stop", usage: { inputTokens: { total: 1 }, outputTokens: { total: 1 } } }])),
+    ))
+    expect(result.finalText).toBe("done")
+    expect(result.newTail.some((message) => message.role === "tool")).toBe(true)
   })
 })

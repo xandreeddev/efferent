@@ -10,6 +10,33 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A `match` on `StepStatus` (`step.ended.status`, `onStepSettled`) adds
+  `truncated`; a host building an `AssistantMessageEvent` (a custom
+  `StepLoop`) gives its `finishReason`, and reruns `stepLoopConformance`.
+  Releases before stored format 2 cannot read `truncated` records.
+- A call to a tool the step does not have now gets the corrective for a
+  tool the model does not have (its name framed in `<tool-name>`), not the
+  one for a reply that does not decode.
+- A response cut short no longer completes the run, nor runs its tool
+  calls: a reply cut at the output limit is corrected at most twice in a
+  row, and any other cut (`content-filter`, `error`, `other`, and `unknown`
+  for a response that holds tool calls the loop would run) fails the run
+  with `loop.truncated`. A provider adapter or a scripted model ends each
+  response that calls tools with a finish part: a response without one is
+  `unknown`. A reply holding no tool call the loop would run (text alone,
+  or an empty one) without a finish part still completes the run. A reply
+  cut while a call's arguments were still being written is a cut only where
+  the adapter keeps the unfinished call (the models plugin's chat
+  completions client); effect/ai's Anthropic and OpenAI adapters fail it
+  with `ToolParameterValidationError`, which the loop answers as malformed.
+- A host calling `runLoop` directly handles its wider failure:
+  `E | AiError | HarnessError`, the `HarnessError` of code `loop.truncated`
+  (`harnessCodeOf`) for a reply cut short that the loop does not correct.
+  Through the step loop, `loop.truncated` reaches the turn as it is.
+- An endpoint on the models plugin's chat completions route whose
+  `finish_reason` is a word outside the client's list (under Fixed) now
+  ends its replies `other`, a cut that fails the run with `loop.truncated`,
+  where they read `stop` or `tool-calls`.
 - A turn now runs at most 6 hours by default: past it,
   `@xandreed/plugin-sessions` closes it as interrupted with
   `turn.time-limit`. A host whose turns run longer sets
@@ -643,7 +670,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/plugin-agent-loop`: `RunLoopOptions` takes `<Tools, E, R>`, and
   `runLoop`'s callbacks fail with `E`: a callback's failure fails its step,
   or the run once the step settled, as that failure, typed. The run fails
-  with `E` or a provider's `AiError`.
+  with `E`, a provider's `AiError` or a `HarnessError` (`loop.truncated`,
+  a reply cut short).
 - `@xandreed/evals-cli` drops its `./*` export: a subpath import such as
   `@xandreed/evals-cli/cli.adapter` fails with `ERR_PACKAGE_PATH_NOT_EXPORTED`.
   The root exports every name those modules published.
@@ -893,6 +921,37 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- A step is as honest as its response. `assistant.message` carries the
+  response's `finishReason` (`FinishReason` in `@xandreed/core`, effect/ai's
+  list: `stop`, `length`, `content-filter`, `tool-calls`, `error`, `pause`,
+  `other`, `unknown`), and `step.usage` stores it (optional, stored format
+  2). `@xandreed/plugin-agent-loop` resolves tool calls itself: the model
+  call returns them unrun and unchecked, and the loop runs them, through
+  the step's toolkit, only once the response is whole and every call names
+  a tool the step has with parameters that decode; otherwise none of them
+  runs. A response is whole when it ends `stop`, `tool-calls` or `pause`,
+  or `unknown` (no finish reason given) with no tool call the loop would
+  run, so a reply of text alone without a finish reason completes as
+  before. A response cut short runs no call: each is answered with the
+  failure `ReplyCut`, whose message says how the reply ended (for a reply
+  cut at the output limit, "Your reply reached the output limit, so this
+  call was not run. Call it again if you still need it."), and the step
+  ends with the new status `truncated`, with no completion evaluated. A
+  reply cut at the output limit gets a corrective under the next step, at
+  most twice in a row (`engine.corrections` kind `reply-cut`): a reply
+  holding tool calls the loop would run is told the calls it made were not
+  run, and to call the tools it still needs again, fewer in one reply; any
+  other, to continue from where it stopped. The next step's input is
+  compacted and steered as after any step the run goes on from. A third
+  cut in a row, or any other cut, fails the run with the new code
+  `loop.truncated`. A `pause` continues the run. The text of a reply the
+  run continues (a paused one, or one cut at the output limit holding no
+  tool call the loop would run) is carried: the run's text
+  (`RunResult.text`) is the carried text followed by the reply that
+  finishes it, and holds the carried text when the step cap ends the run
+  first. `stepLoopConformance` checks the finish reasons, the cuts, their
+  count in a row and the carried text (`cut`, `cut-stream`, `cut-fail`,
+  `cut-reset`, `cut-text`, `cut-unknown`, `pause`, `finish`).
 - A turn time limit: `timeLimitMs` on `BeginTurn` (`User`, `Inbox`, `Task`),
   `NewTurn` and the `drain` options, else the sessions plugin's new
   `turns.timeLimitMs` (6 hours by default). Past it, the instance holding
@@ -953,7 +1012,8 @@ stays inside its package, with nothing deprecated first:
 - `STORED_FORMAT` in `@xandreed/core`: the version of every shape the
   framework stores in a session log (journal payloads, `SessionHeader` and
   `SessionLogEvent`, the tasks plugin's records, the sessions plugin's head
-  state), format 1 as of this release. `bun run docs:generate` fingerprints
+  state), format 2 as of this release (format 1 before the finish reasons
+  and the `truncated` status above). `bun run docs:generate` fingerprints
   the shapes into `docs/stored-format.json` and fails on a change that does
   not bump it. `@xandreed/plugin-sessions` stamps every session it writes
   with the format, and refuses a session a newer release stamped for
@@ -1149,6 +1209,14 @@ stays inside its package, with nothing deprecated first:
 
 ### Changed
 
+- `@xandreed/plugin-agent-loop`: each tool call the loop runs is its own
+  `loop.tool_call` span under its step's `engine.turn` (attributes
+  `engine.tool`, the tool's name, and `engine.tool.call_id`), and the tool
+  registry's `tool.<name>` nests under it, no longer under effect/ai's
+  `LanguageModel.*` span of the model call. effect/ai's toolkit writes the
+  call's `tool` and `parameters` on that span, where it wrote them on the
+  model call's span before, one call's over another's. A cut response's
+  calls, answered without running, have none.
 - `@xandreed/core`: `extractModel` is deprecated in favour of
   `responseModelOf`; it still reads `router.model` until the next minor
   release.
@@ -1288,6 +1356,20 @@ Model-visible text (exact pins and the compaction golden updated):
 
 ### Fixed
 
+- `@xandreed/plugin-models`: the chat completions client, settled and
+  streamed, decides a response's finish reason from the wire's
+  `finish_reason` before it decodes its tool calls' arguments, whatever the
+  word's case: `stop`, `tool_calls`, `function_call`, `tool_use`,
+  `tool_call`, `end_turn`, `stop_sequence`, `eos` and none at all (`null`, or a stream that ended
+  without one) are `tool-calls` when the response holds tool calls, else
+  `stop`; `length` and `max_tokens` are `length`; `content_filter` is
+  `content-filter`; `error` and `insufficient_system_resource` are
+  `error`; any other word is `other`. A reply cut at `length` or by
+  `content_filter` is no longer reported as `tool-calls` when it holds
+  calls, and in a cut reply a tool call whose arguments do not parse is
+  kept with `{}` as its parameters (the loop runs none of a cut reply's
+  calls) instead of failing the response with `InvalidOutputError`; in a
+  whole reply it still fails.
 - `@xandreed/plugin-models`: an Anthropic subscription request no longer
   replaces the client's `anthropic-beta` header with the subscription's
   betas: they are added to it, so a document or a structured output keeps

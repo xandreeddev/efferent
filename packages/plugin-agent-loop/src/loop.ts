@@ -1,18 +1,20 @@
-import { AiError, LanguageModel, Prompt } from "effect/ai"
-import type { Response, Tool, Toolkit } from "effect/ai"
+import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
+import type { Tool, Toolkit } from "effect/ai"
 import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Stream } from "effect"
 import { CurrentTraceContent, freezeModelRequest, replayableContext } from "@xandreed/core"
 import { foldStreamParts } from "@xandreed/core/internal"
 import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import type { AgentMessage, AgentResult, StepStatus } from "@xandreed/core"
-import { addUsage, clipTo, elideMediaData, framed, hostNote, isMediaValue, zeroUsage } from "@xandreed/core"
+import type { AgentMessage, AgentResult, HarnessError, StepStatus } from "@xandreed/core"
+import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
 import { plannedCallIdOf, responseModelOf } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
 import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
 import type { LoopEvent } from "./loop-event.entity.js"
+import { lengthCorrective, malformedCall, MAX_CUT_CORRECTIVES, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
+import type { CutReason } from "./response-gate.entity.js"
 
 /**
  * A mid-run fold the `compact` callback hands back: everything before
@@ -30,20 +32,25 @@ export interface CompactionPlan {
 }
 
 /**
- * The provider-agnostic agent loop. `@effect/ai` resolves ONE step's tool
- * calls (its handlers are our Effects) but does not iterate across turns —
- * iteration is ours: each turn maps the message buffer to a `Prompt`, calls
- * `LanguageModel.generateText`, appends the response as the new tail, and
- * re-invokes until the model stops requesting tools, `maxSteps` is hit, or
- * the degenerate-loop breaker fires. State is an immutable fold through
- * a recursive step — the same discipline as foundry's forge loop.
+ * The provider-agnostic agent loop. Each turn maps the message buffer to a
+ * `Prompt` and calls `LanguageModel.generateText` (or `streamText`) with tool
+ * call resolution off: the response comes back whole first, and the loop
+ * runs its tool calls itself, only when the response is whole (`verdictOf`:
+ * a reply cut short runs none of them) and every call names a tool the step
+ * has with parameters that decode (`malformedCall`). It then appends the
+ * response and the results as the new tail, and re-invokes until the model
+ * stops requesting tools, `maxSteps` is hit, or the degenerate-loop breaker
+ * fires. State is an immutable fold through a recursive step — the same
+ * discipline as foundry's forge loop.
  */
 
 /**
  * The callbacks run with the caller's services `R` and fail with its `E`:
  * a callback's failure fails the step it runs in (its status `failed`), or
  * the run once the step settled, as that failure, typed. The run fails
- * with `E` or a provider's `AiError`.
+ * with `E`, a provider's `AiError`, or a `HarnessError` `loop.truncated`
+ * (a reply cut short that the loop does not answer: a cut other than the
+ * output limit, or one more after `MAX_CUT_CORRECTIVES` in a row).
  *
  * @public
  */
@@ -100,7 +107,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
   readonly messages: ReadonlyArray<AgentMessage>
   readonly toolkit: Toolkit.Toolkit<Tools>
   /** Host completion condition for `step`, checked after the step settled
-   * (`onStepSettled`), never after a malformed one. A query: it ends no step.
+   * (`onStepSettled`), never after a malformed or a truncated one. A query: it ends no step.
    * Avoids a paid final prose call when a tool already delivered the
    * complete result. */
   readonly isComplete?: (step: number) => Effect.Effect<boolean, E, R>
@@ -108,13 +115,15 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
    * Called exactly once per step, after its tail went through `onTail` and
    * before anything is decided (completion, nudges, compaction, steering),
    * with the exit of the step's own call, tools and tail: `completed`,
-   * `failed`, `cancelled`, or `malformed` (a response the model could not
-   * form, answered with a corrective turn). What is decided afterwards, and
+   * `failed`, `cancelled`, `malformed` (a response the model could not
+   * form, answered with a corrective turn), or `truncated` (a response cut
+   * short, none of its tool calls run). What is decided afterwards, and
    * fails, fails the run, never the settled step.
    */
   readonly onStepSettled?: (step: number, status: StepStatus) => Effect.Effect<void, E, R>
   /** When true, a model stop cannot substitute for host completion. A bounded
-   * corrective turn asks for the missing actions; maxSteps still applies. */
+   * corrective turn asks for the missing actions (never after a paused reply,
+   * which the next call continues); maxSteps still applies. */
   readonly requireCompletion?: boolean
   /** Run-pinned deterministic capability selection, refreshed between steps
    * and sent in the order returned (append new tools to keep the prefix stable).
@@ -124,7 +133,8 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
   /** A ceiling, not a target — a normal run ends when the model stops
    *  calling tools. Default {@link DEFAULT_MAX_STEPS}. */
   readonly maxSteps?: number
-  /** Concurrency for resolving one step's tool calls. Default
+  /** Concurrency for running one step's tool calls, which the loop runs
+   *  itself once the response is whole. Default
    *  {@link DEFAULT_TOOL_CONCURRENCY} — bounded so a many-call turn doesn't
    *  stampede the provider. */
   readonly toolConcurrency?: number
@@ -139,7 +149,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
    * session is restorable to its last completed turn after a crash, with
    * the step they belong to: a step's response and tool results are its
    * own, recorded before it settles; the loop's own messages (a malformed
-   * corrective, a nudge, a steer) belong to the next step, which reads
+   * or a length corrective, a nudge, a steer) belong to the next step, which reads
    * them, and are recorded only when that step runs (a run the step cap,
    * the breaker or completion ends sends none). Returns the absolute store
    * positions aligned with the input.
@@ -205,8 +215,9 @@ export const DEFAULT_TOOL_CONCURRENCY = 4
  * `engine_runs_total{engine_outcome,engine_reason}` (task completion rate),
  * `engine_tool_calls_total{engine_tool,engine_ok}` (usage frequency +
  * failed-call rate), `engine_corrections_total{engine_kind}` (malformed
- * recoveries, degenerate nudges, stream fallbacks and steps sent again
- * without the images a provider refused — the self-correction count).
+ * recoveries, replies cut at the output limit answered with a corrective,
+ * degenerate nudges, stream fallbacks and steps sent again without the
+ * images a provider refused — the self-correction count).
  */
 const engineRuns = Metric.counter("engine.runs", {
   description: "agent runs by outcome and reason",
@@ -217,7 +228,7 @@ const engineToolCalls = Metric.counter("engine.tool_calls", {
   incremental: true,
 })
 const engineCorrections = Metric.counter("engine.corrections", {
-  description: "self-corrections by kind (malformed recovery, degenerate nudge, stream fallback, image refused and resent)",
+  description: "self-corrections by kind (malformed recovery, reply cut at the output limit, degenerate nudge, stream fallback, image refused and resent)",
   incremental: true,
 })
 const tagged = <Input, State>(
@@ -259,10 +270,19 @@ const runUsageAttributes = (usage: TokenUsage): Record<string, number> => ({
 
 /**
  * A response the loop can correct: the model's own output does not decode
- * (an unknown tool, a part that does not parse) or a tool call's parameters
- * do not. A provider's protocol failure (`InvalidResponseError`: a body or
- * stream chunk of the wrong shape) is not the model's to correct, so it
- * fails the step like any other provider error.
+ * (a part that does not parse: `InvalidOutputError`), or a whole response's
+ * call names a tool the step does not have (`ToolNotFoundError`) or gives
+ * parameters its schema does not decode (`ToolParameterValidationError`),
+ * both of which the loop makes from `malformedCall`. A provider adapter may
+ * raise either of the last two itself, before any finish part: effect/ai's
+ * Anthropic and OpenAI adapters fail a call whose arguments are not valid
+ * JSON with `ToolParameterValidationError`, a call a cut at the output
+ * limit left unfinished included, which the loop then answers as malformed,
+ * not as cut (the models plugin's chat completions client keeps such a
+ * call for the gate). A provider's protocol
+ * failure (`InvalidResponseError`: a body or stream chunk of the wrong
+ * shape) is not the model's to correct, so it fails the step like any other
+ * provider error.
  */
 type MalformedResponse = AiError.AiError & {
   readonly reason: AiError.InvalidOutputError | AiError.ToolParameterValidationError | AiError.ToolNotFoundError
@@ -307,15 +327,19 @@ const replyAgain = (tools: ReadonlyArray<string>): string => tools.length === 0
 /**
  * The loop's own corrective after a reply the model could not form: a host
  * note saying what was wrong and what it can call, then, for a tool it does
- * not have or parameters that do not match, what it wrote, framed as data and
- * clipped. A reply that could not be decoded (an unknown tool's name fails
- * the response's decoding first) is not quoted: the decoder's report on it
- * is a dump of the response schema, not the model's words.
+ * not have (the response decodes with any tool name, and the loop reports
+ * one the step does not have as `ToolNotFoundError`) or parameters that do
+ * not match, what it wrote, framed as data and clipped. A reply that could
+ * not be decoded (`InvalidOutputError`: mostly a tool call's arguments that
+ * are not valid JSON, else a part of the response that does not parse; the
+ * loop reports an unknown tool or parameters that do not match itself) is
+ * not quoted: the report on it is the provider's or a dump of the response
+ * schema, not the model's words.
  */
 const malformedCorrective = (reason: MalformedResponse["reason"], tools: ReadonlyArray<string>): string => Match.valueTags(reason, {
   ToolNotFoundError: (notFound) => `${hostNote(`your previous reply called a tool you do not have; its name follows, as you wrote it. ${replyAgain(tools)}`)}\n\n${framed("tool-name", clipTo(notFound.toolName, CORRECTIVE_QUOTE_CHARS))}`,
   ToolParameterValidationError: (invalid) => `${hostNote(`your previous reply called ${invalid.toolName} with parameters that do not match its schema; what did not match follows, and it may quote your reply. ${replyAgain(tools)}`)}\n\n${framed("parameter-errors", clipTo(invalid.description, CORRECTIVE_QUOTE_CHARS))}`,
-  InvalidOutputError: () => hostNote(`your previous reply could not be decoded, which usually means it called a tool you do not have or gave a call parameters of the wrong shape. ${replyAgain(tools)}`),
+  InvalidOutputError: () => hostNote(`your previous reply could not be decoded, which usually means a tool call's arguments were not valid JSON. ${replyAgain(tools)}`),
 })
 
 /** The loop's own note after a stop that left the host's required work undone. */
@@ -383,8 +407,8 @@ export const foldProgress = (
 }
 
 /** THE decision after a turn — the only model-driven edge is `wantsMore`
- *  (the provider said "tool-calls" and there were some); the breaker and
- *  the cap are the harness's, and they outrank it in that order.
+ *  (the provider said "tool-calls" and there were some, or "pause"); the
+ *  breaker and the cap are the harness's, and they outrank it in that order.
  *
  * @public
  */
@@ -406,8 +430,18 @@ interface LoopState {
   readonly messages: ReadonlyArray<AgentMessage>
   readonly newTail: ReadonlyArray<AgentMessage>
   readonly finalText: string
+  /**
+   * The run's text a continuation has not finished yet: a reply in text cut
+   * at the output limit and asked to continue, or a paused one the run goes
+   * on from. The next step that ends it puts it before its own text in
+   * `finalText` (`settledText`).
+   */
+  readonly carried: string
   readonly turnIndex: number
+  /** Consecutive malformed responses, each answered with a corrective; any response that is not resets it. */
   readonly malformedStreak: number
+  /** Consecutive responses cut at the output limit, each answered with a corrective; any response that is not resets it. */
+  readonly cutStreak: number
   readonly seen: ReadonlySet<string>
   readonly staleTurns: number
   readonly usage: TokenUsage
@@ -422,6 +456,16 @@ interface LoopState {
   readonly streamingHealthy: boolean
 }
 
+/** The run's text after a step that ends a continuation: the carried text, then the step's; the previous text when both are empty. */
+const settledText = (state: LoopState, text: string): Pick<LoopState, "finalText" | "carried"> => {
+  const whole = `${state.carried}${text}`
+  return { finalText: whole.length > 0 ? whole : state.finalText, carried: "" }
+}
+
+/** The run's text after a step the next one continues (a reply in text cut at the output limit, a paused one): carried, not final yet. */
+const carriedText = (state: LoopState, text: string): Pick<LoopState, "finalText" | "carried"> =>
+  ({ finalText: state.finalText, carried: `${state.carried}${text}` })
+
 /**
  * A step's content as a trace attribute: an image is traced by its type,
  * size and fingerprint, never its bytes (a prompt's `file` part keeps its
@@ -432,6 +476,41 @@ const tracedJson = (value: unknown): string => JSON.stringify(value, (_key, fiel
     : typeof field === "object" && field !== null && "type" in field && field.type === "file" && "data" in field && typeof field.data === "string"
       ? { ...field, data: `[${field.data.length} base64 characters]` }
       : field)
+
+/**
+ * One tool call run through the step's toolkit, under its own span
+ * (`loop.tool_call`, a child of the step's): its stream drained here,
+ * preliminary results dropped, its last result parted as the toolkit's own
+ * resolution parts it. effect/ai's toolkit annotates the span current where
+ * a call is handled with the call's `tool` and `parameters`: that is the
+ * call's own span, so no call's overwrites another's, and the step's span
+ * carries content only with `captureTraceContent`.
+ */
+const runCall = <Tools extends Record<string, Tool.Any>>(toolkit: Toolkit.WithHandler<Tools>, call: Response.ToolCallPart<string, unknown>): Effect.Effect<Response.AnyPart, AiError.AiError> =>
+  // Erased as the model call is: handlers carry their own context, and fail as the provider's errors do.
+  (toolkit.handle(call.name as never, call.params as never, call.id) as Effect.Effect<Stream.Stream<Tool.HandlerResult<Tool.Any>, AiError.AiError>, AiError.AiError>).pipe(
+    Effect.flatMap((results) => Stream.runLast(Stream.filter(results, (result) => !result.preliminary))),
+    Effect.flatMap(Option.match({
+      onNone: () => Effect.die(new Error(`the tool ${call.name} ended without a result`)),
+      onSome: Effect.succeed,
+    })),
+    Effect.map((result): Response.AnyPart => Response.makePart("tool-result", {
+      id: call.id, name: call.name, providerExecuted: false, preliminary: false,
+      result: result.result, encodedResult: result.encodedResult, isFailure: result.isFailure,
+      ...(result.modelOutput === undefined ? {} : { modelOutput: result.modelOutput }),
+    })),
+    // Around the handle and the drain: the handler's fiber, forked in the handle, nests its spans under this one.
+    Effect.withSpan("loop.tool_call", { attributes: { "engine.tool": call.name, "engine.tool.call_id": call.id } }),
+  )
+
+/** The answer to a tool call of a response cut short: it did not run (`replyCutFailure`). */
+const cutResult = (call: Response.ToolCallPart<string, unknown>, reason: CutReason): Response.AnyPart => {
+  const failure = replyCutFailure(reason)
+  return Response.makePart("tool-result", {
+    id: call.id, name: call.name, providerExecuted: false, preliminary: false,
+    result: failure, encodedResult: failure, isFailure: true,
+  })
+}
 
 /** @public */
 export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = never>(
@@ -478,9 +557,32 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
 
         // One provider attempt over the step's messages, rendered for it: a request refused over an
         // image before any part of its response arrived is attempted once more, rendered again after
-        // `onMediaRejected` dealt with the images. Once a part arrived, deltas went out and tool handlers
-        // may have run, so a refusal then fails the step like any other failure after the first part.
+        // `onMediaRejected` dealt with the images. Once a part arrived, deltas went out, so a refusal
+        // then fails the step like any other failure after the first part.
         const partSeen = yield* Ref.make(false)
+        // The step's tools, run by the loop once its response is whole (never by the model call), each
+        // between its tool_start and tool_end events.
+        const toolSequence = yield* Ref.make(0)
+        const instrumented: Toolkit.WithHandler<Tools> = {
+          tools: selectedTools,
+          handle: (name, params, providerCallId, parseOptions) => Effect.gen(function* () {
+            const sequence = yield* Ref.getAndUpdate(toolSequence, (value) => value + 1)
+            const toolCallId = `execution:${state.turnIndex}:${sequence}`
+            yield* onEvent({ type: "tool_start", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params })
+            const results = yield* toolkit.handle(name, params, providerCallId, parseOptions)
+            return results.pipe(
+              // Parameters the toolkit does not decode (the loop decoded them first: a toolkit's own parse
+              // options may still refuse them) fail the step whatever the tool's failure mode.
+              Stream.mapEffect((result) => result.isFailure && result.failureOrigin === "parameters"
+                ? Effect.fail(result.result as AiError.AiError)
+                : Effect.succeed(result)),
+              Stream.tap((result) => result.preliminary ? Effect.void : onEvent({
+                type: "tool_end", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params,
+                ok: !result.isFailure, result: result.result, encoded: result.encodedResult,
+              })),
+            )
+          }) as never,
+        }
         const attempt = Effect.gen(function* () {
           const visible = options.render === undefined ? state.messages : yield* options.render(stepView).pipe(Effect.provide(eventContext))
           const prompt = freezeModelRequest(Prompt.concat(instructions, Prompt.make(toPromptMessages(visible))))
@@ -490,31 +592,13 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
               "engine.step.input": tracedJson({ messages: prompt.content, activeTools: toolNames }),
             })
 
-          const toolSequence = yield* Ref.make(0)
-          const instrumented: Toolkit.WithHandler<Tools> = {
-            tools: selectedTools,
-            handle: (name, params, providerCallId, parseOptions) => Effect.gen(function* () {
-              const sequence = yield* Ref.getAndUpdate(toolSequence, (value) => value + 1)
-              const toolCallId = `execution:${state.turnIndex}:${sequence}`
-              yield* onEvent({ type: "tool_start", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params })
-              const results = yield* toolkit.handle(name, params, providerCallId, parseOptions)
-              return results.pipe(
-                // Parameters that do not decode are a malformed response whatever
-                // the tool's failure mode: the loop answers with a corrective turn.
-                Stream.mapEffect((result) => result.isFailure && result.failureOrigin === "parameters"
-                  ? Effect.fail(result.result as AiError.AiError)
-                  : Effect.succeed(result)),
-                Stream.tap((result) => result.preliminary ? Effect.void : onEvent({
-                  type: "tool_end", turnIndex: state.turnIndex, toolCallId, toolName: String(name), args: params,
-                  ok: !result.isFailure, result: result.result, encoded: result.encodedResult,
-                })),
-              )
-            }) as never,
-          }
+          // Tool call resolution is the loop's: the model call returns the response whole, its calls
+          // unrun and unvalidated (`deferred`), for the loop to check every one before any runs.
           const callOptions = Object.freeze({
             prompt,
             toolkit: instrumented,
-            concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY,
+            disableToolCallResolution: true as const,
+            toolCallValidation: "deferred" as const,
             ...Option.match(directive, { onNone: () => ({}), onSome: (toolChoice) => ({ toolChoice: toolChoice as never }) }),
           })
 
@@ -531,7 +615,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           // dispatch check and the tool events.
           const generated = (planned ? LanguageModel.generateText(callOptions) : beforeDispatch.pipe(Effect.andThen(Effect.suspend(() =>
             dispatchModel.generateText(callOptions),
-          )))) as Effect.Effect<LanguageModel.GenerateTextResponse<Tools, "opaque">, AiError.AiError | E, LanguageModel.LanguageModel>
+          )))) as Effect.Effect<LanguageModel.GenerateTextResponse<Tools, "deferred">, AiError.AiError | E, LanguageModel.LanguageModel>
           const settled = (streamingHealthy: boolean) =>
             generated.pipe(
               Effect.map((res) => ({
@@ -547,9 +631,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           // assistant_delta events while tokens flow. A failure or defect
           // BEFORE the first part (a scripted provider's Stream.die, a broken
           // gateway) falls back to generateText for the rest of the run, with
-          // one stream_fallback event; after the first part, failures ride the
-          // existing turn handling (tool handlers may already have run — a
-          // replay would duplicate).
+          // one stream_fallback event; after the first part, deltas went out,
+          // so failures ride the existing turn handling (no tool has run: the
+          // loop runs them once the response is whole).
           // The dispatch check runs first, outside that fallback: a failed
           // check fails the step, it is no stream failure (the fallback's own
           // call is checked again).
@@ -648,15 +732,36 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           Effect.provideService(CurrentEmptyResponseTolerance, state.toolCalls > 0),
         )
 
-        // A response that doesn't decode — a hallucinated tool NAME or a
-        // wrong-shaped param set (both fail inside generateText, before any
-        // handler runs, so `failureMode: "return"` never sees them): the step
-        // settles `malformed`, and the loop answers it (`recover`).
+        // A response that doesn't decode (a part that does not parse: the model
+        // call's decoder refuses it) settles the step `malformed`, and the loop
+        // answers it (`recover`); nothing ran.
         if (outcome._tag === "malformed") return { _tag: "Malformed" as const, err: outcome.err, toolNames }
 
-        // Mint deterministic ids for id-less tool calls BEFORE the content
-        // fans out into events + persisted messages (durable UI identity).
-        const content = withToolCallIds(outcome.content, state.turnIndex, options.run)
+        // Mint deterministic ids for id-less tool calls BEFORE anything runs or
+        // fans out into events and persisted messages: the results answer them,
+        // and UIs key on them (durable identity).
+        const response = withToolCallIds(outcome.content, state.turnIndex, options.run)
+        // The calls the loop runs: a provider-executed one is the provider's, run and answered there.
+        const calls = response.flatMap((part) => part.type === "tool-call" && part.providerExecuted !== true ? [part] : [])
+        const verdict = verdictOf(outcome.finishReason, calls.length > 0)
+        // A whole response runs its calls only once every one names a tool the step has and its
+        // parameters decode: one that does not is a malformed response, and none of them ran.
+        const malformed = verdict._tag === "Whole" ? yield* malformedCall(calls, selectedTools) : Option.none()
+        if (Option.isSome(malformed)) {
+          const reason = Match.valueTags(malformed.value, {
+            NotFound: (missing) => new AiError.ToolNotFoundError({ toolName: missing.toolName, availableTools: toolNames }),
+            Invalid: (invalid) => new AiError.ToolParameterValidationError({ toolName: invalid.toolName, description: invalid.description }),
+          })
+          return { _tag: "Malformed" as const, err: AiError.make({ module: "AgentLoop", method: "resolveToolCalls", reason }) as MalformedResponse, toolNames }
+        }
+        // Each call's last result, in call order, as the toolkit's resolution would part it: a whole
+        // response's calls run (bounded); a cut one's are answered as cut, and none of them runs.
+        const results = yield* Match.valueTags(verdict, {
+          Whole: () => Effect.forEach(calls, (call) => runCall(instrumented, call), { concurrency: options.toolConcurrency ?? DEFAULT_TOOL_CONCURRENCY }),
+          Cut: (cut) => Effect.succeed(calls.map((call) => cutResult(call, cut.reason))),
+        })
+        const cut = verdict._tag === "Cut" ? Option.some(verdict.reason) : Option.none<CutReason>()
+        const content: ReadonlyArray<Response.AnyPart> = [...response, ...results]
         const usage = extractUsage(outcome.usage, content)
         yield* Effect.annotateCurrentSpan({
           "engine.step.finish_reason": outcome.finishReason,
@@ -684,6 +789,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           reasoning: responseReasoning(content),
           toolCalls,
           usage,
+          finishReason: outcome.finishReason,
           ...Option.match(model, { onNone: () => ({}), onSome: (id) => ({ model: id }) }),
           ...Option.match(assistantPosition, {
             onNone: () => ({}),
@@ -691,12 +797,15 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           }),
         })
         const toolResults = responseToolResults(content)
-        yield* Effect.forEach(toolResults, (tr) => Metric.update(tagged(engineToolCalls, {
+        // Calls that ran: a cut response's were answered, not run.
+        yield* Option.isSome(cut) ? Effect.void : Effect.forEach(toolResults, (tr) => Metric.update(tagged(engineToolCalls, {
           "engine.tool": tr.toolName, "engine.ok": tr.ok ? "true" : "false",
         }), 1), { concurrency: 1 })
         return {
           _tag: "Responded" as const,
-          content, finishReason: outcome.finishReason, usage, tail, text, toolCalls, toolResults, planned,
+          content, finishReason: outcome.finishReason, cut, usage, tail, text, toolCalls, toolResults, planned,
+          // Whether the response held calls the loop runs (a cut one's were answered instead).
+          callsToRun: calls.length > 0,
           streamingHealthy: outcome.streamingHealthy,
         }
       })
@@ -707,7 +816,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
 
     /** The step's status: its execution's exit, nothing decided after it. */
     const statusOf = (exit: Exit.Exit<Executed, unknown>): StepStatus => Exit.match(exit, {
-      onSuccess: (executed): StepStatus => executed._tag === "Malformed" ? "malformed" : "completed",
+      onSuccess: (executed): StepStatus => executed._tag === "Malformed" ? "malformed" : Option.isSome(executed.cut) ? "truncated" : "completed",
       onFailure: (cause): StepStatus => Cause.hasInterruptsOnly(cause) ? "cancelled" : "failed",
     })
     const settle = (step: number, status: StepStatus) =>
@@ -716,7 +825,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
     /**
      * After a malformed step: feed the decode error back as a corrective
      * turn and retry, bounded. The corrective is what the next step reads,
-     * so it is recorded under that step, and only when that step runs.
+     * so it is recorded under that step, and only when that step runs. A
+     * malformed response is no cut one: the count of cuts in a row restarts.
      */
     const recover = (state: LoopState, malformed: Malformed) => Effect.gen(function* () {
       const streak = state.malformedStreak + 1
@@ -726,7 +836,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
       const recoveredIndex = state.turnIndex + 1
       if (recoveredIndex >= maxSteps) {
         yield* Effect.logWarning(`step cap reached while recovering from a malformed response`)
-        return { ...state, turnIndex: recoveredIndex, malformedStreak: streak, phase: "step-cap" } satisfies LoopState
+        // The run ends here: the text a continuation carried is its text.
+        return { ...state, ...settledText(state, ""), turnIndex: recoveredIndex, malformedStreak: streak, cutStreak: 0, phase: "step-cap" } satisfies LoopState
       }
       const reason = malformed.err.reason
       const desc = clipTo("description" in reason ? reason.description : reason.message, CORRECTIVE_QUOTE_CHARS)
@@ -743,61 +854,26 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         newTail: [...state.newTail, corrective],
         turnIndex: recoveredIndex,
         malformedStreak: streak,
+        cutStreak: 0,
         corrections: state.corrections + 1,
       } satisfies LoopState
     })
 
     /**
-     * After a step that settled with a response: the breaker, completion,
-     * compaction and steering. What they append (a nudge, a steer) is the
-     * next step's input, recorded under it, and only when the run goes on
-     * to that step: a run that ends here (the cap, the breaker, completion)
-     * records nothing for a step that never runs.
+     * The next step's input, once the run goes on to it: the buffer with the
+     * settled step's tail and the loop's own messages for the next step
+     * (`appended`, each already recorded under it), folded when `compact`
+     * plans it over that buffer and the settled step's usage, then the
+     * host's steer, recorded under the next step. Both are consulted only
+     * while the run continues, at turn boundaries.
      */
-    const decide = (state: LoopState, responded: Responded) => Effect.gen(function* () {
-      const { content, usage, tail, text, toolCalls, toolResults } = responded
-      const turnIndex = state.turnIndex + 1
-
-      // --- Degenerate-loop circuit breaker ---
-      // A turn whose progress signature was already seen produced nothing
-      // new; count consecutive stale turns, nudge once, then force-stop.
-      const sig = progressSignature(content, pollable)
-      const progress = foldProgress(state, sig)
-      const { stale, seen } = progress
-
-      const finalText = text.length > 0 ? text : state.finalText
-      const completed = yield* options.isComplete?.(state.turnIndex) ?? Effect.succeed(false)
-      const requireMore = !completed && options.requireCompletion === true
-      const wantsMore = !completed && (requireMore || responded.finishReason === "tool-calls" && toolCalls.length > 0)
-      const broke = progress.broke
-      const phase = nextPhase({ broke, wantsMore, turnIndex, maxSteps })
-      yield* broke
-        ? Effect.logWarning(`breaking a degenerate tool-call loop after ${stale} stale turns`)
-        : Effect.void
-
-      // --- The next step's input: a nudge, a completion corrective ---
-      const continues = phase === "continue"
-      const nudge: ReadonlyArray<AgentMessage> = continues && progress.nudge
-        ? [{ role: "user", content: hostNote(DEGENERATE_REPEAT_NUDGE) }]
-        : []
-      yield* nudge.length > 0 ? (options.onTail?.(nudge, turnIndex) ?? Effect.void) : Effect.void
-      yield* nudge.length > 0
-        ? Metric.update(tagged(engineCorrections, { "engine.kind": "degenerate-nudge" }), 1)
-        : Effect.void
-      const completionNudge: ReadonlyArray<AgentMessage> = continues && requireMore && toolCalls.length === 0
-        ? [{ role: "user", content: options.correctives?.incomplete ?? INCOMPLETE_CORRECTIVE }]
-        : []
-      yield* completionNudge.length > 0 ? (options.onTail?.(completionNudge, turnIndex) ?? Effect.void) : Effect.void
-
-      // --- Within-run compaction (turn boundaries only) ---
-      // Consulted only while the run CONTINUES; the buffer rewrite is
-      // load-side (persisted history and `newTail` untouched). A plan that
-      // violates the assistant-boundary contract is ignored, never applied.
-      const nextMessages = [...state.messages, ...tail, ...nudge, ...completionNudge]
-      const plan =
-        continues && options.compact !== undefined
-          ? yield* options.compact(nextMessages, usage)
-          : Option.none<CompactionPlan>()
+    const nextInput = (state: LoopState, tail: ReadonlyArray<AgentMessage>, appended: ReadonlyArray<AgentMessage>, usage: TokenUsage) => Effect.gen(function* () {
+      // --- Within-run compaction ---
+      // The buffer rewrite is load-side (persisted history and `newTail`
+      // untouched). A plan that violates the assistant-boundary contract is
+      // ignored, never applied.
+      const nextMessages = [...state.messages, ...tail, ...appended]
+      const plan = options.compact === undefined ? Option.none<CompactionPlan>() : yield* options.compact(nextMessages, usage)
       const applied = Option.filter(
         plan,
         (p) =>
@@ -816,18 +892,15 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           }),
       })
 
-      // --- Mid-turn steering (turn boundaries, running runs only) ---
+      // --- Mid-turn steering ---
       // Consulted AFTER the fold so a steering message can never be
       // compacted away before the model sees it.
-      const steered =
-        continues && options.pendingInput !== undefined
-          ? yield* options.pendingInput()
-          : Option.none<string>()
+      const steered = options.pendingInput === undefined ? Option.none<string>() : yield* options.pendingInput()
       const steerTail: ReadonlyArray<AgentMessage> = Option.match(steered, {
         onNone: () => [],
         onSome: (text) => [{ role: "user", content: text }],
       })
-      yield* steerTail.length > 0 ? (options.onTail?.(steerTail, turnIndex) ?? Effect.void) : Effect.void
+      yield* steerTail.length > 0 ? (options.onTail?.(steerTail, state.turnIndex + 1) ?? Effect.void) : Effect.void
 
       return {
         messages: [
@@ -837,10 +910,122 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           }),
           ...steerTail,
         ],
-        newTail: [...state.newTail, ...tail, ...nudge, ...completionNudge, ...steerTail],
-        finalText: broke && finalText.length === 0 ? DEGENERATE_LOOP_STOP : finalText,
+        newTail: [...state.newTail, ...tail, ...appended, ...steerTail],
+      } satisfies Pick<LoopState, "messages" | "newTail">
+    })
+
+    /**
+     * After a step whose response was cut short (`truncated`): it is in the
+     * tail, its calls answered as cut and none of them run. A reply cut at
+     * the output limit is answered with a corrective, at most
+     * `MAX_CUT_CORRECTIVES` in a row, recorded under the next step and only
+     * when that step runs, then the next step's input is made as after any
+     * step (`nextInput`: compaction, steering); any other cut, or one more,
+     * fails the run with `loop.truncated`. No completion is evaluated for
+     * it. A cut response is no malformed one: the count of malformed
+     * responses in a row restarts. A reply in text is carried, for the next
+     * one to continue; one that held calls the loop would have run is
+     * replied to anew.
+     */
+    const recut = (state: LoopState, responded: Responded, reason: CutReason) => Effect.gen(function* () {
+      const streak = state.cutStreak + 1
+      if (reason !== "length" || streak > MAX_CUT_CORRECTIVES) {
+        return yield* Effect.fail(harnessError("loop.truncated", truncatedMessage(reason, state.turnIndex, streak)))
+      }
+      const turnIndex = state.turnIndex + 1
+      const answered = {
+        ...state,
         turnIndex,
         malformedStreak: 0,
+        cutStreak: streak,
+        usage: addUsage(state.usage, responded.usage),
+        lastUsage: responded.planned ? state.lastUsage : Option.some(responded.usage),
+        streamingHealthy: responded.streamingHealthy,
+      } satisfies LoopState
+      if (turnIndex >= maxSteps) {
+        yield* Effect.logWarning("step cap reached while answering a reply cut at the output limit")
+        // The run ends here, with no corrective: the carried text and this reply's are its text.
+        return {
+          ...answered,
+          ...settledText(state, responded.text),
+          messages: [...state.messages, ...responded.tail],
+          newTail: [...state.newTail, ...responded.tail],
+          phase: "step-cap",
+        } satisfies LoopState
+      }
+      yield* Effect.logWarning(`answering a reply cut at the output limit (${streak} in a row)`)
+      yield* Metric.update(tagged(engineCorrections, { "engine.kind": "reply-cut" }), 1)
+      const corrective: AgentMessage = { role: "user", content: lengthCorrective(responded.callsToRun) }
+      yield* options.onTail?.([corrective], turnIndex) ?? Effect.void
+      const input = yield* nextInput(state, responded.tail, [corrective], responded.usage)
+      return {
+        ...answered,
+        ...input,
+        ...(responded.callsToRun ? settledText(state, responded.text) : carriedText(state, responded.text)),
+        corrections: state.corrections + 1,
+      } satisfies LoopState
+    })
+
+    /**
+     * After a step that settled with a response: the breaker, completion,
+     * compaction and steering. What they append (a nudge, a steer) is the
+     * next step's input, recorded under it, and only when the run goes on
+     * to that step: a run that ends here (the cap, the breaker, completion)
+     * records nothing for a step that never runs. A paused reply the run
+     * goes on from is carried; any other puts the carried text before its
+     * own in `finalText`.
+     */
+    const decide = (state: LoopState, responded: Responded) => Effect.gen(function* () {
+      const { content, usage, tail, text, toolCalls, toolResults } = responded
+      const turnIndex = state.turnIndex + 1
+
+      // --- Degenerate-loop circuit breaker ---
+      // A turn whose progress signature was already seen produced nothing
+      // new; count consecutive stale turns, nudge once, then force-stop.
+      const sig = progressSignature(content, pollable)
+      const progress = foldProgress(state, sig)
+      const { stale, seen } = progress
+
+      const completed = yield* options.isComplete?.(state.turnIndex) ?? Effect.succeed(false)
+      const requireMore = !completed && options.requireCompletion === true
+      // `pause`: the provider paused a long reply, to be continued by the next call.
+      const wantsMore = !completed && (requireMore || (responded.finishReason === "tool-calls" && toolCalls.length > 0) || responded.finishReason === "pause")
+      const broke = progress.broke
+      const phase = nextPhase({ broke, wantsMore, turnIndex, maxSteps })
+      yield* broke
+        ? Effect.logWarning(`breaking a degenerate tool-call loop after ${stale} stale turns`)
+        : Effect.void
+
+      // --- The next step's input: a nudge, a completion corrective ---
+      const continues = phase === "continue"
+      const nudge: ReadonlyArray<AgentMessage> = continues && progress.nudge
+        ? [{ role: "user", content: hostNote(DEGENERATE_REPEAT_NUDGE) }]
+        : []
+      yield* nudge.length > 0 ? (options.onTail?.(nudge, turnIndex) ?? Effect.void) : Effect.void
+      yield* nudge.length > 0
+        ? Metric.update(tagged(engineCorrections, { "engine.kind": "degenerate-nudge" }), 1)
+        : Effect.void
+      // A paused reply is no stop: the next call continues it, with no completion corrective between them.
+      const completionNudge: ReadonlyArray<AgentMessage> = continues && requireMore && toolCalls.length === 0 && responded.finishReason !== "pause"
+        ? [{ role: "user", content: options.correctives?.incomplete ?? INCOMPLETE_CORRECTIVE }]
+        : []
+      yield* completionNudge.length > 0 ? (options.onTail?.(completionNudge, turnIndex) ?? Effect.void) : Effect.void
+
+      // --- Compaction and steering, only while the run CONTINUES ---
+      // A run that ends here appends nothing: a nudge or a completion corrective is due only to a next step.
+      const input = continues
+        ? yield* nextInput(state, tail, [...nudge, ...completionNudge], usage)
+        : { messages: [...state.messages, ...tail], newTail: [...state.newTail, ...tail] }
+
+      // A paused reply the run goes on from is carried, for the next call to continue; any other ends the continuation.
+      const texts = continues && responded.finishReason === "pause" ? carriedText(state, text) : settledText(state, text)
+      return {
+        ...input,
+        ...texts,
+        finalText: broke && texts.finalText.length === 0 ? DEGENERATE_LOOP_STOP : texts.finalText,
+        turnIndex,
+        malformedStreak: 0,
+        cutStreak: 0,
         seen,
         staleTurns: stale,
         usage: addUsage(state.usage, usage),
@@ -861,9 +1046,12 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
     const step = (state: LoopState) =>
       execute(state).pipe(
         Effect.onExit((exit) => settle(state.turnIndex, statusOf(exit))),
-        Effect.flatMap((executed): Effect.Effect<LoopState, AiError.AiError | E, R> => Match.valueTags(executed, {
+        Effect.flatMap((executed): Effect.Effect<LoopState, AiError.AiError | HarnessError | E, R> => Match.valueTags(executed, {
           Malformed: (malformed) => recover(state, malformed),
-          Responded: (responded) => decide(state, responded),
+          Responded: (responded) => Option.match(responded.cut, {
+            onNone: () => decide(state, responded),
+            onSome: (reason) => recut(state, responded, reason),
+          }),
         })),
         Effect.provideService(CurrentAgentStep, Option.some(state.turnIndex)),
         Effect.withSpan("engine.turn", {
@@ -880,8 +1068,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         messages: options.messages,
         newTail: [],
         finalText: "",
+        carried: "",
         turnIndex: 0,
         malformedStreak: 0,
+        cutStreak: 0,
         seen: new Set<string>(),
         staleTurns: 0,
         usage: zeroUsage,

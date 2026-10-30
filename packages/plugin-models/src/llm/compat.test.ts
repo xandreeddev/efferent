@@ -564,3 +564,139 @@ describe("toChatMessages: a tool the provider ran", () => {
     ])
   })
 })
+
+describe("fromChatCompletion: the finish reason", () => {
+  const usage = { prompt_tokens: 5, completion_tokens: 3, total_tokens: 8 }
+  const finishUsage = { inputTokens: { total: 5, uncached: 5, cacheRead: 0, cacheWrite: 0 }, outputTokens: { total: 3, text: 3, reasoning: 0 } }
+
+  test("the finish reason is the wire's, read case-insensitively; a cut stays a cut when the completion holds tool calls", async () => {
+    const call = { id: ToolCallId.make("c1"), function: { name: "echo", arguments: `{"value":"hi"}` } }
+    const finishOf = (finishReason: string | null | undefined, toolCalls: boolean) =>
+      fromChatCompletion("Test", {
+        choices: [
+          {
+            ...(finishReason === undefined ? {} : { finish_reason: finishReason }),
+            message: { content: "ok", ...(toolCalls ? { tool_calls: [call] } : {}) },
+          },
+        ],
+      }).pipe(Effect.map((parts) => parts.flatMap((part) => (part.type === "finish" ? [part.reason] : []))))
+    const words: ReadonlyArray<string | null | undefined> = [
+      "stop", "tool_calls", "function_call", "tool_use", "tool_call", "end_turn", "stop_sequence", "eos",
+      "length", "max_tokens", "content_filter", "error", "insufficient_system_resource",
+      "STOP", "MAX_TOKENS", "recitation", null, undefined, "",
+    ]
+    const cases = words.flatMap((word) => [[word, true] as const, [word, false] as const])
+    const seen = await Effect.runPromise(
+      Effect.forEach(cases, ([finishReason, toolCalls]) => finishOf(finishReason, toolCalls), { concurrency: 1 }),
+    )
+    expect(cases.map(([finishReason, toolCalls], at) => [String(finishReason), toolCalls, seen[at]])).toEqual([
+      ["stop", true, ["tool-calls"]],
+      ["stop", false, ["stop"]],
+      ["tool_calls", true, ["tool-calls"]],
+      ["tool_calls", false, ["stop"]],
+      ["function_call", true, ["tool-calls"]],
+      ["function_call", false, ["stop"]],
+      ["tool_use", true, ["tool-calls"]],
+      ["tool_use", false, ["stop"]],
+      ["tool_call", true, ["tool-calls"]],
+      ["tool_call", false, ["stop"]],
+      ["end_turn", true, ["tool-calls"]],
+      ["end_turn", false, ["stop"]],
+      ["stop_sequence", true, ["tool-calls"]],
+      ["stop_sequence", false, ["stop"]],
+      ["eos", true, ["tool-calls"]],
+      ["eos", false, ["stop"]],
+      ["length", true, ["length"]],
+      ["length", false, ["length"]],
+      ["max_tokens", true, ["length"]],
+      ["max_tokens", false, ["length"]],
+      ["content_filter", true, ["content-filter"]],
+      ["content_filter", false, ["content-filter"]],
+      ["error", true, ["error"]],
+      ["error", false, ["error"]],
+      ["insufficient_system_resource", true, ["error"]],
+      ["insufficient_system_resource", false, ["error"]],
+      ["STOP", true, ["tool-calls"]],
+      ["STOP", false, ["stop"]],
+      ["MAX_TOKENS", true, ["length"]],
+      ["MAX_TOKENS", false, ["length"]],
+      ["recitation", true, ["other"]],
+      ["recitation", false, ["other"]],
+      ["null", true, ["tool-calls"]],
+      ["null", false, ["stop"]],
+      ["undefined", true, ["tool-calls"]],
+      ["undefined", false, ["stop"]],
+      ["", true, ["tool-calls"]],
+      ["", false, ["stop"]],
+    ])
+  })
+
+  test("a completion cut at the output limit keeps its tool calls and finishes on length", async () => {
+    const parts = await Effect.runPromise(
+      fromChatCompletion("Test", {
+        choices: [
+          {
+            finish_reason: "length",
+            message: {
+              content: null,
+              tool_calls: [{ id: ToolCallId.make("c1"), function: { name: "echo", arguments: `{"value":"hi"}` } }],
+            },
+          },
+        ],
+        usage,
+      }),
+    )
+    expect(parts).toEqual([
+      { type: "tool-call", id: "c1", name: "echo", params: { value: "hi" } },
+      { type: "finish", reason: "length", usage: finishUsage },
+    ])
+  })
+
+  test("a completion cut in the middle of a call's arguments keeps the call with params {} and ends on the cut", async () => {
+    const cutAt = (finishReason: string) =>
+      fromChatCompletion("Test", {
+        choices: [
+          {
+            finish_reason: finishReason,
+            message: {
+              content: "Writing both files.",
+              tool_calls: [
+                { id: ToolCallId.make("c1"), function: { name: "write", arguments: `{"path":"a.txt","content":"done"}` } },
+                { id: ToolCallId.make("c2"), function: { name: "write", arguments: `{"path":"b.txt","content":"half of the` } },
+              ],
+            },
+          },
+        ],
+        usage,
+      })
+    const seen: ReadonlyArray<unknown> = await Effect.runPromise(Effect.forEach(["length", "content_filter", "error", "recitation"], cutAt, { concurrency: 1 }))
+    const cut = (reason: string) => [
+      { type: "text", text: "Writing both files." },
+      { type: "tool-call", id: "c1", name: "write", params: { path: "a.txt", content: "done" } },
+      { type: "tool-call", id: "c2", name: "write", params: {} },
+      { type: "finish", reason, usage: finishUsage },
+    ]
+    expect(seen).toEqual([cut("length"), cut("content-filter"), cut("error"), cut("other")])
+  })
+
+  test("unparseable arguments in a completion that ended on its own still fail with the model's invalid output", async () => {
+    const failureOf = (finishReason: string | null) =>
+      Effect.flip(fromChatCompletion("Test", {
+        choices: [
+          {
+            finish_reason: finishReason,
+            message: { tool_calls: [{ id: ToolCallId.make("c1"), function: { name: "echo", arguments: `{"value":"h` } }] },
+          },
+        ],
+      }))
+    const failures = await Effect.runPromise(Effect.forEach(["stop", "tool_calls", "end_turn", null], failureOf, { concurrency: 1 }))
+    const invalid = { _tag: "InvalidOutputError", description: "tool call echo carried unparseable JSON arguments" }
+    expect(failures.map((failure) => [failure.module, failure.method])).toEqual([
+      ["Test", "generateText"],
+      ["Test", "generateText"],
+      ["Test", "generateText"],
+      ["Test", "generateText"],
+    ])
+    failures.forEach((failure) => expect(failure.reason).toMatchObject(invalid))
+  })
+})

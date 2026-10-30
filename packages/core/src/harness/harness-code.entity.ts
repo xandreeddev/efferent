@@ -28,6 +28,7 @@ export const HARNESS_CODES = [
   "events.reserved",
   "loop.failed",
   "loop.model",
+  "loop.truncated",
   "matcher.timeout",
   "memory.digest",
   "memory.log",
