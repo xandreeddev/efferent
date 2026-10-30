@@ -121,6 +121,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/plugin-render/src/output.ts",
   "packages/plugin-agent-loop/src/index.ts",
   "packages/plugin-models/src/conformance/index.ts",
+  "packages/sdk/src/index.ts",
   "packages/sdk/src/conformance/index.ts",
 ]
 

@@ -15,8 +15,7 @@ it is written to, and any per-turn host data.
 ```ts
 import { Context, Effect, Layer, Option } from "effect"
 import { LanguageModel } from "effect/ai"
-import { RunId, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
-import { Agent } from "@xandreed/sdk"
+import { Agent, RunId, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
@@ -321,13 +320,12 @@ the host's own request fibers, then closes the services' scope:
 // Inside the host's Effect.gen, in the scope the process closes last.
 import { Effect, Layer, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
-import { awaitIdle, SessionLogMemoryLive, TurnAdmission, TurnRefused } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive } from "@xandreed/plugin-tasks"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { Agent } from "@xandreed/sdk"
+import { Agent, awaitIdle, SessionLogMemoryLive, TurnAdmission, TurnRefused } from "@xandreed/sdk"
 
 const draining = yield* Ref.make(false)
 const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({

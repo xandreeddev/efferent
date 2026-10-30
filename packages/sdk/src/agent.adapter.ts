@@ -54,7 +54,11 @@ import { guardTurn, openTurnTools, settleTurn, traceTurn, traceTurnBegin, turnOf
 import { cacheKeyOf } from "./turn/turn-run.usecase.functions.js"
 import { TurnLive } from "./turn/turn.adapter.js"
 
-/** One plugin instance of an agent: the definition, its options and (optionally) an instance id. */
+/**
+ * One plugin instance of an agent: the definition, its options and (optionally) an instance id.
+ *
+ * @public
+ */
 export interface AgentPluginEntry {
   readonly plugin: Plugin
   /** Defaults to the plugin id. */
@@ -62,7 +66,11 @@ export interface AgentPluginEntry {
   readonly options?: Readonly<Record<string, unknown>>
 }
 
-/** Everything an agent is made of. Swapping a strategy is swapping one entry. */
+/**
+ * Everything an agent is made of. Swapping a strategy is swapping one entry.
+ *
+ * @public
+ */
 export interface AgentConfig {
   /** Memory log and strategy, tool registry, step loop, and any capability plugins. */
   readonly plugins: ReadonlyArray<Plugin | AgentPluginEntry>

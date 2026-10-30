@@ -57,6 +57,6 @@ None.
 ## Tests
 
 - Kits: `src/render-surface.test.ts:21` runs `renderSurfaceConformance` over `RenderLive` and `makeMemoryRenderStore`; `src/render-transport.test.ts:13` and `:19` run `renderTransportConformance` over both transports and `renderFeedConformance` over `makeRenderFeed`. `src/render-surface.conformance.test.ts` is the surface kit's self-test: a careless store with no generation check must fail exactly the generation checks. The feed and transport kits have no self-tests. `src/render-output.test.ts` covers admission before commit and `render_component`'s text; `src/render-tail.sessions.test.ts` the session tail over a stub `Sessions`.
-- `packages/sdk/src/events-guide.test.ts` serves a session's journal through `RenderFeedLive`, `SessionsJournalTailLive` and `SseTransport`; `scripts/verify-packages.ts:376` imports the packed package on Node. Run: `bun test packages/plugin-render packages/sdk/src/events-guide.test.ts`.
+- `packages/sdk/src/events-guide.test.ts` serves a session's journal through `RenderFeedLive`, `SessionsJournalTailLive` and `SseTransport`; `scripts/verify-packages.ts:413` imports the packed package on Node. Run: `bun test packages/plugin-render packages/sdk/src/events-guide.test.ts`.
 
 See the root AGENTS.md for the enforced rules and the definition of done.

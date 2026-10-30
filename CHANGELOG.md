@@ -289,6 +289,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   that composed its turns on core alone adds `@xandreed/sdk` as a dependency.
 - Import `toolRegistryConformance` from `@xandreed/sdk/conformance` and run it
   over your registry as before.
+- An import from `@xandreed/sdk` of a name the list above leaves out fails to
+  compile: import that name from `@xandreed/core` instead (installed beside
+  the sdk already, as its peer). The values are the same, so code may take a
+  name from either package.
 
 ### Breaking
 
@@ -779,6 +783,35 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   runs each check in a turn over the sdk's `TurnLive`. Its checks are
   unchanged. `stepLoopConformance` (with `probeCall` and `textReply`) and
   `turnConformance` stay in `@xandreed/core/conformance`.
+- `@xandreed/sdk` no longer re-exports all of `@xandreed/core`: its root names
+  each export. It exports its own `Agent` (`AgentConfig`, `AgentPluginEntry`),
+  `agentTaskExecutor` and the turn engine (`TurnLive`, `cacheKeyOf`,
+  `runTurnLoop`, `stepRequestOf`, `TurnRunServices`, `finishTurn`,
+  `guardTurn`, `openTurnTools`, `settleTurn`, `traceTurn`, `traceTurnBegin`,
+  `TurnBeginTrace`, `TurnTraceOptions`, `turnOf`, `turnTools`), and
+  re-exports from core what a host writes beside `Agent`:
+  - a turn's input: `UserMessage`, `mediaFromBytes`, `mediaFromBase64`,
+    `RunId`, `ConversationId`, `SessionAddress`, `TurnInput`, `NewTurn`;
+  - the turn and its result: `Turn`, `TurnPolicy`, `TurnOutcome`,
+    `TurnResult`;
+  - the sessions: `Sessions`, `SessionLog`, `SessionLogMemoryLive`,
+    `TurnAdmission`, `TurnAdmissionOpen`, `TurnRefused`;
+  - the host's capabilities and plugins: `defineTool`, `defineSkill`,
+    `definePromptSection`, `defineCapability`, `Capability`, `definePlugin`,
+    `publishToolProgress`, `Failure`, `Media`, `SessionEnvironment`,
+    `ActionPolicy`, `PermissionGrants`;
+  - the turn's events and their records: `TurnEvent`, `TurnEventOf`,
+    `TurnEvents`, `TurnEventsService`, `onEvent`, `onTool`, `subscribeAll`,
+    `defineHostEvent`, `AssistantMessage`, `TurnEndedData`, `turnEndedOf`;
+  - what a turn fails with: `HarnessError`, `isHarnessError`,
+    `harnessCodeOf`, `TurnBeginError`, `turnBeginCodes`, `TurnError`,
+    `isTurnError`, `turnEndingOf`;
+  - the process's activity: `awaitIdle`, `processActivity`.
+
+  Every other name of core (the ports to implement and their entities,
+  memory, model requests, stored payloads and journal kinds, References,
+  the in-memory file system) is imported from `@xandreed/core`, and its kits
+  from `@xandreed/core/conformance`.
 
 ### Added
 
@@ -1720,6 +1753,16 @@ Model-visible text (exact pins and the compaction golden updated):
   sdk layer may import `effect/ai`.
   `scripts/api-snapshot.ts` refuses a root export declared under
   `src/internal/` (no package has a `src/engine/` any more).
+- `quality/exports-have-consumers` checks the sdk's root
+  (`packages/sdk/src/index.ts` joins `CURATED_ENTRIES`): a re-export of core
+  that no other package, script or doc code block imports from the sdk is
+  tagged `@public` at its specifier, and the sdk's own exports used only by
+  its tests (the engine, `AgentConfig`, `AgentPluginEntry`,
+  `agentTaskExecutor`) at their declarations. `api/sdk.api.txt` holds the
+  70 names.
+- The README, the framework guide and the website's getting-started, SDK and
+  core pages import a host's names from `@xandreed/sdk`, and the packed
+  consumers of `verify:packages` do too, on Node and on Bun.
 
 ### Deprecated
 

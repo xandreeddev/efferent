@@ -39,6 +39,8 @@ const runOn = (agent: TurnRunner, services: Context.Context<never>, writer: Turn
  * `TasksLive(config).pipe(Layer.provide(agentTaskExecutor(agent, { services })))`
  * (a `tasksPlugin` among the agent's own plugins would need the executor
  * before the agent exists).
+ *
+ * @public
  */
 export const agentTaskExecutor = (agent: TurnRunner, options: {
   readonly services: Context.Context<never>
