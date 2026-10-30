@@ -251,7 +251,7 @@ export const toolRegistryConformance = (
       const tools = yield* opening
       yield* tools.select(run.userMessage)
       const call = (name: string, params: unknown, step = 1): Effect.Effect<CallResult, unknown> => (Effect.gen(function* () {
-        const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>))
+        const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers))
         const results = yield* Stream.runCollect(yield* kit.handle(name, params))
         const last = results.at(-1)
         return { isFailure: last?.isFailure ?? true, result: last?.result }

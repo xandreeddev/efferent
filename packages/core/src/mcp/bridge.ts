@@ -3,6 +3,7 @@ import { Context, Effect, Option, Schema } from "effect"
 import { Failure } from "../domain/failure.entity.js"
 import { McpClient } from "../ports/mcp-client.port.js"
 import type { McpToolDescriptor } from "../ports/mcp-client.port.js"
+import type { ToolHandlers } from "../ports/tool-registry.port.js"
 
 /**
  * MCP servers → the agent's toolkit by PROGRESSIVE DISCLOSURE, the same
@@ -78,14 +79,15 @@ export type McpBridgedTool = Tool.Any
 export interface McpBridge {
   readonly toolkit: Toolkit.Toolkit<Record<string, McpBridgedTool>>
   /** The two tools' handlers, closed over the client + descriptor snapshot. */
-  readonly handlers: Context.Context<Tool.Handler<string>>
+  readonly handlers: Context.Context<ToolHandlers>
   /** Every configured tool, for the tier-1 prompt listing (names only). */
   readonly descriptors: ReadonlyArray<McpToolDescriptor>
 }
 
 export const emptyMcpBridge: McpBridge = {
-  toolkit: Toolkit.make() as Toolkit.Toolkit<Record<string, McpBridgedTool>>,
-  handlers: Context.empty() as Context.Context<Tool.Handler<string>>,
+  toolkit: Toolkit.make(),
+  // No tool, so no call: the empty toolkit never looks a handler up.
+  handlers: Context.empty() as Context.Context<ToolHandlers>,
   descriptors: [],
 }
 
@@ -108,9 +110,11 @@ export const buildMcpBridge: Effect.Effect<McpBridge, never, McpClient> =
     // Spread an array (not a fixed tuple) so the toolkit is Record-shaped —
     // the same shape `emptyMcpBridge` carries, so both satisfy `McpBridge`.
     const tools: ReadonlyArray<McpBridgedTool> = [McpDescribe, McpCall]
-    const toolkit = Toolkit.make(...tools) as Toolkit.Toolkit<Record<string, McpBridgedTool>>
-    const handlerRecord = {
-      mcp_describe: (params: { readonly server: string; readonly tool: string }) =>
+    const toolkit: Toolkit.Toolkit<Record<string, McpBridgedTool>> = Toolkit.make(...tools)
+    // The handlers bind to the typed pair (a handler is keyed by its tool's
+    // name), so each is checked against its tool's schemas.
+    const handlers = yield* Toolkit.make(McpDescribe, McpCall).toHandlers({
+      mcp_describe: (params) =>
         Option.match(find(params.server, params.tool), {
           onNone: () =>
             Effect.fail({
@@ -125,11 +129,7 @@ export const buildMcpBridge: Effect.Effect<McpBridge, never, McpClient> =
               inputSchema: descriptor.inputSchema,
             }),
         }),
-      mcp_call: (params: {
-        readonly server: string
-        readonly tool: string
-        readonly args: Record<string, unknown>
-      }) =>
+      mcp_call: (params) =>
         Option.isNone(find(params.server, params.tool))
           ? Effect.fail({
               error: "UnknownMcpTool",
@@ -151,13 +151,8 @@ export const buildMcpBridge: Effect.Effect<McpBridge, never, McpClient> =
                 Effect.fail({ error: "McpTransportError", message: error.message }),
               ),
             ),
-    }
-    const handlers = yield* toolkit.toHandlers(handlerRecord as never)
-    return {
-      toolkit,
-      handlers: handlers as Context.Context<Tool.Handler<string>>,
-      descriptors,
-    }
+    })
+    return { toolkit, handlers, descriptors }
   }).pipe(
     // Degrade to NO MCP tools rather than killing the run — but never
     // silently: a misconfigured server otherwise reads as "my tools

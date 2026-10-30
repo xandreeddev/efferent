@@ -9,7 +9,7 @@ import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { TurnError } from "../session/sessions.entity.js"
 import type { CompletionVerdict } from "../turn/turn-event.entity.js"
 import type { InitialBatch, StepInfo, ToolChoice } from "./capability.port.js"
-import type { RunTools } from "./tool-registry.port.js"
+import type { RunTools, ToolHandlers } from "./tool-registry.port.js"
 import type { TurnEventsService, TurnTasksService } from "./turn-events.port.js"
 
 export interface LoopLimits {
@@ -47,8 +47,11 @@ export interface StepRequest {
    */
   readonly run: RunRef
   readonly tools: RunTools
-  /** What the tool handlers run with: the turn's services (its LanguageModel included) and the registry's handlers. */
-  readonly handlers: Context.Context<never>
+  /**
+   * What the tool handlers run with: the registry's handlers and the turn's
+   * services, its LanguageModel included (read by key, when present).
+   */
+  readonly handlers: Context.Context<ToolHandlers>
   readonly limits: LoopLimits
   /** A host-planned first batch, run as step zero without a provider call. */
   readonly initial: Option.Option<InitialBatch>

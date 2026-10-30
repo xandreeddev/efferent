@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
 import { Cause, Effect, Layer, Logger, Option, Ref, References, Schema, Stream } from "effect"
-import type { Context, Result } from "effect"
+import type { Result } from "effect"
 import {
   ActionPolicy,
   ConversationId,
@@ -132,7 +132,7 @@ const callInTurn = (outer: Option.Option<ToolInvocation>, failOn: Option.Option<
     yield* tools.select(run.userMessage)
     // The open toolkit is typed over any tool, so its handler services are `any`: the registry's handlers need none.
     const handled: Effect.Effect<ReadonlyArray<{ readonly result: unknown }>, unknown> = Effect.gen(function* () {
-      const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>))
+      const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers))
       return yield* Stream.runCollect(yield* kit.handle(Report.name, {}))
     }) as never
     const outcome = yield* harnessDefectsAsFailures(handled.pipe(Effect.provideService(CurrentAgentStep, Option.some(2)), Effect.provideService(CurrentToolInvocation, outer))).pipe(Effect.result)
@@ -266,7 +266,7 @@ const refusalTurn = (calls: ReadonlyArray<readonly [string, unknown]>, options: 
     const tools = yield* (options.policy === undefined ? opening : opening.pipe(Effect.provideService(ActionPolicy, options.policy)))
     yield* tools.select(run.userMessage)
     const handled = (name: string, params: unknown): Effect.Effect<unknown> => Effect.gen(function* () {
-      const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>))
+      const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers))
       const results = yield* Stream.runCollect(yield* kit.handle(name, params))
       return results.at(-1)?.result
     }).pipe(Effect.provideService(CurrentAgentStep, Option.some(1)), Effect.orDie) as never
@@ -428,7 +428,7 @@ const matchedTurn = <A>(picks: ReadonlyArray<ReadonlyArray<string>>, body: (tool
 
 /** Call a tool through the open toolkit's handlers at step 1, as the loop does; the call's result, failed or not. */
 const callTool = (tools: RunTools, name: string, params: unknown): Effect.Effect<unknown, HarnessError> => Effect.gen(function* () {
-  const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>))
+  const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers))
   const results = yield* Stream.runCollect(yield* kit.handle(name, params))
   return results.at(-1)?.result
 }).pipe(Effect.provideService(CurrentAgentStep, Option.some(1))) as never

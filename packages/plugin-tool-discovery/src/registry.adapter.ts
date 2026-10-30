@@ -1,5 +1,5 @@
 import { Tool, Toolkit } from "effect/ai"
-import { Cause, Clock, Context, Effect, Exit, Option, Ref, Schema, Semaphore, SynchronizedRef } from "effect"
+import { Cause, Clock, Effect, Exit, Option, Ref, Schema, Semaphore, SynchronizedRef } from "effect"
 import {
   ActionPolicy,
   activationsOf,
@@ -353,9 +353,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
           : entry.handler
 
     const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.make(...registered.map((entry) => entry.tool))
-    const handlers = yield* toolkit.toHandlers(
-      Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))])) as never,
-    )
+    const handlers = yield* toolkit.toHandlers(Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))])))
 
     const always = skills.filter((skill) => skill.always).map((skill) => skill.id)
     const candidates = skills.filter((skill) => !skill.always)
@@ -443,7 +441,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
 
     return {
       toolkit,
-      handlers: handlers as Context.Context<never>,
+      handlers,
       active: SynchronizedRef.get(activated).pipe(Effect.map((held) => [...own.map((entry) => entry.tool.name), ...held.tools])),
       activate,
       match,

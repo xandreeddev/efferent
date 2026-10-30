@@ -17,9 +17,8 @@ const isMalformed = (error: unknown): boolean => AiError.isAiError(error) &&
 const minimalLoop = StepLoop.of({
   id: "minimal", version: "1",
   run: (request: StepRequest) => Effect.gen(function* () {
-    const handlers = request.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>
     const model = yield* Effect.orDie(Effect.fromOption(Context.getOption(request.handlers, LanguageModel.LanguageModel)))
-    const toolkit = yield* request.tools.toolkit.pipe(Effect.provide(handlers))
+    const toolkit = yield* request.tools.toolkit.pipe(Effect.provide(request.handlers))
     const run = request.run.ordinal
     const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, TurnError> => request.completion(info).pipe(
       Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, run, verdict })))
@@ -55,7 +54,7 @@ const minimalLoop = StepLoop.of({
         return yield* generated.pipe(
           // The run's trace content switch, for the model call to read.
           Effect.provideService(CurrentTraceContent, request.captureTraceContent),
-          Effect.provide(handlers),
+          Effect.provide(request.handlers),
           Effect.provideService(CurrentAgentStep, Option.some(index)),
         )
       })
@@ -160,8 +159,9 @@ const runWith = (model: LanguageModel.LanguageModel, options: {
   const seen = yield* Ref.make<ReadonlyArray<TurnEvent>>([])
   yield* events.subscribe(Option.some, (event: TurnEvent) => Ref.update(seen, (all) => [...all, event]).pipe(
     Effect.andThen(options.failOn !== undefined && event._tag === options.failOn.tag ? Effect.fail(options.failOn.error) : Effect.void)))
+  const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.empty
   const tools: RunTools = {
-    toolkit: Toolkit.empty, handlers: Context.empty(), active: Effect.succeed([]), activate: () => Effect.succeed([]),
+    toolkit, handlers: yield* toolkit.toHandlers({}), active: Effect.succeed([]), activate: () => Effect.succeed([]),
     match: (userMessage) => Effect.succeed({ userMessage, skills: [], probabilities: Option.none(), record: Option.none() }),
     apply: () => Effect.succeed([]), select: () => Effect.succeed([]),
     views: {
@@ -175,7 +175,7 @@ const runWith = (model: LanguageModel.LanguageModel, options: {
   const result = yield* runSteps({
     run: { id: RunId.make("run-1"), turn: 1, ordinal: RunOrdinal.make(0) },
     tools,
-    handlers: Context.make(LanguageModel.LanguageModel, model) as Context.Context<never>,
+    handlers: Context.merge(tools.handlers, Context.make(LanguageModel.LanguageModel, model)),
     limits: { maxSteps: 6, toolConcurrency: 1, streaming: options.streaming, requireCompletion: false },
     initial: Option.none(),
     plan: () => Effect.succeed({ model: Option.none(), system: "sys", messages: [{ role: "user", content: "go" }], toolChoice: Option.none() }),

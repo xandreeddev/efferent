@@ -38,7 +38,7 @@ Core's `ToolRegistry` over every contributed capability: it registers the tools 
 
 ## Erasure files
 
-`src/registry.adapter.ts`: the toolkit is built from tools known only at run time (`Toolkit.make` over the registered list, its handlers by name), so its static tool map is erased with `as never`.
+None. The toolkit is built from tools known only at run time (`Toolkit.make` over the registered list), so it is typed over any tool (`Tool.Any`); its handlers, by name, are core's `ToolHandlers` as `toHandlers` returns them, with no cast.
 
 ## Layout
 

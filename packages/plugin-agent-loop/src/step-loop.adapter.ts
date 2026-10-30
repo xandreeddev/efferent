@@ -140,9 +140,8 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     ),
     onEvent,
   })
-  const handlers = request.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>
   const result = yield* harnessDefectsAsFailures(loop.pipe(
-    Effect.provide(handlers),
+    Effect.provide(request.handlers),
     Effect.provideService(LanguageModel.LanguageModel, model),
     Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
     // A turn's failure (a HarnessError, the writer's TurnClosed and the other TurnError tags) keeps its tag; what else

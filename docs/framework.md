@@ -895,7 +895,10 @@ needs per turn (a `ResultDigester`, a summarizer's `UtilityLlm`) with
 the open, not as an argument. `ToolRegistry.open(session)` requires
 `RunContext` and a scope, and its handlers run with the services of where it
 is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
-`PermissionGrants` there are used when present.
+`PermissionGrants` there are used when present. The run's `handlers` (and a
+`StepRequest`'s) are a `Context<ToolHandlers>`, what `toolkit.toHandlers`
+returns: provided to the run's `toolkit`, they meet its requirement with no
+cast. A custom `ToolRegistry` builds them the same way, with `toHandlers`.
 
 `memoryConformance(memory, services)`, `stepLoopConformance(loop)`,
 `turnConformance(runner, services)`, `sessionLogConformance(log)`,

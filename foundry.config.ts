@@ -53,11 +53,12 @@ const CHECKED = [
 /**
  * The declared TYPE-ERASURE boundary: the router wrapping arbitrary provider
  * services, the compat/codex clients speaking effect/ai's generic surface,
- * the loop's call assembly, the bridge over dynamic MCP tools, the npm
- * undici's fetch typed as the global one (its requests and responses have the
- * global fetch types' shape but are distinct classes, so nothing downstream
- * may rely on `instanceof Response` / `Headers`). `as never`
- * is the design there and nowhere else — a new one anywhere else fails.
+ * the loop's call assembly, the npm undici's fetch typed as the global one
+ * (its requests and responses have the global fetch types' shape but are
+ * distinct classes, so nothing downstream may rely on `instanceof Response` /
+ * `Headers`). `as never` is the design there and nowhere else — a new one
+ * anywhere else fails. A run's tool handlers are typed (`ToolHandlers`), so
+ * the registry and the MCP bridge build them without one.
  * Test scaffolding (scripted providers, stubbed ports) is out of scope. An
  * entry whose file holds no `as never` any more fails too: the boundary
  * only shrinks.
@@ -69,8 +70,6 @@ const ERASURE_BOUNDARY = [
   "packages/plugin-models/src/llm/providers.ts",
   "packages/plugin-models/src/transport/undici-fetch.adapter.ts",
   "packages/plugin-agent-loop/src/loop.ts",
-  "packages/core/src/mcp/bridge.ts",
-  "packages/plugin-tool-discovery/src/registry.adapter.ts",
 ]
 /**
  * Test code as the build leaves it out (scripts/build-check.ts): test and

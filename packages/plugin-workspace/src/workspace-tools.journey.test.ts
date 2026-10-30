@@ -3,7 +3,6 @@ import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { LanguageModel } from "effect/ai"
-import type { Tool } from "effect/ai"
 import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
 import { ConversationId, HarnessError, onEvent, onTool, RunId, SessionLogMemoryLive, Sessions, subscribeAll, TurnAdmissionOpen, TurnToolbox, UserMessage } from "@xandreed/core"
 import type { Turn, TurnEventOf } from "@xandreed/core"
@@ -66,7 +65,7 @@ const callTool = (name: string, params: unknown): Effect.Effect<unknown, Harness
   const handled: Effect.Effect<ReadonlyArray<{ readonly result: unknown }>, HarnessError> = Effect.gen(function* () {
     // The turn's toolbox is among the services `use` runs with.
     const tools = yield* Option.match(yield* Effect.serviceOption(TurnToolbox), { onNone: () => Effect.die("no toolbox in the turn"), onSome: (toolbox) => toolbox.tools })
-    const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>))
+    const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers))
     return yield* Stream.runCollect(yield* kit.handle(name, params))
   }).pipe(Effect.orDie) as never
   return handled.pipe(Effect.map((results) => results.at(-1)?.result))
