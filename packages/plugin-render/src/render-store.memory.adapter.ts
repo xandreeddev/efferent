@@ -6,6 +6,7 @@ import { RenderError, SurfaceCommitted, SurfaceFrozen, SurfacePlanned } from "./
 import type { SurfaceId, SurfaceRecord, SurfaceScope } from "./domain/render-surface.entity.js"
 import { RenderStore } from "./ports/render.port.js"
 
+/** @public */
 export interface MemoryAnnotation {
   readonly surfaceId: string
   readonly kind: string
@@ -78,7 +79,11 @@ const fenced = <A>(scope: SurfaceScope, target: Target, write: (state: MemorySta
   return Result.isSuccess(result) ? [result, { ...next, fences: new Map([...next.fences, [key, scope.fence]]) }] : [result, next]
 }
 
-/** A complete in-process RenderStore, for tests, examples and single-process hosts. */
+/**
+ * A complete in-process RenderStore, for tests, examples and single-process hosts.
+ *
+ * @public
+ */
 export const makeMemoryRenderStore = Effect.gen(function* () {
   const stored = yield* Ref.make<MemoryState>({ entries: [], receipts: new Map(), fences: new Map(), annotations: [], sequence: 0 })
   const decide = <A>(decision: (state: MemoryState) => Decision<A>) => Ref.modify(stored, decision).pipe(Effect.flatMap(Effect.fromResult))
@@ -129,4 +134,5 @@ export const makeMemoryRenderStore = Effect.gen(function* () {
   }
 })
 
+/** @public */
 export const MemoryRenderStoreLive = Layer.effect(RenderStore, makeMemoryRenderStore.pipe(Effect.map(({ store }) => store)))

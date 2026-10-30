@@ -1273,6 +1273,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `export *`, and `quality/exports-have-consumers` checks it
   (`CURATED_ENTRIES`); the exports no first-party code imports are tagged
   `@public`.
+- `@xandreed/plugin-render` names each export of its root and `./output`
+  instead of `export *`, and `quality/exports-have-consumers` checks both
+  (`CURATED_ENTRIES`): the exports no first-party code imports are tagged
+  `@public`. Its API is unchanged.
 
 ### Deprecated
 

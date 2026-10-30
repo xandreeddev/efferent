@@ -8,12 +8,17 @@ import type { RenderError, RenderNode, RenderSnapshotInput, SurfaceRecord, Surfa
 import type { UiOutputAdmission } from "./ports/render-output.port.js"
 import type { Render, RenderOpenOptions, RenderStore } from "./ports/render.port.js"
 
+/** @public */
 export interface ConformanceCheck {
   readonly name: string
   readonly run: Effect.Effect<void, ConformanceFailure | RenderError>
 }
 
-/** A fresh surface implementation and its store for each check, built over the given admission. */
+/**
+ * A fresh surface implementation and its store for each check, built over the given admission.
+ *
+ * @public
+ */
 export interface SurfaceSubject {
   readonly make: (admission: typeof UiOutputAdmission.Service) => Effect.Effect<{
     readonly render: typeof Render.Service
@@ -73,7 +78,11 @@ const refusingBOnce = Effect.gen(function* () {
   return admission
 })
 
-/** The contract every Render/RenderStore pair must keep, run against any implementation. */
+/**
+ * The contract every Render/RenderStore pair must keep, run against any implementation.
+ *
+ * @public
+ */
 export const renderSurfaceConformance = (subject: SurfaceSubject): ReadonlyArray<ConformanceCheck> => [
   {
     name: "identical content opens no new generation",

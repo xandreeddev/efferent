@@ -4,31 +4,59 @@ import { RunId } from "@xandreed/core"
 /** Every render id is trimmed and non-empty; its brand says which id it is. */
 const Id = Schema.Trimmed.check(Schema.isNonEmpty())
 
-/** The host's thread (a session, a conversation): a store never mixes records across threads. */
+/**
+ * The host's thread (a session, a conversation): a store never mixes records across threads.
+ *
+ * @public
+ */
 export const ThreadId = Id.pipe(Schema.brand("ThreadId"))
 export type ThreadId = typeof ThreadId.Type
 
-/** Whom the output is for; the host authorizes it, and records never mix across principals. */
+/**
+ * Whom the output is for; the host authorizes it, and records never mix across principals.
+ *
+ * @public
+ */
 export const PrincipalId = Id.pipe(Schema.brand("PrincipalId"))
 export type PrincipalId = typeof PrincipalId.Type
 
-/** The host's message a render answers (`<messageId>:v<generation>` names its versions). */
+/**
+ * The host's message a render answers (`<messageId>:v<generation>` names its versions).
+ *
+ * @public
+ */
 export const RenderMessageId = Id.pipe(Schema.brand("RenderMessageId"))
 export type RenderMessageId = typeof RenderMessageId.Type
 
-/** One node of a snapshot, or the placeholder a fill commits into. */
+/**
+ * One node of a snapshot, or the placeholder a fill commits into.
+ *
+ * @public
+ */
 export const NodeId = Id.pipe(Schema.brand("NodeId"))
 export type NodeId = typeof NodeId.Type
 
-/** One commit, idempotent under it: a retry reuses the id (`operationIdOf`, `fillOperationIdOf`). */
+/**
+ * One commit, idempotent under it: a retry reuses the id (`operationIdOf`, `fillOperationIdOf`).
+ *
+ * @public
+ */
 export const OperationId = Id.pipe(Schema.brand("OperationId"))
 export type OperationId = typeof OperationId.Type
 
-/** The immutable revision a commit stored, as the host's journal names it. */
+/**
+ * The immutable revision a commit stored, as the host's journal names it.
+ *
+ * @public
+ */
 export const RevisionId = Id.pipe(Schema.brand("RevisionId"))
 export type RevisionId = typeof RevisionId.Type
 
-/** Immutable references: a release is never resolved through a latest alias. */
+/**
+ * Immutable references: a release is never resolved through a latest alias.
+ *
+ * @public
+ */
 export const UiRelease = Schema.Struct({
   component: Schema.Trimmed.check(Schema.isNonEmpty()),
   version: Schema.Trimmed.check(Schema.isNonEmpty()),
@@ -39,7 +67,11 @@ export const UiRelease = Schema.Struct({
 })
 export type UiRelease = typeof UiRelease.Type
 
-/** IDs of facts/artifacts are resolved by the host, never executable content. */
+/**
+ * IDs of facts/artifacts are resolved by the host, never executable content.
+ *
+ * @public
+ */
 export const UiOutputProposal = Schema.Struct({
   operationId: OperationId,
   nodeId: NodeId,
@@ -49,7 +81,11 @@ export const UiOutputProposal = Schema.Struct({
 })
 export type UiOutputProposal = typeof UiOutputProposal.Type
 
-/** The host supplies these fields; the model cannot choose another principal/run. */
+/**
+ * The host supplies these fields; the model cannot choose another principal/run.
+ *
+ * @public
+ */
 export const UiOutputScope = Schema.Struct({
   threadId: ThreadId,
   /** Core's run id, trimmed and non-empty as a scope takes it. */
@@ -64,6 +100,7 @@ export const UiOutputScope = Schema.Struct({
 })
 export type UiOutputScope = typeof UiOutputScope.Type
 
+/** @public */
 export const UiOutputReceipt = Schema.Struct({
   threadId: ThreadId,
   messageId: RenderMessageId,
@@ -73,6 +110,7 @@ export const UiOutputReceipt = Schema.Struct({
 })
 export type UiOutputReceipt = typeof UiOutputReceipt.Type
 
+/** @public */
 export class UiOutputError extends Schema.TaggedError<UiOutputError>()("UiOutputError", {
   code: Schema.Literals(["invalid", "forbidden", "unavailable", "conflict", "storage"]),
   message: Schema.String,

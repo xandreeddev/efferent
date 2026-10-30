@@ -39,6 +39,8 @@ import type { FeedFrame, FeedPayload, FeedScope, JournalRecord } from "../domain
  *   message already frozen, never one for another surface.
  * - `hydrate` returns that surface's records, in write order, for every
  *   message, and nothing else.
+ *
+ * @public
  */
 export class RenderStore extends Context.Service<RenderStore, {
   readonly hydrate: (scope: SurfaceScope) => Effect.Effect<ReadonlyArray<SurfaceRecord>, RenderError>
@@ -49,7 +51,11 @@ export class RenderStore extends Context.Service<RenderStore, {
   readonly annotate: (scope: SurfaceScope, kind: string, data: Readonly<Record<string, unknown>>) => Effect.Effect<void, RenderError>
 }>()("efferent/render/Store") {}
 
-/** Everything a host does with one surface during a run. Writes are serialized. */
+/**
+ * Everything a host does with one surface during a run. Writes are serialized.
+ *
+ * @public
+ */
 export interface RenderSurface {
   readonly scope: SurfaceScope
   /** The records hydrated when the surface was opened, for every message (e.g. the page being edited). */
@@ -75,6 +81,7 @@ export interface RenderSurface {
   readonly annotate: (kind: string, data: Readonly<Record<string, unknown>>) => Effect.Effect<void, RenderError>
 }
 
+/** @public */
 export interface RenderOpenOptions {
   /** The host's background runner (e.g. its turn tasks), so preparations live and die with the host's unit of work. */
   readonly fork: (tag: string, work: Effect.Effect<void>) => Effect.Effect<void>
@@ -84,7 +91,11 @@ export class Render extends Context.Service<Render, {
   readonly open: (scope: SurfaceScope, options: RenderOpenOptions) => Effect.Effect<RenderSurface, RenderError>
 }>()("efferent/render/Render") {}
 
-/** The host's journal, read after a cursor. The host authorizes the feed's principal. */
+/**
+ * The host's journal, read after a cursor. The host authorizes the feed's principal.
+ *
+ * @public
+ */
 export class JournalTail extends Context.Service<JournalTail, {
   readonly read: (feed: FeedScope, after: number) => Effect.Effect<ReadonlyArray<JournalRecord>, RenderError>
   /**
@@ -102,7 +113,11 @@ export class RenderFeed extends Context.Service<RenderFeed, {
   readonly frames: (feed: FeedScope, after: number, project: FeedProjection) => Stream.Stream<FeedFrame, RenderError>
 }>()("efferent/render/Feed") {}
 
-/** A wire: SSE, WebSocket, or anything that can carry text frames to one peer. */
+/**
+ * A wire: SSE, WebSocket, or anything that can carry text frames to one peer.
+ *
+ * @public
+ */
 export interface RenderTransport<Peer> {
   readonly id: string
   readonly serve: (frames: Stream.Stream<FeedFrame, RenderError>, peer: Peer) => Effect.Effect<void>
@@ -114,6 +129,7 @@ export interface SsePeer {
   readonly closed: Effect.Effect<void>
 }
 
+/** @public */
 export interface SocketPeer {
   readonly send: (text: string) => Effect.Effect<void>
   readonly closed: Effect.Effect<void>

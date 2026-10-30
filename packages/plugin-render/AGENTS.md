@@ -5,7 +5,7 @@ Agent output a host renders: versioned render surfaces over the host's `RenderSt
 ## Rules
 
 - Admit before any write: the size check and `UiOutputAdmission.validate` run before the store or journal sees a component, and a refused one is never replaced.
-- Keep a store's guarantees in the store (`RenderStore` contract, `src/ports/render.port.ts:20-42`), each in its write's own transaction: a write under a fence lower than the highest the surface and message accepted is `forbidden`, `plan` refuses a frozen surface and a generation that is not the highest planned plus one (`conflict`), `commit` is idempotent by `operationId`, and records never mix across threads or principals.
+- Keep a store's guarantees in the store (`RenderStore` contract, `src/ports/render.port.ts:20-44`), each in its write's own transaction: a write under a fence lower than the highest the surface and message accepted is `forbidden`, `plan` refuses a frozen surface and a generation that is not the highest planned plus one (`conflict`), `commit` is idempotent by `operationId`, and records never mix across threads or principals.
 - A publish whose plan another writer beat (`conflict`) re-hydrates and decides once more, never twice: the same content resumes that version, other content plans the next.
 - Derive operation ids with `operationIdOf` / `fillOperationIdOf` (stable per run, surface, generation and node, parts percent-encoded) and versions with `versionIdOf`; never join raw ids. Every id is a brand (`ThreadId`, `PrincipalId`, `RenderMessageId`, `SurfaceId`, `VersionId`, `NodeId`, `OperationId`, `RevisionId`; the scope's `runId` is core's `RunId`): mint one with `.make` where the host creates it.
 - Identical content (same `signatureOf`) opens no generation: it commits only the nodes still missing, then completes.
@@ -17,9 +17,11 @@ Agent output a host renders: versioned render surfaces over the host's `RenderSt
 ## Public surface
 
 - Plugins and defaults: `renderSurfacePlugin`, `renderFeedPlugin`, `uiOutputPlugin`, `renderSurfaceDefaults`, `renderFeedDefaults`. `uiOutputPlugin` provides the toolkit in `UiOutputTools`; the host serves it with `UiOutputHandlersLive`.
-- Ports: `Render`, `RenderStore`, `JournalTail`, `RenderFeed` (types `RenderSurface`, `RenderOpenOptions`, `FeedProjection`, `RenderTransport`, `SsePeer`, `SocketPeer`), `UiOutput`, `UiOutputAdmission`, `UiOutputJournal`, `UiOutputContext`, `UiOutputTools`. Adapters: `RenderLive` / `openSurface`, `MemoryRenderStoreLive` / `makeMemoryRenderStore`, `RenderFeedLive` / `makeRenderFeed`, `SessionsJournalTailLive`, `SseTransport`, `WebSocketTransport`, `sseNodePeer`, `sseHeaders`, `UiOutputLive`, `UiOutputHandlersLive`; the tool `RenderComponent` in `uiOutputToolkit` (an effect/ai `Toolkit`, not a core capability).
-- Schemas: ids (`ThreadId`, `PrincipalId`, `RenderMessageId`, `NodeId`, `OperationId`, `RevisionId`, `SurfaceId`, `VersionId`), surfaces (`SurfaceScope`, `RenderNode`, `RenderSnapshot`, `FreezeReason`, `SurfacePlanned`, `SurfaceCommitted`, `SurfaceCompleted`, `SurfaceFrozen`, `SurfaceRecord`, `SurfaceState`, `PublishResult`, `RenderError`), the feed (`FeedScope`, `JournalRecord`, `FeedPayload`, `FeedRecord`, `FeedReady`, `FeedHeartbeat`, `FeedFrame`, `SseRecordFields`, `FeedOptions`, `SocketFrame`, `SocketResume`), output (`UiRelease`, `UiOutputProposal`, `UiOutputScope`, `UiOutputReceipt`, `UiOutputError`), and core's `ConformanceFailure`, re-exported.
-- Functions: `signatureOf`, `versionIdOf`, `operationIdOf`, `fillOperationIdOf`, `missingNodesOf`, `outputScopeOf`, `proposalOf`, `fromOutputError`, `isFrozenRefusal`, `isConflictRefusal`, `progressOf`, `describeError`, `ssePreamble`, `encodeSse`, `decodeSse`, `encodeSocketFrame`, `decodeSocketFrame`, `socketResumeOf`, `nextPollMs`. Kits: `renderSurfaceConformance`, `renderFeedConformance`, `renderTransportConformance`, `makeMemoryJournal` (types `ConformanceCheck`, `SurfaceSubject`). The `./output` subpath (`src/output.ts`) exports the output half alone.
+- Ports: `Render`, `RenderStore`, `JournalTail`, `RenderFeed` (types `RenderSurface`, `RenderOpenOptions`, `FeedProjection`, `RenderTransport`, `SsePeer`, `SocketPeer`), `UiOutput`, `UiOutputAdmission`, `UiOutputJournal`, `UiOutputContext`, `UiOutputTools`. Adapters: `RenderLive` / `openSurface`, `MemoryRenderStoreLive` / `makeMemoryRenderStore` (type `MemoryAnnotation`), `RenderFeedLive` / `makeRenderFeed`, `SessionsJournalTailLive`, `SseTransport`, `WebSocketTransport`, `sseNodePeer`, `sseHeaders`, `UiOutputLive`, `UiOutputHandlersLive`; the tool `RenderComponent` in `uiOutputToolkit` (an effect/ai `Toolkit`, not a core capability).
+- Schemas: ids (`ThreadId`, `PrincipalId`, `RenderMessageId`, `NodeId`, `OperationId`, `RevisionId`, `SurfaceId`, `VersionId`), surfaces (`SurfaceScope`, `RenderNode`, `RenderSnapshot`, `FreezeReason`, `SurfacePlanned`, `SurfaceCommitted`, `SurfaceCompleted`, `SurfaceFrozen`, `SurfaceRecord`, `SurfaceState`, `PublishResult`, `RenderError`; `RenderSnapshotInput` is a snapshot as `publish` takes it), the feed (`FeedScope`, `JournalRecord`, `FeedPayload`, `FeedRecord`, `FeedReady`, `FeedHeartbeat`, `FeedFrame`, `SseRecordFields`, `FeedOptions`, `SocketFrame`, `SocketResume`), output (`UiRelease`, `UiOutputProposal`, `UiOutputScope`, `UiOutputReceipt`, `UiOutputError`), and core's `ConformanceFailure`, re-exported.
+- Functions: `signatureOf`, `versionIdOf`, `operationIdOf`, `fillOperationIdOf`, `missingNodesOf`, `outputScopeOf`, `proposalOf`, `fromOutputError`, `isFrozenRefusal`, `isConflictRefusal`, `progressOf` (type `SurfaceProgress`), `describeError`, `ssePreamble`, `encodeSse`, `decodeSse`, `encodeSocketFrame`, `decodeSocketFrame`, `socketResumeOf`, `nextPollMs`. Kits: `renderSurfaceConformance`, `renderFeedConformance`, `renderTransportConformance`, `makeMemoryJournal` (types `ConformanceCheck`, `SurfaceSubject`). The `./output` subpath (`src/output.ts`) exports the output half alone.
+
+Both entries name each export, and `quality/exports-have-consumers` checks each one: sdk's tests, the scripts (the plugin reference, the packed consumers) and the docs' code blocks import some, and the rest, which no first-party code imports, are tagged `@public` at their declarations (core's `ConformanceFailure` at its re-export in `src/index.ts`).
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
@@ -31,10 +33,10 @@ Agent output a host renders: versioned render surfaces over the host's `RenderSt
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `render_component` description | `src/render-output.tools.ts:6` | unpinned |
-| Its parameters (`UiOutputProposal` fields, no descriptions) | `src/domain/render-output.entity.ts:43-49` | unpinned |
-| Failures as `{ error: code, message }` (admission and journal messages are the host's) | `src/render-output.adapter.ts:29` | unpinned (`src/render-output.test.ts:29`, `:48` check only that `emit` fails) |
-| `invalid` messages: invalid proposal, not serializable, over the size limit | `src/render-output.adapter.ts:14`, `:17`, `:19` | unpinned |
+| `render_component` description | `src/render-output.tools.ts:7` | unpinned |
+| Its parameters (`UiOutputProposal` fields, no descriptions) | `src/domain/render-output.entity.ts:75-81` | unpinned |
+| Failures as `{ error: code, message }` (admission and journal messages are the host's) | `src/render-output.adapter.ts:31` | unpinned (`src/render-output.test.ts:29`, `:48` check only that `emit` fails) |
+| `invalid` messages: invalid proposal, not serializable, over the size limit | `src/render-output.adapter.ts:15`, `:18`, `:20` | unpinned |
 
 ## Erasure files
 
