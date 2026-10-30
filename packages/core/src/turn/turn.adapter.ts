@@ -2,6 +2,7 @@ import { Context, Effect, Layer, Match, Option, Ref, Result, Schema, Scope, Sema
 import { addUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { fingerprintOf } from "../memory/memory-log.entity.functions.js"
+import { SectionId } from "../memory/memory-log.entity.js"
 import type { LogEntry, TurnContextBody } from "../memory/memory-log.entity.js"
 import { readerOf } from "../memory/memory-session.js"
 import { Capabilities } from "../ports/capability.port.js"
@@ -49,7 +50,7 @@ const storedDraft = (turn: number) => (event: TurnEvent): Effect.Effect<Option.O
       Effect.map(Option.map((draft): TurnDraft => frameworkDraft(draft.kind, draft.data))),
     )
 
-const contextBody = (entry: TurnContextEntry): TurnContextBody => ({ _tag: "TurnContext", sectionId: entry.id, version: entry.version, text: entry.text })
+const contextBody = (entry: TurnContextEntry): TurnContextBody => ({ _tag: "TurnContext", sectionId: SectionId.make(entry.id), version: entry.version, text: entry.text })
 
 /** The turn's tools: not open, being opened (`TurnToolbox.open`), or open. An open that fails leaves them closed. */
 type ToolSlot =
@@ -274,7 +275,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       if (!Option.contains(yield* Ref.get(lastSystem), fingerprint)) {
         yield* session.record([{
           _tag: "SystemPrepared", fingerprint, text,
-          sections: parts.map((part) => ({ id: part.section.id, version: part.section.version, fingerprint: fingerprintOf(part.text) })),
+          sections: parts.map((part) => ({ id: SectionId.make(part.section.id), version: part.section.version, fingerprint: fingerprintOf(part.text) })),
         }], 0)
         yield* Ref.set(lastSystem, Option.some(fingerprint))
       }
@@ -285,7 +286,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       if (!(yield* transition(sectionsDue))) return
       const parts = yield* rendered(yield* openTools, Option.none(), (section) => section.tier === "turn")
       yield* parts.length === 0 ? Effect.void : session.record(parts.map(({ section, text }) => ({
-        _tag: "TurnContext" as const, sectionId: section.id, version: section.version, text,
+        _tag: "TurnContext" as const, sectionId: SectionId.make(section.id), version: section.version, text,
       })), 0)
     }),
   })

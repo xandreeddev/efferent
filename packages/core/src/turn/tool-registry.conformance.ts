@@ -300,13 +300,13 @@ export const toolRegistryConformance = (
 
   return [
     check("the catalog and a run's tools hold every tool and skill the capabilities define, with their permissions", "catalog", () => inTurn({}, (turn) => Effect.gen(function* () {
-      const recipes = turn.catalog.recipes.map((recipe) => recipe.id)
-      const listed = turn.catalog.tools.map((tool) => tool.id)
+      const recipes = turn.catalog.recipes.map((recipe): string => recipe.id)
+      const listed = turn.catalog.tools.map((tool): string => tool.id)
       yield* expect("catalog", SKILLS.every((skill) => recipes.includes(skill)) && TOOLS.every((tool) => listed.includes(tool)),
         `the catalog lists the skills ${recipes.join()} and the tools ${listed.join()}`)
       const vault = turn.catalog.tools.find((tool) => tool.id === Vault.name)
       yield* expect("catalog", vault?.permissions.join() === "kit.vault", `the catalog gives ${Vault.name} the permissions [${vault?.permissions.join() ?? "of no entry"}]`)
-      const skills = turn.tools.skills.map((skill) => skill.id)
+      const skills = turn.tools.skills.map((skill): string => skill.id)
       yield* expect("catalog", SKILLS.every((skill) => skills.includes(skill)), `the run's skills are ${skills.join()}`)
       const toolkit = Object.keys(turn.tools.toolkit.tools)
       yield* expect("catalog", TOOLS.every((tool) => toolkit.includes(tool)), `the run's toolkit holds ${toolkit.join()}`)

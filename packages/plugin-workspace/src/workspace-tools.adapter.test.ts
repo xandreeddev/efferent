@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Layer, Option, Schema } from "effect"
 import type { Scope } from "effect"
-import { Bash, Capabilities, FileSystem, Failure, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, SessionEnvironment, toolParametersSchema, toolResultMedia } from "@xandreed/core"
+import { Bash, Capabilities, FileSystem, Failure, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, PluginInstanceId, SessionEnvironment, toolParametersSchema, toolResultMedia } from "@xandreed/core"
 import type { Capability } from "@xandreed/core"
 import { makeRegistry } from "@xandreed/plugin-tool-discovery"
 import type { DiscoveryConfig } from "@xandreed/plugin-tool-discovery"
@@ -145,7 +145,7 @@ describe("read images", () => {
     expect(seen.view.text).toBe("[Image chart.png (image/png, 70 B).]")
     expect(seen.view.text).not.toContain(pixelPng)
     expect(seen.view.media).toEqual([{ path: ["image"], fingerprint: image.fingerprint, mediaType: "image/png", bytes: 70 }])
-    expect(seen.view.subjects.map((subject) => subject.id)).toEqual(["chart.png"])
+    expect<unknown>(seen.view.subjects.map((subject) => subject.id)).toEqual(["chart.png"])
     expect(seen.checked).toEqual({ slots: seen.view.media ?? [], labels: [] })
   })
 
@@ -597,7 +597,7 @@ describe("workspaceToolsPlugin", () => {
   test("without a Bash service there is no bash tool and no workspace.shell skill", async () => {
     const capability = await scoped(workspaceTools(workspaceToolsDefaults))
     expect(capability.tools.map((entry) => entry.tool.name)).toEqual(["read", "ls", "find", "grep", "write", "edit"])
-    expect(capability.skills.map((skill) => [skill.id, skill.always, skill.permissions])).toEqual([
+    expect<unknown>(capability.skills.map((skill) => [skill.id, skill.always, skill.permissions])).toEqual([
       ["workspace.read", true, []],
       ["workspace.edit", false, ["fs.write"]],
     ])
@@ -607,8 +607,8 @@ describe("workspaceToolsPlugin", () => {
   test("resolves in a graph after the local system, with Bash, and refuses bad options", async () => {
     const tools = await scoped(Effect.gen(function* () {
       const graph = yield* resolveGraph({ version: 1, plugins: [
-        { id: "local", use: localSystemPlugin.id, options: { exitGraceMs: 100 } },
-        { id: "tools", use: workspaceToolsPlugin.id, options: { always: ["read", "shell"], tools: ["read", "bash"] } },
+        { id: PluginInstanceId.make("local"), use: localSystemPlugin.id, options: { exitGraceMs: 100 } },
+        { id: PluginInstanceId.make("tools"), use: workspaceToolsPlugin.id, options: { always: ["read", "shell"], tools: ["read", "bash"] } },
       ] }, [workspaceToolsPlugin, localSystemPlugin], [SessionEnvironment.key])
       const context = yield* activateGraph(graph, "runtime", Context.empty(), yield* Effect.scope)
       const contributed: ReadonlyArray<Capability> = Option.getOrElse(Context.getOption(context, Capabilities), () => [])
@@ -624,7 +624,7 @@ describe("workspaceToolsPlugin", () => {
       { unknown: true },
       { protect: ["{a,b}".repeat(11)] },
       { exclude: ["{a,b}".repeat(11)] },
-    ].map((options) => Effect.runPromise(Effect.flip(resolveGraph({ version: 1, plugins: [{ id: "tools", use: workspaceToolsPlugin.id, options }] }, [workspaceToolsPlugin], [FileSystem.key, SessionEnvironment.key]))).then((error) => error.code)))
+    ].map((options) => Effect.runPromise(Effect.flip(resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("tools"), use: workspaceToolsPlugin.id, options }] }, [workspaceToolsPlugin], [FileSystem.key, SessionEnvironment.key]))).then((error) => error.code)))
     expect(refused).toEqual(Array.from({ length: 8 }, () => "config.options"))
     const badGlob = await Effect.runPromise(Effect.flip(Effect.scoped(Layer.build(WorkspaceToolsPluginLive({ protect: ["{a,b}".repeat(11)] })))))
     expect(badGlob.message).toContain("protect")

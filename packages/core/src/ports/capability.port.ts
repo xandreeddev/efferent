@@ -4,7 +4,7 @@ import type { LanguageModel, Tool } from "effect/ai"
 import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
-import type { PromptTier, SkillDefinition, ToolAnnotations } from "../harness/capability.entity.js"
+import type { CapabilityId, PromptTier, SkillDefinition, ToolAnnotations } from "../harness/capability.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { ArtifactRef, Subject } from "../memory/memory-log.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
@@ -121,9 +121,9 @@ export interface ModelChoice {
   readonly variant: Option.Option<string>
 }
 
-/** One bundle a host (or a capability plugin) contributes. */
+/** One bundle a host (or a capability plugin) contributes (see `defineCapability`). */
 export interface Capability {
-  readonly id: string
+  readonly id: CapabilityId
   readonly version: string
   readonly tools: ReadonlyArray<RegisteredTool>
   readonly skills: ReadonlyArray<SkillDefinition>

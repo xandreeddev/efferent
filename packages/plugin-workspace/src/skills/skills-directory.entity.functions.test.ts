@@ -24,7 +24,7 @@ describe("settleSkills", () => {
 
   test("strict fails with skills.files on any issue; lenient keeps the skills that loaded", async () => {
     expect(await Effect.runPromise(Effect.flip(settleSkills(found, { strict: true, maxSkills: 10 })))).toMatchObject({ code: "skills.files", message: "/r/x/SKILL.md: no description" })
-    expect((await Effect.runPromise(settleSkills(found, { strict: false, maxSkills: 10 }))).map((skill) => skill.id)).toEqual(["a", "b"])
+    expect<unknown>((await Effect.runPromise(settleSkills(found, { strict: false, maxSkills: 10 }))).map((skill) => skill.id)).toEqual(["a", "b"])
   })
 
   test("more skills than maxSkills fails with skills.limit", async () => {

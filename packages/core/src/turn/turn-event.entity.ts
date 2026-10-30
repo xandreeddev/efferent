@@ -175,17 +175,21 @@ export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
   text: Schema.String,
   reasoning: Schema.String,
   model: Schema.OptionFromNullOr(Schema.String),
-  toolCalls: Schema.Array(Schema.Struct({ id: Schema.String, tool: Schema.String, input: Schema.Unknown })),
+  toolCalls: Schema.Array(Schema.Struct({ id: ToolCallId, tool: Schema.String, input: Schema.Unknown })),
   usage: TokenUsage,
 }).annotate({
   description: "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage): the content itself is memory's `memory.message`.",
 })
 
+/** The id that groups the streamed increments of one content part (a text, a reasoning, a tool call's params), as the provider's stream names it. */
+export const StreamPartId = Schema.String.pipe(Schema.brand("StreamPartId"))
+export type StreamPartId = typeof StreamPartId.Type
+
 /** A streamed increment — transient: never journaled, restated by assistant.message. */
 export const AssistantDeltaEvent = Schema.TaggedStruct("assistant.delta", {
   step: Schema.Int,
   channel: Schema.Literals(["text", "reasoning", "tool-params"]),
-  id: Schema.String,
+  id: StreamPartId,
   delta: Schema.String,
 }).annotate({
   description: "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none.",

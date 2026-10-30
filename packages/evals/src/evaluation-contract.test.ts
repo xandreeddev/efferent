@@ -1,13 +1,14 @@
 import { describe, expect, it } from "bun:test"
 import { Effect, Option } from "effect"
 import { assessCompleteness } from "./completeness.entity.functions.js"
+import { ActionId, ToolInvocationId, TraceStepId } from "./completeness.entity.js"
 import { evaluationScores } from "./evaluation-score.entity.functions.js"
 import { projectEvaluatorInput, evaluatorRegistry } from "./evaluator-registry.usecase.functions.js"
 import type { Evaluator } from "./assessment.usecase.js"
 
-const tool = { name: "read", invocationId: "call-1", stepId: "step-1" }
-const evidence = { required: ["a", "b", "c", "d"].map((id) => ({ id, description: id })), tools: [tool], evidenceRefs: ["answer"] }
-const actions = ["matched", "matched", "partial", "missing"].map((status, index) => ({ actionId: ["a", "b", "c", "d"][index]!, status: status as "matched" | "partial" | "missing", tools: index < 3 ? [tool] : [], evidenceRefs: ["answer"], reason: "Observed answer" }))
+const tool = { name: "read", invocationId: ToolInvocationId.make("call-1"), stepId: TraceStepId.make("step-1") }
+const evidence = { required: ["a", "b", "c", "d"].map((id) => ({ id: ActionId.make(id), description: id })), tools: [tool], evidenceRefs: ["answer"] }
+const actions = ["matched", "matched", "partial", "missing"].map((status, index) => ({ actionId: ActionId.make(["a", "b", "c", "d"][index]!), status: status as "matched" | "partial" | "missing", tools: index < 3 ? [tool] : [], evidenceRefs: ["answer"], reason: "Observed answer" }))
 
 describe("evaluation contracts", () => {
   it("calculates completeness and lists every action", async () => {
@@ -20,7 +21,7 @@ describe("evaluation contracts", () => {
   it("rejects missing, duplicate and invented attribution", async () => {
     expect(await Effect.runPromise(Effect.isFailure(assessCompleteness(evidence, actions.slice(1))))).toBe(true)
     expect(await Effect.runPromise(Effect.isFailure(assessCompleteness(evidence, [actions[0]!, actions[0]!, ...actions.slice(2)])))).toBe(true)
-    expect(await Effect.runPromise(Effect.isFailure(assessCompleteness(evidence, actions.map((action) => ({ ...action, tools: [{ ...tool, invocationId: "invented" }] })))))).toBe(true)
+    expect(await Effect.runPromise(Effect.isFailure(assessCompleteness(evidence, actions.map((action) => ({ ...action, tools: [{ ...tool, invocationId: ToolInvocationId.make("invented") }] })))))).toBe(true)
     expect(await Effect.runPromise(Effect.isFailure(assessCompleteness(evidence, actions.map((action) => ({ ...action, reason: "" })))))).toBe(true)
     expect(await Effect.runPromise(Effect.isFailure(assessCompleteness({ ...evidence, required: [] }, [])))).toBe(true)
   })

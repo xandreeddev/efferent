@@ -16,7 +16,7 @@ import type { TurnError } from "../session/sessions.entity.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { canonicalJson } from "./memory-log.entity.functions.js"
-import { LogEntry } from "./memory-log.entity.js"
+import { ArtifactId, LogEntry, SectionId } from "./memory-log.entity.js"
 
 const conversation = ConversationId.make("00000000-0000-4000-8000-00000000c0f0")
 /** The turn's first run, and its second: what a build names for its step context. */
@@ -49,7 +49,7 @@ export const inMemoryLog = Effect.gen(function* () {
   return { stored, log }
 })
 
-const artifact = { id: "artifact-1", kind: "image" as const, mediaType: "image/png", url: "https://example.test/artifact-1.png", alt: Option.some("a figure") }
+const artifact = { id: ArtifactId.make("artifact-1"), kind: "image" as const, mediaType: "image/png", url: "https://example.test/artifact-1.png", alt: Option.some("a figure") }
 const views: ToolViews = {
   view: (_tool, encoded) => Effect.succeed({ text: `VIEW ${canonicalJson(encoded)}`, version: "1", subjects: [], artifacts: [artifact], pinned: false }),
   compact: () => Effect.succeed(Option.none()),
@@ -106,7 +106,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
   return [
     check("entries get their own ids, <runId>:<n>, continuing across reopens", "ids", (open, log) => Effect.gen(function* () {
       const first = yield* open(log, "run-1")
-      const a = yield* first.record([said("one"), { _tag: "TurnContext", sectionId: "s", version: "1", text: "context" }], 0)
+      const a = yield* first.record([said("one"), { _tag: "TurnContext", sectionId: SectionId.make("s"), version: "1", text: "context" }], 0)
       const again = yield* open(log, "run-1")
       const b = yield* again.record([{ _tag: "TurnEnded", outcome: "completed", reply: Option.none() }], 0)
       const other = yield* open(log, "run-2")

@@ -1,7 +1,7 @@
 import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Option, Ref, Schema } from "effect"
-import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, reasonOf, StepLoop } from "@xandreed/core"
+import { CurrentAgentStep, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, reasonOf, StepLoop, StreamPartId, ToolCallId } from "@xandreed/core"
 import type { AgentMessage, CompletionVerdict, LoopEvent, RunResult, StepInfo, StepRequest, StepStatus, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopToolChoice } from "./loop.js"
@@ -75,14 +75,14 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
 
   const onEvent = (event: LoopEvent): Effect.Effect<void> => {
     if (event.type === "assistant_delta") {
-      return request.events.publish({ _tag: "assistant.delta", step: event.turnIndex, channel: event.channel, id: event.id, delta: event.delta }).pipe(Effect.orDie)
+      return request.events.publish({ _tag: "assistant.delta", step: event.turnIndex, channel: event.channel, id: StreamPartId.make(event.id), delta: event.delta }).pipe(Effect.orDie)
     }
     if (event.type === "assistant_message") {
       return Effect.gen(function* () {
         if (!isPlanned(event.turnIndex)) yield* Ref.update(ledger, used(event.usage))
         yield* request.events.publish({
           _tag: "assistant.message", step: event.turnIndex, run, text: event.text, reasoning: event.reasoning,
-          model: Option.fromNullishOr(event.model), toolCalls: event.toolCalls.map((call) => ({ id: call.id, tool: call.toolName, input: call.args })),
+          model: Option.fromNullishOr(event.model), toolCalls: event.toolCalls.map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })),
           usage: event.usage,
         })
       }).pipe(Effect.orDie)

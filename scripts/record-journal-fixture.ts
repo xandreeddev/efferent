@@ -21,6 +21,7 @@ import {
   SessionLogEvent,
   SessionLogMemoryLive,
   Sessions,
+  SubjectId,
   subscribeAll,
   TaskExecutor,
   TaskRunner,
@@ -129,7 +130,7 @@ const host = defineCapability({
         version: "1",
         render: (result) => found(result.items),
         compact: (result) => `(earlier lookup found ${result.items.map((item) => item.id).join(", ")})`,
-        subjects: (result) => result.items.map((item) => ({ kind: "record", id: item.id, label: Option.none(), data: Option.none() })),
+        subjects: (result) => result.items.map((item) => ({ kind: "record", id: SubjectId.make(item.id), label: Option.none(), data: Option.none() })),
         digest: {
           _tag: "Select", version: "1", instructions: "Keep the records the request needs.",
           items: (result) => result.items.map((item) => ({ key: item.id, text: item.detail })),

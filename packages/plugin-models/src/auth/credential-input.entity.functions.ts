@@ -1,5 +1,6 @@
 import { Match, Redacted } from "effect"
 import type { Credential } from "@xandreed/core"
+import { AccountId, InstallationId } from "./credential-input.entity.js"
 import type { CredentialInput, CredentialInputs } from "./credential-input.entity.js"
 
 /** The stored form of a credential a host handed over: its secrets unwrapped. */
@@ -17,8 +18,8 @@ export const toCredentialInput = (credential: Credential): CredentialInput =>
     Match.when({ type: "api_key" }, ({ key }): CredentialInput => ({ type: "api_key", key: Redacted.make(key) })),
     Match.when({ type: "oauth" }, ({ type, access, refresh, expires, accountId, installationId }): CredentialInput => ({
       type, expires, access: Redacted.make(access), refresh: Redacted.make(refresh),
-      ...(accountId === undefined ? {} : { accountId }),
-      ...(installationId === undefined ? {} : { installationId }),
+      ...(accountId === undefined ? {} : { accountId: AccountId.make(accountId) }),
+      ...(installationId === undefined ? {} : { installationId: InstallationId.make(installationId) }),
     })),
     Match.when({ type: "local" }, ({ type, baseUrl }): CredentialInput => ({ type, ...(baseUrl === undefined ? {} : { baseUrl }) })),
     Match.exhaustive,

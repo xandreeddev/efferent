@@ -8,6 +8,7 @@ import {
   AuthStore,
   ConversationId,
   definePlugin,
+  PluginInstanceId,
   ProviderId,
   RunId,
   SessionEnvironment,
@@ -109,7 +110,7 @@ describe("the models plugin is built once per agent", () => {
 })
 
 describe("the models plugin's secrets", () => {
-  const config = (options: Readonly<Record<string, unknown>>): HarnessConfig => ({ version: 1, plugins: [{ id: modelsPlugin.id, use: modelsPlugin.id, options }], system: "" })
+  const config = (options: Readonly<Record<string, unknown>>): HarnessConfig => ({ version: 1, plugins: [{ id: PluginInstanceId.make(modelsPlugin.id), use: modelsPlugin.id, options }], system: "" })
   const refusals = [
     { label: "a plain-string API key", options: { storage: "memory", credentials: { anthropic: { type: "api_key", key: "sk-plain-secret-1" } } }, secret: "sk-plain-secret-1" },
     { label: "a plain-string OAuth token", options: { storage: "memory", credentials: { openai: { type: "oauth", access: "sk-plain-secret-2", refresh: Redacted.make("r"), expires: 1 } } }, secret: "sk-plain-secret-2" },

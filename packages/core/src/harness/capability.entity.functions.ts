@@ -3,6 +3,7 @@ import { Effect, Option } from "effect"
 import { strictJsonSchema, toolParametersSchema } from "../loop/toolSchema.js"
 import type { Capability, RegisteredTool, ToolDefinition, ToolViewInput } from "../ports/capability.port.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
+import { CapabilityId, CapabilityToolId, SkillId, SkillReferenceId } from "./capability.entity.js"
 import type {
   CapabilityCatalog,
   CapabilitySelection,
@@ -38,11 +39,13 @@ export const defineTool = <T extends Tool.Any, R>(definition: {
 })
 
 /**
- * A skill, as `defineSkill` takes it. An always-on skill is active from
- * every turn's first step and is never loaded, so nothing shows the model
- * instructions on it: it takes none (`instructions` does not compile with
- * `always: true`). Give the model what such a skill's tools need in their
- * descriptions or in a prompt section.
+ * A skill, as `defineSkill` takes it: its ids as strings, which it brands
+ * (`SkillId`, `SkillReferenceId`; one that is empty or not trimmed throws).
+ * An always-on skill is active from every turn's first step and is never
+ * loaded, so nothing shows the model instructions on it: it takes none
+ * (`instructions` does not compile with `always: true`). Give the model
+ * what such a skill's tools need in their descriptions or in a prompt
+ * section.
  */
 export type SkillInput = {
   readonly id: string
@@ -50,23 +53,24 @@ export type SkillInput = {
   readonly tools: ReadonlyArray<string>
   readonly version?: string
   readonly permissions?: ReadonlyArray<string>
-  readonly references?: SkillDefinition["references"]
+  readonly references?: ReadonlyArray<{ readonly id: string; readonly title: string; readonly text: string }>
 } & (
   | { readonly always: true; readonly instructions?: never }
   | { readonly always?: false; readonly instructions?: string }
 )
 
 export const defineSkill = (skill: SkillInput): SkillDefinition => ({
-  id: skill.id,
+  id: SkillId.make(skill.id),
   version: skill.version ?? "1",
   summary: skill.summary,
   instructions: skill.instructions ?? "",
   tools: skill.tools,
   always: skill.always ?? false,
   permissions: skill.permissions ?? [],
-  references: skill.references ?? [],
+  references: (skill.references ?? []).map((reference) => ({ ...reference, id: SkillReferenceId.make(reference.id) })),
 })
 
+/** A capability from its parts; its id is a string, which it brands (`CapabilityId`). */
 export const defineCapability = (capability: {
   readonly id: string
   readonly version: string
@@ -74,7 +78,7 @@ export const defineCapability = (capability: {
   readonly skills?: Capability["skills"]
   readonly promptSections?: Capability["promptSections"]
 }): Capability => ({
-  id: capability.id,
+  id: CapabilityId.make(capability.id),
   version: capability.version,
   tools: capability.tools ?? [],
   skills: capability.skills ?? [],
@@ -93,7 +97,7 @@ export const catalogOf = (version: string, capabilities: ReadonlyArray<Capabilit
       inputSchema: storedJson(toolParametersSchema(registered.tool)),
       outputSchema: storedJson(strictJsonSchema(registered.tool.successSchema)),
     }, { concurrency: 1 }).pipe(Effect.map(({ inputSchema, outputSchema }) => ({
-      id: registered.tool.name,
+      id: CapabilityToolId.make(registered.tool.name),
       version: "1",
       description: registered.tool.description ?? registered.tool.name,
       returns: "tool result",

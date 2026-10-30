@@ -144,6 +144,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A custom `StepLoop` records nothing under a step it never starts: at the
   step cap or after a complete verdict, it drops the corrective or nudge it
   would have sent. Rerun `stepLoopConformance`.
+- Mint ids with `.make` where they are created: a tool view's `subjects`
+  (`SubjectId.make(...)`), a hand-written `HarnessConfig`
+  (`PluginInstanceId.make(...)`), a `CredentialInput` value
+  (`AccountId.make(...)`), and evals inputs. `defineSkill` and
+  `defineCapability` still take strings and brand them; an empty or
+  untrimmed skill or reference id, or an empty plugin instance id given to
+  `Agent.define`, now throws. A `RetrievalJudge` may still answer with
+  plain-string ids.
 
 ### Breaking
 
@@ -401,6 +409,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   turn is recorded as `task.started`'s `startedBy`.
 - Only a task's own session (origin `task`) is refused from starting tasks;
   a host's fork of a conversation may now start them.
+- `@xandreed/core`: the remaining ids are branded: `SubjectId`,
+  `ArtifactId`, `SectionId`, `CandidateId`, `ProviderToolId`, `ToolCallId`
+  on `assistant.message` tool calls, `StreamPartId`, `SkillId`,
+  `SkillReferenceId`, `CapabilityToolId`, `CapabilityId` (`Capability.id`)
+  and `PluginInstanceId` (`PluginEntry.id`).
+- `@xandreed/plugin-models`: `AccountId` and `InstallationId` on
+  `CredentialInput`; the chat wire's tool-call ids are `ToolCallId`.
+- `@xandreed/evals`: `ActionId`, `ToolInvocationId`, `TraceStepId`,
+  `DecisionCaseId`, `RetrievalDocumentId`, `RetrievalItemId`.
+- Brands are type-only: stored data is unchanged, and every journal and
+  report still decodes.
 
 ### Added
 
@@ -953,6 +972,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   references; its writes, refusals and spans are unchanged. The
   `domain-entity` skill gains an "Aggregates" section that names it as the
   reference.
+- `effect/branded-id-fields` runs over every package's `*.entity.ts` files
+  (and core's `src/spec`); the per-package list is gone, and a test checks
+  that the rule covers every checked package.
 
 ## 0.14.0 — 2026-10-29
 

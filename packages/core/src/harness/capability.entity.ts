@@ -22,16 +22,32 @@ export const ToolAnnotations = Schema.Struct({
 })
 export type ToolAnnotations = typeof ToolAnnotations.Type
 
+/** Names a skill: `defineSkill` brands the id it is given, a skill file's is decoded. A recipe of the catalogue is a skill under the same id. */
+export const SkillId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("SkillId"))
+export type SkillId = typeof SkillId.Type
+
+/** Names a skill's reference within the skill (a skill file's is its path below the skill's folder). */
+export const SkillReferenceId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("SkillReferenceId"))
+export type SkillReferenceId = typeof SkillReferenceId.Type
+
+/** Names a host's or a plugin's bundle of tools, skills and prompt sections; `defineCapability` brands the id it is given. */
+export const CapabilityId = Schema.String.pipe(Schema.brand("CapabilityId"))
+export type CapabilityId = typeof CapabilityId.Type
+
+/** Names a tool of the catalogue: the registered tool's name. */
+export const CapabilityToolId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("CapabilityToolId"))
+export type CapabilityToolId = typeof CapabilityToolId.Type
+
 /** Tier 3: reference material a loaded skill may read on demand. */
 export const SkillReference = Schema.Struct({
-  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  id: SkillReferenceId,
   title: Schema.Trimmed.check(Schema.isNonEmpty()),
   text: Schema.String,
 })
 export type SkillReference = typeof SkillReference.Type
 
 export const SkillDefinition = Schema.Struct({
-  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  id: SkillId,
   version: Schema.Trimmed.check(Schema.isNonEmpty()),
   /** Tier 1: the skill's line in tool discovery's catalogue, which lists only the skills loaded on demand. */
   summary: Schema.Trimmed.check(Schema.isNonEmpty()),
@@ -54,7 +70,7 @@ export const PromptTier = Schema.Literals(["static", "session", "turn"])
 export type PromptTier = typeof PromptTier.Type
 
 export const CapabilityTool = Schema.Struct({
-  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  id: CapabilityToolId,
   version: Schema.Trimmed.check(Schema.isNonEmpty()),
   description: Schema.Trimmed.check(Schema.isNonEmpty()),
   returns: Schema.Trimmed.check(Schema.isNonEmpty()),
@@ -64,7 +80,7 @@ export const CapabilityTool = Schema.Struct({
 })
 export type CapabilityTool = typeof CapabilityTool.Type
 export const CapabilityRecipe = Schema.Struct({
-  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  id: SkillId,
   version: Schema.Trimmed.check(Schema.isNonEmpty()),
   instructions: Schema.Trimmed.check(Schema.isNonEmpty()),
   tools: Schema.Array(Schema.Trimmed.check(Schema.isNonEmpty())),

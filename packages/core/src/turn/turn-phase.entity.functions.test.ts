@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
-import { EntryId } from "../memory/memory-log.entity.js"
+import { EntryId, SectionId } from "../memory/memory-log.entity.js"
 import type { LogBody, LogEntry, TurnContextBody } from "../memory/memory-log.entity.js"
 import type { TurnPhase } from "./turn-phase.entity.js"
 import { addContext, claim, heldWith, hold, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
 import type { Transition } from "./turn-phase.entity.functions.js"
 
-const note = (text: string): TurnContextBody => ({ _tag: "TurnContext", sectionId: "note", version: "1", text })
+const note = (text: string): TurnContextBody => ({ _tag: "TurnContext", sectionId: SectionId.make("note"), version: "1", text })
 const waiting: TurnPhase = { _tag: "Waiting", early: [note("a")] }
 const taking: TurnPhase = { _tag: "Taking", early: [note("a")] }
 const [first, second, third] = [RunOrdinal.make(0), RunOrdinal.make(1), RunOrdinal.make(2)]

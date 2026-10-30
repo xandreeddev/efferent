@@ -1,10 +1,11 @@
+import { RetrievalItemId } from "./semantic-retrieval.entity.js"
 import type { RetrievalContext, RetrievalItem, RetrievalMeasure } from "./semantic-retrieval.entity.js"
 
 const itemsOf: { readonly [M in RetrievalMeasure]: (input: RetrievalContext) => ReadonlyArray<RetrievalItem> } = {
-  "contextual-precision": (input) => input.documents.map((document) => ({ id: document.id, text: document.text })),
-  "contextual-recall": (input) => input.expectedClaims.map((claim, index) => ({ id: `claim:${index}`, text: claim })),
+  "contextual-precision": (input) => input.documents.map((document) => ({ id: RetrievalItemId.make(document.id), text: document.text })),
+  "contextual-recall": (input) => input.expectedClaims.map((claim, index) => ({ id: RetrievalItemId.make(`claim:${index}`), text: claim })),
   "contextual-relevancy": (input) => input.documents.flatMap((document) =>
-    document.statements.map((statement, index) => ({ id: `${document.id}/statement:${index}`, text: statement }))),
+    document.statements.map((statement, index) => ({ id: RetrievalItemId.make(`${document.id}/statement:${index}`), text: statement }))),
 }
 
 /**

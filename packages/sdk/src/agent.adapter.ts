@@ -13,6 +13,7 @@ import {
   isBudgetTokens,
   normalizeUserMessage,
   openTurnTools,
+  PluginInstanceId,
   processActivity,
   reasonOf,
   replayableContext,
@@ -290,8 +291,8 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
   const harness: HarnessConfig = {
     version: 1,
     plugins: [
-      ...(withHost ? [{ id: host.id, use: host.id }] : []),
-      ...entries.map((entry) => ({ id: entry.id ?? entry.plugin.id, use: entry.plugin.id, options: { ...entry.options } })),
+      ...(withHost ? [{ id: PluginInstanceId.make(host.id), use: host.id }] : []),
+      ...entries.map((entry) => ({ id: PluginInstanceId.make(entry.id ?? entry.plugin.id), use: entry.plugin.id, options: { ...entry.options } })),
     ],
     ...(config.bindings === undefined ? {} : { bindings: { ...config.bindings } }),
     system: config.system ?? "",

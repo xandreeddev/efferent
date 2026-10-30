@@ -17,14 +17,22 @@ import { UserMessage } from "../turn/user-message.entity.js"
 export const EntryId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("EntryId"))
 export type EntryId = typeof EntryId.Type
 
+/** A subject's id within its kind (a file's path for `file`), as a tool's view names it. */
+export const SubjectId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("SubjectId"))
+export type SubjectId = typeof SubjectId.Type
+
 /** Something a tool result discovered, e.g. a record the next turn may cite. */
 export const Subject = Schema.Struct({
   kind: Schema.Trimmed.check(Schema.isNonEmpty()),
-  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  id: SubjectId,
   label: Schema.OptionFromNullOr(Schema.String),
   data: Schema.OptionFromNullOr(Schema.Unknown),
 })
 export type Subject = typeof Subject.Type
+
+/** A file or image's id, as the tool result that points to it names it. */
+export const ArtifactId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("ArtifactId"))
+export type ArtifactId = typeof ArtifactId.Type
 
 /**
  * A file or image a tool result points to by URL: the log keeps the
@@ -33,7 +41,7 @@ export type Subject = typeof Subject.Type
  * value, stored inline.
  */
 export const ArtifactRef = Schema.Struct({
-  id: Schema.Trimmed.check(Schema.isNonEmpty()),
+  id: ArtifactId,
   kind: Schema.Literals(["image", "file"]),
   mediaType: Schema.Trimmed.check(Schema.isNonEmpty()),
   url: Schema.String,
@@ -63,8 +71,15 @@ export type CompactionAction = typeof CompactionAction.Type
 export const ActivationSource = Schema.Literals(["always", "matcher", "load_skill", "host"])
 export type ActivationSource = typeof ActivationSource.Type
 
+/**
+ * A prompt section's id (`PromptSection.id`), or a turn-context entry's
+ * (`TurnContextEntry.id`), as the log stores it, with no checks.
+ */
+export const SectionId = Schema.String.pipe(Schema.brand("SectionId"))
+export type SectionId = typeof SectionId.Type
+
 /** A turn-context message the model sees this turn: a turn-tier prompt section, or an entry the host adds (`TurnMemory.context`). */
-export const TurnContextBody = Schema.TaggedStruct("TurnContext", { sectionId: Schema.String, version: Schema.String, text: Schema.String })
+export const TurnContextBody = Schema.TaggedStruct("TurnContext", { sectionId: SectionId, version: Schema.String, text: Schema.String })
 export type TurnContextBody = typeof TurnContextBody.Type
 
 /** A TurnStarted body as stored: the text under `prompt`, the images (when there are some) under `attachments`. */
@@ -78,7 +93,7 @@ export const LogBody = Schema.Union(
   [Schema.TaggedStruct("SystemPrepared", {
     fingerprint: Schema.String,
     text: Schema.String,
-    sections: Schema.Array(Schema.Struct({ id: Schema.String, version: Schema.String, fingerprint: Schema.String })),
+    sections: Schema.Array(Schema.Struct({ id: SectionId, version: Schema.String, fingerprint: Schema.String })),
   }),
   /**
    * The user's message, stored with its text under the original key

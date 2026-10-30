@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { ToolCallId } from "@xandreed/core"
 
 /**
  * The OpenAI-compatible chat-completions wire, as the compat client reads
@@ -27,6 +28,8 @@ export const CompletionUsage = Schema.Struct({
 })
 export type CompletionUsage = typeof CompletionUsage.Type
 
+/** A tool call's id as the wire carries it: absent, `null` or the provider's id. */
+const WireToolCallId = Schema.optionalKey(Schema.NullOr(ToolCallId))
 const ToolCallFunction = Schema.optionalKey(Schema.NullOr(Schema.Struct({ name: Text, arguments: Text })))
 
 /** A message's text and reasoning fields: DeepSeek-native `reasoning_content`
@@ -40,7 +43,7 @@ export const ChatCompletion = Schema.Struct({
     finish_reason: Text,
     message: Schema.optionalKey(Schema.NullOr(Schema.Struct({
       ...MessageText,
-      tool_calls: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Struct({ id: Text, function: ToolCallFunction })))),
+      tool_calls: Schema.optionalKey(Schema.NullOr(Schema.Array(Schema.Struct({ id: WireToolCallId, function: ToolCallFunction })))),
     }))),
   })))),
   usage: Schema.optionalKey(Schema.NullOr(CompletionUsage)),
@@ -48,7 +51,7 @@ export const ChatCompletion = Schema.Struct({
 export type ChatCompletion = typeof ChatCompletion.Type
 
 /** A streamed tool-call fragment: fragments of one call share its `index`. */
-export const StreamToolCall = Schema.Struct({ index: Count, id: Text, function: ToolCallFunction })
+export const StreamToolCall = Schema.Struct({ index: Count, id: WireToolCallId, function: ToolCallFunction })
 export type StreamToolCall = typeof StreamToolCall.Type
 
 /** One `data:` chunk of a streaming chat completion. */

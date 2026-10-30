@@ -71,23 +71,23 @@ describe("readSkillFiles: the tree", () => {
   ]
 
   test("every SKILL.md at any depth is a skill, its id the directory path when the frontmatter names none", () => {
-    expect(skillsOf(tree).map((skill) => skill.id)).toEqual(["git", "git/rebase", "tools/lint"])
+    expect<unknown>(skillsOf(tree).map((skill) => skill.id)).toEqual(["git", "git/rebase", "tools/lint"])
     expect(readSkillFiles(tree).skills.map((entry) => entry.directory)).toEqual(["git", "git/rebase", "tools/lint"])
   })
 
   test("a skill's other files are its references, by path below its directory; a nested skill's files are its own", () => {
-    expect(byId(tree, "git")?.references).toEqual([
+    expect<unknown>(byId(tree, "git")?.references).toEqual([
       { id: "references/style.md", title: "Commit style", text: "Short titles." },
       { id: "scripts/check.sh", title: "scripts/check.sh", text: "#!/bin/sh\necho ok" },
     ])
-    expect(byId(tree, "git/rebase")?.references).toEqual([{ id: "notes.md", title: "Rebase notes", text: "# Rebase notes\n\nKeep it linear." }])
+    expect<unknown>(byId(tree, "git/rebase")?.references).toEqual([{ id: "notes.md", title: "Rebase notes", text: "# Rebase notes\n\nKeep it linear." }])
   })
 
   test("a SKILL.md at the root is named by its frontmatter, else by rootName, else it is an error", () => {
     const root = [file("SKILL.md", "---\ndescription: The root.\n---\n"), file("guide.md", "# Guide")]
-    expect(skillsOf(root, { rootName: "skills" }).map((skill) => [skill.id, skill.references.map((reference) => reference.id)])).toEqual([["skills", ["guide.md"]]])
+    expect<unknown>(skillsOf(root, { rootName: "skills" }).map((skill) => [skill.id, skill.references.map((reference) => reference.id)])).toEqual([["skills", ["guide.md"]]])
     expect(readSkillFiles(root).issues).toEqual([{ path: "SKILL.md", severity: "error", message: "a SKILL.md at the root names its skill: give it an id or a name" }])
-    expect(skillsOf([file("./SKILL.md", "---\nname: named\ndescription: d\n---\n")]).map((skill) => skill.id)).toEqual(["named"])
+    expect<unknown>(skillsOf([file("./SKILL.md", "---\nname: named\ndescription: d\n---\n")]).map((skill) => skill.id)).toEqual(["named"])
   })
 
   test("the default version is a fingerprint of the skill as read: a change to its SKILL.md or a reference changes it", () => {
@@ -119,7 +119,7 @@ describe("readSkillFiles: the tree", () => {
       file("a/big.md", "é".repeat(6)),
       file("a/small.md", "12345"),
     ], { maxReferenceBytes: 10 })
-    expect(read.skills[0]?.skill.references.map((reference) => reference.id)).toEqual(["small.md"])
+    expect<unknown>(read.skills[0]?.skill.references.map((reference) => reference.id)).toEqual(["small.md"])
     expect(read.skills[0]?.skill.always).toBe(false)
     expect(read.issues).toEqual([
       { path: "a/SKILL.md", severity: "warning", message: "frontmatter line 4 is not `key: value` and was not read" },
@@ -148,7 +148,7 @@ describe("readSkillFiles: the tree", () => {
       { path: "a/data.json", text: "", size: 70_000 },
       { path: "b/SKILL.md", text: "", size: 70_000 },
     ], { maxReferenceBytes: 65_536 })
-    expect(read.skills.map((entry) => [entry.skill.id, entry.skill.references.length])).toEqual([["a", 0]])
+    expect<unknown>(read.skills.map((entry) => [entry.skill.id, entry.skill.references.length])).toEqual([["a", 0]])
     expect(read.issues).toEqual([
       { path: "a/data.json", severity: "warning", message: "left out: 70000 bytes, more than the 65536-byte reference limit (maxReferenceBytes)" },
       { path: "b/SKILL.md", severity: "error", message: "not read: 70000 bytes, too large to be read (maxFileBytes)" },
@@ -162,7 +162,7 @@ describe("skillsFromFiles", () => {
       file("triage/SKILL.md", "---\nsummary: Triage.\ntools: lookup\nalways: true\n---\nTriage first."),
       file("triage/references/formats.md", "# Formats\n\nISO dates."),
     ]))
-    expect(skills.map((skill) => [skill.id, skill.tools, skill.always, skill.references.map((reference) => [reference.id, reference.title])])).toEqual([
+    expect<unknown>(skills.map((skill) => [skill.id, skill.tools, skill.always, skill.references.map((reference) => [reference.id, reference.title])])).toEqual([
       ["triage", ["lookup"], true, [["references/formats.md", "Formats"]]],
     ])
     const error = await Effect.runPromise(Effect.flip(skillsFromFiles([file("a/SKILL.md", "---\nname: a\n---\n"), file("b/SKILL.md", "plain")])))

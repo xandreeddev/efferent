@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Option, References, Schema } from "effect"
-import { definePlugin, HarnessError } from "@xandreed/core"
+import { definePlugin, HarnessError, PluginInstanceId } from "@xandreed/core"
 import type { Plugin } from "@xandreed/core"
 import { activateGraph, graphFingerprint, resolveGraph } from "./graph.js"
 
@@ -11,8 +11,8 @@ const consumer = definePlugin({ id: "consumer", version: "1", config: Schema.Str
 describe("plugin graph", () => {
   test("orders dependencies and validates typed options", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "c", use: "consumer" }, { id: "p", use: "provider", options: { value: 41 } }] }, [provider, consumer])
-      expect(graph.nodes.map((node) => node.entry.id)).toEqual(["p", "c"])
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("c"), use: "consumer" }, { id: PluginInstanceId.make("p"), use: "provider", options: { value: 41 } }] }, [provider, consumer])
+      expect(graph.nodes.map((node): string => node.entry.id)).toEqual(["p", "c"])
       const context = yield* activateGraph(graph, "session", Context.empty(), yield* Effect.scope)
       return Context.getOption(context, Consumer).pipe(Option.getOrThrow)
     })))
@@ -20,19 +20,19 @@ describe("plugin graph", () => {
   })
   test("rejects missing, ambiguous, cyclic, incompatible and invalid configurations", async () => {
     const cases = [
-      { plugins: [{ id: "c", use: "consumer" }] },
-      { plugins: [{ id: "a", use: "provider" }, { id: "b", use: "provider" }] },
-      { plugins: [{ id: "a", use: "provider", options: { typo: 1 } }] },
-      { plugins: [{ id: "a", use: "missing" }] },
+      { plugins: [{ id: PluginInstanceId.make("c"), use: "consumer" }] },
+      { plugins: [{ id: PluginInstanceId.make("a"), use: "provider" }, { id: PluginInstanceId.make("b"), use: "provider" }] },
+      { plugins: [{ id: PluginInstanceId.make("a"), use: "provider", options: { typo: 1 } }] },
+      { plugins: [{ id: PluginInstanceId.make("a"), use: "missing" }] },
     ]
     await Promise.all(cases.map(async (config) => expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, ...config }, [provider, consumer])))).toHaveProperty("_tag", "Failure")))
     const self = { ...provider, requires: [Value.key] }
-    expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [self])))).toHaveProperty("_tag", "Failure")
-    expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [{ ...provider, apiVersion: 99 }])))).toHaveProperty("_tag", "Failure")
+    expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("a"), use: "provider" }] }, [self])))).toHaveProperty("_tag", "Failure")
+    expect(await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("a"), use: "provider" }] }, [{ ...provider, apiVersion: 99 }])))).toHaveProperty("_tag", "Failure")
   })
   test("plugins of the current API and of every earlier one still supported load", async () => {
     expect(provider.apiVersion).toBe(3)
-    const loaded = await Promise.all([1, 2, 3].map((apiVersion) => Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }] }, [{ ...provider, apiVersion }])))))
+    const loaded = await Promise.all([1, 2, 3].map((apiVersion) => Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("a"), use: "provider" }] }, [{ ...provider, apiVersion }])))))
     expect(loaded.map((result) => result._tag)).toEqual(["Success", "Success", "Success"])
   })
   test("bindings select providers and failed activation disposes acquired resources", async () => {
@@ -43,11 +43,11 @@ describe("plugin graph", () => {
     } })
     const broken = definePlugin({ id: "broken", version: "1", config: Schema.Struct({}), defaults: {}, requires: [Value], provides: [Consumer], layer: () => Layer.effect(Consumer, Effect.fail(new HarnessError({ code: "test", message: "broken" }))) })
     await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "t", use: "tracked" }, { id: "b", use: "broken" }] }, [tracked, broken])
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("t"), use: "tracked" }, { id: PluginInstanceId.make("b"), use: "broken" }] }, [tracked, broken])
       yield* activateGraph(graph, "session", Context.empty(), yield* Effect.scope)
     })).pipe(Effect.result))
     expect(released).toEqual(["closed"])
-    const graph = await Effect.runPromise(resolveGraph({ version: 1, plugins: [{ id: "a", use: "provider" }, { id: "b", use: "provider" }], bindings: { [Value.key]: "b" } }, [provider]))
+    const graph = await Effect.runPromise(resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("a"), use: "provider" }, { id: PluginInstanceId.make("b"), use: "provider" }], bindings: { [Value.key]: "b" } }, [provider]))
     expect(graph.providers[Value.key]).toBe("b")
   })
   test("capabilities concatenate in graph order; consumers wait for every other contributor", async () => {
@@ -57,13 +57,13 @@ describe("plugin graph", () => {
     const optionalValue = definePlugin({ id: "optional", version: "1", config: Schema.Struct({}), defaults: {}, optional: [Value], provides: [Consumer],
       layer: () => Layer.succeed(Consumer, 0) })
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "c", use: "collector" }, { id: "a", use: "a" }, { id: "b", use: "b" }] }, [contributor("a", ["one"]), contributor("b", ["two", "three"]), collector])
-      expect(graph.nodes.map((node) => node.entry.id)).toEqual(["a", "b", "c"])
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("c"), use: "collector" }, { id: PluginInstanceId.make("a"), use: "a" }, { id: PluginInstanceId.make("b"), use: "b" }] }, [contributor("a", ["one"]), contributor("b", ["two", "three"]), collector])
+      expect(graph.nodes.map((node): string => node.entry.id)).toEqual(["a", "b", "c"])
       const context = yield* activateGraph(graph, "session", Context.empty(), yield* Effect.scope)
       return { seen: Context.getOption(context, Consumer).pipe(Option.getOrThrow), all: Context.getOption(context, Items).pipe(Option.getOrThrow) }
     })))
     expect(result).toEqual({ seen: 3, all: ["one", "two", "three", "collector"] })
-    const alone = await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: "o", use: "optional" }] }, [optionalValue])))
+    const alone = await Effect.runPromise(Effect.result(resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("o"), use: "optional" }] }, [optionalValue])))
     expect(alone._tag).toBe("Success")
   })
   test("a plugin's layer gets the services it declares and the fiber's settings, not the services around its activation", async () => {
@@ -75,7 +75,7 @@ describe("plugin graph", () => {
       return [span, String((yield* References.CurrentLogAnnotations)["run"])]
     })) })
     const activated = (plugin: Plugin, services: Context.Context<never>) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "p", use: plugin.id }] }, [plugin])
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("p"), use: plugin.id }] }, [plugin])
       return yield* activateGraph(graph, "session", services, yield* Effect.scope)
     })).pipe(Effect.provideService(Value, 41), Effect.withSpan("activation"), Effect.annotateLogs({ run: "r1" })))
     const consumed = (plugin: Plugin, services: Context.Context<never>) => activated(plugin, services).then((context) => Context.getUnsafe(context, Consumer))
@@ -96,21 +96,21 @@ describe("plugin graph", () => {
       provides: [Items], layer: ({ inbox, holder }) => Layer.succeed(Items, [String(inbox.maxPending), String(inbox.attempts), holder.mode]),
     })
     const items = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: "n", use: "nested", options: { inbox: { maxPending: 50 }, holder: { mode: "process" } } }] }, [nested])
+      const graph = yield* resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("n"), use: "nested", options: { inbox: { maxPending: 50 }, holder: { mode: "process" } } }] }, [nested])
       expect(graph.nodes[0]!.options).toEqual({ inbox: { maxPending: 50, attempts: 2 }, holder: { mode: "process" } })
       return Context.getUnsafe(yield* activateGraph(graph, "session", Context.empty(), yield* Effect.scope), Items)
     })))
     expect(items).toEqual(["50", "2", "process"])
-    const typo = await Effect.runPromise(Effect.flip(resolveGraph({ version: 1, plugins: [{ id: "n", use: "nested", options: { inbox: { maxPending: 50, typo: 1 } } }] }, [nested])))
+    const typo = await Effect.runPromise(Effect.flip(resolveGraph({ version: 1, plugins: [{ id: PluginInstanceId.make("n"), use: "nested", options: { inbox: { maxPending: 50, typo: 1 } } }] }, [nested])))
     expect(typo).toMatchObject({ code: "config.options", plugin: "n", cause: { _tag: "SchemaError" } })
     expect(typo.message).toContain("typo")
     expect(typo.message).not.toStartWith("SchemaError")
   })
   test("profiles are refused, not ignored", async () => {
     const configs = [
-      { version: 1 as const, profile: "review", profiles: { review: { plugins: [{ id: "p", use: "provider" }] } } },
-      { version: 1 as const, plugins: [{ id: "p", use: "provider" }], profiles: {} },
-      { version: 1 as const, plugins: [{ id: "p", use: "provider" }], profile: "review" },
+      { version: 1 as const, profile: "review", profiles: { review: { plugins: [{ id: PluginInstanceId.make("p"), use: "provider" }] } } },
+      { version: 1 as const, plugins: [{ id: PluginInstanceId.make("p"), use: "provider" }], profiles: {} },
+      { version: 1 as const, plugins: [{ id: PluginInstanceId.make("p"), use: "provider" }], profile: "review" },
     ]
     const errors = await Effect.runPromise(Effect.forEach(configs, (config) => Effect.flip(resolveGraph(config, [provider]))))
     expect(errors.map((error) => error.code)).toEqual(["config.profile", "config.profile", "config.profile"])
@@ -124,13 +124,13 @@ describe("plugin graph", () => {
     })
     const fingerprint = (config: Parameters<typeof resolveGraph>[0]) => Effect.runPromise(resolveGraph(config, [nested, provider]).pipe(Effect.map((graph) => graphFingerprint(graph))))
     const written = await fingerprint({ version: 1, system: "s", bindings: { [Value.key]: "n" }, plugins: [
-      { id: "n", use: "nested", options: { b: { y: 3, x: 2 }, labels: { "z": "1", "b": "2" }, a: 5 } }, { id: "p", use: "provider" },
+      { id: PluginInstanceId.make("n"), use: "nested", options: { b: { y: 3, x: 2 }, labels: { "z": "1", "b": "2" }, a: 5 } }, { id: PluginInstanceId.make("p"), use: "provider" },
     ] })
     const reordered = await fingerprint({ plugins: [
-      { use: "nested", options: { a: 5, labels: { "b": "2", "z": "1" }, b: { x: 2, y: 3 } }, id: "n" }, { use: "provider", id: "p" },
+      { use: "nested", options: { a: 5, labels: { "b": "2", "z": "1" }, b: { x: 2, y: 3 } }, id: PluginInstanceId.make("n") }, { use: "provider", id: PluginInstanceId.make("p") },
     ], bindings: { [Value.key]: "n" }, system: "s", version: 1 })
     const other = await fingerprint({ version: 1, system: "s", bindings: { [Value.key]: "n" }, plugins: [
-      { id: "n", use: "nested", options: { a: 5, b: { x: 3, y: 2 }, labels: { "b": "2", "z": "1" } } }, { id: "p", use: "provider" },
+      { id: PluginInstanceId.make("n"), use: "nested", options: { a: 5, b: { x: 3, y: 2 }, labels: { "b": "2", "z": "1" } } }, { id: PluginInstanceId.make("p"), use: "provider" },
     ] })
     expect(reordered).toBe(written)
     expect(other).not.toBe(written)

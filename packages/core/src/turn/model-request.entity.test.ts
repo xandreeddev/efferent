@@ -4,7 +4,7 @@ import { Tool } from "effect/ai"
 import { RunOrdinal } from "../domain/run.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { modelRequestTools } from "./model-request.entity.functions.js"
-import { MemoryRenderRecipe } from "./model-request.entity.js"
+import { MemoryRenderRecipe, ProviderToolId } from "./model-request.entity.js"
 
 /** A provider-defined tool whose configuration carries a credential, as a remote tool server's does. */
 const RemoteTools = Tool.providerDefined({
@@ -29,7 +29,7 @@ describe("a request header's provider-defined tools", () => {
     expect(stored).not.toContain("oauth-secret-token")
     expect(stored).not.toContain("https://tools.example/sse")
     expect(declared?.provider).toEqual(Option.some({
-      id: "test.remote_tools", name: "remote_tools",
+      id: ProviderToolId.make("test.remote_tools"), name: "remote_tools",
       argKeys: ["authorization", "server_label", "server_url"],
       // SHA-256 of the args' canonical JSON.
       argsDigest: "a3a6ded6b95854abe00164b8bad45f8c10fbb548aa126eea37a736655b226630",

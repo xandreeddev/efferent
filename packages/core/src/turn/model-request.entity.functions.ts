@@ -12,7 +12,7 @@ import { canonicalJson, buildContext } from "../memory/memory-log.entity.functio
 import type { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { SessionLogEvent } from "../session/session-log.entity.js"
 import { entriesOfEvents, readStoredKeys } from "../session/session-event.entity.functions.js"
-import { ModelRequestDescriptor, ModelRequestHeader } from "./model-request.entity.js"
+import { ModelRequestDescriptor, ModelRequestHeader, ProviderToolId } from "./model-request.entity.js"
 import type { ModelRequestTool } from "./model-request.entity.js"
 
 const descriptorKey = "efferent/model-request-descriptor" as const
@@ -121,7 +121,7 @@ export const modelRequestTools = (tools: ReadonlyArray<Tool.Any>): ReadonlyArray
   description: Tool.getDescription(tool) ?? "",
   parameters: Tool.isDynamic(tool) && tool.jsonSchema !== undefined ? tool.jsonSchema : toolParametersSchema(tool),
   provider: Tool.isProviderDefined(tool)
-    ? Option.some({ id: tool.id, name: tool.providerName, ...providerArgs(tool.args) })
+    ? Option.some({ id: ProviderToolId.make(tool.id), name: tool.providerName, ...providerArgs(tool.args) })
     : Option.none(),
 }))
 
