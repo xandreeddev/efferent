@@ -48,10 +48,10 @@ describe("window memory policy", () => {
 describe("reading a spilled result back", () => {
   const recall = recallCapability.tools[0]!
   const stored = result(2, 1, "x".repeat(RECALL_PAGE_CHARS + 500))
-  // The registry erases a handler's requirements; this one needs only the run's memory.
+  // The handler declares the one service it reads, the run (of which it uses the memory), and gets it where it runs.
   const recalled = (params: { readonly locator: string; readonly offset?: number }) => Effect.runPromise(Effect.result(recall.handler(params).pipe(
     Effect.provideService(RunContext, RunContext.of({ memory: { resolve: (id: string) => Effect.succeed(Option.some(stored).pipe(Option.filter((entry) => entry.id === id))) } } as never)),
-  ) as Effect.Effect<unknown, unknown>))
+  )))
 
   test("the preview says how many characters it left out and the offset to read them from, never a negative count", () => {
     expect(spillPreview(stored, "abcdef", 4)).toBe(`abcd\n[… 2 more characters kept out of context; call recall_context with locator "run-1:2" and offset 4 to read them]`)
@@ -75,6 +75,11 @@ describe("reading a spilled result back", () => {
     expect(await recalled({ locator: "run-1:2", offset: RECALL_PAGE_CHARS })).toMatchObject({ _tag: "Success", success: "x".repeat(500) })
     expect(await recalled({ locator: "run-1:2", offset: RECALL_PAGE_CHARS + 500 })).toMatchObject({ _tag: "Failure", failure: { error: "OffsetOutOfRange" } })
     expect(await recalled({ locator: "run-9:9" })).toMatchObject({ _tag: "Failure", failure: { error: "UnknownLocator" } })
+  })
+
+  test("recall_context declares the run it reads the memory of, and a call without one fails with requires.missing", async () => {
+    expect(recall.requires).toEqual([RunContext.key])
+    expect(await Effect.runPromise(Effect.result(recall.handler({ locator: "run-1:2" })))).toMatchObject({ _tag: "Failure", failure: { code: "requires.missing" } })
   })
 
   test("a recalled page is never spilled again: under pressure the other results are", async () => {

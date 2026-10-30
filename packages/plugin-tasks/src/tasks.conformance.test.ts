@@ -97,6 +97,18 @@ describe("the Tasks kit catches careless backends", () => {
     }))))).toEqual(["reconcile-delivery"])
   }, 30_000)
 
+  test("one that runs its executor's turns without itself in context fails only the executor-tasks check", async () => {
+    // The port's type asks for Tasks around the executor's turns: taking it away compiles only through this cast.
+    const withoutTasks = <A, E>(turn: Effect.Effect<A, E, Tasks>) => turn.pipe(Effect.updateContext((context: Context.Context<never>) => Context.omit(Tasks)(context) as Context.Context<Tasks>))
+    expect(await failedChecks(tasksConformance((dependencies) => tasksOver({
+      ...dependencies,
+      executor: TaskExecutor.of({
+        turn: (writer, task) => withoutTasks(dependencies.executor.turn(writer, task)),
+        react: (writer) => withoutTasks(dependencies.executor.react(writer)),
+      }),
+    })))).toEqual(["executor-tasks"])
+  }, 30_000)
+
   test("one that lists no task fails the checks that read the list", async () => {
     expect(await failedChecks(tasksConformance(careless(() => ({ list: () => Effect.succeed([]) })))))
       .toEqual(["run", "start-once"])

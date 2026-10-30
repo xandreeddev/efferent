@@ -128,6 +128,7 @@ export const recallCapability = defineCapability({
   version: "1",
   tools: [defineTool({
     tool: RecallContext,
+    requires: [RunContext],
     handler: ({ locator, offset }) => Effect.gen(function* () {
       const run = yield* RunContext
       const id = Schema.decodeUnknownOption(EntryId)(locator)

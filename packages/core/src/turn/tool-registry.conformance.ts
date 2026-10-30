@@ -2,10 +2,11 @@ import { Tool } from "effect/ai"
 import { Array as Arr, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, expect, failureCode, freshId } from "../conformance.functions.js"
+import { check, expect, fail, failureCode, freshId } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import { RunId } from "../domain/run.entity.js"
 import { defineCapability, defineSkill, defineTool } from "../harness/capability.entity.functions.js"
+import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import type { CapabilityCatalog } from "../harness/capability.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentAgentStep, CurrentToolInvocation } from "../loop/stepContext.js"
@@ -13,7 +14,7 @@ import { EntryId } from "../memory/memory-log.entity.js"
 import { openLogSession } from "../memory/memory-session.js"
 import type { MemoryPolicy } from "../memory/memory-session.js"
 import type { Capability } from "../ports/capability.port.js"
-import { ActionPolicy } from "../ports/harness.port.js"
+import { ActionPolicy, SessionEnvironment } from "../ports/harness.port.js"
 import { ConversationMemory } from "../ports/memory.port.js"
 import { PermissionGrants } from "../ports/permission.port.js"
 import { RunContext } from "../ports/run-context.port.js"
@@ -56,6 +57,13 @@ const Report = Tool.make("kit_report", {
   failure: Failure,
   failureMode: "return",
 })
+const Where = Tool.make("kit_where", {
+  description: "Say which workspace the call runs in.",
+  parameters: Schema.Struct({}),
+  success: Schema.String,
+  failure: Failure,
+  failureMode: "return",
+})
 const Vault = Tool.make("kit_vault", {
   description: "Read the vault, with the kit.vault permission.",
   parameters: Schema.Struct({ key: Schema.String }),
@@ -70,10 +78,14 @@ const Archive = Tool.make("kit_archive", {
   failure: Failure,
   failureMode: "return",
 })
-const TOOLS = [Ping.name, Report.name, Vault.name, Archive.name]
+const TOOLS = [Ping.name, Report.name, Where.name, Vault.name, Archive.name]
 const SKILLS = ["kit.basics", "kit.vault", "kit.archiving"]
 
-/** The kit's tools and skills; each handler adds its tool's name to `ran` when it runs. */
+/**
+ * The kit's tools and skills; each handler adds its tool's name to `ran`
+ * when it runs. `kit_where` declares the one service it reads, the
+ * `SessionEnvironment`, which the kit's turns open the tools with.
+ */
 const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>): Capability => {
   const note = (tool: string) => Ref.update(ran, (all) => [...all, tool])
   return defineCapability({
@@ -92,11 +104,16 @@ const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>): Capability => {
           return `${Option.match(invocation, { onNone: () => "no invocation", onSome: (call) => `${call.invocationId}|${call.tool}|${call.step}` })}|${opener}`
         }),
       }),
+      defineTool({
+        tool: Where,
+        requires: [SessionEnvironment],
+        handler: () => note(Where.name).pipe(Effect.andThen(SessionEnvironment), Effect.map((environment) => environment.workspace)),
+      }),
       defineTool({ tool: Vault, handler: ({ key }) => note(Vault.name).pipe(Effect.as(`secret ${key}`)), annotations: { permissions: ["kit.vault"] } }),
       defineTool({ tool: Archive, handler: ({ id }) => note(Archive.name).pipe(Effect.as(`archived ${id}`)) }),
     ],
     skills: [
-      defineSkill({ id: "kit.basics", summary: "Ping and report.", tools: [Ping.name, Report.name], always: true }),
+      defineSkill({ id: "kit.basics", summary: "Ping, report and say where.", tools: [Ping.name, Report.name, Where.name], always: true }),
       defineSkill({ id: "kit.vault", summary: "Read the vault.", tools: [Vault.name], permissions: ["kit.vault"] }),
       defineSkill({ id: "kit.archiving", summary: "Archive records.", tools: [Archive.name] }),
     ],
@@ -178,10 +195,15 @@ interface TurnSetup {
   readonly grants?: ReadonlyArray<string>
   /** Record `kit_vault` as activated by an earlier turn, as a turn whose grants have since changed finds it. */
   readonly vaultActive?: boolean
+  /** Open the tools without the `SessionEnvironment` that `kit_where` declares (they open with one by default). */
+  readonly withoutEnvironment?: boolean
 }
 
 const messageOf = (result: unknown): string =>
   typeof result === "object" && result !== null && "message" in result && typeof result.message === "string" ? result.message : "none"
+
+/** A failure's framework code, as the kit reports it. */
+const codeOf = (error: unknown): string => Option.getOrElse(harnessCodeOf(error), () => "none")
 
 /** The tool the model loads skills with. */
 const LOAD_SKILL = "load_skill"
@@ -202,11 +224,14 @@ const toolsOf = (data: unknown): ReadonlyArray<string> =>
  * listed, each published and recorded once; a handled call publishes
  * `tool.started`, its handler's `tool.progress` and `tool.completed` under
  * one invocation id (`<runId>:call:<n>`), and the handler sees that call
- * as `CurrentToolInvocation` and the services where the tools were opened;
- * and a call refused before its handler runs (`inactive`, `forbidden`,
- * `denied`, `call-limit`, `tool-call-limit`) takes its invocation id first,
- * publishes one `tool.refused` with its input and no `tool.started`, never
- * runs the handler, and fails with the refusal's message as its result.
+ * as `CurrentToolInvocation` and the services where the tools were opened,
+ * the ones it declares (`RegisteredTool.requires`) included; a run lacking
+ * a service a tool declares fails to open its tools with
+ * `requires.missing`, naming the tool and the service; and a call refused
+ * before its handler runs (`inactive`, `forbidden`, `denied`, `call-limit`,
+ * `tool-call-limit`) takes its invocation id first, publishes one
+ * `tool.refused` with its input and no `tool.started`, never runs the
+ * handler, and fails with the refusal's message as its result.
  * The registry publishes these events on the run's bus (`RunContext.events`)
  * only, and never writes the journal itself: the turn journals them (core's
  * `TurnLive` keeps `tool.progress` out and stores a `tool.refused` without
@@ -217,7 +242,9 @@ const toolsOf = (data: unknown): ReadonlyArray<string> =>
  * `make` builds a registry over the kit's capabilities for each check, with
  * at most `maxCallsPerRun` calls per turn and no permissions granted unless
  * the turn's `PermissionGrants` say so. The kit runs each turn over core's
- * `TurnLive` with a writer that keeps the turn's events in memory.
+ * `TurnLive` with a writer that keeps the turn's events in memory, opens
+ * the tools with a `SessionEnvironment` (which one of its tools declares)
+ * and calls them with another, as a step would.
  */
 export const toolRegistryConformance = (
   make: (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => Effect.Effect<Registry, unknown, Scope.Scope>,
@@ -242,6 +269,8 @@ export const toolRegistryConformance = (
       if (setup.vaultActive === true) yield* memory.session.record([{ _tag: "ToolsActivated", skills: ["kit.vault"], tools: [Vault.name], source: "host", decision: Option.none() }], 0)
       const opening = (yield* TurnToolbox).open.pipe(
         Effect.provideService(Opener, "the opener's"),
+        (open) => setup.withoutEnvironment === true ? open.pipe(Effect.updateContext((context: Context.Context<never>) => Context.omit(SessionEnvironment)(context)))
+          : open.pipe(Effect.provideService(SessionEnvironment, { workspace: "the opener's" })),
         (open) => Option.match(Option.fromNullishOr(setup.policy), { onNone: () => open, onSome: (denying) => open.pipe(Effect.provideService(ActionPolicy, denying)) }),
         (open) => Option.match(Option.fromNullishOr(setup.grants), {
           onNone: () => open,
@@ -258,6 +287,7 @@ export const toolRegistryConformance = (
       }) as Effect.Effect<CallResult, unknown>).pipe(
         Effect.provideService(CurrentAgentStep, Option.some(step)),
         Effect.provideService(Opener, "the caller's"),
+        Effect.provideService(SessionEnvironment, { workspace: "the caller's" }),
       )
       return yield* body({
         catalog: registry.catalog,
@@ -372,6 +402,21 @@ export const toolRegistryConformance = (
       const next = yield* turn.call(Ping.name, { n: 1 })
       const started = (yield* turn.published).filter((event) => event._tag === "tool.started").map(idOf)
       yield* expect("invocation", !next.isFailure && started.join() === `${id},${RUN}:call:2`, `the next call took the id ${started.at(-1) ?? "none"}`)
+    }))),
+
+    check("a run lacking a service a tool declares fails to open its tools, with requires.missing naming the tool and the service", "requires-missing", () => Effect.gen(function* () {
+      const failed = yield* inTurn({ withoutEnvironment: true }, () => Effect.void).pipe(Effect.match({ onFailure: Option.some, onSuccess: () => Option.none<unknown>() }))
+      yield* Option.match(failed, {
+        onNone: () => fail("requires-missing", `the tools opened in a run without ${SessionEnvironment.key}, which ${Where.name} declares`),
+        onSome: (error) => expect("requires-missing", codeOf(error) === "requires.missing" && messageOf(error).includes(Where.name) && messageOf(error).includes(SessionEnvironment.key),
+          `opening the tools without ${SessionEnvironment.key} failed with ${codeOf(error)} ("${messageOf(error)}"), not requires.missing naming ${Where.name} and the service`),
+      })
+    })),
+
+    check("a handler sees the services it declares as they are where its run's tools were opened, not where it is called", "requires-opened", () => inTurn({}, (turn) => Effect.gen(function* () {
+      const outcome = yield* turn.call(Where.name, {})
+      yield* expect("requires-opened", !outcome.isFailure && outcome.result === "the opener's",
+        `${Where.name} returned ${JSON.stringify(outcome.result)} (failure: ${outcome.isFailure}), not the workspace of where the tools were opened`)
     }))),
 
     check("the turn's PermissionGrants, read where the tools are opened, let a skill that needs them be activated and its tools run", "grants", () => inTurn({ grants: ["kit.vault"] }, (turn) => Effect.gen(function* () {

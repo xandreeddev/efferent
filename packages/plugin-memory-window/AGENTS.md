@@ -28,7 +28,7 @@ Windowed conversation memory: a `ConversationMemory` over core's memory log that
 | `locator` and `offset` descriptions | `src/plugin.adapter.ts:108-109` | exact, `src/plugin.adapter.test.ts:61`; sdk golden |
 | Spill preview (`[… N more characters kept out of context; call recall_context …]`) | `src/plugin.adapter.ts:62` | exact, `src/plugin.adapter.test.ts:56` |
 | Page continuation (`[… N more characters; call recall_context …]`) | `src/plugin.adapter.ts:121` | exact, `src/plugin.adapter.test.ts:72` |
-| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:137`, `:139` | codes only, `src/plugin.adapter.test.ts:72`; messages unpinned |
+| `UnknownLocator`, `OffsetOutOfRange` failures | `src/plugin.adapter.ts:139`, `:141` | codes only, `src/plugin.adapter.test.ts:72`; messages unpinned |
 
 ## Erasure files
 

@@ -7,7 +7,7 @@ import { openWorkspace } from "./workspace-path.entity.functions.js"
 import type { WorkspaceAccess } from "./workspace-path.entity.functions.js"
 import { BashParams, BashToolResult, WORKSPACE_PERMISSIONS } from "./workspace-tools.entity.js"
 import { bashEnvironment, compactBash, renderBash, toolDescriptions } from "./workspace-tools.entity.functions.js"
-import { failure } from "./read-tools.adapter.js"
+import { failure, WORKSPACE_SERVICES } from "./read-tools.adapter.js"
 import type { WorkspaceToolContext } from "./read-tools.adapter.js"
 
 const BashTool = (description: string) => Tool.make("bash", { description, parameters: BashParams, success: BashToolResult, failure: Failure, failureMode: "return" })
@@ -70,6 +70,7 @@ const prune = (access: WorkspaceAccess, dir: string, keep: number): Effect.Effec
  */
 export const bashTool = (context: WorkspaceToolContext): RegisteredTool => defineTool({
   tool: BashTool(toolDescriptions(context.config).bash),
+  requires: [...WORKSPACE_SERVICES, Bash],
   handler: (params) => Effect.gen(function* () {
     const { config } = context
     const access = yield* openWorkspace(context.path)

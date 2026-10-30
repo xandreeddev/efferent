@@ -12,6 +12,10 @@ describe("the model's task tools", () => {
     expect(taskStatus!.tool.description).toBe("Check a background task this conversation started: whether it is still running, and its result once it has one.")
   })
 
+  test("both tools declare the run and the tasks they read, so a run without them does not open its tools", () => {
+    expect([startTask!.requires, taskStatus!.requires]).toEqual([[RunContext.key, Tasks.key], [RunContext.key, Tasks.key]])
+  })
+
   test("start_task starts the task with the turn's own meta, unchanged, and the turn whose run started it", async () => {
     const started = await Effect.runPromise(Effect.gen(function* () {
       const inputs = yield* Ref.make<ReadonlyArray<unknown>>([])
@@ -22,8 +26,8 @@ describe("the model's task tools", () => {
       }
       const tasks = Tasks.of({ start: (_parent: unknown, input: unknown) => Ref.update(inputs, (all) => [...all, input]).pipe(Effect.as(view)) } as never)
       const run = RunContext.of({ session: { id: view.parent, owner: "owner-1" }, runId: "run-7", admitted: { turn: 3, meta: { tenant: "acme" } } } as never)
-      // The registry erases a handler's requirements; this one needs the run and the tasks.
-      const output = yield* (startTask!.handler({ instructions: "count", mode: "spawn" }).pipe(Effect.provideService(Tasks, tasks), Effect.provideService(RunContext, run)) as Effect.Effect<unknown, unknown>)
+      // The handler declares the services it reads, the run and the tasks, and gets them where it runs.
+      const output = yield* startTask!.handler({ instructions: "count", mode: "spawn" }).pipe(Effect.provideService(Tasks, tasks), Effect.provideService(RunContext, run))
       return { output, inputs: yield* Ref.get(inputs) }
     }))
     expect(started).toEqual({
@@ -41,7 +45,7 @@ describe("the model's task tools", () => {
         status: (_parent: unknown, taskId: ConversationId) => Ref.update(looked, (all) => [...all, taskId]).pipe(Effect.andThen(Effect.fail(new TaskMissing({ session: parent, taskId })))),
       } as never)
       const run = RunContext.of({ session: { id: parent, owner: "owner-1" } } as never)
-      const answer = (taskId: string) => Effect.flip(taskStatus!.handler({ taskId }).pipe(Effect.provideService(Tasks, tasks), Effect.provideService(RunContext, run)) as Effect.Effect<unknown, unknown>)
+      const answer = (taskId: string) => Effect.flip(taskStatus!.handler({ taskId }).pipe(Effect.provideService(Tasks, tasks), Effect.provideService(RunContext, run)))
       return { answers: [yield* answer("task-1"), yield* answer(stranger)], looked: yield* Ref.get(looked) }
     }))
     expect(asked).toEqual({

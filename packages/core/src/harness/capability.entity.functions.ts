@@ -1,5 +1,5 @@
 import type { Tool } from "effect/ai"
-import { Effect, Option } from "effect"
+import { Context, Effect, Option } from "effect"
 import { strictJsonSchema, toolParametersSchema } from "../loop/toolSchema.js"
 import type { Capability, RegisteredTool, ToolDefinition, ToolViewInput } from "../ports/capability.port.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
@@ -12,31 +12,48 @@ import type {
   ToolAnnotations,
 } from "./capability.entity.js"
 import { HarnessError } from "./plugin.entity.js"
+import { provideDeclared } from "./plugin.entity.functions.js"
+import type { ServiceKeys } from "./plugin.entity.functions.js"
 
 export const defaultAnnotations: ToolAnnotations = {
   readOnly: false, pollable: false, pinned: false, permissions: [], maxCallsPerRun: Option.none(), labels: {}, stage: Option.none(),
 }
 
-/** Author a tool with its handler, model view and annotations; the registry erases it. */
-export const defineTool = <T extends Tool.Any, R>(definition: {
+/**
+ * Author a tool with its handler, model view and annotations; the registry
+ * erases it. The handler may read only the services `requires` lists (a
+ * Reference needs no entry): one that reads another does not compile. It
+ * gets them where it runs, through `provideDeclared`, which fails the call
+ * with `requires.missing` when one is not there; a registry checks the same
+ * keys (`RegisteredTool.requires`) when it opens a run's tools, so a run
+ * lacking one fails to open instead.
+ */
+export const defineTool = <T extends Tool.Any, const Req extends ServiceKeys = readonly []>(definition: {
   readonly tool: T
-  readonly handler: ToolDefinition<T, R>["handler"]
+  readonly requires?: Req
+  readonly handler: ToolDefinition<T, Context.Service.Identifier<Req[number]>>["handler"]
   readonly view?: ToolViewInput<Tool.Success<T>, Tool.Parameters<T>>
   readonly annotations?: Partial<ToolAnnotations>
-}): RegisteredTool => ({
-  tool: definition.tool,
-  handler: definition.handler as (params: unknown) => Effect.Effect<unknown, unknown, unknown>,
-  view: Option.map(Option.fromNullishOr(definition.view), (view) => ({
-    version: view.version,
-    render: view.render,
-    compact: Option.fromNullishOr(view.compact),
-    subjects: view.subjects ?? (() => []),
-    artifacts: view.artifacts ?? (() => []),
-    digest: Option.fromNullishOr(view.digest),
-    media: Option.fromNullishOr(view.media),
-  })) as RegisteredTool["view"],
-  annotations: { ...defaultAnnotations, ...definition.annotations },
-})
+}): RegisteredTool => {
+  const requires = definition.requires ?? ([] as const)
+  const declared = provideDeclared(definition.tool.name, requires)
+  return {
+    tool: definition.tool,
+    requires: requires.filter((key) => !Context.isReference(key)).map((key) => key.key),
+    // The toolkit decodes the params against the tool's own schema before it calls the handler.
+    handler: (params) => declared(definition.handler(params as Tool.Parameters<T>)),
+    view: Option.map(Option.fromNullishOr(definition.view), (view) => ({
+      version: view.version,
+      render: view.render,
+      compact: Option.fromNullishOr(view.compact),
+      subjects: view.subjects ?? (() => []),
+      artifacts: view.artifacts ?? (() => []),
+      digest: Option.fromNullishOr(view.digest),
+      media: Option.fromNullishOr(view.media),
+    })) as RegisteredTool["view"],
+    annotations: { ...defaultAnnotations, ...definition.annotations },
+  }
+}
 
 /**
  * A skill, as `defineSkill` takes it: its ids as strings, which it brands

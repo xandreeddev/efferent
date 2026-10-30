@@ -13,6 +13,7 @@ import {
   defineTool,
   EntryId,
   Failure,
+  FileSystem,
   harnessCodeOf,
   harnessDefectsAsFailures,
   HarnessError,
@@ -26,6 +27,7 @@ import {
   publishToolProgress,
   RunContext,
   RunId,
+  SessionEnvironment,
   ToolRegistry,
   TurnLive,
   TurnMemory,
@@ -337,6 +339,26 @@ describe("the registry refuses a call before its handler runs", () => {
     expect(turn.results).toEqual([expect.objectContaining({ error: "ToolInactive" }), "pong 1"])
     expect(turn.events.map((event) => `${event._tag}:${"invocationId" in event ? event.invocationId : ""}`)).toEqual([
       "tool.refused:run-1:call:0", "tool.started:run-1:call:1", "tool.completed:run-1:call:1",
+    ])
+  })
+})
+
+describe("opening a run's tools", () => {
+  const Look = Tool.make("look", { description: "Name the workspace.", parameters: Schema.Struct({}), success: Schema.String, failure: Failure, failureMode: "return" })
+  const Touch = Tool.make("touch", { description: "Touch the workspace.", parameters: Schema.Struct({}), success: Schema.String, failure: Failure, failureMode: "return" })
+  const declaring = defineCapability({
+    id: "declaring", version: "1",
+    tools: [
+      defineTool({ tool: Look, requires: [SessionEnvironment], handler: () => SessionEnvironment.pipe(Effect.map((environment) => environment.workspace)) }),
+      defineTool({ tool: Touch, requires: [FileSystem, SessionEnvironment], handler: () => Effect.all([FileSystem, SessionEnvironment], { concurrency: 1 }).pipe(Effect.as("touched")) }),
+    ],
+    skills: [defineSkill({ id: "declaring", summary: "Look and touch.", tools: [Look.name, Touch.name], always: true })],
+  })
+
+  test("fails with requires.missing, naming each tool and each service it declares that the run lacks, before any step", async () => {
+    const error = await Effect.runPromise(Effect.flip(harnessDefectsAsFailures(refusalTurn([], { capabilities: [declaring] }))))
+    expect([harnessCodeOf(error), isHarnessError(error) ? error.message : "none"]).toEqual([
+      Option.some("requires.missing"), `look requires ${SessionEnvironment.key}; touch requires ${FileSystem.key}, ${SessionEnvironment.key}`,
     ])
   })
 })

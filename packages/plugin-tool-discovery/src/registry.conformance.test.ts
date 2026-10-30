@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
-import { Capabilities, ToolRegistry, toolRegistryConformance } from "@xandreed/core"
+import { Capabilities, SessionEnvironment, ToolRegistry, toolRegistryConformance } from "@xandreed/core"
 import type { Capability, ConformanceCheck, ToolRegistryLimits } from "@xandreed/core"
 import { toolDiscoveryDefaults, ToolDiscoveryLive } from "./plugin.adapter.js"
 import { makeRegistry } from "./registry.adapter.js"
@@ -33,6 +33,22 @@ describe("the ToolRegistry kit catches careless registries", () => {
       open: (session) => registry.open(session).pipe(Effect.tap((tools) => tools.activate(tools.skills.filter((skill) => skill.permissions.length === 0).map((skill) => skill.id), "host"))),
     })))
     expect(await failedChecks(toolRegistryConformance(eager))).toEqual(["activation", "invocation", "refused-inactive"])
+  })
+
+  test("one that opens a run's tools without checking the services they declare fails only the requires-missing check", async () => {
+    const unchecked = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities.map((capability) => ({
+      ...capability,
+      tools: capability.tools.map((entry) => ({ tool: entry.tool, handler: entry.handler, view: entry.view, annotations: entry.annotations })),
+    })), limits)
+    expect(await failedChecks(toolRegistryConformance(unchecked))).toEqual(["requires-missing"])
+  })
+
+  test("one that opens the tools over services of its own fails the declared-services checks: the handler sees its workspace, and a run lacking one still opens", async () => {
+    const own = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities, limits).pipe(Effect.map((registry) => ToolRegistry.of({
+      ...registry,
+      open: (session) => registry.open(session).pipe(Effect.provideService(SessionEnvironment, { workspace: "the registry's" })),
+    })))
+    expect(await failedChecks(toolRegistryConformance(own))).toEqual(["requires-missing", "requires-opened"])
   })
 
   test("one whose catalog leaves out the permissions a tool needs fails only the catalog check", async () => {

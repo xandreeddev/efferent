@@ -69,12 +69,16 @@ export class TaskRunner extends Context.Service<TaskRunner, {
 
 /**
  * How the host runs the turns tasks need: the child's one turn, and the
- * parent's reaction to results. `agentTaskExecutor` (`@xandreed/sdk`) runs
- * both through an agent's `turn`.
+ * parent's reaction to results. Both run with `Tasks` in context, the
+ * `Tasks` whose work they are (the tasks plugin provides its own around the
+ * turns it hands over; a host that calls `react` itself, to drain a parent,
+ * provides its own), so the turns' `start_task` and `task_status` find it
+ * wherever the work runs. `agentTaskExecutor` (`@xandreed/sdk`) runs both
+ * through an agent's `turn`, with that `Tasks` among the turn's services.
  */
 export class TaskExecutor extends Context.Service<TaskExecutor, {
   /** Run the child's turn on its writer (the tasks plugin ends it). */
-  readonly turn: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, TurnError>
+  readonly turn: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, TurnError, Tasks>
   /** Run the parent's inbox turn on its writer. */
-  readonly react: (writer: TurnWriter) => Effect.Effect<void, TurnError>
+  readonly react: (writer: TurnWriter) => Effect.Effect<void, TurnError, Tasks>
 }>()("efferent/TaskExecutor") {}

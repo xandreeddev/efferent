@@ -45,7 +45,9 @@ const carrying = <A, E, R>(effect: Effect.Effect<A, E, R>, ids: Record<string, u
  * inbox), so any instance, or a later request, can finish what another
  * left: run a task that never ran, deliver a result that was never
  * delivered. Delivery is once per task (the inbox id), and whoever delivers
- * drains the parent, so it reacts after the answer in flight. Each method is
+ * drains the parent, so it reacts after the answer in flight. The turns it
+ * hands the executor (the child's, the parent's reactions) run with this
+ * `Tasks` in context. Each method is
  * a `tasks.<op>` span and a task's work a `task.run` span; they and their
  * logs carry `efferent.session.id` (the parent's) and, for one task,
  * `efferent.task.id`.
@@ -54,6 +56,13 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
   const sessions = yield* Sessions
   const runner = yield* TaskRunner
   const executor = yield* TaskExecutor
+
+  /**
+   * The executor's turns, run with this `Tasks` in context (`service`, built
+   * below): the work runs on the runner's fibers without its caller's
+   * services, and a turn's `start_task` and `task_status` read it.
+   */
+  const withTasks = <A, E>(turn: Effect.Effect<A, E, Tasks>): Effect.Effect<A, E> => Effect.provideService(turn, Tasks, service)
 
   const childOf = (parent: SessionAddress, task: ConversationId): SessionAddress => ({ id: task, owner: parent.owner })
 
@@ -127,7 +136,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
       // A cancel that landed after the task was read, before its turn began.
       const cancelledFirst = (yield* sessions.read(child, { kinds: [TASK_CANCELLED] })).length > 0
       const turn = cancelledFirst ? writer.end({ reason: "cancelled", failure: Option.none() }) : Effect.gen(function* () {
-        const exit = yield* Effect.exit(bounded(executor.turn(writer, { ...task, status: "running" }), writer, deadline))
+        const exit = yield* Effect.exit(bounded(withTasks(executor.turn(writer, { ...task, status: "running" })), writer, deadline))
         const result = resultOf(task.taskId, exit)
         const data = yield* resultJson(result)
         yield* writer.transact((foreign) => Effect.succeed({
@@ -194,13 +203,13 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
    */
   const reaction = (writer: TurnWriter, deadline: Option.Option<number>) => Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis
-    if (Option.isNone(deadline)) return yield* executor.react(writer)
+    if (Option.isNone(deadline)) return yield* withTasks(executor.react(writer))
     const cut = { code: "task.deadline", message: "the runner's deadline ended the inbox reaction" }
     if (deadline.value <= now) {
       return yield* writer.end({ reason: "interrupted", failure: Option.some({ ...cut, message: "the runner's deadline passed before the inbox reaction began" }) })
     }
     const answered = yield* Ref.make(false)
-    const reacted = yield* executor.react(noting(writer, answered)).pipe(Effect.timeoutOption(deadline.value - now))
+    const reacted = yield* withTasks(executor.react(noting(writer, answered))).pipe(Effect.timeoutOption(deadline.value - now))
     if (Option.isSome(reacted)) return
     yield* writer.end({ reason: (yield* Ref.get(answered)) ? "partial" : "interrupted", failure: Option.some(cut) })
   })
@@ -331,11 +340,12 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
   })
 
   // The helpers the methods share stay untraced: a span is one call of the service.
-  return Tasks.of({
+  const service = Tasks.of({
     start: Effect.fn("tasks.start")(start, (effect, parent) => carrying(effect, sessionIds(parent))),
     status: Effect.fn("tasks.status")(taskOf, (effect, parent, taskId) => carrying(effect, taskIds(parent, taskId))),
     list: Effect.fn("tasks.list")(listOf, (effect, parent) => carrying(effect, sessionIds(parent))),
     cancel: Effect.fn("tasks.cancel")(cancel, (effect, parent, taskId) => carrying(effect, taskIds(parent, taskId))),
     reconcile: Effect.fn("tasks.reconcile")(reconcile, (effect, parent) => carrying(effect, sessionIds(parent))),
   })
+  return service
 }))

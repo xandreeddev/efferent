@@ -13,7 +13,11 @@ explicit `plugin.adapter.ts` boundary: a layer may need only what its
 each declared key by key (`requires.missing`) and runs the work in the
 caller's own context, never a captured one. A plugin that does not compile
 against its declaration declares the service; never widen the layer's type
-or cast it through.
+or cast it through. `defineTool` holds a tool's handler to its `requires`
+the same way (`provideDeclared` under the tool's name, so the erased
+`RegisteredTool.handler` needs nothing), and keeps the declared keys,
+References aside, as `RegisteredTool.requires`: a registry checks them
+when it opens a run's tools (`toolRegistryConformance`).
 
 Tell a `HarnessError` (or another tagged error) by its tag and fields, with
 `isHarnessError` (`src/harness/plugin.entity.functions.ts`), never with

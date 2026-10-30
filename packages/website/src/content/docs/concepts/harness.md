@@ -162,6 +162,11 @@ before activation, and a failed activation closes its partially acquired
 scope. An agent whose turns would have no memory, tool registry or step loop
 is refused by `Agent.define` (`config.graph`, naming the missing service).
 
+A tool declares the services its handler reads too (`defineTool`'s
+`requires`; a handler that reads another does not compile), and a turn whose
+services lack one fails to open its tools with `requires.missing`, naming
+the tool and the service, before its first step.
+
 Options are given as `{ plugin, options }` entries in `Agent.define({ plugins })`.
 They merge over the plugin's defaults, nested objects key by key (an array,
 or an object of another of the shapes the schema allows, replaces its
@@ -286,7 +291,10 @@ a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`;
 the turn's origin is `task`. Its result lands in the parent's inbox once,
 and the parent answers it after the turn in flight. `agentTaskExecutor`
 from `@xandreed/sdk` runs the child's turn and the parent's reaction
-through the agent; build `Tasks` beside the agent with it
+through the agent, with the `Tasks` that hands them over among the turns'
+services, so their `start_task` and `task_status` work (a host draining a
+parent through the executor's `react` provides its `Tasks` too); build
+`Tasks` beside the agent with it
 (`TasksLive(tasksDefaults).pipe(Layer.provide(agentTaskExecutor(agent, { services })))`).
 See the framework guide's sessions section for the contract, the event
 vocabulary and the inbox protocol.

@@ -202,7 +202,7 @@ const Note = Tool.make("note", {
 })
 const noting = defineCapability({
   id: "test-noting", version: "1",
-  tools: [defineTool({ tool: Note, handler: ({ text }) => Tally.pipe(Effect.flatMap((tally) => tallied(tally, `tool:${text}`)), Effect.as(true)) })],
+  tools: [defineTool({ tool: Note, requires: [Tally], handler: ({ text }) => Tally.pipe(Effect.flatMap((tally) => tallied(tally, `tool:${text}`)), Effect.as(true)) })],
   skills: [defineSkill({ id: "noting", summary: "Take notes.", tools: ["note"], always: true })],
 })
 
@@ -1473,7 +1473,8 @@ describe("the inbox after Agent.turn", () => {
         return yield* turn.reply("started")
       }))
       const before = yield* Ref.get(reactions)
-      if ((result.pending ?? 0) > 0) yield* sessions.drain(journal.address, executor.react)
+      // The executor's turns run with the Tasks whose work they are: the caller's drain provides its own.
+      if ((result.pending ?? 0) > 0) yield* sessions.drain(journal.address, executor.react).pipe(Effect.provideService(Tasks, Context.get(services, Tasks)))
       return { pending: result.pending, before, after: yield* Ref.get(reactions) }
     })))
     expect([pending, before]).toEqual([1, []])

@@ -63,6 +63,9 @@ export class ToolRegistry extends Context.Service<ToolRegistry, {
    * Open the tools of one run. The handlers run with the services of where
    * it is opened (host services, run layers, RunContext), captured at open;
    * an IntentMatcher, ActionPolicy and PermissionGrants there are used.
+   * Every service a tool declares (`RegisteredTool.requires`) must be
+   * there: a missing one fails the open with `requires.missing`, naming the
+   * tool and the service, before any step runs.
    */
   readonly open: (session: MemorySession) => Effect.Effect<RunTools, TurnError, RunContext | Scope.Scope>
 }>()("efferent/ToolRegistry") {}

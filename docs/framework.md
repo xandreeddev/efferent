@@ -895,7 +895,10 @@ needs per turn (a `ResultDigester`, a summarizer's `UtilityLlm`) with
 the open, not as an argument. `ToolRegistry.open(session)` requires
 `RunContext` and a scope, and its handlers run with the services of where it
 is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
-`PermissionGrants` there are used when present. The run's `handlers` (and a
+`PermissionGrants` there are used when present. Every service a tool
+declares (`RegisteredTool.requires`, from `defineTool`'s `requires`) must be
+there: a run lacking one fails to open with `requires.missing`, naming the
+tool and the service, before its first step. The run's `handlers` (and a
 `StepRequest`'s) are a `Context<ToolHandlers>`, what `toolkit.toHandlers`
 returns: provided to the run's `toolkit`, they meet its requirement with no
 cast. A custom `ToolRegistry` builds them the same way, with `toHandlers`.
@@ -924,7 +927,8 @@ lease (a turn is judged as it was taken), and, for an instance with a
 `TurnActivity`, that it counts
 each begin from the moment it is asked for and each turn per session and
 turn until its scope closes. The Tasks kit gives the backend its own runner
-and executor; the TaskRunner kit checks a runner the host makes. Both wait
+and executor, and checks that the executor's turns run with the backend's
+`Tasks`; the TaskRunner kit checks a runner the host makes. Both wait
 up to two seconds on the live clock for background work, so run them
 without a `TestClock`; so do the turn kit's checks that cancel a turn or
 fill a background queue. The registry kit runs each turn over `TurnLive` and
@@ -1018,7 +1022,7 @@ write, edit, ls, find, grep and bash, over `FileSystem` and `Bash`) ship in
 [Skills from a directory](#skills-from-a-directory)).
 
 **Tool discovery.** Hosts contribute tools (`defineTool`: handler, view,
-annotations) and skills (`defineSkill`, `skillsFromFiles` over files the host
+annotations, and the services the handler reads as `requires`) and skills (`defineSkill`, `skillsFromFiles` over files the host
 read, or directories of `SKILL.md` files through `skillsDirectoryPlugin`: see
 [Skills from a directory](#skills-from-a-directory)). The registry keeps a
 grow-only active set in memory:
@@ -1035,6 +1039,33 @@ instructions on it: `defineSkill` takes none for one (`instructions` does
 not compile with `always: true`). Put what its tools need in their
 descriptions or in a prompt section; the skills directory renders its file
 skills' own in a section.
+
+A tool's handler may read only the services its `requires` lists (a
+Reference, which has a default, needs no entry): one that reads another does
+not compile. The handler gets them from where the run's tools were opened,
+and the registry checks every declared one when it opens them, so a turn
+lacking one fails to open its tools with `requires.missing`, naming the tool
+and the service, instead of failing the call mid-turn:
+
+```ts
+import { Tool } from "effect/ai"
+import { Effect, Schema } from "effect"
+import { defineTool, Failure, SessionEnvironment } from "@xandreed/core"
+
+const Workspace = Tool.make("workspace", {
+  description: "Name the workspace this conversation works in.",
+  parameters: Schema.Struct({}),
+  success: Schema.String,
+  failure: Failure,
+  failureMode: "return",
+})
+
+const workspace = defineTool({
+  tool: Workspace,
+  requires: [SessionEnvironment],
+  handler: () => SessionEnvironment.pipe(Effect.map((environment) => environment.workspace)),
+})
+```
 
 `turn.tools.select(userMessage)` activates the `always` skills and, when the
 turn's services carry an `IntentMatcher`, the skills it selects (the matcher
@@ -1166,7 +1197,9 @@ call works through the `FileSystem`, `Bash` and `SessionEnvironment` of the
 turn it runs in, so `localSystemPlugin` (the local disk and shell), an
 in-memory `FileSystemMemoryLive` or a host's own adapters all serve them.
 `workspaceTools(config)` builds the same capability for a host that stacks
-layers itself.
+layers itself. Each tool declares those services (`bash` adds `Bash`), so a
+turn whose services lack one fails to open its tools with
+`requires.missing`.
 
 | Tool | Skill | Parameters | Result |
 | --- | --- | --- | --- |
@@ -2052,12 +2085,18 @@ task's turn stored before tasks had an origin of their own reads as a
 user's, its task id in `command.task`, and a task started before
 `startedBy` may carry its run's id in `meta.runId`.
 
-The executor runs the turns the tasks plugin begins and ends. The sdk's
+The executor runs the turns the tasks plugin begins and ends, with `Tasks`
+in context (`TaskExecutor`'s methods require it): the tasks plugin
+provides its own around the turns it hands over, and a host that drains a
+parent through the executor's `react` itself provides one. The sdk's
 `agentTaskExecutor(agent, { services, child?, react? })` is one over an
 agent (`Agent.turn`, or any `TurnRunner`): it runs the child's turn with
 `child(turn, task)` and the parent's reaction with `react(turn)`, each by
 default the turn's skills selected, then one run of the step loop, whose
-text is the reply, with `services` as the turns' services. Build `Tasks`
+text is the reply, with `services` and that `Tasks` as the turns'
+services, so their `start_task` and `task_status` (which declare `Tasks`)
+open: a task's own `start_task` is refused (`depth`), and a reaction's may
+start another task. Build `Tasks`
 beside the agent rather than as one of its plugins (the executor needs the
 agent first):
 

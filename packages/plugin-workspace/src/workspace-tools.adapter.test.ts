@@ -43,7 +43,7 @@ const bench = (options: Partial<WorkspaceToolsConfig> = {}, planted: Readonly<Re
 
 const caller = (capability: Capability, services: Context.Context<never>): Call => (name, params) => Option.match(Option.fromNullishOr(capability.tools.find((entry) => entry.tool.name === name)), {
   onNone: () => Effect.die(`no tool ${name}`),
-  onSome: (entry) => entry.handler(params).pipe(Effect.provide(services)) as Effect.Effect<unknown, unknown>,
+  onSome: (entry) => entry.handler(params).pipe(Effect.provide(services)),
 })
 
 /** The result of a call that must succeed, decoded with its schema. */
@@ -602,6 +602,15 @@ describe("workspaceToolsPlugin", () => {
       ["workspace.edit", false, ["fs.write"]],
     ])
     expect(capability.promptSections.map((section) => [section.id, section.tier, section.order])).toEqual([["workspace.environment", "session", 800]])
+  })
+
+  test("each tool declares the services it reads on each call: the file system and the session's workspace, and bash the shell too", async () => {
+    const { capability } = await scoped(bench())
+    const workspace = [FileSystem.key, SessionEnvironment.key]
+    expect(capability.tools.map((entry) => [entry.tool.name, entry.requires])).toEqual([
+      ...["read", "ls", "find", "grep", "write", "edit"].map((name) => [name, workspace]),
+      ["bash", [...workspace, Bash.key]],
+    ])
   })
 
   test("resolves in a graph after the local system, with Bash, and refuses bad options", async () => {
