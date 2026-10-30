@@ -4,7 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Database } from "bun:sqlite"
 import { Context, Effect, Exit, Layer, Option, Scope, Tracer } from "effect"
-import { ConversationId, SessionLog, sessionLogConformance, sessionLogRecoveryConformance } from "@xandreed/core"
+import { ConversationId, SessionLog } from "@xandreed/core"
+import { sessionLogConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import { makeSessionLogSqlite, openSessionDatabase, SessionLogSqliteLive } from "./session-log.adapter.js"
 
 const directory = join(tmpdir(), `efferent-session-log-${crypto.randomUUID()}`)

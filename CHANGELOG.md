@@ -1200,6 +1200,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/core/models` to the models plugin.
 - `@xandreed/plugin-render` imports and re-exports `ConformanceFailure` from
   `@xandreed/core/conformance` instead of core's deprecated root name.
+- `@xandreed/plugin-session-sqlite`'s tests import the session-log and
+  sessions kits from `@xandreed/core/conformance`.
 
 ### Deprecated
 
