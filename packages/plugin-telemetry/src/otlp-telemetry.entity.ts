@@ -1,15 +1,27 @@
 import { Schema } from "effect"
 import type { Duration, Option } from "effect"
 
-/** How a signal's batches are encoded: OTLP/HTTP protobuf (the OpenTelemetry default) or JSON. gRPC is not supported. */
+/**
+ * How a signal's batches are encoded: OTLP/HTTP protobuf (the OpenTelemetry default) or JSON. gRPC is not supported.
+ *
+ * @public
+ */
 export const OtlpProtocol = Schema.Literals(["http/protobuf", "http/json"])
 export type OtlpProtocol = typeof OtlpProtocol.Type
 
-/** Request compression; gzip leaves a batch under 1 KB uncompressed. */
+/**
+ * Request compression; gzip leaves a batch under 1 KB uncompressed.
+ *
+ * @public
+ */
 export const OtlpCompression = Schema.Literals(["gzip", "none"])
 export type OtlpCompression = typeof OtlpCompression.Type
 
-/** How counters and histograms are reported: totals since the start (`cumulative`) or since the last export (`delta`). */
+/**
+ * How counters and histograms are reported: totals since the start (`cumulative`) or since the last export (`delta`).
+ *
+ * @public
+ */
 export const OtlpTemporality = Schema.Literals(["cumulative", "delta"])
 export type OtlpTemporality = typeof OtlpTemporality.Type
 
@@ -38,6 +50,8 @@ export type OtlpSignal = "traces" | "metrics"
  *   traces, 10 s for metrics); `shutdownTimeout`: how long closing the layer
  *   waits for the last export (3 s).
  * - `metricsTemporality`: `"cumulative"` by default.
+ *
+ * @public
  */
 export interface OtlpTelemetryOptions {
   readonly baseUrl?: string

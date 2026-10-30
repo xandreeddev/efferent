@@ -124,6 +124,8 @@ const transportLayer = (config: Config): Effect.Effect<Layer.Layer<never, Harnes
  * refreshes, the OpenAI subscription's WebSocket) goes through one
  * `ModelsTransport`, the `noProxy` / `NO_PROXY` hosts and loopback direct;
  * so do they through a host's own transport.
+ *
+ * @public
  */
 export const modelsPlugin = definePlugin({
   id: "@xandreed/plugin-models", version: "0.14.0", scope: "runtime", config: Config,

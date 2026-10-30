@@ -19,6 +19,8 @@ export const usesOpenCodeResponses = (modelId: string): boolean =>
  * OpenCode's other models are text-only until each is verified. A
  * configured endpoint says so itself (`ModelEndpoint.images`). Where it is
  * false, a request's images are sent as label lines.
+ *
+ * @public
  */
 export const imageInputFor = (selection: string): boolean =>
   Option.exists(modelProfileOf(selection), (model) => model.images)
@@ -58,9 +60,14 @@ export const configuredModelCatalog = (
     }),
   )
 
+/** @public */
 export type ReasoningEffort = ReasoningEffortType
 
-/** The reasoning controls accepted by each routed model (its profile's efforts; none for a provider not built in). */
+/**
+ * The reasoning controls accepted by each routed model (its profile's efforts; none for a provider not built in).
+ *
+ * @public
+ */
 export const reasoningEffortsFor = (selection: string): ReadonlyArray<ReasoningEffort> =>
   Option.match(modelProfileOf(selection), { onNone: () => [], onSome: (model) => model.efforts })
 
@@ -76,7 +83,11 @@ export type PublicReasoningEffort = "low" | "medium" | "high"
 export const publicReasoningEffort = (effort: ReasoningEffort): PublicReasoningEffort =>
   effort === "xhigh" || effort === "max" ? "high" : effort === "none" ? "low" : effort
 
-/** The catalog over the AuthStore's credentials and the configured endpoints (`CurrentModelEndpoints`). */
+/**
+ * The catalog over the AuthStore's credentials and the configured endpoints (`CurrentModelEndpoints`).
+ *
+ * @public
+ */
 export const ConfiguredModelCatalogLive = Layer.effect(
   ModelCatalog,
   Effect.all({ auth: AuthStore, endpoints: Effect.service(CurrentModelEndpoints) }, { concurrency: 1 }).pipe(Effect.map(({ auth, endpoints }) => ({

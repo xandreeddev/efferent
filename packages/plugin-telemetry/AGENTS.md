@@ -43,6 +43,16 @@ on Node and Bun in `bun run verify:packages`).
   value elsewhere never fails a host that exports nothing. The export is a
   Layer around the host's program, not a plugin: the `Tracer` and the
   metric registry are fiber references a plugin's `provides` cannot reach.
+- Public surface: the root names each export, and
+  `quality/exports-have-consumers` checks each one. The scripts and other
+  packages' tests import `telemetryPlugin`, `OtlpTelemetryLive` and
+  `flushTelemetry`; the rest are tagged `@public` at their declarations:
+  the turn's layers (`TelemetryPluginLive`, `TurnTelemetryLive`), their
+  options (`TelemetryOptions`, `telemetryDefaults`), `TelemetryMetrics`,
+  the export's layers (`OtlpTelemetryHttpLive`, `OtlpTelemetryHttpFromEnv`,
+  `OtlpTelemetryFromEnv`) and their options (`OtlpTelemetryOptions`,
+  `OtlpProtocol`, `OtlpCompression`, `OtlpTemporality`). How a usage splits
+  into token kinds (`tokenCounts`, `TokenKind`) stays inside the package.
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks, and
 the website's `concepts/observability.md` for the user-facing contract.

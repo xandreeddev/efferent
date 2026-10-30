@@ -169,8 +169,9 @@ changelog aside), or a `@public` tag; `export *` fails, and so does a
 uses per gate run from the `workspace` every rule's context carries (the
 root and the program's source files), reading the scripts and the
 markdown through `ts.sys`. Its include lists entry files, never globs
-over a package (`CURATED_ENTRIES` in the root config); the vendored
-`quality` pack does not carry it.
+over a package: in the root config `CURATED_ENTRIES`, every published
+entry, where a `const` registry of the registration gate requires each
+package's root entry. The vendored `quality` pack does not carry it.
 
 Fixtures live OUTSIDE `src/` (`fixtures/`) so the root typecheck and the
 self-check never see their deliberate violations.

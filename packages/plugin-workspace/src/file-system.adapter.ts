@@ -157,5 +157,9 @@ export const localFileSystem: Fs = FileSystem.of({
   remove,
 })
 
-/** The local `FileSystem` (`localFileSystem`) as a layer. */
+/**
+ * The local `FileSystem` (`localFileSystem`) as a layer.
+ *
+ * @public
+ */
 export const FileSystemLive: Layer.Layer<FileSystem> = Layer.succeed(FileSystem, localFileSystem)

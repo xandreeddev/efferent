@@ -19,7 +19,11 @@ export const InboxSlot = Schema.Struct({
 })
 export type InboxSlot = typeof InboxSlot.Type
 
-/** Where a process-owned turn's holder runs: its host, its pid, and when that process started (a pid is reused). */
+/**
+ * Where a process-owned turn's holder runs: its host, its pid, and when that process started (a pid is reused).
+ *
+ * @public
+ */
 export const HolderProcess = Schema.Struct({ host: Schema.String, pid: Schema.Int, startedAt: Schema.Number })
 export type HolderProcess = typeof HolderProcess.Type
 
@@ -43,6 +47,8 @@ export type SessionsState = typeof SessionsState.Type
  * judges it by that, whatever its own ownership: a change of ownership
  * between restarts, or instances that differ in it, neither hold a turn
  * forever nor reap one that is still held.
+ *
+ * @public
  */
 export const Ownership = Schema.Union([
   Schema.Struct({

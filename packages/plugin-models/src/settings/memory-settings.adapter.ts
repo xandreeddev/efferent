@@ -8,6 +8,8 @@ import { applyRole, applySetting } from "./settings-value.entity.functions.js"
  * `setRole` and `set` check their value the way the file store does
  * (a `"<provider>:<modelId>"` selection; each key's string form) and refuse
  * one that does not parse, leaving the settings as they were.
+ *
+ * @public
  */
 export const MemorySettingsStoreLive = (initial: EngineSettings = new EngineSettings({})): Layer.Layer<SettingsStore> =>
   Layer.effect(SettingsStore, Effect.gen(function* () {

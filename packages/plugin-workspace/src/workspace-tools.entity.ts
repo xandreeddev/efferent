@@ -1,7 +1,11 @@
 import { Effect, Result, Schema } from "effect"
 import { AttachmentRejectedReason, BASH_ENV_ALLOWLIST, BashTermination, compileGlob, FsReason, ImageMediaType, Media } from "@xandreed/core"
 
-/** The seven workspace tools, by the names the model calls them. */
+/**
+ * The seven workspace tools, by the names the model calls them.
+ *
+ * @public
+ */
 export const WorkspaceToolName = Schema.Literals(["read", "write", "edit", "ls", "find", "grep", "bash"])
 export type WorkspaceToolName = typeof WorkspaceToolName.Type
 
@@ -9,11 +13,17 @@ export type WorkspaceToolName = typeof WorkspaceToolName.Type
  * The tools' three skills, by the short names `always` takes: `read`
  * (`workspace.read`: read, ls, find, grep), `edit` (`workspace.edit`: write,
  * edit) and `shell` (`workspace.shell`: bash).
+ *
+ * @public
  */
 export const WorkspaceSkillName = Schema.Literals(["read", "edit", "shell"])
 export type WorkspaceSkillName = typeof WorkspaceSkillName.Type
 
-/** The grants the tools that change things need: `write` and `edit` need `fs.write`, `bash` needs `shell.exec`. */
+/**
+ * The grants the tools that change things need: `write` and `edit` need `fs.write`, `bash` needs `shell.exec`.
+ *
+ * @public
+ */
 export const WORKSPACE_PERMISSIONS = { write: "fs.write", exec: "shell.exec" } as const
 
 const atLeast = (minimum: number) => Schema.Int.check(Schema.isGreaterThanOrEqualTo(minimum))
@@ -75,6 +85,8 @@ const Glob = Schema.String.check(Schema.makeFilter((glob: string) =>
  *   one `tool.progress` event per run of output from one stream.
  * - `environmentSection`, `sectionOrder`: the `workspace.environment`
  *   system-prompt section (tier `session`) and its order.
+ *
+ * @public
  */
 export const WorkspaceToolsConfig = Schema.Struct({
   tools: Schema.Array(WorkspaceToolName),
@@ -105,6 +117,7 @@ export const WorkspaceToolsConfig = Schema.Struct({
 }).check(Schema.makeFilter((config) => config.bashTimeoutMs <= config.bashMaxTimeoutMs ? true : "bashTimeoutMs must not exceed bashMaxTimeoutMs"))
 export type WorkspaceToolsConfig = typeof WorkspaceToolsConfig.Type
 
+/** @public */
 export const workspaceToolsDefaults: WorkspaceToolsConfig = {
   tools: ["read", "write", "edit", "ls", "find", "grep", "bash"],
   always: ["read"],
@@ -135,7 +148,11 @@ export const workspaceToolsDefaults: WorkspaceToolsConfig = {
 
 /* ── what each tool takes and returns ── */
 
-/** `read`: a file's lines from `offset` (1-based, default 1), at most `limit` of them (and never more than the configured window). */
+/**
+ * `read`: a file's lines from `offset` (1-based, default 1), at most `limit` of them (and never more than the configured window).
+ *
+ * @public
+ */
 export const ReadParams = Schema.Struct({
   path: Schema.String,
   offset: Schema.optionalKey(atLeast(1)),
@@ -156,6 +173,8 @@ export type ReadParams = typeof ReadParams.Type
  * over `MEDIA_LIMITS.maxPixels` a side, or a header without a size) is an
  * `ImageRejected` note: its type, size and why. Any other binary file is
  * `Binary`, with the media type its name suggests.
+ *
+ * @public
  */
 export const ReadResult = Schema.Union([
   Schema.TaggedStruct("Text", {
@@ -187,17 +206,27 @@ export const ReadResult = Schema.Union([
 ])
 export type ReadResult = typeof ReadResult.Type
 
+/** @public */
 export const WriteParams = Schema.Struct({ path: Schema.String, content: Schema.String })
 export type WriteParams = typeof WriteParams.Type
 
-/** What `write` did: how many bytes it wrote, and whether the file is new. */
+/**
+ * What `write` did: how many bytes it wrote, and whether the file is new.
+ *
+ * @public
+ */
 export const WriteResult = Schema.Struct({ path: Schema.String, bytes: Schema.Int, created: Schema.Boolean })
 export type WriteResult = typeof WriteResult.Type
 
-/** One replacement: `oldText` (exactly once in the file) becomes `newText`. */
+/**
+ * One replacement: `oldText` (exactly once in the file) becomes `newText`.
+ *
+ * @public
+ */
 export const TextEdit = Schema.Struct({ oldText: Schema.String, newText: Schema.String })
 export type TextEdit = typeof TextEdit.Type
 
+/** @public */
 export const EditParams = Schema.Struct({ path: Schema.String, edits: Schema.NonEmptyArray(TextEdit) })
 export type EditParams = typeof EditParams.Type
 
@@ -205,6 +234,8 @@ export type EditParams = typeof EditParams.Type
  * What `edit` did: how many blocks it replaced, whether any was found only
  * after normalising, the first changed line, and the change as a unified
  * diff (for a host's UI; the model is shown a one-line summary).
+ *
+ * @public
  */
 export const EditResult = Schema.Struct({
   path: Schema.String,
@@ -215,23 +246,35 @@ export const EditResult = Schema.Struct({
 })
 export type EditResult = typeof EditResult.Type
 
+/** @public */
 export const LsParams = Schema.Struct({ path: Schema.optionalKey(Schema.String), limit: Schema.optionalKey(atLeast(1)) })
 export type LsParams = typeof LsParams.Type
 
+/** @public */
 export const LsEntry = Schema.Struct({ name: Schema.String, kind: Schema.Literals(["file", "directory", "symlink", "other"]) })
 export type LsEntry = typeof LsEntry.Type
 
-/** A directory's entries by name, at most the limit of them; `total` counts them all. */
+/**
+ * A directory's entries by name, at most the limit of them; `total` counts them all.
+ *
+ * @public
+ */
 export const LsResult = Schema.Struct({ path: Schema.String, entries: Schema.Array(LsEntry), total: Schema.Int })
 export type LsResult = typeof LsResult.Type
 
+/** @public */
 export const FindParams = Schema.Struct({ pattern: Schema.String, path: Schema.optionalKey(Schema.String), limit: Schema.optionalKey(atLeast(1)) })
 export type FindParams = typeof FindParams.Type
 
-/** The files a glob matched, as paths relative to the workspace root; `truncated` when more matched. */
+/**
+ * The files a glob matched, as paths relative to the workspace root; `truncated` when more matched.
+ *
+ * @public
+ */
 export const FindResult = Schema.Struct({ pattern: Schema.String, path: Schema.String, paths: Schema.Array(Schema.String), truncated: Schema.Boolean })
 export type FindResult = typeof FindResult.Type
 
+/** @public */
 export const GrepParams = Schema.Struct({
   pattern: Schema.String,
   path: Schema.optionalKey(Schema.String),
@@ -243,11 +286,19 @@ export const GrepParams = Schema.Struct({
 })
 export type GrepParams = typeof GrepParams.Type
 
-/** One line `grep` shows: a matching line, or (`match: false`) a line of context around one. `text` is cut to the configured width. */
+/**
+ * One line `grep` shows: a matching line, or (`match: false`) a line of context around one. `text` is cut to the configured width.
+ *
+ * @public
+ */
 export const GrepLine = Schema.Struct({ path: Schema.String, line: Schema.Int, text: Schema.String, match: Schema.Boolean })
 export type GrepLine = typeof GrepLine.Type
 
-/** A file `grep` could not read, and why (`Permission` when access was denied). */
+/**
+ * A file `grep` could not read, and why (`Permission` when access was denied).
+ *
+ * @public
+ */
 export const GrepUnreadable = Schema.Struct({ path: Schema.String, reason: FsReason })
 export type GrepUnreadable = typeof GrepUnreadable.Type
 
@@ -257,6 +308,8 @@ export type GrepUnreadable = typeof GrepUnreadable.Type
  * limit, how many files it skipped (binary, larger than `maxFileBytes`, or
  * resolving outside the workspace), and the files it could not read
  * (`unreadable`, empty in results stored before it was recorded).
+ *
+ * @public
  */
 export const GrepResult = Schema.Struct({
   pattern: Schema.String,
@@ -270,7 +323,11 @@ export const GrepResult = Schema.Struct({
 })
 export type GrepResult = typeof GrepResult.Type
 
-/** `bash`: the command, its timeout in seconds, and what to write to its standard input. */
+/**
+ * `bash`: the command, its timeout in seconds, and what to write to its standard input.
+ *
+ * @public
+ */
 export const BashParams = Schema.Struct({
   command: Schema.String,
   timeout: Schema.optionalKey(atLeast(1)),
@@ -285,6 +342,8 @@ export type BashParams = typeof BashParams.Type
  * workspace root; null when nothing was saved). The file holds at most
  * `maxFileBytes` of the output, its start: `fullOutputCut` when there was
  * more, which was not saved.
+ *
+ * @public
  */
 export const BashToolResult = Schema.Struct({
   command: Schema.String,
@@ -300,7 +359,11 @@ export const BashToolResult = Schema.Struct({
 })
 export type BashToolResult = typeof BashToolResult.Type
 
-/** The tools' names and schemas, for `onTool` subscriptions (a UI showing `edit` diffs, say). */
+/**
+ * The tools' names and schemas, for `onTool` subscriptions (a UI showing `edit` diffs, say).
+ *
+ * @public
+ */
 export const workspaceToolSchemas = {
   read: { name: "read", parametersSchema: ReadParams, successSchema: ReadResult },
   write: { name: "write", parametersSchema: WriteParams, successSchema: WriteResult },

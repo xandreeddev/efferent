@@ -20,6 +20,8 @@ import { Context, Schema } from "effect"
  * after the tool results; without it they are label lines.
  * The endpoint's usage is read in full: cache reads and writes from
  * `prompt_tokens_details`, reasoning from `completion_tokens_details`.
+ *
+ * @public
  */
 export const ModelEndpoint = Schema.Struct({
   url: Schema.String,
@@ -34,11 +36,19 @@ export const ModelEndpoint = Schema.Struct({
 }).annotate({ messageUnexpectedKey: "not an option of a model endpoint" })
 export type ModelEndpoint = typeof ModelEndpoint.Type
 
-/** Endpoints by provider name; a name that matches a built-in provider replaces it. */
+/**
+ * Endpoints by provider name; a name that matches a built-in provider replaces it.
+ *
+ * @public
+ */
 export const ModelEndpoints = Schema.Record(Schema.String, ModelEndpoint)
 export type ModelEndpoints = typeof ModelEndpoints.Type
 
-/** The endpoints the models plugin was configured with; none by default. */
+/**
+ * The endpoints the models plugin was configured with; none by default.
+ *
+ * @public
+ */
 export const CurrentModelEndpoints = Context.Reference<ModelEndpoints>("@xandreed/plugin-models/CurrentModelEndpoints", {
   defaultValue: () => ({}),
 })

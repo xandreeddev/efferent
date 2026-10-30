@@ -35,6 +35,8 @@ const readRoot = (root: string, config: SkillsDirectoryConfig): Effect.Effect<Op
  * the ids prefixed, the first root winning a clash, issues failing
  * (`strict`) or logged, and the limits checked. What `skillsDirectoryPlugin`
  * contributes; a host that composes capabilities itself can call it.
+ *
+ * @public
  */
 export const loadSkillsDirectory = (config: SkillsDirectoryConfig, workspace: string): Effect.Effect<ReadonlyArray<SkillDefinition>, HarnessError, FileSystem> =>
   Effect.forEach(config.roots, (root) => readRoot(resolve(workspace, root), config), { concurrency: 1 }).pipe(
@@ -67,5 +69,9 @@ export const skillsDirectoryPlugin = definePlugin({
     return [skillsCapability(skills, config)]
   })),
 })
-/** The skills directory as a typed layer: contributes `Capabilities`; requires `FileSystem` (and reads `SessionEnvironment` when present). */
+/**
+ * The skills directory as a typed layer: contributes `Capabilities`; requires `FileSystem` (and reads `SessionEnvironment` when present).
+ *
+ * @public
+ */
 export const SkillsDirectoryPluginLive = skillsDirectoryPlugin.live

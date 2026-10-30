@@ -16,6 +16,8 @@ import { Metric } from "effect"
  * | `efferent.tool.duration` | `efferent.tool`, `efferent.ok` | those calls' time in milliseconds, from `tool.started` to the handler's exit |
  * | `efferent.tool.refused` | `efferent.tool`, `efferent.refusal.reason` | calls the tool registry refused before the handler ran |
  * | `efferent.stream.fallbacks` | — | streamed model calls that failed before their first part and were answered by a non-streamed call |
+ *
+ * @public
  */
 export const TelemetryMetrics = {
   tokens: Metric.counter("efferent.llm.tokens", {

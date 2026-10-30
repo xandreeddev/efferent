@@ -103,9 +103,14 @@ const ENVIRONMENT_EDGES = ["**/main.ts", "packages/plugin-workspace/src/bash.ada
 const src = (name: string): string => `packages/${name}/src/**`
 
 /**
- * The package entries whose every export has a first-party consumer or a
- * `@public` tag (`quality/exports-have-consumers`): entry files, not
- * globs, one per line. An entry joins once its surface is curated.
+ * Every published entry, one file per line: each `exports` subpath of each
+ * package the build publishes (`names` in scripts/build-packages.ts), whose
+ * every export has a first-party consumer or a `@public` tag
+ * (`quality/exports-have-consumers`). The rule fails on a listed file no
+ * subpath points at, and the registration gate on a package whose root
+ * entry is missing here; a subpath joins in the change that adds it to
+ * `exports`. A hand list, not one derived from the manifests: the
+ * registration gate reads its entries from the source.
  */
 const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/core/src/index.ts",
@@ -120,7 +125,18 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/plugin-render/src/index.ts",
   "packages/plugin-render/src/output.ts",
   "packages/plugin-agent-loop/src/index.ts",
+  "packages/plugin-models/src/index.ts",
+  "packages/plugin-models/src/compat/index.ts",
   "packages/plugin-models/src/conformance/index.ts",
+  "packages/plugin-memory-window/src/index.ts",
+  "packages/plugin-memory-summary/src/index.ts",
+  "packages/plugin-memory-digest/src/index.ts",
+  "packages/plugin-tool-discovery/src/index.ts",
+  "packages/plugin-session-sqlite/src/index.ts",
+  "packages/plugin-sessions/src/index.ts",
+  "packages/plugin-tasks/src/index.ts",
+  "packages/plugin-workspace/src/index.ts",
+  "packages/plugin-telemetry/src/index.ts",
   "packages/sdk/src/index.ts",
   "packages/sdk/src/conformance/index.ts",
 ]
@@ -260,10 +276,11 @@ const privateText: NonNullable<typeof GateSuiteConfig.Encoded["privateText"]> = 
 /**
  * A package is gated, built and published only once it is listed by hand:
  * in CHECKED, in a boundaries layer below, in the build's `names`, in the
- * base tsconfig's `paths` and, for a plugin, in the plugin reference's
- * `firstParty`. The registration gate fails on every package one of them
- * misses, naming the list. The docs site is not a TypeScript package of the
- * framework, and foundry is development tooling: never built or published.
+ * base tsconfig's `paths`, its root entry in CURATED_ENTRIES and, for a
+ * plugin, in the plugin reference's `firstParty`. The registration gate
+ * fails on every package one of them misses, naming the list. The docs site
+ * is not a TypeScript package of the framework, and foundry is development
+ * tooling: never built or published.
  */
 const registration: NonNullable<typeof GateSuiteConfig.Encoded["registration"]> = {
   roots: ["packages"],
@@ -281,6 +298,14 @@ const registration: NonNullable<typeof GateSuiteConfig.Encoded["registration"]> 
       entry: "{dir}",
       exclude: ["packages/foundry"],
       hint: 'add "{dir}" to `names` in scripts/build-packages.ts; an unlisted package is never built, verified or published',
+    },
+    {
+      source: "const",
+      file: "foundry.config.ts",
+      name: "CURATED_ENTRIES",
+      entry: "{path}/src/index.ts",
+      exclude: ["packages/foundry"],
+      hint: 'add "{path}/src/index.ts", and each subpath entry of its package.json `exports`, to CURATED_ENTRIES in foundry.config.ts: each export is then imported by another package, a script or a doc code block, or tagged @public',
     },
     { source: "json-keys", file: "tsconfig.base.json", keys: ["compilerOptions", "paths"], entry: "{name}" },
     {
@@ -359,7 +384,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-unknown-requirements", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_REQUIREMENT_EDGES },
     { rule: "quality/no-skipped-tests", include: CHECKED },
     { rule: "quality/no-empty-catch", include: CHECKED },
-    // One entry at a time (the list above).
+    // Every published entry (the list above).
     { rule: "quality/exports-have-consumers", include: CURATED_ENTRIES },
     { rule: "architecture/no-raw-promise-core", include: CHECKED },
     { rule: "architecture/no-runtime-imports-core", include: CHECKED },

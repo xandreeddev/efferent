@@ -21,6 +21,8 @@ const signalled = (error: unknown): boolean => !Option.contains(errorCodeOf(erro
  * Process ownership's default liveness: this process by its host, pid and
  * start time, and a pid of this host runs while `kill(pid, 0)` finds it.
  * Without a process (another runtime), turns name none and nothing is asked.
+ *
+ * @public
  */
 export const processLiveness: ProcessLiveness = {
   current: running.pipe(Effect.map(Option.flatMap((current) => Option.map(hostOf(current), (host): HolderProcess => ({

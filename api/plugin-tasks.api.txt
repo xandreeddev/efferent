@@ -12,7 +12,6 @@ const TasksLive
 const TasksPluginLive
 const default
 const deliveryId
-const noticeOf
 const tasksCapability
 const tasksDefaults
 const tasksPlugin

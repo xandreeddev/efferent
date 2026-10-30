@@ -1,9 +1,7 @@
 const ToolDiscoveryConfig
 const ToolDiscoveryLive
-const catalogText
 const default
 const makeRegistry
-const skillInstructions
 const toolDiscoveryDefaults
 const toolDiscoveryPlugin
 interface DiscoveryConfig

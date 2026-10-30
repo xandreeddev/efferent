@@ -1,6 +1,10 @@
 import { Schema } from "effect"
 
-/** A proxy URL as an option takes it: a string, or a `Redacted` one when it carries credentials. */
+/**
+ * A proxy URL as an option takes it: a string, or a `Redacted` one when it carries credentials.
+ *
+ * @public
+ */
 export const ProxyUrlOption = Schema.Union([
   Schema.String,
   Schema.Redacted(Schema.String).annotate({ message: "proxy is a URL string or a Redacted one" }),
@@ -16,6 +20,8 @@ export type ProxyUrlOption = typeof ProxyUrlOption.Type
  * `HTTPS_PROXY` and `http_proxy` / `HTTP_PROXY` apply. `noProxy` lists the
  * hosts that go direct, in NO_PROXY syntax, added to the environment's
  * `no_proxy` / `NO_PROXY`; `"*"` turns the proxy off.
+ *
+ * @public
  */
 export const HttpProxyOptions = Schema.Struct({
   proxy: Schema.optionalKey(ProxyUrlOption),
@@ -72,13 +78,21 @@ export class ProxyConfig extends Schema.Class<ProxyConfig>("ProxyConfig")({
   noProxy: Schema.Array(NoProxyRule),
 }) {}
 
-/** A proxy URL that cannot be used: not a URL, or not `http://` / `https://`. `source` names where it came from. */
+/**
+ * A proxy URL that cannot be used: not a URL, or not `http://` / `https://`. `source` names where it came from.
+ *
+ * @public
+ */
 export class ProxyInvalid extends Schema.TaggedError<ProxyInvalid>()("ProxyInvalid", {
   source: Schema.String,
   message: Schema.String,
 }) {}
 
-/** A proxy applies, but this runtime cannot send the call through it: the call is refused rather than sent direct. */
+/**
+ * A proxy applies, but this runtime cannot send the call through it: the call is refused rather than sent direct.
+ *
+ * @public
+ */
 export class ProxyUnsupported extends Schema.TaggedError<ProxyUnsupported>()("ProxyUnsupported", {
   message: Schema.String,
 }) {}

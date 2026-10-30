@@ -34,4 +34,3 @@ export {
   WriteParams,
   WriteResult,
 } from "./workspace-tools.entity.js"
-export { applyTextEdits, normalizeLine } from "./text-edit.entity.functions.js"

@@ -11,7 +11,11 @@ import type { RoleField, SettingValue } from "./settings-value.entity.js"
  * how one key or role changes a settings value.
  */
 
-/** The field each model role is kept under. */
+/**
+ * The field each model role is kept under.
+ *
+ * @public
+ */
 export const ROLE_FIELDS: Readonly<Record<ModelRole, RoleField>> = {
   general: "model",
   code: "codeModel",
@@ -25,7 +29,11 @@ const asString = Schema.decodeUnknownOption(Schema.NonEmptyString)
 const asNumber = Schema.decodeUnknownOption(Schema.Finite)
 const asReasoningEffort = Schema.decodeUnknownOption(ReasoningEffort)
 
-/** Settings from a config record: values of the wrong type read as unset, keys it does not name are not read; the legacy `openAiReasoningEffort` key backs `reasoningEffort`. */
+/**
+ * Settings from a config record: values of the wrong type read as unset, keys it does not name are not read; the legacy `openAiReasoningEffort` key backs `reasoningEffort`.
+ *
+ * @public
+ */
 export const settingsFromRecord = (record: Readonly<Record<string, unknown>>): EngineSettings =>
   new EngineSettings({
     model: asString(record["model"]),
@@ -58,6 +66,8 @@ const refuse = (message: string) => Effect.fail(new SettingsError({ message }))
  * `"<provider>:<modelId>"`, an effort one the models accept, a count a
  * positive integer. A value that does not parse is
  * refused, not written and then ignored on load.
+ *
+ * @public
  */
 export const coerceSettingValue = (key: SettingsKey, raw: string): Effect.Effect<SettingValue, SettingsError> =>
   Match.value(key).pipe(
@@ -76,7 +86,11 @@ export const coerceSettingValue = (key: SettingsKey, raw: string): Effect.Effect
     Match.exhaustive,
   )
 
-/** A role's selection, checked: `None` clears the role; a value must be `"<provider>:<modelId>"`. */
+/**
+ * A role's selection, checked: `None` clears the role; a value must be `"<provider>:<modelId>"`.
+ *
+ * @public
+ */
 export const roleSelection = (role: ModelRole, selection: Option.Option<string>): Effect.Effect<Option.Option<string>, SettingsError> =>
   Option.match(selection, {
     onNone: () => Effect.succeed(Option.none<string>()),
@@ -91,13 +105,21 @@ const withField = (settings: EngineSettings, field: RoleField | SettingsKey, val
   return settingsFromRecord(Option.match(value, { onNone: () => others, onSome: (set) => ({ ...others, [field]: set }) }))
 }
 
-/** `settings` with one key set from its string form (checked, as `set` takes it), or cleared with `None`. */
+/**
+ * `settings` with one key set from its string form (checked, as `set` takes it), or cleared with `None`.
+ *
+ * @public
+ */
 export const applySetting = (settings: EngineSettings, key: SettingsKey, value: Option.Option<string>): Effect.Effect<EngineSettings, SettingsError> =>
   Option.match(value, {
     onNone: () => Effect.succeed(withField(settings, key, Option.none())),
     onSome: (raw) => coerceSettingValue(key, raw).pipe(Effect.map((coerced) => withField(settings, key, Option.some(coerced)))),
   })
 
-/** `settings` with one role's selection set (checked, as `setRole` takes it), or cleared with `None`. */
+/**
+ * `settings` with one role's selection set (checked, as `setRole` takes it), or cleared with `None`.
+ *
+ * @public
+ */
 export const applyRole = (settings: EngineSettings, role: ModelRole, selection: Option.Option<string>): Effect.Effect<EngineSettings, SettingsError> =>
   roleSelection(role, selection).pipe(Effect.map((checked) => withField(settings, ROLE_FIELDS[role], checked)))

@@ -10,6 +10,7 @@ export const sessionSqlitePlugin = definePlugin({
   config: Config, defaults: { path: ".efferent/runtime/sessions.db" }, provides: [SessionLog, TurnAdmission],
   layer: ({ path }) => Layer.merge(SessionLogSqliteLive(path), TurnAdmissionOpen),
 })
+/** @public */
 export default sessionSqlitePlugin
 
 export { makeSessionLogSqlite, SessionLogSqliteLive, sessionLogSqlitePlugin } from "./session-log.adapter.js"

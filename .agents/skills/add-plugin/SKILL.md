@@ -26,6 +26,12 @@ data in `foundry.config.ts`.
      it (`["core"]` for a plugin; an `@xandreed/*` import is checked against
      it and the target's `exports`), `externals` is the exact allowlist of
      the third-party imports;
+   - add `"packages/<name>/src/index.ts"` to `CURATED_ENTRIES`, and the
+     file of each subpath its `exports` adds: `quality/exports-have-consumers`
+     then wants each export imported by another package, a script or a doc
+     code block, or tagged `@public` at its declaration (host API: the
+     plugin, whose tag covers the default export, its layer, its config and
+     defaults, a port, an adapter, an error a host matches, a kit);
    - if its tests import more (sdk, runtime, other plugins), add a
      `<name>-tests` layer BEFORE the package's entry (the first match wins; see
      `plugin-tasks-tests`) and the matching `devDependencies`. Read the
@@ -87,7 +93,10 @@ export default tasksPlugin
   built with `definePromptSection` and lists them in its `requires` the same
   way (a plain `PromptSection` reads none).
 - Export `<thing>Plugin`, `<Thing>PluginLive = <thing>Plugin.live`, the
-  config schema and the defaults; `export default` the package's main plugin.
+  config schema and the defaults, by name from `src/index.ts` (never
+  `export *`), each tagged `@public` at its declaration unless another
+  package imports it; `export default` the package's main plugin. Leave a
+  helper only the package uses unexported from the entry.
 - A plugin builds only its own services from what it requires. Agents are
   composed by `Agent.define({ plugins })` or a host's `stackPlugins`; a
   package has no composition root.
@@ -114,7 +123,7 @@ export default tasksPlugin
 
 ## Checklist
 
-- [ ] package.json, tsconfig, `paths`, `CHECKED`, boundaries layer (and `-tests` layer), build `names`, `firstParty`
+- [ ] package.json, tsconfig, `paths`, `CHECKED`, `CURATED_ENTRIES`, boundaries layer (and `-tests` layer), build `names`, `firstParty`
 - [ ] AGENTS.md + CLAUDE.md link, README row
 - [ ] `definePlugin` in a `.adapter.ts`; id, version, scope, flat documented config, defaults exported
 - [ ] Plugin, `PluginLive`, config and defaults exported from `src/index.ts`

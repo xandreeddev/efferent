@@ -28,7 +28,11 @@ export const ANTHROPIC_OAUTH_BETA = "claude-code-20250219,oauth-2025-04-20"
 export const CLAUDE_CODE_SYSTEM =
   "You are Claude Code, Anthropic's official CLI for Claude."
 
-/** The tokens a sign-in or a refresh grants, `Redacted` from the token response on. */
+/**
+ * The tokens a sign-in or a refresh grants, `Redacted` from the token response on.
+ *
+ * @public
+ */
 export interface RefreshedTokens {
   readonly access: Redacted.Redacted<string>
   readonly refresh: Redacted.Redacted<string>
@@ -48,6 +52,8 @@ const oauthError = (stage: string) => (detail: string): AuthError =>
  * the request goes through the models plugin's proxy); `now` is
  * the time the new token's expiry is counted from, in epoch ms (default: the
  * Effect `Clock`).
+ *
+ * @public
  */
 export interface TokenRequestOptions {
   readonly fetch?: ModelsFetch
@@ -95,7 +101,11 @@ const postToken = (
   )
 }
 
-/** Refresh an expired (or near-expiry) access token; the refresh token is unwrapped only into the request body. */
+/**
+ * Refresh an expired (or near-expiry) access token; the refresh token is unwrapped only into the request body.
+ *
+ * @public
+ */
 export const refreshAnthropicToken = (
   refreshToken: Redacted.Redacted<string>,
   options: TokenRequestOptions = {},
@@ -132,6 +142,7 @@ export const generatePkce: Effect.Effect<Pkce> = Effect.sync(() => {
   return { verifier, challenge: base64url(new Uint8Array(createHash("sha256").update(verifier).digest())) }
 })
 
+/** @public */
 export interface OAuthBegin {
   /** The PKCE verifier — ALSO the `state`; the driver must verify the
    *  redirect echoes it (CSRF) before exchanging. */
@@ -141,7 +152,11 @@ export interface OAuthBegin {
   readonly callbackPath: string
 }
 
-/** Start an authorization: PKCE material + the browser URL. */
+/**
+ * Start an authorization: PKCE material + the browser URL.
+ *
+ * @public
+ */
 export const beginAnthropicOAuth: Effect.Effect<OAuthBegin> = Effect.map(
   generatePkce,
   (pkce) => ({
@@ -181,6 +196,7 @@ export const exchangeAnthropicCode = (
     Option.none(),
   )
 
+/** @public */
 export interface AuthRedirect {
   readonly code: Option.Option<string>
   readonly state: Option.Option<string>
@@ -190,7 +206,10 @@ const fromNullableTrimmed = (value: string | null | undefined): Option.Option<st
   Option.filter(Option.fromNullishOr(value), (v) => v.trim().length > 0)
 
 /** Pull `code`/`state` out of a pasted redirect URL, `code#state` pair,
- *  bare query string, or raw code. Total — garbage is `{none, none}`. */
+ *  bare query string, or raw code. Total — garbage is `{none, none}`.
+ *
+ * @public
+ */
 export const parseAuthorizationInput = (input: string): AuthRedirect => {
   const value = input.trim()
   if (value.length === 0) return { code: Option.none(), state: Option.none() }

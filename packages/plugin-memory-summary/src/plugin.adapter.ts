@@ -12,6 +12,7 @@ import {
 } from "@xandreed/core"
 import type { AgentMessage, CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
 
+/** @public */
 export const MemorySummaryConfig = Schema.Struct({
   /** Summarize once the rendered messages pass this share of the budget. */
   triggerRatio: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0.1, maximum: 1 }))),
@@ -47,6 +48,7 @@ export const MemorySummaryConfig = Schema.Struct({
   summaryTimeoutMs: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 100, maximum: 600_000 }))),
 })
 export type MemorySummaryConfig = typeof MemorySummaryConfig.Type
+/** @public */
 export const memorySummaryDefaults: MemorySummaryConfig = {
   triggerRatio: 0.8, keepRatio: 0.16, cooldownTurns: 3, turnContext: "current", replies: true, digests: true, media: "inline",
   maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
@@ -54,6 +56,7 @@ export const memorySummaryDefaults: MemorySummaryConfig = {
   summaryTimeoutMs: 60_000,
 }
 
+/** @public */
 export const SUMMARY_STRATEGY = { id: "summary", version: "1" } as const
 
 const latestSummary = (entries: ReadonlyArray<LogEntry>) => Option.fromNullishOr(entries.flatMap((entry) =>
@@ -93,6 +96,8 @@ export const summaryPrompt = (instructions: string, transcript: string, earlier:
  * turns are folded into one recorded summary (previous summary included).
  * A summarizer call that fails or outlasts `summaryTimeoutMs` is logged and
  * decides nothing: the turn goes on with what memory already holds.
+ *
+ * @public
  */
 export const summaryPolicy = (config: MemorySummaryConfig, summarize: (prompt: string) => Effect.Effect<string, HarnessError>): MemoryPolicy => ({
   strategy: SUMMARY_STRATEGY,
@@ -133,7 +138,11 @@ const decide = (
 
 const missingUtility = new HarnessError({ code: "memory.summary", message: "The summary strategy needs a UtilityLlm in the turn's services" })
 
-/** The summarizer is the UtilityLlm of where each session is opened (the turn), so it runs under that turn's budget. */
+/**
+ * The summarizer is the UtilityLlm of where each session is opened (the turn), so it runs under that turn's budget.
+ *
+ * @public
+ */
 export const memorySummaryPlugin = definePlugin({
   id: "@xandreed/plugin-memory-summary", version: "0.14.0", scope: "runtime",
   config: MemorySummaryConfig, defaults: memorySummaryDefaults,
@@ -156,6 +165,10 @@ export const memorySummaryPlugin = definePlugin({
       }),
     })),
 })
-/** Summarizing memory as a typed layer: provides ConversationMemory (and needs a UtilityLlm per turn). */
+/**
+ * Summarizing memory as a typed layer: provides ConversationMemory (and needs a UtilityLlm per turn).
+ *
+ * @public
+ */
 export const MemorySummaryLive = memorySummaryPlugin.live
 export default memorySummaryPlugin

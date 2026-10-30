@@ -19,7 +19,11 @@ export const localSystemPlugin = definePlugin({
   provides: [FileSystem, Bash],
   layer: (config) => Layer.merge(FileSystemLive, BashLive(config)),
 })
-/** The local system as a typed layer: provides FileSystem and Bash; requires nothing. */
+/**
+ * The local system as a typed layer: provides FileSystem and Bash; requires nothing.
+ *
+ * @public
+ */
 export const LocalSystemPluginLive = localSystemPlugin.live
 
 /**
@@ -40,5 +44,9 @@ export const workspaceToolsPlugin = definePlugin({
   contributes: [Capabilities],
   layer: (config) => Layer.effect(Capabilities, workspaceTools(config).pipe(Effect.map((capability) => [capability]))),
 })
-/** The workspace tools as a typed layer: contributes their capability; its handlers need FileSystem and SessionEnvironment (and Bash for bash) where the tools are opened. */
+/**
+ * The workspace tools as a typed layer: contributes their capability; its handlers need FileSystem and SessionEnvironment (and Bash for bash) where the tools are opened.
+ *
+ * @public
+ */
 export const WorkspaceToolsPluginLive = workspaceToolsPlugin.live

@@ -57,6 +57,8 @@ const exportLayer = (target: OtlpExport): Layer.Layer<OtlpExporter.Flusher, neve
  * what is left, waiting up to `shutdownTimeout`; a serverless host flushes
  * before it responds (`flushTelemetry`). A failed export is retried and
  * then turns that signal off for 60 seconds; it never fails the program.
+ *
+ * @public
  */
 export const OtlpTelemetryHttpLive = (options: OtlpTelemetryOptions): Layer.Layer<OtlpExporter.Flusher, never, HttpClient.HttpClient> =>
   exportLayer(otlpExportOf(options))
@@ -74,11 +76,17 @@ export const OtlpTelemetryLive = (options: OtlpTelemetryOptions): Layer.Layer<Ot
  * `OTEL_SDK_DISABLED=true`, it exports nothing and reads nothing further,
  * so a host can always provide it. A variable it reads that is set to an
  * invalid value fails the layer with its `ConfigError`.
+ *
+ * @public
  */
 export const OtlpTelemetryHttpFromEnv = (defaults: OtlpTelemetryOptions = {}): Layer.Layer<OtlpExporter.Flusher, Config.ConfigError, HttpClient.HttpClient> =>
   Layer.unwrap(otlpExportFromEnv(defaults).pipe(Effect.map(exportLayer)))
 
-/** `OtlpTelemetryHttpFromEnv` over the global `fetch` (`FetchHttpClient`), on Node 24 and Bun. */
+/**
+ * `OtlpTelemetryHttpFromEnv` over the global `fetch` (`FetchHttpClient`), on Node 24 and Bun.
+ *
+ * @public
+ */
 export const OtlpTelemetryFromEnv = (defaults: OtlpTelemetryOptions = {}): Layer.Layer<OtlpExporter.Flusher, Config.ConfigError> =>
   OtlpTelemetryHttpFromEnv(defaults).pipe(Layer.provide(FetchHttpClient.layer))
 

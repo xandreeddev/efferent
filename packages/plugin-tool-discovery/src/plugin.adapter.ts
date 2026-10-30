@@ -2,6 +2,7 @@ import { Effect, Layer, Schema } from "effect"
 import { Capabilities, defineCapability, definePlugin, definePromptSection, ToolRegistry } from "@xandreed/core"
 import { catalogText, makeRegistry } from "./registry.adapter.js"
 
+/** @public */
 export const ToolDiscoveryConfig = Schema.Struct({
   /** Granted permissions when the turn's services carry no PermissionGrants. */
   grants: Schema.Array(Schema.String),
@@ -32,6 +33,8 @@ export const toolDiscoveryDefaults: ToolDiscoveryConfig = {
  * turn's bus; a handler's `publishToolProgress` (`tool.progress`) reads the
  * call's `CurrentToolInvocation`, which it sets. The matcher, grants and action
  * policy are read from each turn's services.
+ *
+ * @public
  */
 export const toolDiscoveryPlugin = definePlugin({
   id: "@xandreed/plugin-tool-discovery", version: "0.14.0", scope: "runtime",

@@ -9,6 +9,8 @@ import { TasksLive } from "./tasks.adapter.js"
  * host's TaskRunner and TaskExecutor, its result delivered to the parent's
  * inbox for the turn after the one in flight. With `tools`, the model gets
  * `start_task` and `task_status`.
+ *
+ * @public
  */
 export const tasksPlugin = definePlugin({
   id: "@xandreed/plugin-tasks", version: "0.14.0", scope: "runtime",
@@ -18,6 +20,10 @@ export const tasksPlugin = definePlugin({
   contributes: [Capabilities],
   layer: (config) => Layer.mergeAll(TasksLive(config), Layer.succeed(Capabilities, config.tools ? [tasksCapability] : [])),
 })
-/** Background tasks as a typed layer: provides Tasks (and, with `tools`, their capability); requires Sessions, TaskRunner and TaskExecutor. */
+/**
+ * Background tasks as a typed layer: provides Tasks (and, with `tools`, their capability); requires Sessions, TaskRunner and TaskExecutor.
+ *
+ * @public
+ */
 export const TasksPluginLive = tasksPlugin.live
 export default tasksPlugin

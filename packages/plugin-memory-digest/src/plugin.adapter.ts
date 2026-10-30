@@ -2,6 +2,7 @@ import { Effect, Layer, Option, Schema } from "effect"
 import { clipTo, definePlugin, framed, HarnessError, ResultDigester, userMessageText, UtilityLlm } from "@xandreed/core"
 import type { DigestOutcome, DigestTask } from "@xandreed/core"
 
+/** @public */
 export const MemoryDigestConfig = Schema.Struct({
   /** The digester's input (the user's request, then the result or its items) is clipped to this many characters; the request to a quarter of it. */
   maxSourceChars: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1_000, maximum: 400_000 }))),
@@ -9,8 +10,10 @@ export const MemoryDigestConfig = Schema.Struct({
   digestTimeoutMs: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 100, maximum: 600_000 }))),
 })
 export type MemoryDigestConfig = typeof MemoryDigestConfig.Type
+/** @public */
 export const memoryDigestDefaults: MemoryDigestConfig = { maxSourceChars: 48_000, digestTimeoutMs: 30_000 }
 
+/** @public */
 export const UTILITY_DIGESTER = { id: "utility-digest", version: "1" } as const
 
 /** Further lines of one item indented, so text inside an item cannot pass for another. */
@@ -74,6 +77,8 @@ export const outcomeOf = (task: DigestTask, reply: string): DigestOutcome => tas
  * decides how; this plugin only asks. A call that fails or outlasts
  * `digestTimeoutMs` is logged and fails with `memory.digest`: memory
  * records no digest, and the result keeps its view.
+ *
+ * @public
  */
 export const memoryDigestPlugin = definePlugin({
   id: "@xandreed/plugin-memory-digest", version: "0.14.0", scope: "session",

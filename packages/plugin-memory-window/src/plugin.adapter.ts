@@ -21,6 +21,7 @@ import {
 } from "@xandreed/core"
 import type { CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
 
+/** @public */
 export const MemoryWindowConfig = Schema.Struct({
   /** At turn start, show earlier turns' tool results through their compact views. */
   compactPreviousTurn: Schema.Boolean,
@@ -49,19 +50,25 @@ export const MemoryWindowConfig = Schema.Struct({
   maxMediaChars: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: MEDIA_LIMITS.requestChars }))),
 })
 export type MemoryWindowConfig = typeof MemoryWindowConfig.Type
+/** @public */
 export const memoryWindowDefaults: MemoryWindowConfig = {
   compactPreviousTurn: true, turnContext: "current", replies: true,
   spillMinChars: 2_000, previewChars: 600, ledgerTurnChars: 240,
   digestOnWriteChars: 0, digests: true, media: "inline", maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
 }
 
+/** @public */
 export const WINDOW_STRATEGY = { id: "window", version: "1" } as const
 
 /** A spilled result's preview: its first `chars` characters, and how to read the rest. */
 export const spillPreview = (entry: LogEntry, view: string, chars: number): string =>
   `${view.slice(0, chars)}\n[… ${Math.max(0, view.length - chars)} more characters kept out of context; call recall_context with locator "${entry.id}" and offset ${Math.min(chars, view.length)} to read them]`
 
-/** The window policy: compact older turns, spill oversized results, then drop the oldest turns. */
+/**
+ * The window policy: compact older turns, spill oversized results, then drop the oldest turns.
+ *
+ * @public
+ */
 export const windowPolicy = (config: MemoryWindowConfig): MemoryPolicy => ({
   strategy: WINDOW_STRATEGY,
   render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages, maxChars: config.maxMediaChars } },
@@ -122,7 +129,11 @@ export const recallPage = (locator: string, view: string, offset: number): strin
     : `${page}\n[… ${view.length - end} more characters; call recall_context with locator "${locator}" and offset ${end}]`
 }
 
-/** The memory-owned tool that makes spills lossless for the model. */
+/**
+ * The memory-owned tool that makes spills lossless for the model.
+ *
+ * @public
+ */
 export const recallCapability = defineCapability({
   id: "@xandreed/plugin-memory-window/recall",
   version: "1",
@@ -152,6 +163,8 @@ export const recallCapability = defineCapability({
  * full fidelity; each request shows the current turn verbatim, earlier turns
  * through their tools' compact views, and — only under budget pressure —
  * previews of oversized results and a ledger in place of the oldest turns.
+ *
+ * @public
  */
 export const memoryWindowPlugin = definePlugin({
   id: "@xandreed/plugin-memory-window", version: "0.14.0", scope: "runtime",

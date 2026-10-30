@@ -29,14 +29,12 @@ const WorkspaceToolsConfig
 const WorkspaceToolsPluginLive
 const WriteParams
 const WriteResult
-const applyTextEdits
 const fsReasonOf
 const loadSkillsDirectory
 const localFileSystem
 const localSystemDefaults
 const localSystemPlugin
 const makeBash
-const normalizeLine
 const skillsCapability
 const skillsDirectoryDefaults
 const skillsDirectoryPlugin

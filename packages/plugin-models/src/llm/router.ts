@@ -662,6 +662,8 @@ const selectionModel = (
  * `HttpClient` so drivers don't have to. Reads `CurrentModelEndpoints` and
  * `ModelsTransport` once, where it is built: built over a transport (as the
  * models plugin builds it), every call goes through that transport.
+ *
+ * @public
  */
 export const LanguageModelLive = Layer.effect(
   LanguageModel.LanguageModel,
@@ -699,7 +701,10 @@ export const LanguageModelLive = Layer.effect(
 /** A profile-pinned routed model. Unlike LanguageModelLive it never consults
  * SettingsStore; dedicated agents use this so global role edits cannot
  * silently change an evalled execution profile. Like it, it reads its
- * provider services once, where it is built. */
+ * provider services once, where it is built.
+ *
+ * @public
+ */
 export const LanguageModelSelectionLive = (
   primary: ModelSelection,
   fallback: Option.Option<ModelSelection>,

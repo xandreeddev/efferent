@@ -18,5 +18,9 @@ export const telemetryPlugin = definePlugin({
   requires: [RunContext, TurnEvents], provides: [],
   layer: (config) => TurnTelemetryLive(config),
 })
-/** The telemetry plugin as a typed layer: requires the turn's RunContext and TurnEvents; provides nothing. */
+/**
+ * The telemetry plugin as a typed layer: requires the turn's RunContext and TurnEvents; provides nothing.
+ *
+ * @public
+ */
 export const TelemetryPluginLive = telemetryPlugin.live

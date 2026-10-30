@@ -12,7 +12,11 @@ export const TASK_STARTED = "task.started"
 export const TASK_RESULT = "task.result"
 export const TASK_CANCELLED = "task.cancelled"
 
-/** The turn whose run started a task (the model's `start_task`): its run id and number. */
+/**
+ * The turn whose run started a task (the model's `start_task`): its run id and number.
+ *
+ * @public
+ */
 export const TaskStarter = Schema.Struct({ runId: RunId, turn: Schema.Int })
 export type TaskStarter = typeof TaskStarter.Type
 
@@ -31,6 +35,7 @@ export const TaskStarted = Schema.Struct({
 })
 export type TaskStarted = typeof TaskStarted.Type
 
+/** @public */
 export const TaskOutcome = TurnEndReason.pick(["completed", "partial", "failed", "interrupted"])
 export type TaskOutcome = typeof TaskOutcome.Type
 
@@ -44,6 +49,7 @@ export type TaskResult = typeof TaskResult.Type
 
 export const TaskCancelled = Schema.Struct({ taskId: ConversationId })
 
+/** @public */
 export const TasksConfig = Schema.Struct({
   /** Tasks a session may have waiting or running at once. */
   maxRunning: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })),

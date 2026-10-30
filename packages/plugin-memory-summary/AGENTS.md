@@ -17,6 +17,8 @@ Summarizing conversation memory: a `ConversationMemory` with the window strategy
 
 - `memorySummaryPlugin` (also the default export) and `MemorySummaryLive` (its `.live` layer); `MemorySummaryConfig`, `memorySummaryDefaults`, `SUMMARY_STRATEGY`, `summaryPolicy`.
 
+The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests and the scripts import `memorySummaryPlugin`, and the rest, which no first-party code imports, are tagged `@public` at their declarations (`memorySummaryPlugin`'s tag covers the default export).
+
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
 | `memorySummaryPlugin` | `@xandreed/plugin-memory-summary` | runtime | `efferent/ConversationMemory` | none | none; optional: `@xandreed/core/UtilityLlm` (read from each turn's services) |
@@ -27,9 +29,9 @@ All of it goes to the summarizer (the utility model), not to the agent's model.
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:53` | exact, `src/plugin.adapter.test.ts:55`; sdk compaction golden |
-| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:81`, `:84`, `:87` | exact, `src/plugin.adapter.test.ts:37`; sdk compaction golden |
-| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:84`, `:86` | exact, `src/plugin.adapter.test.ts:37`; sdk compaction golden |
+| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:55` | exact, `src/plugin.adapter.test.ts:55`; sdk compaction golden |
+| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:84`, `:87`, `:90` | exact, `src/plugin.adapter.test.ts:37`; sdk compaction golden |
+| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:87`, `:89` | exact, `src/plugin.adapter.test.ts:37`; sdk compaction golden |
 
 ## Erasure files
 

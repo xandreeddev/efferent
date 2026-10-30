@@ -20,6 +20,8 @@ import { ModelPrice } from "@xandreed/core"
  * Flat. The options of the plugin this package shipped before 0.11.0
  * (`enabled`, `serviceName`) are refused; export is the host's
  * `OtlpTelemetryLive` now.
+ *
+ * @public
  */
 export const TelemetryOptions = Schema.Struct({
   prices: Schema.Record(Schema.String, ModelPrice),
@@ -28,6 +30,7 @@ export const TelemetryOptions = Schema.Struct({
 })
 export type TelemetryOptions = typeof TelemetryOptions.Type
 
+/** @public */
 export const telemetryDefaults: TelemetryOptions = { prices: {}, metricAttributes: {}, spanEvents: true }
 
 /**
