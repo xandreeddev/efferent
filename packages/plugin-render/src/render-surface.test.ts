@@ -1,7 +1,9 @@
 import { expect, test } from "bun:test"
 import { Effect, Layer, Option, Ref, Schema, Stream } from "effect"
-import { RenderError, RenderSnapshot, SurfaceFrozen, SurfacePlanned, SurfaceRecord } from "./domain/render-surface.entity.js"
-import { fillOperationIdOf, isFrozenRefusal, operationIdOf, signatureOf } from "./domain/render-surface.entity.functions.js"
+import { RunId } from "@xandreed/core"
+import { NodeId, OperationId, PrincipalId, RenderMessageId, ThreadId } from "./domain/render-output.entity.js"
+import { RenderError, RenderSnapshot, SurfaceFrozen, SurfaceId, SurfacePlanned, SurfaceRecord, VersionId } from "./domain/render-surface.entity.js"
+import { fillOperationIdOf, isConflictRefusal, isFrozenRefusal, operationIdOf, signatureOf } from "./domain/render-surface.entity.functions.js"
 import { UiOutputAdmission } from "./ports/render-output.port.js"
 import { Render, RenderStore } from "./ports/render.port.js"
 import { renderSurfacePlugin } from "./plugin.adapter.js"
@@ -22,7 +24,10 @@ renderSurfaceConformance(subject).forEach((check) => {
   })
 })
 
-const scope = { threadId: "thread", runId: "run", messageId: "answer", principalId: "guest", fence: 1, surfaceId: "page", baseVersion: Option.none<string>() }
+const scope = {
+  threadId: ThreadId.make("thread"), runId: RunId.make("run"), messageId: RenderMessageId.make("answer"), principalId: PrincipalId.make("guest"),
+  fence: 1, surfaceId: SurfaceId.make("page"), baseVersion: Option.none<VersionId>(),
+}
 const release = { component: "card", version: "1", definitionHash: "a".repeat(64), rendererRelease: "1", tokensHash: "b".repeat(64), layoutVersion: "1" }
 
 test("a failed preparation is annotated with its message", async () => {
@@ -69,22 +74,32 @@ test("an oversized component is rejected before admission and storage", async ()
 })
 
 test("a freeze stored before versions were optional still reads, and one with no version encodes as null", () => {
-  const identity = { surfaceId: "page", messageId: "answer", reason: "interaction" } as const
+  const identity = { surfaceId: SurfaceId.make("page"), messageId: RenderMessageId.make("answer"), reason: "interaction" } as const
   const stored = { _tag: "SurfaceFrozen", ...identity, versionId: "answer:v1" }
-  expect(Schema.decodeUnknownSync(SurfaceRecord)(stored)).toEqual(SurfaceFrozen.make({ ...identity, versionId: Option.some("answer:v1") }))
+  expect(Schema.decodeUnknownSync(SurfaceRecord)(stored)).toEqual(SurfaceFrozen.make({ ...identity, versionId: Option.some(VersionId.make("answer:v1")) }))
   expect(Schema.encodeSync(SurfaceFrozen)(SurfaceFrozen.make({ ...identity, versionId: Option.none() })).versionId).toBeNull()
 })
 
+test("a plan stored before the ids were branded still reads, its base version unchecked as before", () => {
+  const stored = {
+    _tag: "SurfacePlanned", surfaceId: "page", messageId: "answer", versionId: "answer:v2", generation: 2, baseVersionId: " the page as seen ",
+    phase: "partial", spec: {}, nodes: ["a"], placeholders: [], signature: "s",
+  }
+  const planned = Schema.decodeUnknownSync(SurfaceRecord)(stored)
+  expect<unknown>(Schema.encodeSync(SurfaceRecord)(planned)).toEqual(stored)
+})
+
 test("operation ids name the surface and generation, and a colon inside a part cannot make two ids meet", () => {
-  expect(operationIdOf("run", "page", 2, "a")).toBe("run:render:page:2:a")
-  expect(fillOperationIdOf("run", "page", 2, "media")).toBe("run:render:page:2:fill:media")
+  expect<string>(operationIdOf("run", "page", 2, "a")).toBe("run:render:page:2:a")
+  expect<string>(fillOperationIdOf("run", "page", 2, "media")).toBe("run:render:page:2:fill:media")
   expect(operationIdOf("run", "a:1", 2, "x")).not.toBe(operationIdOf("run", "a", 1, "2:x"))
   expect(operationIdOf("run", "page", 2, "fill:media")).not.toBe(fillOperationIdOf("run", "page", 2, "media"))
 })
 
-test("only a frozen refusal reads as frozen", () => {
+test("only a frozen refusal reads as frozen, and only a conflict as a conflict", () => {
   const codes = ["invalid", "frozen", "conflict", "forbidden", "storage", "unavailable"] as const
   expect(codes.filter((code) => isFrozenRefusal(new RenderError({ code, message: "refused" })))).toEqual(["frozen"])
+  expect(codes.filter((code) => isConflictRefusal(new RenderError({ code, message: "refused" })))).toEqual(["conflict"])
 })
 
 test("a version partly committed under an earlier operation id format completes with only its missing node", async () => {
@@ -95,10 +110,13 @@ test("a version partly committed under an earlier operation id format completes 
     const memory = yield* makeMemoryRenderStore
     const admitted = yield* Ref.make<ReadonlyArray<string>>([])
     yield* memory.store.plan(scope, SurfacePlanned.make({
-      surfaceId: "page", messageId: "answer", versionId: "answer:v1", generation: 1, baseVersionId: Option.none(), phase: "complete",
-      spec: content.spec, nodes: ["a", "b"], placeholders: [], signature: signatureOf(Schema.decodeSync(RenderSnapshot)(content)),
+      surfaceId: scope.surfaceId, messageId: scope.messageId, versionId: VersionId.make("answer:v1"), generation: 1, baseVersionId: Option.none(), phase: "complete",
+      spec: content.spec, nodes: [NodeId.make("a"), NodeId.make("b")], placeholders: [], signature: signatureOf(Schema.decodeSync(RenderSnapshot)(content)),
     }))
-    yield* memory.store.commit(scope, { versionId: "answer:v1", proposal: { operationId: "run:render:1:a", nodeId: "a", release, props: {}, evidence: ["a"] } })
+    yield* memory.store.commit(scope, {
+      versionId: VersionId.make("answer:v1"),
+      proposal: { operationId: OperationId.make("run:render:1:a"), nodeId: NodeId.make("a"), release, props: {}, evidence: ["a"] },
+    })
     const render = yield* Render.pipe(Effect.provide(RenderLive().pipe(Layer.provide(Layer.mergeAll(
       Layer.succeed(RenderStore, memory.store),
       Layer.succeed(UiOutputAdmission, { validate: (_scope, proposal) => Ref.update(admitted, (all) => [...all, proposal.operationId]) }),
@@ -109,6 +127,36 @@ test("a version partly committed under an earlier operation id format completes 
   }))
   expect(result.admitted).toEqual(["run:render:page:1:b"])
   expect([result.published.changed, result.published.generation, result.state.completed]).toEqual([true, 1, true])
+})
+
+/** The memory store with `plan` or `commit` refused as another writer's conflict, its calls noted in order. */
+const conflicting = (refuse: "plan" | "commit") => Effect.gen(function* () {
+  const memory = yield* makeMemoryRenderStore
+  const calls = yield* Ref.make<ReadonlyArray<string>>([])
+  const note = (name: string) => Ref.update(calls, (all) => [...all, name])
+  const conflict = Effect.fail(new RenderError({ code: "conflict", message: "another writer was first" }))
+  const store = RenderStore.of({
+    ...memory.store,
+    hydrate: (target) => note("hydrate").pipe(Effect.andThen(memory.store.hydrate(target))),
+    plan: (target, record) => note("plan").pipe(Effect.andThen(refuse === "plan" ? conflict : memory.store.plan(target, record))),
+    commit: (target, write) => note("commit").pipe(Effect.andThen(refuse === "commit" ? conflict : memory.store.commit(target, write))),
+  })
+  return { store, calls: Ref.get(calls) }
+})
+
+test("a plan another writer beat is retried once from the store's records, and a conflicting commit not at all", async () => {
+  const content = { phase: "complete" as const, spec: { layout: "single" }, nodes: [{ nodeId: "a", release, props: {}, evidence: ["a"] }] }
+  const refused = (refuse: "plan" | "commit") => Effect.runPromise(Effect.gen(function* () {
+    const { store, calls } = yield* conflicting(refuse)
+    const render = yield* Render.pipe(Effect.provide(RenderLive().pipe(Layer.provide(Layer.mergeAll(
+      Layer.succeed(RenderStore, store), Layer.succeed(UiOutputAdmission, { validate: () => Effect.void }),
+    )))))
+    const surface = yield* render.open(scope, { fork: (_tag, work) => Effect.forkDetach(work).pipe(Effect.asVoid) })
+    const failure = yield* Effect.flip(surface.publish(content))
+    return { code: failure.code, calls: yield* calls }
+  }))
+  expect(await refused("plan")).toEqual({ code: "conflict", calls: ["hydrate", "plan", "hydrate", "plan"] })
+  expect(await refused("commit")).toEqual({ code: "conflict", calls: ["hydrate", "plan", "commit"] })
 })
 
 test("the surface plugin declares a runtime-scoped Render over a store and admission", () => {

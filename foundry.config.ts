@@ -134,6 +134,7 @@ const BRANDED_IDS_CLEAN = [
   "plugin-telemetry",
   "plugin-session-sqlite",
   "plugin-sessions",
+  "plugin-render",
   "foundry",
 ].map(entities)
 

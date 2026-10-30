@@ -1,12 +1,13 @@
 import { expect, test } from "bun:test"
 import { Effect, Exit, Fiber, Layer, Tracer } from "effect"
+import { RunId } from "@xandreed/core"
 import { UiOutput, UiOutputAdmission, UiOutputContext, UiOutputJournal } from "./ports/render-output.port.js"
-import { UiOutputError } from "./domain/render-output.entity.js"
+import { NodeId, OperationId, PrincipalId, RenderMessageId, RevisionId, ThreadId, UiOutputError } from "./domain/render-output.entity.js"
 import { UiOutputLive } from "./render-output.adapter.js"
 
-const scope = { threadId: "thread", runId: "run", messageId: "answer", principalId: "guest", fence: 1 }
-const proposal = { operationId: "op", nodeId: "map", release: { component: "map", version: "1", definitionHash: "a".repeat(64), rendererRelease: "1", tokensHash: "b".repeat(64), layoutVersion: "1" }, props: { factId: "course" }, evidence: ["course"] }
-const receipt = { threadId: "thread", messageId: "answer", revisionId: "revision", sequence: 3, nodeId: "map" }
+const scope = { threadId: ThreadId.make("thread"), runId: RunId.make("run"), messageId: RenderMessageId.make("answer"), principalId: PrincipalId.make("guest"), fence: 1 }
+const proposal = { operationId: OperationId.make("op"), nodeId: NodeId.make("map"), release: { component: "map", version: "1", definitionHash: "a".repeat(64), rendererRelease: "1", tokensHash: "b".repeat(64), layoutVersion: "1" }, props: { factId: "course" }, evidence: ["course"] }
+const receipt = { threadId: scope.threadId, messageId: scope.messageId, revisionId: RevisionId.make("revision"), sequence: 3, nodeId: proposal.nodeId }
 const provide = (validate: ContextService["validate"], commit: JournalService["commit"]) => UiOutputLive().pipe(Layer.provide(Layer.mergeAll(
   Layer.succeed(UiOutputContext, scope), Layer.succeed(UiOutputAdmission, { validate }), Layer.succeed(UiOutputJournal, { commit }),
 )))
@@ -57,7 +58,7 @@ test("each emit is one render.emit span, ended with the refusal", async () => {
   await Effect.runPromise(Effect.gen(function* () {
     const output = yield* UiOutput
     yield* output.emit(proposal)
-    yield* Effect.result(output.emit({ ...proposal, operationId: "refused" }))
+    yield* Effect.result(output.emit({ ...proposal, operationId: OperationId.make("refused") }))
   }).pipe(Effect.provide(provide(
     (_, actual) => actual.operationId === "refused" ? Effect.fail(new UiOutputError({ code: "unavailable", message: "Release revoked" })) : Effect.void,
     () => Effect.succeed(receipt),

@@ -13,6 +13,7 @@ import type {
   SurfaceRecord,
   SurfaceScope,
   SurfaceState,
+  VersionId,
 } from "../domain/render-surface.entity.js"
 import type { FeedFrame, FeedPayload, FeedScope, JournalRecord } from "../domain/feed-frame.entity.js"
 
@@ -20,9 +21,17 @@ import type { FeedFrame, FeedPayload, FeedScope, JournalRecord } from "../domain
  * The host's durable surface storage. Every write is fenced by the scope.
  * A surface is the scope's thread, principal and `surfaceId`: its records
  * never mix with another thread's or principal's, even under the same ids.
+ * - Every write (`plan`, `commit`, `complete`, `freeze`) MUST fail with code
+ *   `forbidden`, inside its transaction, when `scope.fence` is lower than the
+ *   highest fence the store has accepted for the surface and message; a
+ *   write it accepts raises that fence to its own.
  * - `plan` MUST fail with code `frozen` inside the same transaction when a
  *   `SurfaceFrozen` (with or without a version) exists for the surface and
  *   message.
+ * - `plan` MUST fail with code `conflict` inside the same transaction unless
+ *   `record.generation` is the highest generation planned for the surface
+ *   and message plus one (1 for the first): two writers of one message never
+ *   plan the same version, and none skips one.
  * - `commit` is idempotent by `proposal.operationId` within the thread and
  *   principal; reusing an id with a different proposal fails with `conflict`.
  *   It persists a `SurfaceCommitted`.
@@ -34,7 +43,7 @@ import type { FeedFrame, FeedPayload, FeedScope, JournalRecord } from "../domain
 export class RenderStore extends Context.Service<RenderStore, {
   readonly hydrate: (scope: SurfaceScope) => Effect.Effect<ReadonlyArray<SurfaceRecord>, RenderError>
   readonly plan: (scope: SurfaceScope, record: SurfacePlanned) => Effect.Effect<void, RenderError>
-  readonly commit: (scope: SurfaceScope, write: { readonly versionId: string; readonly proposal: UiOutputProposal }) => Effect.Effect<UiOutputReceipt, RenderError>
+  readonly commit: (scope: SurfaceScope, write: { readonly versionId: VersionId; readonly proposal: UiOutputProposal }) => Effect.Effect<UiOutputReceipt, RenderError>
   readonly complete: (scope: SurfaceScope, record: SurfaceCompleted) => Effect.Effect<void, RenderError>
   readonly freeze: (scope: SurfaceScope, record: SurfaceFrozen) => Effect.Effect<void, RenderError>
   readonly annotate: (scope: SurfaceScope, kind: string, data: Readonly<Record<string, unknown>>) => Effect.Effect<void, RenderError>
@@ -50,6 +59,9 @@ export interface RenderSurface {
    * Versioned and deduplicated: identical content opens no new generation, but commits the nodes an
    * earlier attempt left uncommitted (`changed` is then true) before it completes. A frozen surface
    * records a frozen, partial completion instead of failing (none for a version already complete).
+   * When another writer planned first (`conflict`), it re-hydrates and decides once more: it resumes
+   * that version if it holds the same content, else plans the next one. A second conflict, or a
+   * lower fence (`forbidden`), fails the publish.
    */
   readonly publish: (snapshot: RenderSnapshotInput) => Effect.Effect<PublishResult, RenderError>
   /** Commit a node into a declared placeholder of the current version; allowed after freezing. */

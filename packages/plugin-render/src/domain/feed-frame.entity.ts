@@ -1,11 +1,12 @@
 import { Schema } from "effect"
+import { PrincipalId, ThreadId } from "./render-output.entity.js"
 
 const Id = Schema.Trimmed.check(Schema.isNonEmpty())
 /** A record's payload: a JSON object, every value JSON. */
 const Json = Schema.JsonObject
 
 /** Whose journal a feed reads. The host authorizes the principal before opening one. */
-export const FeedScope = Schema.Struct({ threadId: Id, principalId: Id })
+export const FeedScope = Schema.Struct({ threadId: ThreadId, principalId: PrincipalId })
 export type FeedScope = typeof FeedScope.Type
 
 /** One durable journal record, as the host's tail returns it, in sequence order. */
@@ -34,12 +35,12 @@ export const FeedHeartbeat = Schema.TaggedStruct("FeedHeartbeat", {})
 export const FeedFrame = Schema.Union([FeedRecord, FeedReady, FeedHeartbeat])
 export type FeedFrame = typeof FeedFrame.Type
 
-/** The fields of one SSE record block, as text: `id` is the record's sequence, `data` its JSON. */
+/** The fields of one SSE record block, as text: the wire's `id` is the record's sequence, `data` its JSON. */
 export const SseRecordFields = Schema.Struct({
-  id: Schema.NumberFromString.pipe(Schema.decodeTo(FeedRecord.fields.sequence)),
+  sequence: Schema.NumberFromString.pipe(Schema.decodeTo(FeedRecord.fields.sequence)),
   event: FeedRecord.fields.event,
   data: Schema.fromJsonString(FeedRecord.fields.data),
-})
+}).pipe(Schema.encodeKeys({ sequence: "id" }))
 
 export const FeedOptions = Schema.Struct({
   /** Poll interval after new records. */

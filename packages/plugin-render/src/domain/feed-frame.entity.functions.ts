@@ -33,7 +33,7 @@ const decodeSseBlock = (block: string): Result.Result<ReadonlyArray<FeedFrame>, 
   if (fields.get("event") === "ready") return Result.succeed([FeedReady.make({})])
   if (!["id", "event", "data"].some((name) => fields.has(name))) return Result.succeed([])
   return decodeRecordFields(Object.fromEntries(fields)).pipe(
-    Result.map((record): ReadonlyArray<FeedFrame> => [{ _tag: "FeedRecord", sequence: record.id, event: record.event, data: record.data }]),
+    Result.map((record): ReadonlyArray<FeedFrame> => [{ _tag: "FeedRecord", sequence: record.sequence, event: record.event, data: record.data }]),
     Result.mapError((error) => new RenderError({ code: "invalid", message: `Invalid SSE record: ${error.message}` })),
   )
 }
