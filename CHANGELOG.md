@@ -190,6 +190,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `UtilityLlmLive` yourself, provide `CurrentModelEndpoints` and
   `ModelsTransport` to the layer, not around its calls. Hosts using
   `modelsPlugin` need no change.
+- Code naming `RunLoopOptions<Tools, R>` writes `RunLoopOptions<Tools, E,
+  R>` (`never` for callbacks that cannot fail); a `runLoop<Tools>(…)` call
+  whose callbacks fail names the error, `runLoop<Tools, E>(…)`, or lets it
+  be inferred. Callbacks no longer need `Effect.orDie`.
 
 ### Breaking
 
@@ -501,6 +505,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `LanguageModelSelectionLive` and `UtilityLlmLive` read
   `CurrentModelEndpoints` and `ModelsTransport` once, when they are built;
   values provided only around a call are ignored.
+- `@xandreed/plugin-agent-loop`: `RunLoopOptions` takes `<Tools, E, R>`, and
+  `runLoop`'s callbacks fail with `E`: a callback's failure fails its step,
+  or the run once the step settled, as that failure, typed. The run fails
+  with `E` or a provider's `AiError`.
 
 ### Added
 
@@ -639,6 +647,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `toolRegistryConformance` checks the open's `requires.missing`, and that
   a handler sees its declared services as they were where the tools were
   opened.
+- `@xandreed/core`: `foldStreamParts`' `onDelta` may fail; the fold fails
+  with its error.
 
 ### Changed
 

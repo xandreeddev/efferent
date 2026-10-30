@@ -15,7 +15,8 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 - Step spans carry a call's usage under the GenAI names and the run span the sum under `engine.usage.*`; content only with `captureTraceContent`, images by size.
 - `runSteps` computes a step's plan once and serves the model, the messages and the tool choice from it.
 - The loop provides core's `StepLoopReferences`, whatever the caller's: `runSteps` the request's `cacheKey` and `callPolicy` for the run, `runLoop` its `captureTraceContent` for the run and the step and the empty-response tolerance per step. Its callbacks run with the caller's services, never with the caller's step or tolerance (an outer run's).
-- `runSteps` fails with a turn's `TurnError` as it is (`isTurnError`: the writer's `TurnClosed` keeps its tag, typed or carried as a defect), and with anything else (a provider's `AiError`) as `loop.failed`, that failure its `cause`.
+- `runLoop`'s callbacks fail with the caller's error (`RunLoopOptions<Tools, E, R>`), and the run fails with `E` or a provider's `AiError`: a callback that can fail returns its failure, never `Effect.orDie`s it.
+- `runSteps` fails with a turn's `TurnError` as it is (`isTurnError`: the writer's `TurnClosed` keeps its tag), and with anything else (a provider's `AiError`) as `loop.failed`, that failure its `cause`. The request's callbacks reach `runLoop` as `E = TurnError`; `harnessDefectsAsFailures` stays only for a tool handler's `TurnError`, which its `never` error channel carries as a defect.
 - The default corrective texts are model-facing: a host's `correctives` replaces them, and a change to them updates their pins.
 
 ## Public surface
@@ -31,16 +32,16 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `DEGENERATE_REPEAT_NUDGE` (a user-role message) | `src/loop.ts:268-272` | by reference only, `src/loop.test.ts:231`; wording unpinned |
-| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:274-275` | unpinned |
-| Default malformed corrective (`Your previous reply could not be parsed: …`) | `src/loop.ts:681-684` | contains, `src/loop.test.ts:188`, `:206` |
-| Default incomplete corrective (`The host reports that required actions are incomplete. …`) | `src/loop.ts:735` | unpinned |
+| `DEGENERATE_REPEAT_NUDGE` (a user-role message) | `src/loop.ts:274-278` | by reference only, `src/loop.test.ts:231`; wording unpinned |
+| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:280-281` | unpinned |
+| Default malformed corrective (`Your previous reply could not be parsed: …`) | `src/loop.ts:689-692` | contains, `src/loop.test.ts:188`, `:206` |
+| Default incomplete corrective (`The host reports that required actions are incomplete. …`) | `src/loop.ts:743` | unpinned |
 
 Steering text (`pendingInput`) is the host's; the fold's summary message is core's `handoffToMessage`.
 
 ## Erasure files
 
-`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:457`) and the tool choice into its tool-name union (`:463`).
+`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:463`) and the tool choice into its tool-name union (`:469`).
 
 ## Layout
 
@@ -54,7 +55,7 @@ Steering text (`pendingInput`) is the host's; the fold's summary message is core
 ## Tests
 
 - `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:105`), its self-tests (`runSteps` made careless, ending its steps in its completion check and recording a corrective under a step the cap stops it from taking, must fail the settle checks; and providing a wrong value of one of `StepLoopReferences` to its model calls, which must fail that reference's check), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
-- `src/loop.test.ts`: scripted-model runs (correctives, breaker, cap, settling each step once, nothing recorded under a step that never runs, the compact seam, steering, streaming parity and fallback, image refusals, a host's initial batch, spans) and the pure decisions (`:785`).
+- `src/loop.test.ts`: scripted-model runs (correctives, breaker, cap, settling each step once, nothing recorded under a step that never runs, callbacks failing with the caller's error, the compact seam, steering, streaming parity and fallback, image refusals, a host's initial batch, spans) and the pure decisions (`:827`).
 - `src/step-ledger.entity.functions.test.ts`: the ledger's updates.
 - The sdk golden composes `stepLoopPlugin`.
 - Run: `bun test packages/plugin-agent-loop packages/sdk/src/agent.golden.test.ts`.

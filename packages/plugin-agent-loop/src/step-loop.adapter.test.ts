@@ -279,12 +279,17 @@ describe("runSteps failures", () => {
     expect(failed._tag === "HarnessError" ? failed.cause : null).toBe(down)
   })
 
-  // `step.started` reaches the loop as a typed failure, `assistant.message` and `step.ended` as a defect behind their `never` callbacks.
-  test.each(["step.started", "assistant.message", "step.ended"] as const)("a turn's failure on %s (the writer's TurnClosed) fails the run with its own tag, not loop.failed", async (tag) => {
+  // Each reaches the loop as a typed failure of the callback that published it.
+  test.each([
+    ["step.started", false],
+    ["assistant.message", false],
+    ["step.ended", false],
+    ["stream.fallback", true],
+  ] as const)("a turn's failure on %s (the writer's TurnClosed) fails the run with its own tag, not loop.failed", async (tag, streaming) => {
     const closed = new TurnClosed({ session: ConversationId.make("00000000-0000-4000-8000-0000000000d1"), turn: 1, reason: "cancelled" })
     const failed = await Effect.runPromise(Effect.flip(Effect.gen(function* () {
       const reads = yield* Ref.make<ReadonlyArray<boolean>>([])
-      return yield* runWith(yield* unstreamable(reads), { streaming: false, captureTraceContent: false, failOn: { tag, error: closed } })
+      return yield* runWith(yield* unstreamable(reads), { streaming, captureTraceContent: false, failOn: { tag, error: closed } })
     })))
     expect([failed._tag, failed._tag === "TurnClosed" ? failed.reason : null]).toEqual(["TurnClosed", "cancelled"])
   })

@@ -435,6 +435,12 @@ runs: a run the step cap, the breaker or completion ends records none. A
 `StepLoop`'s `RunResult` says the same as a union: `completed` with the
 reason `completed`, or `partial` with `step-cap` or `degenerate-loop`.
 
+The callbacks run with the caller's services and fail with its error:
+`RunLoopOptions<Tools, E, R>`. A callback's failure fails the step it runs
+in (the step settles `failed`), or the run once the step settled, as that
+failure, typed; the run fails with `E` or a provider's `AiError`. The step
+loop passes a turn's `TurnError` through them as it is.
+
 `@xandreed/evals` provides `DecisionTrial`, `SelectionObservation`,
 `compareDecisionTrials` and `selectionMetrics`. Comparisons pair case/repetition,
 bootstrap scenario groups, preserve infrastructure failures, and leave missing

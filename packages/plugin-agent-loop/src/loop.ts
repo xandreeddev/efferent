@@ -36,7 +36,13 @@ export interface CompactionPlan {
  * a recursive step — the same discipline as foundry's forge loop.
  */
 
-export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
+/**
+ * The callbacks run with the caller's services `R` and fail with its `E`:
+ * a callback's failure fails the step it runs in (its status `failed`), or
+ * the run once the step settled, as that failure, typed. The run fails
+ * with `E` or a provider's `AiError`.
+ */
+export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
   /** A host-validated first batch. Runs as step zero through the ordinary
    * Effect AI decoder, instrumented toolkit and durable tail hooks, without
    * another provider request. Provider usage belongs to the host planner. */
@@ -58,23 +64,23 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
   }) => Effect.Effect<{
     readonly model: LanguageModel.LanguageModel
     readonly system: Prompt.Prompt
-  }, AiError.AiError, R>
+  }, AiError.AiError | E, R>
   /** Validate independently reconstructed durable input immediately before a provider dispatch. */
-  readonly beforeDispatch?: (step: number, request: ModelDispatch) => Effect.Effect<void, never, R>
+  readonly beforeDispatch?: (step: number, request: ModelDispatch) => Effect.Effect<void, E, R>
   /**
    * A provider refused a step's request over an image (an `InvalidRequestError`
    * that names one; the argument is what it said). True: the images are
    * dealt with (memory omits them), and the loop renders the step again and
    * sends it once more; false, or absent: the step fails with the refusal.
    */
-  readonly onMediaRejected?: (reason: string) => Effect.Effect<boolean, never, R>
+  readonly onMediaRejected?: (reason: string) => Effect.Effect<boolean, E, R>
   readonly system: string | Prompt.Prompt
   /** The READ side of memory: when present, each provider step sends these
    * messages instead of the loop's own buffer. Persistence still flows through
    * `onTail`, so a memory plugin can rebuild every request from its log. */
-  readonly render?: (step: StepView) => Effect.Effect<ReadonlyArray<AgentMessage>, never, R>
+  readonly render?: (step: StepView) => Effect.Effect<ReadonlyArray<AgentMessage>, E, R>
   /** Per-step tool choice (e.g. force a delivery tool without removing others). */
-  readonly stepDirective?: (step: StepView) => Effect.Effect<{ readonly toolChoice: Option.Option<LoopToolChoice> }, never, R>
+  readonly stepDirective?: (step: StepView) => Effect.Effect<{ readonly toolChoice: Option.Option<LoopToolChoice> }, E, R>
   /** Host wording for the loop's own corrective turns. */
   readonly correctives?: {
     readonly malformed?: (tools: ReadonlyArray<string>, description: string) => string
@@ -92,7 +98,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
    * (`onStepSettled`), never after a malformed one. A query: it ends no step.
    * Avoids a paid final prose call when a tool already delivered the
    * complete result. */
-  readonly isComplete?: (step: number) => Effect.Effect<boolean, never, R>
+  readonly isComplete?: (step: number) => Effect.Effect<boolean, E, R>
   /**
    * Called exactly once per step, after its tail went through `onTail` and
    * before anything is decided (completion, nudges, compaction, steering),
@@ -101,7 +107,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
    * form, answered with a corrective turn). What is decided afterwards, and
    * fails, fails the run, never the settled step.
    */
-  readonly onStepSettled?: (step: number, status: StepStatus) => Effect.Effect<void, never, R>
+  readonly onStepSettled?: (step: number, status: StepStatus) => Effect.Effect<void, E, R>
   /** When true, a model stop cannot substitute for host completion. A bounded
    * corrective turn asks for the missing actions; maxSteps still applies. */
   readonly requireCompletion?: boolean
@@ -109,7 +115,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
    * and sent in the order returned (append new tools to keep the prefix stable).
    * A capability-expansion tool can update this selection for the next call.
    * Handlers must still enforce their own principal/action policy. */
-  readonly activeTools?: () => Effect.Effect<ReadonlyArray<keyof Tools>, never, R>
+  readonly activeTools?: () => Effect.Effect<ReadonlyArray<keyof Tools>, E, R>
   /** A ceiling, not a target — a normal run ends when the model stops
    *  calling tools. Default {@link DEFAULT_MAX_STEPS}. */
   readonly maxSteps?: number
@@ -121,7 +127,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
    *  correct for these, so they never count toward the degenerate breaker. */
   readonly pollableTools?: ReadonlyArray<string>
   /** The single event sink — see `LoopEvent`. */
-  readonly onEvent?: (event: LoopEvent) => Effect.Effect<void, never, R>
+  readonly onEvent?: (event: LoopEvent) => Effect.Effect<void, E, R>
   /**
    * Incremental persistence: called with each turn's appended messages
    * (model responses AND synthetic correctives) the moment they land, so a
@@ -136,7 +142,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
   readonly onTail?: (
     messages: ReadonlyArray<AgentMessage>,
     step: number,
-  ) => Effect.Effect<ReadonlyArray<number>, never, R>
+  ) => Effect.Effect<ReadonlyArray<number>, E, R>
   /**
    * The WITHIN-RUN compaction seam, consulted at turn boundaries while the
    * run continues. Receives the buffer the NEXT turn would send plus the
@@ -147,7 +153,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
   readonly compact?: (
     messages: ReadonlyArray<AgentMessage>,
     lastTurnUsage: TokenUsage,
-  ) => Effect.Effect<Option.Option<CompactionPlan>, never, R>
+  ) => Effect.Effect<Option.Option<CompactionPlan>, E, R>
   /**
    * Route turns through `streamText`, folding the parts back into the
    * settled turn shape while fanning `assistant_delta` events as tokens
@@ -165,7 +171,7 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, R> {
    * fold (steering must never be compacted away) and persisted via
    * `onTail` like every other appended message.
    */
-  readonly pendingInput?: () => Effect.Effect<Option.Option<string>, never, R>
+  readonly pendingInput?: () => Effect.Effect<Option.Option<string>, E, R>
 }
 
 /** What the loop knows about the step it is about to take. */
@@ -379,8 +385,8 @@ const tracedJson = (value: unknown): string => JSON.stringify(value, (_key, fiel
       ? { ...field, data: `[${field.data.length} base64 characters]` }
       : field)
 
-export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
-  options: RunLoopOptions<Tools, R>,
+export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = never>(
+  options: RunLoopOptions<Tools, E, R>,
 ) =>
   Effect.gen(function* () {
     yield* Effect.annotateCurrentSpan({ "engine.input.messages": options.messages.length })
@@ -472,9 +478,11 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
            *  turn body is identical code, streamed or not. */
           // Tools declare no dependencies (handlers carry their own context), so a
           // model call needs the model alone; `Tool.Any` would widen it to `any`.
+          // It fails with the provider's error, or with the caller's from the
+          // dispatch check and the tool events.
           const generated = (planned ? LanguageModel.generateText(callOptions) : beforeDispatch.pipe(Effect.andThen(Effect.suspend(() =>
             dispatchModel.generateText(callOptions),
-          )))) as Effect.Effect<LanguageModel.GenerateTextResponse<Tools, "opaque">, AiError.AiError, LanguageModel.LanguageModel>
+          )))) as Effect.Effect<LanguageModel.GenerateTextResponse<Tools, "opaque">, AiError.AiError | E, LanguageModel.LanguageModel>
           const settled = (streamingHealthy: boolean) =>
             generated.pipe(
               Effect.map((res) => ({
@@ -499,7 +507,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
           const streamed = Effect.gen(function* () {
             yield* beforeDispatch
             const folded = yield* foldStreamParts(
-              (Stream.unwrap(Effect.sync(() => dispatchModel.streamText(callOptions))) as Stream.Stream<Response.AnyPart, AiError.AiError, LanguageModel.LanguageModel>).pipe(
+              (Stream.unwrap(Effect.sync(() => dispatchModel.streamText(callOptions))) as Stream.Stream<Response.AnyPart, AiError.AiError | E, LanguageModel.LanguageModel>).pipe(
                 Stream.tap(() => Ref.set(partSeen, true)),
               ),
               (delta) =>
@@ -808,7 +816,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
     const step = (state: LoopState) =>
       execute(state).pipe(
         Effect.onExit((exit) => settle(state.turnIndex, statusOf(exit))),
-        Effect.flatMap((executed): Effect.Effect<LoopState, AiError.AiError, R> => Match.valueTags(executed, {
+        Effect.flatMap((executed): Effect.Effect<LoopState, AiError.AiError | E, R> => Match.valueTags(executed, {
           Malformed: (malformed) => recover(state, malformed),
           Responded: (responded) => decide(state, responded),
         })),

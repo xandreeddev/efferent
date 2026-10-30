@@ -59,7 +59,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
       request.events.publish({ _tag: "step.ended", step, run, status, results: resultsOf(current, step) })))
     return status === "failed" || status === "cancelled"
       ? ending.pipe(Effect.ignoreCause({ log: "Warn", message: `the end of failed step ${step} was not recorded` }))
-      : ending.pipe(Effect.orDie)
+      : ending
   }
 
   const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, TurnError> => request.completion(info).pipe(
@@ -72,11 +72,11 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     if (first.complete || first.awaiting.length === 0) return first.complete
     yield* request.tasks.await(first.awaiting)
     return (yield* evaluate(info)).complete
-  }).pipe(Effect.orDie)
+  })
 
-  const onEvent = (event: LoopEvent): Effect.Effect<void> => {
+  const onEvent = (event: LoopEvent): Effect.Effect<void, TurnError> => {
     if (event.type === "assistant_delta") {
-      return request.events.publish({ _tag: "assistant.delta", step: event.turnIndex, channel: event.channel, id: StreamPartId.make(event.id), delta: event.delta }).pipe(Effect.orDie)
+      return request.events.publish({ _tag: "assistant.delta", step: event.turnIndex, channel: event.channel, id: StreamPartId.make(event.id), delta: event.delta })
     }
     if (event.type === "assistant_message") {
       return Effect.gen(function* () {
@@ -86,15 +86,15 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
           model: Option.fromNullishOr(event.model), toolCalls: event.toolCalls.map((call) => ({ id: ToolCallId.make(call.id), tool: call.toolName, input: call.args })),
           usage: event.usage,
         })
-      }).pipe(Effect.orDie)
+      })
     }
     if (event.type === "stream_fallback") {
-      return request.events.publish({ _tag: "stream.fallback", step: event.turnIndex, run, message: event.message }).pipe(Effect.orDie)
+      return request.events.publish({ _tag: "stream.fallback", step: event.turnIndex, run, message: event.message })
     }
     return Effect.void
   }
 
-  const loop = runLoop<Record<string, Tool.Any>>({
+  const loop = runLoop<Record<string, Tool.Any>, TurnError>({
     run: request.run,
     system: "",
     messages: [],
@@ -113,31 +113,28 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
       yield* Ref.update(ledger, started(step))
       yield* request.events.publish({ _tag: "step.started", step, run, planned: isPlanned(step), activeTools: active })
       return active
-    }).pipe(Effect.orDie),
+    }),
     prepareModel: (step) => infoOf(step.stepIndex, step.activeTools).pipe(
       Effect.flatMap(planFor),
       Effect.map((plan) => ({ model: Option.getOrElse(plan.model, () => model), system: Prompt.make([{ role: "system", content: plan.system }]) })),
-      Effect.orDie,
     ),
     render: (view) => isPlanned(view.stepIndex)
       ? Effect.succeed<ReadonlyArray<AgentMessage>>([])
-      : planFor(view).pipe(Effect.map((plan) => plan.messages), Effect.orDie),
+      : planFor(view).pipe(Effect.map((plan) => plan.messages)),
     stepDirective: (view) => isPlanned(view.stepIndex)
       ? Effect.succeed({ toolChoice: Option.none<LoopToolChoice>() })
-      : planFor(view).pipe(Effect.map((plan) => ({ toolChoice: plan.toolChoice })), Effect.orDie),
-    beforeDispatch: (step, actual) => request.dispatch(step, actual).pipe(Effect.orDie),
+      : planFor(view).pipe(Effect.map((plan) => ({ toolChoice: plan.toolChoice }))),
+    beforeDispatch: (step, actual) => request.dispatch(step, actual),
     // The images are omitted from now on: the step is planned again for its second attempt.
     onMediaRejected: (reason) => request.onMediaRejected(reason).pipe(
       Effect.tap((retry) => retry ? Ref.update(ledger, replanned) : Effect.void),
-      Effect.orDie,
     ),
     isComplete,
     onStepSettled: settle,
-    pendingInput: () => request.steering.pipe(Effect.orDie),
+    pendingInput: () => request.steering,
     onTail: (messages, step) => request.record(step, messages).pipe(
       Effect.flatMap((entries) => Ref.update(ledger, recorded(step, entries))),
       Effect.as([]),
-      Effect.orDie,
     ),
     onEvent,
   })
@@ -146,8 +143,9 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     Effect.provideService(LanguageModel.LanguageModel, model),
     Effect.provideService(CurrentPromptCacheKey, request.cacheKey),
     Effect.provideService(CurrentModelCallPolicy, request.callPolicy),
-    // A turn's failure (a HarnessError, the writer's TurnClosed and the other TurnError tags) keeps its tag; what else
-    // failed underneath (a provider's `AiError`) is `loop.failed`, with it as the cause and its text, never its stack, as the message.
+    // A turn's failure (a HarnessError, the writer's TurnClosed and the other TurnError tags) keeps its tag: the request's
+    // callbacks fail with it, typed, and a tool handler's carries it as a defect, which `harnessDefectsAsFailures` restores.
+    // What else failed underneath (a provider's `AiError`) is `loop.failed`, with it as the cause and its text, never its stack, as the message.
     Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
   ))
   // The loop's sum of the usage each `assistant.message` carried.

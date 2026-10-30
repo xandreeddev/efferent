@@ -170,8 +170,8 @@ export const makeTurnTasks = Effect.fnUntraced(function* (scope: Scope.Scope): E
 })
 
 /**
- * Callbacks with a `never` error channel (the loop's, a tool wrapper's
- * publish) carry a `TurnError` as a defect: a `HarnessError`, or a writer's
+ * Callbacks with a `never` error channel (a tool wrapper's publish, a
+ * subscriber's) carry a `TurnError` as a defect: a `HarnessError`, or a writer's
  * `TurnClosed`, `ReservedKind`, `SessionContended` or `SessionLogError`.
  * This restores it as a failure at the turn boundary (`isTurnError`, from
  * any copy of core), so a subscriber or writer failure fails the turn,
