@@ -13,5 +13,6 @@ const stepLoopPlugin
 interface CompactionPlan
 interface RunLoopOptions
 interface StepView
+type LoopEvent
 type LoopToolChoice
 type Phase

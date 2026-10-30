@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Data, Effect, Layer, Match, Option, Ref, Schema, Stream, Tracer } from "effect"
 import { CurrentAgentStep, CurrentEmptyResponseTolerance, CurrentTraceContent, Failure, hostNote, mediaFromBase64 } from "@xandreed/core"
-import type { LoopEvent } from "@xandreed/core"
+import type { LoopEvent } from "./loop-event.entity.js"
 import { DEGENERATE_REPEAT_NUDGE, foldProgress, nextPhase, runLoop } from "./loop.js"
 
 /** A scripted provider: call N returns `script(N)`'s encoded parts. */

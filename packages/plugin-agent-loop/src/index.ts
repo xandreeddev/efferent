@@ -12,4 +12,5 @@ export {
   type RunLoopOptions,
   type StepView,
 } from "./loop.js"
+export type { LoopEvent } from "./loop-event.entity.js"
 export { runSteps, STEP_LOOP, StepLoopLive, stepLoopPlugin, stepLoopPlugin as default } from "./step-loop.adapter.js"

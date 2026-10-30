@@ -1,5 +1,4 @@
-import type { TokenUsage } from "./token-usage.entity.js"
-import type { StepStatus } from "./turn-vocabulary.entity.js"
+import type { StepStatus, TokenUsage, ToolCallSummary } from "@xandreed/core"
 
 /**
  * The loop's event vocabulary — everything a driver needs to render a run
@@ -9,15 +8,9 @@ import type { StepStatus } from "./turn-vocabulary.entity.js"
  *
  * Discriminated on `type` (not `_tag`) so product events compose naturally
  * (`type SessionEvent = LoopEvent | { type: "math_render"; ... }`).
+ *
+ * @public
  */
-
-/** @public */
-export interface ToolCallSummary {
-  readonly id: string
-  readonly toolName: string
-  readonly args: unknown
-}
-
 export type LoopEvent =
   | { readonly type: "turn_start"; readonly turnIndex: number }
   /** The step settled: its call, its tools and its tail are done, with the

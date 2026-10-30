@@ -275,6 +275,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A custom `SettingsStore` drops its `sandbox` and `viMode` cases and reruns
   `settingsStoreConformance`. An exhaustive match over `LoopEvent` drops its
   `error` case.
+- Import `LoopEvent` from `@xandreed/plugin-agent-loop`:
+  `import type { LoopEvent } from "@xandreed/plugin-agent-loop"`.
 
 ### Breaking
 
@@ -729,6 +731,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     their place; `globMatcher` (use `compileGlob(pattern)` and its
     `matches`), `toFailure` (a defect's text is `reasonOf(Cause.die(defect))`),
     `safeKeepFrom` and `stepContextOf`, with nothing in their place.
+- `LoopEvent`, the events `runLoop` hands its `onEvent` sink, moves from
+  `@xandreed/core` to `@xandreed/plugin-agent-loop`, the package that emits
+  them. `@xandreed/core`, and `@xandreed/sdk`, which re-exports it, no
+  longer name it. The type is unchanged, and no journal kind or stored
+  payload changes. `ToolCallSummary`, the shape of an `assistant_message`
+  event's tool calls, stays in `@xandreed/core`.
 
 ### Added
 
