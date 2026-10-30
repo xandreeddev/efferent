@@ -245,6 +245,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A custom `StepLoop` provides `request.handlers` outermost and its
   `StepLoopReferences` (the request's `cacheKey` as `CurrentPromptCacheKey`,
   its `callPolicy` as `CurrentModelCallPolicy`, and the others) inside them.
+- Replace `assessAll(bindings, input)` with one grader per evaluator:
+  `graderFromEvaluator({ definition, input, evaluator, timeoutMs }, services)`.
+  The grader's `metrics` replace a binding's `select`, `input` is the codec
+  the projection encoded the grading context's input with, `services`
+  provides what the evaluator requires (a `SemanticJudge` layer), and
+  `timeoutMs` keeps its 90 s default. Read the outcome from the run's
+  `Grade`: `status`, `metrics`, `usage`, `metadata` (an assessment's
+  `references` under `metadata.references`) and `reason`, a string where
+  `EvaluationResult.reason` was an `Option`.
+- To grade one input outside a run, provide the grader's `layer` and call
+  `GraderAssessment`'s `assess(context, candidate)`. A failure is an
+  `EvaluationError` (`code` `unavailable` for a missing measurement) where
+  `assess` returned an `error` or `unavailable` result.
+- An exporter that sent `evaluationScores(result)` sends
+  `exportableScores(encodedRun)`: each score carries its trial, `key`, a
+  stable `seed` for the remote id, a numeric `value` and the grade's
+  reason as `comment` (a metric's own `comment` is not sent).
+- Call `parseEvaluationApp` where you called `validateEvaluationApp`.
+- Saved reports are unaffected: no stored run holds an `EvaluationResult`
+  or an `EvaluationScore`.
 
 ### Breaking
 
@@ -606,6 +626,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   carry them, and checks that the loop's own values still win there. A
   custom `StepLoop` that provides `request.handlers` inside its own
   references now fails the cache-key and call-policy checks.
+`@xandreed/evals` removes the exports it had deprecated:
+
+- `assess`, `assessAll`, `EvaluatorBinding`, `EvaluationResult` and
+  `summarizeAssessments` (and `validateBindings`, never exported from the
+  root): an evaluator grades only behind a grader, `graderFromEvaluator`.
+  Its verdict is a `Grade` in the run, `gradeEvaluation` regrades saved
+  work, and the run's grades and `runGates` are the summary.
+- `evaluatorRegistry` and `EvaluatorRegistration`: register each evaluator
+  as a grader in the app's `graders`, which `parseEvaluationApp` checks for
+  duplicates; a task binds it as `<id>@<version>`.
+- `evaluationScores` and `EvaluationScore`: `exportableScores` and
+  `ExportedScore`.
+- `validateEvaluationApp`: `parseEvaluationApp`, the same check.
 
 ### Added
 

@@ -1,11 +1,9 @@
 import { expect, test } from "bun:test"
-import { Effect, Option, Predicate, Ref, Schema } from "effect"
-import { AssessmentError } from "./assessment.entity.js"
-import { assessAll } from "./assessment.usecase.functions.js"
-import { validateDataset, summarizeAssessments } from "./assessment.entity.functions.js"
+import { Effect, Option, Predicate, Schema } from "effect"
+import { validateDataset } from "./assessment.entity.functions.js"
 import { compareCalibrationMetric, summarizeCalibration } from "./domain/grader-calibration.entity.functions.js"
 import { assessBothOrders } from "./evaluators/pairwise.js"
-import type { Dataset, Evaluator } from "./assessment.usecase.js"
+import type { Dataset } from "./assessment.usecase.js"
 import { spanRecorder } from "./testing/fixture.testing.js"
 
 const data: Dataset<string, boolean> = {
@@ -14,10 +12,6 @@ const data: Dataset<string, boolean> = {
     { id: "good", family: "good", split: "calibration", review: "known", input: "supported", reference: true, provenance: "controlled fixture" },
     { id: "bad", family: "bad", split: "validation", review: "known", input: "fabricated", reference: false, provenance: "controlled fixture" },
   ],
-}
-const judge: Evaluator<{ readonly output: string; readonly reference: boolean }> = {
-  id: "quality", version: "1", metrics: ["supported", "helpful"],
-  run: (input) => Effect.succeed({ metrics: [{ kind: "boolean", name: "supported", value: input.output === "supported" }, { kind: "score", name: "helpful", value: 1, min: 0, max: 1 }], reason: "fixture" }),
 }
 
 test("dataset rejects duplicate IDs and cross-split case families", async () => {
@@ -30,40 +24,6 @@ test("a case that does not decode is named, and its schema error kept as the cau
   expect(error.code).toBe("invalid")
   expect(error.message).toStartWith("Dataset case bad does not decode: ")
   expect(Predicate.isTagged(error.cause, "SchemaError")).toBe(true)
-})
-test("one judge call emits several independently selected metrics", async () => {
-  const program = Effect.gen(function* () {
-    const count = yield* Ref.make(0)
-    const bound = { ...judge, run: (input: { output: string; reference: boolean }) => Ref.update(count, (n) => n + 1).pipe(Effect.andThen(judge.run(input))) }
-    const result = yield* assessAll([{ evaluator: bound, select: ["supported"] }], { output: "supported", reference: true })
-    expect(yield* Ref.get(count)).toBe(1)
-    expect(result[0]?.metrics.map((m) => m.name)).toEqual(["supported"])
-    expect(yield* assessAll([{ evaluator: bound, select: ["supported"] }, { evaluator: bound, select: ["helpful"] }], { output: "", reference: false }).pipe(Effect.isFailure)).toBe(true)
-  })
-  await Effect.runPromise(program)
-})
-test("provider failure is unavailable, never a measured zero", async () => {
-  const result = await Effect.runPromise(assessAll([{ evaluator: { ...judge, run: () => Effect.fail(new AssessmentError({ code: "unavailable", message: "missing evidence" })) }, select: ["supported"] }], { output: "", reference: false }))
-  expect(result[0]?.status).toBe("unavailable")
-  expect(result[0]?.metrics).toEqual([])
-  expect(Option.isNone(result[0]!.usage.costUsd)).toBe(true)
-  expect(summarizeAssessments(result).scored).toBe(0)
-})
-test("a failed assessment's reason is its error's code and message, or a defect's message, never a stack frame or a path", async () => {
-  // Made here, so its stack names this file.
-  const crashed = new Error("judge crashed")
-  const [died, unavailable] = await Effect.runPromise(assessAll([
-    { evaluator: { ...judge, id: "crashing", run: () => Effect.die(crashed) }, select: ["supported"] },
-    { evaluator: { ...judge, run: () => Effect.fail(new AssessmentError({ code: "unavailable", message: "missing evidence" })) }, select: ["supported"] },
-  ], { output: "", reference: false }))
-  expect([died?.status, Option.getOrNull(died!.reason)]).toEqual(["error", "judge crashed"])
-  expect([unavailable?.status, Option.getOrNull(unavailable!.reason)]).toEqual(["unavailable", "unavailable: missing evidence"])
-  expect(JSON.stringify([died, unavailable])).not.toContain(import.meta.dir)
-})
-test("invalid judge output is an execution error, not clamped", async () => {
-  const result = await Effect.runPromise(assessAll([{ evaluator: { ...judge, metrics: ["helpful"], run: () => Effect.succeed({ metrics: [{ kind: "score", name: "helpful", value: 7, min: 0, max: 1 }], reason: "invalid" }) }, select: ["helpful"] }], { output: "", reference: false }))
-  expect(result[0]?.status).toBe("error")
-  expect(result[0]?.metrics).toEqual([])
 })
 test("calibration distinguishes probabilities from scalar scores", () => {
   const result = compareCalibrationMetric({ kind: "probability", name: "grounded", value: 0.8 }, { kind: "boolean", name: "grounded", value: true })

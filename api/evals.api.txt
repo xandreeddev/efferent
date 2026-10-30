@@ -22,9 +22,7 @@ const DecisionCaseId
 const DecisionTrial
 const EvalId
 const EvalPath
-const EvaluationResult
 const EvaluationRun
-const EvaluationScore
 const EvaluationServicesLive
 const EvaluationSplit
 const EvaluationUsage
@@ -71,8 +69,6 @@ const Trial
 const Version
 const approveReviews
 const argValue
-const assess
-const assessAll
 const assessCompleteness
 const assessmentOfAiError
 const calibrateGrader
@@ -92,8 +88,6 @@ const errorCodeOf
 const evaluationAppViolations
 const evaluationEnvironmentPort
 const evaluationFingerprint
-const evaluationScores
-const evaluatorRegistry
 const executionFingerprint
 const exportableScores
 const fingerprint
@@ -123,12 +117,10 @@ const semanticEvaluator
 const semanticResponseSchema
 const semanticRetrievalGraders
 const standardDeviation
-const summarizeAssessments
 const summarizeCalibration
 const tasksFromDataset
 const unknownEvaluationUsage
 const validateDataset
-const validateEvaluationApp
 const validateMetrics
 const validateSemanticAnswers
 const validateSemanticInput
@@ -142,8 +134,6 @@ interface EvaluationApp
 interface EvaluationEnvironment
 interface EvaluationSelection
 interface Evaluator
-interface EvaluatorBinding
-interface EvaluatorRegistration
 interface ExporterRegistration
 interface GraderRegistration
 interface GradingSelection
@@ -166,9 +156,7 @@ type DecisionCaseId
 type DecisionTrial
 type EvalId
 type EvalPath
-type EvaluationResult
 type EvaluationRun
-type EvaluationScore
 type EvaluationUsage
 type EvidenceProjection
 type ExportReceipt

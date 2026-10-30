@@ -18,9 +18,10 @@ const evaluationErrorOf = (error: AssessmentError): EvaluationError =>
  * The registration keeps `definition`; each grade decodes the grading
  * context's `input` with `input` (the codec the projection encoded it
  * with), runs the evaluator with `services` (what it requires, built in
- * the grade's scope) within `timeoutMs` (90 s), checks its metrics as
- * `assess` did, and keeps the grader's `metrics`. A non-empty `references`
- * list is the grade's `metadata.references`.
+ * the grade's scope) within `timeoutMs` (90 s), checks its metrics against
+ * its declaration (each declared one once and no other, a score within its
+ * range), and keeps the grader's `metrics`. A non-empty `references` list
+ * is the grade's `metadata.references`.
  *
  * The layer fails `invalid` when the evaluator does not declare every
  * metric of the grader, or the deadline is not a positive number. An input

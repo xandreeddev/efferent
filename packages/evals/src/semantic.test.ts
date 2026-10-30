@@ -1,7 +1,13 @@
 import { expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt } from "effect/ai"
-import { Effect, Fiber, Layer, Option, Predicate, Ref, Schema, SchemaRepresentation, Stream } from "effect"
-import { assessAll, unknownEvaluationUsage } from "./assessment.usecase.functions.js"
+import { Cause, Effect, Fiber, Layer, Option, Predicate, Ref, Schema, SchemaRepresentation, Stream } from "effect"
+import type { AssessmentError } from "./assessment.entity.js"
+import type { Evaluator } from "./assessment.usecase.js"
+import { unknownEvaluationUsage } from "./assessment.usecase.functions.js"
+import { graderFromEvaluator } from "./adapters/evaluator-grader.adapter.js"
+import { EvalId } from "./domain/identity.entity.js"
+import { isUnavailable, reasonOf } from "./domain/identity.entity.functions.js"
+import { GraderAssessment } from "./ports/grader-assessment.port.js"
 import { SemanticJudge } from "./ports/semantic-judge.port.js"
 import { SemanticInput } from "./semantic.entity.js"
 import { semanticResponseSchema, validateSemanticAnswers } from "./semantic.entity.functions.js"
@@ -16,8 +22,14 @@ const input: SemanticInput = { state: "Answer: open at 09:00. Evidence: hours 09
   preference: { type: "choice", instructions: "Choose the better supported answer.", criteria: { A: "First", B: "Second", tie: "Equal" } },
 } }
 const answers = { groundedness: { type: "boolean" as const, probability: 0.9 }, completeness: { type: "score" as const, score: 1.5 }, preference: { type: "choice" as const, choice: "A" } }
-const evaluator = semanticEvaluator({ id: "quality", version: "rubric-v1", questions: input.questions, state: (value: { state: string }) => value.state })
-const bindings = [{ evaluator, select: ["groundedness", "completeness", "preference"] }]
+const State = Schema.Struct({ state: Schema.String })
+const evaluator = semanticEvaluator({ id: "quality", version: "rubric-v1", questions: input.questions, state: (value: typeof State.Type) => value.state })
+const candidate = { id: EvalId.make("candidate"), configuration: {}, fingerprints: {} }
+/** One grade of `rubric` behind a grader of every metric it declares, over the input's state, judged by `judge`. */
+const grade = (judge: Layer.Layer<SemanticJudge, AssessmentError>, rubric: Evaluator<typeof State.Type, SemanticJudge> = evaluator) =>
+  GraderAssessment.use((port) => port.assess({ projection: "state", version: "1", input: { state: input.state }, references: [], omissions: [], bytes: 0, fingerprint: "state" }, candidate)).pipe(
+    Effect.provide(graderFromEvaluator({ definition: { id: EvalId.make(rubric.id), version: rubric.version, kind: "model", metrics: rubric.metrics, fingerprints: {} }, input: State, evaluator: rubric }, judge).layer),
+  )
 const finish = { type: "finish" as const, reason: "stop" as const, usage: { inputTokens: { total: 10 }, outputTokens: { total: 5 } } }
 const model = (prompts: Ref.Ref<ReadonlyArray<string>>) => Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
   generateText: (request) => Ref.update(prompts, (prior) => [...prior, JSON.stringify(request.prompt)]).pipe(Effect.as([{ type: "text" as const, text: JSON.stringify({ answers }) }, finish])),
@@ -27,13 +39,13 @@ const model = (prompts: Ref.Ref<ReadonlyArray<string>>) => Layer.effect(Language
 test("a single Jev request emits selected typed metrics and preserves unknown usage", async () => {
   const calls: SemanticInput[] = []
   const layer = SemanticJevLive({ evaluate: async (request) => { calls.push(request); return { answers } } })
-  const [result] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(layer)))
+  const result = await Effect.runPromise(grade(layer))
   expect(calls).toEqual([input])
-  expect(result?.status).toBe("scored")
-  expect(result?.metrics).toEqual([{ kind: "probability", name: "groundedness", value: 0.9 }, { kind: "score", name: "completeness", value: 1.5, min: 0, max: 2 }, { kind: "preference", name: "preference", value: "A" }])
-  expect(result?.metadata.backend).toBe("jev")
-  expect(Option.isNone(result!.usage.costUsd)).toBe(true)
-  expect(Option.isNone(result!.usage.inputTokens)).toBe(true)
+  expect(result.status).toBe("scored")
+  expect(result.metrics).toEqual([{ kind: "probability", name: "groundedness", value: 0.9 }, { kind: "score", name: "completeness", value: 1.5, min: 0, max: 2 }, { kind: "preference", name: "preference", value: "A" }])
+  expect(result.metadata.backend).toBe("jev")
+  expect(Option.isNone(result.usage.costUsd)).toBe(true)
+  expect(Option.isNone(result.usage.inputTokens)).toBe(true)
 })
 
 /** A judge over a model whose every call fails with `reason`. */
@@ -45,11 +57,10 @@ const failingJudge = (reason: AiError.AiErrorReason) => SemanticLlmLive({
 }))))
 
 test("a provider failure the next call may not repeat is unavailable; a lasting one is an error; each is named by its reason", async () => {
-  const [limited] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(failingJudge(new AiError.RateLimitError({})))))
-  const [denied] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(failingJudge(new AiError.AuthenticationError({ kind: "InvalidKey" })))))
-  expect([limited?.status, Option.getOrThrow(limited!.reason)]).toEqual(["unavailable", "unavailable: RateLimitError: Scripted.generateObject: Rate limit exceeded"])
-  expect([denied?.status, Option.getOrThrow(denied!.reason)]).toEqual(["error", "provider: AuthenticationError: Scripted.generateObject: InvalidKey: Verify your API key is correct"])
-  expect([limited?.metrics, denied?.metrics]).toEqual([[], []])
+  const limited = await Effect.runPromise(grade(failingJudge(new AiError.RateLimitError({}))).pipe(Effect.flip))
+  const denied = await Effect.runPromise(grade(failingJudge(new AiError.AuthenticationError({ kind: "InvalidKey" }))).pipe(Effect.flip))
+  expect([isUnavailable(limited), reasonOf(Cause.fail(limited))]).toEqual([true, "unavailable: RateLimitError: Scripted.generateObject: Rate limit exceeded"])
+  expect([isUnavailable(denied), reasonOf(Cause.fail(denied))]).toEqual([false, "provider: AuthenticationError: Scripted.generateObject: InvalidKey: Verify your API key is correct"])
 })
 
 test("a judge's provider failure keeps the AiError as its cause", async () => {
@@ -68,17 +79,17 @@ test("native LLM profiles pair distinct prompts and model Layers with the same r
       id: `llm-${variant}`, metadata: { promptVersion: "1", variant },
       prompt: (request) => Prompt.make([{ role: "system", content: `Rubric profile ${variant}` }, { role: "user", content: JSON.stringify(request) }]),
     }).pipe(Layer.provide(model(seen)))
-    const a = yield* assessAll(bindings, { state: input.state }).pipe(Effect.provide(profile("concise", seenA)))
-    const b = yield* assessAll(bindings, { state: input.state }).pipe(Effect.provide(profile("detailed", seenB)))
-    expect(a[0]?.metrics).toEqual(b[0]?.metrics)
+    const a = yield* grade(profile("concise", seenA))
+    const b = yield* grade(profile("detailed", seenB))
+    expect(a.metrics).toEqual(b.metrics)
     expect((yield* Ref.get(seenA))[0]).toContain("Rubric profile concise")
     expect((yield* Ref.get(seenB))[0]).toContain("Rubric profile detailed")
     expect((yield* Ref.get(seenA))[0]).toContain("09:00")
-    expect(a[0]?.metadata.variant).toBe("concise")
-    expect(a[0]?.metadata.backend).toBe("llm-concise")
-    expect(Option.getOrThrow(a[0]!.usage.inputTokens)).toBe(10)
-    expect(Option.getOrThrow(a[0]!.usage.outputTokens)).toBe(5)
-    expect(Option.isNone(a[0]!.usage.costUsd)).toBe(true)
+    expect(a.metadata.variant).toBe("concise")
+    expect(a.metadata.backend).toBe("llm-concise")
+    expect(Option.getOrThrow(a.usage.inputTokens)).toBe(10)
+    expect(Option.getOrThrow(a.usage.outputTokens)).toBe(5)
+    expect(Option.isNone(a.usage.costUsd)).toBe(true)
   }))
 })
 
@@ -97,16 +108,14 @@ test("the LLM judge asks for its answers as the object semantic_assessment", asy
 
 test("a semantic assessment is traced: eval.semantic.run under eval.evaluator, the judge's call under it", async () => {
   const jev = spanRecorder()
-  await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(
-    Effect.provide(SemanticJevLive({ evaluate: async () => ({ answers }) })), Effect.withTracer(jev.tracer),
-  ))
+  await Effect.runPromise(grade(SemanticJevLive({ evaluate: async () => ({ answers }) })).pipe(Effect.withTracer(jev.tracer)))
   expect(jev.named("eval.semantic.run").map(jev.parentOf)).toEqual(["eval.evaluator"])
   expect(jev.named("eval.semantic.jev").map((span) => [jev.parentOf(span), span.attributes.get("gen_ai.request.model")])).toEqual([["eval.semantic.run", "typesafe-ai/jev"]])
   const llm = spanRecorder()
   await Effect.runPromise(Effect.gen(function* () {
     const prompts = yield* Ref.make<ReadonlyArray<string>>([])
     const judge = SemanticLlmLive({ id: "llm-traced", prompt: (request) => Prompt.make([{ role: "user", content: JSON.stringify(request) }]) }).pipe(Layer.provide(model(prompts)))
-    return yield* assessAll(bindings, { state: input.state }).pipe(Effect.provide(judge))
+    return yield* grade(judge)
   }).pipe(Effect.withTracer(llm.tracer)))
   expect(llm.named("eval.semantic.llm").map((span) => [llm.parentOf(span), span.attributes.get("eval.backend")])).toEqual([["eval.semantic.run", "llm-traced"]])
 })
@@ -122,9 +131,8 @@ test("malformed, mismatched and non-finite answers fail without scores", async (
     { ...answers, preference: { type: "choice", choice: "C" } },
   ]
   await Promise.all(invalid.map(async (value) => {
-    const [result] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(SemanticJevLive({ evaluate: async () => ({ answers: value }) }))))
-    expect(result?.status).toBe("error")
-    expect(result?.metrics).toEqual([])
+    const failed = await Effect.runPromise(grade(SemanticJevLive({ evaluate: async () => ({ answers: value }) })).pipe(Effect.flip))
+    expect(failed.code).toBe("invalid")
   }))
 })
 
@@ -170,16 +178,14 @@ test("categorical decisions remain usable directly but cannot become preference 
   const direct = await Effect.runPromise(Effect.flatMap(SemanticJudge, (judge) => judge.evaluate({ state: "", questions })).pipe(Effect.provide(layer)))
   expect(direct.answers.route).toEqual({ type: "choice", choice: "search" })
   const categorical = semanticEvaluator({ id: "route", version: "1", questions, state: () => "" })
-  const [result] = await Effect.runPromise(assessAll([{ evaluator: categorical, select: ["route"] }], {}).pipe(Effect.provide(layer)))
-  expect(result?.status).toBe("error")
+  const refused = await Effect.runPromise(grade(layer, categorical).pipe(Effect.flip))
+  expect([refused.code, refused.message]).toEqual(["invalid", "Preference metrics require A/B/tie choices; use SemanticJudge directly for categorical decisions"])
   expect(calls).toHaveLength(1)
 })
 
 test("provider rejection stays a failed assessment with no implicit fallback", async () => {
-  const [result] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(SemanticJevLive({ evaluate: () => Promise.reject(new Error("offline")) }))))
-  expect(result?.status).toBe("error")
-  expect(result?.metrics).toEqual([])
-  expect(Option.getOrThrow(result!.reason)).toBe("provider: Jev request failed: offline")
+  const failed = await Effect.runPromise(grade(SemanticJevLive({ evaluate: () => Promise.reject(new Error("offline")) })).pipe(Effect.flip))
+  expect([isUnavailable(failed), reasonOf(Cause.fail(failed))]).toEqual([false, "provider: Jev request failed: offline"])
 })
 
 test("a Jev transport failure and undecodable answers keep what failed as the cause", async () => {
@@ -206,9 +212,8 @@ test("Jev enforces UTF-8 byte limits before transport", async () => {
 test("Jev deadlines abort the SDK request", async () => {
   const aborted: boolean[] = []
   const layer = SemanticJevLive({ timeoutMs: 10, evaluate: (_input, signal) => new Promise((_resolve, reject) => { signal.addEventListener("abort", () => { aborted.push(true); reject(new Error("aborted")) }) }) })
-  const [result] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(layer)))
-  expect(result?.status).toBe("error")
-  expect(Option.getOrThrow(result!.reason)).toContain("deadline")
+  const late = await Effect.runPromise(grade(layer).pipe(Effect.flip))
+  expect([late.code, late.message]).toEqual(["timeout", "Jev deadline exceeded"])
   expect(aborted).toEqual([true])
 })
 
@@ -222,9 +227,8 @@ test("custom backends are revalidated before metric conversion", async () => {
   const layer = Layer.succeed(SemanticJudge, {
     id: "custom", evaluate: () => Effect.succeed({ answers: { ...answers, preference: { type: "choice", choice: "missing" } }, usage: unknownEvaluationUsage, metadata: {} }),
   })
-  const [result] = await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(Effect.provide(layer)))
-  expect(result?.status).toBe("error")
-  expect(result?.metrics).toEqual([])
+  const failed = await Effect.runPromise(grade(layer).pipe(Effect.flip))
+  expect(failed.code).toBe("invalid")
 })
 
 

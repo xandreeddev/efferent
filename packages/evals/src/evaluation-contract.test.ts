@@ -1,9 +1,8 @@
 import { describe, expect, it } from "bun:test"
-import { Effect, Option } from "effect"
+import { Effect } from "effect"
 import { assessCompleteness } from "./completeness.entity.functions.js"
 import { ActionId, ToolInvocationId, TraceStepId } from "./completeness.entity.js"
-import { evaluationScores } from "./evaluation-score.entity.functions.js"
-import { projectEvaluatorInput, evaluatorRegistry } from "./evaluator-registry.usecase.functions.js"
+import { projectEvaluatorInput } from "./assessment.usecase.functions.js"
 import type { Evaluator } from "./assessment.usecase.js"
 
 const tool = { name: "read", invocationId: ToolInvocationId.make("call-1"), stepId: TraceStepId.make("step-1") }
@@ -29,14 +28,5 @@ describe("evaluation contracts", () => {
     const evaluator: Evaluator<{ answer: string }> = { id: "help", version: "1", metrics: ["help"], run: (input) => Effect.succeed({ metrics: [{ kind: "boolean", name: "help", value: Object.keys(input).join() === "answer" }], reason: input.answer }) }
     const projected = projectEvaluatorInput(evaluator, (input: { answer: string; secret: string }) => Effect.succeed({ answer: input.answer }))
     expect((await Effect.runPromise(projected.run({ answer: "ok", secret: "hidden" }))).metrics[0]?.value).toBe(true)
-    const entry = { id: "help", version: "1", projectionVersion: "1", promptHash: "hash", settings: {}, evaluator }
-    const registry = await Effect.runPromise(evaluatorRegistry([entry]))
-    expect((await Effect.runPromise(registry.resolve("help", "1"))).evaluator).toBe(evaluator)
-    expect(await Effect.runPromise(Effect.isFailure(evaluatorRegistry([entry, entry])))).toBe(true)
-  })
-  it("exposes comments without manufacturing unavailable scores", () => {
-    const result = { version: 2 as const, evaluator: "x", evaluatorVersion: "1", status: "scored" as const, metrics: [{ kind: "boolean" as const, name: "x", value: true, comment: "specific" }], reason: Option.some("shared"), references: [], startedAt: 0, endedAt: 1, usage: { inputTokens: Option.none<number>(), outputTokens: Option.none<number>(), costUsd: Option.none<number>() }, metadata: {} }
-    expect(evaluationScores(result)).toEqual([{ key: "x", score: true, comment: "specific" }])
-    expect(evaluationScores({ ...result, status: "unavailable" })).toEqual([])
   })
 })

@@ -117,10 +117,8 @@ puts it behind a grader, a `GraderRegistration` for the app's `graders`:
 - **References.** An assessment's non-empty `references` are the grade's
   `metadata.references`.
 
-`assess`, `assessAll`, `EvaluatorBinding`, `EvaluationResult`,
-`summarizeAssessments`, `evaluatorRegistry` and `EvaluatorRegistration` are
-deprecated and will be removed in a later minor release: register the
-evaluator as a grader, bind it to tasks, and read the run's grades and gates.
+This is the only way an evaluator runs: register it as a grader, bind it to
+tasks, and read the run's grades and gates.
 
 ## Native prompts
 
