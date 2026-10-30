@@ -162,6 +162,58 @@ describe("TurnLive", () => {
     }))
     expect(journalNames.filter((name) => name.startsWith("turn."))).toEqual(["turn.started", "turn.reply"])
   })
+
+  test("a message memory failed to record can be taken again, with the context entries that waited for it", async () => {
+    const seen = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      // The first write (the message's) fails, as a store refusing one append would.
+      const writes = yield* Ref.make(0)
+      const flaky: Recorded = { ...recorded, writer: { ...recorded.writer, append: (drafts) => Ref.getAndUpdate(writes, (n) => n + 1).pipe(
+        Effect.flatMap((n) => n === 0 ? Effect.fail(new HarnessError({ code: "session.log", message: "refused once" })) : recorded.writer.append(drafts)),
+      ) } }
+      return yield* inTurn(flaky, Effect.gen(function* () {
+        const turn = yield* TurnMemory
+        yield* turn.context({ id: "intent", version: "1", text: "waited" })
+        const first = yield* Effect.result(turn.persistMessage)
+        const again = yield* Effect.result(turn.persistMessage)
+        return {
+          first: first._tag === "Failure" ? failureCode(first.failure) : "taken",
+          again: again._tag === "Failure" ? failureCode(again.failure) : again.success,
+          entries: (yield* turn.entries).map((entry) => `${entry.id}:${entry.body._tag}`),
+        }
+      }))
+    }))
+    expect(seen).toEqual({ first: "session.log", again: 1, entries: ["run-1:0:TurnStarted", "run-1:1:TurnContext"] })
+  })
+
+  test("tools whose open failed stay closed, and open on the next try", async () => {
+    const seen = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      const opens = yield* Ref.make(0)
+      const flaky = ToolRegistry.of({
+        ...registry,
+        open: (session) => Ref.getAndUpdate(opens, (n) => n + 1).pipe(
+          Effect.flatMap((n) => n === 0 ? Effect.fail(new HarnessError({ code: "tools.duplicate", message: "refused once" })) : registry.open(session)),
+        ),
+      })
+      return yield* Effect.scoped(Effect.gen(function* () {
+        const toolbox = yield* TurnToolbox
+        const first = yield* Effect.result(openTurnTools)
+        const between = yield* Effect.result(toolbox.tools)
+        const again = yield* Effect.result(openTurnTools)
+        return {
+          first: first._tag === "Failure" ? failureCode(first.failure) : "open",
+          between: between._tag === "Failure" ? between.failure.code : "open",
+          again: again._tag === "Failure" ? failureCode(again.failure) : "open",
+          active: yield* (yield* RunContext).activate(["notes"]),
+        }
+      })).pipe(
+        Effect.provide(TurnLive({ turn: recorded.writer })),
+        Effect.provide(Layer.merge(Layer.succeed(ConversationMemory, memory), Layer.succeed(ToolRegistry, flaky))),
+      )
+    }))
+    expect(seen).toEqual({ first: "tools.duplicate", between: "tools.unavailable", again: "open", active: ["notes@host:run-1"] })
+  })
 })
 
 describe("guardTurn", () => {

@@ -63,6 +63,10 @@ export type CompactionAction = typeof CompactionAction.Type
 export const ActivationSource = Schema.Literals(["always", "matcher", "load_skill", "host"])
 export type ActivationSource = typeof ActivationSource.Type
 
+/** A turn-context message the model sees this turn: a turn-tier prompt section, or an entry the host adds (`TurnMemory.context`). */
+export const TurnContextBody = Schema.TaggedStruct("TurnContext", { sectionId: Schema.String, version: Schema.String, text: Schema.String })
+export type TurnContextBody = typeof TurnContextBody.Type
+
 /** A TurnStarted body as stored: the text under `prompt`, the images (when there are some) under `attachments`. */
 const StoredTurnStarted = Schema.Struct({
   _tag: Schema.Literal("TurnStarted"),
@@ -92,7 +96,7 @@ export const LogBody = Schema.Union(
         : { _tag: "TurnStarted" as const, prompt: userMessage.text, attachments: userMessage.attachments },
     }),
   )),
-  Schema.TaggedStruct("TurnContext", { sectionId: Schema.String, version: Schema.String, text: Schema.String }),
+  TurnContextBody,
   Schema.TaggedStruct("Message", { message: AgentMessage }),
   Schema.TaggedStruct("ToolResult", {
     toolCallId: ToolCallId,
