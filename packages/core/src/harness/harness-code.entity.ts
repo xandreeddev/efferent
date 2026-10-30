@@ -96,6 +96,7 @@ export const HARNESS_CODES = [
   "turn.persisted",
   "turn.refused",
   "turn.run-reused",
+  "turn.takeover",
   "turn.unended",
   "turn.unstarted",
 ] as const

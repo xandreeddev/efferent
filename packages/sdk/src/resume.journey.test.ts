@@ -10,6 +10,7 @@ import {
   harnessCodeOf,
   onTool,
   RunId,
+  SessionLog,
   SessionLogMemoryLive,
   Sessions,
   subscribeAll,
@@ -230,5 +231,58 @@ describe("journey: resume a turn cancelled mid-tool-call", () => {
     expect(prompt.indexOf("FOUND record-alpha-a")).toBeGreaterThan(prompt.indexOf("find alpha and fetch its page"))
     expect(prompt.lastIndexOf("find alpha and fetch its page")).toBeGreaterThan(prompt.indexOf("FOUND record-alpha-a"))
     expect([codeOf(observed.answered), observed.answered]).toMatchObject(["turn.not-resumable", { _tag: "NotResumable", session: "00000000-0000-4000-8000-0000000000aa", turn: 1, reason: "superseded" }])
+  })
+})
+
+describe("journey: a new process takes over a turn its stopped holder left open", () => {
+  test("a turn held by an instance that stopped, its tool still running, is taken over and resumed at once by another instance", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const slow = yield* Ref.make(true)
+      const fetching = yield* Deferred.make<void>()
+      const fetched = yield* Ref.make(0)
+      const agent = yield* Agent.define({
+        plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin],
+        capabilities: [toolsOf(slow, fetching, fetched)],
+        turnServices: [LanguageModel.LanguageModel],
+        limits: { streaming: false, maxSteps: 6 },
+      })
+      // Two instances over one log, as two processes over one store, each holding its turns for a long lease.
+      const log = Context.get(yield* Layer.build(SessionLogMemoryLive), SessionLog)
+      const instance = () => Layer.build(SessionsLive({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs: 600_000, renew: "on-commit" } }).pipe(
+        Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen)))).pipe(Effect.map(Context.get(Sessions)))
+      const [stopped, successor] = [yield* instance(), yield* instance()]
+      yield* stopped.create({ owner: session.owner, id: session.id })
+      const services = (sessions: Context.Service.Shape<typeof Sessions>, model: LanguageModel.LanguageModel) => Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions))
+
+      // 1. The first process asks: a whole step (lookup), then fetch_page, which hangs: the process stops answering here.
+      const first = yield* scripted([call("c1", "lookup", { query: "alpha" }), call("c2", "fetch_page", { id: "record-alpha-a" })])
+      const asking = yield* Effect.forkChild(agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-1") }, services: services(stopped, first.model) }, deliverAnswer))
+      yield* Deferred.await(fetching)
+      yield* Ref.set(slow, false)
+
+      // 2. Without takeOver, the new process waits for the lease: SessionBusy.
+      const second = yield* scripted([call("c3", "fetch_page", { id: "record-alpha-a" }), call("c4", "deliver", { text: "PAGE of record-alpha-a" })])
+      const busy = yield* Effect.flip(agent.turn({ turn: { session, userMessage: message, runId: RunId.make("run-2"), resumes: 1 }, services: services(successor, second.model) }, deliverAnswer))
+
+      // 3. With takeOver, it closes turn 1 and resumes it at once, in one begin.
+      const resumed = yield* agent.turn({ turn: { session, userMessage: new UserMessage({ text: "Continue." }), runId: RunId.make("run-3"), resumes: 1, takeOver: true }, services: services(successor, second.model) }, deliverAnswer)
+
+      // 4. The stopped process's turn, when its tool returns, writes nothing more: its writer was fenced.
+      yield* Fiber.interrupt(asking)
+      return { busy, resumed, resumedPrompt: (yield* Ref.get(second.prompts))[0] ?? "", all: yield* successor.read(session) }
+    })))
+
+    expect(codeOf(observed.busy)).toBe("session.busy")
+    expect(observed.resumed.outcome).toBe("completed")
+    // The resuming turn's model sees turn 1's message and its whole step, then "Continue.".
+    const prompt = observed.resumedPrompt
+    expect(prompt.indexOf("FOUND record-alpha-a")).toBeGreaterThan(prompt.indexOf("find alpha and fetch its page"))
+    expect(prompt.indexOf("Continue.")).toBeGreaterThan(prompt.indexOf("FOUND record-alpha-a"))
+    const endings = observed.all.filter((event) => event.kind === "turn.ended").map((event) => [turnOf(event), event.data.reason, (event.data.failure as { readonly code: string } | null)?.code ?? null])
+    expect(endings).toEqual([[1, "interrupted", "turn.takeover"], [2, "completed", null]])
+    expect(ofTurn(observed.all, 2)[0]?.data).toMatchObject({ key: "resume:1", resumes: 1, runId: "run-3" })
+    // Nothing of turn 1 was stored after its takeover.
+    const takeover = observed.all.findIndex((event) => event.kind === "turn.ended")
+    expect(observed.all.slice(takeover + 1).filter((event) => turnOf(event) === 1)).toEqual([])
   })
 })

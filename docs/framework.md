@@ -2387,7 +2387,8 @@ result delivered meanwhile is answered first and does not stand in the
 way), and earlier resumes of turn `n` that failed, were cancelled or were
 interrupted, so a resume that did not complete can be tried again (see
 keys, below). A turn reaped because its holder stopped (`turn.lease`)
-counts as interrupted, including one the resuming begin reaps itself.
+counts as interrupted, including one the resuming begin reaps itself, and
+so does one taken over (`turn.takeover`, below).
 Otherwise the begin fails with `NotResumable` (`session`, `turn` and a
 `reason`) and opens nothing: `missing` (no such turn in this session's own
 log; a fork's inherited turns are its parent's), `inbox` (an inbox turn),
@@ -2414,6 +2415,22 @@ continues, and refuses to continue one that has been answered since; it
 changes nothing the model is sent. Send the original message again to
 re-run the request, or a short instruction such as "Continue where you
 stopped.".
+
+**Taking a session over.** A turn whose holder stopped (its process was
+killed, its machine restarted) stays open until its lease runs out, or,
+under process ownership, until its process is seen to be gone: until then a
+begin fails with `SessionBusy`. A host that knows the holder is gone (it
+restarted the process that held it, or moved the session) begins with
+`takeOver: true` (`BeginTurn`, `agent.turn({ turn: { …, takeOver: true } })`,
+`drain(address, run, { takeOver: true })`): the opening commit closes the
+open turn at once, whatever its lease, as `interrupted` with code
+`turn.takeover`, its inbox items waiting again with no attempt counted, and
+the same begin may resume it (`resumes: n`). A turn no longer held is reaped
+as any begin reaps it (`turn.lease`). The framework does not judge whether
+the holder is really gone: that is the host's word. A holder still running
+is fenced at its next write, which fails with `TurnClosed` (`interrupted`)
+and stores nothing (on the taking instance, its writer is closed at once);
+what it did before, a tool's side effects included, is not undone.
 
 **What is durable after a cancel or an interrupt** is what the turn's
 writer committed before the turn was closed:

@@ -163,6 +163,14 @@ export interface NewTurn {
    * however it ended: to try a resume that failed again, pass a new key.
    */
   readonly resumes?: number
+  /**
+   * Take the session over: its open turn's holder is gone (a restarted
+   * process), so the begin closes that turn at once, as `interrupted` with
+   * `turn.takeover`, instead of failing `SessionBusy` until its lease runs
+   * out (`BeginTurn`'s `takeOver`). With `resumes`, the turn taken over can
+   * be the one resumed.
+   */
+  readonly takeOver?: boolean
 }
 
 /**

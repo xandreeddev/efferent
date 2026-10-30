@@ -5689,6 +5689,11 @@
       "meaning": "A stored `turn.started` or `turn.ended` did not decode when the begin checked its key or the turn it resumes."
     },
     {
+      "code": "turn.takeover",
+      "where": "a stored `turn.ended` failure (reason `interrupted`), written by plugin-sessions' `Sessions`",
+      "meaning": "A begin with `takeOver` closed the session's open turn, still held by another holder, which the host says is gone (a restarted process). The turn is resumable, and its inbox items wait again with no attempt counted."
+    },
+    {
       "code": "session.version",
       "where": "plugin-sessions' `Sessions` (a `SessionLogError`), before it plans a write",
       "meaning": "A newer release wrote the session: the stored format in its head (`STORED_FORMAT`) is above this release's. Nothing was written: `begin`, `deliver`, `drain`, `cancel`, `transact` and `fork` refuse it, while `get`, `list` and `read` still read it. Use that release or a later one."

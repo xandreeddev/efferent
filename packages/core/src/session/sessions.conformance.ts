@@ -166,7 +166,10 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * per id, taken by one inbox turn, waiting for the open turn, given back
  * when its turn is interrupted from outside, done when its turn is
  * cancelled); a turn whose lease ran out shown closed, left alone by a
- * drain with nothing to take and reaped by the next begin; a write renewing
+ * drain with nothing to take and reaped by the next begin; a begin with
+ * `takeOver` closing a turn still held elsewhere at once (`turn.takeover`,
+ * no attempt counted), resuming it, fencing its old writer and closing the
+ * instance's own; a write renewing
  * the lease from that write; with `processOwned`, a turn whose process
  * stopped reaped, one whose process runs held, and a leased turn held by
  * a process-owned instance within its lease (a turn is judged as it was
@@ -693,6 +696,38 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("lease", late === "TurnClosed:interrupted", `a write by the old holder gave ${late}`)
       const closed = yield* writer.closed
       yield* expect("lease", closed.reason === "interrupted", `the old holder's writer was closed as ${closed.reason}`)
+    })),
+
+    scoped("a begin with takeOver closes a turn still held elsewhere at once, as interrupted with turn.takeover and no attempt counted, resumes it, and fences its old writer; without it the begin is SessionBusy", "takeover", (owner) => Effect.gen(function* () {
+      const [stopped, successor] = [yield* leased(), yield* leased()]
+      const address = yield* created(stopped.sessions, owner)
+      yield* stopped.sessions.deliver(address, item("t1"))
+      const inbox = yield* stopped.sessions.begin(address, { _tag: "Inbox", runId: RunId.make("run-inbox-held") })
+      // Held for a long lease by an instance that stopped writing: a plain begin waits for it, a takeover does not.
+      const busy = yield* refusal(successor.sessions, address, say("too early"))
+      yield* expect("takeover", busy === "SessionBusy", `a begin without takeOver over a held turn gave ${busy}`)
+      const taking = yield* successor.sessions.begin(address, { ...say("take it over"), takeOver: true })
+      yield* expect("takeover", taking.admitted.turn === 2, `the takeover opened turn ${taking.admitted.turn}`)
+      const taken = endings(yield* successor.sessions.read(address, { kinds: ["turn.ended"] }))
+      yield* expect("takeover", taken === "1:interrupted:turn.takeover", `the turn taken over was closed as ${taken || "nothing"}`)
+      const late = yield* writeRefused(inbox)
+      yield* expect("takeover", late === "TurnClosed:interrupted", `a write by the old holder after the takeover gave ${late}`)
+      yield* taking.end(completed)
+      // The item the taken-over turn held waits again, with no attempt counted: a drain takes it, and it is not dropped.
+      const drained = yield* successor.sessions.drain(address, () => Effect.void)
+      const dropped = (yield* successor.sessions.read(address, { kinds: ["inbox.dropped"] })).length
+      yield* expect("takeover", drained.turns === 1 && dropped === 0, `after the takeover a drain ran ${drained.turns} turns and ${dropped} items were dropped`)
+      // A user's turn held elsewhere is taken over and resumed in one begin.
+      const second = yield* created(stopped.sessions, owner)
+      yield* stopped.sessions.begin(second, say("long running"))
+      const resuming = yield* successor.sessions.begin(second, { ...resume(1), takeOver: true })
+      yield* expect("takeover", resuming.admitted.turn === 2 && resuming.admitted.resumes === 1, `a takeover resuming turn 1 opened turn ${resuming.admitted.turn}, resuming ${resuming.admitted.resumes ?? "nothing"}`)
+      // On the holder's own instance, its writer is closed at once.
+      const third = yield* created(successor.sessions, owner)
+      const own = yield* successor.sessions.begin(third, say("mine"))
+      yield* Effect.scoped(successor.sessions.begin(third, { ...say("again"), takeOver: true }).pipe(Effect.flatMap((writer) => writer.end(completed))))
+      const closed = yield* own.closed
+      yield* expect("takeover", closed.reason === "interrupted" && closed.turn === 1, `the instance's own writer taken over was closed as ${closed.reason}`)
     })),
 
     scoped("a write renews the lease: a turn written to within its lease is held for a lease from that write, then reaped", "lease-renewal", (owner) => Effect.gen(function* () {

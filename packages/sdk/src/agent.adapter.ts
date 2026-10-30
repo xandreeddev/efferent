@@ -230,6 +230,7 @@ const beginTurn = (context: Context.Context<never>, turn: NewTurn): Effect.Effec
     _tag: "User", userMessage, runId: turn.runId, key: keyOf(turn), command: turn.command ?? {},
     ...(turn.meta === undefined ? {} : { meta: turn.meta }),
     ...(turn.resumes === undefined ? {} : { resumes: turn.resumes }),
+    ...(turn.takeOver === true ? { takeOver: true } : {}),
   })
 })
 

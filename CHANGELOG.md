@@ -10,6 +10,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A custom `Sessions` implements `takeOver` on `begin` and `drain` and
+  reruns `sessionsConformance`, which checks it.
 - A host `Sessions` over `@xandreed/plugin-sessions`' state, or tooling that
   reads the head's `sessions` state, accepts its new optional `format` key.
   A session a newer release wrote is refused for writes and turns with
@@ -883,6 +885,14 @@ stays inside its package, with nothing deprecated first:
   `store.stalled`. It passes `sessionLogConformance`,
   `sessionLogRecoveryConformance` (on Bun and, in `verify:packages`, on
   Node) and `sessionsConformance`.
+- `takeOver` on `BeginTurn` (`User`, `Inbox`, `Task`), on `NewTurn`
+  (`agent.turn`) and on `Sessions.drain`: the host's word that the holder of
+  the session's open turn is gone (a restarted process). The opening commit
+  closes a turn still held at once, whatever its lease, as `interrupted`
+  with the new code `turn.takeover` (resumable, its inbox items waiting
+  again with no attempt counted), and the same begin may resume it. A
+  holder still running is fenced at its next write. `sessionsConformance`
+  checks it (`takeover`).
 - `STORED_FORMAT` in `@xandreed/core`: the version of every shape the
   framework stores in a session log (journal payloads, `SessionHeader` and
   `SessionLogEvent`, the tasks plugin's records, the sessions plugin's head
