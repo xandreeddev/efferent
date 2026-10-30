@@ -12,7 +12,7 @@ The models plugin: the routed `LanguageModel` (opencode, google, anthropic, open
 - Never repeat a secret in an error: an unknown option key is named without its value, and proxy URLs go through `redactCredentials`.
 - Keep `CLAUDE_CODE_SYSTEM` byte-exact and first on Anthropic OAuth calls: the provider refuses the token otherwise.
 - A route that reads no images (`imageInputFor`, an endpoint's `images`) is sent label lines (`promptWithImageLabels`), never the image and never a provider error.
-- Bound a settled routed call by one `CallBudget`, shared by its attempts and its fallback rung, and make the call final once it hands a tool call to its toolkit (`withHandOff` in `src/llm/router.ts`): after that no retry, no fallback and no router bound, since the tools would run again. Bound an attempt by racing it (`retryableLlm`), never by wrapping it in a timeout, which would count the tools' time.
+- Bound a routed call by one `CallBudget`, shared by its attempts and a settled call's fallback rung, and make the call final once it hands a tool call to its toolkit (`withHandOff` in `src/llm/router.ts`): after that no retry, no fallback and no router bound, since the tools would run again. Bound an attempt by racing it (`retryableLlm`), never by wrapping it in a timeout, which would count the tools' time. A stream's idle bound (`retryableLlmStream`) leaves out the time its tool handlers run (the budget's `inFlight`, which `withHandOff` counts), and its retries stop at its first content part.
 - Decode an OpenAI-compatible body or stream chunk with `src/llm/chat-wire.entity.functions.ts` (`decodeChatCompletion`, `decodeStreamChunk`); one that does not decode fails as an `AiError`, and an empty 200 response is a transient failure (`rejectEmptyResponse`) unless the loop has set `CurrentEmptyResponseTolerance`.
 
 ## Public surface
@@ -29,7 +29,7 @@ The models plugin: the routed `LanguageModel` (opencode, google, anthropic, open
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Anthropic subscription system block `CLAUDE_CODE_SYSTEM` | `src/auth/anthropicOAuth.ts:28`, prepended by `prependClaudeCode` (`src/llm/providers.ts:91`, called at `src/llm/router.ts:139`) | unpinned |
+| Anthropic subscription system block `CLAUDE_CODE_SYSTEM` | `src/auth/anthropicOAuth.ts:28`, prepended by `prependClaudeCode` (`src/llm/providers.ts:91`, called at `src/llm/router.ts:140`) | unpinned |
 | Codex default `instructions` (`You are a helpful assistant.`) when a request has no system text | `src/llm/openAiCodex.ts:58` | exact, `src/llm/providers.test.ts:61`, `src/llm/openAiCodex.test.ts:40` |
 | Label lines in place of unsent files: the message's text, then one line per file part | `src/llm/compat.ts:147-158`, `:268-286` | exact, `src/llm/compat.test.ts:434`, `:500`, `:504`; `src/llm/providers.test.ts:210` |
 | Non-image file label (`[file omitted: <type>, <name>]`); images use core's `mediaLabel` | `src/llm/compat.ts:123` | unpinned |
@@ -37,7 +37,7 @@ The models plugin: the routed `LanguageModel` (opencode, google, anthropic, open
 
 ## Erasure files
 
-- `src/llm/router.ts`, `src/llm/providers.ts`: one routed `LanguageModel` over arbitrary provider services, with reshaped options and the generic `generateText`/`generateObject`/`streamText` signatures (for example `router.ts:329`, `:646-651`); `withImageLabels` re-wraps those three methods (`providers.ts:66-68`) and a cache-control message is rebuilt with `Prompt.makeMessage` (`providers.ts:120`).
+- `src/llm/router.ts`, `src/llm/providers.ts`: one routed `LanguageModel` over arbitrary provider services, with reshaped options and the generic `generateText`/`generateObject`/`streamText` signatures (for example `router.ts:343`, `:664-669`); `withImageLabels` re-wraps those three methods (`providers.ts:66-68`) and a cache-control message is rebuilt with `Prompt.makeMessage` (`providers.ts:120`).
 - `src/llm/compat.ts`, `src/llm/openAiCodex.ts`: effect/ai's generic `LanguageModel` surface over hand-built clients (`compat.ts:511`, `:530`; `openAiCodex.ts:207-218`), and `Tool.Any`'s description and schema (`compat.ts:298-299`).
 - `src/transport/undici-fetch.adapter.ts`: npm undici's fetch typed as the global one; its classes differ, so nothing downstream may rely on `instanceof Response` or `Headers`.
 

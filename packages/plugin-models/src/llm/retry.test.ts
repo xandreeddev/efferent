@@ -264,10 +264,90 @@ describe("retryableLlmStream", () => {
       Stream.fromIterable([delta]).pipe(Stream.concat(Stream.never)),
     ])
     const exit = await Effect.runPromiseExit(
-      Stream.runCollect(retryableLlmStream("test", 80)(stream)),
+      Stream.runCollect(retryableLlmStream("test", undefined, 80)(stream)),
     )
     expect(exit._tag).toBe("Failure")
     expect(JSON.stringify(exit)).toContain("was cut off")
     expect(attempts).toHaveLength(1)
+  })
+})
+
+describe("retryableLlmStream within a call budget", () => {
+  /**
+   * Runs `stream` under `retryableLlmStream` within a budget, on a test clock
+   * moved an hour on: its attempts, its time, and its parts or its failure.
+   * It starts from a woken sleep, so the clock waits for every fiber the
+   * stream forks to suspend before it moves on.
+   */
+  const run = (stream: (budget: CallBudget) => Stream.Stream<unknown, AiError.AiError>, budgetMs?: number) =>
+    Effect.runPromise(Effect.gen(function* () {
+      const attempts = yield* Ref.make(0)
+      const guarded = (budget: CallBudget) =>
+        retryableLlmStream("gw:idle", budget)(Stream.unwrap(Ref.update(attempts, (n) => n + 1).pipe(Effect.as(stream(budget)))))
+      const fiber = yield* Effect.forkChild(Effect.sleep("1 millis").pipe(
+        Effect.andThen(makeCallBudget(budgetMs)),
+        Effect.flatMap((budget) => Effect.timed(Effect.exit(Stream.runCollect(guarded(budget))))),
+      ))
+      yield* TestClock.adjust("1 hour")
+      const [elapsed, exit] = yield* Fiber.join(fiber)
+      return {
+        attempts: yield* Ref.get(attempts),
+        elapsed: Duration.toMillis(elapsed),
+        outcome: Exit.isSuccess(exit) ? exit.value : String(Cause.squash(exit.cause)),
+      }
+    }).pipe(Effect.provide(TestClock.layer())))
+  /** A tool handler of the call running for `duration`, as the hand-off counts one. */
+  const handlerRunning = (budget: CallBudget, duration: Duration.Input) =>
+    Ref.update(budget.inFlight, (running) => running + 1).pipe(
+      Effect.andThen(Effect.sleep(duration)),
+      Effect.andThen(Ref.update(budget.inFlight, (running) => running - 1)),
+    )
+
+  test("a tool handler that runs 400 s leaves its time out of the idle bound: the part after it still arrives", async () => {
+    const result = await run((budget) => Stream.make(delta).pipe(
+      Stream.concat(Stream.fromEffect(handlerRunning(budget, "400 seconds").pipe(Effect.as(finish)))),
+    ))
+    expect(result).toEqual({ attempts: 1, elapsed: 400_000, outcome: [delta, finish] })
+  })
+
+  test("with no handler running, a provider idle for 300 s is cut, and after content the cut is final", async () => {
+    const result = await run(() => Stream.make(delta).pipe(
+      Stream.concat(Stream.fromEffect(Effect.sleep("400 seconds").pipe(Effect.as(finish)))),
+    ))
+    expect(result.attempts).toBe(1)
+    expect(result.elapsed).toBe(300_000)
+    expect(result.outcome).toContain("the gw:idle request exceeded 300s and was cut off")
+  })
+
+  test("the idle bound resumes when the handler ends: a provider idle after it is cut within 300 s of its end", async () => {
+    const result = await run((budget) => Stream.make(delta).pipe(
+      Stream.concat(Stream.fromEffectDrain(handlerRunning(budget, "100 seconds"))),
+      Stream.concat(Stream.never),
+    ))
+    expect(result.attempts).toBe(1)
+    // The bound counts the time no handler runs to within a quarter of it.
+    expect(result.elapsed).toBeGreaterThan(100_000 + 300_000 * 3 / 4)
+    expect(result.elapsed).toBeLessThanOrEqual(100_000 + 300_000)
+    expect(result.outcome).toContain("the gw:idle request exceeded 300s and was cut off")
+  })
+
+  test("a stream that sends nothing: attempt one is cut at 300 s, attempt two at the budget's deadline, and no attempt follows", async () => {
+    const result = await run(() => Stream.never)
+    expect(result.attempts).toBe(2)
+    expect(result.elapsed).toBe(LLM_CALL_BUDGET_MS)
+    expect(result.outcome).toContain("the gw:idle call reached its 600s budget after 2 attempts and was cut off")
+  })
+
+  test("a stream that sends parts but no content is cut at the budget's deadline", async () => {
+    const result = await run(() => Stream.tick("200 seconds").pipe(Stream.map(() => ({ type: "response-metadata" }))))
+    expect(result.attempts).toBe(1)
+    expect(result.elapsed).toBe(LLM_CALL_BUDGET_MS)
+    expect(result.outcome).toContain("the gw:idle call reached its 600s budget after 1 attempt and was cut off")
+  })
+
+  test("no stream attempt starts at or after the deadline", async () => {
+    const result = await run(() => Stream.make(delta, finish), 0)
+    expect(result.attempts).toBe(0)
+    expect(result.outcome).toContain("the gw:idle call reached its 0s budget after 0 attempts and was cut off")
   })
 })
