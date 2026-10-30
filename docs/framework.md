@@ -28,10 +28,10 @@ before activation. An agent whose turns would have no `ConversationMemory`,
 `ToolRegistry` or `StepLoop` (none provided by a plugin, none in `services`,
 none declared in `turnServices`) is refused by `Agent.define` with
 `config.graph`, naming the missing service, rather than failing its first turn.
-A `HarnessConfig` given to `resolveGraph` with `profile` or `profiles` is
-refused (`config.profile`): the graph does not select profiles, so a host
-folds the selected profile's plugins, bindings and system into the
-configuration first.
+A `HarnessConfig` names no profiles: the graph does not select one, so a
+host folds the selected profile's plugins, bindings and system into the
+configuration first, and `resolveGraph` refuses a config that still carries
+`profile` or `profiles` (`config.profile`) rather than ignore them.
 
 ```ts
 import { Layer, Schema } from "effect"
@@ -116,8 +116,8 @@ mapping, stream fold and tool schemas the first-party packages share; and
 `@xandreed/core/engine` the turn engine. The root and `./conformance` are
 semver; `./internal`, `./engine` and `./models` are not (`./engine` moves
 into `@xandreed/sdk` and `./models` into `@xandreed/plugin-models` in the
-next minor release). The root still exports every name it did, those with
-a subpath home marked `@deprecated` with the path to import instead.
+next minor release). The root does not repeat what a subpath holds: a kit,
+a store or an engine function is imported from its entry.
 
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
 under `.artifacts/packages`, leaving test code out (`*.test.*`, `testing` modules and
@@ -416,14 +416,12 @@ persisted messages. Omitting `initialStep` preserves ordinary loop behavior.
 
 ### Inspectable host decisions and continuation models
 
-`@xandreed/core` exports `DecisionRecord` and `DecisionOutcome` schemas. A record
-names the finite candidates, context/candidate hashes, policy version, provider
-attempt IDs, selection, host validation, applied fallback and optional reported
-probabilities. The outcome links the decision to a run's tool invocations, model
-attempts and delivered journal sequences. Downstream links describe chronology;
-they do not prove that a selector caused an improvement. Hosts own capture,
-redaction, storage, candidate eligibility and validation. `DecisionOutcome` is
-deprecated (no package records it) and is removed in the next minor release.
+`@xandreed/core` exports the `DecisionRecord` schema, and `recordDecision`
+journals one on the current turn (`decision.recorded`). A record names the
+finite candidates, context/candidate hashes, policy version, provider attempt
+IDs, selection, host validation, applied fallback and optional reported
+probabilities. Hosts own capture, redaction, storage, candidate eligibility and
+validation.
 
 `runLoop` accepts an optional `prepareModel` hook (a turn exposes it as the
 `model` function of its `TurnPolicy`):
@@ -1512,8 +1510,7 @@ it puts the usage so far on the current span), `turnOf(options)`
 `TurnTraceOptions`; the turn's `agent.turn` span around everything after the
 begin, see traces and metrics). `cacheKeyOf(prefix,
 conversation)` builds the prompt-cache key. `@xandreed/core/engine` has no
-semver: it moves into `@xandreed/sdk` in the next minor release, and the
-root's names for it are deprecated until then.
+semver: it moves into `@xandreed/sdk` in the next minor release.
 
 `Agent.turn` is, in order:
 

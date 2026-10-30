@@ -1,12 +1,11 @@
 import type { TokenUsage } from "./token-usage.entity.js"
-import type { AgentFailure } from "./agent-failure.entity.js"
 import type { StepStatus } from "./turn-vocabulary.entity.js"
 
 /**
  * The loop's event vocabulary — everything a driver needs to render a run
  * live. ONE union, ONE optional sink (`onEvent`), instead of a record of
- * optional callbacks: the session chassis pumps these onto its ledger and a
- * product extends the vocabulary with its own `{ type: ... }` events.
+ * optional callbacks: the step loop turns these into the turn's events, and
+ * a product extends the vocabulary with its own `{ type: ... }` events.
  *
  * Discriminated on `type` (not `_tag`) so product events compose naturally
  * (`type SessionEvent = LoopEvent | { type: "math_render"; ... }`).
@@ -99,14 +98,4 @@ export type LoopEvent =
       readonly outcome: "ok" | "partial"
       readonly reason: "completed" | "step-cap" | "degenerate-loop"
       readonly finalText: string
-    }
-  /** A turn crashed outside the model's control (provider failure after
-   *  retries, a defect). Published by the chassis, part of the vocabulary so
-   *  every driver renders failures the same way. */
-  | {
-      readonly type: "error"
-      /** Human-readable presentation text. */
-      readonly message: string
-      /** Machine-readable context retained by stores, hosts, and evals. */
-      readonly failure?: AgentFailure
     }

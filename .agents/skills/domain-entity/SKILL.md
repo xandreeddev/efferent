@@ -31,7 +31,7 @@ see a file by its suffix, so the suffix decides which rules apply.
   repo's data is this.
 - `Schema.Class` when the value is a named domain concept built in many
   places with `new` and checked as a whole: `UserMessage`, `ModelSelection`,
-  `Checkpoint`. Its constructor runs the schema's checks.
+  `UtilityCompletion`. Its constructor runs the schema's checks.
 - Errors: `class XError extends Schema.TaggedError<XError>()("XError", { reason, message })`.
 - No methods on classes: behaviour lives in the functions file.
 

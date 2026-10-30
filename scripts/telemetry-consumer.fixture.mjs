@@ -9,7 +9,7 @@
 import { createServer } from "node:http"
 import { Context, Effect, Layer, Option, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
-import { costOf, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage, usageBreakdown } from "@xandreed/core"
+import { costOf, ENGINE_KEY, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage, usageBreakdown } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
@@ -48,7 +48,7 @@ const { result, session, unflushed, flushed } = await Effect.runPromise(Effect.s
   })
   // The models plugin stamps its selection on the finish part; the scripted model does the same.
   const llm = yield* LanguageModel.make({
-    generateText: () => Effect.succeed([{ type: "text", text: "hello" }, { type: "finish", reason: "stop", usage, metadata: { router: { model } } }]),
+    generateText: () => Effect.succeed([{ type: "text", text: "hello" }, { type: "finish", reason: "stop", usage, metadata: { [ENGINE_KEY]: { model } } }]),
     streamText: () => Stream.die("not scripted"),
   })
   const view = yield* sessions.create({ owner: "consumer" })

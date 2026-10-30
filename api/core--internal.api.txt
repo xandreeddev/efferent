@@ -1,7 +1,6 @@
 const extractUsage
 const foldStreamParts
 const handoffToMessage
-const responseModelOrLegacyOf
 const responseReasoning
 const responseText
 const responseToAgentMessages

@@ -61,7 +61,7 @@ const CHECKED = [
  * distinct classes, so nothing downstream may rely on `instanceof Response` /
  * `Headers`). `as never` is the design there and nowhere else — a new one
  * anywhere else fails. A run's tool handlers are typed (`ToolHandlers`), so
- * the registry and the MCP bridge build them without one.
+ * the registry builds them without one.
  * Test scaffolding (scripted providers, stubbed ports) is out of scope. An
  * entry whose file holds no `as never` any more fails too: the boundary
  * only shrinks.
@@ -125,25 +125,20 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
 ]
 
 /**
- * Open schemas (`effect/no-unknown-json`) core keeps for now. The MCP
- * bridge passes a model's arguments to a server it does not know; a
- * plugin entry's in-code options may hold values that are not JSON (a
- * function, a layer); the deprecated JSON helpers keep what they read
- * today until they are removed. Each entry goes once its file decodes what
- * it reads; the list only shrinks.
+ * Open schemas (`effect/no-unknown-json`) core keeps for now: a plugin
+ * entry's in-code options may hold values that are not JSON (a function, a
+ * layer). An entry goes once its file decodes what it reads; the list only
+ * shrinks.
  */
 const UNKNOWN_JSON_EDGES = [
-  "packages/core/src/mcp/bridge.ts",
   "packages/core/src/harness/config.entity.ts",
-  "packages/core/src/internal/json.entity.functions.ts",
 ]
 
 /**
  * What `effect/branded-id-fields` judges: every package's entity files,
- * where its stored and published schemas live, and core's `src/spec`, whose
- * schemas live in older modules without that role.
+ * where its stored and published schemas live.
  */
-const ENTITY_FILES = [...CHECKED.map((glob) => `${glob}/*.entity.ts`), "packages/core/src/spec/**"]
+const ENTITY_FILES = CHECKED.map((glob) => `${glob}/*.entity.ts`)
 
 /**
  * Casts to an object type (`effect/no-record-cast`) not yet replaced by a
@@ -153,23 +148,16 @@ const ENTITY_FILES = [...CHECKED.map((glob) => `${glob}/*.entity.ts`), "packages
  * only shrinks.
  */
 const RECORD_CAST_EDGES = [
-  // Core's failure classifier reads a foreign failure's fields off an open record, until it decodes them.
-  "packages/core/src/domain/agent-failure.entity.functions.ts",
   "packages/plugin-tool-discovery/src/registry.adapter.ts",
 ]
 
 /**
  * The provider-neutral packages (`effect/no-provider-namespace`): core and
  * the agent loop carry a provider's metadata and options opaque, and write
- * their own under core's `ENGINE_KEY`. Their tests and kits drive the loop
- * with provider-shaped metadata and are left out. `responseModelOrLegacyOf`
- * (the agent loop's, through `@xandreed/core/internal`, and the deprecated
- * `extractModel`) still reads the stamp the models plugin's router kept
- * under `router`, for one minor release; its entry goes with it, and the
- * list only shrinks.
+ * their own under core's `ENGINE_KEY`, with no file excused. Their tests and
+ * kits drive the loop with provider-shaped metadata and are left out.
  */
 const PROVIDER_NEUTRAL = [src("core"), src("plugin-agent-loop")]
-const PROVIDER_NAMESPACE_EDGES = ["packages/core/src/domain/engine-stamp.entity.functions.ts"]
 
 /**
  * Effect, Stream and Layer types whose requirements are `unknown`
@@ -202,12 +190,7 @@ const ROLELESS_FILES = [
   "packages/core/src/loop/promptProvenance.ts",
   "packages/core/src/loop/stepContext.ts",
   "packages/core/src/loop/traceContent.ts",
-  "packages/core/src/mcp/bridge.ts",
   "packages/core/src/memory/memory-session.ts",
-  "packages/core/src/session/chassis.ts",
-  "packages/core/src/spec/SpecDoc.ts",
-  "packages/core/src/spec/codec.ts",
-  "packages/core/src/spec/frontmatter.ts",
   "packages/core/src/turn/model-text.ts",
   "packages/core/src/turn/prompt-sections.ts",
   "packages/evals/src/cli.functions.ts",
@@ -364,7 +347,6 @@ const config: typeof GateSuiteConfig.Encoded = {
       rule: "effect/no-provider-namespace",
       include: PROVIDER_NEUTRAL,
       exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING],
-      allow: PROVIDER_NAMESPACE_EDGES,
     },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },

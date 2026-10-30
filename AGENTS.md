@@ -52,7 +52,7 @@ with findings enters one package at a time, through a list in
 `foundry.config.ts` of the packages it runs in: to add a package, fix its
 findings and add its line, never the baseline; once the list names every
 package, the rule takes `CHECKED` and the list is deleted. An `allow` list
-(`ROLELESS_FILES`, `NULLABLE_EDGES`, `RECORD_CAST_EDGES`, `PROVIDER_NAMESPACE_EDGES`, `UNKNOWN_REQUIREMENT_EDGES`)
+(`ROLELESS_FILES`, `NULLABLE_EDGES`, `RECORD_CAST_EDGES`, `UNKNOWN_JSON_EDGES`, `UNKNOWN_REQUIREMENT_EDGES`)
 or a `boundary` (`ERASURE_BOUNDARY`) only shrinks: an entry that excuses
 nothing fails.
 
@@ -71,7 +71,7 @@ nothing fails.
 | `effect/no-sync-codec` | `decodeSync`, `decodeUnknownSync`, `encodeSync`, `encodeUnknownSync` | the Effect, Result or Option codec, its failure handled |
 | `effect/no-unknown-json` | `Schema.Record(Schema.String, Schema.Unknown)`, `Schema.fromJsonString(Schema.Unknown)`, but as the argument of a `Schema.encode*` call (`UNKNOWN_JSON_EDGES` aside) | decode the shape that is read; `Schema.Json` or `Schema.JsonObject` for JSON that stays open |
 | `effect/no-record-cast` | `as Record<string, unknown>`, `as Record<string, any>`, `as { … }` (`RECORD_CAST_EDGES` aside) | decode with a Schema, narrow with `Predicate.hasProperty`, or fix the type at its source |
-| `effect/no-provider-namespace` | in core and the agent loop (`PROVIDER_NEUTRAL`): an `anthropic`, `openai`, `google` or `router` key, written, typed, destructured or read (`PROVIDER_NAMESPACE_EDGES` aside) | carry provider metadata and options opaque (`ProviderOptions`); core's own fields go under `ENGINE_KEY` (`stampResponseModel`, `responseModelOf`); code for one provider lives in the models plugin |
+| `effect/no-provider-namespace` | in core and the agent loop (`PROVIDER_NEUTRAL`): an `anthropic`, `openai`, `google` or `router` key, written, typed, destructured or read | carry provider metadata and options opaque (`ProviderOptions`); core's own fields go under `ENGINE_KEY` (`stampResponseModel`, `responseModelOf`); code for one provider lives in the models plugin |
 | `effect/no-cause-pretty-data` | `Cause.pretty` anywhere but an `Effect.log*` argument | log the cause; data keeps `Cause.prettyErrors` messages or `reasonOf` |
 | `effect/no-effect-promise` | `Effect.promise` | `Effect.tryPromise` with a typed error, logged or handled |
 | `effect/no-promise-all` | `Promise.all`, `Promise.allSettled` | `Effect.forEach` or `Effect.all` with a stated `concurrency` |

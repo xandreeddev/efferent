@@ -96,7 +96,6 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     tool_end: () => Effect.void,
     compaction: () => Effect.void,
     agent_end: () => Effect.void,
-    error: () => Effect.void,
   }))
 
   const loop = runLoop<Record<string, Tool.Any>, TurnError>({

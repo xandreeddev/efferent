@@ -18,18 +18,6 @@ export const ToolCallId = Schema.String.pipe(Schema.brand("ToolCallId"))
 export type ToolCallId = typeof ToolCallId.Type
 
 /**
- * @deprecated No package stores or reads it. Removed in the next minor
- * release.
- */
-export class Checkpoint extends Schema.Class<Checkpoint>("Checkpoint")({
-  conversationId: ConversationId,
-  /** The absolute message position this fold covers (inclusive). */
-  messagePosition: Schema.Number,
-  summary: Schema.String,
-  createdAt: Schema.Number,
-}) {}
-
-/**
  * A provider's private fields, by provider: effect/ai's response part
  * `metadata`, replayed as its prompt part `options`. The `engine` key is
  * core's own (the turn's usage stamp), never sent to a provider.

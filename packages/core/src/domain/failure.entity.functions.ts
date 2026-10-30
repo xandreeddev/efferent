@@ -1,5 +1,4 @@
 import { Cause, Option, Predicate } from "effect"
-import type { Failure } from "./failure.entity.js"
 
 const stringField = (value: unknown, key: string): Option.Option<string> =>
   Predicate.isObject(value) ? Option.filter(Option.some(value[key]), Predicate.isString) : Option.none()
@@ -13,19 +12,6 @@ export const errorCodeOf = (error: unknown): Option.Option<string> => stringFiel
 
 /** A value's message as `Cause.prettyErrors` reads it: an `Error`'s or a tagged value's `message`, else the value as text (an object as JSON). */
 const messageOf = (value: unknown): string => Cause.prettyErrors(Cause.die(value))[0]?.message ?? ""
-
-/**
- * Project an arbitrary defect into the model-readable failure shape: named
- * by its `_tag` when it has one, else by an `Error`'s name, else `Error`;
- * its message as `Cause.prettyErrors` reads it, never `[object Object]`.
- */
-export const toFailure = (error: unknown): Failure => ({
-  error: Option.getOrElse(
-    Option.orElse(stringField(error, "_tag"), () => error instanceof Error ? Option.some(error.name) : Option.none()),
-    () => "Error",
-  ),
-  message: messageOf(error),
-})
 
 /** An error's label: its `code`, else its `_tag`, else its class name unless that is plain `Error`. */
 const labelOf = (value: unknown): Option.Option<string> => Option.firstSomeOf([

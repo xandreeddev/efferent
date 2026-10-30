@@ -34,10 +34,10 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `DEGENERATE_REPEAT_NUDGE`, as a host note (a user-role message) | `src/loop.ts:288-292`, `:782` | exact, `src/loop.test.ts:1235` |
-| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:295-296` | exact, `src/loop.test.ts:1240` |
-| Default malformed corrective, a host note by why the reply could not be used (a tool it does not have, parameters that do not match, a reply that does not decode) with the step's tools; the parameters' report framed (`parameter-errors`) and clipped at 600 characters, a decoder's dump never | `src/loop.ts:303-320`, `:738` | exact, `src/loop.test.ts:1213`, `:1218`, `:1223` |
-| Default incomplete corrective, a host note (`the host reports that the required work is not complete, …`) | `src/loop.ts:323-326`, `:789` | exact, `src/loop.test.ts:1251` |
+| `DEGENERATE_REPEAT_NUDGE`, as a host note (a user-role message) | `src/loop.ts:287-291`, `:781` | exact, `src/loop.test.ts:1235` |
+| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:294-295` | exact, `src/loop.test.ts:1240` |
+| Default malformed corrective, a host note by why the reply could not be used (a tool it does not have, parameters that do not match, a reply that does not decode) with the step's tools; the parameters' report framed (`parameter-errors`) and clipped at 600 characters, a decoder's dump never | `src/loop.ts:302-319`, `:737` | exact, `src/loop.test.ts:1213`, `:1218`, `:1223` |
+| Default incomplete corrective, a host note (`the host reports that the required work is not complete, …`) | `src/loop.ts:322-325`, `:788` | exact, `src/loop.test.ts:1251` |
 
 Steering text (`pendingInput`) is the host's; the fold's summary message is core's `handoffToMessage`.
 

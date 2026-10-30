@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Effect, Option, Schema } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
-import { errorCodeOf, reasonOf, toFailure } from "./failure.entity.functions.js"
+import { errorCodeOf, reasonOf } from "./failure.entity.functions.js"
 
 class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { message: Schema.String }) {}
 class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
@@ -46,19 +46,6 @@ describe("reasonOf", () => {
     expect(reasonOf(causeOf(Effect.interrupt))).toBe("interrupted")
     expect(reasonOf(Cause.combine(Cause.interrupt(), Cause.fail(new NotFound({ message: "missing" }))))).toBe("NotFound: missing")
     expect(reasonOf(Cause.empty)).toBe("failed without an error")
-  })
-})
-
-describe("toFailure", () => {
-  test("names a tagged value by its tag and keeps its message, never [object Object]", () => {
-    expect(toFailure(new HarnessError({ code: "events.depth", message: "too deep" }))).toEqual({ error: "HarnessError", message: "too deep" })
-    expect(toFailure({ _tag: "NotFound", message: "no such skill" })).toEqual({ error: "NotFound", message: "no such skill" })
-    expect(toFailure({ _tag: "Gone", id: "a" })).toEqual({ error: "Gone", message: JSON.stringify({ _tag: "Gone", id: "a" }) })
-  })
-
-  test("names an Error by its name, anything else Error", () => {
-    expect(toFailure(new TypeError("x is not a function"))).toEqual({ error: "TypeError", message: "x is not a function" })
-    expect(toFailure("plain text")).toEqual({ error: "Error", message: "plain text" })
   })
 })
 

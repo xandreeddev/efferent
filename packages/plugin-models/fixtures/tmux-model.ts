@@ -1,7 +1,8 @@
 import { LanguageModel } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Effect, Layer, Option, Schedule, Schema, Stream } from "effect"
-import { AuthStore, definePlugin, EngineSettings, ModelCatalog, SettingsStore, tokenUsage, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { definePlugin, ModelCatalog, tokenUsage, UtilityCompletion, UtilityLlm } from "@xandreed/core"
+import { AuthStore, EngineSettings, SettingsStore } from "@xandreed/core/models"
 
 const usage = { inputTokens: { total: 12, uncached: 6, cacheRead: 4, cacheWrite: 2 }, outputTokens: { total: 4, text: 3, reasoning: 1 } }
 const finish = { type: "finish", reason: "stop", usage } as const

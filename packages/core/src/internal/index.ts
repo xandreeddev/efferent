@@ -16,4 +16,3 @@ export {
 } from "./mapping.entity.functions.js"
 export { foldStreamParts } from "./stream-fold.entity.functions.js"
 export { strictJsonSchema, toolParametersSchema } from "./tool-schema.entity.functions.js"
-export { responseModelOrLegacyOf } from "../domain/engine-stamp.entity.functions.js"

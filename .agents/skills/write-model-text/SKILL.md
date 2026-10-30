@@ -28,8 +28,9 @@ cached prefixes. Treat a wording change like an API change.
   restated by hand), and when to use another tool instead.
 - Name only what the model can see in the same request: tools this
   capability registers and headings its own sections render. Never point at
-  a listing a host may or may not render (`core/src/mcp/bridge.ts` points at
-  "External MCP tools"). Suggest `bash` only when the bash tool is enabled.
+  a listing a host may or may not render (a heading such as "External
+  tools" that another capability may or may not add). Suggest `bash` only
+  when the bash tool is enabled.
 - Framework text is domain-neutral. Host vocabulary comes in through options
   (`system`, the loop's `correctives`, the summarizer's `instructions`).
 - Annotate every parameter whose meaning or format is not obvious from its
@@ -38,7 +39,7 @@ cached prefixes. Treat a wording change like an API change.
 - `Failure.error` is PascalCase (`NotFound`, `ToolInactive`); `message`
   names what is wrong and the call that fixes it. Never `Cause.pretty`
   output, stack frames, host paths or internal `_tag`s: text from a cause is
-  `reasonOf(cause)`, from a defect `toFailure(defect)`.
+  `reasonOf(cause)`, from a defect `reasonOf(Cause.die(defect))`.
 - Guidance a capability needs at all times goes in its tool descriptions or
   a section it contributes, never in an always-on skill's `instructions`.
 - Tools only grow within a conversation: restrict a step with tool choice or
