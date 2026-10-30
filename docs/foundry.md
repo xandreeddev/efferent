@@ -120,7 +120,8 @@ would judge attempt N against attempt N-1's source).
    `google` or `router` key in provider-neutral code),
    `effect/no-cause-pretty-data` (`Cause.pretty` outside an
    `Effect.log*` argument), `effect/no-effect-promise`, `effect/no-promise-all`,
-   `effect/callback-buffer-size`, `effect/no-process-env`,
+   `effect/callback-buffer-size`, `effect/bounded-pubsub` (`PubSub.unbounded`
+   or an infinite capacity), `effect/no-process-env`,
    `effect/no-ambient-time-random` (`Date.now`, argless `new Date()`,
    `Math.random`, `randomUUID`), `effect/no-locale-compare`,
    `effect/require-sort-comparator` and `effect/no-instanceof-tagged-error`

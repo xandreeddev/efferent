@@ -1893,8 +1893,10 @@ turn can be continued by the next user's turn ([resuming a
 turn](#resuming-a-turn)). `fork(parent, { inherit })`
 makes a child session (a background task's): with `inherit` its history is
 the parent's up to its last closed turn, and its turns count on from there.
-`changes(address)` signals each commit this instance makes (a feed polls
-for the others), and `lookup(address, key)` finds a key's turn.
+`changes(address)` signals the session's followers at least once after each
+commit this instance makes, the signals a follower has not taken merged into
+one (a feed polls for the others' commits), and `lookup(address, key)` finds
+a key's turn.
 
 **Admission.** `TurnAdmission.admit(turn, open)` runs around the one commit
 that opens every turn (a user's, the inbox's, a task's), never around the

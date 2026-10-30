@@ -1,7 +1,7 @@
-import { Deferred, Effect, Exit, Fiber, Match, Option, Ref, Schema, Scope } from "effect"
+import { Deferred, Effect, Exit, Fiber, Match, Option, Ref, Schema, Scope, Stream } from "effect"
 import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, expect, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
+import { check, eventually, expect, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { RunId } from "../domain/run.entity.js"
 import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
@@ -135,7 +135,9 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * its end's commit, right before `turn.ended` (by its scope's end too,
  * ending as a held reply implies; dropped by a cancel); writing outside a turn and the reserved kinds,
  * refused as `ReservedKind` there and to a turn's writer unless the
- * framework's turn wrote them (`frameworkDraft`); cancel and removal closing
+ * framework's turn wrote them (`frameworkDraft`); `changes` signalling a
+ * follower after its own session's commits only, the signals it did not
+ * take merged into one; cancel and removal closing
  * the writer, a write after a cancel, a reap or a stopped holder refused as
  * `TurnClosed` with its reason (a writer must raise these tags, not a
  * `HarnessError` of their codes), and
@@ -513,6 +515,33 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* writer.end(completed)
       const turn = kindsOf(yield* sessions.read(address, { after: 1 }))
       yield* expect("transact", turn === "turn.started@1,step.started@1,conformance.answer@1,turn.ended@1", `the turn stored ${turn}`)
+    })),
+
+    scoped("a follower is signalled after its session's commits: one that did not pull holds one signal, and a commit to another session does not wake it", "changes", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const [followed, other] = [yield* created(sessions, owner), yield* created(sessions, owner)]
+      const note = (address: SessionAddress) => sessions.transact(address, () => Effect.succeed({ drafts: [{ kind: "conformance.note", data: {} }], result: undefined }))
+      const seen = yield* Ref.make(0)
+      const first = yield* Deferred.make<void>()
+      const gate = yield* Deferred.make<void>()
+      // The follower takes a signal, then pulls nothing more until the gate opens.
+      yield* Effect.forkScoped(sessions.changes(followed).pipe(Stream.runForEach(() => Ref.update(seen, (count) => count + 1).pipe(
+        Effect.andThen(Deferred.succeed(first, undefined)), Effect.andThen(Deferred.await(gate))))))
+      // It follows from its first pull, which runs on its own fiber: commit until it took a signal.
+      const woken = (tries: number): Effect.Effect<boolean, unknown> => Deferred.isDone(first).pipe(Effect.flatMap((done) =>
+        done || tries <= 0 ? Effect.succeed(done) : note(followed).pipe(Effect.andThen(Effect.yieldNow), Effect.andThen(Effect.suspend(() => woken(tries - 1))))))
+      yield* expect("changes", yield* woken(20), "a follower was not signalled after 20 commits to its session")
+      yield* Effect.forEach([1, 2, 3], () => note(followed), { concurrency: 1 })
+      yield* Deferred.succeed(gate, undefined)
+      // Read until more than the one held signal came, or the follower stays caught up.
+      const caughtUp = yield* eventually(Ref.get(seen), (count) => count > 2, 50)
+      yield* expect("changes", caughtUp === 2, `a follower that pulled nothing during three commits then took ${caughtUp - 1} signals, not one`)
+      yield* note(other)
+      const unmoved = yield* eventually(Ref.get(seen), (count) => count > 2, 50)
+      yield* expect("changes", unmoved === 2, `a commit to another session gave the follower ${unmoved - 2} signals`)
+      yield* note(followed)
+      const next = yield* eventually(Ref.get(seen), (count) => count > 2)
+      yield* expect("changes", next > 2, "a follower that caught up was not signalled after its session's next commit")
     })),
 
     scoped("a cancel ends exactly the open turn as cancelled and closes its writer, on its own instance at once and on another at its next write", "cancel", (owner) => Effect.gen(function* () {

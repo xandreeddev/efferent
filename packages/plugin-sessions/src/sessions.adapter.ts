@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Effect, Equal, Exit, Layer, Match, Option, PubSub, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
+import { Cause, Clock, Context, Effect, Equal, Exit, Layer, Match, Option, PubSub, RcMap, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
 import {
   canonicalJson,
   ConversationId,
@@ -180,13 +180,24 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     onNone: () => all,
     onSome: (turn) => Option.exists(next.open, (open) => open.turn === turn) ? all : new Map([...all].filter(([session]) => session !== id)),
   }))
-  const signals = yield* PubSub.unbounded<string>()
+  /**
+   * Per followed session, one hub of change signals: sliding with room for
+   * one, so a follower that does not pull holds one signal however many
+   * commits it missed, and never loses the last. Held while someone follows
+   * the session (`RcMap` releases it with the last follower), so a commit to
+   * a session nobody follows signals nothing and keeps nothing.
+   */
+  const followers = yield* RcMap.make({ lookup: (_: ConversationId) => Effect.acquireRelease(PubSub.sliding<void>(1), PubSub.shutdown) })
   /** The writer this instance holds per session, for a local cancel or removal. */
   const writers = yield* Ref.make(new Map<string, OpenWriter & { readonly turn: number }>())
   const inFlight = yield* SubscriptionRef.make<InFlight>({ held: new Map(), beginning: 0 })
   const heldKey = (id: string, turn: number) => `${id}:${turn}`
   const beginSettled = SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, beginning: now.beginning - 1 }))
-  const wake = (id: string) => PubSub.publish(signals, id).pipe(Effect.asVoid)
+  /** Signal the session's followers, if it has any. */
+  const wake = (id: ConversationId) => RcMap.getOption(followers, id).pipe(
+    Effect.flatMap(Option.match({ onNone: () => Effect.void, onSome: (hub) => PubSub.publish(hub, undefined).pipe(Effect.asVoid) })),
+    Effect.scoped,
+  )
   const freshId = Effect.sync(() => ConversationId.make(crypto.randomUUID()))
 
   const stateFrom = (head: SessionHead) => stateOf(head).pipe(Effect.mapError(storage("session.state")))
@@ -604,7 +615,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     read: Effect.fn("sessions.read")((address, query) => owned(address).pipe(Effect.flatMap(() => log.read(address.id, {
       after: query?.after ?? 0, limit: Option.fromNullishOr(query?.limit), kinds: query?.kinds ?? [],
     }))), onSession),
-    changes: (address) => Stream.fromPubSub(signals).pipe(Stream.filter((id) => id === address.id), Stream.map(() => undefined)),
+    changes: (address) => Stream.unwrap(RcMap.get(followers, address.id).pipe(Effect.map(Stream.fromPubSub))),
     lookup: Effect.fn("sessions.lookup")((address, key) => owned(address).pipe(Effect.flatMap(() => keyed(address.id, key)), Effect.map(Option.map((found) => found.turn))), onSession),
     transact: Effect.fn("sessions.transact")(<A, E>(address: SessionAddress, decide: (view: SessionView) => Effect.Effect<Decision<A>, E>) => guarded(address, (head, state) => Effect.gen(function* () {
       const decision = yield* decide(yield* viewOf(head, state, holder))

@@ -15,6 +15,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 - Count an inbox attempt only for a turn that wrote something; drop an item once `inbox.attempts` turns took it and failed.
 - Keep `TurnActivity` exact: a begin counts from the request until its writer is handed over, then the turn until the writer's scope closes (`awaitIdle` relies on it).
 - A keep-alive is queued in order with the turn's writes: keep one `write` or `transact` shorter than the lease.
+- Signal `changes` through one hub per followed session, `PubSub.sliding(1)` held in an `RcMap` (released with its last follower): a commit wakes only its own session's followers, and a follower that does not pull holds one signal. Never `dropping` (it loses the last signal) nor a `SubscriptionRef` (it signals a follower on subscribing, before any commit).
 - Trace each `Sessions` call but `changes` as `sessions.<op>` (`Effect.fn`; the `onSession` pipeable puts `sessionAttributes` on its span and its logs), each writer commit as `turn_writer.commit` under the span of the call that queued it (`underCaller`: the writer's fiber was forked under the begin), and the writer's `flush` and `end` as `turn_writer.flush` and `turn_writer.end`, all with `turnAttributes`; the writer's fibers carry the turn's ids on their spans and logs. A log line names no id: the ids are its annotations. Trace nothing per append or per `write`.
 - Import no `node:` module: `processLiveness` reaches `node:os` through `process.getBuiltinModule` and works without a process.
 - Change behaviour by adding the check to core's `sessionsConformance` first, with a careless instance in `src/sessions.conformance.test.ts` that it catches.
@@ -44,7 +45,7 @@ None.
 | File | Role |
 |---|---|
 | `src/plugin.adapter.ts` | `sessionsPlugin`, `SessionsPluginLive` |
-| `src/sessions.adapter.ts` | `SessionsLive`: create, fork, begin, deliver, drain, cancel, remove, reaping, `TurnActivity` |
+| `src/sessions.adapter.ts` | `SessionsLive`: create, fork, begin, deliver, drain, cancel, remove, reaping, change signals, `TurnActivity` |
 | `src/turn-writer.adapter.ts` | the open turn's writer: queued, batched commits, lease renewal and keep-alive |
 | `src/turn-writer.entity.ts` | the writer's phase (`WriterPhase`, with the closing drafts held) and how an end begins (`EndStep`) |
 | `src/turn-writer.entity.functions.ts` | the writer's transitions: admit, hold the closing drafts, begin, plan, settle and withdraw an end, latch, close, the scope's own ending |

@@ -73,6 +73,7 @@ nothing fails.
 | `effect/no-effect-promise` | `Effect.promise` | `Effect.tryPromise` with a typed error, logged or handled |
 | `effect/no-promise-all` | `Promise.all`, `Promise.allSettled` | `Effect.forEach` or `Effect.all` with a stated `concurrency` |
 | `effect/callback-buffer-size` | `Stream.callback` without a `bufferSize` | pass `{ bufferSize }` |
+| `effect/bounded-pubsub` | `PubSub.unbounded`, or `bounded`, `sliding` or `dropping` with an infinite capacity | a finite capacity: `PubSub.sliding(n)` (a wake-up signal: `sliding(1)`, which never loses the last), `bounded(n)` or `dropping(n)` |
 | `effect/no-process-env` | `process.env` outside a `main.ts` and the bash adapter (`ENVIRONMENT_EDGES`) | `Config.String`, `Config.Redacted`, `Config.option`: the ConfigProvider supplies it |
 | `effect/no-ambient-time-random` | `Date.now`, `new Date()` without arguments, `Math.random`, `randomUUID`, outside `*.adapter.ts` files | `Clock.currentTimeMillis`, `Random` (core's `randomUuid` for ids) |
 | `effect/no-locale-compare` | `.localeCompare` | `Order.String` |

@@ -152,7 +152,13 @@ export class Sessions extends Context.Service<Sessions, {
     readonly kinds?: ReadonlyArray<string>
     readonly limit?: number
   }) => Effect.Effect<ReadonlyArray<SessionLogEvent>, SessionMissing | SessionLogError>
-  /** A signal after each commit this instance makes to the session (followers poll for the others). */
+  /**
+   * At least one signal after each commit this instance makes; signals not
+   * yet taken merge into one. A follower is woken only by its own session's
+   * commits, from its first pull on, and holds at most one signal while it
+   * does not pull: a signal says "read again", never how many commits came
+   * (followers poll for the commits of other instances).
+   */
   readonly changes: (address: SessionAddress) => Stream.Stream<void>
   /** The turn begun with this key, if any. */
   readonly lookup: (address: SessionAddress, key: string) => Effect.Effect<Option.Option<number>, SessionMissing | SessionLogError>

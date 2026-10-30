@@ -307,6 +307,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-effect-promise", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/no-promise-all", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/callback-buffer-size", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/bounded-pubsub", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/no-process-env", include: CHECKED, exclude: [...ENVIRONMENT_EDGES, ...TEST_SCAFFOLDING] },
     { rule: "effect/no-ambient-time-random", include: CHECKED, exclude: ["**/*.adapter.ts", ...TEST_SCAFFOLDING] },
     { rule: "effect/no-locale-compare", include: CHECKED, exclude: TEST_SCAFFOLDING },

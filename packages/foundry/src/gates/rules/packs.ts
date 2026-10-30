@@ -16,7 +16,7 @@ import { noSkippedTests } from "./noSkippedTests.js"
 import { noTryCatch } from "./noTryCatch.js"
 import { noAmbientTimeRandom, noProcessEnv } from "./ambientServices.js"
 import { noJsonParse, noRecordCast, noSyncCodec, noUnknownJson } from "./boundaryDecoding.js"
-import { callbackBufferSize } from "./callbackBufferSize.js"
+import { boundedPubSub, callbackBufferSize } from "./callbackBufferSize.js"
 import { noLocaleCompare, requireSortComparator } from "./deterministicOrder.js"
 import { noCausePrettyData, noErrorCodeCompare, noInstanceofTaggedError, noStringifiedCause } from "./errorValues.js"
 import { noEffectPromise, noPromiseAll } from "./promiseInterop.js"
@@ -64,6 +64,7 @@ export const effectPack: RulePack = {
     noEffectPromise,
     noPromiseAll,
     callbackBufferSize,
+    boundedPubSub,
     noProcessEnv,
     noAmbientTimeRandom,
     noLocaleCompare,
