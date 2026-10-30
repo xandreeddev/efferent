@@ -89,6 +89,8 @@ type ToolSlot =
  * Tasks run in the layer's scope: they are interrupted when it closes.
  * `TurnMemory.persistReply` runs under its span, `turn.persist_reply`
  * (inline `turn.ended` subscribers' spans nest under it).
+ *
+ * @public
  */
 export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   RunContext | TurnEvents | TurnTasks | TurnMemory | TurnToolbox | TurnPrompt,

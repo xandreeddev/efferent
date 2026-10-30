@@ -31,7 +31,11 @@ import type { TurnRunServices } from "./turn-run.usecase.functions.js"
 
 const failed: TurnOutcome = { outcome: "failed", reply: Option.none() }
 
-/** Open the turn's tools (once). Their handlers run with the services of where this runs: open them inside the host's layer. */
+/**
+ * Open the turn's tools (once). Their handlers run with the services of where this runs: open them inside the host's layer.
+ *
+ * @public
+ */
 export const openTurnTools: Effect.Effect<RunTools, TurnError, TurnToolbox> =
   TurnToolbox.pipe(Effect.flatMap((toolbox) => toolbox.open))
 
@@ -53,7 +57,11 @@ export const turnTools: Effect.Effect<TurnTools, TurnError, TurnToolbox> = TurnT
   })),
 )
 
-/** Await the tasks, then drain the background reactions, again until a round starts nothing new. */
+/**
+ * Await the tasks, then drain the background reactions, again until a round starts nothing new.
+ *
+ * @public
+ */
 export const settleTurn: Effect.Effect<void, TurnError, TurnEvents | TurnTasks> = Effect.gen(function* () {
   const events = yield* TurnEvents
   const tasks = yield* TurnTasks
@@ -160,6 +168,8 @@ const finishFailed: Effect.Effect<void, never, TurnMemory | TurnEvents | RunCont
  * `Agent.turn`; `traceTurn` records it itself when the turn returns). A
  * `TurnError` carried as a defect (a subscriber's or the writer's failure
  * behind a `never` error channel) fails the turn, typed.
+ *
+ * @public
  */
 export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.Effect<
   TurnResult,
@@ -182,6 +192,8 @@ export const guardTurn = <E, R>(body: Effect.Effect<TurnOutcome, E, R>): Effect.
  * `Agent.turn` hands to `use`): its `run` is `runTurnLoop` with `options`,
  * its spans under the span current where `run` is called. The message must
  * be persisted and the tools open.
+ *
+ * @public
  */
 export const turnOf = Effect.fnUntraced(function* (options: TurnRunOptions = {}): Effect.fn.Return<Turn, TurnError, TurnRunServices | RunContext | StepLoop> {
   const services = replayableContext(yield* Effect.context<TurnRunServices | StepLoop>())
@@ -273,6 +285,8 @@ const turnEndAttributes = (exit: Exit.Exit<TurnResult, unknown>): Record<string,
  * in it: the turn-dependent plugins, the host's layer, the tools opened, `use`,
  * the reply and the end; a host composing its own turn wraps the same. The
  * begin itself has its own span beside this one (`traceTurnBegin`).
+ *
+ * @public
  */
 export const traceTurn = (writer: TurnWriter, options: TurnTraceOptions = {}) =>
   <E, R>(effect: Effect.Effect<TurnResult, E, R>): Effect.Effect<TurnResult, E, R> =>
@@ -324,6 +338,8 @@ const beginEndAttributes = (exit: Exit.Exit<{ readonly admitted: AdmittedTurn },
  * itself; a turn the host began (its writer passed in) has no begin span. A
  * host composing its own turn wraps its begin the same way, then the rest
  * in `traceTurn`.
+ *
+ * @public
  */
 export const traceTurnBegin = (begin: TurnBeginTrace) =>
   <A extends { readonly admitted: AdmittedTurn }, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>

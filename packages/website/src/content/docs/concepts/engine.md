@@ -7,7 +7,9 @@ description: Shared schemas and service ports, independent of providers and host
 
 `@xandreed/core` contains message schemas, plugin and configuration contracts,
 session events and service ports. The runtime and concrete implementations live
-in separate packages. `@xandreed/sdk` reexports the contracts for application authors.
+in separate packages. `@xandreed/sdk` re-exports, by name, the contracts a host
+writes beside `Agent` (a turn's message and ids, the sessions, `define*`, the
+turn's events and errors); the rest is imported from `@xandreed/core`.
 
 The replaceable services include `StepLoop`, `ConversationMemory`,
 `ResultDigester`, `ToolRegistry`, `Sessions`, `SessionLog`, `TurnAdmission`,

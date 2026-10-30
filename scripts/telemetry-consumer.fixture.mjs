@@ -9,13 +9,13 @@
 import { createServer } from "node:http"
 import { Context, Effect, Layer, Option, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
-import { costOf, ENGINE_KEY, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage, usageBreakdown } from "@xandreed/core"
+import { costOf, ENGINE_KEY, usageBreakdown } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { flushTelemetry, OtlpTelemetryLive, telemetryPlugin } from "@xandreed/plugin-telemetry"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { Agent } from "@xandreed/sdk"
+import { Agent, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/sdk"
 
 const runtime = typeof Bun === "undefined" ? `Node ${process.versions.node}` : `Bun ${Bun.version}`
 const fail = (message) => { console.error(`telemetry consumer (${runtime}): ${message}`); process.exit(1) }

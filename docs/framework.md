@@ -123,6 +123,26 @@ so is the `ToolRegistry` kit, which runs its turns over that engine
 `@xandreed/plugin-models` exports them, and
 `@xandreed/plugin-models/conformance` their kits.
 
+The sdk's root names each of its exports: `Agent` (`AgentConfig`,
+`AgentPluginEntry`), `agentTaskExecutor`, the turn engine, and the names of
+core a host writes beside `Agent`, re-exported so that defining an agent and
+running its turns imports one package. Those are a turn's input
+(`UserMessage`, `mediaFromBytes`, `mediaFromBase64`, `RunId`,
+`ConversationId`, `SessionAddress`, `TurnInput`, `NewTurn`), the turn and its
+result (`Turn`, `TurnPolicy`, `TurnOutcome`, `TurnResult`), the sessions
+(`Sessions`, `SessionLog`, `SessionLogMemoryLive`, `TurnAdmission`,
+`TurnAdmissionOpen`, `TurnRefused`), the host's capabilities and plugins
+(`defineTool`, `defineSkill`, `definePromptSection`, `defineCapability`,
+`Capability`, `definePlugin`, `publishToolProgress`, `Failure`, `Media`,
+`SessionEnvironment`, `ActionPolicy`, `PermissionGrants`), the turn's events
+(`TurnEvent`, `TurnEventOf`, `TurnEvents`, `TurnEventsService`, `onEvent`,
+`onTool`, `subscribeAll`, `defineHostEvent`, `AssistantMessage`,
+`TurnEndedData`, `turnEndedOf`), its errors (`HarnessError`, `isHarnessError`,
+`harnessCodeOf`, `TurnBeginError`, `turnBeginCodes`, `TurnError`,
+`isTurnError`, `turnEndingOf`) and the process's activity (`awaitIdle`,
+`processActivity`). Everything else of core is imported from
+`@xandreed/core`, the same values: there is one core.
+
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
 under `.artifacts/packages`, leaving test code out (`*.test.*`, `testing` modules and
 folders). `bun run verify:packages` refuses a build that is not of `HEAD`, was made
@@ -1101,7 +1121,7 @@ and the service, instead of failing the call mid-turn:
 ```ts
 import { Tool } from "effect/ai"
 import { Effect, Schema } from "effect"
-import { defineTool, Failure, SessionEnvironment } from "@xandreed/core"
+import { defineTool, Failure, SessionEnvironment } from "@xandreed/sdk"
 
 const Workspace = Tool.make("workspace", {
   description: "Name the workspace this conversation works in.",
@@ -1173,7 +1193,7 @@ service fails with `requires.missing`, naming the section and the service:
 
 ```ts
 import { Effect, Option } from "effect"
-import { definePromptSection, SessionEnvironment } from "@xandreed/core"
+import { definePromptSection, SessionEnvironment } from "@xandreed/sdk"
 
 const workspaceNote = definePromptSection({
   id: "app.workspace", version: "1", tier: "session", order: 100,
@@ -1604,7 +1624,7 @@ alt? }`, `data` being padded base64 without a `data:` prefix and
 the constructors, which check the bytes:
 
 ```ts
-import { mediaFromBase64, mediaFromBytes, UserMessage } from "@xandreed/core"
+import { mediaFromBase64, mediaFromBytes, UserMessage } from "@xandreed/sdk"
 
 const shot = yield* mediaFromBytes(bytes, { name: "form.png", alt: "the failing form" })
 const pasted = yield* mediaFromBase64(dataUrl) // a data: URL, or base64 with line breaks
@@ -1662,7 +1682,7 @@ is sent with it, or the ones its view picks:
 ```ts
 import { Tool } from "effect/ai"
 import { Effect, Schema } from "effect"
-import { defineTool, Failure, Media, mediaFromBytes } from "@xandreed/core"
+import { defineTool, Failure, Media, mediaFromBytes } from "@xandreed/sdk"
 
 declare const capture: (url: string) => Effect.Effect<Uint8Array>
 
@@ -2248,14 +2268,13 @@ drained.
 // Inside the host's Effect.gen, in the scope the process closes last.
 import { Effect, Layer, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
-import { awaitIdle, TurnAdmission, TurnRefused } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive } from "@xandreed/plugin-tasks"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { Agent } from "@xandreed/sdk"
+import { Agent, awaitIdle, TurnAdmission, TurnRefused } from "@xandreed/sdk"
 
 const draining = yield* Ref.make(false)
 const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({

@@ -1,6 +1,6 @@
 # @xandreed/sdk
 
-The composable agent: `Agent.define` builds an agent's plugin graph once (through runtime's `resolveGraph` and `activateGraph`) and `agent.turn` runs one turn over the turn engine, `TurnLive` (`src/turn/`), with the session, memory, registry and step loop its plugins provide. It re-exports all of core, so a host imports one package. Node 24 and Bun; layer `sdk` in `foundry.config.ts` (imports core and runtime); its tests are the `sdk-tests` layer, which may import every plugin.
+The composable agent: `Agent.define` builds an agent's plugin graph once (through runtime's `resolveGraph` and `activateGraph`) and `agent.turn` runs one turn over the turn engine, `TurnLive` (`src/turn/`), with the session, memory, registry and step loop its plugins provide. It re-exports, each by name, the part of core a host writes beside `Agent`, so defining an agent and running its turns imports one package; the rest of core is imported from `@xandreed/core`. Node 24 and Bun; layer `sdk` in `foundry.config.ts` (imports core and runtime); its tests are the `sdk-tests` layer, which may import every plugin.
 
 ## Rules
 
@@ -17,8 +17,10 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 
 ## Public surface
 
-- `export * from "@xandreed/core"` (`turnBeginCodes` among it), plus `Agent` (`Agent.define`) and the types `AgentConfig` and `AgentPluginEntry` (`src/agent.adapter.ts`), and `agentTaskExecutor(agent, { services, child?, react? })` (`src/task-executor.adapter.ts`): a `Layer<TaskExecutor>` whose child and reaction turns run with `services` and the calling `Tasks`, and are, by default, the turn's skills selected, then one run of the step loop, its text the reply.
+- `Agent` (`Agent.define`) and the types `AgentConfig` and `AgentPluginEntry` (`src/agent.adapter.ts`), and `agentTaskExecutor(agent, { services, child?, react? })` (`src/task-executor.adapter.ts`): a `Layer<TaskExecutor>` whose child and reaction turns run with `services` and the calling `Tasks`, and are, by default, the turn's skills selected, then one run of the step loop, its text the reply.
 - The turn engine, for a host that composes a turn itself: `TurnLive`, `cacheKeyOf`, `runTurnLoop`, `stepRequestOf` (`TurnRunServices`), `finishTurn`, `guardTurn`, `openTurnTools`, `settleTurn`, `traceTurn`, `traceTurnBegin` (`TurnBeginTrace`, `TurnTraceOptions`), `turnOf` and `turnTools`.
+- Core's host API, re-exported by name (`src/index.ts`) so that a host defining an agent and running its turns imports one package: a turn's input (`UserMessage`, `mediaFromBytes`, `mediaFromBase64`, `RunId`, `ConversationId`, `SessionAddress`, the types `TurnInput` and `NewTurn`); the turn and its result (the types `Turn`, `TurnPolicy`, `TurnOutcome`, `TurnResult`); the sessions turns begin in (`Sessions`, `SessionLog`, `SessionLogMemoryLive`, `TurnAdmission`, `TurnAdmissionOpen`, `TurnRefused`); the host's capabilities and plugins (`defineTool`, `defineSkill`, `definePromptSection`, `defineCapability`, the type `Capability`, `definePlugin`, `publishToolProgress`, `Failure`, `Media`, `SessionEnvironment`, `ActionPolicy`, `PermissionGrants`); the turn's events and the journal's records of its messages and end (`TurnEvent`, `TurnEvents`, the types `TurnEventOf` and `TurnEventsService`, `onEvent`, `onTool`, `subscribeAll`, `defineHostEvent`, `AssistantMessage`, `TurnEndedData`, `turnEndedOf`); what a turn fails with (`HarnessError`, `isHarnessError`, `harnessCodeOf`, `TurnBeginError`, `turnBeginCodes`, the type `TurnError`, `isTurnError`, `turnEndingOf`); and what the process has in flight (`awaitIdle`, `processActivity`). A port to implement and its entities, memory, model requests, stored payloads and References are imported from `@xandreed/core`, a kit from `@xandreed/core/conformance`: the sdk is the host's entry, not a second copy of core's surface. A name joins the list when a host writes it beside `Agent` in the common case, not because one test needs it.
+- `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
@@ -47,7 +49,7 @@ None.
 | `src/turn/turn-run.usecase.functions.ts` | one run of the step loop: the step request, the cache key |
 | `src/turn/turn-lifecycle.usecase.functions.ts` | the lifecycle: open the tools, settle, finish, guard, trace |
 | `src/turn/tool-registry.conformance.ts` | the `ToolRegistry` kit |
-| `src/index.ts` | core re-export and the sdk's own exports |
+| `src/index.ts` | the sdk's own exports and the core names it re-exports for hosts |
 | `src/conformance/index.ts` | `@xandreed/sdk/conformance` |
 | `src/testing.port.ts` | test-only services for the agent tests |
 | `src/turn/testing.ts` | `recordingTurnWriter`: a writer that keeps the turn in memory, for the engine's tests |

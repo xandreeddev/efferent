@@ -34,8 +34,7 @@ All framework packages are published at `0.14.0` under npm's `latest` tag.
 ```ts
 import { Context, Effect, Layer, Option } from "effect"
 import { LanguageModel } from "effect/ai"
-import { RunId, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
-import { Agent } from "@xandreed/sdk"
+import { Agent, RunId, Sessions, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
@@ -60,6 +59,14 @@ const reply = Effect.scoped(Effect.gen(function* () {
   return outcome.reply
 }))
 ```
+
+`@xandreed/sdk` re-exports, each by name, the part of core a host writes
+beside `Agent`: a turn's message, images and ids, the sessions with their
+store and admission, `defineTool`, `defineSkill`, `definePromptSection`,
+`defineCapability` and `definePlugin`, the turn's events, and its errors with
+their codes and guards. The rest of core (a port to implement and its
+entities, memory, model requests, stored payloads) is imported from
+`@xandreed/core`.
 
 A plugin declares an Effect Schema, defaults, required/provided service tags,
 and a scoped Layer. The runtime rejects invalid options, missing dependencies,
@@ -87,7 +94,7 @@ point the models plugin at any OpenAI-compatible endpoint.
 | --- | --- |
 | `@xandreed/core` | Shared schemas, ports, messages and protocol helpers; the conformance kits in `@xandreed/core/conformance` |
 | `@xandreed/runtime` | Plugin graph validation and scoped activation |
-| `@xandreed/sdk` | `Agent.define` and `Agent.turn`: the agent's plugin graph and its turns, over durable sessions |
+| `@xandreed/sdk` | `Agent.define` and `Agent.turn`: the agent's plugin graph and its turns, over durable sessions; the turn engine; core's names a host writes beside them |
 | `@xandreed/plugin-agent-loop` | The agent step loop |
 | `@xandreed/plugin-models` | Model routing and provider adapters |
 | `@xandreed/plugin-memory-window`, `-memory-summary`, `-memory-digest` | Conversation memory strategies and tool-result digests |

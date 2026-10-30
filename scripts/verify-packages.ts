@@ -190,7 +190,7 @@ import { connect, createServer } from "node:net"
 import type { Socket } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { awaitIdle, Bash, Capabilities, FileSystem, makeMemoryFileSystem, RunId, Sessions, SessionEnvironment, SessionLogMemoryLive, TaskActivity, TaskExecutor, Tasks, TurnActivity, TurnAdmissionOpen, UserMessage } from "@xandreed/core"
+import { Bash, Capabilities, FileSystem, makeMemoryFileSystem, TaskActivity, TaskExecutor, Tasks, TurnActivity } from "@xandreed/core"
 import { bashConformance, fileSystemConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import type { TurnWriter } from "@xandreed/core"
 import { modelsPlugin } from "@xandreed/plugin-models"
@@ -198,7 +198,7 @@ import { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive,
 import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
-import { Agent } from "@xandreed/sdk"
+import { Agent, awaitIdle, RunId, Sessions, SessionEnvironment, SessionLogMemoryLive, TurnAdmissionOpen, UserMessage } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
@@ -414,13 +414,13 @@ const { encodeSse, FeedReady, renderSurfacePlugin } = await import("@xandreed/pl
 if (renderSurfacePlugin.id !== "@xandreed/plugin-render/surface" || encodeSse(FeedReady.make({})) !== "event: ready\\ndata: {}\\n\\n") process.exit(1)
 const { Context, Effect, Layer, Option, Stream } = await import("effect")
 const { LanguageModel } = await import("effect/ai")
-const { makeMemoryFileSystem, Sessions, SessionLog, SessionLogMemoryLive, StepLoop, TurnAdmissionOpen } = await import("@xandreed/core")
+const { makeMemoryFileSystem, StepLoop } = await import("@xandreed/core")
 const { fileSystemConformance, sessionLogRecoveryConformance, stepLoopConformance, turnConformance } = await import("@xandreed/core/conformance")
 const { runSteps, STEP_LOOP, stepLoopPlugin } = await import("@xandreed/plugin-agent-loop")
 const { memoryWindowPlugin } = await import("@xandreed/plugin-memory-window")
 const { SessionsPluginLive } = await import("@xandreed/plugin-sessions")
 const { toolDiscoveryPlugin } = await import("@xandreed/plugin-tool-discovery")
-const { Agent } = await import("@xandreed/sdk")
+const { Agent, Sessions, SessionLog, SessionLogMemoryLive, TurnAdmissionOpen } = await import("@xandreed/sdk")
 // Run a kit's checks; any failure prints them all and fails the verification.
 const runKit = async (kit, checks) => {
   const failures = (await Effect.runPromise(Effect.forEach(checks, (check) => Effect.result(check.run).pipe(

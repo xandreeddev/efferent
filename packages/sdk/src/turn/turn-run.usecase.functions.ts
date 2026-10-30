@@ -88,7 +88,11 @@ export const schemaTokens = (tools: RunTools, active: ReadonlyArray<string>): nu
     return tool === undefined ? sum : sum + estimateTokens(`${tool.description ?? ""}${canonicalJson(toolParametersSchema(tool))}`)
   }, 0)
 
-/** The prompt-cache key of a conversation: `<prefix>:<conversation>`, none without a prefix. */
+/**
+ * The prompt-cache key of a conversation: `<prefix>:<conversation>`, none without a prefix.
+ *
+ * @public
+ */
 export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<string> =>
   Option.map(Option.filter(Option.some(prefix), (value) => value.length > 0), (value) => `${value}:${conversation}`)
 
