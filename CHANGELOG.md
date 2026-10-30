@@ -874,6 +874,14 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- `@xandreed/plugin-session-files`: crash tests against real processes,
+  on Bun and, in `verify:packages`, on Node: a writer SIGKILLed while it
+  commits leaves whole commits, one killed between writing and linking a
+  commit committed nothing, one killed after the link committed, and two
+  processes racing by compare-and-swap lose no update
+  (`EFFERENT_SESSION_FILES_MOUNT` runs them on a mount). The first commit a
+  handle makes to a session now removes the temporary files a stopped
+  writer left for revisions taken since.
 - `@xandreed/plugin-session-files`: the session log as files in a
   directory, on Node 24 and Bun, local or on a network mount
   (`SessionLogFilesLive(path)`, `makeSessionLogFiles(path, options)`,

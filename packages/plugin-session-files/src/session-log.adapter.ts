@@ -33,6 +33,7 @@ import {
   page,
   revisionFile,
   revisionOfFile,
+  revisionOfTemporary,
   tailVerdict,
 } from "./session-files.entity.functions.js"
 
@@ -143,6 +144,8 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
   const permits = yield* Semaphore.make(2)
   const health = yield* Ref.make<StoreHealth>({ _tag: "Healthy" })
   const known = yield* Ref.make<ReadonlyMap<string, Known>>(new Map())
+  /** The sessions whose temporary files this handle swept, at its first commit to each. */
+  const swept = yield* Ref.make<ReadonlySet<string>>(new Set())
 
   const sessionsDir = join(root, "sessions")
   const dirOf = (id: string) => join(sessionsDir, id)
@@ -355,6 +358,24 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
       )),
     )
 
+  /**
+   * The temporary files of commits that can never be published, since their
+   * revision is taken (by `revision` or before): left by a writer that
+   * stopped between writing a commit and linking it, or between linking it
+   * and removing it. Once per session and handle, at its first commit.
+   */
+  const sweepTemporaries = (id: ConversationId, revision: number) => Effect.gen(function* () {
+    const first = yield* Ref.modify(swept, (done): [boolean, ReadonlySet<string>] => done.has(id) ? [false, done] : [true, new Set(done).add(id)])
+    if (!first) return
+    const folder = join(dirOf(id), "tmp")
+    const names = yield* call("list", folder, () => io.list(folder)).pipe(
+      Effect.tapError((error) => Effect.logDebug(`the temporary files of a session could not be listed (${error._tag}); they are swept at a later commit`)),
+      Effect.orElseSucceed((): ReadonlyArray<string> => []),
+    )
+    const dead = names.filter((name) => Option.exists(revisionOfTemporary(name), (written) => written <= revision))
+    yield* Effect.forEach(dead, (name) => bestEffort("unlink", join(folder, name), () => io.unlink(join(folder, name))), { concurrency: 1, discard: true })
+  })
+
   const createDirectory = (id: string) => join(root, "staging", `${id}.${randomUUID()}`)
 
   /** Rename a session's directory away and delete it; a missing one is nothing to do. */
@@ -499,6 +520,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
       }))
       return yield* Match.valueTags(published, {
         Published: (): Effect.Effect<SessionCommitted, RevisionConflict | SessionMissing | SessionLogError> => remember(id, header.nonce, { revision, seq: meta.last, at, state }, [meta]).pipe(
+          Effect.andThen(sweepTemporaries(id, revision)),
           Effect.as({ revision, seq: meta.last, events: events.map(eventOf(id, at)), at }),
         ),
         Taken: () => current(id).pipe(Effect.flatMap((after) => Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: after.tail.revision })))),

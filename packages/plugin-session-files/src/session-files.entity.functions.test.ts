@@ -5,7 +5,7 @@ import { ConversationId } from "@xandreed/core"
 import type { SessionHead, SessionListQuery } from "@xandreed/core"
 import { PublishNonce } from "./session-files.entity.js"
 import type { CommitRecord, StoreHealth } from "./session-files.entity.js"
-import { admitCall, afterCall, crc32Of, decodeCommit, encodeCommit, isSessionDirectory, page, revisionFile, revisionOfFile, tailVerdict } from "./session-files.entity.functions.js"
+import { admitCall, afterCall, crc32Of, decodeCommit, encodeCommit, isSessionDirectory, page, revisionFile, revisionOfFile, revisionOfTemporary, tailVerdict } from "./session-files.entity.functions.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000a1")
 const record = (events: number, data: Record<string, unknown> = {}): CommitRecord => ({
@@ -56,6 +56,10 @@ describe("names", () => {
   test("a revision's file name sorts as its number does and reads back; other names are no revision", () => {
     expect([revisionFile(1), revisionFile(10), revisionFile(9)].sort()).toEqual([revisionFile(1), revisionFile(9), revisionFile(10)])
     expect([revisionOfFile(revisionFile(42)), revisionOfFile("000000000042.jsonl.tmp"), revisionOfFile("42.jsonl")]).toEqual([Option.some(42), Option.none(), Option.none()])
+  })
+
+  test("a temporary commit file names the revision it was written for; a published one, or another name, names none", () => {
+    expect([revisionOfTemporary(`${revisionFile(7)}.3f2a`), revisionOfTemporary(revisionFile(7)), revisionOfTemporary("link-probe.1")]).toEqual([Option.some(7), Option.none(), Option.none()])
   })
 
   test("only a session's id names a session's directory: an editor's or a network file system's leftovers do not", () => {
