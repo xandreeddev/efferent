@@ -296,16 +296,17 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       return found.text
     })
 
-    const wrap = (entry: RegisteredTool, handler: RegisteredTool["handler"]) => (params: unknown) => Effect.gen(function* () {
+    const wrap = (entry: RegisteredTool, handler: RegisteredTool["handler"]) => (params: unknown, context: Toolkit.HandlerContext<Tool.Any>) => Effect.gen(function* () {
       const name = entry.tool.name
       const isOwn = own.includes(entry)
       // The call's id first: a refused call has one too, and its `tool.refused` carries it.
       const sequence = yield* Ref.getAndUpdate(invocation, (value) => value + 1)
       const invocationId = InvocationId.make(`${run.runId}:call:${sequence}`)
       const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => 0)
+      const toolCall = context.toolCallId === undefined ? {} : { toolCallId: ToolCallId.make(context.toolCallId) }
       /** Publish the refusal, then fail the call with it: the model reads it as the call's result. */
       const refuse = (reason: ToolRefusalReason, error: string, message: string) =>
-        run.events.publish({ _tag: "tool.refused", step, invocationId, tool: name, input: params, reason, message }).pipe(
+        run.events.publish({ _tag: "tool.refused", step, invocationId, ...toolCall, tool: name, input: params, reason, message }).pipe(
           // A subscriber failure fails the turn, never the tool call (which the model would see).
           Effect.orDie,
           Effect.andThen(Effect.fail(failure(error, message))),
@@ -330,11 +331,11 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       const labels = entry.annotations.labels
       const stage = entry.annotations.stage
       // A subscriber failure fails the turn, never the tool call (which the model would see).
-      yield* run.events.publish({ _tag: "tool.started", step, invocationId, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
+      yield* run.events.publish({ _tag: "tool.started", step, invocationId, ...toolCall, tool: name, input: params, labels, stage }).pipe(Effect.orDie)
       const started = yield* Clock.currentTimeMillis
       const lane = entry.annotations.readOnly ? readLane : writeLane
       // The invocation innermost: a handler sees its own call even when the run's services carry an outer one.
-      const call = handler(params).pipe(Effect.provideService(CurrentToolInvocation, Option.some({ invocationId, tool: name, step })))
+      const call = handler(params).pipe(Effect.provideService(CurrentToolInvocation, Option.some({ invocationId, ...toolCall, tool: name, step })))
       const exit = yield* lane.withPermits(1)(Effect.exit(call.pipe(Effect.provide(runServices))))
       const durationMs = (yield* Clock.currentTimeMillis) - started
       const ok = Exit.isSuccess(exit)
@@ -355,7 +356,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
         Effect.tapError((error) => Effect.logWarning(`${name} returned a value its own schema does not encode; it is recorded as returned`, error)),
         Effect.orElseSucceed(() => value),
       )
-      yield* run.events.publish({ _tag: "tool.completed", step, invocationId, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
+      yield* run.events.publish({ _tag: "tool.completed", step, invocationId, ...toolCall, tool: name, input: params, ok, result: value, encoded, durationMs, labels, stage }).pipe(Effect.orDie)
       if (Option.isSome(turnFailure)) return yield* Effect.die(turnFailure.value)
       return yield* ok ? Effect.succeed(value) : Effect.fail(value)
     }).pipe(Effect.withSpan(`tool.${entry.tool.name}`), Effect.provide(runServices))

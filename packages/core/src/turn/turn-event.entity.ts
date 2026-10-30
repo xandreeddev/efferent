@@ -55,12 +55,14 @@ export const StepStartedEvent = Schema.TaggedStruct("step.started", {
 export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
   step: Schema.Int,
   invocationId: InvocationId,
+  /** The provider's pairing key (or the loop's deterministic id); absent for direct calls without an id. */
+  toolCallId: Schema.optionalKey(ToolCallId),
   tool: Schema.String,
   input: Schema.Unknown,
   labels: Labels,
   stage: Schema.OptionFromNullOr(Schema.String),
 }).annotate({
-  description: "Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress` and `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes `tool.refused` instead, and no other `tool.*` event; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included.",
+  description: "Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress` and `tool.completed`; `toolCallId`, when present, is the provider pairing key or the loop's deterministic id; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes `tool.refused` instead, and no other `tool.*` event; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included.",
 })
 
 /** Why the tool registry refused a call before its handler ran. */
@@ -71,6 +73,7 @@ export type ToolRefusalReason = typeof ToolRefusalReason.Type
 export const ToolRefusedEvent = Schema.TaggedStruct("tool.refused", {
   step: Schema.Int,
   invocationId: InvocationId,
+  toolCallId: Schema.optionalKey(ToolCallId),
   tool: Schema.String,
   /** The decoded parameters. Not journaled. */
   input: Schema.Unknown,
@@ -78,13 +81,14 @@ export const ToolRefusedEvent = Schema.TaggedStruct("tool.refused", {
   /** What the model is told, as the call's failed result. */
   message: Schema.String,
 }).annotate({
-  description: "Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`.",
+  description: "Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`.",
 })
 
 /** @public */
 export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
   step: Schema.Int,
   invocationId: InvocationId,
+  toolCallId: Schema.optionalKey(ToolCallId),
   tool: Schema.String,
   input: Schema.Unknown,
   ok: Schema.Boolean,
@@ -97,7 +101,7 @@ export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
   labels: Labels,
   stage: Schema.OptionFromNullOr(Schema.String),
 }).annotate({
-  description: "Published by the tool registry when a handler returned or failed (`ok`). `result` is the decoded value, `encoded` its wire form as the model receives it. `durationMs` runs from just after `tool.started` to the handler's exit, so it includes any wait for the tool's read or write lane. Journaled as `tool.completed` without `input`, `result` and `encoded`: memory keeps the call and its result (`memory.message`, `memory.tool-result`).",
+  description: "Published by the tool registry when a handler returned or failed (`ok`). `toolCallId`, when present, pairs it with the assistant's call and its result. `result` is the decoded value, `encoded` its wire form as the model receives it. `durationMs` runs from just after `tool.started` to the handler's exit, so it includes any wait for the tool's read or write lane. Journaled as `tool.completed` without `input`, `result` and `encoded`: memory keeps the call and its result (`memory.message`, `memory.tool-result`).",
 })
 
 /**
@@ -111,11 +115,12 @@ export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
 export const ToolProgressEvent = Schema.TaggedStruct("tool.progress", {
   step: Schema.Int,
   invocationId: InvocationId,
+  toolCallId: Schema.optionalKey(ToolCallId),
   tool: Schema.String,
   channel: Schema.Literals(["stdout", "stderr", "status"]),
   text: Schema.String,
 }).annotate({
-  description: "Published by `publishToolProgress` from inside a tool handler, between that call's `tool.started` and `tool.completed` (same `step`, `invocationId` and `tool`). `channel` is stdout or stderr for a command's output as it arrives, status for anything else the tool reports; `text` is that output or message. Transient: never journaled; `tool.completed` carries the result.",
+  description: "Published by `publishToolProgress` from inside a tool handler, between that call's `tool.started` and `tool.completed` (same `step`, `invocationId`, optional `toolCallId` and `tool`). `channel` is stdout or stderr for a command's output as it arrives, status for anything else the tool reports; `text` is that output or message. Transient: never journaled; `tool.completed` carries the result.",
 })
 
 export const StepResult = Schema.Struct({

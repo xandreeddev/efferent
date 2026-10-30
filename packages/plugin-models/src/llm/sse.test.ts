@@ -599,3 +599,21 @@ describe("compat streamText", () => {
     expect((finish?.at ?? 0) - (firstDelta?.at ?? 0)).toBeGreaterThan(150)
   })
 })
+
+test("SSE keeps missing tool-call ids empty for the loop to assign, and preserves provider ids", async () => {
+  const parts = await collect(wire(
+    JSON.stringify({ choices: [{ delta: { tool_calls: [
+      { index: 0, function: { name: "echo", arguments: "{}" } },
+      { index: 1, id: "provider:second", function: { name: "echo", arguments: "{}" } },
+      { index: 2, id: "", function: { name: "echo", arguments: "{}" } },
+    ] } }] }),
+    JSON.stringify({ choices: [{ delta: {}, finish_reason: "tool_calls" }] }),
+    "[DONE]",
+  ))
+  expect(parts).toEqual([
+    { type: "tool-call", id: "", name: "echo", params: {} },
+    { type: "tool-call", id: "provider:second", name: "echo", params: {} },
+    { type: "tool-call", id: "", name: "echo", params: {} },
+    { type: "finish", reason: "tool-calls", usage: zeroUsage },
+  ])
+})

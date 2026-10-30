@@ -282,13 +282,14 @@ const flush = (moduleName: string, reading: UsageReading, state: SseState): Effe
     : Effect.gen(function* () {
         const [closed, closeParts] = emitThen(closeText(state), closeReasoning)
         const reason = finishReasonFromWire(closed.finishReason, closed.toolCalls.length > 0)
-        const toolParts = yield* Effect.forEach(closed.toolCalls, (call, index) =>
+        const toolParts = yield* Effect.forEach(closed.toolCalls, (call) =>
           toolCallParams(call.args.length > 0 ? call.args : "{}", reason, () =>
             malformed(moduleName, `tool call ${call.name.length > 0 ? call.name : "?"} carried unparseable JSON arguments`),
           ).pipe(
             Effect.map((params): Part => ({
               type: "tool-call",
-              id: call.id.length > 0 ? call.id : `call_${index}`,
+              // Leave an omitted id for the loop's deterministic, session-scoped mint.
+              id: call.id,
               name: call.name,
               params,
             })),

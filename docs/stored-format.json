@@ -1,6 +1,6 @@
 {
-  "format": 2,
-  "fingerprint": "f1d8e83d2a4764dc0aea4d383e2c93a845be952fd42e4a60d22d964fb37c5b77",
+  "format": 3,
+  "fingerprint": "8e2be508955c5fec758fad3fb999185d44fead091f6e5f8c402504884dab0d9f",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
@@ -23,9 +23,9 @@
     "journal step.started": "16e48fd396fce5174bcc84a1a9f8b8e25729331a79bbc5a08c385e51b4e4515b",
     "journal step.usage": "1e13adffdf0e739803565455c25ba80f8e381dc0b5cab2c72f55d489ffd1b287",
     "journal stream.fallback": "a8df996294e170347e1f43b26251d9ada0be3ea01f75a5f0df31c37f3081a17e",
-    "journal tool.completed": "e113384b50c6fd0ede175aa030532ff5b21db8a9a73074e9e5bb974bef1d23a7",
-    "journal tool.refused": "053447efcc5603a51424568f9f4627593087a21459159de27dc1fed6cc69a86d",
-    "journal tool.started": "380400970e33b0122b7a7927b4d0a0da3e8ee77a311a159425cdff665a80d3cd",
+    "journal tool.completed": "15f66882180ac3acfb376c53da57d053a831671f6956f9ea958b02584d05e2c9",
+    "journal tool.refused": "a68da9e15cc1cd0c3638d3a8fa9ffb5eca871d72ffa84bb819d617f465132d4c",
+    "journal tool.started": "b3bbc328f2086dc498e3066e2a09005784fdf6ecde6fd69915d812e176af8bd6",
     "journal turn.ended": "9ad790e35056a849ed7121f0d005e0312633732ac43f651e152ff00a71227c3e",
     "journal turn.reply": "e1cc10fb802d4c6169b1bd494f3777f5f9c506519a75faf36bcd307cd8fbe194",
     "journal turn.started": "6b6fa1513a84520541b303f038d7a47176d2d434d244e92367afcdb4adecc221",
@@ -41,6 +41,10 @@
     {
       "format": 2,
       "fingerprint": "f1d8e83d2a4764dc0aea4d383e2c93a845be952fd42e4a60d22d964fb37c5b77"
+    },
+    {
+      "format": 3,
+      "fingerprint": "8e2be508955c5fec758fad3fb999185d44fead091f6e5f8c402504884dab0d9f"
     }
   ]
 }

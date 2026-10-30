@@ -10,6 +10,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A custom `ToolRegistry` carries the toolkit handler context's optional
+  `toolCallId` onto `CurrentToolInvocation` and every `tool.*` event, and
+  reruns `toolRegistryConformance` (new check `provider-call-id`).
 - A `match` on `StepStatus` (`step.ended.status`, `onStepSettled`) adds
   `truncated`; a host building an `AssistantMessageEvent` (a custom
   `StepLoop`) gives its `finishReason`, and reruns `stepLoopConformance`.
@@ -921,6 +924,12 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- `@xandreed/core`, `@xandreed/plugin-tool-discovery`: the provider's call
+  id reaches tool handlers as `CurrentToolInvocation.toolCallId`, every
+  `tool.*` event and `onTool` subscribers. Direct toolkit calls may omit
+  it. The journal keeps the optional id on `tool.started`, `tool.refused`
+  and `tool.completed`; stored format is now 3, and older records still
+  decode.
 - A step is as honest as its response. `assistant.message` carries the
   response's `finishReason` (`FinishReason` in `@xandreed/core`, effect/ai's
   list: `stop`, `length`, `content-filter`, `tool-calls`, `error`, `pause`,
@@ -1356,6 +1365,10 @@ Model-visible text (exact pins and the compaction golden updated):
 
 ### Fixed
 
+- `@xandreed/plugin-models`: streamed chat completions without tool-call
+  ids keep them empty until the loop assigns deterministic ids, distinct
+  across steps, runs and turns. The SSE client no longer invents repeating
+  `call_0` ids that collide in memory's tool-input and pinned-result maps.
 - `@xandreed/plugin-models`: the chat completions client, settled and
   streamed, decides a response's finish reason from the wire's
   `finish_reason` before it decodes its tool calls' arguments, whatever the

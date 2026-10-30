@@ -3,7 +3,7 @@ import { Tool } from "effect/ai"
 import { Cause, Deferred, Effect, Exit, Fiber, Option, Ref, Schema, Tracer } from "effect"
 import { failureCode } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
-import { ConversationId } from "../domain/message.entity.js"
+import { ConversationId, ToolCallId } from "../domain/message.entity.js"
 import { InvocationId, RunOrdinal } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentTraceContent } from "../loop/traceContent.js"
@@ -22,7 +22,7 @@ const Lookup = Tool.make("lookup", {
   failure: Failure,
   failureMode: "return",
 })
-const completed = (tool: string, input: unknown, result: unknown): TurnEvent => ({
+const completed = (tool: string, input: unknown, result: unknown): Extract<TurnEvent, { readonly _tag: "tool.completed" }> => ({
   _tag: "tool.completed", step: 0, invocationId: InvocationId.make("i1"), tool, input, ok: true, result, encoded: result, durationMs: 1, labels: {}, stage: Option.none(),
 })
 const run = <A, E>(effect: Effect.Effect<A, E, never>) => Effect.runPromise(Effect.result(effect))
@@ -75,6 +75,21 @@ describe("the turn event bus", () => {
       return yield* Ref.get(seen)
     })))
     expect(ids).toEqual(["alpha:r1"])
+  })
+
+  test("onTool preserves the provider call id and leaves a direct call's id absent", async () => {
+    const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const events = yield* makeTurnEvents({ maxDepth: 4 })
+      const calls = yield* Ref.make<ReadonlyArray<unknown>>([])
+      yield* onTool(Lookup, (call) => Ref.update(calls, (all) => [...all, call]))(events)
+      yield* events.publish({ ...completed("lookup", { query: "alpha" }, { id: "r1" }), toolCallId: ToolCallId.make("provider:1") })
+      yield* events.publish(completed("lookup", { query: "beta" }, { id: "r2" }))
+      return yield* Ref.get(calls)
+    })))
+    expect(seen).toEqual([
+      { step: 0, invocationId: "i1", toolCallId: "provider:1", input: { query: "alpha" }, result: { id: "r1" } },
+      { step: 0, invocationId: "i1", input: { query: "beta" }, result: { id: "r2" } },
+    ])
   })
 
   test("host events round-trip through their schema", async () => {

@@ -125,7 +125,8 @@ const capabilityOf = (ran: Ref.Ref<ReadonlyArray<string>>): Capability => {
           const opener = yield* Effect.service(Opener)
           yield* publishToolProgress("stdout", "working")
           yield* publishToolProgress("status", "half way")
-          return `${Option.match(invocation, { onNone: () => "no invocation", onSome: (call) => `${call.invocationId}|${call.tool}|${call.step}` })}|${opener}`
+          const provider = Option.flatMap(invocation, (call) => Option.fromNullishOr(call.toolCallId))
+          return `${Option.match(invocation, { onNone: () => "no invocation", onSome: (call) => `${call.invocationId}|${call.tool}|${call.step}` })}|${opener}${Option.match(provider, { onNone: () => "", onSome: (id) => `|${id}` })}`
         }),
       }),
       defineTool({
@@ -204,7 +205,7 @@ interface KitTurn {
   readonly catalog: CapabilityCatalog
   readonly tools: RunTools
   /** Call a tool through the open toolkit's handlers at `step`, as the loop (or a host) does. */
-  readonly call: (name: string, params: unknown, step?: number) => Effect.Effect<CallResult, unknown>
+  readonly call: (name: string, params: unknown, step?: number, toolCallId?: string) => Effect.Effect<CallResult, unknown>
   /** The `tool.*` and `skills.activated` events published so far, in order. */
   readonly published: Effect.Effect<ReadonlyArray<TurnEvent>>
   /** What the turn stored so far. */
@@ -258,7 +259,9 @@ const toolsOf = (data: unknown): ReadonlyArray<string> =>
  * `tool.started`, its handler's `tool.progress` and `tool.completed` under
  * one invocation id (`<runId>:call:<n>`), and the handler sees that call
  * as `CurrentToolInvocation` and the services where the tools were opened,
- * the ones it declares (`RegisteredTool.requires`) included; a run lacking
+ * the ones it declares (`RegisteredTool.requires`) included. The provider's
+ * pairing key reaches the invocation, every lifecycle event and its journal
+ * record as `toolCallId` (absent on direct calls without one). A run lacking
  * a service a tool declares fails to open its tools with
  * `requires.missing`, naming the tool and the service; and a call refused
  * before its handler runs (`inactive`, `forbidden`, `denied`, `call-limit`,
@@ -313,9 +316,9 @@ export const toolRegistryConformance = (
       )
       const tools = yield* opening
       yield* tools.select(run.userMessage)
-      const call = (name: string, params: unknown, step = 1): Effect.Effect<CallResult, unknown> => (Effect.gen(function* () {
+      const call = (name: string, params: unknown, step = 1, toolCallId?: string): Effect.Effect<CallResult, unknown> => (Effect.gen(function* () {
         const kit = yield* tools.toolkit.pipe(Effect.provide(tools.handlers))
-        const results = yield* Stream.runCollect(yield* kit.handle(name, params))
+        const results = yield* Stream.runCollect(yield* kit.handle(name, params, toolCallId))
         const last = results.at(-1)
         return { isFailure: last?.isFailure ?? true, result: last?.result }
       }) as Effect.Effect<CallResult, unknown>).pipe(
@@ -445,6 +448,29 @@ export const toolRegistryConformance = (
       const next = yield* turn.call(Ping.name, { n: 1 })
       const started = (yield* turn.published).filter((event) => event._tag === "tool.started").map(idOf)
       yield* expect("invocation", !next.isFailure && started.join() === `${id},${RUN}:call:2`, `the next call took the id ${started.at(-1) ?? "none"}`)
+    }))),
+
+    check("the provider's call id reaches concurrent handlers, their lifecycle events and the journal, including refusals; a direct call has none", "provider-call-id", () => inTurn({}, (turn) => Effect.gen(function* () {
+      const ids = ["provider:a", "provider:b"]
+      const outcomes = yield* Effect.forEach(ids, (id) => turn.call(Report.name, {}, 3, id), { concurrency: 2 })
+      yield* expect("provider-call-id", outcomes.every((outcome, at) => !outcome.isFailure && typeof outcome.result === "string" && outcome.result.endsWith(`|${ids[at]}`)),
+        "a concurrent handler did not see its own provider call id")
+      yield* turn.call(Vault.name, { key: "k" }, 3, "provider:refused")
+      const events = (yield* turn.published).filter((event) => event._tag.startsWith("tool."))
+      yield* expect("provider-call-id", ids.every((id) => {
+        const own = events.filter((event) => "toolCallId" in event && event.toolCallId === id)
+        return tags(own) === "tool.started,tool.progress,tool.progress,tool.completed"
+          && own.every((event) => idOf(event) === idOf(own[0]!))
+      }), "a handled call's lifecycle events lost or mixed provider call ids")
+      const refused = events.at(-1)
+      yield* expect("provider-call-id", refused?._tag === "tool.refused" && refused.toolCallId === "provider:refused", "a refusal lost the provider call id")
+      const stored = (yield* turn.stored).filter((record) => record.kind.startsWith("tool."))
+      yield* expect("provider-call-id", ids.every((id) => stored.filter((record) => record.data.toolCallId === id).map((record) => record.kind).join() === "tool.started,tool.completed")
+        && stored.at(-1)?.data.toolCallId === "provider:refused", "the journal lost the calls' provider ids")
+      const before = events.length
+      yield* turn.call(Report.name, {})
+      const direct = (yield* turn.published).filter((event) => event._tag.startsWith("tool.")).slice(before)
+      yield* expect("provider-call-id", direct.length === 4 && direct.every((event) => !("toolCallId" in event)), "a direct call inherited another call's provider id")
     }))),
 
     check("a run lacking a service a tool declares fails to open its tools, with requires.missing naming the tool and the service", "requires-missing", () => Effect.gen(function* () {

@@ -6,6 +6,7 @@ Core's `ToolRegistry` over every contributed capability: it registers the tools 
 
 - `open` checks every registered tool's `requires` against the services it captures before it sets anything up: a missing one fails the open with `requires.missing`, naming each tool and service, so no handler finds one missing mid-turn.
 - A call refused before its handler runs goes through `refuse`: it publishes `tool.refused` and returns `{ error, message }` as the call's result, for the model to correct.
+- The handler context's `toolCallId` reaches `CurrentToolInvocation` and every `tool.*` event, refusals included. A direct call without one never inherits an outer call's id. The sdk's `provider-call-id` conformance check pins this contract.
 - Only `skills.unknown` and `capability.forbidden` are refusals of an activation (`refusalNames`); any other failure there, such as the store's, is the turn's. Those codes are the host's (`RunTools.activate` fails with them, and spans and logs keep them); `load_skill` returns a refusal to the model under its own name, `UnknownSkill` or `PermissionDenied`.
 - Every failure the model reads is `{ error, message }` with a PascalCase `error` that says what is wrong; never pass a host's code (a `HarnessError`'s, a port's) through as the name: map it where the `Failure` is built. The sdk's `ToolRegistry` kit checks the refusals' and `load_skill`'s names.
 - A handler's defect reaches the model as `ToolDefect` with the first line of its message (core's `messagesOf`: never its class name or tag; at most 300 characters); the whole cause goes to the log only.
@@ -29,17 +30,17 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `load_skill` description | `src/registry.adapter.ts:78` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:567`; sdk golden |
-| `read_skill_reference` description | `src/registry.adapter.ts:86` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:568` |
+| `load_skill` description | `src/registry.adapter.ts:78` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:569`; sdk golden |
+| `read_skill_reference` description | `src/registry.adapter.ts:86` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:570` |
 | Catalogue heading and lines (`catalogText`) | `src/registry.adapter.ts:123-128` | sdk golden |
-| Skill instructions (`skillInstructions`: `## id`, `Tools:`, `References (read_skill_reference):`, `Now available:`), also for matcher-seeded exchanges | `src/registry.adapter.ts:115-121` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:581`; sdk golden |
-| `ToolInactive` messages: not loaded, not available | `src/registry.adapter.ts:315-316` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:304`, `:355` |
-| `ToolCallLimit` message | `src/registry.adapter.ts:327` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:315` |
-| `PermissionDenied` (a permission the turn lacks), `CallLimit` messages; `PolicyDenied` carries the policy's | `src/registry.adapter.ts:319`, `:325`, `:322` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:305`, `:311`, `:307` |
-| `ToolDefect` message: the defect's message alone (`messagesOf`), never its class name or tag | `src/registry.adapter.ts:344` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:403`, `:415` |
-| `SkillLoadLimit`, `UnknownReference` messages; `load_skill`'s refusals, each under its name (`refusalNames`): `UnknownSkill`, `Unknown skills: …; load_skill takes …` (the code `skills.unknown`), and `PermissionDenied` with core's `capability.forbidden` message | `src/registry.adapter.ts:283`, `:295`, `:265`, `:71-74`, `:286` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:542`, `:582`, `:535`, `:530` |
-| `SkillNotLoaded` message | `src/registry.adapter.ts:294` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:580` |
-| `requires.missing` at open (`<tool> requires <key>, …; …`): fails the turn before any step, so a model reads it only as a failed turn's message, such as a background task's notice | `src/registry.adapter.ts:236`, `:238` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:382` |
+| Skill instructions (`skillInstructions`: `## id`, `Tools:`, `References (read_skill_reference):`, `Now available:`), also for matcher-seeded exchanges | `src/registry.adapter.ts:115-121` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:583`; sdk golden |
+| `ToolInactive` messages: not loaded, not available | `src/registry.adapter.ts:316-317` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:306`, `:357` |
+| `ToolCallLimit` message | `src/registry.adapter.ts:328` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:317` |
+| `PermissionDenied` (a permission the turn lacks), `CallLimit` messages; `PolicyDenied` carries the policy's | `src/registry.adapter.ts:320`, `:326`, `:323` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:307`, `:313`, `:309` |
+| `ToolDefect` message: the defect's message alone (`messagesOf`), never its class name or tag | `src/registry.adapter.ts:345` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:405`, `:417` |
+| `SkillLoadLimit`, `UnknownReference` messages; `load_skill`'s refusals, each under its name (`refusalNames`): `UnknownSkill`, `Unknown skills: …; load_skill takes …` (the code `skills.unknown`), and `PermissionDenied` with core's `capability.forbidden` message | `src/registry.adapter.ts:283`, `:295`, `:265`, `:71-74`, `:286` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:544`, `:584`, `:537`, `:532` |
+| `SkillNotLoaded` message | `src/registry.adapter.ts:294` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:582` |
+| `requires.missing` at open (`<tool> requires <key>, …; …`): fails the turn before any step, so a model reads it only as a failed turn's message, such as a background task's notice | `src/registry.adapter.ts:236`, `:238` | exact, `packages/sdk/src/tool-discovery-turn.test.ts:384` |
 
 ## Erasure files
 

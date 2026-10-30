@@ -480,6 +480,10 @@ const checks = toolRegistryConformance((capabilities, limits) =>
   as `CurrentToolInvocation` and the services where the tools were opened,
   not the caller's; the events are published on the run's bus only, so
   `tool.progress` never reaches the journal.
+- **provider-call-id**: the provider's pairing key reaches concurrent
+  handlers as `CurrentToolInvocation.toolCallId`, their lifecycle events
+  and journal records, refusals included. Direct calls without an id leave
+  it absent. A nested handler never inherits its outer call's id.
 - **requires-missing**: a run lacking a service a tool declares (here the
   `SessionEnvironment`) fails to open its tools with `requires.missing`,
   naming the tool and the service.
