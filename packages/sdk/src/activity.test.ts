@@ -67,7 +67,7 @@ const endings = (events: ReadonlyArray<SessionLogEvent>) => events.filter((event
 /** A failure by its framework code (`harnessCodeOf`), else its tag. */
 const codeOf = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
 
-const idle: ProcessActivity = { openTurns: [], beginningTurns: 0, runningTasks: 0, busy: false }
+const idle: ProcessActivity = { openTurns: [], beginningTurns: 0, runningTasks: 0, busy: false, stopping: false }
 
 describe("Agent.activity", () => {
   test("it counts the turn its graph's Sessions holds open and the work of the task runner in its services", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -234,7 +234,7 @@ describe("a shutdown within a deadline: Agent.shutdown and AgentConfig.shutdown"
     expect([codeOf(refused), refused._tag === "TurnRefused" && isShutdownRefusal(refused)]).toEqual(["turn.refused", true])
     yield* Deferred.succeed(release, undefined)
     expect((yield* Fiber.join(inFlight)).outcome).toBe("completed")
-    expect(yield* Fiber.join(stopping)).toEqual({ idle: true, interrupted: [], left: idle })
+    expect(yield* Fiber.join(stopping)).toEqual({ idle: true, interrupted: [], left: { ...idle, stopping: true } })
     expect(endings(yield* sessions.read(session))).toEqual(["completed"])
   }))))
 
@@ -262,7 +262,7 @@ describe("a shutdown within a deadline: Agent.shutdown and AgentConfig.shutdown"
     yield* Deferred.await(tasked)
 
     const report = yield* agent.shutdown({ deadline: "200 millis", reserve: "100 millis" })
-    expect([report.idle, report.interrupted.map((turn) => [turn.session, turn.turn]), report.left]).toEqual([false, [[session.id, 1], [child.id, 1]], idle])
+    expect([report.idle, report.interrupted.map((turn) => [turn.session, turn.turn]), report.left]).toEqual([false, [[session.id, 1], [child.id, 1]], { ...idle, stopping: true }])
     // The request's turn failed with its writer closed under it; the host's server would answer it now.
     const exit = yield* Fiber.await(request)
     expect(Exit.isFailure(exit) && Option.exists(Exit.findErrorOption(exit), (error) => error._tag === "TurnClosed")).toBe(true)
@@ -292,6 +292,21 @@ describe("a shutdown within a deadline: Agent.shutdown and AgentConfig.shutdown"
     yield* Scope.close(scope, Exit.void)
     expect(Exit.isFailure(yield* Fiber.await(request))).toBe(true)
     expect(yield* storedEndings(store, session.id)).toEqual([["interrupted", "turn.shutdown"]])
+  }))))
+})
+
+describe("a turn time limit", () => {
+  test("a turn past its timeLimitMs fails with TurnClosed timed-out, stored as interrupted with turn.time-limit, and the next turn resumes it", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const store = Context.get(yield* Layer.build(SessionLogMemoryLive), SessionLog)
+    const services = yield* Layer.build(SessionsPluginLive().pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, store), TurnAdmissionOpen))))
+    yield* Context.get(services, Sessions).create({ owner: session.owner, id: session.id })
+    const agent = yield* define({ services })
+    const turnServices = Context.make(LanguageModel.LanguageModel, yield* answering("0 seconds", yield* Deferred.make<void>()))
+    const failed = yield* Effect.flip(agent.turn({ turn: { ...ask("run-1", "a long request"), timeLimitMs: 50 }, services: turnServices }, () => Effect.never))
+    expect([failed._tag, failed._tag === "TurnClosed" ? failed.reason : null]).toEqual(["TurnClosed", "timed-out"])
+    expect(yield* storedEndings(store, session.id)).toEqual([["interrupted", "turn.time-limit"]])
+    const resumed = yield* agent.turn({ turn: { ...ask("run-2", "Continue."), resumes: 1 }, services: turnServices }, runToEnd)
+    expect(resumed.outcome).toBe("completed")
   }))))
 })
 

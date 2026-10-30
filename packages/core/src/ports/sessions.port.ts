@@ -225,8 +225,9 @@ export class Sessions extends Context.Service<Sessions, {
    * took, even when it wrote nothing. With `takeOver`, each turn begins as
    * `BeginTurn`'s `takeOver` says: a turn left open by a holder the host
    * knows is gone is closed at once (`turn.takeover`) instead of waiting
-   * for its lease.
+   * for its lease. With `timeLimitMs`, each turn may run that long
+   * (`BeginTurn`'s `timeLimitMs`), its `run` interrupted past it.
    */
-  readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean }) =>
+  readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean; readonly timeLimitMs?: number }) =>
     Effect.Effect<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R>
 }>()("efferent/Sessions") {}

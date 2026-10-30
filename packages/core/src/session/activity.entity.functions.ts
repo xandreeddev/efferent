@@ -6,19 +6,23 @@ const noTurns: TurnsInFlight = { open: [], beginning: 0 }
 
 /**
  * What this process is busy with now: the turns its `TurnActivity` holds
- * open or is beginning, and the work its `TaskActivity` runs. A probe that
- * is not in the context counts as nothing open, beginning or running.
+ * open or is beginning, the work its `TaskActivity` runs, and whether its
+ * `TurnShutdown` is stopping. A probe that is not in the context counts as
+ * nothing open, beginning or running, and not stopping.
  */
 export const processActivity: Effect.Effect<ProcessActivity> = Effect.gen(function* () {
   const turns = yield* Effect.serviceOption(TurnActivity)
   const tasks = yield* Effect.serviceOption(TaskActivity)
+  const shutdown = yield* Effect.serviceOption(TurnShutdown)
   const inFlight = yield* Option.match(turns, { onNone: () => Effect.succeed(noTurns), onSome: (probe) => probe.current })
   const runningTasks = yield* Option.match(tasks, { onNone: () => Effect.succeed(0), onSome: (probe) => probe.running })
+  const stopping = yield* Option.match(shutdown, { onNone: () => Effect.succeed(false), onSome: (probe) => probe.stopping })
   return {
     openTurns: inFlight.open,
     beginningTurns: inFlight.beginning,
     runningTasks,
     busy: inFlight.open.length > 0 || inFlight.beginning > 0 || runningTasks > 0,
+    stopping,
   }
 })
 

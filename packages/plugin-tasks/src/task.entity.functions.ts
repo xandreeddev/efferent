@@ -68,6 +68,7 @@ const closedText: Readonly<Record<TurnClosed["reason"], string>> = {
   cancelled: "the task's turn was cancelled",
   interrupted: "the task's turn was interrupted",
   removed: "the task's session was removed",
+  "timed-out": "the task's turn ran past its time limit",
   ended: "the task's turn had already ended",
 }
 

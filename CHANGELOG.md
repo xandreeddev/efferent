@@ -10,6 +10,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A turn now runs at most 6 hours by default: past it,
+  `@xandreed/plugin-sessions` closes it as interrupted with
+  `turn.time-limit`. A host whose turns run longer sets
+  `turns.timeLimitMs` (at most a week) or the begin's `timeLimitMs`. A host that writes a whole `SessionsConfig` adds `turns`
+  (or spreads `sessionsDefaults`).
+- `TurnClosed`'s `reason` gains `timed-out`: an exhaustive match on it adds
+  the case. `ProcessActivity` gains `stopping` and `TurnShutdown` its
+  `stopping` effect: a host building either, or comparing an activity
+  whole, adds it.
 - The kits' fixtures name a shutdown: a `SessionsInstance` built for
   `sessionsConformance` gives `shutdown` (its `TurnShutdown`, as
   `Context.getOption(context, TurnShutdown)`; `Option.none()` for a
@@ -884,6 +893,17 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- A turn time limit: `timeLimitMs` on `BeginTurn` (`User`, `Inbox`, `Task`),
+  `NewTurn` and the `drain` options, else the sessions plugin's new
+  `turns.timeLimitMs` (6 hours by default). Past it, the instance holding
+  the turn stores its end as interrupted with the new code
+  `turn.time-limit` (resumable, an inbox attempt counted) and closes its
+  writer with `TurnClosed` of the new reason `timed-out`, so `Agent.turn`
+  interrupts the turn's body. `sessionsConformance` checks it
+  (`time-limit`).
+- `ProcessActivity.stopping`: whether this process's shutdown began
+  (`TurnShutdown.stopping`), so a `/ping` can answer 503 and a load
+  balancer send it no more turns; the events guide's ping does.
 - A shutdown within a deadline: `shutdownGracefully({ deadline, reserve })`
   in `@xandreed/core` refuses every new begin, waits until idle for the
   deadline less its reserve (`DEFAULT_SHUTDOWN_RESERVE`, 2 s), then closes

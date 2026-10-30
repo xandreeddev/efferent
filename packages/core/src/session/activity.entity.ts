@@ -29,13 +29,16 @@ export type TurnsInFlight = typeof TurnsInFlight.Type
 /**
  * What this process is busy with, for a `/ping` or a graceful shutdown: the
  * turns it holds open (oldest first), the begins still in progress, the
- * background tasks it runs, and whether there is any of them.
+ * background tasks it runs, whether there is any of them, and whether it is
+ * stopping (its `TurnShutdown` refuses new turns: a load balancer stops
+ * sending it any).
  */
 export const ProcessActivity = Schema.Struct({
   openTurns: Schema.Array(ActiveTurn),
   beginningTurns: Schema.Int,
   runningTasks: Schema.Int,
   busy: Schema.Boolean,
+  stopping: Schema.Boolean,
 })
 export type ProcessActivity = typeof ProcessActivity.Type
 

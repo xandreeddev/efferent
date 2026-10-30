@@ -98,6 +98,7 @@ export const HARNESS_CODES = [
   "turn.run-reused",
   "turn.shutdown",
   "turn.takeover",
+  "turn.time-limit",
   "turn.unended",
   "turn.unstarted",
 ] as const

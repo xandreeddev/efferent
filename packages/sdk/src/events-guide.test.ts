@@ -433,9 +433,9 @@ export const eventsRoute = (host: Host, owner: string, id: string, request: Requ
 // #endregion events-route
 
 // #region ping
-/** GET /ping: what this instance has in flight, for a load balancer, or a deploy waiting to stop it. */
+/** GET /ping: what this instance has in flight, for a deploy waiting to stop it; 503 once it is stopping, so a load balancer sends it no more turns. */
 export const pingRoute = (host: Host): Promise<Response> => Effect.runPromise(host.agent.activity.pipe(Effect.map((now) =>
-  Response.json({ busy: now.busy, openTurns: now.openTurns.length, beginningTurns: now.beginningTurns, runningTasks: now.runningTasks }))))
+  Response.json({ busy: now.busy, stopping: now.stopping, openTurns: now.openTurns.length, beginningTurns: now.beginningTurns, runningTasks: now.runningTasks }, { status: now.stopping ? 503 : 200 }))))
 // #endregion ping
 
 /* ── test scaffolding: a scripted model, the host's tool, requests and frames ── */
@@ -711,8 +711,11 @@ describe("serving turns over HTTP", () => {
     yield* Deferred.succeed(release, undefined)
     expect(framesOf(yield* Effect.promise(() => first.text())).at(-1)?.data.outcome).toBe("completed")
     yield* settled
-    expect(yield* Effect.promise(() => pingRoute(host).then((response) => response.json()))).toEqual({ busy: false, openTurns: 0, beginningTurns: 0, runningTasks: 0 })
-    expect(yield* awaitIdle({ timeout: "1 second" }).pipe(Effect.provide(host.services))).toEqual({ busy: false, openTurns: [], beginningTurns: 0, runningTasks: 0 })
+    expect(yield* Effect.promise(() => pingRoute(host).then((response) => response.json()))).toEqual({ busy: false, stopping: false, openTurns: 0, beginningTurns: 0, runningTasks: 0 })
+    expect(yield* awaitIdle({ timeout: "1 second" }).pipe(Effect.provide(host.services))).toEqual({ busy: false, stopping: false, openTurns: [], beginningTurns: 0, runningTasks: 0 })
+    // A SIGTERM: once the agent is stopping, the ping answers 503.
+    yield* host.agent.shutdown({ deadline: "1 second" })
+    expect(yield* Effect.promise(() => pingRoute(host).then((response) => response.json().then((body) => [response.status, body.stopping])))).toEqual([503, true])
   })))
 
   test("a cancelled turn is resumed, a keyless retry of the resume gets its stored answer, resuming it again under another key is 409 turn.not-resumable", () => run(Effect.gen(function* () {

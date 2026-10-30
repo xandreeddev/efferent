@@ -16,6 +16,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 - Count an inbox attempt only for a turn that wrote something; drop an item once `inbox.attempts` turns took it and failed.
 - Keep `TurnActivity` exact: a begin counts from the request until its writer is handed over, then the turn until the writer's scope closes (`awaitIdle` relies on it).
 - Close an open turn from outside through `closeOpen` (a cancel, a shutdown): one guarded commit that reaps a turn nobody holds instead, else stores its `turn.ended`, then closes this instance's writer of it with the same reason.
+- Run a turn's time limit (the begin's `timeLimitMs`, else `turns.timeLimitMs`) as a fiber in the turn's scope, from when its writer is handed over: past it, close the turn as interrupted with `turn.time-limit`, an attempt counted, its writer's `TurnClosed` `timed-out` (`closeForTimeLimit`); the scope's close stops the timer.
 - Stop for a shutdown in one phase (`stopping`: running, refusing, interrupting): once refusing, refuse every begin before the host's admission and again inside its opening plan (`shutdownRefusal`), never a delivery; once interrupting, close every turn this instance holds, and any begin whose writer is handed over after, as interrupted with `turn.shutdown` and no attempt counted (`closeForShutdown`), its writer closed even when the store refused the end.
 - A keep-alive is queued in order with the turn's writes: keep one `write` or `transact` shorter than the lease.
 - Signal `changes` through one hub per followed session, `PubSub.sliding(1)` held in an `RcMap` (released with its last follower): a commit wakes only its own session's followers, and a follower that does not pull holds one signal. Never `dropping` (it loses the last signal) nor a `SubscriptionRef` (it signals a follower on subscribing, before any commit).
@@ -26,7 +27,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 ## Public surface
 
 - `sessionsPlugin` (also the default export) and `SessionsPluginLive` (its `.live` layer); `SessionsLive(config, { liveness })` for hosts that compose layers; `processLiveness` (type `ProcessLiveness`).
-- Config: `SessionsConfig`, `sessionsDefaults` (a 60 s lease, a keep-alive every 20 s), `Ownership`; `HolderProcess`, where a process-owned turn's holder runs (what `ProcessLiveness.current` returns). The state the plugin keeps in the session head (`SessionsState`, `HeldTurn`, `InboxSlot`) is its own and stays inside the package.
+- Config: `SessionsConfig`, `sessionsDefaults` (a 60 s lease, a keep-alive every 20 s, a turn time limit of 6 hours), `Ownership`; `HolderProcess`, where a process-owned turn's holder runs (what `ProcessLiveness.current` returns). The state the plugin keeps in the session head (`SessionsState`, `HeldTurn`, `InboxSlot`) is its own and stays inside the package.
 
 The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests, the scripts and the docs import `sessionsPlugin`, `SessionsPluginLive`, `SessionsLive`, `SessionsConfig`, `sessionsDefaults` and `ProcessLiveness`, and the rest are tagged `@public` at their declarations (`sessionsPlugin`'s tag covers the default export).
 

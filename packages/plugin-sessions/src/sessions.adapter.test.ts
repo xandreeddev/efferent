@@ -713,7 +713,7 @@ describe("activity", () => {
     yield* Effect.yieldNow
     expect(drained.pollUnsafe()).toBeUndefined()
     yield* Scope.close(scope, Exit.void)
-    expect(yield* Fiber.join(drained)).toEqual({ openTurns: [], beginningTurns: 0, runningTasks: 0, busy: false })
+    expect(yield* Fiber.join(drained)).toEqual({ openTurns: [], beginningTurns: 0, runningTasks: 0, busy: false, stopping: false })
 
     // A refused begin stops counting at once, though its scope stays open.
     const kept = yield* Scope.make()

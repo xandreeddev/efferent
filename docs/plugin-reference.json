@@ -160,7 +160,10 @@
         "capacity": 1024,
         "batch": 64
       },
-      "retries": 8
+      "retries": 8,
+      "turns": {
+        "timeLimitMs": 21600000
+      }
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -282,6 +285,20 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 64
+        },
+        "turns": {
+          "type": "object",
+          "properties": {
+            "timeLimitMs": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 604800000
+            }
+          },
+          "required": [
+            "timeLimitMs"
+          ],
+          "additionalProperties": true
         }
       },
       "required": [
@@ -289,7 +306,8 @@
         "titleChars",
         "inbox",
         "writer",
-        "retries"
+        "retries",
+        "turns"
       ],
       "additionalProperties": true
     }

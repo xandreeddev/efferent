@@ -118,6 +118,16 @@ const TaskOf = Schema.optionalKey(TaskRef)
 const TakeOver = Schema.optionalKey(Schema.Boolean)
 
 /**
+ * How long the turn may run, in milliseconds from when its writer is handed
+ * over, instead of the Sessions' own limit (plugin-sessions'
+ * `turns.timeLimitMs`). Past it, the turn is closed: stored as interrupted
+ * with code `turn.time-limit` (resumable), its writer closed with
+ * `TurnClosed` of reason `timed-out`. Input only: never stored, and not part
+ * of the key's fingerprint.
+ */
+const TimeLimit = Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)))
+
+/**
  * How a turn begins: a user's message, the inbox's pending items, or a
  * background task's instructions (the one turn of its child session, begun
  * by the tasks plugin; origin `task`, which cannot be resumed).
@@ -133,8 +143,9 @@ export const BeginTurn = Schema.Union([
     /** The turn this one resumes (see `NotResumable` for which turns can be). */
     resumes: Resumes,
     takeOver: TakeOver,
+    timeLimitMs: TimeLimit,
   }),
-  Schema.TaggedStruct("Inbox", { runId: RunId, meta: TurnMeta, takeOver: TakeOver }),
+  Schema.TaggedStruct("Inbox", { runId: RunId, meta: TurnMeta, takeOver: TakeOver, timeLimitMs: TimeLimit }),
   Schema.TaggedStruct("Task", {
     task: TaskRef,
     /** The task's instructions, as the model is given them. */
@@ -144,6 +155,7 @@ export const BeginTurn = Schema.Union([
     key: Schema.String,
     meta: TurnMeta,
     takeOver: TakeOver,
+    timeLimitMs: TimeLimit,
   }),
 ])
 export type BeginTurn = typeof BeginTurn.Type
@@ -235,15 +247,16 @@ export class ReservedKind extends Schema.TaggedError<ReservedKind>()("ReservedKi
 
 /**
  * The turn's writer takes no more writes: someone else closed the turn
- * (`cancelled`; `interrupted`, its lease reaped or its holder gone;
- * `removed`, its session removed), or it was `ended` by its own writer (its
- * end stored or under way, or its scope closed). `TurnWriter.closed` gives
- * only the first three.
+ * (`cancelled`; `interrupted`, its lease reaped, its holder gone or the
+ * process shutting down; `removed`, its session removed; `timed-out`, it ran
+ * past its time limit, `timeLimitMs`), or it was `ended` by its own writer
+ * (its end stored or under way, or its scope closed). `TurnWriter.closed`
+ * gives all but `ended`.
  */
 export class TurnClosed extends Schema.TaggedError<TurnClosed>()("TurnClosed", {
   session: ConversationId,
   turn: Schema.Int,
-  reason: Schema.Literals(["cancelled", "interrupted", "removed", "ended"]),
+  reason: Schema.Literals(["cancelled", "interrupted", "removed", "timed-out", "ended"]),
 }) {}
 
 /**

@@ -183,7 +183,10 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * begin refused (`TurnRefused`, reason `shutdown`) once it refuses, the
  * turns open before running on and a drain opening nothing, then every
  * turn it holds closed by `interrupt` as interrupted with `turn.shutdown`,
- * its writer closed, and resumed by another instance; and, for an instance
+ * its writer closed, and resumed by another instance; a turn past its time
+ * limit (`timeLimitMs`) closed by its holder as interrupted with
+ * `turn.time-limit`, its writer's `TurnClosed` `timed-out`, and resumed, a
+ * turn within its limit left open; and, for an instance
  * with a `TurnActivity`, its activity agreeing with what is open, per
  * session and turn, a begin counting from the moment it is asked for (an
  * instance without either passes that check unchecked).
@@ -874,6 +877,30 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("shutdown", resuming.admitted.turn === 2 && resuming.admitted.resumes === 1, `another instance resuming turn 1 opened turn ${resuming.admitted.turn}, resuming ${resuming.admitted.resumes ?? "nothing"}`)
       const taken = yield* successor.sessions.drain(idle, () => Effect.void)
       yield* expect("shutdown", taken.turns === 1, `another instance's drain of what waited ran ${taken.turns} turns`)
+    })),
+
+    scoped("a turn past its time limit is closed by its holder as interrupted with turn.time-limit, its writer TurnClosed timed-out, and resumed; one within its limit runs on", "time-limit", (owner) => Effect.gen(function* () {
+      const [holder, other] = [yield* leased(), yield* leased()]
+      const [limited, unlimited] = [yield* created(holder.sessions, owner), yield* created(holder.sessions, owner)]
+      const writer = yield* holder.sessions.begin(limited, { ...say("bounded"), timeLimitMs: SHORT })
+      const free = yield* holder.sessions.begin(unlimited, { ...say("unbounded"), timeLimitMs: LONG })
+      const closing = yield* Effect.forkChild(writer.closed)
+      yield* subject.advance(SHORT - 1)
+      yield* expect("time-limit", !(yield* settles(closing)), "a turn was closed before its time limit")
+      yield* subject.advance(1)
+      const ended = yield* eventually(other.sessions.read(limited, { kinds: ["turn.ended"] }).pipe(
+        Effect.map(endings),
+        Effect.catch((error) => Effect.succeed(`unread (${error._tag})`)),
+      ), (now) => now !== "", 2_000)
+      yield* expect("time-limit", ended === "1:interrupted:turn.time-limit", `the turn past its time limit was closed as ${ended || "nothing"}`)
+      yield* expect("time-limit", yield* settles(closing, 2_000), "the writer of a turn past its time limit was not closed")
+      const closed = yield* Fiber.join(closing)
+      const late = yield* writeRefused(writer)
+      yield* expect("time-limit", closed.reason === "timed-out" && late === "TurnClosed:timed-out", `the writer was closed as ${closed.reason}, and a write after it gave ${late}`)
+      const running = yield* writeRefused(free)
+      yield* expect("time-limit", running === "stored", `a write by a turn within its time limit gave ${running}`)
+      const resuming = yield* other.sessions.begin(limited, resume(1))
+      yield* expect("time-limit", resuming.admitted.turn === 2 && resuming.admitted.resumes === 1, `resuming the turn past its limit opened turn ${resuming.admitted.turn}, resuming ${resuming.admitted.resumes ?? "nothing"}`)
     })),
 
     scoped("TurnActivity agrees with what is open: a begin counts from the moment it is asked for, then its turn per session and turn until its scope closes", "activity", (owner) => Effect.gen(function* () {

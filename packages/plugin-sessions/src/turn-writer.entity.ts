@@ -14,7 +14,7 @@ export const TurnClosedReason = TurnClosed.fields.reason
 export type TurnClosedReason = typeof TurnClosedReason.Type
 
 /** Why someone else closed the turn: what `TurnWriter.closed` gives (never `ended`). */
-export const ClosedBy = TurnClosedReason.pick(["cancelled", "interrupted", "removed"])
+export const ClosedBy = TurnClosedReason.pick(["cancelled", "interrupted", "removed", "timed-out"])
 export type ClosedBy = typeof ClosedBy.Type
 
 /** What a writer that failed refuses every later write with: the store's failure, contention, or its own state's (a `TurnError` but `TurnClosed`). */
