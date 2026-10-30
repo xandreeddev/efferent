@@ -152,6 +152,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   untrimmed skill or reference id, or an empty plugin instance id given to
   `Agent.define`, now throws. A `RetrievalJudge` may still answer with
   plain-string ids.
+- An evaluation export that runs longer than 5 minutes now fails as
+  `provider`: pass a larger `timeoutMs` to the exporter.
 
 ### Breaking
 
@@ -548,6 +550,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `Tasks.start` accepts `startedBy`.
 - Sessions kit check `task`; the Tasks kit checks a task's origin and that a
   host's fork may start tasks.
+- `@xandreed/evals-langfuse` and `@xandreed/evals-langsmith`: an optional
+  `timeoutMs` (default 300 000) bounds a whole export, `flush` included;
+  past it the export fails as `provider`.
 
 ### Changed
 
@@ -791,6 +796,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   conversation and reach the next turn's history. `runLoop`'s `newTail` no
   longer carries it, and a run's `engine.corrections` counts only
   correctives the model was sent.
+- `@xandreed/evals-langfuse`: interrupting an export aborts its ingestion
+  requests, and each request has a 30 s limit and at most 2 retries.
+- `@xandreed/evals-langsmith`: each request has a 30 s limit (was 90 s),
+  and an interrupted export returns at once without waiting for its
+  requests.
 
 ### Repository
 
