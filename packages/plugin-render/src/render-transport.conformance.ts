@@ -19,7 +19,11 @@ const sample: ReadonlyArray<FeedFrame> = [
   FeedRecord.make({ sequence: 2, event: "message.updated", data: { text: "é ✓" } }),
 ]
 
-/** The two shipped wires must carry the same frames. */
+/**
+ * The two shipped wires must carry the same frames.
+ *
+ * @public
+ */
 export const renderTransportConformance = (transports: {
   readonly sse: RenderTransport<SsePeer>
   readonly socket: RenderTransport<SocketPeer>
@@ -42,6 +46,8 @@ export const renderTransportConformance = (transports: {
  * An appendable journal for feed checks: `tail` polls only, `wakingTail` also
  * signals after each append (the signals a feed has not taken merge into one,
  * as `Sessions.changes` does).
+ *
+ * @public
  */
 export const makeMemoryJournal = Effect.fnUntraced(function* (initial: ReadonlyArray<JournalRecord>) {
   const records = yield* Ref.make(initial)
@@ -63,7 +69,11 @@ const record = (sequence: number, kind = "message.updated"): JournalRecord => ({
 const collect = (stream: Stream.Stream<FeedFrame, RenderError>) => Stream.runCollect(stream).pipe(Effect.map((chunk) => Array.from(chunk)))
 const sequences = (frames: ReadonlyArray<FeedFrame>) => frames.flatMap((frame) => frame._tag === "FeedRecord" ? [frame.sequence] : [])
 
-/** The contract of a RenderFeed built over a JournalTail with short intervals. */
+/**
+ * The contract of a RenderFeed built over a JournalTail with short intervals.
+ *
+ * @public
+ */
 export const renderFeedConformance = (makeFeed: (tail: typeof JournalTail.Service, options: FeedOptions) => typeof RenderFeed.Service): ReadonlyArray<ConformanceCheck> => {
   const options: FeedOptions = { pollMs: 5, maxPollMs: 10, heartbeatMs: 30, maxDurationMs: 150 }
   return [

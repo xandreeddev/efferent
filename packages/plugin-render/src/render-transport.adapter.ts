@@ -26,7 +26,11 @@ export const SseTransport: RenderTransport<SsePeer> = {
   ),
 }
 
-/** One JSON text frame per feed frame. Clients resume by sending `{"after": <sequence>}` or the host's equivalent. */
+/**
+ * One JSON text frame per feed frame. Clients resume by sending `{"after": <sequence>}` or the host's equivalent.
+ *
+ * @public
+ */
 export const WebSocketTransport: RenderTransport<SocketPeer> = {
   id: "websocket",
   serve: (frames, peer) => Stream.runForEach(frames, (frame) => peer.send(encodeSocketFrame(frame))).pipe(

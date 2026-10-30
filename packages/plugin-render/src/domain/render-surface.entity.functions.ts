@@ -5,7 +5,11 @@ import type { NodeId, RenderMessageId, UiOutputError, UiOutputProposal, UiOutput
 import { RenderError, SurfaceCommitted, SurfaceCompleted, SurfaceFrozen, SurfacePlanned, VersionId } from "./render-surface.entity.js"
 import type { RenderNode, RenderSnapshot, SurfaceId, SurfaceRecord, SurfaceScope, SurfaceState } from "./render-surface.entity.js"
 
-/** A surface's durable progress for the current message, rebuilt from its records. */
+/**
+ * A surface's durable progress for the current message, rebuilt from its records.
+ *
+ * @public
+ */
 export type SurfaceProgress = {
   readonly state: Omit<SurfaceState, "pending">
   readonly signature: Option.Option<string>
@@ -14,47 +18,73 @@ export type SurfaceProgress = {
   readonly frozenRecorded: boolean
 }
 
-/** Identical content has an identical signature, whatever the phase or key order. */
+/**
+ * Identical content has an identical signature, whatever the phase or key order.
+ *
+ * @public
+ */
 export const signatureOf = (snapshot: RenderSnapshot): string =>
   fingerprintOf(canonicalJson({ spec: snapshot.spec, nodes: snapshot.nodes, placeholders: snapshot.placeholders }))
 
 /** A joined id takes its brand unchecked: its parts are the scope's ids, and the write that stores it checks it. */
 const unchecked = { disableChecks: true } as const
 
+/** @public */
 export const versionIdOf = (messageId: string, generation: number): VersionId => VersionId.make(`${messageId}:v${generation}`, unchecked)
 
 /** A `:` or `%` inside an id part is percent-encoded, so different parts never join into the same id. */
 const idPart = (value: string): string => value.replaceAll("%", "%25").replaceAll(":", "%3A")
 
-/** Stable per surface, generation and node: a retried publish reuses the id; another surface or generation never collides. */
+/**
+ * Stable per surface, generation and node: a retried publish reuses the id; another surface or generation never collides.
+ *
+ * @public
+ */
 export const operationIdOf = (runId: string, surfaceId: string, generation: number, nodeId: string): OperationId =>
   OperationId.make(`${idPart(runId)}:render:${idPart(surfaceId)}:${generation}:${idPart(nodeId)}`, unchecked)
 
-/** A placeholder's fill, per surface and generation: filling it again in a later version is a new operation. */
+/**
+ * A placeholder's fill, per surface and generation: filling it again in a later version is a new operation.
+ *
+ * @public
+ */
 export const fillOperationIdOf = (runId: string, surfaceId: string, generation: number, placeholder: string): OperationId =>
   OperationId.make(`${idPart(runId)}:render:${idPart(surfaceId)}:${generation}:fill:${idPart(placeholder)}`, unchecked)
 
-/** The snapshot's nodes the current version has not committed: what a retry of identical content still owes. */
+/**
+ * The snapshot's nodes the current version has not committed: what a retry of identical content still owes.
+ *
+ * @public
+ */
 export const missingNodesOf = (progress: SurfaceProgress, snapshot: RenderSnapshot): ReadonlyArray<RenderNode> =>
   snapshot.nodes.filter((node) => !progress.committed.includes(node.nodeId))
 
+/** @public */
 export const outputScopeOf = (scope: SurfaceScope): UiOutputScope => ({
   threadId: scope.threadId, runId: scope.runId, messageId: scope.messageId, principalId: scope.principalId, fence: scope.fence,
 })
 
+/** @public */
 export const proposalOf = (operationId: OperationId, node: RenderNode): UiOutputProposal => ({
   operationId, nodeId: node.nodeId, release: node.release, props: node.props, evidence: node.evidence,
 })
 
+/** @public */
 export const fromOutputError = (error: UiOutputError): RenderError => new RenderError({ code: error.code, message: error.message })
 
-/** Whether a store refused a write because the surface is frozen for the message (`RenderStore.plan`'s guard). */
+/**
+ * Whether a store refused a write because the surface is frozen for the message (`RenderStore.plan`'s guard).
+ *
+ * @public
+ */
 export const isFrozenRefusal = (error: RenderError): boolean => error.code === "frozen"
 
 /**
  * Whether a store refused a write as a conflict: from `plan`, another writer
  * planned the generation first (`RenderStore.plan`'s generation rule); from
  * `commit`, the operation id was used with other content.
+ *
+ * @public
  */
 export const isConflictRefusal = (error: RenderError): boolean => error.code === "conflict"
 
@@ -69,7 +99,11 @@ const latestPlanned = (records: ReadonlyArray<SurfaceRecord>): Option.Option<Sur
     onSome: (current) => record.generation > current.generation,
   }) ? Option.some(record) : best, Option.none())
 
-/** Fold the records of one surface into the current message's progress. */
+/**
+ * Fold the records of one surface into the current message's progress.
+ *
+ * @public
+ */
 export const progressOf = (surfaceId: SurfaceId, messageId: RenderMessageId, records: ReadonlyArray<SurfaceRecord>): SurfaceProgress => {
   const mine = records.filter((record) => record.surfaceId === surfaceId && record.messageId === messageId)
   const latest = latestPlanned(mine)
@@ -92,5 +126,6 @@ export const progressOf = (surfaceId: SurfaceId, messageId: RenderMessageId, rec
   }
 }
 
+/** @public */
 export const describeError = (error: unknown): string =>
   typeof error === "object" && error !== null && "message" in error && typeof error.message === "string" ? error.message : String(error)

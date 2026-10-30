@@ -48,6 +48,7 @@ export const encodeSocketFrame = (frame: FeedFrame): string => JSON.stringify(Ma
   FeedHeartbeat: (): SocketFrame => ({ type: "heartbeat" }),
 }))
 
+/** @public */
 export const decodeSocketFrame = (text: string): Option.Option<FeedFrame> =>
   Result.getSuccess(Schema.decodeUnknownResult(Schema.fromJsonString(SocketFrame))(text)).pipe(Option.map((frame): FeedFrame =>
     Match.value(frame).pipe(
@@ -56,10 +57,18 @@ export const decodeSocketFrame = (text: string): Option.Option<FeedFrame> =>
       Match.orElse(() => FeedHeartbeat.make({})),
     )))
 
-/** The cursor a WebSocket client asks to resume after (`{"after": n}`). */
+/**
+ * The cursor a WebSocket client asks to resume after (`{"after": n}`).
+ *
+ * @public
+ */
 export const socketResumeOf = (text: string): Option.Option<number> =>
   Result.getSuccess(Schema.decodeUnknownResult(Schema.fromJsonString(SocketResume))(text)).pipe(Option.map((resume) => resume.after))
 
-/** Back off while idle; poll promptly again once records arrive. */
+/**
+ * Back off while idle; poll promptly again once records arrive.
+ *
+ * @public
+ */
 export const nextPollMs = (current: number, options: FeedOptions, received: boolean): number =>
   received ? options.pollMs : Math.min(options.maxPollMs, Math.max(options.pollMs, current * 2))

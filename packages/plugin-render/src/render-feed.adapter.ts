@@ -41,6 +41,8 @@ const waitOf = (tail: typeof JournalTail.Service, feed: FeedScope): Effect.Effec
  * one ready frame after the first empty poll, heartbeats while idle, idle
  * polling backs off (a `changes` signal polls at once); the stream ends after
  * `maxDurationMs`.
+ *
+ * @public
  */
 export const makeRenderFeed = (tail: typeof JournalTail.Service, options: FeedOptions) => RenderFeed.of({
   frames: (feed, after, project) => Stream.unwrap(Effect.all([Clock.currentTimeMillis, waitOf(tail, feed)], { concurrency: 1 }).pipe(Effect.map(([now, wait]) =>

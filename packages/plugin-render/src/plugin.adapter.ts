@@ -7,6 +7,7 @@ import { RenderFeedLive } from "./render-feed.adapter.js"
 import { RenderLive } from "./render-surface.adapter.js"
 
 const SurfaceConfig = Schema.Struct({ maxBytes: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1024, maximum: 131_072 }))) })
+/** @public */
 export const renderSurfaceDefaults: typeof SurfaceConfig.Type = { maxBytes: 32_768 }
 
 /** Surfaces over the host's RenderStore, with the host's admission rules. */

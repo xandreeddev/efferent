@@ -4,6 +4,7 @@ import { UiOutputError, UiOutputProposal } from "./domain/render-output.entity.j
 import { UiOutput, UiOutputAdmission, UiOutputContext, UiOutputJournal, UiOutputTools } from "./ports/render-output.port.js"
 import { uiOutputToolkit } from "./render-output.tools.js"
 
+/** @public */
 export const UiOutputLive = (maxBytes = 32_768) => Layer.effect(UiOutput, Effect.gen(function* () {
   const admission = yield* UiOutputAdmission
   const journal = yield* UiOutputJournal
@@ -23,6 +24,7 @@ export const UiOutputLive = (maxBytes = 32_768) => Layer.effect(UiOutput, Effect
   })
 }))
 
+/** @public */
 export const UiOutputHandlersLive = uiOutputToolkit.toLayer(Effect.gen(function* () {
   const output = yield* UiOutput
   return { render_component: (proposal: UiOutputProposal) => output.emit(proposal).pipe(
@@ -30,7 +32,11 @@ export const UiOutputHandlersLive = uiOutputToolkit.toLayer(Effect.gen(function*
   ) }
 }))
 
-/** Transport-independent: WebSocket/SSE hosts consume the committed journal. */
+/**
+ * Transport-independent: WebSocket/SSE hosts consume the committed journal.
+ *
+ * @public
+ */
 export const uiOutputPlugin = definePlugin({
   id: "@xandreed/plugin-render/output", version: "0.14.0",
   requires: [UiOutputAdmission, UiOutputJournal, UiOutputContext],

@@ -35,6 +35,8 @@ type PlanOutcome = "planned" | "frozen" | "stale"
  * background preparation. Writes are serialized; preparations run one at a
  * time through the host's `fork`. Identical content opens no generation but
  * still commits the nodes an earlier attempt left uncommitted.
+ *
+ * @public
  */
 export const openSurface = (
   store: typeof RenderStore.Service,
@@ -218,6 +220,7 @@ export const openSurface = (
   } satisfies RenderSurface
 })
 
+/** @public */
 export const RenderLive = (maxBytes = 32_768) => Layer.effect(Render, Effect.gen(function* () {
   const store = yield* RenderStore
   const admission = yield* UiOutputAdmission
