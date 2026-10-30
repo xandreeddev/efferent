@@ -10,6 +10,7 @@ import {
   type ExporterRegistration
 } from "@xandreed/evals"
 
+/** @public */
 export interface LangfuseExportOptions {
   readonly baseUrl: string
   readonly publicKey: string
@@ -138,6 +139,7 @@ const exportService = (options: LangfuseExportOptions) => ({
     bounded(options.timeoutMs ?? EXPORT_TIMEOUT_MS)
   )
 })
+/** @public */
 export const EvaluationExportLangfuseLive = (options: LangfuseExportOptions) =>
   Layer.succeed(EvaluationExport, exportService(options))
 
