@@ -867,6 +867,11 @@ Model-visible text (exact pins and the compaction golden updated):
   (`<known-subjects>`); the summarizer's transcript leaves out a reply
   that repeats its turn's last assistant text. Ledgers already stored
   render as before.
+- Model-visible text: `render_component`'s parameters each carry a
+  description, and its release hashes reach the model with their
+  `^[a-f0-9]{64}$` pattern (it was dropped from the JSON Schema);
+  `recall_context`'s `UnknownLocator` refusal ends with what to do:
+  `; pass a locator exactly as a shortened result shows it`.
 
 ### Fixed
 

@@ -52,18 +52,21 @@ export type OperationId = typeof OperationId.Type
 export const RevisionId = Id.pipe(Schema.brand("RevisionId"))
 export type RevisionId = typeof RevisionId.Type
 
+// A pattern reaches the JSON Schema a model sees only with the `u` flag (Effect's `isPattern`).
+const Sha256Hex = Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u))
+
 /**
  * Immutable references: a release is never resolved through a latest alias.
  *
  * @public
  */
 export const UiRelease = Schema.Struct({
-  component: Schema.Trimmed.check(Schema.isNonEmpty()),
-  version: Schema.Trimmed.check(Schema.isNonEmpty()),
-  definitionHash: Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
-  rendererRelease: Schema.Trimmed.check(Schema.isNonEmpty()),
-  tokensHash: Schema.String.pipe(Schema.check(Schema.isPattern(/^[a-f0-9]{64}$/))),
-  layoutVersion: Schema.Trimmed.check(Schema.isNonEmpty()),
+  component: Schema.Trimmed.check(Schema.isNonEmpty()).annotate({ description: "The component's name in the approved release." }),
+  version: Schema.Trimmed.check(Schema.isNonEmpty()).annotate({ description: "The component's version in the approved release." }),
+  definitionHash: Sha256Hex.annotate({ description: "The release's definition hash: 64 lowercase hexadecimal characters, as the release gives it." }),
+  rendererRelease: Schema.Trimmed.check(Schema.isNonEmpty()).annotate({ description: "The renderer release the approved release names." }),
+  tokensHash: Sha256Hex.annotate({ description: "The release's design-tokens hash: 64 lowercase hexadecimal characters, as the release gives it." }),
+  layoutVersion: Schema.Trimmed.check(Schema.isNonEmpty()).annotate({ description: "The layout version the approved release names." }),
 })
 export type UiRelease = typeof UiRelease.Type
 
@@ -73,11 +76,11 @@ export type UiRelease = typeof UiRelease.Type
  * @public
  */
 export const UiOutputProposal = Schema.Struct({
-  operationId: OperationId,
-  nodeId: NodeId,
-  release: UiRelease,
-  props: Schema.JsonObject,
-  evidence: Schema.Array(Schema.Trimmed.check(Schema.isNonEmpty())),
+  operationId: OperationId.annotate({ description: "An id for this call; reuse it only to retry the identical call." }),
+  nodeId: NodeId.annotate({ description: "The id of the canvas node the component fills." }),
+  release: UiRelease.annotate({ description: "The exact approved release to render with, every field as the catalog gives it." }),
+  props: Schema.JsonObject.annotate({ description: "The component's props: only those its catalog entry lists." }),
+  evidence: Schema.Array(Schema.Trimmed.check(Schema.isNonEmpty())).annotate({ description: "The ids of the facts and artifacts the component shows, as domain tools returned them." }),
 })
 export type UiOutputProposal = typeof UiOutputProposal.Type
 
