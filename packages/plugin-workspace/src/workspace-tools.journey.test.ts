@@ -13,6 +13,7 @@ import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { Agent } from "@xandreed/sdk"
 import { localSystemPlugin, workspaceToolsPlugin } from "./plugin.adapter.js"
 import { workspaceToolSchemas } from "./workspace-tools.entity.js"
+import type { WorkspaceToolsConfig } from "./workspace-tools.entity.js"
 
 /*
  * Key-free journeys: an agent with the local system and the workspace
@@ -76,14 +77,14 @@ const callTool = (name: string, params: unknown): Effect.Effect<unknown, Harness
  * with the script; then, when asked, one more call (`probe`) as the loop
  * would make it.
  */
-const turnOver = (root: string, grants: ReadonlyArray<string>, script: ReadonlyArray<Part>, text: string, probe?: { readonly name: string; readonly params: unknown }) => Effect.gen(function* () {
+const turnOver = (root: string, grants: ReadonlyArray<string>, script: ReadonlyArray<Part>, text: string, probe?: { readonly name: string; readonly params: unknown }, options: Partial<WorkspaceToolsConfig> = {}) => Effect.gen(function* () {
   const agent = yield* Agent.define({
     plugins: [
       memoryWindowPlugin,
       { plugin: toolDiscoveryPlugin, options: { grants: [...grants], maxCallsPerRun: 200 } },
       stepLoopPlugin,
       { plugin: localSystemPlugin, options: { exitGraceMs: 100 } },
-      { plugin: workspaceToolsPlugin, options: { bashSessionEnv: true, progressMs: 10 } },
+      { plugin: workspaceToolsPlugin, options: { bashSessionEnv: true, progressMs: 10, ...options } },
     ],
     turnServices: [LanguageModel.LanguageModel],
     limits: { streaming: false, maxSteps: 8 },
@@ -198,4 +199,28 @@ describe("workspace tools journey", () => {
     expect(seen.probed).toEqual({ error: "ToolInactive", message: "edit is not loaded yet; call load_skill with one of: workspace.edit" })
     expect(seen.notes).toBe("- buy milk\n")
   })
+})
+
+test("journey: a host's read-only extra root is readable and its write refusal reaches the next model request", async () => {
+  const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const root = yield* workspace
+    const references = yield* workspace
+    const file = join(references, "notes.txt")
+    yield* Effect.promise(() => writeFile(file, "reference facts"))
+    const turn = yield* turnOver(root, ["fs.write"], [
+      call("read-reference", "read", { path: file }),
+      call("load-edit", "load_skill", { skills: ["workspace.edit"] }),
+      call("refused-write", "write", { path: file, content: "replacement" }),
+      stop("The reference is read-only."),
+    ], "read the reference, then try to change it", undefined, { roots: [{ path: references, access: "read" }] })
+    return { ...turn, references, file, after: yield* Effect.promise(() => readFile(file, "utf8")) }
+  })))
+  expect(seen.outcome.outcome).toBe("completed")
+  expect(seen.after).toBe("reference facts")
+  expect(seen.requests[0]?.prompt).toContain(`The file tools may also read ${seen.references}.`)
+  expect(seen.requests[1]?.prompt).toContain("reference facts")
+  expect(seen.requests[3]?.prompt).toContain("ReadOnly")
+  expect(seen.requests[3]?.prompt).toContain(`${seen.file} is under ${seen.references}, which the workspace tools may read but not change`)
+  const completed = seen.stored.filter((event) => event.kind === "tool.completed")
+  expect(completed.some((event) => event.data.tool === "write" && event.data.ok === false)).toBe(true)
 })

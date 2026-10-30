@@ -59,7 +59,7 @@ export const workspaceTools = Effect.fnUntraced(function* (config: WorkspaceTool
   const context: WorkspaceToolContext = { config, path, protect, locks }
   // The section reads the turn's workspace as the tools do, so it declares the same services.
   const section = definePromptSection({
-    id: "workspace.environment", version: "1", tier: "session", order: config.sectionOrder,
+    id: "workspace.environment", version: "2", tier: "session", order: config.sectionOrder,
     requires: WORKSPACE_SERVICES,
     render: () => openWorkspace(path).pipe(
       Effect.map((access) => access.root),

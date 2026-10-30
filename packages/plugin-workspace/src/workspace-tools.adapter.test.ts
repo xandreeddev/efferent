@@ -722,3 +722,73 @@ describe("workspaceToolsPlugin", () => {
     expect(badGlob.message).toContain("protect")
   })
 })
+
+describe("host file-tool roots", () => {
+  test("read, ls, find and grep use an extra read root; write and edit refuse it and allow a more specific writable root", async () => {
+    const seen = await scoped(Effect.gen(function* () {
+      const root = yield* temporary
+      const references = yield* temporary
+      yield* io(() => writeFile(join(references, "notes.txt"), "alpha\nbeta\n"))
+      yield* io(() => mkdir(join(references, "drafts")))
+      yield* io(() => symlink(references, join(root, "reference-link")))
+      const capability = yield* workspaceTools({ ...workspaceToolsDefaults, tools: ["read", "ls", "find", "grep", "write", "edit"], roots: [
+        { path: references, access: "read" }, { path: join(references, "drafts"), access: "write" },
+      ] })
+      const call = caller(capability, Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: root })))
+      const read = yield* succeeds(ReadResult)(call("read", { path: join(references, "notes.txt") }))
+      const list = yield* succeeds(LsResult)(call("ls", { path: references }))
+      const find = yield* succeeds(FindResult)(call("find", { path: references, pattern: "*.txt" }))
+      const grep = yield* succeeds(GrepResult)(call("grep", { path: "reference-link/notes.txt", pattern: "alpha" }))
+      const refused = yield* Effect.all([
+        fails(call("write", { path: join(references, "notes.txt"), content: "changed" })),
+        fails(call("edit", { path: "reference-link/notes.txt", edits: [{ oldText: "alpha", newText: "changed" }] })),
+      ])
+      const written = yield* succeeds(WriteResult)(call("write", { path: join(references, "drafts/new.txt"), content: "draft" }))
+      return { read, list, find, grep, refused, written, unchanged: yield* io(() => readFile(join(references, "notes.txt"), "utf8")), references }
+    }))
+    expect(seen.read).toMatchObject({ _tag: "Text", text: "alpha\nbeta" })
+    expect(seen.list.entries.map((entry) => entry.name)).toEqual(["drafts", "notes.txt"])
+    expect(seen.find.paths).toEqual([join(seen.references, "notes.txt")])
+    expect(seen.grep.lines.map((line) => line.text)).toEqual(["alpha"])
+    expect(seen.refused.map((failure) => failure.error)).toEqual(["ReadOnly", "ReadOnly"])
+    expect(seen.written.created).toBe(true)
+    expect(seen.unchanged).toBe("alpha\nbeta\n")
+  })
+
+  test("a read-only workspace still supports reads and bash, while file writes refuse before changing it", async () => {
+    const seen = await scoped(Effect.gen(function* () {
+      const built = yield* bench({ workspaceAccess: "read" })
+      yield* io(() => writeFile(join(built.root, "notes.txt"), "original"))
+      const read = yield* succeeds(ReadResult)(built.call("read", { path: "notes.txt" }))
+      const refused = yield* fails(built.call("write", { path: "notes.txt", content: "replacement" }))
+      const shell = yield* succeeds(BashToolResult)(built.call("bash", { command: "printf from-shell > notes.txt" }))
+      return { read, refused, shell, after: yield* io(() => readFile(join(built.root, "notes.txt"), "utf8")) }
+    }))
+    expect(seen.read).toMatchObject({ _tag: "Text", text: "original" })
+    expect(seen.refused).toEqual({ error: "ReadOnly", message: "notes.txt is under the workspace root, which the workspace tools may read but not change" })
+    expect(seen.shell.exitCode).toBe(0)
+    expect(seen.after).toBe("from-shell")
+  })
+})
+
+test("workspace protect globs still reject an extra-root alias into .git, and do not cover an explicitly writable extra root's own .git", async () => {
+  const seen = await scoped(Effect.gen(function* () {
+    const root = yield* temporary
+    const extra = yield* temporary
+    yield* io(() => mkdir(join(root, ".git")))
+    yield* io(() => writeFile(join(root, ".git/config"), "workspace config"))
+    yield* io(() => mkdir(join(extra, ".git")))
+    yield* io(() => writeFile(join(extra, ".git/config"), "external config"))
+    yield* io(() => symlink(join(root, ".git/config"), join(extra, "workspace-alias")))
+    const capability = yield* workspaceTools({ ...workspaceToolsDefaults, tools: ["write", "find"], roots: [{ path: extra, access: "write" }] })
+    const call = caller(capability, Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: root })))
+    const refused = yield* fails(call("write", { path: join(extra, "workspace-alias"), content: "replacement" }))
+    yield* succeeds(WriteResult)(call("write", { path: join(extra, ".git/config"), content: "explicit external change" }))
+    const found = yield* succeeds(FindResult)(call("find", { path: extra, pattern: "**/*" }))
+    return { refused, found, workspace: yield* io(() => readFile(join(root, ".git/config"), "utf8")), external: yield* io(() => readFile(join(extra, ".git/config"), "utf8")) }
+  }))
+  expect(seen.refused.error).toBe("Protected")
+  expect(seen.workspace).toBe("workspace config")
+  expect(seen.external).toBe("explicit external change")
+  expect(seen.found.paths.some((path) => path.includes("/.git/"))).toBe(false)
+})

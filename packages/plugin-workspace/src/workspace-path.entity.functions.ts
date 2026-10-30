@@ -2,7 +2,7 @@ import { Effect, Option, Result } from "effect"
 import type { Context, Path } from "effect"
 import { compileGlob, FileSystem, FsError, SessionEnvironment } from "@xandreed/core"
 import type { Failure, FsReason } from "@xandreed/core"
-import type { WorkspaceRoot, WorkspaceTarget } from "./workspace-path.entity.js"
+import type { AllowedRoot, WorkspaceAccessMode, WorkspaceAllowedRoot, WorkspaceRoot, WorkspaceTarget } from "./workspace-path.entity.js"
 
 type Fs = Context.Service.Shape<typeof FileSystem>
 
@@ -53,15 +53,37 @@ export const isWithin = (root: string, path: string): boolean => path === root |
  * Open the workspace of the call: `SessionEnvironment.workspace` made
  * absolute (against the process's directory) and resolved by the file
  * system; one that cannot be resolved fails with `WorkspaceMissing`.
+ * Extra roots are resolved against it for this call. An extra root that
+ * cannot be opened as a directory is logged and left out.
  */
-export const openWorkspace = Effect.fnUntraced(function* (path: Path.Path): Effect.fn.Return<WorkspaceAccess, Failure, FileSystem | SessionEnvironment> {
+export const openWorkspace = Effect.fnUntraced(function* (path: Path.Path, options: {
+  readonly roots: ReadonlyArray<WorkspaceAllowedRoot>
+  readonly workspaceAccess: WorkspaceAccessMode
+} = { roots: [], workspaceAccess: "write" }): Effect.fn.Return<WorkspaceAccess, Failure, FileSystem | SessionEnvironment> {
   const fs = yield* FileSystem
   const { workspace } = yield* SessionEnvironment
   const lexicalRoot = path.resolve(workspace)
   // The reason only: the file system's message names the host's path.
   const root = yield* fs.realPath(lexicalRoot).pipe(Effect.mapError((error) => workspaceMissing(error.reason)))
-  return { fs, path, root, lexicalRoot }
+  const extra = yield* Effect.forEach(options.roots, (allowed) => {
+    const lexicalRoot = path.resolve(root, allowed.path)
+    return fs.realPath(lexicalRoot).pipe(
+      Effect.flatMap((root) => fs.stat(root).pipe(Effect.flatMap((info) => info.kind === "directory"
+        ? Effect.succeed(Option.some<AllowedRoot>({ root, lexicalRoot, access: allowed.access }))
+        : Effect.logWarning("an extra workspace root is not a directory", { path: allowed.path }).pipe(Effect.as(Option.none<AllowedRoot>()))))),
+      Effect.catch((error) => Effect.logWarning("an extra workspace root could not be opened", { path: allowed.path, reason: error.reason }).pipe(Effect.as(Option.none<AllowedRoot>()))),
+    )
+  }, { concurrency: 1 })
+  return { fs, path, root, lexicalRoot, roots: [{ root, lexicalRoot, access: options.workspaceAccess }, ...extra.flatMap(Option.toArray)] }
 })
+
+/** Whether a real path is inside any root the file tools may read. */
+export const withinAnyRoot = (access: WorkspaceAccess, path: string): boolean => access.roots.some((root) => isWithin(root.root, path))
+
+/** The most specific real root controls access; a later explicit root wins an equal-path tie. */
+const rootOf = (access: WorkspaceAccess, path: string): Option.Option<AllowedRoot> => access.roots.reduce<Option.Option<AllowedRoot>>((selected, candidate) =>
+  isWithin(candidate.root, path) && Option.match(selected, { onNone: () => true, onSome: (current) => candidate.root.length >= current.root.length })
+    ? Option.some(candidate) : selected, Option.none())
 
 /** How a path appears to the model: relative to the root (`.` for the root itself), or absolute outside it. */
 export const displayOf = (access: WorkspaceAccess, absolute: string): string => {
@@ -92,22 +114,35 @@ const canonicalOf = (access: WorkspaceAccess, target: string, display: string): 
 
 /**
  * Resolve a path a tool was given: relative to the workspace root, or
- * absolute. With `confine`, a path written outside the root is refused
+ * absolute. With `confine`, a path written outside every allowed root is refused
  * before anything is read, and so is one whose real location (links
- * resolved, through the nearest existing ancestor) is outside it
- * (`OutsideWorkspace`). This is a guardrail against mistakes, not a
+ * resolved, through the nearest existing ancestor) is outside all roots
+ * (`OutsideWorkspace`). A write into a read root fails with `ReadOnly`;
+ * the most specific real root decides access. With confinement off these
+ * restrictions are disabled. This is a guardrail against mistakes, not a
  * sandbox: what a path names can change between this check and its use.
  */
-export const resolveTarget = Effect.fnUntraced(function* (access: WorkspaceAccess, input: string, options: { readonly confine: boolean }): Effect.fn.Return<WorkspaceTarget, Failure> {
+export const resolveTarget = Effect.fnUntraced(function* (access: WorkspaceAccess, input: string, options: { readonly confine: boolean; readonly intent?: WorkspaceAccessMode }): Effect.fn.Return<WorkspaceTarget, Failure> {
   const lexical = access.path.resolve(access.root, input.length === 0 ? "." : input)
   const display = displayOf(access, lexical)
-  const inside = (path: string) => isWithin(access.root, path) || isWithin(access.lexicalRoot, path)
+  const inside = (path: string) => access.roots.some((root) => isWithin(root.root, path) || isWithin(root.lexicalRoot, path))
+  const extras = access.roots.slice(1).map((root) => displayOf(access, root.root))
   if (options.confine && !inside(lexical)) {
-    return yield* Effect.fail(failure("OutsideWorkspace", `${input} is outside the workspace; use a path under its root`))
+    return yield* Effect.fail(failure("OutsideWorkspace", extras.length === 0
+      ? `${input} is outside the workspace; use a path under its root`
+      : `${input} is outside the workspace and its allowed roots (${extras.join(", ")}); use a path under one of them`))
   }
   const path = yield* canonicalOf(access, lexical, display)
-  if (options.confine && !isWithin(access.root, path)) {
-    return yield* Effect.fail(failure("OutsideWorkspace", `${display} leads outside the workspace through a symbolic link`))
+  if (options.confine && !withinAnyRoot(access, path)) {
+    return yield* Effect.fail(failure("OutsideWorkspace", extras.length === 0
+      ? `${display} leads outside the workspace through a symbolic link`
+      : `${display} leads outside the workspace and its allowed roots (${extras.join(", ")}) through a symbolic link`))
+  }
+  const allowed = rootOf(access, path)
+  if (options.confine && options.intent === "write" && Option.exists(allowed, (root) => root.access === "read")) {
+    const root = Option.getOrThrow(allowed)
+    const place = root.root === access.root ? "the workspace root" : displayOf(access, root.root)
+    return yield* Effect.fail(failure("ReadOnly", `${display} is under ${place}, which the workspace tools may read but not change`))
   }
   return { path, display }
 })

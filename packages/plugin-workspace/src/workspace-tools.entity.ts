@@ -1,5 +1,6 @@
 import { Effect, Result, Schema } from "effect"
 import { AttachmentRejectedReason, BASH_ENV_ALLOWLIST, BashTermination, compileGlob, FsReason, ImageMediaType, Media } from "@xandreed/core"
+import { WorkspaceAccessMode, WorkspaceAllowedRoot } from "./workspace-path.entity.js"
 
 /**
  * The seven workspace tools, by the names the model calls them.
@@ -49,7 +50,12 @@ const Glob = Schema.String.check(Schema.makeFilter((glob: string) =>
  *   them with `load_skill`, which refuses them without the grants
  *   (`PermissionDenied`).
  * - `confine`: refuse paths whose real location (links resolved, through the
- *   nearest ancestor that exists) is outside the workspace root.
+ *   nearest ancestor that exists) is outside the workspace and extra roots.
+ * - `workspaceAccess`: `read` refuses writes in the workspace; `write`
+ *   permits them. `roots` adds readable or writable directories, absolute
+ *   or relative to the session's workspace. The longest matching real root
+ *   decides access. These restrictions apply with `confine`; bash remains
+ *   unconfined. An extra root that cannot be resolved is skipped and logged.
  * - `protect`: globs, relative to the root, that `write` and `edit` refuse.
  * - `exclude`: names (or, with a `/`, paths relative to the root) `find`
  *   and `grep` never enter below the directory they search. Both lists are
@@ -93,6 +99,8 @@ export const WorkspaceToolsConfig = Schema.Struct({
   tools: Schema.Array(WorkspaceToolName),
   always: Schema.Array(WorkspaceSkillName),
   confine: Schema.Boolean,
+  workspaceAccess: WorkspaceAccessMode,
+  roots: Schema.Array(WorkspaceAllowedRoot),
   protect: Schema.Array(Glob),
   exclude: Schema.Array(Glob),
   maxLines: between(1, 100_000),
@@ -123,6 +131,8 @@ export const workspaceToolsDefaults: WorkspaceToolsConfig = {
   tools: ["read", "write", "edit", "ls", "find", "grep", "bash"],
   always: ["read"],
   confine: true,
+  workspaceAccess: "write",
+  roots: [],
   protect: [".git/**", ".efferent/**"],
   exclude: ["node_modules", ".git", ".efferent"],
   maxLines: 2_000,
