@@ -107,18 +107,21 @@ See [evaluation-domain.md](evaluation-domain.md) for interfaces, lifecycle, comm
 
 ## Distribution
 
-`@xandreed/core` publishes four entries. The root holds the entities, ports,
+`@xandreed/core` publishes three entries. The root holds the entities, ports,
 events, journal kinds, `define*` helpers, errors, model-text frames,
-References and in-memory adapters; `@xandreed/core/conformance` the port
-kits (`check` builds a kit's check); `@xandreed/core/internal` the provider
-mapping, stream fold, tool schemas and id helper the first-party packages
-share; and `@xandreed/core/engine` the turn engine. The root and
-`./conformance` are semver; `./internal` and `./engine` are not (`./engine`
-moves into `@xandreed/sdk` in the next minor release). The root does not
-repeat what a subpath holds: a kit or an engine function is imported from
-its entry. The credential and settings stores (`AuthStore`, `SettingsStore`)
-are the models plugin's own ports: `@xandreed/plugin-models` exports them,
-and `@xandreed/plugin-models/conformance` their kits.
+References and in-memory adapters (the turn's event bus and tasks among
+them); `@xandreed/core/conformance` the port kits (`check` builds a kit's
+check); and `@xandreed/core/internal` what the first-party packages share
+with core: the provider mapping, stream fold, tool schemas and id helper,
+and what the sdk's turn engine reads of core. The root and `./conformance`
+are semver; `./internal` is not. The root does not repeat what a subpath
+holds: a kit is imported from its entry. The turn engine is
+`@xandreed/sdk`'s (`TurnLive` and the turn's lifecycle, from its root), and
+so is the `ToolRegistry` kit, which runs its turns over that engine
+(`@xandreed/sdk/conformance`). The credential and settings stores
+(`AuthStore`, `SettingsStore`) are the models plugin's own ports:
+`@xandreed/plugin-models` exports them, and
+`@xandreed/plugin-models/conformance` their kits.
 
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
 under `.artifacts/packages`, leaving test code out (`*.test.*`, `testing` modules and
@@ -957,7 +960,9 @@ checks each, with the caller's values around the run and in `handlers`.
 `bashConformance(subject)`, `authStoreConformance(store, { refresh?, corrupt? })`,
 `settingsStoreConformance(store, { writable, corrupt? })` and
 `modelCatalogConformance(catalog, { includes? })` (from `@xandreed/core/conformance`;
-the credential and settings store kits from `@xandreed/plugin-models/conformance`) are
+the credential and settings store kits from `@xandreed/plugin-models/conformance`, and
+`toolRegistryConformance`, which runs its turns over the sdk's `TurnLive`,
+from `@xandreed/sdk/conformance`) are
 the port contracts as runnable checks: each returns `ConformanceCheck`s
 (`name`, and a `run` effect that fails with a `ConformanceFailure` naming the
 broken check) that any test runner can run. Run them against a new strategy,
@@ -1462,7 +1467,7 @@ the other's tools, skills and sections, and neither layer sees the other's.
 
 The steps of a turn are public, over typed services, so a host composes the
 turn it needs; `Agent.turn` is one such composition. `TurnLive(input)` (from
-`@xandreed/core/engine`, requiring `ConversationMemory` and `ToolRegistry`) builds,
+`@xandreed/sdk`, requiring `ConversationMemory` and `ToolRegistry`) builds,
 over the admitted turn's `TurnWriter`, in this order, the event bus and the
 tasks, with the writer as the bus's first subscriber, then the memory
 session (opened where the layer is built, over the session's earlier turns)
@@ -1493,7 +1498,7 @@ and `RunContext` (which carries the turn's `session`). It provides:
   `admitted` is the writer's admitted turn, the host's `meta` included),
   `TurnEvents` and `TurnTasks`.
 
-The lifecycle is functions over them, from `@xandreed/core/engine` too:
+The lifecycle is functions over them, from `@xandreed/sdk` too:
 `openTurnTools`, `turnTools` (the
 host's view), `settleTurn` (join the tasks, drain the reactions, until quiet),
 `finishTurn(outcome)` (persist the reply, drain, flush; the reply and the
@@ -1510,8 +1515,7 @@ it puts the usage so far on the current span), `turnOf(options)`
 `TurnRunServices`), and `traceTurn(writer, { spanMeta })` (its options a
 `TurnTraceOptions`; the turn's `agent.turn` span around everything after the
 begin, see traces and metrics). `cacheKeyOf(prefix,
-conversation)` builds the prompt-cache key. `@xandreed/core/engine` has no
-semver: it moves into `@xandreed/sdk` in the next minor release.
+conversation)` builds the prompt-cache key.
 
 `Agent.turn` is, in order:
 

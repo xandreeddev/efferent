@@ -38,7 +38,6 @@ write("types/demo/src/model.entity.d.ts", [
 write("types/demo/src/tools.d.ts", `export declare const tool: string;\n`)
 write("types/demo/src/extra.d.ts", `export { parse } from "./internal/json.js";\n`)
 write("types/demo/src/internal/json.d.ts", `export declare const parse: (text: string) => unknown;\n`)
-write("types/demo/src/engine/run.d.ts", `export declare const start: () => void;\n`)
 // Installed beside the sources only, as a package's own dependencies are.
 write("sources/demo/node_modules/ext/package.json", JSON.stringify({ name: "ext", types: "index.d.ts" }))
 write("sources/demo/node_modules/ext/index.d.ts", `export declare const external: number;\n`)
@@ -66,26 +65,23 @@ describe("the API snapshot", () => {
     })
   })
 
-  test("a root entry may not export what src/internal/ or src/engine/ declares, nor re-export a module that does not resolve; every published path resolves", () => {
+  test("a root entry may not export what src/internal/ declares, nor re-export a module that does not resolve; every published path resolves", () => {
     manifest("host", { ".": { types: "./dist/index.d.ts" } })
     write("types/host/src/index.d.ts", [
       `export * from "@xandreed/demo";`,
       `export { parse } from "@xandreed/demo/extra";`,
-      `export { start } from "./engine/run.js";`,
       `export { deep } from "@xandreed/demo/internal/json.js";`,
       `export { runMain } from "@xandreed/cli/run.adapter.js";`,
     ].join("\n"))
-    write("types/host/src/engine/run.d.ts", `export declare const start: () => void;\n`)
     const snapshot = apiSnapshot(build(["demo", "cli", "host"]))
     expect(snapshot.problems).toEqual([
       `host/src/index.d.ts re-exports "@xandreed/demo/internal/json.js", which does not resolve`,
       "@xandreed/host exports deep, whose declaration does not resolve",
-      "@xandreed/host exports parse, declared in demo/src/internal/json.d.ts: a root entry may not export what src/internal/ or src/engine/ declares; export it from its own entry",
-      "@xandreed/host exports start, declared in host/src/engine/run.d.ts: a root entry may not export what src/internal/ or src/engine/ declares; export it from its own entry",
+      "@xandreed/host exports parse, declared in demo/src/internal/json.d.ts: a root entry may not export what src/internal/ declares; export it from its own entry",
     ])
     // `export *` of another package's root is that root's names but `default`; `./*.js` resolves as `./*` does.
     expect(snapshot.files.get("host.api.txt")?.split("\n")).toContain("const runMain")
-    expect(snapshot.files.get("host.api.txt")?.split("\n").filter((line) => !/ (parse|start|runMain)$/.test(line)))
+    expect(snapshot.files.get("host.api.txt")?.split("\n").filter((line) => !/ (parse|runMain)$/.test(line)))
       .toEqual(snapshot.files.get("demo.api.txt")?.split("\n").filter((line) => line !== "const default"))
   })
 

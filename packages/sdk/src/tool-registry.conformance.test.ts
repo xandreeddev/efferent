@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
 import { Capabilities, SessionEnvironment, ToolRegistry } from "@xandreed/core"
-import { toolRegistryConformance } from "@xandreed/core/conformance"
 import type { Capability } from "@xandreed/core"
-import type { ConformanceCheck, ToolRegistryLimits } from "@xandreed/core/conformance"
-import { toolDiscoveryDefaults, ToolDiscoveryLive } from "./plugin.adapter.js"
-import { makeRegistry } from "./registry.adapter.js"
+import type { ConformanceCheck } from "@xandreed/core/conformance"
+import { makeRegistry, toolDiscoveryDefaults, ToolDiscoveryLive } from "@xandreed/plugin-tool-discovery"
+import { toolRegistryConformance } from "./turn/tool-registry.conformance.js"
+import type { ToolRegistryLimits } from "./turn/tool-registry.conformance.js"
 
 const failedChecks = (checks: ReadonlyArray<ConformanceCheck>) => Effect.runPromise(Effect.forEach(checks, (check) =>
   Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : [])))).then((failed) => failed.flat().toSorted())

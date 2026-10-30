@@ -288,6 +288,8 @@ const isTurnError
 const journalSchemaOf
 const ledgerOf
 const makeMemoryFileSystem
+const makeTurnEvents
+const makeTurnTasks
 const mediaFromBase64
 const mediaFromBytes
 const mediaLabel

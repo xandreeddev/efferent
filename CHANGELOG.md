@@ -284,6 +284,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/plugin-models/conformance`; `tsc` names every import that no
   longer resolves.
 - Replace `toCredential(input)` with `input`.
+- Replace `from "@xandreed/core/engine"` with `from "@xandreed/sdk"`
+  (`makeTurnEvents` and `makeTurnTasks`: `from "@xandreed/core"`). A package
+  that composed its turns on core alone adds `@xandreed/sdk` as a dependency.
+- Import `toolRegistryConformance` from `@xandreed/sdk/conformance` and run it
+  over your registry as before.
 
 ### Breaking
 
@@ -761,6 +766,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/core/conformance`.
 - `toCredential` is removed from `@xandreed/plugin-models`: a
   `CredentialInput` is a `Credential` as it is.
+- `@xandreed/core/engine` is gone: the turn engine is `@xandreed/sdk`'s.
+  Import `TurnLive`, `cacheKeyOf`, `runTurnLoop`, `stepRequestOf`
+  (`TurnRunServices`), `finishTurn`, `guardTurn`, `openTurnTools`,
+  `settleTurn`, `traceTurn`, `traceTurnBegin` (`TurnBeginTrace`,
+  `TurnTraceOptions`), `turnOf` and `turnTools` from `@xandreed/sdk`. The
+  turn's event bus and tasks stay in core, as root API: `makeTurnEvents` and
+  `makeTurnTasks` come from `@xandreed/core` (and `@xandreed/sdk`, which
+  re-exports it), beside `harnessDefectsAsFailures`.
+- `toolRegistryConformance` and its `ToolRegistryLimits` move from
+  `@xandreed/core/conformance` to the new `@xandreed/sdk/conformance`: the kit
+  runs each check in a turn over the sdk's `TurnLive`. Its checks are
+  unchanged. `stepLoopConformance` (with `probeCall` and `textReply`) and
+  `turnConformance` stay in `@xandreed/core/conformance`.
 
 ### Added
 
@@ -1682,6 +1700,26 @@ Model-visible text (exact pins and the compaction golden updated):
   `RECORD_CAST_EDGES` and `ROLELESS_FILES` shrink, `effect/branded-id-fields`
   no longer names `src/spec`, and `PROVIDER_NAMESPACE_EDGES`, now empty, is
   deleted: no file of core or the agent loop reads a provider's namespace.
+- The engine's sources and tests are in `packages/sdk/src/turn/`, with
+  `TurnLive`'s phase (`TurnPhase` and its transitions) and the test writer
+  `recordingTurnWriter`, which only the engine used. `@xandreed/core/internal`
+  gains what the engine reads of core (`entriesSendingMedia`,
+  `estimateTokens`, `readerOf`, `draftOfTurnEvent`, `draftsOfEntries`,
+  `renderSections`, `checkModelRequest`, `modelRequestHeaderOf`,
+  `modelRequestTools`, `reconstructModelRequest`).
+- The tests that need the engine moved into the sdk, which already lists
+  the plugins as devDependencies: the `ToolRegistry` kit's run over the tool
+  discovery plugin's registry and its self-tests
+  (`tool-registry.conformance.test.ts`), that registry's tests inside turns
+  (`tool-discovery-turn.test.ts`, where the plugin's model-facing texts are
+  now pinned) and the sessions plugin's spans under `traceTurnBegin`
+  (`sessions-begin-trace.test.ts`). No plugin depends on the sdk.
+- Boundaries: the `core-engine` layer, the `core/engine` grants and the
+  `plugin-agent-loop-tests`, `plugin-tool-discovery-tests` and
+  `plugin-sessions-tests` layers (they only granted the engine) are gone; the
+  sdk layer may import `effect/ai`.
+  `scripts/api-snapshot.ts` refuses a root export declared under
+  `src/internal/` (no package has a `src/engine/` any more).
 
 ### Deprecated
 

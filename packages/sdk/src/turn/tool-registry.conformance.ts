@@ -1,38 +1,62 @@
 import { Tool } from "effect/ai"
 import { Array as Arr, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import type { Scope } from "effect"
-import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, expect, fail, failureCode, freshId } from "../conformance.functions.js"
-import { Failure } from "../domain/failure.entity.js"
-import { RunId } from "../domain/run.entity.js"
-import { defineCapability, defineSkill, defineTool } from "../harness/capability.entity.functions.js"
-import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
-import type { CapabilityCatalog } from "../harness/capability.entity.js"
-import { HarnessError } from "../harness/plugin.entity.js"
-import { CurrentAgentStep, CurrentToolInvocation } from "../loop/stepContext.js"
-import { EntryId } from "../memory/memory-log.entity.js"
-import { openLogSession } from "../memory/memory-session.js"
-import type { MemoryPolicy } from "../memory/memory-session.js"
-import type { Capability } from "../ports/capability.port.js"
-import { ActionPolicy, SessionEnvironment } from "../ports/harness.port.js"
-import { ConversationMemory } from "../ports/memory.port.js"
-import { PermissionGrants } from "../ports/permission.port.js"
-import { RunContext } from "../ports/run-context.port.js"
-import { ToolRegistry } from "../ports/tool-registry.port.js"
-import type { RunTools } from "../ports/tool-registry.port.js"
-import type { TurnDraft, TurnWriter } from "../ports/sessions.port.js"
-import { TurnMemory, TurnToolbox } from "../ports/turn-scope.port.js"
-import { turnStartedDraft } from "../session/session-event.entity.functions.js"
-import type { SessionLogEvent } from "../session/session-log.entity.js"
-import { storedJson } from "../session/session-log.entity.functions.js"
-import { TurnLive } from "../engine/turn.adapter.js"
-import type { ToolRefusalReason, TurnEvent } from "./turn-event.entity.js"
-import { publishToolProgress } from "./turn-event.entity.functions.js"
-import { UserMessage } from "./user-message.entity.js"
+import {
+  ActionPolicy,
+  ConversationId,
+  ConversationMemory,
+  CurrentAgentStep,
+  CurrentToolInvocation,
+  defineCapability,
+  defineSkill,
+  defineTool,
+  EntryId,
+  Failure,
+  harnessCodeOf,
+  HarnessError,
+  openLogSession,
+  PermissionGrants,
+  publishToolProgress,
+  RunContext,
+  RunId,
+  SessionEnvironment,
+  storedJson,
+  ToolRegistry,
+  TurnMemory,
+  turnStartedDraft,
+  TurnToolbox,
+  UserMessage,
+} from "@xandreed/core"
+import type {
+  Capability,
+  CapabilityCatalog,
+  MemoryPolicy,
+  RunTools,
+  SessionLogEvent,
+  ToolRefusalReason,
+  TurnDraft,
+  TurnEvent,
+  TurnWriter,
+} from "@xandreed/core"
+import { check, ConformanceFailure } from "@xandreed/core/conformance"
+import type { ConformanceCheck } from "@xandreed/core/conformance"
+import { randomUuid } from "@xandreed/core/internal"
+import { TurnLive } from "./turn.adapter.js"
 
 type Registry = Context.Service.Shape<typeof ToolRegistry>
 
-/** What the kit asks of the registry it builds: the most calls a turn may make. */
+const fail = (check: string, message: string) => Effect.fail(new ConformanceFailure({ check, message }))
+const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(check, message)
+/** A port's failure as the kit compares and reports it: its framework code (`harnessCodeOf`), else its tag. */
+const failureCode = (error: { readonly _tag: string }): string => Option.getOrElse(harnessCodeOf(error), () => error._tag)
+/** A fresh session id per turn, so the kit can run against a shared store. */
+const freshId = Effect.map(randomUuid, (id) => ConversationId.make(id))
+
+/**
+ * What the kit asks of the registry it builds: the most calls a turn may make.
+ *
+ * @public
+ */
 export interface ToolRegistryLimits {
   readonly maxCallsPerRun: number
 }
@@ -233,7 +257,7 @@ const toolsOf = (data: unknown): ReadonlyArray<string> =>
  * `tool.refused` with its input and no `tool.started`, never runs the
  * handler, and fails with the refusal's message as its result.
  * The registry publishes these events on the run's bus (`RunContext.events`)
- * only, and never writes the journal itself: the turn journals them (core's
+ * only, and never writes the journal itself: the turn journals them (the sdk's
  * `TurnLive` keeps `tool.progress` out and stores a `tool.refused` without
  * its input). The kit reads the journal to catch a registry that writes it
  * directly; what the turn does with the events is `TurnLive`'s, not the
@@ -241,7 +265,7 @@ const toolsOf = (data: unknown): ReadonlyArray<string> =>
  *
  * `make` builds a registry over the kit's capabilities for each check, with
  * at most `maxCallsPerRun` calls per turn and no permissions granted unless
- * the turn's `PermissionGrants` say so. The kit runs each turn over core's
+ * the turn's `PermissionGrants` say so. The kit runs each turn over the sdk's
  * `TurnLive` with a writer that keeps the turn's events in memory, opens
  * the tools with a `SessionEnvironment` (which one of its tools declares)
  * and calls them with another, as a step would.

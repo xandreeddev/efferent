@@ -1,15 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Logger, Option, References, Tracer } from "effect"
-import { ConversationId } from "../domain/message.entity.js"
-import { RunId } from "../domain/run.entity.js"
-import { tokenUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
-import { HarnessError } from "../harness/plugin.entity.js"
-import type { TurnWriter } from "../ports/sessions.port.js"
-import type { TurnResult } from "../ports/turn.port.js"
-import type { JsonObject } from "../session/session-log.entity.js"
-import { SessionBusy } from "../session/sessions.entity.js"
+import { ConversationId, HarnessError, RunId, SessionBusy, tokenUsage, UserMessage, zeroUsage } from "@xandreed/core"
+import type { JsonObject, TurnResult, TurnWriter } from "@xandreed/core"
 import { traceTurn, traceTurnBegin } from "./turn-lifecycle.usecase.functions.js"
-import { UserMessage } from "../turn/user-message.entity.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000c1")
 

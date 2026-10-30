@@ -1,34 +1,50 @@
 import { Context, Effect, Layer, Match, Option, Ref, Result, Schema, Scope, Semaphore } from "effect"
-import { addUsage, zeroUsage } from "../domain/token-usage.entity.functions.js"
-import { HarnessError } from "../harness/plugin.entity.js"
-import { fingerprintOf } from "../memory/memory-log.entity.functions.js"
-import { SectionId } from "../memory/memory-log.entity.js"
-import type { LogEntry, TurnContextBody } from "../memory/memory-log.entity.js"
-import { readerOf } from "../memory/memory-session.js"
-import { Capabilities } from "../ports/capability.port.js"
-import type { Capability, PromptContext, PromptSection } from "../ports/capability.port.js"
-import { ConversationMemory } from "../ports/memory.port.js"
-import type { LogHandle } from "../ports/memory.port.js"
-import { RunContext } from "../ports/run-context.port.js"
-import type { TurnDraft } from "../ports/sessions.port.js"
-import { draftOfTurnEvent, draftsOfEntries, entriesOfEvents, frameworkDraft, readStoredKeys } from "../session/session-event.entity.functions.js"
-import { storedJson } from "../session/session-log.entity.functions.js"
-import { MEMORY_KINDS, RESERVED_KINDS } from "../session/session-event.entity.js"
-import { ToolRegistry } from "../ports/tool-registry.port.js"
-import type { RunTools } from "../ports/tool-registry.port.js"
-import { TurnEvents, TurnTasks } from "../ports/turn-events.port.js"
-import { TurnMemory, TurnPrompt, TurnToolbox } from "../ports/turn-scope.port.js"
-import type { RequestSnapshot, TurnContextEntry, TurnLiveInput } from "../ports/turn-scope.port.js"
-import type { SessionLogEvent } from "../session/session-log.entity.js"
-import type { TurnError } from "../session/sessions.entity.js"
-import { renderSections } from "../turn/prompt-sections.js"
-import { makeTurnEvents, makeTurnTasks } from "./turn-bus.adapter.js"
-import type { TurnEvent } from "../turn/turn-event.entity.js"
-import { ModelRequestHeader } from "../turn/model-request.entity.js"
-import { ReplyStep } from "../turn/turn-phase.entity.js"
-import type { TurnPhase } from "../turn/turn-phase.entity.js"
-import { addContext, claim, heldWith, hold, numberOf, release, reply, sectionsDue, startRun, take } from "../turn/turn-phase.entity.functions.js"
-import type { Transition } from "../turn/turn-phase.entity.functions.js"
+import {
+  addUsage,
+  Capabilities,
+  ConversationMemory,
+  entriesOfEvents,
+  fingerprintOf,
+  frameworkDraft,
+  HarnessError,
+  makeTurnEvents,
+  makeTurnTasks,
+  MEMORY_KINDS,
+  ModelRequestHeader,
+  readStoredKeys,
+  RESERVED_KINDS,
+  RunContext,
+  SectionId,
+  storedJson,
+  ToolRegistry,
+  TurnEvents,
+  TurnMemory,
+  TurnPrompt,
+  TurnTasks,
+  TurnToolbox,
+  zeroUsage,
+} from "@xandreed/core"
+import type {
+  Capability,
+  LogEntry,
+  LogHandle,
+  PromptContext,
+  PromptSection,
+  RequestSnapshot,
+  RunTools,
+  SessionLogEvent,
+  TurnContextBody,
+  TurnContextEntry,
+  TurnDraft,
+  TurnError,
+  TurnEvent,
+  TurnLiveInput,
+} from "@xandreed/core"
+import { draftOfTurnEvent, draftsOfEntries, readerOf, renderSections } from "@xandreed/core/internal"
+import { ReplyStep } from "./turn-phase.entity.js"
+import type { TurnPhase } from "./turn-phase.entity.js"
+import { addContext, claim, heldWith, hold, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
+import type { Transition } from "./turn-phase.entity.functions.js"
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
 

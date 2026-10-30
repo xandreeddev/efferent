@@ -22,7 +22,7 @@ import {
   TurnLive,
   turnOf,
   traceTurn,
-} from "@xandreed/core/engine"
+} from "@xandreed/sdk"
 import { turnConformance } from "@xandreed/core/conformance"
 import type { Turn, TurnBeginError, TurnError, TurnInput, TurnOutcome, TurnResult, TurnServices, TurnWriter } from "@xandreed/core"
 import { StepLoopLive } from "@xandreed/plugin-agent-loop"

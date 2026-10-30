@@ -11,8 +11,7 @@
  * wildcard entry (`./*`) is one entry per module it publishes, and a module two keys reach is read
  * once, under the first. The names are read with the TypeScript checker from the declarations the
  * build emitted (`.artifacts/types/<dir>/src`). A root entry may not export a name declared under
- * a package's `src/internal/` or `src/engine/`: those modules have entries of their own, outside
- * semver.
+ * a package's `src/internal/`: those modules have an entry of their own, outside semver.
  *
  *   bun run api:update   rebuild the packages, then rewrite api/ from that build
  *
@@ -55,7 +54,7 @@ interface Entry { readonly path: string; readonly file: string; readonly root: b
 interface BuiltManifest { readonly name: string; readonly exports?: Readonly<Record<string, { readonly types?: string }>> }
 
 /** The folders of a package that only their own entries may export from. */
-const UNLISTED_AT_ROOT: ReadonlyArray<string> = ["internal", "engine"]
+const UNLISTED_AT_ROOT: ReadonlyArray<string> = ["internal"]
 
 /** Code-unit order, the same on every machine. */
 const byText = (a: string, b: string): number => a < b ? -1 : a > b ? 1 : 0
@@ -169,7 +168,7 @@ export const apiSnapshot = (build: ApiBuild): ApiSnapshot => {
       ...(module === undefined ? [`${entry.path}: ${shown(entry.declaration)} is not a module`] : []),
       ...declared.filter(({ files }) => files.length === 0).map(({ name }) => `${entry.path} exports ${name}, whose declaration does not resolve`),
       ...(entry.root ? declared.flatMap(({ name, files }) => files.filter((file) => UNLISTED_AT_ROOT.includes(folderOf(build, file) ?? "")).slice(0, 1)
-        .map((file) => `${entry.path} exports ${name}, declared in ${shown(file)}: a root entry may not export what src/internal/ or src/engine/ declares; export it from its own entry`)) : []),
+        .map((file) => `${entry.path} exports ${name}, declared in ${shown(file)}: a root entry may not export what src/internal/ declares; export it from its own entry`)) : []),
     ].sort(byText)
     return { file: entry.file, text: lines.length === 0 ? "" : `${lines.join("\n")}\n`, problems }
   })

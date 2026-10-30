@@ -26,13 +26,14 @@ own implementation, from `@xandreed/core/conformance`: see
 
 | Import | Holds | Semver |
 | --- | --- | --- |
-| `@xandreed/core` | entities, ports, events and journal kinds, `define*` helpers, errors, model-text frames, References, in-memory adapters | yes |
-| `@xandreed/core/conformance` | the port kits, `ConformanceCheck`, `ConformanceFailure` and `check` | yes |
-| `@xandreed/core/engine` | the turn engine: `TurnLive` and the turn's lifecycle | no; moves into `@xandreed/sdk` in the next minor release |
-| `@xandreed/core/internal` | the provider mapping, stream fold, tool schemas and id helper the first-party packages share | no |
+| `@xandreed/core` | entities, ports, events and journal kinds, `define*` helpers, errors, model-text frames, References, in-memory adapters (the turn's event bus and tasks among them) | yes |
+| `@xandreed/core/conformance` | the port kits but the tool registry's, `ConformanceCheck`, `ConformanceFailure` and `check` | yes |
+| `@xandreed/core/internal` | what the first-party packages share with core: the provider mapping, stream fold, tool schemas and id helper, and what the sdk's turn engine reads of core | no |
 
-The root does not repeat what a subpath holds: import a kit or an engine
-function from its entry. The credential and settings stores (`AuthStore`,
+The root does not repeat what a subpath holds: import a kit from its entry.
+The turn engine (`TurnLive` and the turn's lifecycle) is `@xandreed/sdk`'s,
+and so is the tool registry's kit (`@xandreed/sdk/conformance`), which runs
+its turns over it. The credential and settings stores (`AuthStore`,
 `SettingsStore`) are the models plugin's own ports, exported by
 `@xandreed/plugin-models`, with their kits in
 `@xandreed/plugin-models/conformance`.

@@ -1,11 +1,6 @@
 import { Effect, Option, Ref } from "effect"
-import { ConversationId } from "../domain/message.entity.js"
-import type { RunId } from "../domain/run.entity.js"
-import { EntryId } from "../memory/memory-log.entity.js"
-import type { TurnDraft, TurnWriter } from "../ports/sessions.port.js"
-import { turnStartedDraft } from "../session/session-event.entity.functions.js"
-import type { SessionLogEvent } from "../session/session-log.entity.js"
-import { UserMessage } from "./user-message.entity.js"
+import { ConversationId, EntryId, turnStartedDraft, UserMessage } from "@xandreed/core"
+import type { RunId, SessionLogEvent, TurnDraft, TurnWriter } from "@xandreed/core"
 
 /**
  * A turn writer that keeps the session's events in memory, for testing the

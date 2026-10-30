@@ -13,7 +13,6 @@ const stepLoopConformance
 const taskRunnerConformance
 const tasksConformance
 const textReply
-const toolRegistryConformance
 const turnConformance
 interface BashFixture
 interface BashSubject
@@ -27,4 +26,3 @@ interface SessionsSubject
 interface TaskRunnerFixture
 interface TasksDependencies
 interface TasksFixture
-interface ToolRegistryLimits

@@ -1,5 +1,7 @@
 // `@xandreed/core/conformance`: every port's kit, run against each adapter of
-// the port under any test runner, and what a kit is made of.
+// the port under any test runner, and what a kit is made of. The
+// `ToolRegistry` kit runs its turns over the sdk's `TurnLive`, so it is
+// `@xandreed/sdk/conformance`.
 export { ConformanceFailure } from "../conformance.entity.js"
 export type { ConformanceCheck } from "../conformance.entity.js"
 export { check } from "../conformance.functions.js"
@@ -20,7 +22,5 @@ export type { TaskRunnerFixture, TasksDependencies, TasksFixture } from "../sess
 export { probeCall, stepLoopConformance, textReply } from "../turn/step-loop.conformance.js"
 export { inMemoryLog, memoryConformance } from "../memory/memory.conformance.js"
 export { turnConformance } from "../turn/turn.conformance.js"
-export { toolRegistryConformance } from "../turn/tool-registry.conformance.js"
-export type { ToolRegistryLimits } from "../turn/tool-registry.conformance.js"
 // the model catalog
 export { modelCatalogConformance } from "../domain/model-catalog.conformance.js"

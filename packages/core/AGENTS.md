@@ -10,30 +10,30 @@ No provider SDKs, filesystem IO, runtime graph, terminal, or host imports.
 the agent loop, the models plugin and the sdk share with core: the provider
 mapping (`mapping.entity.functions.ts`), the stream fold, tool schemas, and
 the JSON, glob and id helpers (`randomUuid`, which the models plugin's kits
-use too). `src/engine` holds the turn engine:
-`TurnLive` (`turn.adapter.ts`), a turn's run and lifecycle
-(`turn-run.usecase.functions.ts`, `turn-lifecycle.usecase.functions.ts`) and
-its bus (`turn-bus.adapter.ts`).
+use too). The turn engine (`TurnLive`, a turn's run and lifecycle) is the
+sdk's (`packages/sdk/src/turn/`); core keeps what code beneath it uses too:
+the turn's bus (`src/turn/turn-bus.adapter.ts`: `makeTurnEvents` and
+`makeTurnTasks`, the in-memory `TurnEvents` and `TurnTasks` the step-loop
+kit runs a loop with, and `harnessDefectsAsFailures`, which the sessions
+plugin and the agent loop use), and the memory, journal and model-request
+functions the engine reads, which `./internal` exports to the sdk.
 
-The package has four entries, each an `index.ts` of explicit named exports:
+The package has three entries, each an `index.ts` of explicit named exports:
 
 | Entry | Holds | Semver | Who imports it (boundaries) |
 |---|---|---|---|
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
-| `./conformance` (`src/conformance/index.ts`) | every kit of core's ports, `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
-| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas and the id helper | none | plugin-agent-loop, plugin-models, sdk |
-| `./engine` (`src/engine/index.ts`) | `TurnLive`, a turn's run and lifecycle, its bus | none; it moves into `@xandreed/sdk` in the next minor release | sdk |
+| `./conformance` (`src/conformance/index.ts`) | every kit of core's ports but the `ToolRegistry`'s (`@xandreed/sdk/conformance`: it runs its turns over `TurnLive`), `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
+| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas and the id helper, and what the sdk's turn engine reads of core | none | plugin-agent-loop, plugin-models, sdk |
 
-A package reaches `./internal` or `./engine` only when its boundaries
-layer grants `core/<subpath>` (the core entry layer's `restricted`). The
-root does not repeat what these entries hold: a kit or an engine function is
-imported from its entry. A few names
-declared in `internal/` or `engine/` are root API too, declared again at the
-end of `src/index.ts` (the same value, or a type of the same shape, since a
-root entry may not re-export what those folders declare:
+A package reaches `./internal` only when its boundaries layer grants
+`core/internal` (the core entry layer's `restricted`). The root does not
+repeat what these entries hold: a kit is imported from its entry. A few names
+declared in `internal/` are root API too, declared again at the end of
+`src/index.ts` (the same value, or a type of the same shape, since a root
+entry may not re-export what that folder declares:
 `scripts/api-snapshot.ts`): `compileGlob` and its types (the workspace
-plugin uses them), `harnessDefectsAsFailures` (the sessions plugin and the
-agent loop), and `assistantModel` and `assistantUsage` (documented for
+plugin uses them), and `assistantModel` and `assistantUsage` (documented for
 hosts).
 
 The credential and settings stores (`AuthStore`, `SettingsStore`) are not
@@ -45,7 +45,7 @@ keys they were declared with here (`@xandreed/core/AuthStore`,
 it lists every package's. Core's own model ports, `ModelCatalog` and
 `UtilityLlm`, need nothing of theirs.
 
-`quality/exports-have-consumers` runs on all four entries (`CURATED_ENTRIES`
+`quality/exports-have-consumers` runs on all three entries (`CURATED_ENTRIES`
 in `foundry.config.ts`): each export is imported, by its entry's name, from
 another package, a script or a doc code block, or is tagged `@public`.
 `@public`, on the declaration, marks host API: what the README, the guides
@@ -71,15 +71,15 @@ file is in the first layer whose glob matches it:
 | `core-model` | `*.entity.ts`; the References in `loop/` | nothing of core |
 | `core-ports` | `ports/**` | model |
 | `core-logic` | `*.entity.functions.ts`, `internal/**`, `turn/model-text.ts` | model, ports |
-| `core` | everything else: adapters, harness, the memory session, prompt sections; and the entries (`**/index.ts`), which re-export every layer | model, ports, logic |
-| `core-engine` | `engine/**` | model, ports, logic, core |
-| `core-kits` | `*.conformance.ts` | model, ports, logic, core, engine: the step-loop and registry kits run turns over the engine |
+| `core` | everything else: adapters (the turn's bus among them), harness, the memory session, prompt sections; and the entries (`**/index.ts`), which re-export every layer | model, ports, logic |
+| `core-kits` | `*.conformance.ts` | model, ports, logic, core: the step-loop kit runs a loop over the turn's bus |
 | `core-tests` | `*.test.ts` | every layer, and `fast-check` and `bun:test`, which no other layer imports |
 
 A port that needs a type from a functions file gets it from the entity file
-(`LogQuery` is in `memory-log.entity.ts`); what code beneath the engine needs
-does not live in it (`sessionAttributes` and `turnAttributes`, which the
-in-memory log and the sessions plugin use, are session functions).
+(`LogQuery` is in `memory-log.entity.ts`); what code beneath the sdk's
+engine needs stays in core (`sessionAttributes` and `turnAttributes`, which
+the in-memory log and the sessions plugin use, are session functions; the
+turn's bus is a core adapter).
 
 Plugin and configuration contracts live in `src/harness`; service tags live in
 `src/ports`. Entity files contain schemas and derived types. Behavior belongs
@@ -134,7 +134,8 @@ sessions in `@xandreed/plugin-sessions`, and the composable agent
 supplies deterministic verification when a host chooses it.
 
 Port contracts ship as conformance kits (`*.conformance.ts`, each exported
-from `src/conformance/index.ts`). Run a port's kit against every adapter of it, and
+from `src/conformance/index.ts`; the `ToolRegistry`'s is the sdk's,
+`@xandreed/sdk/conformance`, since it runs its turns over `TurnLive`). Run a port's kit against every adapter of it, and
 when the port changes, on Node too (`verify:packages`). The kits share
 the helpers in `src/conformance.functions.ts` (`check`, `expect`,
 `fail`, `freshId`, `headerOf`, `atTime`), the step-loop and turn kits
@@ -143,17 +144,16 @@ the helpers in `src/conformance.functions.ts` (`check`, `expect`,
 `eventually`; new kits use them too, and only `check` is exported
 (`./conformance`). That file is test support for the kits, not an entity's behaviour,
 so it is not paired with `conformance.entity.ts`.
-Core has no adapter of `Sessions`, `Tasks` or `ToolRegistry`: their kits
-(`sessionsConformance`, `tasksConformance`, `toolRegistryConformance`) run
-in the plugins that implement them (`plugin-sessions` and
-`plugin-session-sqlite`, `plugin-tasks`, `plugin-tool-discovery`), whose
-tests also hold the kits' self-tests, careless wrappers of the plugin's own
-adapter that must fail; `taskRunnerConformance` has its self-test here,
-over fiber runners written in the test. The registry kit builds its turns
-over `TurnLive` and a writer of its own that keeps the turn in memory: a
-kit ships in the build, which leaves test code out (`*.test.*`, `testing`
-modules and folders: `scripts/build-check.ts`), so it cannot import
-`recordingTurnWriter`.
+Core has no adapter of `Sessions` or `Tasks`: their kits
+(`sessionsConformance`, `tasksConformance`) run in the plugins that
+implement them (`plugin-sessions` and `plugin-session-sqlite`,
+`plugin-tasks`), whose tests also hold the kits' self-tests, careless
+wrappers of the plugin's own adapter that must fail; `taskRunnerConformance`
+has its self-test here, over fiber runners written in the test. The sdk's
+`ToolRegistry` kit runs, with its self-tests, in the sdk's own tests, over
+the tool discovery plugin's registry. The step-loop kit gives the loop it
+checks a bus and tasks of its own (`makeTurnEvents`, `makeTurnTasks`), so it
+needs no turn engine.
 
 The `FileSystem` and `Bash` ports are what agent tools work through. Core
 ships the ports, the in-memory `FileSystemMemoryLive` and the two kits; the
@@ -201,7 +201,7 @@ around work that runs somewhere else, goes through `replayableContext`
 (`src/loop/traceContent.ts`): the services tool handlers, policy and loop
 callbacks run with (the registry, `stepRequestOf`, `turnOf`, `runLoop`),
 a model layer's dependencies (the models plugin), the services of
-`Agent.turn`'s input, bus subscribers (`engine/turn-bus.adapter.ts`) and a live layer's
+`Agent.turn`'s input, bus subscribers (`turn/turn-bus.adapter.ts`) and a live layer's
 dependencies (`makeLiveLayer`).
 It drops the trace and log state of the place it was captured: the parent
 span, so spans nest where the replayed work runs; the span annotations and
@@ -218,20 +218,17 @@ from its spans or a tool handler's logs.
 
 Span attributes and log annotations share their keys: `turnAttributes`
 (`efferent.session.id`, `efferent.run.id`, `efferent.turn`) and
-`sessionAttributes` (`src/session/sessions.entity.functions.ts`). `traceTurn`
-(`src/engine/turn-lifecycle.usecase.functions.ts`) opens `agent.turn`;
-`traceTurnBegin` opens `agent.turn.begin`, its sibling, around a begin. Put no span between `traceTurn` and `guardTurn`: a failed turn's
-usage goes on the span current where `guardTurn` runs.
+`sessionAttributes` (`src/session/sessions.entity.functions.ts`), which the
+sdk's `traceTurn` (`agent.turn`) and `traceTurnBegin` (`agent.turn.begin`)
+put on a turn's spans and logs (`packages/sdk/AGENTS.md`).
 
-Core's own spans are `Effect.fn` and few: `turn.persist_reply` (`TurnLive`'s
-`persistReply`, under `agent.turn`), `skills.collect` (`collectSkillFiles`)
-and the in-memory log's `session_log.<op>`, with `efferent.session.id` when
-the operation names a session. Everything else is `Effect.fnUntraced`: entity
-functions and decoders; constructors (`make*`, and `openLogSession`, which
-`TurnLive` runs between `traceTurn` and `guardTurn`); the views a turn's code
-works with (`turnOf`, `stepRequestOf`); helpers called per event, step or
-entry (`publishToolProgress`, the memory log's `append`, the step request's
-`dispatch`); and the kits.
+Core's own spans are `Effect.fn` and few: `skills.collect`
+(`collectSkillFiles`) and the in-memory log's `session_log.<op>`, with
+`efferent.session.id` when the operation names a session. Everything else is
+`Effect.fnUntraced`: entity functions and decoders; constructors (`make*`,
+the bus's included, and `openLogSession`, which `TurnLive` runs between
+`traceTurn` and `guardTurn`); helpers called per event or entry
+(`publishToolProgress`, the memory log's `append`); and the kits.
 
 ## Model-facing text
 

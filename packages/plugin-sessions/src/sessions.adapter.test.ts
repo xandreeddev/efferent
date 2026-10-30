@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test"
 import { Context, Deferred, Effect, Exit, Fiber, Layer, Logger, Option, Ref, References, Scheduler, Scope, Tracer } from "effect"
 import { TestClock } from "effect/testing"
 import { awaitIdle, frameworkDraft, harnessCodeOf, HarnessError, InboxItemId, LeaseExpired, MediaFingerprint, mediaFromBase64, RevisionConflict, RunId, SessionLog, SessionLogError, SessionLogMemoryLive, SessionMissing, Sessions, TurnActivity, TurnAdmission, TurnAdmissionOpen, TurnRefused, UserMessage } from "@xandreed/core"
-import { traceTurnBegin } from "@xandreed/core/engine"
 import type { BeginTurn, JsonObject, SessionAddress, SessionLogEvent, TurnEnding, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsPluginLive } from "./plugin.adapter.js"
 import { processLiveness } from "./process-liveness.adapter.js"
@@ -1583,8 +1582,6 @@ describe("traces and logs", () => {
     Option.flatMap(span.parent, (parent) => Option.fromNullishOr(spans.find((candidate) => candidate.spanId === parent.spanId))),
     { onNone: () => [], onSome: (parent) => [parent.name, ...ancestors(spans, parent)] },
   )
-  const ids = ["efferent.session.id", "efferent.run.id", "efferent.turn"]
-  const read = (span: Tracer.NativeSpan, keys: ReadonlyArray<string>) => keys.map((key) => span.attributes.get(key))
   type Line = readonly [string, Readonly<Record<string, unknown>>]
   const capturingLogger = (lines: Array<Line>) => Logger.layer([Logger.make((options) => {
     lines.push([[options.message].flat().join(" "), options.fiber.getRef(References.CurrentLogAnnotations)])
@@ -1624,44 +1621,6 @@ describe("traces and logs", () => {
       ["sessions.cancel", address.id, "host.request"],
       ["sessions.remove", child, "host.request"],
     ])
-  })))
-
-  test("the writer's commits are turn_writer.commit spans under the call that asked for them, not under the begin; they, flush and end carry the turn's ids, as do the log's spans under a commit", () => withLog((inner) => Effect.gen(function* () {
-    const spans: Array<Tracer.NativeSpan> = []
-    // A log whose commit opens a span of its own, as a store's would.
-    const log = SessionLog.of({ ...inner, commit: (id, commit) => inner.commit(id, commit).pipe(Effect.withSpan("store.commit")) })
-    const [sessions] = yield* instancesOver(log, sessionsDefaults)
-    const address = yield* created(sessions!)
-    yield* Effect.scoped(Effect.gen(function* () {
-      const writer = yield* sessions!.begin(address, say("hello")).pipe(traceTurnBegin({ session: address.id, runId: RunId.make("run-hello"), origin: "user" }))
-      yield* Effect.gen(function* () {
-        yield* writer.append([{ kind: "note", data: { n: 1 } }]).pipe(Effect.withSpan("host.step"))
-        yield* writer.flush
-        yield* writer.end({ reason: "completed", failure: Option.none() })
-      }).pipe(Effect.withSpan("host.turn"))
-    })).pipe(Effect.withSpan("host.request"), Effect.withTracer(capturing(spans)))
-    const begin = spans.filter((span) => ancestors(spans, span).includes("agent.turn.begin"))
-    // The begin holds only its own work: its reads of the log and the opening commit.
-    expect(begin.map((span) => [span.name, ancestors(spans, span)[0]])).toEqual([
-      ["sessions.begin", "agent.turn.begin"],
-      ["session_log.head", "sessions.begin"],
-      ["session_log.read", "sessions.begin"],
-      ["session_log.read", "sessions.begin"],
-      ["store.commit", "sessions.begin"],
-      ["session_log.commit", "store.commit"],
-    ])
-    // By name and parent: the writer's fiber runs a commit after the call that queued it may have moved on.
-    const writes = spans.filter((span) => span.name.startsWith("turn_writer.") || (span.name === "store.commit" && !begin.includes(span)))
-      .map((span) => [span.name, ancestors(spans, span).slice(0, 2).join(" < "), ...read(span, ids)])
-    expect(writes.toSorted((left, right) => JSON.stringify(left) < JSON.stringify(right) ? -1 : 1)).toEqual([
-      ["store.commit", "turn_writer.commit < host.step", address.id, "run-hello", 1],
-      ["store.commit", "turn_writer.commit < turn_writer.end", address.id, "run-hello", 1],
-      ["turn_writer.commit", "host.step < host.turn", address.id, "run-hello", 1],
-      ["turn_writer.commit", "turn_writer.end < host.turn", address.id, "run-hello", 1],
-      ["turn_writer.end", "host.turn < host.request", address.id, "run-hello", 1],
-      ["turn_writer.flush", "host.turn < host.request", address.id, "run-hello", 1],
-    ])
-    expect(yield* all(sessions!, address)).toEqual(["turn.started@1", "note@1", "turn.ended@1"])
   })))
 
   test("the drain's lines name no ids: the session's, its turn's and run's are their annotations", () => {

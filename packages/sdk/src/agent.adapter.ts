@@ -29,16 +29,6 @@ import {
   turnAttributes,
   turnEndingOf,
 } from "@xandreed/core"
-import {
-  cacheKeyOf,
-  guardTurn,
-  openTurnTools,
-  settleTurn,
-  TurnLive,
-  traceTurn,
-  traceTurnBegin,
-  turnOf,
-} from "@xandreed/core/engine"
 import type {
   Capability,
   HarnessConfig,
@@ -60,6 +50,9 @@ import type {
 } from "@xandreed/core"
 import { activateGraph, graphFingerprint, resolveGraph } from "@xandreed/runtime"
 import type { PluginGraph, PluginNode } from "@xandreed/runtime"
+import { guardTurn, openTurnTools, settleTurn, traceTurn, traceTurnBegin, turnOf } from "./turn/turn-lifecycle.usecase.functions.js"
+import { cacheKeyOf } from "./turn/turn-run.usecase.functions.js"
+import { TurnLive } from "./turn/turn.adapter.js"
 
 /** One plugin instance of an agent: the definition, its options and (optionally) an instance id. */
 export interface AgentPluginEntry {

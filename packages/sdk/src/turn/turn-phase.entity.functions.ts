@@ -1,10 +1,6 @@
 import { Match, Option, Result } from "effect"
-import { RunOrdinal } from "../domain/run.entity.js"
-import type { RunId, RunRef } from "../domain/run.entity.js"
-import type { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
-import { harnessError } from "../harness/harness-code.entity.functions.js"
-import type { HarnessError } from "../harness/plugin.entity.js"
-import type { LogEntry, TurnContextBody } from "../memory/memory-log.entity.js"
+import { harnessError, RunOrdinal } from "@xandreed/core"
+import type { HarnessError, LogEntry, RunId, RunRef, TurnContextBody, TurnOutcomeKind } from "@xandreed/core"
 import type { ReplyStep, TurnPhase } from "./turn-phase.entity.js"
 
 /*

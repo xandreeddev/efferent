@@ -232,6 +232,7 @@ const TurnEndedEvent
 const TurnEnding
 const TurnEvent
 const TurnFailure
+const TurnLive
 const TurnOrigin
 const TurnOutcomeKind
 const TurnStartedData
@@ -249,6 +250,7 @@ const assistantModel
 const assistantUsage
 const attachmentsOf
 const awaitIdle
+const cacheKeyOf
 const canonicalJson
 const catalogOf
 const clipTo
@@ -273,10 +275,12 @@ const errorCodeOf
 const escapeFrame
 const estimateMessageTokens
 const fingerprintOf
+const finishTurn
 const formatModelSelection
 const framed
 const frameworkDraft
 const freezeModelRequest
+const guardTurn
 const harnessCodeOf
 const harnessDefectsAsFailures
 const harnessError
@@ -290,6 +294,8 @@ const isTurnError
 const journalSchemaOf
 const ledgerOf
 const makeMemoryFileSystem
+const makeTurnEvents
+const makeTurnTasks
 const mediaFromBase64
 const mediaFromBytes
 const mediaLabel
@@ -301,6 +307,7 @@ const normalizeUserMessage
 const onEvent
 const onTool
 const openLogSession
+const openTurnTools
 const parseModelSelection
 const pendingCompaction
 const plannedCallIdOf
@@ -324,14 +331,17 @@ const resolvingModel
 const responseModelOf
 const resumeRefusal
 const rewrittenBy
+const runTurnLoop
 const sameUserMessage
 const sessionAttributes
+const settleTurn
 const skillIssuesText
 const skillsFromFiles
 const sniffImageType
 const stackPlugins
 const stampPartModel
 const stampResponseModel
+const stepRequestOf
 const storedJson
 const subscribeAll
 const sumUsage
@@ -339,13 +349,17 @@ const tokenUsage
 const toolCallIdOf
 const toolInputsOf
 const toolResultMedia
+const traceTurn
+const traceTurnBegin
 const turnAttributes
 const turnBeginCodes
 const turnEndedDraft
 const turnEndedOf
 const turnEndingOf
+const turnOf
 const turnStartedDraft
 const turnStartedOf
+const turnTools
 const turnUsageOf
 const uncachedInputTokens
 const unmarkedReservedDraft
@@ -404,6 +418,7 @@ interface ToolViewDefinition
 interface ToolViewInput
 interface ToolViews
 interface Turn
+interface TurnBeginTrace
 interface TurnContextEntry
 interface TurnDraft
 interface TurnEventsService
@@ -417,6 +432,7 @@ interface TurnRunner
 interface TurnTasksService
 interface TurnToAdmit
 interface TurnTools
+interface TurnTraceOptions
 interface TurnWriter
 interface TypedPlugin
 type ActivationSource
@@ -567,6 +583,7 @@ type TurnEventOf
 type TurnFailure
 type TurnOrigin
 type TurnOutcomeKind
+type TurnRunServices
 type TurnServices
 type TurnStartedData
 type TurnsInFlight
