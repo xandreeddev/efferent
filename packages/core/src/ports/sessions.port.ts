@@ -179,6 +179,10 @@ export class Sessions extends Context.Service<Sessions, {
    * (`turn.interrupted`) when the scope was interrupted.
    * The input's `meta` is stored in `turn.started` and shown on the writer's
    * `admitted`; it is not part of the key's fingerprint.
+   * A task's turn (`Task`, origin `task`) is keyed like a user's, its task
+   * (`TaskRef`) part of the fingerprint, stored in `turn.started` and shown
+   * on `admitted` and to the host's admission; it cannot be resumed
+   * (`NotResumable`, `task`).
    * A user's turn with `resumes: n` resumes turn `n`: it must be the
    * session's last turn begun by a user (only inbox turns, and resumes of it
    * that failed, were cancelled or were interrupted, may have run since) and

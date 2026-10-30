@@ -135,6 +135,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   them in the end's commit before `turn.ended`; then rerun
   `sessionsConformance` and `turnConformance`, which both gain a `closing`
   check.
+- Match `"task"` wherever you match `TurnOrigin` or `NotResumable` reasons.
+- Read the starting run from `task.started.startedBy`; older records keep
+  it in `meta.runId`, and older task turns read as `origin: user` with
+  `command.task`.
+- Build `Tasks` beside the agent:
+  `TasksLive(cfg).pipe(Layer.provide(agentTaskExecutor(agent, { services })))`.
 
 ### Breaking
 
@@ -382,6 +388,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A turn's `turn.reply` (and what memory records after it) is stored with
   its `turn.ended`, not before: journal readers see no reply until the turn
   ends, and a cancelled or reaped turn stores none.
+- A background task's child turn begins as a task's turn: origin `task`,
+  with a `task` (`TaskRef`: the task's and the parent's ids) on
+  `BeginTurn.Task`, `AdmittedTurn`, `TurnToAdmit` and the stored
+  `turn.started`, no longer as a user's turn with `command.task`.
+  `TurnOrigin` and `NotResumable`'s reasons gain `task`. A session that has
+  stored a task turn cannot be read by 0.14 or earlier.
+- `start_task` no longer adds `runId` to the task's `meta`; the starting
+  turn is recorded as `task.started`'s `startedBy`.
+- Only a task's own session (origin `task`) is refused from starting tasks;
+  a host's fork of a conversation may now start them.
 
 ### Added
 
@@ -505,6 +521,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `isAnyOf`, `match`).
 - `@xandreed/core` exports `TurnContextBody`, the `LogBody` member for a
   TurnContext entry.
+- `@xandreed/sdk`: `agentTaskExecutor(agent, { services, child?, react? })`,
+  a `TaskExecutor` that runs a task's turns through an agent.
+- `Tasks.start` accepts `startedBy`.
+- Sessions kit check `task`; the Tasks kit checks a task's origin and that a
+  host's fork may start tasks.
 
 ### Changed
 

@@ -103,7 +103,8 @@ const supersedes = (target: number) => (later: ResumableTurn) => later.turn > ta
  * session's own turns (each `turn.started`, with the turn it resumed and its
  * `turn.ended`'s reason when it has them): `missing` when no turn has that
  * number (a number that is not a whole number of at least 1 never does),
- * `inbox` when an inbox turn has it, `superseded` when a user's turn was
+ * `inbox` or `task` when a turn a user did not begin has it (its origin),
+ * `superseded` when a user's turn was
  * begun after it (only inbox turns, and resumes of it that failed, were
  * cancelled or were interrupted, may follow), `finished` unless it ended
  * cancelled or interrupted (a turn reaped because its holder stopped ended
@@ -113,7 +114,7 @@ const supersedes = (target: number) => (later: ResumableTurn) => later.turn > ta
 export const resumeRefusal = (target: number, turns: ReadonlyArray<ResumableTurn>): Option.Option<NotResumable["reason"]> =>
   Option.match(Option.fromNullishOr(turns.find((candidate) => candidate.turn === target)), {
     onNone: () => Option.some("missing" as const),
-    onSome: (found) => found.origin === "inbox" ? Option.some("inbox" as const)
+    onSome: (found) => found.origin !== "user" ? Option.some(found.origin)
       : turns.some(supersedes(target)) ? Option.some("superseded" as const)
       : stopped(found.ended) ? Option.none()
       : Option.some("finished" as const),

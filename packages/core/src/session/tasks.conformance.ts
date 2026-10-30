@@ -205,8 +205,10 @@ const fillInbox = (sessions: Context.Service.Shape<typeof Sessions>, parent: Ses
  * `task.started` once per task, and starting a task again runs it once (the
  * same id with other instructions or another mode is `TaskConflict`, and an
  * id naming a session that is not the parent's task child `SessionExists`,
- * starting nothing); a failed turn's result says why; a cancel stops the child's turn and
- * delivers nothing; a task does not start tasks; and `reconcile` starts a
+ * starting nothing); the child's turn is a task's (origin `task`, its
+ * `TaskRef` the task's and the parent's ids); a failed turn's result says why; a cancel stops the child's turn and
+ * delivers nothing; a task does not start tasks, and a host's fork of the
+ * conversation may; and `reconcile` starts a
  * task whose runner never ran it, and delivers, once, a finished result
  * whose delivery was lost. The kit loses one by filling the parent's inbox
  * until `deliver` fails with `InboxFull` before the task ends: that check
@@ -281,6 +283,9 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       const ran = yield* h.turns
       yield* expect("run", ran.length === 1 && ran[0]!.admitted.session.id === view.child && ran[0]!.task.taskId === view.taskId
         && ran[0]!.task.instructions === "look it up" && ran[0]!.history === "", `the executor ran ${ran.length} child turns, the first with history [${ran[0]?.history ?? ""}]`)
+      const childTurn = ran[0]!.admitted
+      yield* expect("run", childTurn.origin === "task" && childTurn.task?.taskId === view.taskId && childTurn.task.parent === h.parent.id && childTurn.userMessage.text === "look it up",
+        `the child's turn was begun with origin ${childTurn.origin}, task ${JSON.stringify(childTurn.task ?? null)}`)
       const reacted = yield* h.reactions
       yield* expect("run", reacted.length === 1 && reacted[0]!.origin === "inbox" && reacted[0]!.session.id === h.parent.id
         && reacted[0]!.claimed.length === 1 && reacted[0]!.claimed[0]!.content.includes("found: look it up"),
@@ -385,12 +390,16 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       yield* expect("cancel", unknown.every((error) => error._tag === "TaskMissing"), `an unknown task gave ${unknown.map((error) => error._tag).join()}`)
     })),
 
-    scoped("a task does not start tasks", "depth", (owner) => Effect.gen(function* () {
+    scoped("a task does not start tasks; a host's own fork of the conversation may", "depth", (owner) => Effect.gen(function* () {
       const h = yield* harness(owner)
       const view = yield* h.tasks.start(h.parent, { instructions: "first", mode: "spawn" })
       yield* h.idle("depth")
       const nested = yield* Effect.flip(h.tasks.start({ id: view.child, owner }, { instructions: "deeper", mode: "spawn" }))
       yield* expect("depth", nested._tag === "TaskRefused" && nested.reason === "depth", `a task's session starting a task gave ${nested._tag}`)
+      const fork = yield* h.sessions.fork(h.parent, { origin: "conformance", inherit: true })
+      const forked = yield* startOutcome(h.tasks.start({ id: fork.header.id, owner }, { instructions: "from the fork", mode: "spawn" }))
+      yield* h.idle("depth")
+      yield* expect("depth", forked === "started", `a host's fork of the conversation starting a task gave ${forked}`)
     })),
 
     scoped("reconcile starts a task its runner never ran, which then delivers; done, it finds nothing more", "reconcile", (owner) => Effect.gen(function* () {

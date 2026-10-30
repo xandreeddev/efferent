@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { ConversationId, JsonObject, TaskMode, TurnEndReason, TurnFailure } from "@xandreed/core"
+import { ConversationId, JsonObject, RunId, TaskMode, TurnEndReason, TurnFailure } from "@xandreed/core"
 
 /*
  * What the tasks plugin records. In the parent: `task.started` (the outbox
@@ -12,12 +12,22 @@ export const TASK_STARTED = "task.started"
 export const TASK_RESULT = "task.result"
 export const TASK_CANCELLED = "task.cancelled"
 
+/** The turn whose run started a task (the model's `start_task`): its run id and number. */
+export const TaskStarter = Schema.Struct({ runId: RunId, turn: Schema.Int })
+export type TaskStarter = typeof TaskStarter.Type
+
 export const TaskStarted = Schema.Struct({
   taskId: ConversationId,
   instructions: Schema.String,
   mode: TaskMode,
-  /** The starter's own facts (e.g. the run that started it). */
+  /** The starter's metadata (`Tasks.start`'s `meta`): the task's turns are begun with it. */
   meta: JsonObject,
+  /**
+   * The turn whose run started the task, written only when given. A task
+   * started before it was recorded here may carry that run's id in
+   * `meta.runId`.
+   */
+  startedBy: Schema.optionalKey(TaskStarter),
 })
 export type TaskStarted = typeof TaskStarted.Type
 

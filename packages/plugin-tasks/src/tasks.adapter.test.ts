@@ -345,7 +345,7 @@ describe("cancel and removal", () => {
 })
 
 describe("limits, failures and budgets", () => {
-  test("a task does not start tasks, and a session runs so many at once", () => scenario(Effect.gen(function* () {
+  test("a task does not start tasks, a host's fork of the conversation may, and a session runs so many at once", () => scenario(Effect.gen(function* () {
     const h = yield* harness({ turn: () => Effect.never })
     const first = yield* h.tasks.start(h.parent, { instructions: "one", mode: "fork" })
     yield* h.tasks.start(h.parent, { instructions: "two", mode: "fork" })
@@ -353,6 +353,9 @@ describe("limits, failures and budgets", () => {
     expect([third._tag, third._tag === "TaskRefused" ? third.reason : null]).toEqual(["TaskRefused", "limit"])
     const nested = yield* Effect.flip(h.tasks.start({ id: first.child, owner }, { instructions: "deeper", mode: "spawn" }))
     expect([nested._tag, nested._tag === "TaskRefused" ? nested.reason : null]).toEqual(["TaskRefused", "depth"])
+    const fork = yield* h.sessions.fork(h.parent, { origin: "user", inherit: true })
+    const forked = yield* h.tasks.start({ id: fork.header.id, owner }, { instructions: "from the fork", mode: "spawn" })
+    expect([forked.parent, forked.status]).toEqual([fork.header.id, "running"])
     expect(yield* h.tasks.cancel(h.parent, first.taskId)).toBe(true)
     yield* h.tasks.start(h.parent, { instructions: "three, now", mode: "fork" })
     expect((yield* h.tasks.list(h.parent)).map((task) => task.status).sort()).toEqual(["cancelled", "running", "running"])
@@ -551,17 +554,47 @@ describe("limits, failures and budgets", () => {
     )
   })
 
-  test("the starter's meta goes with the task: the child's turn and the parent's reaction are admitted with it", () => scenario(Effect.gen(function* () {
-    const admitted = yield* Ref.make<ReadonlyArray<readonly [string, unknown]>>([])
+  test("the starter's meta goes with the task: the child's turn, a task's, and the parent's reaction are admitted with it", () => scenario(Effect.gen(function* () {
+    const admitted = yield* Ref.make<ReadonlyArray<readonly [string, unknown, unknown]>>([])
     const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
-      admit: (turn, open) => Ref.update(admitted, (all) => [...all, [turn.key.startsWith("task:") ? "child" : turn.origin, turn.meta] as const]).pipe(Effect.andThen(open)),
+      admit: (turn, open) => Ref.update(admitted, (all) => [...all, [turn.origin, turn.meta, turn.task ?? null] as const]).pipe(Effect.andThen(open)),
     }))
     const h = yield* harness({ admission })
-    yield* h.tasks.start(h.parent, { instructions: "count for acme", mode: "spawn", meta: { tenant: "acme", runId: "run-1" } })
+    const task = yield* h.tasks.start(h.parent, { instructions: "count for acme", mode: "spawn", meta: { tenant: "acme" } })
     yield* h.idle
-    const all = yield* Ref.get(admitted)
-    expect([...new Set(all.map(([origin]) => origin))]).toEqual(["child", "inbox"])
-    expect(all.every(([, meta]) => JSON.stringify(meta) === JSON.stringify({ tenant: "acme", runId: "run-1" }))).toBe(true)
+    expect(yield* Ref.get(admitted)).toEqual([
+      ["task", { tenant: "acme" }, { taskId: task.taskId, parent: h.parent.id }],
+      ["inbox", { tenant: "acme" }, null],
+    ])
+  })))
+
+  test("the child's turn is a task's: origin task, its task's ref, the instructions its message and no command, stored so", () => scenario(Effect.gen(function* () {
+    const turns = yield* Ref.make<ReadonlyArray<unknown>>([])
+    const h = yield* harness({
+      turn: (writer, task) => Ref.update(turns, (all) => [...all, {
+        origin: writer.admitted.origin, task: writer.admitted.task, text: writer.admitted.userMessage.text, command: writer.admitted.command, key: writer.admitted.key,
+      }]).pipe(Effect.as({ outcome: "completed" as const, reply: Option.some(`found: ${task.instructions}`) })),
+    })
+    const task = yield* h.tasks.start(h.parent, { instructions: "look it up", mode: "spawn" })
+    yield* h.idle
+    const ref = { taskId: task.taskId, parent: h.parent.id }
+    expect(yield* Ref.get(turns)).toEqual([{ origin: "task", task: ref, text: "look it up", command: {}, key: `task:${task.taskId}` }])
+    const [started] = yield* h.sessions.read({ id: task.child, owner }, { kinds: ["turn.started"] })
+    expect([started?.data.origin, started?.data.task, started?.data.command]).toEqual(["task", ref, {}])
+    // Its session is titled by the instructions, as by a user's first message.
+    expect(Option.getOrNull((yield* h.sessions.get({ id: task.child, owner })).title)).toBe("look it up")
+    // A task's turn cannot be resumed: it is no user's turn.
+    const resumed = yield* Effect.flip(Effect.scoped(h.sessions.begin({ id: task.child, owner }, { _tag: "User", userMessage: new UserMessage({ text: "again" }), runId: RunId.make("run-resume"), key: "resume", command: {}, resumes: 1 })))
+    expect([resumed._tag, resumed._tag === "NotResumable" ? resumed.reason : null]).toEqual(["NotResumable", "task"])
+  })))
+
+  test("task.started records the turn that started the task when it is given, and nothing for it otherwise", () => scenario(Effect.gen(function* () {
+    const h = yield* harness()
+    yield* h.tasks.start(h.parent, { instructions: "by a run", mode: "spawn", meta: { tenant: "acme" }, startedBy: { runId: RunId.make("run-7"), turn: 3 } })
+    yield* h.tasks.start(h.parent, { instructions: "by the host", mode: "spawn" })
+    yield* h.idle
+    const started = yield* h.sessions.read(h.parent, { kinds: ["task.started"] })
+    expect(started.map((event) => [event.data.meta, event.data.startedBy ?? null])).toEqual([[{ tenant: "acme" }, { runId: "run-7", turn: 3 }], [{}, null]])
   })))
 })
 

@@ -225,7 +225,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 
 | Kind | Written by | Sensitive content | Fields |
 | --- | --- | --- | --- |
-| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message (its images, inline as base64, included), the host's command and the host's metadata (`meta`), when given. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `entry`, `at`, `meta`, `resumes` |
+| `turn.started` | plugin-sessions, when `Sessions.begin` opens the turn | The user's message (its images, inline as base64, included), the host's command and the host's metadata (`meta`), when given. | `runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, `entry`, `at`, `meta`, `resumes`, `task` |
 | `memory.system` | Memory, when the turn's system prompt (or a variant) changes | The full system prompt text. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.section` | Memory: `turn.context(…)` and turn-tier prompt sections | Turn sections: the host's context for this turn, as the model sees it. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.step` | Memory: the step policy's step context | Step context text. | `entry`, `runId`, `step`, `at`, `body` |
@@ -314,7 +314,7 @@ When `Agent.turn` begins the turn itself and the turn cannot begin (`Sessions.be
 | `KeyConflict` | `turn.key-conflict` | 409 | The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts). |
 | `RunIdReused` | `turn.run-reused` | 409 | The run id was used before, by an earlier turn of the session or of the history a fork inherits: a run id names one turn's run (memory numbers its entries from it). Begin again with a new run id, a retry under a new key included; nothing was opened. |
 | `NothingPending` | `session.nothing-pending` | 204 | An inbox turn found nothing to take (inbox turns only). |
-| `NotResumable` | `turn.not-resumable` | 409 | The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id). |
+| `NotResumable` | `turn.not-resumable` | 409 | The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `task` (a background task's turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id). |
 | `TurnRefused` | `turn.refused` | 429 for a quota or rate, 403 when not allowed, 503 while draining before a shutdown | The host's `TurnAdmission` refused the turn; nothing was opened or counted. |
 | `SessionMissing` | `session.missing` | 404 | No such session for this owner. |
 | `SessionContended` | `session.contended` | 503 | Other writers kept committing to the session first, and nothing was opened. Retry later. |
@@ -435,7 +435,7 @@ Feed defaults (`renderFeedDefaults`, in milliseconds):
 
 | Kind | Recorded in | When |
 | --- | --- | --- |
-| `task.started` | the parent session | `Tasks.start`: the task's instructions, mode and the starter's facts; its child session is created with it. |
+| `task.started` | the parent session | `Tasks.start`: the task's instructions, mode, the starter's `meta` and, when given, the turn that started it (`startedBy`); its child session is created with it. |
 | `task.result` | the child session | Before the child's turn ends (or outside a turn when the host refused it): the outcome, reply and failure. |
 | `task.cancelled` | the child, then the parent | `Tasks.cancel`, while the task is pending or running; the first of a result and a cancellation ends the task. |
 
@@ -447,6 +447,7 @@ Feed defaults (`renderFeedDefaults`, in milliseconds):
 | `instructions` | `string` |
 | `mode` | `"fork" \| "spawn"` |
 | `meta` | `object` |
+| `startedBy` | `{ runId, turn }` (optional) |
 
 ### `task.result`
 

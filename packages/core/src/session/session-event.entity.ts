@@ -8,6 +8,7 @@ import { TURN_EVENT_NAMES } from "../turn/turn-event.entity.js"
 import type { TurnEventName } from "../turn/turn-event.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { JsonObject } from "./session-log.entity.js"
+import { TaskRef } from "./tasks.entity.js"
 
 /**
  * An inbox item's id as stored: `InboxItemId`'s brand without its checks,
@@ -31,7 +32,7 @@ const StoredInboxItemId = Schema.String.pipe(Schema.brand("InboxItemId"))
  * of the framework's kinds is stored with.
  */
 
-/** Opens a turn: who asked, what they said, the host's command and the inbox items it claims. */
+/** Opens a turn: who asked, what they said, the host's command, the inbox items it claims and the task it runs. */
 export const TurnStartedData = Schema.Struct({
   runId: RunId,
   /** The host's idempotency key: a second begin with it is the same turn. */
@@ -55,6 +56,13 @@ export const TurnStartedData = Schema.Struct({
    * only when given: part of the key's fingerprint.
    */
   resumes: Schema.optionalKey(Schema.Int),
+  /**
+   * The task a task's turn runs (`BeginTurn.Task`; origin `task`), written
+   * only on such a turn: part of the key's fingerprint. A task's turn stored
+   * before tasks had an origin of their own reads as a user's, its task id
+   * in `command.task`.
+   */
+  task: Schema.optionalKey(TaskRef),
 })
 export type TurnStartedData = typeof TurnStartedData.Type
 

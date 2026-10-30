@@ -1,4 +1,4 @@
-import { Cause, Clock, Context, Effect, Exit, Layer, Option, PubSub, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
+import { Cause, Clock, Context, Effect, Equal, Exit, Layer, Match, Option, PubSub, Ref, Schema, Scope, Stream, SubscriptionRef } from "effect"
 import {
   canonicalJson,
   ConversationId,
@@ -54,7 +54,9 @@ import type {
   SessionHead,
   SessionLogEvent,
   SessionView,
+  TaskRef,
   TurnDraft,
+  TurnOrigin,
   TurnWriter,
 } from "@xandreed/core"
 import { processLiveness } from "./process-liveness.adapter.js"
@@ -95,6 +97,32 @@ const droppedDrafts = (ids: ReadonlyArray<InboxItemId>, turn: number): Effect.Ef
 
 const standalone = (drafts: ReadonlyArray<TurnDraft>): ReadonlyArray<SessionDraft> =>
   drafts.map((draft) => ({ kind: draft.kind, turn: Option.none(), data: draft.data }))
+
+/**
+ * What a begin asks for, by its kind: who begins the turn, its key, the
+ * message it brings (none for the inbox, whose message is the items it
+ * claims), the host's command, the turn it resumes and the task it runs.
+ */
+interface Asked {
+  readonly origin: TurnOrigin
+  readonly key: string
+  readonly userMessage: Option.Option<UserMessage>
+  readonly command: JsonObject
+  readonly resumes: Option.Option<number>
+  readonly task: Option.Option<TaskRef>
+}
+
+/** A begin as `Asked`: a user's and a task's turn are keyed by their caller, an inbox turn by its run id. */
+const askedOf = (input: BeginTurn): Asked => Match.valueTags(input, {
+  User: (user): Asked => ({
+    origin: "user", key: user.key, userMessage: Option.some(user.userMessage), command: user.command,
+    resumes: Option.fromNullishOr(user.resumes), task: Option.none(),
+  }),
+  Inbox: (inbox): Asked => ({ origin: "inbox", key: inbox.runId, userMessage: Option.none(), command: {}, resumes: Option.none(), task: Option.none() }),
+  Task: (task): Asked => ({
+    origin: "task", key: task.key, userMessage: Option.some(task.userMessage), command: {}, resumes: Option.none(), task: Option.some(task.task),
+  }),
+})
 
 /**
  * A pipeable of `Effect.fn` for a call that names a session: its id
@@ -326,13 +354,15 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     const scope = yield* Effect.scope
     const at = yield* Clock.currentTimeMillis
     const meta = input.meta ?? {}
-    const resumes = input._tag === "User" ? Option.fromNullishOr(input.resumes) : Option.none<number>()
+    const asked = askedOf(input)
+    const { key, origin, resumes } = asked
     // `resumes` is typed only as a number: one that is not a whole number of at least 1 names no turn, refused before the host's admission sees it.
     const unnumbered = Option.filter(resumes, (turn) => !(Number.isSafeInteger(turn) && turn >= 1))
     if (Option.isSome(unnumbered)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: unnumbered.value, reason: "missing" }))
-    // Written only when given, like `meta`: a turn that resumes nothing is stored and admitted as before.
+    // Written only when given, like `meta`: a turn that resumes nothing, or runs no task, is stored and admitted as before.
     const resuming = Option.match(resumes, { onNone: () => ({}), onSome: (turn) => ({ resumes: turn }) })
-    const toAdmit = { session: address, origin: input._tag === "User" ? "user" as const : "inbox" as const, runId: input.runId, key: input._tag === "User" ? input.key : input.runId, meta, ...resuming }
+    const tasked = Option.match(asked.task, { onNone: () => ({}), onSome: (task) => ({ task }) })
+    const toAdmit = { session: address, origin, runId: input.runId, key, meta, ...resuming, ...tasked }
     /** The turn the opening commit stored, until its writer is handed over. */
     const unowned = yield* Ref.make(Option.none<AdmittedTurn>())
     yield* SubscriptionRef.update(inFlight, (now): InFlight => ({ ...now, beginning: now.beginning + 1 }))
@@ -346,16 +376,19 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         const reap = yield* reaped(head, stored)
         const state = reap.state
         const starts = yield* startsOf(address.id)
-        if (input._tag === "User") {
-          const previous = yield* keyIn(starts, input.key)
+        // A turn that brings its message (a user's, a task's) is keyed by its caller: the key's earlier turn is this one or a conflict.
+        if (Option.isSome(asked.userMessage)) {
+          const brought = asked.userMessage.value
+          const previous = yield* keyIn(starts, key)
           if (Option.isSome(previous)) {
             const started = yield* turnStartedOf(previous.value.event).pipe(Effect.mapError(storage("session.decode")))
-            // The key's fingerprint is the message, the command and the turn resumed, never `meta`: a retry with other metadata is the same turn.
-            const same = sameUserMessage(started.userMessage, input.userMessage) && canonicalJson(started.command) === canonicalJson(input.command)
-              && started.resumes === input.resumes
+            // The key's fingerprint is the message, the command, the turn resumed and the task, never `meta`: a retry with other metadata is the same turn.
+            const same = sameUserMessage(started.userMessage, brought) && canonicalJson(started.command) === canonicalJson(asked.command)
+              && Equal.equals(Option.fromNullishOr(started.resumes), resumes)
+              && canonicalJson(started.task ?? null) === canonicalJson(Option.getOrNull(asked.task))
             return yield* Effect.fail(same
               ? new TurnDuplicate({ session: address.id, turn: previous.value.turn, open: Option.exists(state.open, (open) => open.turn === previous.value.turn) })
-              : new KeyConflict({ session: address.id, key: input.key, turn: previous.value.turn }))
+              : new KeyConflict({ session: address.id, key, turn: previous.value.turn }))
           }
         }
         // A run id names one turn's run: a begin reusing one (a retry under a new key, say) is refused before it opens anything.
@@ -367,14 +400,14 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           const refusal = resumeRefusal(resumes.value, yield* turnsOf(address.id, reap.closed))
           if (Option.isSome(refusal)) return yield* Effect.fail(new NotResumable({ session: address.id, turn: resumes.value, reason: refusal.value }))
         }
-        const waiting = input._tag === "Inbox" ? pendingOf(state).map((slot) => slot.id) : []
-        if (input._tag === "Inbox" && waiting.length === 0) return yield* Effect.fail(new NothingPending({ session: address.id }))
+        // An inbox turn takes every item waiting, and its message is theirs.
+        const waiting = origin === "inbox" ? pendingOf(state).map((slot) => slot.id) : []
+        if (origin === "inbox" && waiting.length === 0) return yield* Effect.fail(new NothingPending({ session: address.id }))
         const claimed = yield* inboxItems(address.id, waiting)
-        const userMessage = input._tag === "User" ? input.userMessage : new UserMessage({ text: claimed.map((item) => item.content).join("\n\n") })
+        const userMessage = Option.getOrElse(asked.userMessage, () => new UserMessage({ text: claimed.map((item) => item.content).join("\n\n") }))
         const turn = state.turns + 1
-        const key = input._tag === "User" ? input.key : input.runId
         const open: HeldTurn = {
-          turn, runId: input.runId, key, origin: input._tag === "User" ? "user" : "inbox", holder: instance,
+          turn, runId: input.runId, key, origin, holder: instance,
           expiresAt: ownership.mode === "lease" ? Option.some(head.now + ownership.ttlMs) : Option.none(),
           process: ownership.mode === "process" ? holder.process : Option.none(),
         }
@@ -382,19 +415,21 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           ...state,
           turns: turn,
           open: Option.some(open),
-          title: Option.orElse(state.title, () => input._tag === "User" && input.userMessage.text.length > 0 ? Option.some(titleOf(input.userMessage.text, config.titleChars)) : Option.none()),
+          // A session is titled by the first message a user or a task brought.
+          title: Option.orElse(state.title, () => Option.map(Option.filter(asked.userMessage, (brought) => brought.text.length > 0), (brought) => titleOf(brought.text, config.titleChars))),
           inbox: state.inbox.map((slot) => waiting.includes(slot.id) ? { ...slot, claimedBy: Option.some(turn) } : slot),
         }
         const starting = yield* turnStartedDraft(turn, {
-          runId: input.runId, key, origin: open.origin, userMessage, command: input._tag === "User" ? input.command : {},
+          runId: input.runId, key, origin, userMessage, command: asked.command,
           claimed: waiting, entry: EntryId.make(`${input.runId}:0`), at,
           // Written only when given: a turn begun without metadata is stored as before.
           ...(input.meta === undefined ? {} : { meta: input.meta }),
           ...resuming,
+          ...tasked,
         }).pipe(Effect.orDie)
         const admitted: AdmittedTurn = {
-          session: address, turn, runId: input.runId, key, origin: open.origin, userMessage,
-          command: input._tag === "User" ? input.command : {}, claimed, meta, ...resuming,
+          session: address, turn, runId: input.runId, key, origin, userMessage,
+          command: asked.command, claimed, meta, ...resuming, ...tasked,
         }
         return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next } }
       }), (opened) => Ref.set(unowned, Option.some(opened.admitted)))))
@@ -443,9 +478,11 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
    * `admitted` all use this value, so a retry with the same images is the
    * same turn and memory takes exactly what was stored.
    */
-  const normalized = (input: BeginTurn): Effect.Effect<BeginTurn, AttachmentRejected> => input._tag === "User"
-    ? normalizeUserMessage(input.userMessage).pipe(Effect.map((userMessage) => ({ ...input, userMessage })))
-    : Effect.succeed(input)
+  const normalized = (input: BeginTurn): Effect.Effect<BeginTurn, AttachmentRejected> => Match.valueTags(input, {
+    User: (user) => normalizeUserMessage(user.userMessage).pipe(Effect.map((userMessage): BeginTurn => ({ ...user, userMessage }))),
+    Task: (task) => normalizeUserMessage(task.userMessage).pipe(Effect.map((userMessage): BeginTurn => ({ ...task, userMessage }))),
+    Inbox: (inbox) => Effect.succeed(inbox),
+  })
 
   const begin = Effect.fn("sessions.begin")((address: SessionAddress, input: BeginTurn) => normalized(input).pipe(
     Effect.flatMap((ready) => openTurn(address, ready)),

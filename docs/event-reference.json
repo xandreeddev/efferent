@@ -1826,7 +1826,7 @@
         },
         {
           "name": "origin",
-          "type": "\"user\" | \"inbox\"",
+          "type": "\"user\" | \"inbox\" | \"task\"",
           "required": true
         },
         {
@@ -1863,6 +1863,11 @@
           "name": "resumes",
           "type": "integer",
           "required": false
+        },
+        {
+          "name": "task",
+          "type": "{ taskId, parent }",
+          "required": false
         }
       ],
       "body": [],
@@ -1880,7 +1885,8 @@
             "type": "string",
             "enum": [
               "user",
-              "inbox"
+              "inbox",
+              "task"
             ]
           },
           "userMessage": {
@@ -1922,6 +1928,26 @@
             "type": "integer",
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
+          },
+          "task": {
+            "type": "object",
+            "properties": {
+              "taskId": {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              "parent": {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              }
+            },
+            "required": [
+              "taskId",
+              "parent"
+            ],
+            "additionalProperties": true
           }
         },
         "required": [
@@ -5369,7 +5395,7 @@
       "tag": "NotResumable",
       "code": "turn.not-resumable",
       "http": "409",
-      "meaning": "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id)."
+      "meaning": "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `task` (a background task's turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id)."
     },
     {
       "tag": "TurnRefused",
@@ -5759,7 +5785,7 @@
       {
         "kind": "task.started",
         "where": "the parent session",
-        "when": "`Tasks.start`: the task's instructions, mode and the starter's facts; its child session is created with it.",
+        "when": "`Tasks.start`: the task's instructions, mode, the starter's `meta` and, when given, the turn that started it (`startedBy`); its child session is created with it.",
         "schema": {
           "$schema": "http://json-schema.org/draft-07/schema#",
           "type": "object",
@@ -5781,6 +5807,24 @@
             },
             "meta": {
               "type": "object"
+            },
+            "startedBy": {
+              "type": "object",
+              "properties": {
+                "runId": {
+                  "type": "string"
+                },
+                "turn": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "runId",
+                "turn"
+              ],
+              "additionalProperties": true
             }
           },
           "required": [
@@ -5811,6 +5855,11 @@
             "name": "meta",
             "type": "object",
             "required": true
+          },
+          {
+            "name": "startedBy",
+            "type": "{ runId, turn }",
+            "required": false
           }
         ]
       },

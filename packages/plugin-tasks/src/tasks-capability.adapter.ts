@@ -34,7 +34,7 @@ export const tasksCapability = defineCapability({
         const run = yield* RunContext
         const tasks = yield* Tasks
         // The turn's own metadata (a tenant, a quota key) goes with the task, so its turns are admitted as the starter's.
-        const task = yield* tasks.start(run.session, { instructions, mode, meta: { ...run.admitted.meta, runId: run.runId } }).pipe(Effect.mapError((error) =>
+        const task = yield* tasks.start(run.session, { instructions, mode, meta: run.admitted.meta, startedBy: { runId: run.runId, turn: run.admitted.turn } }).pipe(Effect.mapError((error) =>
           error._tag === "TaskRefused" ? { error: "TaskRefused", message: error.message } : unavailable(error)))
         return { taskId: task.taskId, status: task.status }
       }),

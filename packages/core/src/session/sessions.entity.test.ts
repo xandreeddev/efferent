@@ -97,6 +97,13 @@ describe("resumeRefusal", () => {
     expect(resumeRefusal(2, [user(1, "completed"), { turn: 2, origin: "inbox", resumes: Option.none(), ended: Option.some("interrupted") }, user(3, "completed")])).toEqual(Option.some("inbox"))
   })
 
+  test("a task's turn is refused as task, however it ended, and does not supersede a user's turn", () => {
+    const task = (turn: number, ended: TurnEndReason): ResumableTurn => ({ turn, origin: "task", resumes: Option.none(), ended: Option.some(ended) })
+    expect(resumeRefusal(1, [task(1, "interrupted")])).toEqual(Option.some("task"))
+    expect(resumeRefusal(2, [user(1, "completed"), task(2, "cancelled")])).toEqual(Option.some("task"))
+    expect(resumeRefusal(1, [user(1, "cancelled"), task(2, "completed")])).toEqual(Option.none())
+  })
+
   test("a turn a user's turn followed is superseded, however each ended", () => {
     expect(resumeRefusal(1, [user(1, "cancelled"), user(2, "cancelled")])).toEqual(Option.some("superseded"))
     expect(resumeRefusal(1, [user(1, "interrupted"), inbox(2), user(3, "failed")])).toEqual(Option.some("superseded"))

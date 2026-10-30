@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer } from "effect"
-import { SessionLog, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, TaskRunner, Tasks, taskRunnerConformance, tasksConformance, TurnAdmissionOpen } from "@xandreed/core"
+import { Context, Effect, Layer, Option } from "effect"
+import { SessionLog, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, TaskRefused, TaskRunner, Tasks, taskRunnerConformance, tasksConformance, TurnAdmissionOpen } from "@xandreed/core"
 import type { ConformanceCheck, TasksDependencies, TasksFixture } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { tasksDefaults } from "./task-records.entity.js"
@@ -33,20 +33,27 @@ describe("InProcessTaskRunnerLive with a deadline (maxMs) conforms to the TaskRu
 /** One in-memory log for every check: the kit uses fresh owners and sessions. */
 const log = Effect.runSync(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
 
-/** TasksLive over SessionsLive (with its default lease and keep-alive) over the shared log, with the kit's runner and executor. */
-const tasksOver = (dependencies: TasksDependencies) => Layer.build(TasksLive(tasksDefaults).pipe(Layer.provideMerge(Layer.mergeAll(
-  SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))),
+type SessionsService = TasksFixture["sessions"]
+
+/**
+ * TasksLive over SessionsLive (with its default lease and keep-alive) over
+ * the shared log, or a careless wrapper of it, with the kit's runner and
+ * executor.
+ */
+const tasksOver = (dependencies: TasksDependencies, wrap: (sessions: SessionsService) => SessionsService = (sessions) => sessions) => Layer.build(TasksLive(tasksDefaults).pipe(Layer.provideMerge(Layer.mergeAll(
+  Layer.effect(Sessions, Effect.map(Effect.service(Sessions), wrap)).pipe(
+    Layer.provide(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))),
   Layer.succeed(TaskRunner, dependencies.runner),
   Layer.succeed(TaskExecutor, dependencies.executor),
 )))).pipe(Effect.map((context): TasksFixture => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks) })))
 
 describe("TasksLive conforms to the Tasks contract", () => {
-  passes(tasksConformance(tasksOver))
+  passes(tasksConformance((dependencies) => tasksOver(dependencies)))
 })
 
 /** TasksLive with one of its calls made careless. */
-const careless = (change: (tasks: TasksFixture["tasks"]) => Partial<TasksFixture["tasks"]>) => (dependencies: TasksDependencies) =>
-  tasksOver(dependencies).pipe(Effect.map((fixture): TasksFixture => ({ ...fixture, tasks: Tasks.of({ ...fixture.tasks, ...change(fixture.tasks) }) })))
+const careless = (change: (tasks: TasksFixture["tasks"], sessions: TasksFixture["sessions"]) => Partial<TasksFixture["tasks"]>) => (dependencies: TasksDependencies) =>
+  tasksOver(dependencies).pipe(Effect.map((fixture): TasksFixture => ({ ...fixture, tasks: Tasks.of({ ...fixture.tasks, ...change(fixture.tasks, fixture.sessions) }) })))
 
 describe("the Tasks kit catches careless backends", () => {
   test("one whose cancel answers yes and stops nothing fails only the cancel check", async () => {
@@ -57,6 +64,24 @@ describe("the Tasks kit catches careless backends", () => {
     expect(await failedChecks(tasksConformance(careless((tasks) => ({
       start: (parent, input) => tasks.start(parent, { instructions: input.instructions, mode: input.mode }),
     }))))).toEqual(["start-once", "task-id"])
+  }, 30_000)
+
+  test("one that judges depth by a session's lineage, refusing a host's fork, fails only the depth check", async () => {
+    expect(await failedChecks(tasksConformance(careless((tasks, sessions) => ({
+      start: (parent, input) => sessions.get(parent).pipe(Effect.flatMap((view) => Option.isSome(view.header.parent)
+        ? Effect.fail(new TaskRefused({ session: parent.id, reason: "depth", message: "a forked session cannot start a task" }))
+        : tasks.start(parent, input))),
+    }))))).toEqual(["depth"])
+  }, 30_000)
+
+  test("one whose child turns begin as a user's, the task in their command, fails only the run check", async () => {
+    const asUser = (sessions: SessionsService): SessionsService => Sessions.of({
+      ...sessions,
+      begin: (address, input) => sessions.begin(address, input._tag === "Task"
+        ? { _tag: "User", userMessage: input.userMessage, runId: input.runId, key: input.key, command: { task: input.task.taskId }, ...(input.meta === undefined ? {} : { meta: input.meta }) }
+        : input),
+    })
+    expect(await failedChecks(tasksConformance((dependencies) => tasksOver(dependencies, asUser)))).toEqual(["run"])
   }, 30_000)
 
   test("one whose reconcile does nothing fails only the reconcile checks", async () => {

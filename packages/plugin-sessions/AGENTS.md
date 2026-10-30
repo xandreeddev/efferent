@@ -1,6 +1,6 @@
 # @xandreed/plugin-sessions
 
-Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time, turns owned by a lease or by the process that began them, the inbox, forks, resumes, and `TurnActivity` (the turns this instance holds open or is beginning). The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
+Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time (a user's, the inbox's or a background task's, `BeginTurn`'s three kinds, told apart once by `Match.valueTags` in `openTurn`), turns owned by a lease or by the process that began them, the inbox, forks, resumes, and `TurnActivity` (the turns this instance holds open or is beginning). The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
 
 ## Rules
 
@@ -32,8 +32,8 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:371` | exact for one item, `src/sessions.adapter.test.ts:1035`; the join unpinned |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:283` | exact, `src/sessions.adapter.test.ts:1187` |
+| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:407` | exact for one item, `src/sessions.adapter.test.ts:1035`; the join unpinned |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:313` | exact, `src/sessions.adapter.test.ts:1187` |
 
 ## Erasure files
 
