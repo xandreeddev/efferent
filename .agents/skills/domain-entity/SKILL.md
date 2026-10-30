@@ -52,7 +52,10 @@ see a file by its suffix, so the suffix decides which rules apply.
   (`TaskStatus`), and a union's tags come from
   `.pipe(Schema.toTaggedUnion("_tag"))`: `discriminants` in order
   (`TURN_EVENT_NAMES`), `isAnyOf([...])` as a guard.
-- Branch over a union with `Match.valueTags` (skill `effect-idioms`).
+- Branch over a union with `Match.valueTags` (skill `effect-idioms`), or,
+  for one with `toTaggedUnion`, its own `X.match(value, { … })`, every tag
+  named (`LogBody.match`: a tag a function ignores gets its case, `() => []`),
+  or `X.matchOrElse` where the default is deliberate (`draftOfTurnEvent`).
 
 ## 4. Invariants live in the schema
 

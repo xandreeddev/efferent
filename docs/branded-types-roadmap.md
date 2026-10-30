@@ -113,7 +113,9 @@ a property test that `parseModel ∘ formatModel` round-trips.
 - **Secrets** — `ApiKey` / `AccessToken` / `RefreshToken` as branded
   **`Redacted`** on `AuthStore` credentials. The only candidate with behavioral
   value: prevents accidental key logging; unwrap with `Redacted.value` only at
-  the HTTP call site in the router/registry.
+  the HTTP call site in the router/registry. The `Redacted` half is done:
+  `Credential`'s `key`, `access` and `refresh` decode as `Redacted`
+  (`Schema.RedactedFromValue`, so `auth.json` is unchanged); the brands are not.
 - **`ToolCallId`** — nominal brand on the provider tool-call id (pairs
   `onBeforeToolCall` ↔ `onAfterToolCall`; ~20 uses). Provider-opaque → nominal.
 

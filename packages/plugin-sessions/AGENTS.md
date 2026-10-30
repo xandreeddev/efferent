@@ -33,8 +33,8 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, joined by a blank line | `src/sessions.adapter.ts:407` | exact for one item, `src/sessions.adapter.test.ts:1036`; the join unpinned |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:313` | exact, `src/sessions.adapter.test.ts:1188` |
+| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:419` | exact, `src/sessions.adapter.test.ts:1304` (one item, `:1134`) |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:325` | exact, `src/sessions.adapter.test.ts:1286` |
 
 ## Erasure files
 

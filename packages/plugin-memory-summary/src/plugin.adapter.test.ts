@@ -50,6 +50,14 @@ describe("the summarizer's prompt", () => {
       "Reply with the summary only.",
     ].join("\n\n"))
   })
+
+  test("the default instructions open it", () => {
+    expect(memorySummaryDefaults.instructions).toBe(
+      "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. "
+      + "Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. "
+      + "Dense prose and lists; never invent anything not in the transcript.",
+    )
+  })
 })
 
 describe("a summarizer that fails or stalls", () => {

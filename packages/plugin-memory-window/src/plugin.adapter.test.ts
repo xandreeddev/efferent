@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Option, Tracer } from "effect"
+import { Context, Effect, Option, Result, Tracer } from "effect"
 import { ConversationId, ConversationMemory, entryId, estimateMessageTokens, HarnessError, renderLog, RunContext, RunId, RunOrdinal, ToolCallId, UserMessage } from "@xandreed/core"
 import { toolParametersSchema } from "@xandreed/core/internal"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
@@ -74,8 +74,8 @@ describe("reading a spilled result back", () => {
     expect(recallPage("run-1:2", "abcdef", 2)).toBe("cdef")
     expect(await recalled({ locator: "run-1:2" })).toMatchObject({ _tag: "Success", success: `${"x".repeat(RECALL_PAGE_CHARS)}\n[… 500 more characters; call recall_context with locator "run-1:2" and offset ${RECALL_PAGE_CHARS}]` })
     expect(await recalled({ locator: "run-1:2", offset: RECALL_PAGE_CHARS })).toMatchObject({ _tag: "Success", success: "x".repeat(500) })
-    expect(await recalled({ locator: "run-1:2", offset: RECALL_PAGE_CHARS + 500 })).toMatchObject({ _tag: "Failure", failure: { error: "OffsetOutOfRange" } })
-    expect(await recalled({ locator: "run-9:9" })).toMatchObject({ _tag: "Failure", failure: { error: "UnknownLocator" } })
+    expect(Result.getFailure(await recalled({ locator: "run-1:2", offset: RECALL_PAGE_CHARS + 500 }))).toEqual(Option.some({ error: "OffsetOutOfRange", message: `The result has ${RECALL_PAGE_CHARS + 500} characters; pass an offset below ${RECALL_PAGE_CHARS + 500}` }))
+    expect(Result.getFailure(await recalled({ locator: "run-9:9" }))).toEqual(Option.some({ error: "UnknownLocator", message: "No stored result has locator run-9:9" }))
   })
 
   test("recall_context declares the run it reads the memory of, and a call without one fails with requires.missing", async () => {

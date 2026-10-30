@@ -290,16 +290,16 @@ export const turnUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number
  */
 export const draftOfTurnEvent = (turn: number, event: TurnEventType): Effect.Effect<Option.Option<SessionDraft>, Schema.SchemaError> => {
   if (TransientTurnEvents.includes(event._tag) || RECORDED_ELSEWHERE.has(event._tag)) return Effect.succeed(Option.none())
-  if (event._tag === "host") return storedJson(event.data).pipe(Effect.map((data) => Option.some({ kind: event.name, turn: Option.some(turn), data })))
-  if (event._tag === "assistant.message") {
-    return encodeStepUsage({ step: event.step, run: event.run, model: event.model, usage: event.usage }).pipe(
+  type Drafted = Effect.Effect<Option.Option<SessionDraft>, Schema.SchemaError>
+  return TurnEvent.matchOrElse(event, {
+    host: (host): Drafted => storedJson(host.data).pipe(Effect.map((data) => Option.some({ kind: host.name, turn: Option.some(turn), data }))),
+    "assistant.message": (message): Drafted => encodeStepUsage({ step: message.step, run: message.run, model: message.model, usage: message.usage }).pipe(
       Effect.map((encoded) => Option.some({ kind: "step.usage", turn: Option.some(turn), data: { ...encoded } })),
-    )
-  }
-  return encodeTurnEvent(event).pipe(Effect.flatMap(({ _tag, ...data }) =>
-    storedJson(Option.match(Option.fromNullishOr(storedPayload.get(_tag)), { onNone: () => data, onSome: (stored) => stored(data) })).pipe(
-      Effect.map((stored) => Option.some({ kind: _tag, turn: Option.some(turn), data: stored })),
-    )))
+    ),
+  }, (stored): Drafted => encodeTurnEvent(stored).pipe(Effect.flatMap(({ _tag, ...data }) =>
+    storedJson(Option.match(Option.fromNullishOr(storedPayload.get(_tag)), { onNone: () => data, onSome: (payload) => payload(data) })).pipe(
+      Effect.map((json) => Option.some({ kind: _tag, turn: Option.some(turn), data: json })),
+    ))))
 }
 
 /** Each memory kind's stored schema, from the log body it holds. */

@@ -89,11 +89,63 @@ const operation = <A>(work: () => A) => whileBusy(Effect.try({ try: work, catch:
 const onSession = <A, E, R>(effect: Effect.Effect<A, E, R>, id: ConversationId): Effect.Effect<A, E, R> =>
   Effect.annotateCurrentSpan("efferent.session.id", id).pipe(Effect.andThen(effect))
 
+/** Schema 1: the tables 0.14.0 created without recording a version (a file without one holds them, or nothing yet). Shipped: never edit it. */
+const SCHEMA_V1 = `
+    CREATE TABLE IF NOT EXISTS session_heads (
+      id TEXT PRIMARY KEY, owner TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, meta TEXT NOT NULL,
+      parent_id TEXT REFERENCES session_heads(id) ON DELETE CASCADE, parent_through INTEGER, turn_at_fork INTEGER,
+      seq INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT '{}', updated_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS session_heads_owner ON session_heads(owner, updated_at DESC, id DESC);
+    CREATE INDEX IF NOT EXISTS session_heads_parent ON session_heads(parent_id);
+    CREATE TABLE IF NOT EXISTS session_log_events (
+      session_id TEXT NOT NULL REFERENCES session_heads(id) ON DELETE CASCADE, seq INTEGER NOT NULL, turn INTEGER,
+      kind TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id, seq));
+    CREATE INDEX IF NOT EXISTS session_log_events_kind ON session_log_events(session_id, kind, seq);
+  `
+
+/**
+ * The schema, in order: entry n takes a file from `user_version` n to n + 1.
+ * A shipped entry never changes; a change to the tables adds one.
+ */
+const MIGRATIONS: ReadonlyArray<string> = [SCHEMA_V1]
+
+/** What opening found: a version this release reads (the file is now at its last schema), or a newer one, left alone. */
+type Migrated =
+  | { readonly _tag: "Current" }
+  | { readonly _tag: "Newer"; readonly found: number }
+
+/**
+ * Bring the file to the last schema of `migrations`, in one IMMEDIATE
+ * transaction, so two processes opening one file migrate it once: the
+ * entries after its `user_version` run in order, then the version is
+ * stamped, all or nothing, so a step that fails leaves the tables and the
+ * version as they were. A file without a version is at 0; a file already at
+ * the last schema is not written. A file at a later version than
+ * `migrations` knows (a newer release wrote it) is left as it is, its
+ * tables neither read nor written, and fails with `store.version`.
+ */
+export const migrateSessionDatabase = (db: Database, migrations: ReadonlyArray<string> = MIGRATIONS): Effect.Effect<void, SessionLogError> =>
+  operation(() => db.transaction((): Migrated => {
+    const found = db.query<{ readonly user_version: number }, []>("PRAGMA user_version").get()?.user_version ?? 0
+    if (found > migrations.length) return { _tag: "Newer", found }
+    if (found === migrations.length) return { _tag: "Current" }
+    migrations.slice(found).forEach((sql) => db.exec(sql))
+    db.exec(`PRAGMA user_version = ${migrations.length}`)
+    return { _tag: "Current" }
+  }).immediate()).pipe(Effect.flatMap((migrated) => Match.valueTags(migrated, {
+    Current: (): Effect.Effect<void, SessionLogError> => Effect.void,
+    Newer: ({ found }) => Effect.fail(new SessionLogError({
+      code: "store.version",
+      message: `the session database is at schema ${found}, written by a newer release; this release reads up to schema ${migrations.length}`,
+    })),
+  })))
+
 /**
  * The session log's SQLite file, opened (and created, readable by its owner
  * only) for the scope: WAL with `synchronous = NORMAL`, foreign keys on, no
  * busy wait on the thread (`busy_timeout = 0`, see `BUSY_WAIT`), and the
- * tables in place. One `session_log.open` span.
+ * tables at this release's schema (`migrateSessionDatabase`). One
+ * `session_log.open` span.
  */
 export const openSessionDatabase = Effect.fn("session_log.open")(function* (path: string): Effect.fn.Return<Database, SessionLogError, Scope.Scope> {
   yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true }), catch: failure("store.open") })
@@ -110,18 +162,7 @@ export const openSessionDatabase = Effect.fn("session_log.open")(function* (path
   }).pipe(Effect.filterOrFail((mode) => mode === "wal", (mode) => new SessionLogError({ code: "store.busy", message: `the journal stayed ${mode ?? "unknown"}, not WAL` }))))
   yield* operation(() => db.exec("PRAGMA synchronous = NORMAL;"))
   // Under the write lock, so a process never creates its tables over a schema another is still writing.
-  yield* operation(() => db.transaction(() => db.exec(`
-    CREATE TABLE IF NOT EXISTS session_heads (
-      id TEXT PRIMARY KEY, owner TEXT NOT NULL, origin TEXT NOT NULL, created_at INTEGER NOT NULL, meta TEXT NOT NULL,
-      parent_id TEXT REFERENCES session_heads(id) ON DELETE CASCADE, parent_through INTEGER, turn_at_fork INTEGER,
-      seq INTEGER NOT NULL DEFAULT 0, revision INTEGER NOT NULL DEFAULT 0, state TEXT NOT NULL DEFAULT '{}', updated_at INTEGER NOT NULL);
-    CREATE INDEX IF NOT EXISTS session_heads_owner ON session_heads(owner, updated_at DESC, id DESC);
-    CREATE INDEX IF NOT EXISTS session_heads_parent ON session_heads(parent_id);
-    CREATE TABLE IF NOT EXISTS session_log_events (
-      session_id TEXT NOT NULL REFERENCES session_heads(id) ON DELETE CASCADE, seq INTEGER NOT NULL, turn INTEGER,
-      kind TEXT NOT NULL, at INTEGER NOT NULL, data TEXT NOT NULL, PRIMARY KEY(session_id, seq));
-    CREATE INDEX IF NOT EXISTS session_log_events_kind ON session_log_events(session_id, kind, seq);
-  `)).immediate())
+  yield* migrateSessionDatabase(db)
   return db
 })
 

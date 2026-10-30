@@ -182,7 +182,8 @@ user-role message (`[Host note: …]`, never "system" or "source of
 truth"), `framed(tag, text)` for untrusted text such as tool output,
 transcripts and summaries (the tag inside it escaped in any case or
 spacing), and `clipTo` / `clippedMarker` for a cut that says how much it
-dropped. Pin every such text with an exact test beside it.
+dropped. Pin every such text with an exact test beside it, and list it
+under "Model-facing text" below.
 
 Skills as files: `harness/skill-files.entity.ts` and its functions read a
 tree of `SKILL.md` files without IO (`readSkillFiles`, which never fails and
@@ -227,5 +228,19 @@ functions and decoders; constructors (`make*`, and `openLogSession`, which
 works with (`turnOf`, `stepRequestOf`); helpers called per event, step or
 entry (`publishToolProgress`, the memory log's `append`, the step request's
 `dispatch`); and the kits.
+
+## Model-facing text
+
+| Text | Source | Pinned by |
+|---|---|---|
+| A host note, `[Host note: …]` (`hostNote`) | `src/turn/model-text.ts:12` | exact, `src/turn/model-text.test.ts:6` |
+| The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact, `src/turn/model-text.test.ts:7`, `:22-27` |
+| A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |
+| The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/internal/mapping.entity.functions.ts:47-54` | exact, `src/internal/mapping.entity.functions.test.ts:402` |
+| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:76` | exact, `src/memory/memory-log.entity.test.ts:389` |
+| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:495-510` | exact, `src/memory/memory-log.entity.test.ts:361`, `:372`, `:389` |
+| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:459-487` | exact, `src/memory/memory-log.entity.test.ts:294`, `:308`, `:327` |
+| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:137-147` | exact, `src/memory/memory-log.entity.test.ts:406-408` |
+| An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:163-164` | exact, `src/domain/media.entity.test.ts:148-150` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

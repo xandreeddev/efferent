@@ -2,23 +2,31 @@ import { Context, Option, Schema } from "effect"
 import type { Effect, Redacted } from "effect"
 import type { ProviderId } from "../domain/model-selection.entity.js"
 
+/** A secret: `Redacted` once decoded, so it prints as `<redacted>`; its encoded form is the plain string. */
+const Secret = Schema.RedactedFromValue(Schema.String)
+
 /**
  * A stored provider credential: a raw API key, an OAuth subscription (with
  * refresh material and absolute expiry, epoch ms), or a local provider that
- * needs no key. Matches the on-disk `auth.json` vocabulary the previous line
- * established, so existing credentials keep working.
+ * needs no key. Its secrets (`key`, `access`, `refresh`) are `Redacted`, so
+ * they print as `<redacted>` in errors, logs and fingerprints; unwrap one
+ * with `Redacted.value` only where a request is built. The encoded form is
+ * the on-disk `auth.json` vocabulary the previous line established, secrets
+ * in the clear, so existing credentials keep working. Store a credential
+ * through `Schema.encodeEffect(Credential)`, never `JSON.stringify`, which
+ * writes `"<redacted>"` in place of each secret.
  */
 export const Credential = Schema.Union(
-  [Schema.Struct({ type: Schema.Literal("api_key"), key: Schema.String }),
+  [Schema.Struct({ type: Schema.Literal("api_key"), key: Secret }),
   Schema.Struct({
     type: Schema.Literal("oauth"),
-    access: Schema.String,
-    refresh: Schema.String,
+    access: Secret,
+    refresh: Secret,
     expires: Schema.Number,
-    accountId: Schema.optional(Schema.String),
-    installationId: Schema.optional(Schema.String),
+    accountId: Schema.optionalKey(Schema.String),
+    installationId: Schema.optionalKey(Schema.String),
   }),
-  Schema.Struct({ type: Schema.Literal("local"), baseUrl: Schema.optional(Schema.String) })],
+  Schema.Struct({ type: Schema.Literal("local"), baseUrl: Schema.optionalKey(Schema.String) })],
 )
 export type Credential = typeof Credential.Type
 
@@ -37,7 +45,8 @@ export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
  * usable secret (refreshing a near-expiry OAuth token first, and persisting
  * it where the store keeps credentials), so a credential added mid-session
  * takes effect on the next call with no restart. `None` means the provider
- * is not configured.
+ * is not configured. Every secret it hands out, through `get` and `all` as
+ * through `resolveKey`, is `Redacted`.
  *
  * One refresh of a credential runs at a time: concurrent calls on one
  * expired token send one token request and share its result. A `set` or

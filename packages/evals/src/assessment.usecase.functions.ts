@@ -6,7 +6,7 @@ import type { EvaluatorBinding } from "./assessment.usecase.js"
 
 export const unknownEvaluationUsage = { inputTokens: Option.none<number>(), outputTokens: Option.none<number>(), costUsd: Option.none<number>() }
 
-/** @public */
+/** @deprecated Put the evaluator behind a grader with `graderFromEvaluator`: a run grades each trial with it, and `gradeEvaluation` regrades saved work. Removed in a later minor release. */
 export const assess = <I, R>(binding: EvaluatorBinding<I, R>, input: I): Effect.Effect<EvaluationResult, never, R> =>
   Effect.gen(function* () {
     const startedAt = yield* Clock.currentTimeMillis
@@ -24,6 +24,7 @@ export const assess = <I, R>(binding: EvaluatorBinding<I, R>, input: I): Effect.
     return { ...common, status: "scored" as const, metrics: result.value.metrics.filter((metric) => binding.select.includes(metric.name)), reason: Option.some(result.value.reason), references: result.value.references ?? [], usage: result.value.usage ?? unknownEvaluationUsage, metadata: result.value.metadata ?? {} }
   }).pipe(Effect.withSpan("eval.evaluator", { attributes: { "eval.evaluator.id": binding.evaluator.id, "eval.evaluator.version": binding.evaluator.version } }))
 
+/** @deprecated `graderFromEvaluator` checks the evaluator against its grader when its layer is built. */
 export const validateBindings = <I, R>(bindings: ReadonlyArray<EvaluatorBinding<I, R>>) => {
   const ids = bindings.map((binding) => binding.evaluator.id)
   return new Set(ids).size !== ids.length || bindings.some(({ evaluator, select, timeoutMs }) => (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs <= 0)) || !evaluator.id.trim() || !evaluator.version.trim() || select.length === 0 || new Set(select).size !== select.length || new Set(evaluator.metrics).size !== evaluator.metrics.length || select.some((name) => !evaluator.metrics.includes(name)))
@@ -31,6 +32,9 @@ export const validateBindings = <I, R>(bindings: ReadonlyArray<EvaluatorBinding<
     : Effect.void
 }
 
-/** Also used to rescore saved evidence; no task execution or export is involved. */
+/**
+ * Also used to rescore saved evidence; no task execution or export is involved.
+ * @deprecated Put each evaluator behind a grader with `graderFromEvaluator`; `gradeEvaluation` regrades saved work. Removed in a later minor release.
+ */
 export const assessAll = <I, R>(bindings: ReadonlyArray<EvaluatorBinding<I, R>>, input: I) =>
   validateBindings(bindings).pipe(Effect.andThen(Effect.forEach(bindings, (binding) => assess(binding, input), { concurrency: 1 })))

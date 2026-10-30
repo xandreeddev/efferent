@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
 import fc from "fast-check"
-import { ConversationId } from "../domain/message.entity.js"
+import { ConversationId, ToolCallId } from "../domain/message.entity.js"
 import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
+import { toPromptMessages } from "../internal/mapping.entity.functions.js"
+import { canonicalJson, renderLog } from "../memory/memory-log.entity.functions.js"
 import { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -66,6 +68,65 @@ describe("the memory log stored as session events", () => {
       const back = Effect.runSync(entriesOfEvents(asEvents(drafts, shuffle)))
       return JSON.stringify(Schema.encodeSync(Schema.Array(LogEntry))(back)) === expected
     }), { numRuns: 50 })
+  })
+
+  /** What a request sends of these entries, as the turn after them renders it. */
+  const sent = (log: ReadonlyArray<LogEntry>) => JSON.stringify(toPromptMessages(renderLog(log, {
+    strategy: "window", currentTurn: 2, currentRun: RunId.make("run-2"), run: RunOrdinal.make(0), turnContext: "current",
+    replies: true, stepContext: "none", digests: true, media: { mode: "none", maxImages: 0, maxChars: 0 },
+  })))
+  const keyOrders: ReadonlyArray<(keys: ReadonlyArray<string>) => ReadonlyArray<string>> = [
+    (keys) => keys,
+    (keys) => [...keys].reverse(),
+    (keys) => [...keys].sort(),
+  ]
+
+  test("a past exchange is sent with the bytes the turn that made it sent, whatever key order the store keeps: params, a provider-run result and provider options in canonical order", async () => {
+    const runId = RunId.make("run-1")
+    const id = (n: number) => EntryId.make(`run-1:${n}`)
+    const input = { query: "alpha", limit: 2, filter: { tag: "b", after: 1 } }
+    const entries: ReadonlyArray<LogEntry> = [
+      { id: id(0), runId, turn: 1, step: 0, at: 0, body: { _tag: "TurnStarted", userMessage: new UserMessage({ text: "search alpha" }) } },
+      {
+        id: id(1), runId, turn: 1, step: 0, at: 0,
+        body: {
+          _tag: "Message", message: {
+            role: "assistant", content: [
+              { type: "reasoning", text: "search for it", providerOptions: { vendor: { type: "thinking", signature: "c2lnbmVk" } } },
+              { type: "tool-call", toolCallId: ToolCallId.make("c1"), toolName: "search", input },
+              { type: "tool-call", toolCallId: ToolCallId.make("p1"), toolName: "web_search", input: { query: "alpha", max: 1 }, providerExecuted: true },
+              { type: "tool-result", toolCallId: ToolCallId.make("p1"), toolName: "web_search", output: { url: "https://example.com", title: "alpha" }, providerExecuted: true },
+            ],
+          },
+        },
+      },
+      {
+        id: id(2), runId, turn: 1, step: 0, at: 0,
+        body: { _tag: "ToolResult", toolCallId: ToolCallId.make("c1"), toolName: "search", isError: false, encoded: { total: 1, hits: ["a"] }, view: "FOUND 1", viewVersion: "1", subjects: [], artifacts: [], pinned: false },
+      },
+    ]
+    // The turn that made the call renders it from memory, in the provider's order; later turns from the store.
+    const live = sent(entries)
+    const drafts = await Effect.runPromise(storedDrafts(entries))
+    const stored = await Effect.runPromise(Effect.forEach(keyOrders, (order) => entriesOfEvents(asEvents(drafts, order)).pipe(Effect.map(sent)), { concurrency: 1 }))
+    expect(stored).toEqual([live, live, live])
+    expect(live).toContain(`"params":${canonicalJson(input)}`)
+    expect(live).toContain("\"options\":{\"vendor\":{\"signature\":\"c2lnbmVk\",\"type\":\"thinking\"}}")
+  })
+
+  test("any tool call's input is sent with the same canonical bytes from memory and from the stored log", () => {
+    const key = fc.string({ minLength: 1, maxLength: 6 })
+    const inputs = fc.dictionary(key, fc.oneof(fc.integer(), fc.string(), fc.boolean(), fc.constant(null), fc.array(fc.integer()), fc.dictionary(key, fc.integer())))
+    fc.assert(fc.property(inputs, fc.integer({ min: 0, max: keyOrders.length - 1 }), (input, store) => {
+      const runId = RunId.make("run-1")
+      const entries: ReadonlyArray<LogEntry> = [
+        { id: EntryId.make("run-1:0"), runId, turn: 1, step: 0, at: 0, body: { _tag: "TurnStarted", userMessage: new UserMessage({ text: "go" }) } },
+        { id: EntryId.make("run-1:1"), runId, turn: 1, step: 0, at: 0, body: { _tag: "Message", message: { role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("c1"), toolName: "search", input }] } } },
+      ]
+      const back = Effect.runSync(storedDrafts(entries).pipe(Effect.flatMap((drafts) => entriesOfEvents(asEvents(drafts, keyOrders[store] ?? ((keys) => keys))))))
+      const live = sent(entries)
+      return sent(back) === live && live.includes(`"params":${canonicalJson(input)}`)
+    }), { numRuns: 100 })
   })
 
   test("every compaction, a digest on compaction and a user-role message read back unchanged", async () => {

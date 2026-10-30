@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Path, Result } from "effect"
-import { FileSystem, makeMemoryFileSystem, SessionEnvironment } from "@xandreed/core"
-import { checkWritable, compileProtect, displayOf, excludesBelow, isWithin, openWorkspace, resolveTarget } from "./workspace-path.entity.functions.js"
+import { FileSystem, FsError, makeMemoryFileSystem, SessionEnvironment } from "@xandreed/core"
+import type { FsReason } from "@xandreed/core"
+import { checkWritable, compileProtect, displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget } from "./workspace-path.entity.functions.js"
 
 /** A workspace at /work in memory, reached through a link at /link, with a secret beside it and links in and out. */
 const opened = (workspace: string) => Effect.gen(function* () {
@@ -45,6 +46,42 @@ describe("resolveTarget", () => {
     expect(await resolved("/work", "/secret/key", false)).toBe("/secret/key as /secret/key")
     expect(await resolved("/work", "out-link", false)).toBe("/secret/key as out-link")
   })
+
+  test("each refusal names the path as the model gave it and what is wrong with it", async () => {
+    const refusal = (input: string) => Effect.runPromise(opened("/work").pipe(Effect.flatMap((access) => Effect.flip(resolveTarget(access, input, { confine: true })))))
+    expect(await Promise.all(["../secret/key", "/secret/key", "out-link", "out-dir/new.txt", "dangling"].map(refusal))).toEqual([
+      { error: "OutsideWorkspace", message: "../secret/key is outside the workspace; use a path under its root" },
+      { error: "OutsideWorkspace", message: "/secret/key is outside the workspace; use a path under its root" },
+      { error: "OutsideWorkspace", message: "out-link leads outside the workspace through a symbolic link" },
+      { error: "OutsideWorkspace", message: "out-dir/new.txt leads outside the workspace through a symbolic link" },
+      { error: "Invalid", message: "dangling: it is a symbolic link to something that does not exist" },
+    ])
+  })
+
+  test("a workspace that cannot be opened is WorkspaceMissing, with the file system's reason and never its message", async () => {
+    const missing = await Effect.runPromise(Effect.gen(function* () {
+      const fs = yield* makeMemoryFileSystem({ "/work/a.txt": "a" })
+      const path = yield* Effect.service(Path.Path).pipe(Effect.provide(Path.layer))
+      return yield* Effect.flip(openWorkspace(path).pipe(Effect.provideService(FileSystem, fs), Effect.provideService(SessionEnvironment, { workspace: "/nowhere" })))
+    }))
+    expect(missing).toEqual({ error: "WorkspaceMissing", message: "the workspace directory cannot be opened (NotFound), so no workspace tool can run in this session; tell the user" })
+  })
+})
+
+describe("fsFailure", () => {
+  test("a file-system failure as the model reads it: every reason in words, never the backend's message", () => {
+    const failed = (reason: FsReason) => fsFailure("src/a.ts")(new FsError({ path: "/work/src/a.ts", reason, message: "the backend's words" }))
+    expect((["NotFound", "IsDirectory", "NotDirectory", "Permission", "Exists", "NotEmpty", "Invalid", "Io"] as const).map(failed)).toEqual([
+      { error: "NotFound", message: "src/a.ts does not exist" },
+      { error: "IsDirectory", message: "src/a.ts is a directory; give the path of a file" },
+      { error: "NotDirectory", message: "src/a.ts is not a directory, or a part of the path before it is a file" },
+      { error: "Permission", message: "permission denied: src/a.ts" },
+      { error: "Exists", message: "src/a.ts already exists, and the file system would not replace it; give another path" },
+      { error: "NotEmpty", message: "src/a.ts is a directory with entries in it; give another path" },
+      { error: "Invalid", message: "src/a.ts is not a path the file system accepts; check it and try again" },
+      { error: "Io", message: "src/a.ts could not be read or written (a file-system error); try again, or give another path" },
+    ])
+  })
 })
 
 describe("protect and display", () => {
@@ -58,6 +95,8 @@ describe("protect and display", () => {
     expect(await outcome("/work/.git/config", "alias-of-git-config")).toBe("Protected")
     expect(await outcome("/work/secrets/prod.env", "secrets/prod.env")).toBe("Protected")
     expect(await outcome("/work/src/main.ts", "src/main.ts")).toBe("ok")
+    expect(await Effect.runPromise(opened("/work").pipe(Effect.flatMap((access) => Effect.flip(checkWritable(access, { path: "/work/secrets/prod.env", display: "secrets/prod.env" }, rules))))))
+      .toEqual({ error: "Protected", message: "secrets/prod.env is protected (secrets/*.env); the workspace tools do not change it" })
     expect(Result.isFailure(compileProtect(["{a,b}".repeat(11)]))).toBe(true)
   })
 

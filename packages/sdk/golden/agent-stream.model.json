@@ -116,8 +116,8 @@
                 "options": {
                   "anthropic": {
                     "info": {
-                      "type": "thinking",
-                      "signature": "c2lnbmF0dXJlLW9mLXRoZS10aGlua2luZw=="
+                      "signature": "c2lnbmF0dXJlLW9mLXRoZS10aGlua2luZw==",
+                      "type": "thinking"
                     }
                   }
                 },
@@ -128,8 +128,8 @@
                 "options": {
                   "anthropic": {
                     "info": {
-                      "type": "redacted_thinking",
-                      "redactedData": "cmVkYWN0ZWQtdGhpbmtpbmc="
+                      "redactedData": "cmVkYWN0ZWQtdGhpbmtpbmc=",
+                      "type": "redacted_thinking"
                     }
                   }
                 },

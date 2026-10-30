@@ -87,7 +87,7 @@ export const lsTool = ({ config, path }: WorkspaceToolContext): RegisteredTool =
     const limit = params.limit ?? config.lsEntries
     return { path: target.display, entries: entries.slice(0, limit).map((entry) => ({ name: entry.name, kind: entry.kind })), total: entries.length }
   }),
-  view: { version: "1", render: renderLs, compact: compactLs },
+  view: { version: "2", render: renderLs, compact: compactLs },
   annotations: { readOnly: true },
 })
 
@@ -103,7 +103,7 @@ export const findTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
       Effect.mapError((error) => error.reason === "Invalid" ? failure("InvalidPattern", `${params.pattern}: ${error.message}`) : fsFailure(target.display)(error)))
     return { pattern: params.pattern, path: target.display, paths: found.paths.map((relative) => displayOf(access, access.path.join(target.path, relative))), truncated: found.truncated }
   }),
-  view: { version: "1", render: (result) => renderFind(result, config.maxLines, config.maxBytes), compact: compactFind },
+  view: { version: "2", render: (result) => renderFind(result, config.maxLines, config.maxBytes), compact: compactFind },
   annotations: { readOnly: true },
 })
 
@@ -142,7 +142,7 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
           const absolute = access.path.join(target.path, relative)
           return { path: absolute, display: displayOf(access, absolute) }
         })),
-        Effect.mapError((error) => error.reason === "Invalid" ? failure("InvalidPattern", `glob ${glob}: ${error.message}`) : fsFailure(target.display)(error)))
+        Effect.mapError((error) => error.reason === "Invalid" ? failure("InvalidPattern", `glob ${params.glob ?? glob}: ${error.message}`) : fsFailure(target.display)(error)))
     const limit = params.limit ?? config.grepMatches
     const perFile = files.length > 1 ? Math.max(1, Math.ceil(limit / 4)) : limit
     const context = params.context ?? 0
@@ -176,6 +176,6 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
     })
     return { pattern: params.pattern, path: target.display, ...searched }
   }),
-  view: { version: "1", render: (result, params) => renderGrep(result, (params.context ?? 0) > 0, config.maxLines, config.maxBytes), compact: compactGrep },
+  view: { version: "2", render: (result, params) => renderGrep(result, (params.context ?? 0) > 0, config.maxLines, config.maxBytes), compact: compactGrep },
   annotations: { readOnly: true },
 })

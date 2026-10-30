@@ -5734,6 +5734,11 @@
       "meaning": "A value to store (an event's data, the session's state or `meta`) is not one JSON can hold (a BigInt, a cycle)."
     },
     {
+      "code": "store.version",
+      "where": "`@xandreed/plugin-session-sqlite` (a `SessionLogError`), opening the file",
+      "meaning": "A newer release wrote the database: its schema version (`PRAGMA user_version`) is above the last one this release knows. Nothing was read or written; open it with that release or a later one. A file without a version, as 0.14.0 wrote it, still opens."
+    },
+    {
       "code": "tasks.encode",
       "where": "`@xandreed/plugin-tasks` (a `SessionLogError`)",
       "meaning": "A task's `task.started` or `task.result` did not encode. No longer raised since `SessionLogError` became storage only (it is a defect now); older journals may hold it."

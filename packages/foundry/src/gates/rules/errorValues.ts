@@ -164,3 +164,27 @@ export const noErrorCodeCompare: IdiomRule = {
         : [{ node, message: `\`${node.getText(sourceFile)}\` compares a code another module declares` }]
     }),
 }
+
+const isCodeKey = (node: ts.Node | undefined): boolean =>
+  node !== undefined && ts.isStringLiteralLike(node) && node.text === "code"
+
+/** `Predicate.hasProperty(e, "code")` (or its data-last form) and `"code" in e`. */
+const isCodeGuard = (node: ts.Node): boolean =>
+  (ts.isCallExpression(node) && isMemberOf(node.expression, "Predicate", ["hasProperty"]) && isCodeKey(node.arguments.at(-1))) ||
+  (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.InKeyword && isCodeKey(node.left))
+
+/** A `code` read by hand decides again, at each site, what counts as one (a
+ *  string? any value? an own property?), and the copies drift. One reader
+ *  answers it: `errorCodeOf` for a foreign code, `harnessCodeOf` for the
+ *  framework's. */
+export const noCodePropertyGuard: IdiomRule = {
+  id: RuleId.make("effect/no-code-property-guard"),
+  defaultSeverity: "error",
+  description: "a failure's `code` is read through its reader, never guarded by hand",
+  fixHint:
+    "use `errorCodeOf(error)` for a Node or SQLite code (`Option.contains(errorCodeOf(error), \"ENOENT\")`), `harnessCodeOf(error)` for the framework's codes, `Effect.catchTag` for a tagged error",
+  check: ({ sourceFile }) =>
+    matchesIn(sourceFile, (node) =>
+      isCodeGuard(node) ? [{ node, message: `\`${node.getText(sourceFile)}\` reads a \`code\` by hand` }] : [],
+    ),
+}

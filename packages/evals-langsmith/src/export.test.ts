@@ -1,6 +1,7 @@
 import { EvaluationExport, type EvaluationRun } from "@xandreed/evals"
 import { expect, test } from "bun:test"
 import { Effect, Exit, Fiber, Layer, Predicate } from "effect"
+import { TestClock } from "effect/testing"
 import {
   EvaluationServicesLive,
   EvaluationRunStore,
@@ -73,6 +74,7 @@ const report = () =>
       Effect.provide(
         Layer.succeed(EvaluationRunStore, {
           writeTrial: () => Effect.void,
+          appendTranscript: () => Effect.void,
           writeRun: () => Effect.void
         })
       )
@@ -210,4 +212,35 @@ test("an interrupted export returns at once, without waiting for its requests", 
   await Effect.runPromise(Fiber.interrupt(fiber)).finally(stub.stop)
   expect(performance.now() - started).toBeLessThan(1_000)
   expect(Exit.hasInterrupts(await Effect.runPromise(Fiber.await(fiber)))).toBe(true)
+})
+
+test("remote ids are the ones earlier exports derived, so exporting again updates the same run and feedback", async () => {
+  const stub = langsmithStub()
+  const run = await report()
+  const receipt = await exportTo(stub.url, run).finally(stub.stop)
+  const created = (path: string) => stub.requests.filter((request) => request.method === "POST" && request.path === path).map((request) => request.body)
+  expect(receipt.mappings).toEqual({ "fixture-run/suite/candidate/task/1": "a69dc915-fad9-53d2-ae2a-f62a20c54676" })
+  expect(created("/runs")).toEqual([expect.objectContaining({ id: "a69dc915-fad9-53d2-ae2a-f62a20c54676" })])
+  expect(created("/feedback")).toEqual([
+    expect.objectContaining({
+      id: "a1e07d5b-2717-5e34-ab4b-3590d685810f",
+      run_id: "a69dc915-fad9-53d2-ae2a-f62a20c54676",
+      key: "grader@1/trial/correct",
+      score: 1,
+      comment: "matches"
+    })
+  ])
+})
+
+test("a receipt is stamped with the Clock's time", async () => {
+  const stub = langsmithStub()
+  const run = await report()
+  const receipt = await Effect.runPromise(
+    TestClock.setTime(1_767_225_600_000).pipe(
+      Effect.andThen(EvaluationExport.use((port) => port.exportRun(run))),
+      Effect.provide(langsmithExporter({ apiUrl: stub.url, apiKey: "fixture", project: "fixture" }).layer),
+      Effect.provide(TestClock.layer())
+    )
+  ).finally(stub.stop)
+  expect(receipt.at).toBe(1_767_225_600_000)
 })

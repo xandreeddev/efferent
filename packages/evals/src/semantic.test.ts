@@ -82,6 +82,19 @@ test("native LLM profiles pair distinct prompts and model Layers with the same r
   }))
 })
 
+test("the LLM judge asks for its answers as the object semantic_assessment", async () => {
+  const formats: Array<unknown> = []
+  const judge = SemanticLlmLive({ id: "llm-named", prompt: (request) => Prompt.make([{ role: "user", content: JSON.stringify(request) }]) }).pipe(
+    Layer.provide(Layer.effect(LanguageModel.LanguageModel, LanguageModel.make({
+      generateText: (request) => Effect.sync(() => formats.push(request.responseFormat.type === "json" ? request.responseFormat.objectName : request.responseFormat.type))
+        .pipe(Effect.as([{ type: "text" as const, text: JSON.stringify({ answers }) }, finish])),
+      streamText: () => Stream.die("unused"),
+    }))),
+  )
+  await Effect.runPromise(Effect.flatMap(SemanticJudge, (llm) => llm.evaluate(input)).pipe(Effect.provide(judge)))
+  expect(formats).toEqual(["semantic_assessment"])
+})
+
 test("a semantic assessment is traced: eval.semantic.run under eval.evaluator, the judge's call under it", async () => {
   const jev = spanRecorder()
   await Effect.runPromise(assessAll(bindings, { state: input.state }).pipe(

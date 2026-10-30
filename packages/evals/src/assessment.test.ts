@@ -3,7 +3,7 @@ import { Effect, Option, Predicate, Ref, Schema } from "effect"
 import { AssessmentError } from "./assessment.entity.js"
 import { assessAll } from "./assessment.usecase.functions.js"
 import { validateDataset, summarizeAssessments } from "./assessment.entity.functions.js"
-import { compareCalibrationMetric, summarizeCalibration } from "./evaluator-calibration.entity.functions.js"
+import { compareCalibrationMetric, summarizeCalibration } from "./domain/grader-calibration.entity.functions.js"
 import { assessBothOrders } from "./evaluators/pairwise.js"
 import type { Dataset, Evaluator } from "./assessment.usecase.js"
 import { spanRecorder } from "./testing/fixture.testing.js"
@@ -92,4 +92,16 @@ test("calibration coverage excludes missing predictions and preserves confusion 
   expect(Option.getOrThrow(result.brier)).toBeCloseTo(0.81)
   expect(Option.isNone(result.recall)).toBe(true)
   expect(result.reliability[9]?.count).toBe(1)
+})
+test("calibration measures two probabilities exactly, outside the confusion counts and the reliability bins", () => {
+  expect(compareCalibrationMetric({ kind: "probability", name: "grounded", value: 0.7 }, { kind: "probability", name: "grounded", value: 0.7 }))
+    .toEqual({ status: "measured", agreement: true, brier: Option.none(), absoluteError: Option.none(), falsePass: false, falseFail: false })
+  const result = summarizeCalibration([
+    { actual: Option.some({ kind: "probability", name: "grounded", value: 0.7 }), reference: { kind: "probability", name: "grounded", value: 0.7 } },
+    { actual: Option.some({ kind: "probability", name: "grounded", value: 0.7 }), reference: { kind: "probability", name: "grounded", value: 0.75 } },
+    { actual: Option.some({ kind: "probability", name: "grounded", value: 0.9 }), reference: { kind: "boolean", name: "grounded", value: true } },
+  ])
+  expect([result.measured, result.unavailable, Option.getOrThrow(result.agreement)]).toEqual([3, 0, 2 / 3])
+  expect(result.confusion).toEqual({ truePositive: 1, trueNegative: 0, falsePositive: 0, falseNegative: 0 })
+  expect(result.reliability.map(({ count }) => count)).toEqual([0, 0, 0, 0, 0, 0, 0, 0, 0, 1])
 })

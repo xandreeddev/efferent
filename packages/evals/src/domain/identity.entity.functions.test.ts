@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Effect, Schema } from "effect"
+import { Cause, Effect, Option, Schema } from "effect"
 import { AssessmentError } from "../assessment.entity.js"
 import { EvaluationError } from "./identity.entity.js"
-import { isEvaluationError, isUnavailable, reasonOf } from "./identity.entity.functions.js"
+import { errorCodeOf, isEvaluationError, isUnavailable, reasonOf } from "./identity.entity.functions.js"
 
 class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { message: Schema.String }) {}
 class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
@@ -47,6 +47,14 @@ describe("reasonOf", () => {
     expect(reasonOf(causeOf(Effect.interrupt))).toBe("interrupted")
     expect(reasonOf(Cause.combine(Cause.interrupt(), Cause.fail(new NotFound({ message: "missing" }))))).toBe("NotFound: missing")
     expect(reasonOf(Cause.empty)).toBe("failed without an error")
+  })
+})
+
+describe("errorCodeOf", () => {
+  test("reads a foreign error's string code only", () => {
+    const missing = Object.assign(new Error("no such file"), { code: "ENOENT" })
+    expect([missing, { code: "EACCES" }, { code: 2 }, new Error("no code"), "ENOENT", undefined].map(errorCodeOf))
+      .toEqual([Option.some("ENOENT"), Option.some("EACCES"), Option.none(), Option.none(), Option.none(), Option.none()])
   })
 })
 

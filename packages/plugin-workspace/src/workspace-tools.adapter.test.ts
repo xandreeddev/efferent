@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test"
 import { chmod, mkdir, mkdtemp, readdir, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Effect, Layer, Option, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema, Stream } from "effect"
 import type { Scope } from "effect"
-import { Bash, Capabilities, FileSystem, Failure, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, PluginInstanceId, SessionEnvironment, toolResultMedia } from "@xandreed/core"
+import { Bash, BashError, Capabilities, FileSystem, Failure, makeMemoryFileSystem, MEDIA_LIMITS, mediaFromBytes, PluginInstanceId, SessionEnvironment, toolResultMedia } from "@xandreed/core"
 import { toolParametersSchema } from "@xandreed/core/internal"
 import type { Capability } from "@xandreed/core"
 import { makeRegistry } from "@xandreed/plugin-tool-discovery"
@@ -66,6 +66,7 @@ describe("read", () => {
     const seen = await scoped(Effect.gen(function* () {
       const { root, capability, call } = yield* bench({ maxLines: 3 })
       yield* io(() => writeFile(join(root, "notes.txt"), "one\ntwo\nthree\nfour\nfive\n"))
+      yield* io(() => writeFile(join(root, "solo.txt"), "one\n"))
       yield* io(() => writeFile(join(root, "font.woff2"), new Uint8Array([0x77, 0x4f, 0x46, 0x32, 0, 1, 0, 0, 0, 0, 0, 13])))
       yield* io(() => mkdir(join(root, "src")))
       const first = yield* succeeds(ReadResult)(call("read", { path: "notes.txt" }))
@@ -74,17 +75,22 @@ describe("read", () => {
         first, second,
         firstView: shown(capability, "read", first, { path: "notes.txt" }),
         binary: yield* succeeds(ReadResult)(call("read", { path: "font.woff2" })),
-        directory: yield* errorOf(call("read", { path: "src" })),
+        directory: yield* fails(call("read", { path: "src" })),
         past: yield* fails(call("read", { path: "notes.txt", offset: 9 })),
-        missing: yield* errorOf(call("read", { path: "nope.txt" })),
+        pastOne: yield* fails(call("read", { path: "solo.txt", offset: 2 })),
+        missing: yield* fails(call("read", { path: "nope.txt" })),
       }
     }))
     expect(seen.first).toEqual({ _tag: "Text", path: "notes.txt", text: "one\ntwo\nthree", firstLine: 1, lastLine: 3, totalLines: 5, next: 4, clipped: false, lossy: false })
     expect(seen.firstView).toBe("one\ntwo\nthree\n[Showing lines 1-3 of 5. Use offset=4 to continue.]")
     expect(seen.second).toMatchObject({ text: "four\nfive", next: null })
     expect(seen.binary).toEqual({ _tag: "Binary", path: "font.woff2", bytes: 12, mediaType: "font/woff2" })
-    expect([seen.directory, seen.past.error, seen.missing]).toEqual(["IsDirectory", "OffsetPastEnd", "NotFound"])
-    expect(seen.past.message).toContain("has 5 lines")
+    expect([seen.directory, seen.past, seen.pastOne, seen.missing]).toEqual([
+      { error: "IsDirectory", message: "src is a directory; use ls to list it" },
+      { error: "OffsetPastEnd", message: "notes.txt has 5 lines; offset must be at most 5" },
+      { error: "OffsetPastEnd", message: "solo.txt has 1 line; offset must be at most 1" },
+      { error: "NotFound", message: "nope.txt does not exist" },
+    ])
   })
 
   test("a file larger than maxFileBytes is refused with what to use instead", async () => {
@@ -93,8 +99,7 @@ describe("read", () => {
       yield* io(() => writeFile(join(root, "big.log"), "x".repeat(2_000)))
       return yield* fails(call("read", { path: "big.log" }))
     }))
-    expect(failure.error).toBe("FileTooLarge")
-    expect(failure.message).toContain("grep")
+    expect(failure).toEqual({ error: "FileTooLarge", message: "big.log is 2.0 KB, more than the 1 KB read loads; use grep to find lines in it, or bash (head, tail, sed -n) for parts of it" })
   })
 
   test("a file that is not valid UTF-8 is shown with U+FFFD and a notice", async () => {
@@ -105,7 +110,7 @@ describe("read", () => {
       return { result, view: shown(capability, "read", result, {}) }
     }))
     expect(seen.result).toMatchObject({ _tag: "Text", text: "caf\ufffd\nx=1", lossy: true })
-    expect(seen.view).toContain("is not valid UTF-8")
+    expect(seen.view).toBe("caf\ufffd\nx=1\n[latin1.txt is not valid UTF-8: bytes that are not show as \ufffd. edit refuses such a file; change it with bash.]")
   })
 })
 
@@ -176,7 +181,7 @@ describe("read images", () => {
   test("an image over the size cap is a note without its bytes, and its view sends no image", async () => {
     const seen = await scoped(readThroughRegistry({}, { "big.png": oversized }, "big.png"))
     expect(seen.result).toMatchObject({ _tag: "ImageRejected", path: "big.png", mediaType: "image/png", bytes: MEDIA_LIMITS.imageBytes + 1, reason: "TooLarge" })
-    expect(seen.view.text).toContain("big.png is an image (image/png, 3.8 MB) that read cannot show")
+    expect(seen.view.text).toBe(`[big.png is an image (image/png, 3.8 MB) that read cannot show: the image has ${MEDIA_LIMITS.imageBytes + 1} bytes, more than ${MEDIA_LIMITS.imageBytes}. To see it, make a smaller copy with bash (scaled down or recompressed) and read that.]`)
     expect(seen.view.media).toBeUndefined()
     expect(JSON.stringify(seen.encoded).length).toBeLessThan(1_000)
   })
@@ -197,16 +202,15 @@ describe("files that are not regular files", () => {
       yield* succeeds(BashToolResult)(call("bash", { command: "mkfifo pipe" }))
       return {
         read: yield* fails(call("read", { path: "pipe" })),
-        write: yield* errorOf(call("write", { path: "pipe", content: "x" })),
-        edit: yield* errorOf(call("edit", { path: "pipe", edits: [{ oldText: "a", newText: "b" }] })),
-        grep: yield* errorOf(call("grep", { pattern: "pipe", path: "pipe" })),
+        write: yield* fails(call("write", { path: "pipe", content: "x" })),
+        edit: yield* fails(call("edit", { path: "pipe", edits: [{ oldText: "a", newText: "b" }] })),
+        grep: yield* fails(call("grep", { pattern: "pipe", path: "pipe" })),
         walk: yield* succeeds(GrepResult)(call("grep", { pattern: "pipe" })),
         kind: (yield* io(() => stat(join(root, "pipe")))).isFIFO(),
       }
     }))
-    expect(seen.read.error).toBe("NotAFile")
-    expect(seen.read.message).toContain("use bash")
-    expect([seen.write, seen.edit, seen.grep]).toEqual(["NotAFile", "NotAFile", "NotAFile"])
+    const notAFile = (tool: string) => ({ error: "NotAFile", message: `pipe is not a regular file (a pipe, socket or device); ${tool} works on regular files only, use bash for it` })
+    expect([seen.read, seen.write, seen.edit, seen.grep]).toEqual([notAFile("read"), notAFile("write"), notAFile("edit"), notAFile("grep")])
     expect(seen.walk).toMatchObject({ matches: 1, skipped: 0 })
     expect(seen.walk.lines.map((line) => line.path)).toEqual(["notes.txt"])
     expect(seen.kind).toBe(true)
@@ -264,7 +268,7 @@ describe("write", () => {
       const { root, capability, call } = yield* bench()
       const created = yield* succeeds(WriteResult)(call("write", { path: "a/b/c.txt", content: "héllo" }))
       const replaced = yield* succeeds(WriteResult)(call("write", { path: "a/b/c.txt", content: "bye" }))
-      const emptied = yield* errorOf(call("write", { path: "a/b/c.txt", content: "" }))
+      const emptied = yield* fails(call("write", { path: "a/b/c.txt", content: "" }))
       yield* io(() => writeFile(join(root, "run.sh"), "#!/bin/sh\necho old\n"))
       yield* io(() => chmod(join(root, "run.sh"), 0o755))
       yield* io(() => writeFile(join(root, "private.txt"), "mine"))
@@ -287,14 +291,18 @@ describe("write", () => {
           return [after.mode & 0o777, yield* io(() => readFile(join(root, name), "utf8"))]
         })),
         leftovers: (yield* io(() => readdir(join(root, "a/b")))).filter((name) => name.includes("efferent-tmp")),
-        directory: yield* errorOf(call("write", { path: "a", content: "x" })),
+        directory: yield* fails(call("write", { path: "a", content: "x" })),
         empty: yield* succeeds(WriteResult)(call("write", { path: "empty.txt", content: "" })),
       }
     }))
     expect(seen.created).toEqual({ path: "a/b/c.txt", bytes: 6, created: true })
     expect(seen.replaced).toEqual({ path: "a/b/c.txt", bytes: 3, created: false })
     expect(seen.view).toBe("Created a/b/c.txt (6 B).")
-    expect([seen.emptied, seen.content, seen.directory]).toEqual(["WouldEmpty", "bye", "IsDirectory"])
+    expect([seen.emptied, seen.content, seen.directory]).toEqual([
+      { error: "WouldEmpty", message: "a/b/c.txt has content; write refuses to empty it. Use edit to remove parts of it, or bash to delete it" },
+      "bye",
+      { error: "IsDirectory", message: "a is a directory; write takes the path of a file" },
+    ])
     expect(seen.modes).toEqual([0o755, 0o600])
     expect(seen.shared).toEqual([[0o664, "edited"], [0o644, "edited"], [0o640, "edited"], [0o666, "edited"]])
     expect(seen.leftovers).toEqual([])
@@ -315,7 +323,7 @@ describe("edit", () => {
         bytes: [...new Uint8Array(yield* io(() => readFile(join(root, "win.txt"))))].slice(0, 3),
         text: yield* io(() => readFile(join(root, "win.txt"), "utf8")),
         missing: yield* fails(call("edit", { path: "nope.txt", edits: [{ oldText: "a", newText: "b" }] })),
-        noMatch: yield* errorOf(call("edit", { path: "win.txt", edits: [{ oldText: "absent", newText: "b" }] })),
+        noMatch: yield* fails(call("edit", { path: "win.txt", edits: [{ oldText: "absent", newText: "b" }] })),
         latin1: yield* io(() => writeFile(join(root, "latin1.txt"), latin1)).pipe(Effect.andThen(fails(call("edit", { path: "latin1.txt", edits: [{ oldText: "x=1", newText: "x=2" }] })))),
         latin1Bytes: [...new Uint8Array(yield* io(() => readFile(join(root, "latin1.txt"))))],
       }
@@ -327,11 +335,28 @@ describe("edit", () => {
     expect(seen.view).toBe("Replaced 2 blocks in win.txt; the first change is at line 2.")
     expect(seen.bytes).toEqual([0xef, 0xbb, 0xbf])
     expect(seen.text).toBe("﻿first\r\n2nd\r\n3rd\r\nfourth\r\n")
-    expect(seen.missing.error).toBe("NotFound")
-    expect(seen.missing.message).toContain("use write")
-    expect(seen.noMatch).toBe("NoMatch")
-    expect(seen.latin1.error).toBe("NotUtf8")
+    expect([seen.missing, seen.noMatch, seen.latin1]).toEqual([
+      { error: "NotFound", message: "nope.txt does not exist; use write to create it" },
+      { error: "NoMatch", message: "oldText was not found in the file; read it again and copy the text exactly, whitespace included" },
+      { error: "NotUtf8", message: "latin1.txt is not valid UTF-8 (Latin-1 or another encoding, say); edit changes UTF-8 text files only, since it would replace the bytes it cannot decode. Use bash (sed, iconv) to change it" },
+    ])
     expect(seen.latin1Bytes).toEqual([...latin1])
+  })
+
+  test("refuses a directory, a binary file and a file over maxFileBytes, saying why", async () => {
+    const seen = await scoped(Effect.gen(function* () {
+      const { root, call } = yield* bench({ maxFileBytes: 1_024 })
+      yield* io(() => mkdir(join(root, "src")))
+      yield* io(() => writeFile(join(root, "data.bin"), new Uint8Array([0x61, 0, 0x62])))
+      yield* io(() => writeFile(join(root, "big.log"), "x".repeat(2_048)))
+      const edit = (path: string) => fails(call("edit", { path, edits: [{ oldText: "a", newText: "b" }] }))
+      return [yield* edit("src"), yield* edit("data.bin"), yield* edit("big.log")]
+    }))
+    expect(seen).toEqual([
+      { error: "IsDirectory", message: "src is a directory; edit takes the path of a file" },
+      { error: "Binary", message: "data.bin is a binary file; edit changes text files only" },
+      { error: "FileTooLarge", message: "big.log is 2 KB, more than the 1 KB edit loads; change it with bash (sed -i, or a script)" },
+    ])
   })
 
   test("edits of one file, from calls running at once, are applied one after the other", async () => {
@@ -370,13 +395,13 @@ describe("ls, find and grep", () => {
       yield* tree(root, outside)
       const all = yield* succeeds(LsResult)(call("ls", {}))
       const limited = yield* succeeds(LsResult)(call("ls", { path: "src", limit: 2 }))
-      return { all, view: shown(capability, "ls", all, {}), limited, limitedView: shown(capability, "ls", limited, {}), file: yield* errorOf(call("ls", { path: "README.md" })) }
+      return { all, view: shown(capability, "ls", all, {}), limited, limitedView: shown(capability, "ls", limited, {}), file: yield* fails(call("ls", { path: "README.md" })) }
     }))
     expect(seen.all.entries.map((entry) => entry.name)).toEqual([".github", "README.md", "linked", "node_modules", "src"])
     expect(seen.view).toBe(".github/\nREADME.md\nlinked@\nnode_modules/\nsrc/")
     expect(seen.limited).toEqual({ path: "src", entries: [{ name: "far.ts", kind: "symlink" }, { name: "lib", kind: "directory" }], total: 3 })
-    expect(seen.limitedView).toContain("[Showing 2 of 3 entries.")
-    expect(seen.file).toBe("NotDirectory")
+    expect(seen.limitedView).toBe("far.ts@\nlib/\n[Showing 2 of 3 entries. Use find with a pattern to narrow them down.]")
+    expect(seen.file).toEqual({ error: "NotDirectory", message: "README.md is not a directory; use read to see a file" })
   })
 
   test("find matches globs from the root or a path, skipping excluded names and links", async () => {
@@ -388,14 +413,18 @@ describe("ls, find and grep", () => {
         lib: yield* succeeds(FindResult)(call("find", { pattern: "*", path: "src/lib" })),
         dotted: yield* succeeds(FindResult)(call("find", { pattern: "**/*.yml" })),
         limited: yield* succeeds(FindResult)(call("find", { pattern: "**/*", limit: 2 })),
-        escape: yield* errorOf(call("find", { pattern: "../*" })),
+        escape: yield* fails(call("find", { pattern: "../*" })),
+        unusable: yield* fails(call("find", { pattern: "{a,b}".repeat(11) })),
       }
     }))
     expect(seen.ts).toEqual({ pattern: "**/*.ts", path: ".", paths: ["src/lib/helper.ts", "src/main.ts"], truncated: false })
     expect(seen.lib.paths).toEqual(["src/lib/data.bin", "src/lib/helper.ts"])
     expect(seen.dotted.paths).toEqual([".github/ci.yml"])
     expect(seen.limited).toMatchObject({ paths: [".github/ci.yml", "README.md"], truncated: true })
-    expect(seen.escape).toBe("InvalidPattern")
+    expect([seen.escape, seen.unusable]).toEqual([
+      { error: "InvalidPattern", message: "../*: a glob pattern is relative to its cwd and stays below it (no leading / or .. segment)" },
+      { error: "InvalidPattern", message: `${"{a,b}".repeat(11)}: not a usable glob pattern: its braces stand for more than 1024 patterns` },
+    ])
   })
 
   test("grep searches text files, never through links or excluded names, with context and caps", async () => {
@@ -411,6 +440,7 @@ describe("ls, find and grep", () => {
         globbed: yield* succeeds(GrepResult)(call("grep", { pattern: "helper", glob: "*.ts" })),
         literal: yield* succeeds(GrepResult)(call("grep", { pattern: "helper()", literal: true })),
         invalid: yield* fails(call("grep", { pattern: "helper(" })),
+        unusableGlob: yield* fails(call("grep", { pattern: "helper", glob: "{a,b}".repeat(11) })),
         none: yield* succeeds(GrepResult)(call("grep", { pattern: "absent" })),
       }
     }))
@@ -420,12 +450,18 @@ describe("ls, find and grep", () => {
       { path: "src/main.ts", line: 2, text: "// TODO: tidy", match: true },
     ])
     expect(seen.todo).toMatchObject({ matches: 3, files: 3, truncated: false, skipped: 1 })
-    expect(seen.todoView).toContain("src/main.ts:2:// TODO: tidy")
-    expect(seen.todoView).toContain("[1 file skipped")
+    expect(seen.todoView).toBe([
+      ".github/ci.yml:1:# TODO ci",
+      "src/lib/helper.ts:1:export const helper = () => 1 // todo",
+      "src/main.ts:2:// TODO: tidy",
+      "[1 file skipped: binary, larger than the read limit, or leading outside the workspace.]",
+    ].join("\n"))
     expect(seen.contextView).toBe("src/main.ts-1-import { helper } from './lib/helper'\nsrc/main.ts:2:// TODO: tidy\nsrc/main.ts-3-helper()")
     expect(seen.globbed.lines.map((line) => line.path)).toEqual(["src/lib/helper.ts", "src/main.ts", "src/main.ts"])
     expect(seen.literal.lines.map((line) => `${line.path}:${line.line}`)).toEqual(["src/main.ts:3"])
+    // The message, with the engine's reason in it, is pinned beside compilePattern.
     expect(seen.invalid.error).toBe("InvalidPattern")
+    expect(seen.unusableGlob).toEqual({ error: "InvalidPattern", message: `glob ${"{a,b}".repeat(11)}: not a usable glob pattern: its braces stand for more than 1024 patterns` })
     expect(seen.none.matches).toBe(0)
   })
 
@@ -483,9 +519,10 @@ describe("ls, find and grep", () => {
     }
   })
 
-  test("read, ls, find and grep show the model the largest limit they take, and refuse a larger one", async () => {
+  test("read, ls, find and grep show the model the largest limit they take, and refuse a larger one; each tool carries its description", async () => {
+    const options = { maxLines: 40, lsEntries: 30, findResults: 20, grepMatches: 10 }
     const tools = await scoped(Effect.gen(function* () {
-      const { capability } = yield* bench({ maxLines: 40, lsEntries: 30, findResults: 20, grepMatches: 10 })
+      const { capability } = yield* bench(options)
       return capability.tools
     }))
     const tool = (name: string) => Option.getOrThrow(Option.fromNullishOr(tools.find((entry) => entry.tool.name === name))).tool
@@ -497,7 +534,8 @@ describe("ls, find and grep", () => {
     const decodes = (name: string, params: unknown) => Schema.is(tool(name).parametersSchema)(params)
     expect([decodes("ls", { limit: 30 }), decodes("ls", { limit: 31 }), decodes("grep", { pattern: "x", limit: 11 }), decodes("read", { path: "a", limit: 0 })])
       .toEqual([true, false, false, false])
-    expect(toolDescriptions({ ...workspaceToolsDefaults, grepMatches: 10 }).grep).toContain("limit (1 to 10) asks for fewer")
+    // The descriptions' words are pinned beside toolDescriptions.
+    expect(Object.fromEntries(tools.map((entry) => [entry.tool.name, entry.tool.description]))).toEqual(toolDescriptions({ ...workspaceToolsDefaults, ...options }))
   })
 })
 
@@ -527,7 +565,8 @@ describe("bash", () => {
       return { slow, view: shown(capability, "bash", slow, {}), capped }
     }))
     expect(seen.slow).toMatchObject({ output: "started", termination: "timeout", exitCode: null })
-    expect(seen.view).toContain("killed after")
+    // How long it ran varies; the words are pinned beside renderBash.
+    expect(seen.view).toMatch(/^started\n\[The command was killed after \d+\.\d s, at its timeout\.\]$/)
     expect(seen.capped.termination).toBe("timeout")
     expect(seen.capped.durationMs).toBeLessThan(4_000)
   })
@@ -550,11 +589,23 @@ describe("bash", () => {
     }))
     expect(seen.long).toMatchObject({ output: "46\n47\n48\n49\n50", truncated: true, totalLines: 50 })
     expect(seen.long.fullOutput).toStartWith(".efferent/runtime/tool-output/bash-")
-    expect(seen.view).toContain("[Output cut to its last 5 of 50 lines. The whole output is in .efferent/runtime/tool-output/bash-")
+    expect(seen.view).toBe(`46\n47\n48\n49\n50\n[Output cut to its last 5 of 50 lines. The whole output is in ${seen.long.fullOutput}; read it with offset to see the rest.]\n[Exit code 0.]`)
     expect(seen.whole).toBe(`${Array.from({ length: 70 }, (_, at) => at + 1).join("\n")}\n`)
     expect(seen.kept).toBe(2)
     expect(seen.short).toMatchObject({ truncated: false, fullOutput: null })
     expect(seen.reread).toMatchObject({ text: "66\n67\n68\n69\n70" })
+  })
+
+  test("a command that cannot run at all is a failure with the Bash service's reason and message, as they are", async () => {
+    const refused = new BashError({ reason: "SpawnFailed", message: "could not read the command's stdout: read failed" })
+    const failing = Bash.of({ stream: () => Stream.fail(refused), exec: () => Effect.fail(refused) })
+    const failure = await scoped(Effect.gen(function* () {
+      const root = yield* temporary
+      const capability = yield* workspaceTools({ ...workspaceToolsDefaults, tools: ["bash"] }).pipe(Effect.provideService(Bash, failing))
+      const call = caller(capability, Context.make(FileSystem, localFileSystem).pipe(Context.add(SessionEnvironment, { workspace: root }), Context.add(Bash, failing)))
+      return yield* fails(call("bash", { command: "echo hi" }))
+    }))
+    expect(failure).toEqual({ error: "SpawnFailed", message: "could not read the command's stdout: read failed" })
   })
 })
 
@@ -589,7 +640,11 @@ describe("bash output at the limits", () => {
     expect(seen.result).toMatchObject({ output: "1996\n1997\n1998\n1999\n2000", truncated: true, totalLines: 2_000, fullOutputCut: true })
     expect(seen.saved).toHaveLength(2_048)
     expect(whole.startsWith(seen.saved)).toBe(true)
-    expect(seen.view).toContain("Only its start was saved")
+    expect(seen.view).toBe([
+      "1996\n1997\n1998\n1999\n2000",
+      `[Output cut to its last 5 of 2000 lines. Only its start was saved, in ${seen.result.fullOutput}: the output grew past the size read opens, and the rest was not kept. Read the file with offset to see that start; to see the rest, run the command again with its output filtered (grep, tail, sed -n).]`,
+      "[Exit code 0.]",
+    ].join("\n"))
     expect(seen.reread).toMatchObject({ _tag: "Text", firstLine: 1 })
   })
 })
@@ -630,6 +685,15 @@ describe("workspaceToolsPlugin", () => {
     expect(seen.requires).toEqual([FileSystem.key, SessionEnvironment.key])
     expect(seen.text).toContain(seen.root)
     expect(seen.missing).toMatchObject({ code: "requires.missing", message: `workspace.environment requires ${SessionEnvironment.key}` })
+  })
+
+  test("the skills' catalogue summaries, word for word", async () => {
+    const capability = await scoped(bench().pipe(Effect.map((built) => built.capability)))
+    expect(capability.skills.map((skill) => [skill.id, skill.summary])).toEqual([
+      ["workspace.read", "Read, list and search the workspace's files (read, ls, find, grep)."],
+      ["workspace.edit", "Create and change files in the workspace (write, edit)."],
+      ["workspace.shell", "Run shell commands in the workspace (bash)."],
+    ])
   })
 
   test("resolves in a graph after the local system, with Bash, and refuses bad options", async () => {

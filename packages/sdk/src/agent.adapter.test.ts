@@ -46,7 +46,7 @@ import {
   UtilityLlm,
   zeroUsage,
 } from "@xandreed/core"
-import type { LogEntry, Plugin, SessionLogEvent, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import type { JsonObject, LogEntry, Plugin, SessionLogEvent, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { runSteps, stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
@@ -258,6 +258,20 @@ describe("Agent.turn", () => {
     const order = names.filter((name) => ["step.started", "tool.started", "tool.completed", "step.ended", "completion.evaluated"].includes(name))
     expect(order.slice(0, 5)).toEqual(["step.started", "tool.started", "tool.completed", "step.ended", "completion.evaluated"])
     expect(named(events, "turn.ended")).toHaveLength(1)
+  })
+
+  test("a cache key the host provides around a turn does not replace the turn's own: every model call reads the turn's, and the dispatch check passes", async () => {
+    const { outcome, seen } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin)
+      const journal = yield* inMemorySession
+      const { seen, model } = yield* scripted(lookupThenDeliver)
+      const outcome = yield* agent.turn(inputFor(journal, "run-1", "find alpha", model), answer()).pipe(
+        Effect.provideService(CurrentPromptCacheKey, Option.some("host:around-the-turn")),
+      )
+      return { outcome, seen: yield* Ref.get(seen) }
+    })))
+    expect(outcome.outcome).toBe("completed")
+    expect(seen.map((request) => Option.getOrNull(request.cacheKey))).toEqual([1, 2, 3].map(() => `agent:${conversation}`))
   })
 
   test("a quick reply is a recorded turn without the loop", async () => {
@@ -1413,6 +1427,60 @@ describe("the token budget", () => {
     expect(built.map(([turn, budget]) => [turn, budget])).toEqual([[2, 20_000], [2, 20_000], [2, 20_000], [3, 30_000], [3, 30_000], [3, 30_000]])
     expect(built.every(([, , reserved]) => typeof reserved === "number" && reserved > 150)).toBe(true)
   })
+})
+
+describe("a past tool call in later requests", () => {
+  const Search = Tool.make("search", {
+    description: "Search records.",
+    parameters: Schema.Struct({ query: Schema.String, limit: Schema.Number }),
+    success: Schema.String,
+    failure: Failure,
+    failureMode: "return",
+  })
+  const searching = defineCapability({
+    id: "test-searching", version: "1",
+    tools: [defineTool({ tool: Search, handler: ({ query, limit }) => Effect.succeed(`FOUND ${limit} for ${query}`) })],
+    skills: [defineSkill({ id: "searching", summary: "Search records.", tools: ["search"], always: true })],
+  })
+  /** The params of call `id` in a recorded prompt, as the bytes a provider sends. */
+  const sentParams = (prompt: string, id: string): ReadonlyArray<string> =>
+    (JSON.parse(prompt) as ReadonlyArray<{ readonly role: string; readonly content: unknown }>).flatMap((message) =>
+      message.role === "assistant" && Array.isArray(message.content)
+        ? message.content.flatMap((part: { readonly type: string; readonly id?: string; readonly params?: unknown }) =>
+          part.type === "tool-call" && part.id === id ? [JSON.stringify(part.params)] : [])
+        : [])
+  const untilStop = (turn: Turn) => turn.tools.select(turn.userMessage).pipe(
+    Effect.andThen(turn.run({ limits: { requireCompletion: false } })),
+    Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })),
+  )
+
+  /** Every object's keys reversed, all the way down. */
+  const reversed = (value: unknown): unknown => Array.isArray(value) ? value.map(reversed)
+    : typeof value === "object" && value !== null
+      ? Object.fromEntries(Object.keys(value).reverse().map((key) => [key, reversed((value as Record<string, unknown>)[key])]))
+      : value
+  /** A session log whose reads hand every stored object back with its keys reversed, as a JSON column may reorder them. */
+  const keyReversing: Layer.Layer<SessionLog> = Layer.effect(SessionLog, Effect.gen(function* () {
+    const inner = yield* SessionLog
+    return SessionLog.of({
+      ...inner,
+      read: (id, query) => inner.read(id, query).pipe(Effect.map((events) => events.map((event) => ({ ...event, data: reversed(event.data) as JsonObject })))),
+    })
+  })).pipe(Layer.provide(SessionLogMemoryLive))
+
+  const stores: ReadonlyArray<readonly [string, Layer.Layer<SessionLog>]> = [["in memory", SessionLogMemoryLive], ["with its keys reordered", keyReversing]]
+  stores.map(([store, log]) => test(`is sent with the same bytes by the turn that made it and by a later turn, its params in canonical key order (a session ${store})`, async () => {
+    const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const agent = yield* define(memoryWindowPlugin, { capabilities: [searching] })
+      const journal = yield* sessionOver(log)
+      const { seen, model } = yield* scripted([call("c1", "search", { query: "alpha", limit: 2 }), stop("found alpha"), stop("still alpha")])
+      yield* agent.turn(inputFor(journal, "run-1", "search alpha", model), untilStop)
+      yield* agent.turn(inputFor(journal, "run-2", "anything else?", model), untilStop)
+      return yield* Ref.get(seen)
+    })))
+    // Turn 1 sends the call back at its next step, from memory; turn 2 sends it from the stored log.
+    expect(seen.map((request) => sentParams(request.prompt, "c1"))).toEqual([[], ["{\"limit\":2,\"query\":\"alpha\"}"], ["{\"limit\":2,\"query\":\"alpha\"}"]])
+  }))
 })
 
 describe("a turn's usage", () => {

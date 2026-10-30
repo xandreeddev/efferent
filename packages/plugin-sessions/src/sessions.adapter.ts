@@ -6,6 +6,7 @@ import {
   HarnessError,
   harnessDefectsAsFailures,
   InboxFull,
+  isRevisionConflict,
   KeyConflict,
   normalizeUserMessage,
   NothingPending,
@@ -48,6 +49,7 @@ import type {
   InboxItemId,
   JsonObject,
   ResumableTurn,
+  RevisionConflict,
   SessionAddress,
   SessionCommitted,
   SessionDraft,
@@ -207,12 +209,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
 
   /**
    * Plan from the head and commit it, against the revision planned from;
-   * after a conflict, plan again. The commit is not interrupted half way,
-   * and `stored` runs with it: an interruption waits for the store's answer
-   * and for what must follow a stored commit.
+   * after a conflict, plan again at once, `config.retries` attempts in all
+   * before `SessionContended`. The commit is not interrupted half way, and
+   * `stored` runs with it: an interruption waits for the store's answer and
+   * for what must follow a stored commit.
    */
-  const guarded = <A, E>(address: SessionAddress, plan: (head: SessionHead, state: SessionsState) => Effect.Effect<GuardedPlan<A>, E>, stored: (result: A) => Effect.Effect<void> = () => Effect.void) => {
-    const attempt = (tries: number): Effect.Effect<Guarded<A>, E | SessionMissing | SessionContended | SessionLogError> => Effect.gen(function* () {
+  const guarded = <A, E>(address: SessionAddress, plan: (head: SessionHead, state: SessionsState) => Effect.Effect<GuardedPlan<A>, E>, stored: (result: A) => Effect.Effect<void> = () => Effect.void): Effect.Effect<Guarded<A>, E | SessionMissing | SessionContended | SessionLogError> => {
+    const once: Effect.Effect<Guarded<A>, E | SessionMissing | RevisionConflict | SessionLogError> = Effect.gen(function* () {
       const head = yield* owned(address)
       const planned = yield* plan(head, yield* stateFrom(head))
       if (planned.drafts.length === 0 && Option.isNone(planned.next)) return { result: planned.result, head, committed: Option.none() }
@@ -229,15 +232,13 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         return { result: planned.result, head, committed: Option.some(outcome.success) }
       }
       const error = outcome.failure
-      if (error._tag === "RevisionConflict") {
-        return tries + 1 >= config.retries
-          ? yield* Effect.fail(new SessionContended({ session: address.id, attempts: tries + 1 }))
-          : yield* attempt(tries + 1)
-      }
-      // The commit has no `notAfter`: a log that says it expired broke its contract.
+      // A conflict fails this attempt as it is, for the retry below. The commit has no `notAfter`: a log that says it expired broke its contract.
       return yield* (error._tag === "LeaseExpired" ? Effect.die(error) : Effect.fail(error))
     })
-    return attempt(0)
+    return once.pipe(
+      Effect.retry({ times: config.retries - 1, while: isRevisionConflict }),
+      Effect.catchIf(isRevisionConflict, () => Effect.fail(new SessionContended({ session: address.id, attempts: config.retries }))),
+    )
   }
 
   /**

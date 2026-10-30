@@ -1,10 +1,11 @@
 import { createHash } from "node:crypto"
 import { LangfuseClient } from "@langfuse/client"
-import { Cause, Effect, Layer, Option, Schema } from "effect"
+import { Cause, Clock, Effect, Layer, Schema } from "effect"
 import {
   EvaluationError,
   EvaluationExport,
   EvaluationRun,
+  exportableScores,
   reasonOf,
   type ExportReceipt,
   type ExporterRegistration
@@ -71,39 +72,19 @@ const exportService = (options: LangfuseExportOptions) => ({
           tags: ["evaluation", trial.status]
         }
       }))
-      const scores = run.trials.flatMap((trial) =>
-        trial.grades
-          .filter((grade) => grade.status === "scored")
-          .flatMap((grade) =>
-            grade.metrics
-              .filter(
-                (metric) =>
-                  metric.kind === "boolean" ||
-                  metric.kind === "score" ||
-                  metric.kind === "probability"
-              )
-              .map((metric) => ({
-                id: remoteId(
-                  `${trial.id}/${grade.grader}/${grade.version}/${grade.scope}/${metric.name}`
-                ),
-                timestamp: new Date(grade.endedAt).toISOString(),
-                type: "score-create" as const,
-                body: {
-                  id: remoteId(
-                    `${trial.id}/${grade.grader}/${grade.version}/${grade.scope}/${metric.name}`
-                  ),
-                  traceId: mappings[trial.id]!,
-                  name: `${grade.grader}@${grade.version}/${grade.scope}/${metric.name}`,
-                  dataType: "NUMERIC" as const,
-                  value:
-                    metric.kind === "boolean"
-                      ? Number(metric.value)
-                      : metric.value,
-                  comment: grade.reason
-                }
-              }))
-          )
-      )
+      const scores = exportableScores(encoded).map((score) => ({
+        id: remoteId(score.seed),
+        timestamp: new Date(score.at).toISOString(),
+        type: "score-create" as const,
+        body: {
+          id: remoteId(score.seed),
+          traceId: mappings[score.trial]!,
+          name: score.key,
+          dataType: "NUMERIC" as const,
+          value: score.value,
+          comment: score.comment
+        }
+      }))
       const batches = Array.from(
         { length: Math.ceil((traces.length + scores.length) / 50) },
         (_, index) =>
@@ -131,7 +112,7 @@ const exportService = (options: LangfuseExportOptions) => ({
         runId: run.id,
         url: options.baseUrl,
         exported: run.trials.length,
-        at: Date.now(),
+        at: yield* Clock.currentTimeMillis,
         mappings
       }
     },

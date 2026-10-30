@@ -14,7 +14,7 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 - A request refused over an image is sent again only before any part arrived, and only when `onMediaRejected` dealt with the images.
 - Step spans carry a call's usage under the GenAI names and the run span the sum under `engine.usage.*`; content only with `captureTraceContent`, images by size.
 - `runSteps` computes a step's plan once and serves the model, the messages and the tool choice from it.
-- The loop provides core's `StepLoopReferences`, whatever the caller's: `runSteps` the request's `cacheKey` and `callPolicy` for the run, `runLoop` its `captureTraceContent` for the run and the step and the empty-response tolerance per step. Its callbacks run with the caller's services, never with the caller's step or tolerance (an outer run's).
+- The loop provides core's `StepLoopReferences`, whatever the caller's: `runSteps` the request's `cacheKey` and `callPolicy` for the run, `runLoop` its `captureTraceContent` for the run and the step and the empty-response tolerance per step. Its callbacks run with the caller's services, never with the caller's step or tolerance (an outer run's). The request's `handlers` hold the turn's services, the caller's values of those references included, so `runSteps` provides `handlers` outermost and its own references inside them.
 - `runLoop`'s callbacks fail with the caller's error (`RunLoopOptions<Tools, E, R>`), and the run fails with `E` or a provider's `AiError`: a callback that can fail returns its failure, never `Effect.orDie`s it.
 - `runSteps` fails with a turn's `TurnError` as it is (`isTurnError`: the writer's `TurnClosed` keeps its tag), and with anything else (a provider's `AiError`) as `loop.failed`, that failure its `cause`. The request's callbacks reach `runLoop` as `E = TurnError`; `harnessDefectsAsFailures` stays only for a tool handler's `TurnError`, which its `never` error channel carries as a defect.
 - The default corrective texts are model-facing: a host's `correctives` replaces them, and a change to them updates their pins.
@@ -34,16 +34,16 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `DEGENERATE_REPEAT_NUDGE` (a user-role message) | `src/loop.ts:288-292` | by reference only, `src/loop.test.ts:231`; wording unpinned |
-| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:295-296` | unpinned |
-| Default malformed corrective (`Your previous reply could not be parsed: …`) | `src/loop.ts:711-714` | contains, `src/loop.test.ts:188`, `:206` |
-| Default incomplete corrective (`The host reports that required actions are incomplete. …`) | `src/loop.ts:765` | unpinned |
+| `DEGENERATE_REPEAT_NUDGE`, as a host note (a user-role message) | `src/loop.ts:288-292`, `:782` | exact, `src/loop.test.ts:1235` |
+| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:295-296` | exact, `src/loop.test.ts:1240` |
+| Default malformed corrective, a host note by why the reply could not be used (a tool it does not have, parameters that do not match, a reply that does not decode) with the step's tools; the parameters' report framed (`parameter-errors`) and clipped at 600 characters, a decoder's dump never | `src/loop.ts:303-320`, `:738` | exact, `src/loop.test.ts:1213`, `:1218`, `:1223` |
+| Default incomplete corrective, a host note (`the host reports that the required work is not complete, …`) | `src/loop.ts:323-326`, `:789` | exact, `src/loop.test.ts:1251` |
 
 Steering text (`pendingInput`) is the host's; the fold's summary message is core's `handoffToMessage`.
 
 ## Erasure files
 
-`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:485`) and the tool choice into its tool-name union (`:491`).
+`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:513`) and the tool choice into its tool-name union (`:519`).
 
 ## Layout
 
@@ -56,8 +56,8 @@ Steering text (`pendingInput`) is the host's; the fold's summary message is core
 
 ## Tests
 
-- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:108`), its self-tests (`runSteps` made careless, ending its steps in its completion check and recording a corrective under a step the cap stops it from taking, must fail the settle checks; and providing a wrong value of one of `StepLoopReferences` to its model calls, which must fail that reference's check), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
-- `src/loop.test.ts`: scripted-model runs (correctives, breaker, cap, settling each step once, nothing recorded under a step that never runs, callbacks failing with the caller's error, the compact seam, steering, streaming parity and fallback, image refusals, a host's initial batch, spans) and the pure decisions (`:827`).
+- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:111`), its self-tests (`runSteps` made careless, ending its steps in its completion check and recording a corrective under a step the cap stops it from taking, must fail the settle checks; and providing a wrong value of one of `StepLoopReferences` to its model calls, which must fail that reference's check), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
+- `src/loop.test.ts`: scripted-model runs (correctives, breaker, cap, settling each step once, nothing recorded under a step that never runs, callbacks failing with the caller's error, the compact seam, steering, streaming parity and fallback, image refusals, a host's initial batch, spans), the pure decisions (`:829`) and the loop's own text, pinned exactly (`:1190`).
 - `src/step-ledger.entity.functions.test.ts`: the ledger's updates.
 - The sdk golden composes `stepLoopPlugin`.
 - Run: `bun test packages/plugin-agent-loop packages/sdk/src/agent.golden.test.ts`.

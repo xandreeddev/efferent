@@ -30,6 +30,7 @@ const EvaluationSplit
 const EvaluationUsage
 const EvidenceProjection
 const ExportReceipt
+const ExportedScore
 const Fingerprints
 const Gate
 const GateFinding
@@ -78,6 +79,7 @@ const calibrateGrader
 const calibrationAgreement
 const compareCalibrationMetric
 const compareDecisionTrials
+const compareMetric
 const comparisonIssues
 const contextualPrecision
 const contextualRecall
@@ -86,15 +88,18 @@ const csv
 const defineEvaluationApp
 const defineGraderCalibration
 const defineRunnable
+const errorCodeOf
 const evaluationAppViolations
 const evaluationEnvironmentPort
 const evaluationFingerprint
 const evaluationScores
 const evaluatorRegistry
 const executionFingerprint
+const exportableScores
 const fingerprint
 const gradeEvaluation
 const gradeTrial
+const graderFromEvaluator
 const gradingContext
 const hasFlag
 const isolatedServices
@@ -142,6 +147,7 @@ interface EvaluatorRegistration
 interface ExporterRegistration
 interface GraderRegistration
 interface GradingSelection
+interface MetricComparison
 interface ProjectionRegistration
 interface RunnableExecution
 interface RunnableRegistration
@@ -166,6 +172,7 @@ type EvaluationScore
 type EvaluationUsage
 type EvidenceProjection
 type ExportReceipt
+type ExportedScore
 type Gate
 type Grade
 type Grader

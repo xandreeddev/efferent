@@ -64,6 +64,14 @@ export const report = Effect.gen(function* () {
 - **Cases** carry the input, the reference label, a `family` (related cases
   never cross splits), a fixed `calibration` or `validation` split, the label's
   review state and its provenance.
+- **Agreement** compares each labelled metric with the grader's metric of
+  the same name through `compareMetric`, at the label's tolerance: booleans
+  and preferences agree when equal, two probabilities or two scores on the
+  same scale within the tolerance, and a probability against a boolean label
+  when `p >= 0.5` equals the label (so a model judge's probability is
+  calibrated against pass/fail labels). A pass against a failing label is a
+  false pass, a fail against a passing one a false fail; a metric that is
+  missing or of another kind or scale disagrees.
 - **Gates** are blocking: full agreement, no false passes and no false
   failures, on reviewed labels only.
 - **The run** is an `EvaluationRun`: every trial with its captured grading
@@ -84,42 +92,91 @@ scoped environment and records each observation through the trial's
 `TrialRecorder`, so a failed step keeps the evidence gathered before it. Its
 graders score the recorded outcome like any other trial.
 
+## Evaluators grade behind graders
+
+`Grader` and `Grade` are the one assessment model: a run grades each trial
+with the app's registered graders, `gradeEvaluation` regrades saved work, and
+`defineGraderCalibration` calibrates a grader. An `Evaluator` (a
+`semanticEvaluator`, or one of your own over a model) is a judging primitive.
+`graderFromEvaluator({ definition, input, evaluator, timeoutMs }, services)`
+puts it behind a grader, a `GraderRegistration` for the app's `graders`:
+
+- **Input.** Each grade decodes the grading context's `input` with `input`,
+  the codec the app's projection encoded it with. A context that does not
+  decode is an `invalid` grade, and the evaluator is not run.
+- **Metrics.** The evaluator runs once per grade, its metrics checked
+  against its declaration, and the grade keeps the grader's `metrics`. The
+  layer fails `invalid` when the evaluator does not declare one of them, or
+  when `timeoutMs` (90 s by default) is not positive.
+- **Failures.** An `AssessmentError` becomes the `EvaluationError` of the
+  same code, message and cause, so an `unavailable` judge stays a missing
+  measurement; an evaluator may fail with an `EvaluationError` too.
+- **Services.** `services` provides what the evaluator requires (a
+  `SemanticJudge`, a `LanguageModel`), built in each grade's scope. An
+  `AssessmentError` building it fails the grade with its code.
+- **References.** An assessment's non-empty `references` are the grade's
+  `metadata.references`.
+
+`assess`, `assessAll`, `EvaluatorBinding`, `EvaluationResult`,
+`summarizeAssessments`, `evaluatorRegistry` and `EvaluatorRegistration` are
+deprecated and will be removed in a later minor release: register the
+evaluator as a grader, bind it to tasks, and read the run's grades and gates.
+
 ## Native prompts
 
-Use `Prompt.make`, `Prompt.merge`, `LanguageModel.generateObject` and native model
+Use `Prompt.make`, `Prompt.concat`, `LanguageModel.generateObject` and native model
 Layers. Prompt modules own shared instructions, model-specific variants and
 version metadata. `CurrentPromptProvenance` carries an optional sidecar record
 for model adapters; it does not change the Prompt format or introduce a prompt
 registry.
 
 ```ts
-const judge = llmEvaluator({
+import { LanguageModel, Prompt } from "effect/ai"
+import { Effect, Layer, Schema } from "effect"
+import { assessmentOfAiError, EvalId, graderFromEvaluator } from "@xandreed/evals"
+import type { Evaluator } from "@xandreed/evals"
+
+const Answer = Schema.Struct({ answer: Schema.String, evidence: Schema.String })
+const Verdict = Schema.Struct({ supported: Schema.Boolean, reason: Schema.String })
+
+const answerQuality: Evaluator<typeof Answer.Type, LanguageModel.LanguageModel> = {
   id: "answer-quality",
   version: "1",
   metrics: ["groundedness"],
-  prompt: (input: { answer: string; evidence: string }) => Prompt.make([
-    { role: "system", content: "Assess support using only the supplied evidence." },
-    { role: "user", content: JSON.stringify(input) },
-  ]),
-  schema: Schema.Struct({ supported: Schema.Boolean, reason: Schema.String }),
-  assessment: (value) => ({
-    metrics: [{ kind: "boolean", name: "groundedness", value: value.supported }],
-    reason: value.reason,
-  }),
-})
-// Provide the selected native LanguageModel Layer at the host boundary.
-const assessment = assessAll([
-  { evaluator: judge, select: ["groundedness"] },
-], { answer, evidence })
+  run: (input) => LanguageModel.generateObject({
+    prompt: Prompt.make([
+      { role: "system", content: "Assess support using only the supplied evidence." },
+      { role: "user", content: JSON.stringify(input) },
+    ]),
+    schema: Verdict,
+  }).pipe(
+    Effect.map(({ value }) => ({
+      metrics: [{ kind: "boolean" as const, name: "groundedness", value: value.supported }],
+      reason: value.reason,
+    })),
+    Effect.mapError(assessmentOfAiError),
+  ),
+}
+
+declare const model: Layer.Layer<LanguageModel.LanguageModel> // the host's configured provider
+
+// Registered in the app's `graders`; a task binds it as "answer-quality@1".
+export const answerGrader = graderFromEvaluator({
+  definition: { id: EvalId.make("answer-quality"), version: "1", kind: "model", metrics: ["groundedness"],
+    fingerprints: { prompt: "answer-quality:1" } },
+  input: Answer, // the codec the projection encodes the grading context's input with
+  evaluator: answerQuality,
+}, model)
 ```
 
 ## Measurement and policy
 
 Boolean, scalar, probability and pairwise metrics have distinct types. A scalar
 score is not a probability. Calibration reports Brier error only for probability
-predictions against boolean references. `summarizeCalibration` reports measured
-coverage, confusion counts, precision/recall, false-pass/false-fail rates, scalar
-absolute error and ten probability reliability bins; empty bins stay unavailable.
+predictions against boolean references. `summarizeCalibration` applies the same
+`compareMetric` rule with no tolerance and reports measured coverage, confusion
+counts, precision/recall, false-pass/false-fail rates, scalar absolute error and
+ten probability reliability bins; empty bins stay unavailable.
 `assessBothOrders` preserves both blinded pairwise judgments and flags order
 sensitivity instead of converting it to a tie.
 
@@ -133,7 +190,8 @@ diagnostic. The run records each one as a `GateFinding` in `EvaluationRun`'s
 trials' reference labels is provisional.
 
 A run preserves completed trials when a candidate fails and reports that failure
-separately. Re-scoring saved evidence uses `assessAll` without rerunning the task.
+separately. Regrading saved evidence uses `gradeEvaluation` (`efferent-eval grade
+--from execution.json`) without rerunning the task.
 
 All examples and regression tests use scripted providers. They establish
 execution and measurement behavior, not model quality or provider compatibility.
@@ -150,14 +208,15 @@ serialized evidence state and named, schema-validated questions:
   response must name one offered key.
 
 `SemanticResult` contains `answers`, `usage`, and `metadata`, a JSON object (as is
-the `metadata` of an `Assessment`, an `EvaluationResult` and a `Grade`). Missing usage remains
+the `metadata` of an `Assessment` and a `Grade`). Missing usage remains
 `Option.none`. Question IDs, answer kinds, bounds, and offered choices are checked
 before answers become evaluation metrics. Empty rubrics and blank instructions
 fail validation before a provider request.
 
 ```ts
-import { Effect } from "effect"
-import { assessAll, semanticEvaluator } from "@xandreed/evals"
+import { Layer, Schema } from "effect"
+import { EvalId, graderFromEvaluator, semanticEvaluator } from "@xandreed/evals"
+import type { AssessmentError, SemanticJudge } from "@xandreed/evals"
 
 const questions = {
   groundedness: {
@@ -171,28 +230,30 @@ const questions = {
   },
 }
 
+const Answer = Schema.Struct({ answer: Schema.String, evidence: Schema.String, expected: Schema.String })
+
 const quality = semanticEvaluator({
   id: "answer-quality",
   version: "rubric-v1",
   questions,
-  state: (input: { answer: string; evidence: string; expected: string }) =>
-    JSON.stringify(input),
+  state: (input: typeof Answer.Type) => JSON.stringify(input),
 })
 
-const assessment = assessAll([
-  { evaluator: quality, select: ["groundedness", "completeness"] },
-], {
-  answer: "The office opens at 09:00.",
-  evidence: "Office hours: 09:00–17:00.",
-  expected: "State the opening time.",
-})
+// One grader per judge backend: its id names the backend, so reports
+// graded by different backends never compare as alike.
+const qualityGrader = (id: string, judge: Layer.Layer<SemanticJudge, AssessmentError>) => graderFromEvaluator({
+  definition: { id: EvalId.make(id), version: "rubric-v1", kind: "model",
+    metrics: ["groundedness", "completeness"], fingerprints: { rubric: "rubric-v1" } },
+  input: Answer,
+  evaluator: quality,
+}, judge)
 ```
 
 The selector controls exactly what the judge sees. When calibrating the judge
 itself, keep the reference labels in the dataset, outside this state.
 `semanticEvaluator` preserves the rubric version and records the backend identity,
-raw typed answers, usage and adapter metadata. Selecting several metrics still
-executes the judge once. Boolean answers become probability metrics; they are not
+raw typed answers, usage and adapter metadata. A grader that keeps several of
+the rubric's metrics still runs the judge once. Boolean answers become probability metrics; they are not
 silently thresholded into booleans. Choice questions become preference metrics
 only for offered `A`/`B`/`tie` keys. Other categories are supported directly through
 `SemanticJudge.evaluate`, but rejected before execution by `semanticEvaluator`.
@@ -220,7 +281,7 @@ const jev = SemanticJevLive({
   metadata: { transport: "gateway", rubricVersion: "rubric-v1" },
 })
 
-const viaJev = assessment.pipe(Effect.provide(jev))
+const viaJev = qualityGrader("answer-quality-jev", jev)
 ```
 
 The transport callback returns a promise-like `{ answers: unknown }`. The adapter
@@ -248,7 +309,7 @@ const base = Prompt.make([{ role: "system", content:
 }])
 
 const buildPrompt = (variant: Prompt.Prompt) => (input: SemanticInput) =>
-  Prompt.merge(Prompt.merge(base, variant), Prompt.make([
+  Prompt.concat(Prompt.concat(base, variant), Prompt.make([
     { role: "user", content: JSON.stringify(input) },
   ]))
 
@@ -269,8 +330,8 @@ const judgeB = SemanticLlmLive({
   metadata: { promptVersion: "1", variant: "concise" },
 }).pipe(Layer.provide(modelB))
 
-const viaLlmA = assessment.pipe(Effect.provide(judgeA))
-const viaLlmB = assessment.pipe(Effect.provide(judgeB))
+const viaLlmA = qualityGrader("answer-quality-llm-a", judgeA)
+const viaLlmB = qualityGrader("answer-quality-llm-b", judgeB)
 ```
 
 The adapter generates the response schema from the rubric, captures available
@@ -288,7 +349,8 @@ measurement; otherwise it is an `error` with the `provider` code. A host's own
 evaluator over a `LanguageModel` maps its failures the same way with
 `assessmentOfAiError`.
 
-These three Effects can assess the same saved evidence and feed the same
-calibration and pairwise helpers. The built-in adapters do not claim equivalent
-quality: that must be measured on held-out, reviewed labels. Arbitrary structured
-LLM evaluators can continue using `llmEvaluator`.
+These three graders can grade the same saved execution (`gradeEvaluation`) and
+be calibrated with `defineGraderCalibration`. The built-in adapters do not claim
+equivalent quality: that must be measured on held-out, reviewed labels. A
+structured LLM evaluator of your own is an `Evaluator` over `LanguageModel`, as
+under [Native prompts](#native-prompts), behind `graderFromEvaluator`.

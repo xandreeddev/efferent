@@ -105,8 +105,7 @@ const src = (name: string): string => `packages/${name}/src/**`
 /**
  * The package entries whose every export has a first-party consumer or a
  * `@public` tag (`quality/exports-have-consumers`): entry files, not
- * globs, one per line. An entry joins once its surface is curated: core's
- * five entries are.
+ * globs, one per line. An entry joins once its surface is curated.
  */
 const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/core/src/index.ts",
@@ -343,7 +342,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/callback-buffer-size", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/bounded-pubsub", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/no-process-env", include: CHECKED, exclude: [...ENVIRONMENT_EDGES, ...TEST_SCAFFOLDING] },
-    { rule: "effect/no-ambient-time-random", include: CHECKED, exclude: ["**/*.adapter.ts", ...TEST_SCAFFOLDING] },
+    { rule: "effect/no-ambient-time-random", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/no-locale-compare", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/require-sort-comparator", include: CHECKED, exclude: TEST_SCAFFOLDING },
     // Tests too: one that checks an error by its class passes where a second copy of core fails.
@@ -369,6 +368,8 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
+    // A foreign code is read by `errorCodeOf`, the framework's by `harnessCodeOf`.
+    { rule: "effect/no-code-property-guard", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/prefer-effect-fn", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/require-concurrency-option", include: CHECKED, exclude: TEST_SCAFFOLDING },
     // What an effect requires is in its type (the list above aside).
@@ -814,6 +815,23 @@ const config: typeof GateSuiteConfig.Encoded = {
             ],
             "externals": [
                   "effect",
+                  "bun:test"
+            ]
+      },
+      // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
+      {
+            "name": "plugin-render-tests",
+            "path": "packages/plugin-render/src/**/*.test.ts",
+            "canImport": [
+                  "plugin-render",
+                  "core",
+                  "core/internal"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "node:",
                   "bun:test"
             ]
       },

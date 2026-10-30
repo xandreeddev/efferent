@@ -105,9 +105,9 @@ would judge attempt N against attempt N-1's source).
    `effect/no-nullable-return` — **type-aware**: the checker reads declared
    AND inferred return types, which is why the engine is compiler-API, not
    pattern-matching — `effect/match-over-tag-switch` (switch on `._tag` +
-   else-if ladders; ternary chains and the `type`, `role` and `mode`
-   discriminants, tolerated in the rule's `boundary` files; single guards
-   are fine), `effect/no-as-any` (incl. `as unknown as T` laundering),
+   else-if ladders; ternary chains, if-return ladders and the `type`,
+   `role` and `mode` discriminants, tolerated in the rule's `boundary`
+   files; single guards are fine), `effect/no-as-any` (incl. `as unknown as T` laundering),
    `effect/no-as-never` (`as never` outside
    the rule's `boundary` files, `as never as T` everywhere),
    `effect/no-unknown-requirements` (type-aware: an `Effect`, `Stream` or
@@ -125,7 +125,8 @@ would judge attempt N against attempt N-1's source).
    `effect/callback-buffer-size`, `effect/bounded-pubsub` (`PubSub.unbounded`
    or an infinite capacity), `effect/no-process-env`,
    `effect/no-ambient-time-random` (`Date.now`, argless `new Date()`,
-   `Math.random`, `randomUUID`), `effect/no-locale-compare`,
+   `Math.random`, `randomUUID`; an adapter may draw from the platform
+   generator, never read the wall clock), `effect/no-locale-compare`,
    `effect/require-sort-comparator` and `effect/no-instanceof-tagged-error`
    — type-aware, plain `instanceof Error` passes — and the rules that keep
    failures, absence and concurrency visible: `effect/no-silent-ignore` (a
@@ -134,7 +135,9 @@ would judge attempt N against attempt N-1's source).
    (`getOrNull`/`getOrUndefined`), `effect/no-stringified-cause`
    (type-aware: `String(e)` of a failure in a tagged error),
    `effect/no-error-code-compare` (type-aware: a code compared outside the
-   file declaring it), `effect/prefer-effect-fn` (a function that only
+   file declaring it), `effect/no-code-property-guard`
+   (`Predicate.hasProperty(e, "code")`, `"code" in e`),
+   `effect/prefer-effect-fn` (a function that only
    returns `Effect.gen`) and `effect/require-concurrency-option`), the
    paradigm-neutral `quality` pack (`quality/no-skipped-tests` — a skipped test is the coder
    gaming the test gate; `quality/no-empty-catch`; and

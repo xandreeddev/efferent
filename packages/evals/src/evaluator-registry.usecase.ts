@@ -2,8 +2,7 @@ import type { Evaluator } from "./assessment.usecase.js"
 
 /**
  * A versioned evaluator or judge an application offers to its calibrations and journeys.
- *
- * @public
+ * @deprecated Register the evaluator as a grader (`graderFromEvaluator`) in the app's `graders`; a task binds it as `<id>@<version>`.
  */
 export interface EvaluatorRegistration<I, R = never> {
   readonly id: string

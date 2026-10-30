@@ -14,6 +14,7 @@ import {
 import {
   AuthStore,
   authStoreConformance,
+  Credential,
   SettingsStore,
   settingsStoreConformance,
 } from "@xandreed/core/models"
@@ -142,7 +143,7 @@ describe("models plugin storage: memory", () => {
       yield* model.generateText({ prompt: "hi" })
       yield* Context.getUnsafe(services, UtilityLlm).complete("a title")
       const catalog = (yield* Context.getUnsafe(services, ModelCatalog).list).map((entry) => entry.selection)
-      yield* auth.set(ProviderId.make("stub"), { type: "api_key", key: "second-key" })
+      yield* auth.set(ProviderId.make("stub"), { type: "api_key", key: Redacted.make("second-key") })
       yield* settings.setRole("general", Option.some("stub:edited"))
       yield* model.generateText({ prompt: "again" })
       yield* auth.remove(ProviderId.make("opencode"))
@@ -195,7 +196,7 @@ describe("models plugin storage: memory", () => {
         credentialEnv: { google: "FIXTURE_GOOGLE_KEY", openai: "FIXTURE_OPENAI_KEY", opencode: "FIXTURE_UNSET_KEY" },
         credentials: { openai: { type: "api_key", key: Redacted.make("option-openai") } },
       }, host)
-      return Object.fromEntries(yield* Context.getUnsafe(services, AuthStore).all)
+      return Object.fromEntries([...yield* Context.getUnsafe(services, AuthStore).all].map(([provider, credential]) => [provider, Schema.encodeSync(Credential)(credential)]))
     })).pipe(Effect.provideService(ConfigProvider.ConfigProvider, env)))
     expect(all).toEqual({
       anthropic: { type: "api_key", key: "host-anthropic" },

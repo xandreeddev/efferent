@@ -57,7 +57,7 @@ export const incompatibleWiring = () => [
   // @ts-expect-error The port accepts a discriminated input union, never an arbitrary string.
   Runner.of({ execute: (input: string) => Effect.succeed({ output: input, evidence: { kind: "invalid" } }) })
 ]
-const store = Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void })
+const store = Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, appendTranscript: () => Effect.void, writeRun: () => Effect.void })
 
 test("specific input unions and environment ports survive shared CLI dispatch", async () => {
   const base = fixture()

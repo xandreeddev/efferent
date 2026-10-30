@@ -22,7 +22,13 @@ const imageLimit = (config: WorkspaceToolsConfig): string => {
   const bytes = Math.min(MEDIA_LIMITS.imageBytes, config.maxFileBytes)
   return bytes < 1_048_576 ? `${Math.floor(bytes * 100 / 1_024) / 100} KB` : `${Math.floor(bytes * 100 / 1_048_576) / 100} MB`
 }
-const listed = (names: ReadonlyArray<string>): string => names.length === 0 ? "nothing" : names.join(", ")
+/** Names in a sentence: `a, b and c` (or `or`). */
+const inWords = (names: ReadonlyArray<string>, joiner: "and" | "or"): string =>
+  names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} ${joiner} ${names.at(-1)}`
+/** `n` and the noun for it, one or many: `1 path`, `2 paths`. */
+const counted = (n: number, one: string, many: string): string => `${n} ${n === 1 ? one : many}`
+/** A directory as a sentence names it: the workspace root for `.`, else its path. */
+const place = (path: string): string => path === "." ? "the workspace root" : path
 
 /** A `limit` from 1 to the configured cap, which the tool's parameter schema shows the model as its maximum. */
 const limitUpTo = (maximum: number) => Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum })))
@@ -46,8 +52,8 @@ export const toolDescriptions = (config: WorkspaceToolsConfig): Readonly<Record<
   write: "Create a file, or replace all of an existing one, with content; missing directories are created. To change part of a file, use edit. Emptying a non-empty file is refused.",
   edit: "Change part of a file by replacing exact text. Each edit's oldText must appear exactly once in the file: copy it from read (without the notice lines), with enough surrounding lines to be unique. All edits are matched against the file as it was before this call and must not overlap; newText replaces oldText (empty to delete it). Line endings and a byte-order mark are kept.",
   ls: `List a directory (by default the workspace root): one entry per line, directories ending in /, symbolic links in @. At most ${config.lsEntries} entries; limit (1 to ${config.lsEntries}) asks for fewer.`,
-  find: `Find files whose path matches a glob pattern, relative to path (by default the workspace root): * and ? match within a name, ** any number of directories, {a,b} either; e.g. **/*.ts or src/**/test_*.py. Never looks inside ${listed(config.exclude)} or symbolic links. At most ${config.findResults} paths; limit (1 to ${config.findResults}) asks for fewer.`,
-  grep: `Search file contents for a regular expression (JavaScript syntax), or for plain text with literal: true. path is a file or a directory (by default the workspace root); glob limits the files searched (*.ts searches every directory). Shows path:line:text for each matching line, and context lines around each match when asked. Lines are cut to ${config.grepLineChars} characters before matching. At most ${config.grepMatches} matching lines; limit (1 to ${config.grepMatches}) asks for fewer. Binary files, ${listed(config.exclude)} and symbolic links are skipped, and files that cannot be read are named.`,
+  find: `Find files whose path matches a glob pattern, relative to path (by default the workspace root): * and ? match within a name, ** any number of directories, {a,b} either; e.g. **/*.ts or src/**/test_*.py. Never looks inside ${inWords([...config.exclude, "symbolic links"], "or")}. At most ${config.findResults} paths; limit (1 to ${config.findResults}) asks for fewer.`,
+  grep: `Search file contents for a regular expression (JavaScript syntax), or for plain text with literal: true. path is a file or a directory (by default the workspace root); glob limits the files searched (*.ts searches every directory). Shows path:line:text for each matching line, and context lines around each match when asked. Lines are cut to ${config.grepLineChars} characters before matching. At most ${config.grepMatches} matching lines; limit (1 to ${config.grepMatches}) asks for fewer. ${inWords(["Binary files", ...config.exclude, "symbolic links"], "and")} are skipped, and files that cannot be read are named.`,
   bash: `Run a shell command with bash -c in the workspace root. timeout is in seconds (default ${seconds(config.bashTimeoutMs)}, at most ${seconds(config.bashMaxTimeoutMs)}); stdin is written to the command's standard input. Returns the exit code and the output, stdout and stderr in the order they came. Output longer than ${config.maxLines} lines or ${formatBytes(config.maxBytes)} is cut to its end${config.spillDir === null ? "" : `, and the whole of it (up to ${formatBytes(config.maxFileBytes)}) is saved to a file you can read`}. A non-zero exit code is a result to read, not a failure. Anything the command leaves running may be stopped when it returns.`,
 })
 
@@ -58,9 +64,9 @@ export const environmentText = (root: string, config: WorkspaceToolsConfig, tool
     "## Workspace",
     `The workspace is ${root}. Give paths relative to it${config.confine ? "; the tools refuse paths that lead outside it." : "."}`,
     ...(has("read") ? [`read shows a file ${config.maxLines} lines or ${formatBytes(config.maxBytes)} at a time; continue with the offset it gives.`] : []),
-    ...(has("find") || has("grep") ? [`find and grep never look inside ${listed(config.exclude)}.`] : []),
+    ...((has("find") || has("grep")) && config.exclude.length > 0 ? [`find and grep never look inside ${config.exclude.join(", ")}.`] : []),
     ...(has("edit") ? ["edit replaces exact text: read the file first and copy the text to change from it."] : []),
-    ...(has("write") || has("edit") ? [config.protect.length === 0 ? "" : `write and edit leave ${listed(config.protect)} alone.`] : []),
+    ...(has("write") || has("edit") ? [config.protect.length === 0 ? "" : `write and edit leave ${config.protect.join(", ")} alone.`] : []),
     ...(has("bash") ? [`bash runs commands in the workspace root with a ${seconds(config.bashTimeoutMs)} timeout.${config.spillDir === null ? "" : " When their output is cut, the whole of it is saved to a file under " + config.spillDir + " that read can open."}`] : []),
   ].filter((line) => line.length > 0).join("\n")
 }
@@ -168,19 +174,20 @@ export const renderLs = (result: LsResult): string => result.total === 0 ? `[${r
   ...(result.entries.length < result.total ? [`[Showing ${result.entries.length} of ${result.total} entries. Use find with a pattern to narrow them down.]`] : []),
 ].join("\n")
 
-export const compactLs = (result: LsResult): string => `(listed ${result.path}: ${result.total} entries)`
+export const compactLs = (result: LsResult): string => `(listed ${result.path}: ${counted(result.total, "entry", "entries")})`
 
 export const renderFind = (result: FindResult, maxLines: number, maxBytes: number): string => {
-  if (result.paths.length === 0) return `No files under ${result.path} match ${result.pattern}.`
+  if (result.paths.length === 0) return `No files under ${place(result.path)} match ${result.pattern}.`
   const head = headLines(result.paths, maxLines, maxBytes)
   return [
     ...head.lines,
-    ...(head.omitted > 0 ? [`[${head.omitted} more paths not shown. Narrow the pattern or the path.]`]
-      : result.truncated ? [`[Stopped at ${result.paths.length} paths; there are more. Narrow the pattern or the path.]`] : []),
+    ...(head.omitted > 0 ? [`[${counted(head.omitted, "more path", "more paths")} not shown. Narrow the pattern or the path.]`]
+      : result.truncated ? [`[Stopped at ${counted(result.paths.length, "path", "paths")}; there are more. Narrow the pattern or the path.]`] : []),
   ].join("\n")
 }
 
-export const compactFind = (result: FindResult): string => `(find ${result.pattern} in ${result.path}: ${result.paths.length}${result.truncated ? "+" : ""} paths)`
+export const compactFind = (result: FindResult): string =>
+  `(find ${result.pattern} in ${result.path}: ${result.truncated ? `${result.paths.length}+ paths` : counted(result.paths.length, "path", "paths")})`
 
 /** The files grep could not read, one line per reason, each naming at most five of them. */
 const unreadableLines = (result: GrepResult): ReadonlyArray<string> =>
@@ -195,18 +202,18 @@ export const renderGrep = (result: GrepResult, withContext: boolean, maxLines: n
     ...(result.skipped === 0 ? [] : [`[${result.skipped} file${result.skipped === 1 ? "" : "s"} skipped: binary, larger than the read limit, or leading outside the workspace.]`]),
     ...unreadableLines(result),
   ]
-  if (result.matches === 0) return [`No matches for ${result.pattern} in ${result.path}.`, ...skipped].join("\n")
+  if (result.matches === 0) return [`No matches for ${result.pattern} in ${place(result.path)}.`, ...skipped].join("\n")
   const head = headLines(renderSearchLines(result.lines, withContext), maxLines, maxBytes)
   return [
     ...head.lines,
-    ...(head.omitted > 0 ? [`[${head.omitted} more lines not shown. Narrow the pattern or the path.]`] : []),
-    ...(result.truncated ? [`[Stopped at ${result.matches} matching lines; there are more. Narrow the pattern or the path, or raise limit.]`] : []),
+    ...(head.omitted > 0 ? [`[${counted(head.omitted, "more line", "more lines")} not shown. Narrow the pattern or the path.]`] : []),
+    ...(result.truncated ? [`[Stopped at ${counted(result.matches, "matching line", "matching lines")}; there are more. Narrow the pattern or the path, or raise limit.]`] : []),
     ...skipped,
   ].join("\n")
 }
 
 export const compactGrep = (result: GrepResult): string =>
-  `(grep ${result.pattern} in ${result.path}: ${result.matches}${result.truncated ? "+" : ""} matching lines in ${result.files} files)`
+  `(grep ${result.pattern} in ${result.path}: ${result.truncated ? `${result.matches}+ matching lines` : counted(result.matches, "matching line", "matching lines")} in ${counted(result.files, "file", "files")})`
 
 /** How a command ended, in a sentence. */
 const endOf = (result: BashToolResult): string =>

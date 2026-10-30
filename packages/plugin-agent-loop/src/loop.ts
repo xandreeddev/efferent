@@ -7,7 +7,7 @@ import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { LoopEvent, StepStatus } from "@xandreed/core"
 import type { AgentMessage, AgentResult } from "@xandreed/core"
-import { addUsage, elideMediaData, isMediaValue, zeroUsage } from "@xandreed/core"
+import { addUsage, clipTo, elideMediaData, framed, hostNote, isMediaValue, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
 import { plannedCallIdOf } from "@xandreed/core"
@@ -296,6 +296,34 @@ export const DEGENERATE_LOOP_STOP =
   "[stopped: repeated the same tool call with no progress — the run was looping]"
 
 const clip = (s: string, max: number): string => (s.length <= max ? s : `${s.slice(0, max)}…`)
+
+/** The longest decoder report, or tool name, the malformed corrective quotes. */
+const CORRECTIVE_QUOTE_CHARS = 600
+
+/** What the model can call now, and how to answer, closing each corrective of a malformed reply. */
+const replyAgain = (tools: ReadonlyArray<string>): string => tools.length === 0
+  ? "You can call no tools now: reply in plain text."
+  : `The tools you can call are: ${tools.join(", ")}. Reply again with one of them, its parameters as its schema gives them, or in plain text if you are done.`
+
+/**
+ * The loop's own corrective after a reply the model could not form: a host
+ * note saying what was wrong and what it can call, then, for a tool it does
+ * not have or parameters that do not match, what it wrote, framed as data and
+ * clipped. A reply that could not be decoded (an unknown tool's name fails
+ * the response's decoding first) is not quoted: the decoder's report on it
+ * is a dump of the response schema, not the model's words.
+ */
+const malformedCorrective = (reason: MalformedResponse["reason"], tools: ReadonlyArray<string>): string => Match.valueTags(reason, {
+  ToolNotFoundError: (notFound) => `${hostNote(`your previous reply called a tool you do not have; its name follows, as you wrote it. ${replyAgain(tools)}`)}\n\n${framed("tool-name", clipTo(notFound.toolName, CORRECTIVE_QUOTE_CHARS))}`,
+  ToolParameterValidationError: (invalid) => `${hostNote(`your previous reply called ${invalid.toolName} with parameters that do not match its schema; what did not match follows, and it may quote your reply. ${replyAgain(tools)}`)}\n\n${framed("parameter-errors", clipTo(invalid.description, CORRECTIVE_QUOTE_CHARS))}`,
+  InvalidOutputError: () => hostNote(`your previous reply could not be decoded, which usually means it called a tool you do not have or gave a call parameters of the wrong shape. ${replyAgain(tools)}`),
+})
+
+/** The loop's own note after a stop that left the host's required work undone. */
+const INCOMPLETE_CORRECTIVE = hostNote(
+  "the host reports that the required work is not complete, so a reply in text does not finish this turn. " +
+  "Complete it with the tools you can call; if it cannot be completed, use one of them that reports why, when there is one.",
+)
 
 /** The longest stream error a `stream_fallback` event carries. */
 const FALLBACK_MESSAGE_CHARS = 300
@@ -702,16 +730,12 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         return { ...state, turnIndex: recoveredIndex, malformedStreak: streak, phase: "step-cap" } satisfies LoopState
       }
       const reason = malformed.err.reason
-      const desc = clip("description" in reason ? reason.description : reason.message, 600)
+      const desc = clipTo("description" in reason ? reason.description : reason.message, CORRECTIVE_QUOTE_CHARS)
       yield* Effect.logWarning(`recovering from a malformed response: ${desc}`)
       yield* Metric.update(tagged(engineCorrections, { "engine.kind": "malformed" }), 1)
       const corrective: AgentMessage = {
         role: "user",
-        content: options.correctives?.malformed?.(malformed.toolNames, desc) ??
-          `Your previous reply could not be parsed: ${desc}\n\n` +
-          `This usually means you called a tool that doesn't exist or used the ` +
-          `wrong argument shape. The only tools available are: ${malformed.toolNames.join(", ")}. ` +
-          `Reply again using one of those tools, or plain text if you're done.`,
+        content: options.correctives?.malformed?.(malformed.toolNames, desc) ?? malformedCorrective(reason, malformed.toolNames),
       }
       yield* options.onTail?.([corrective], recoveredIndex) ?? Effect.void
       return {
@@ -755,14 +779,14 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
       // --- The next step's input: a nudge, a completion corrective ---
       const continues = phase === "continue"
       const nudge: ReadonlyArray<AgentMessage> = continues && progress.nudge
-        ? [{ role: "user", content: DEGENERATE_REPEAT_NUDGE }]
+        ? [{ role: "user", content: hostNote(DEGENERATE_REPEAT_NUDGE) }]
         : []
       yield* nudge.length > 0 ? (options.onTail?.(nudge, turnIndex) ?? Effect.void) : Effect.void
       yield* nudge.length > 0
         ? Metric.update(tagged(engineCorrections, { "engine.kind": "degenerate-nudge" }), 1)
         : Effect.void
       const completionNudge: ReadonlyArray<AgentMessage> = continues && requireMore && toolCalls.length === 0
-        ? [{ role: "user", content: options.correctives?.incomplete ?? "The host reports that required actions are incomplete. Your ordinary text is not a delivered result. Complete the requested work using the available tools, or use an explicit supported failure/clarification action if the evidence is missing." }]
+        ? [{ role: "user", content: options.correctives?.incomplete ?? INCOMPLETE_CORRECTIVE }]
         : []
       yield* completionNudge.length > 0 ? (options.onTail?.(completionNudge, turnIndex) ?? Effect.void) : Effect.void
 

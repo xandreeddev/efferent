@@ -1,6 +1,7 @@
 import { EvaluationExport } from "@xandreed/evals"
 import { expect, test } from "bun:test"
 import { Effect, Exit, Fiber, Layer } from "effect"
+import { TestClock } from "effect/testing"
 import {
   EvaluationServicesLive,
   EvaluationRunStore,
@@ -59,6 +60,7 @@ test("official SDK exports linked trial metadata and measured scores", async () 
       Effect.provide(
         Layer.succeed(EvaluationRunStore, {
           writeTrial: () => Effect.void,
+          appendTranscript: () => Effect.void,
           writeRun: () => Effect.void
         })
       )
@@ -103,7 +105,7 @@ test("a refused ingestion is a provider error that keeps the client's error as i
   const report = await Effect.runPromise(
     runEvaluation(fixture(), "fixture-run", { ids: [], split: "validation" }).pipe(
       Effect.provide(EvaluationServicesLive(fixture())),
-      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void }))
+      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, appendTranscript: () => Effect.void, writeRun: () => Effect.void }))
     )
   )
   const refused = await Effect.runPromise(
@@ -133,7 +135,7 @@ test("an export is one eval.export span naming the exporter and the run, failed 
   const report = await Effect.runPromise(
     runEvaluation(fixture(), "fixture-run", { ids: [], split: "validation" }).pipe(
       Effect.provide(EvaluationServicesLive(fixture())),
-      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void }))
+      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, appendTranscript: () => Effect.void, writeRun: () => Effect.void }))
     )
   )
   await Effect.runPromise(
@@ -151,7 +153,7 @@ const fixtureReport = () =>
   Effect.runPromise(
     runEvaluation(fixture(), "fixture-run", { ids: [], split: "validation" }).pipe(
       Effect.provide(EvaluationServicesLive(fixture())),
-      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, writeRun: () => Effect.void }))
+      Effect.provide(Layer.succeed(EvaluationRunStore, { writeTrial: () => Effect.void, appendTranscript: () => Effect.void, writeRun: () => Effect.void }))
     )
   )
 
@@ -204,4 +206,61 @@ test("interrupting an export aborts its ingestion requests", async () => {
   const aborted = await stub.aborted.finally(stub.stop)
   expect(aborted).toBe(true)
   expect(Exit.hasInterrupts(await Effect.runPromise(Fiber.await(fiber)))).toBe(true)
+})
+
+/** A stand-in that accepts every ingestion batch and keeps each request's body. */
+const ingestionStub = () => {
+  const bodies: Array<unknown> = []
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: async (request) => {
+      bodies.push(await request.json())
+      return Response.json({ successes: [], errors: [] })
+    }
+  })
+  return { url: `http://127.0.0.1:${server.port}`, bodies, stop: () => server.stop(true) }
+}
+
+test("remote ids are the ones earlier exports derived, so exporting again updates the same trace and score", async () => {
+  const stub = ingestionStub()
+  const run = await fixtureReport()
+  const receipt = await Effect.runPromise(
+    EvaluationExport.use((port) => port.exportRun(run)).pipe(
+      Effect.provide(langfuseExporter({ baseUrl: stub.url, publicKey: "fixture", secretKey: "fixture" }).layer)
+    )
+  ).finally(stub.stop)
+  const grade = run.trials[0]!.grades[0]!
+  expect(receipt.mappings).toEqual({ "fixture-run/suite/candidate/task/1": "a69dc915fad9b3d2ce2af62a20c54676" })
+  expect(stub.bodies).toEqual([{
+    batch: [
+      expect.objectContaining({ id: "960ae27d0b4c6a83a584a9130309ac0d", type: "trace-create", body: expect.objectContaining({ id: "a69dc915fad9b3d2ce2af62a20c54676" }) }),
+      {
+        id: "a1e07d5b2717de342b4b3590d685810f",
+        timestamp: new Date(grade.endedAt).toISOString(),
+        type: "score-create",
+        body: {
+          id: "a1e07d5b2717de342b4b3590d685810f",
+          traceId: "a69dc915fad9b3d2ce2af62a20c54676",
+          name: "grader@1/trial/correct",
+          dataType: "NUMERIC",
+          value: 1,
+          comment: "matches"
+        }
+      }
+    ]
+  }])
+})
+
+test("a receipt is stamped with the Clock's time", async () => {
+  const stub = ingestionStub()
+  const run = await fixtureReport()
+  const receipt = await Effect.runPromise(
+    TestClock.setTime(1_767_225_600_000).pipe(
+      Effect.andThen(EvaluationExport.use((port) => port.exportRun(run))),
+      Effect.provide(langfuseExporter({ baseUrl: stub.url, publicKey: "fixture", secretKey: "fixture" }).layer),
+      Effect.provide(TestClock.layer())
+    )
+  ).finally(stub.stop)
+  expect(receipt.at).toBe(1_767_225_600_000)
 })

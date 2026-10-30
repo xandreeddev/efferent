@@ -78,7 +78,7 @@ describe("the models plugin is built once per agent", () => {
       const sessions = yield* sessionsWith
       const agent = yield* agentWith(options, workspace)
       const first = yield* agent.turn(turnInput(sessions, "run-1"), replyOf((services) => Effect.gen(function* () {
-        yield* Context.getUnsafe(services, AuthStore).set(ProviderId.make("stub"), { type: "api_key", key: "in-memory-token" })
+        yield* Context.getUnsafe(services, AuthStore).set(ProviderId.make("stub"), { type: "api_key", key: Redacted.make("in-memory-token") })
         yield* Context.getUnsafe(services, SettingsStore).setRole("general", Option.some("stub:second"))
       })))
       const second = yield* agent.turn(turnInput(sessions, "run-2"), replyOf())

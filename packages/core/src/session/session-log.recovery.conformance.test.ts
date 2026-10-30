@@ -3,6 +3,7 @@ import { Clock, Effect, Option, Ref } from "effect"
 import type { Context } from "effect"
 import { atTime } from "../conformance.functions.js"
 import { SessionLog } from "../ports/session-log.port.js"
+import { RevisionConflict } from "./session-log.entity.js"
 import type { SessionLogEvent } from "./session-log.entity.js"
 import { sessionLogRecoveryConformance } from "./session-log.recovery.conformance.js"
 import type { SessionLogSubject } from "./session-log.recovery.conformance.js"
@@ -98,5 +99,23 @@ describe("the recovery kit catches backends that lose or hide writes", () => {
     const log = Effect.runSync(memoryLog)
     const names = (subject: SessionLogSubject) => sessionLogRecoveryConformance(subject).map((check) => check.name)
     expect(names({ open: Effect.succeed(log), callerClock: true }).length - names({ open: Effect.succeed(log) }).length).toBe(1)
+  })
+})
+
+describe("the recovery kit's own compare-and-swap", () => {
+  test("an increment that keeps losing is tried 101 times, then fails the race check with its conflict", async () => {
+    const memory = Effect.runSync(memoryLog)
+    const tries = Effect.runSync(Ref.make(0))
+    const log = SessionLog.of({
+      ...memory,
+      // The first increment of the first handle always loses to another writer; every other commit is stored.
+      commit: (id, commit) => commit.events.some((event) => event.kind === "increment" && event.data.by === "handle-0" && event.data.n === 0)
+        ? Ref.update(tries, (n) => n + 1).pipe(Effect.andThen(Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 }))))
+        : memory.commit(id, commit),
+    })
+    const race = sessionLogRecoveryConformance({ open: Effect.succeed(log) }).find((check) => check.name.startsWith("of compare-and-swap commits racing"))
+    const exit = await Effect.runPromise(Effect.result(race?.run ?? Effect.void))
+    expect(exit._tag === "Failure" ? [exit.failure.check, exit.failure.message.split(":")[0]] : "passed").toEqual(["cross-handle-race", "unexpected RevisionConflict"])
+    expect(Effect.runSync(Ref.get(tries))).toBe(101)
   })
 })

@@ -72,7 +72,7 @@ export const CompactionAction = Schema.Union(
    * (`StepRequest.onMediaRejected`), it applies whatever strategy renders.
    */
   Schema.TaggedStruct("OmitMedia", { entries: Schema.Array(EntryId), reason: Schema.String })],
-)
+).pipe(Schema.toTaggedUnion("_tag"))
 export type CompactionAction = typeof CompactionAction.Type
 
 export const ActivationSource = Schema.Literals(["always", "matcher", "load_skill", "host"])
@@ -183,7 +183,7 @@ export const LogBody = Schema.Union(
     outcome: TurnOutcomeKind,
     reply: Schema.OptionFromNullOr(Schema.String),
   })],
-)
+).pipe(Schema.toTaggedUnion("_tag"))
 export type LogBody = typeof LogBody.Type
 
 export const LogEntry = Schema.Struct({

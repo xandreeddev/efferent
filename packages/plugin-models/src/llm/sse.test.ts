@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Stream } from "effect"
+import { Effect, Match, Stream } from "effect"
 import { ToolCallId } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel } from "./compat.js"
 import { sseStreamParts } from "./sse.js"
@@ -284,14 +284,13 @@ describe("sseStreamParts", () => {
     const folded = streamed.reduce(
       (acc: { reasoning: string; text: string; rest: ReadonlyArray<unknown> }, part) => {
         const p = part as { type: string; delta?: string }
-        if (p.type === "reasoning-delta") {
-          return { ...acc, reasoning: acc.reasoning + (p.delta ?? "") }
-        }
-        if (p.type === "text-delta") return { ...acc, text: acc.text + (p.delta ?? "") }
-        if (p.type === "tool-call" || p.type === "finish") {
-          return { ...acc, rest: [...acc.rest, part] }
-        }
-        return acc
+        return Match.value(p.type).pipe(
+          Match.when("reasoning-delta", () => ({ ...acc, reasoning: acc.reasoning + (p.delta ?? "") })),
+          Match.when("text-delta", () => ({ ...acc, text: acc.text + (p.delta ?? "") })),
+          Match.whenOr("tool-call", "finish", () => ({ ...acc, rest: [...acc.rest, part] })),
+          // The other parts (starts, ends, metadata) carry nothing this test compares.
+          Match.orElse(() => acc),
+        )
       },
       { reasoning: "", text: "", rest: [] },
     )

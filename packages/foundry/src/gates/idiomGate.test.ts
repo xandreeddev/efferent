@@ -272,6 +272,12 @@ describe("effect-idioms gate over fixtures", () => {
     expect(at(findings)).toEqual([4, 5, 6, 7, 8].map((line) => ({ rule: "effect/no-ambient-time-random", file: "ambientTimeRandom.ts", line })))
   })
 
+  test("effect/no-ambient-time-random flags the wall clock in an adapter, which may still draw from the platform generator", async () => {
+    const findings = await findingsFor(["effect/no-ambient-time-random"], ["ambientTimeRandom.adapter.ts"])
+    expect(at(findings)).toEqual([4, 5].map((line) => ({ rule: "effect/no-ambient-time-random", file: "ambientTimeRandom.adapter.ts", line })))
+    expect(findings.map((f) => f.message)).toEqual(["`Date.now` reads the wall clock", "`new Date()` reads the wall clock"])
+  })
+
   test("effect/no-locale-compare flags localeCompare, not Order.String", async () => {
     const findings = await findingsFor(["effect/no-locale-compare"], ["localeCompare.ts"])
     expect(at(findings)).toEqual([{ rule: "effect/no-locale-compare", file: "localeCompare.ts", line: 3 }])
@@ -311,6 +317,33 @@ describe("effect-idioms gate over fixtures", () => {
     ])
   })
 
+  test("effect/no-code-property-guard flags hasProperty(e, \"code\") either way and \"code\" in e, not the reader or other keys", async () => {
+    const findings = await findingsFor(["effect/no-code-property-guard"], ["codeGuard.ts"])
+    expect(at(findings)).toEqual([3, 4, 5].map((line) => ({ rule: "effect/no-code-property-guard", file: "codeGuard.ts", line })))
+    expect(findings.map((f) => f.message)).toEqual([
+      '`Predicate.hasProperty(error, "code")` reads a `code` by hand',
+      '`Predicate.hasProperty("code")` reads a `code` by hand',
+      '`"code" in error` reads a `code` by hand',
+    ])
+  })
+
+  test("effect/no-code-property-guard leaves test scaffolding to the profile's exclude", async () => {
+    const config = [
+      Schema.decodeUnknownSync(RuleConfig)({
+        rule: "effect/no-code-property-guard",
+        include: ["codeGuard.ts", "codeGuard.testing.ts"],
+        exclude: ["**/*.testing.ts"],
+      }),
+    ]
+    const findings = await Effect.runPromise(
+      makeIdiomGate(allBuiltinRules, config, "tsconfig.json").run(ws).pipe(Effect.provide(TsProjectCachedLive)),
+    )
+    expect([...new Set(at(findings).map((f) => f.file))]).toEqual(["codeGuard.ts"])
+    expect(at(await findingsFor(["effect/no-code-property-guard"], ["codeGuard.testing.ts"]))).toEqual([
+      { rule: "effect/no-code-property-guard", file: "codeGuard.testing.ts", line: 1 },
+    ])
+  })
+
   test("effect/prefer-effect-fn flags exported functions and service methods that only return Effect.gen", async () => {
     const findings = await findingsFor(["effect/prefer-effect-fn"], ["effectFn.ts"])
     expect(at(findings)).toEqual([3, 4, 7].map((line) => ({ rule: "effect/prefer-effect-fn", file: "effectFn.ts", line })))
@@ -338,10 +371,17 @@ describe("effect-idioms gate over fixtures", () => {
 
   test("effect/match-over-tag-switch flags ternary chains and the type, role and mode discriminants, not a single guard", async () => {
     const findings = await findingsFor(["effect/match-over-tag-switch"], ["discriminantChains.ts"])
-    expect(at(findings)).toEqual([5, 7, 9].map((line) => ({ rule: "effect/match-over-tag-switch", file: "discriminantChains.ts", line })))
+    expect(at(findings)).toEqual([5, 7, 9, 17].map((line) => ({ rule: "effect/match-over-tag-switch", file: "discriminantChains.ts", line })))
   })
 
-  test("a boundary tolerates the later match-over-tag-switch checks, never the switch or ladder on _tag", async () => {
+  test("effect/match-over-tag-switch flags adjacent ifs that each return on one subject's discriminant, not an if with an else or two subjects", async () => {
+    const findings = await findingsFor(["effect/match-over-tag-switch"], ["discriminantChains.ts"])
+    expect(findings.filter((f) => f.message.includes("if-return")).map((f) => [Option.map(f.location, (l) => l.line), f.message])).toEqual([
+      [Option.some(17), "`._tag` if-return ladder — use Match.exhaustive (Match.orElse for a deliberate default)"],
+    ])
+  })
+
+  test("a boundary tolerates the later match-over-tag-switch checks, never the switch or else-if ladder on _tag", async () => {
     const config = [
       Schema.decodeUnknownSync(RuleConfig)({
         rule: "effect/match-over-tag-switch",

@@ -4,8 +4,9 @@ import type { Schema } from "effect"
 import { Prompt, Response } from "effect/ai"
 import { responseModelOf, stampResponseModel } from "../domain/engine-stamp.entity.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
-import type { AgentMessage } from "../domain/message.entity.js"
+import type { AgentMessage, ProviderOptions } from "../domain/message.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
+import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { plannedCallIdOf } from "../domain/run.entity.functions.js"
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { uncachedInputTokens } from "../domain/token-usage.entity.functions.js"
@@ -165,6 +166,47 @@ describe("responseToAgentMessages ↔ toPromptMessages", () => {
     const prompt = Prompt.make(toPromptMessages(messages))
     expect(prompt.content[0]?.role === "assistant" ? prompt.content[0].content.map((part) => part.type) : [])
       .toEqual(["text", "tool-call", "tool-result", "tool-call"])
+  })
+
+  test("params, results and provider blobs go out with their keys sorted at every depth: the same bytes whatever order memory holds them in", () => {
+    const exchange = (order: (keys: ReadonlyArray<string>) => ReadonlyArray<string>): ReadonlyArray<AgentMessage> => {
+      const ordered = (value: unknown): unknown => Array.isArray(value) ? value.map(ordered)
+        : typeof value === "object" && value !== null
+          ? Object.fromEntries(order(Object.keys(value)).map((key) => [key, ordered((value as Record<string, unknown>)[key])]))
+          : value
+      const blob = ordered({ vendor: { type: "thinking", signature: "sig" }, other: { b: 1, a: [{ z: 1, y: 2 }] } }) as ProviderOptions
+      return [
+        {
+          role: "assistant", providerOptions: blob, content: [
+            { type: "reasoning", text: "r", providerOptions: blob },
+            { type: "tool-call", toolCallId: ToolCallId.make("c1"), toolName: "search", input: ordered({ query: "alpha", limit: 2, filter: { tag: "b", after: [{ to: 2, from: 1 }] } }) },
+            { type: "tool-call", toolCallId: ToolCallId.make("ws_1"), toolName: "web_search", input: ordered({ query: "alpha", max: 1 }), providerExecuted: true },
+            { type: "tool-result", toolCallId: ToolCallId.make("ws_1"), toolName: "web_search", output: ordered({ url: "u", title: "t" }), providerExecuted: true },
+          ],
+        },
+        { role: "tool", content: [{ type: "tool-result", toolCallId: ToolCallId.make("c1"), toolName: "search", output: ordered({ total: 1, hits: ["a"] }), providerOptions: blob }] },
+      ]
+    }
+    const sent = (order: (keys: ReadonlyArray<string>) => ReadonlyArray<string>) => JSON.stringify(toPromptMessages(exchange(order)))
+    expect(sent((keys) => [...keys].reverse())).toBe(sent((keys) => keys))
+    expect(sent((keys) => [...keys].sort())).toBe(sent((keys) => keys))
+    const [assistant] = toPromptMessages(exchange((keys) => keys))
+    const parts = assistant?.role === "assistant" && typeof assistant.content !== "string" ? assistant.content : []
+    // Core's canonical order, the order fingerprints hash.
+    expect({
+      options: parts.flatMap((part) => part.type === "reasoning" ? [JSON.stringify(part.options)] : []),
+      params: parts.flatMap((part) => part.type === "tool-call" ? [JSON.stringify(part.params)] : []),
+      results: parts.flatMap((part) => part.type === "tool-result" ? [JSON.stringify(part.result)] : []),
+    }).toEqual({
+      options: [canonicalJson({ vendor: { type: "thinking", signature: "sig" }, other: { b: 1, a: [{ z: 1, y: 2 }] } })],
+      params: [canonicalJson({ query: "alpha", limit: 2, filter: { tag: "b", after: [{ to: 2, from: 1 }] } }), canonicalJson({ query: "alpha", max: 1 })],
+      results: [canonicalJson({ url: "u", title: "t" })],
+    })
+    expect(JSON.stringify(assistant?.options)).toBe("{\"other\":{\"a\":[{\"y\":2,\"z\":1}],\"b\":1},\"vendor\":{\"signature\":\"sig\",\"type\":\"thinking\"}}")
+    // A value that is not plain JSON data (a decoded class instance) goes out as it is.
+    const at = new Date(0)
+    const [dated] = toPromptMessages([{ role: "assistant", content: [{ type: "tool-call", toolCallId: ToolCallId.make("c2"), toolName: "remind", input: { note: "n", at } }] }])
+    expect(dated?.role === "assistant" && typeof dated.content !== "string" ? dated.content[0] : undefined).toMatchObject({ params: { at, note: "n" } })
   })
 
   test("a preliminary result is no result: it is neither stored nor summarized", () => {

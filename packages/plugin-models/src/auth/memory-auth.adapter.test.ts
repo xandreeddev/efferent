@@ -2,21 +2,24 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { mkdtempSync, readdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Clock, Effect, Fiber, Layer, Option, Redacted, Ref } from "effect"
+import { Clock, Effect, Fiber, Layer, Option, Redacted, Ref, Schema } from "effect"
 import { ProviderId } from "@xandreed/core"
-import { AuthError, AuthStore, authStoreConformance } from "@xandreed/core/models"
-import type { AuthStoreConformanceOptions, Credential } from "@xandreed/core/models"
+import { AuthError, AuthStore, authStoreConformance, Credential } from "@xandreed/core/models"
+import type { AuthStoreConformanceOptions } from "@xandreed/core/models"
 import { HostCredentials } from "../ports/host-credentials.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import { damagedFile, tokenEndpoint as kitTokenEndpoint } from "../testing.js"
 import type { CredentialInput } from "./credential-input.entity.js"
-import { toCredential } from "./credential-input.entity.functions.js"
 import { LocalAuthStoreLive } from "./localAuth.js"
 import { MemoryAuthStoreLive } from "./memory-auth.adapter.js"
 
 const anthropic = ProviderId.make("anthropic")
 const opencode = ProviderId.make("opencode")
 const HOUR = 3_600_000
+
+/** A credential as it is stored, secrets in the clear: what a test compares (`toEqual` sees no difference between two `Redacted` values). */
+const plain = Schema.encodeSync(Credential)
+const plainAll = (all: ReadonlyMap<string, Credential>) => Object.fromEntries([...all].map(([provider, credential]) => [provider, plain(credential)]))
 
 const runKit = (store: typeof AuthStore.Service, options: AuthStoreConformanceOptions = {}) => authStoreConformance(store, options).map((check) => test(check.name, async () => {
   const exit = await Effect.runPromise(Effect.result(check.run))
@@ -64,12 +67,12 @@ const hostWith = (initial: ReadonlyMap<string, CredentialInput>, failSaves = fal
     load: Effect.succeed(initial),
     save: (provider, credential) => failSaves
       ? Effect.fail(new AuthError({ provider, message: "the host store is down" }))
-      : Ref.update(saves, (all) => [...all, [provider, Option.map(credential, toCredential)] as const]),
+      : Ref.update(saves, (all) => [...all, [provider, credential] as const]),
   }))
   return { saves, layer }
 })
 
-const expired = (now: number): Credential => ({ type: "oauth", access: "stale-access", refresh: "stale-refresh", expires: now - HOUR })
+const expired = (now: number): Credential => ({ type: "oauth", access: Redacted.make("stale-access"), refresh: Redacted.make("stale-refresh"), expires: now - HOUR })
 
 describe("MemoryAuthStoreLive refreshes in memory", () => {
   test("two calls on one expired token send one refresh, and the host receives the new token", async () => {
@@ -87,8 +90,8 @@ describe("MemoryAuthStoreLive refreshes in memory", () => {
     expect(endpoint.requests.length).toBe(1)
     expect(JSON.parse(endpoint.requests[0]!)).toMatchObject({ grant_type: "refresh_token", refresh_token: "stale-refresh" })
     expect(result.keys).toEqual([Option.some("fresh-access-1"), Option.some("fresh-access-1")])
-    expect(Option.getOrThrow(result.stored)).toMatchObject({ type: "oauth", access: "fresh-access-1", refresh: "fresh-refresh-1" })
-    expect(result.saves.map(([provider, credential]) => [provider, Option.map(credential, (value) => value.type === "oauth" ? value.access : "")])).toEqual([[anthropic, Option.some("fresh-access-1")]])
+    expect(plain(Option.getOrThrow(result.stored))).toMatchObject({ type: "oauth", access: "fresh-access-1", refresh: "fresh-refresh-1" })
+    expect(result.saves.map(([provider, credential]) => [provider, Option.map(credential, (value) => value.type === "oauth" && Redacted.isRedacted(value.access) ? Redacted.value(value.access) : "")])).toEqual([[anthropic, Option.some("fresh-access-1")]])
   })
 
   test("a logout during a stalled refresh stays a logout: the refresh writes nothing and the host never gets its token", async () => {
@@ -118,7 +121,7 @@ describe("MemoryAuthStoreLive refreshes in memory", () => {
   test("a login during a stalled refresh wins over the refreshed token", async () => {
     const release = Promise.withResolvers<void>()
     const endpoint = tokenEndpoint(release.promise)
-    const replacement: Credential = { type: "api_key", key: "replacement-key" }
+    const replacement: Credential = { type: "api_key", key: Redacted.make("replacement-key") }
     const result = await Effect.runPromise(Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis
       return yield* Effect.gen(function* () {
@@ -131,7 +134,7 @@ describe("MemoryAuthStoreLive refreshes in memory", () => {
       }).pipe(Effect.provide(MemoryAuthStoreLive(new Map([[anthropic, expired(now)]]), { fetch: endpoint.fetch })))
     }))
     expect(result.key).toEqual(Option.some("replacement-key"))
-    expect(Option.getOrThrow(result.stored)).toEqual(replacement)
+    expect(plain(Option.getOrThrow(result.stored))).toEqual({ type: "api_key", key: "replacement-key" })
   })
 
   test("a host that cannot save a refreshed token still gets the key: the token stays in memory", async () => {
@@ -160,7 +163,7 @@ describe("MemoryAuthStoreLive refreshes in memory", () => {
       }).pipe(Effect.provide(MemoryAuthStoreLive(new Map([[anthropic, expired(now)]]), { fetch: refused })))
     }))
     expect(result.failure).toMatchObject({ _tag: "AuthError", provider: "anthropic" })
-    expect(Option.getOrThrow(result.stored)).toMatchObject({ access: "stale-access" })
+    expect(plain(Option.getOrThrow(result.stored))).toMatchObject({ access: "stale-access" })
   })
 })
 
@@ -174,14 +177,14 @@ describe("MemoryAuthStoreLive and the host's credentials", () => {
       return yield* Effect.gen(function* () {
         const auth = yield* AuthStore
         const seeded = yield* auth.all
-        yield* auth.set(ProviderId.make("openai"), { type: "api_key", key: "openai-login" })
+        yield* auth.set(ProviderId.make("openai"), { type: "api_key", key: Redacted.make("openai-login") })
         yield* auth.remove(ProviderId.make("google"))
         yield* auth.remove(ProviderId.make("never-signed-in"))
         return { seeded, saves: yield* Ref.get(host.saves) }
-      }).pipe(Effect.provide(MemoryAuthStoreLive(new Map([[opencode, { type: "api_key", key: "from-seed" }]])).pipe(Layer.provide(host.layer))))
+      }).pipe(Effect.provide(MemoryAuthStoreLive(new Map([[opencode, { type: "api_key", key: Redacted.make("from-seed") }]])).pipe(Layer.provide(host.layer))))
     }))
-    expect(Object.fromEntries(result.seeded)).toEqual({ opencode: { type: "api_key", key: "from-seed" }, google: { type: "api_key", key: "google-from-host" } })
-    expect(result.saves).toEqual([["openai", Option.some({ type: "api_key", key: "openai-login" })], ["google", Option.none()]])
+    expect(plainAll(result.seeded)).toEqual({ opencode: { type: "api_key", key: "from-seed" }, google: { type: "api_key", key: "google-from-host" } })
+    expect(result.saves.map(([provider, credential]) => [provider, Option.map(credential, plain)])).toEqual([["openai", Option.some({ type: "api_key", key: "openai-login" })], ["google", Option.none()]])
   })
 
   test("a login or logout the host cannot save changes nothing in memory", async () => {
@@ -189,14 +192,31 @@ describe("MemoryAuthStoreLive and the host's credentials", () => {
       const host = yield* hostWith(new Map(), true)
       return yield* Effect.gen(function* () {
         const auth = yield* AuthStore
-        const login = yield* Effect.flip(auth.set(ProviderId.make("openai"), { type: "api_key", key: "lost" }))
+        const login = yield* Effect.flip(auth.set(ProviderId.make("openai"), { type: "api_key", key: Redacted.make("lost") }))
         const logout = yield* Effect.flip(auth.remove(opencode))
         return { login, logout, all: yield* auth.all }
-      }).pipe(Effect.provide(MemoryAuthStoreLive(new Map([[opencode, { type: "api_key", key: "kept" }]])).pipe(Layer.provide(host.layer))))
+      }).pipe(Effect.provide(MemoryAuthStoreLive(new Map([[opencode, { type: "api_key", key: Redacted.make("kept") }]])).pipe(Layer.provide(host.layer))))
     }))
     expect(result.login._tag).toBe("AuthError")
     expect(result.logout._tag).toBe("AuthError")
-    expect(Object.fromEntries(result.all)).toEqual({ opencode: { type: "api_key", key: "kept" } })
+    expect(plainAll(result.all)).toEqual({ opencode: { type: "api_key", key: "kept" } })
+  })
+
+  test("a secret that is not Redacted (from untyped code) is refused as the file store refuses it: memory and the host unchanged, the value never repeated", async () => {
+    const untyped = (credential: unknown): Credential => credential as never
+    const result = await Effect.runPromise(Effect.gen(function* () {
+      const host = yield* hostWith(new Map())
+      return yield* Effect.gen(function* () {
+        const auth = yield* AuthStore
+        const login = yield* Effect.flip(auth.set(ProviderId.make("openai"), untyped({ type: "api_key", key: "sk-plain-login" })))
+        return { login, all: yield* auth.all, saves: yield* Ref.get(host.saves) }
+      }).pipe(Effect.provide(MemoryAuthStoreLive(new Map([[opencode, { type: "api_key", key: Redacted.make("kept") }]])).pipe(Layer.provide(host.layer))))
+    }))
+    expect([result.login._tag, result.login.provider]).toEqual(["AuthError", "openai"])
+    expect(result.login.message).toContain("must be Redacted values")
+    expect(JSON.stringify(result.login)).not.toContain("sk-plain")
+    expect(plainAll(result.all)).toEqual({ opencode: { type: "api_key", key: "kept" } })
+    expect(result.saves).toEqual([])
   })
 })
 

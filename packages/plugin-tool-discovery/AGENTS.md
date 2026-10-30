@@ -26,16 +26,17 @@ Core's `ToolRegistry` over every contributed capability: it registers the tools 
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `load_skill` description | `src/registry.adapter.ts:71` | sdk golden |
-| `read_skill_reference` description | `src/registry.adapter.ts:79` | unpinned |
+| `load_skill` description | `src/registry.adapter.ts:72` | exact, `src/registry.adapter.test.ts:546`; sdk golden |
+| `read_skill_reference` description | `src/registry.adapter.ts:80` | exact, `src/registry.adapter.test.ts:547` |
 | Catalogue heading and lines (`catalogText`) | `src/registry.adapter.ts:117-122` | sdk golden |
-| Skill instructions (`skillInstructions`: `## id`, `Tools:`, `References (read_skill_reference):`, `Now available:`), also for matcher-seeded exchanges | `src/registry.adapter.ts:108-114` | sdk golden; exact, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:188` |
-| `ToolInactive` messages | `src/registry.adapter.ts:308-309` | exact (not loaded), `packages/plugin-workspace/src/workspace-tools.journey.test.ts:183`; not available: unpinned |
-| `ToolCallLimit` message | `src/registry.adapter.ts:320` | exact, `packages/sdk/src/agent.trace.test.ts:239` |
-| `Forbidden`, `CallLimit` messages; `Denied` carries the policy's | `src/registry.adapter.ts:312`, `:318`, `:315` | codes only, `src/registry.adapter.test.ts:305`; the denial's text, `:329` |
-| `ToolDefect` message | `src/registry.adapter.ts:337` | exact, `src/registry.adapter.test.ts:381` |
-| `SkillLoadLimit`, `UnknownReference` messages; `Unknown skills: …` | `src/registry.adapter.ts:276`, `:288`, `:258` | unpinned |
-| `SkillNotLoaded` message | `src/registry.adapter.ts:287` | contains, `packages/plugin-workspace/src/skills/skills-directory.adapter.test.ts:260` |
+| Skill instructions (`skillInstructions`: `## id`, `Tools:`, `References (read_skill_reference):`, `Now available:`), also for matcher-seeded exchanges | `src/registry.adapter.ts:109-115` | exact, `src/registry.adapter.test.ts:560`; sdk golden |
+| `ToolInactive` messages: not loaded, not available | `src/registry.adapter.ts:309-310` | exact, `src/registry.adapter.test.ts:298`, `:349` |
+| `ToolCallLimit` message | `src/registry.adapter.ts:321` | exact, `src/registry.adapter.test.ts:309` |
+| `Forbidden`, `CallLimit` messages; `Denied` carries the policy's | `src/registry.adapter.ts:313`, `:319`, `:316` | exact, `src/registry.adapter.test.ts:299`, `:305`, `:301` |
+| `ToolDefect` message | `src/registry.adapter.ts:338` | exact, `src/registry.adapter.test.ts:397` |
+| `SkillLoadLimit`, `UnknownReference` messages; `load_skill`'s refusals: `Unknown skills: …; load_skill takes …` (`skills.unknown`) and core's `capability.forbidden` message | `src/registry.adapter.ts:277`, `:289`, `:259`, `:280` | exact, `src/registry.adapter.test.ts:521`, `:561`, `:514`, `:509` |
+| `SkillNotLoaded` message | `src/registry.adapter.ts:288` | exact, `src/registry.adapter.test.ts:559` |
+| `requires.missing` at open (`<tool> requires <key>, …; …`): fails the turn before any step, so a model reads it only as a failed turn's message, such as a background task's notice | `src/registry.adapter.ts:230`, `:232` | exact, `src/registry.adapter.test.ts:376` |
 
 ## Erasure files
 
@@ -52,7 +53,7 @@ None. The toolkit is built from tools known only at run time (`Toolkit.make` ove
 ## Tests
 
 - `src/registry.conformance.test.ts` runs core's `toolRegistryConformance` against the plugin, with self-tests of careless registries that must fail.
-- `src/registry.adapter.test.ts`: invocations and progress, subscriber failures, refusals, an open lacking declared services, defects, the matcher's choice, `load_skill`, image views, digest tasks.
+- `src/registry.adapter.test.ts`: invocations and progress, subscriber failures, refusals, an open lacking declared services, defects, the matcher's choice, `load_skill` and `read_skill_reference` with their descriptions and refusals, image views, digest tasks.
 - The sdk golden composes it; the workspace journey and skills tests drive `load_skill` and `read_skill_reference` end to end.
 - Run: `bun test packages/plugin-tool-discovery packages/sdk/src/agent.golden.test.ts`.
 

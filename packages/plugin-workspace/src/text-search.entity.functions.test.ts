@@ -22,12 +22,17 @@ describe("compilePattern", () => {
     const fine = ["(\\d+\\.){3}\\d+", "a+b+", "(foo|bar)+", "\\(a+\\)+", "[(a+)]+", "(a)+(b+)", "(a+)?", "x{2,}", "(?:ab)*c", "[^)]*\\)+"]
     expect(nested.filter((pattern) => !repeatsRepetition(pattern))).toEqual([])
     expect(fine.filter(repeatsRepetition)).toEqual([])
-    const refused = compilePattern("(a+)+$", { literal: false, ignoreCase: false })
-    expect(Result.isFailure(refused) ? refused.failure : undefined).toMatchObject({ error: "InvalidPattern" })
-    expect(Result.isFailure(refused) ? refused.failure.message : "").toContain("exponential")
     expect(Result.isSuccess(compilePattern("(a+)+$", { literal: true, ignoreCase: false }))).toBe(true)
-    const invalid = compilePattern("a(", { literal: false, ignoreCase: false })
-    expect(Result.isFailure(invalid) ? invalid.failure.message : "").toContain("pass literal: true")
+  })
+
+  test("each refusal says why and what to do instead; one that does not compile carries the engine's reason", () => {
+    const refusal = (pattern: string) => Result.match(compilePattern(pattern, { literal: false, ignoreCase: false }), { onFailure: (failure) => failure, onSuccess: () => undefined })
+    // The engine's own words for the syntax error, whichever engine runs the test.
+    const engine = Result.match(Result.try(() => new RegExp("a(")), { onFailure: (error) => error instanceof Error ? error.message : "", onSuccess: () => "compiled" })
+    expect([refusal("(a+)+$"), refusal("a(")]).toEqual([
+      { error: "InvalidPattern", message: "(a+)+$ repeats a group that itself repeats (as in (a+)+), which can take exponential time on some lines; rewrite it without the nested repetition, or search with bash (grep -E, rg)" },
+      { error: "InvalidPattern", message: `a( is not a valid regular expression; the engine says: ${engine}. Pass literal: true to search for it as text` },
+    ])
   })
 })
 

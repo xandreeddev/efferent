@@ -55,6 +55,17 @@ way, without a key.
 The models plugin keeps its credentials (`AuthStore`) and model settings
 (`SettingsStore`) in one of two places, chosen by its `storage` option.
 
+A credential's secrets (an API key, an OAuth access or refresh token) are
+`Redacted` wherever the `AuthStore` takes or hands them out: a login passes
+`Redacted.make(secret)` to `set`, and code that needs a secret from `get` or
+`all` reads it with `Redacted.value`. The OAuth sign-in helpers
+(`exchangeAnthropicCode`, `exchangeOpenAiCodexCode`) return their tokens
+`Redacted` already, so a sign-in passes them to `set` as they are, and the
+refresh functions take the refresh token `Redacted`. They print as
+`<redacted>` in errors, logs and fingerprints. `auth.json` keeps its format, the secrets in the
+clear; a `set` whose secret is not `Redacted` (a plain string from untyped
+code) fails with an `AuthError` and writes nothing.
+
 **`storage: "local"`** (the default) uses `.efferent` files:
 
 - Credentials live in `~/.efferent/runtime/auth.json` (a login lands there,

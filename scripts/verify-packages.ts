@@ -475,7 +475,8 @@ const { authStoreConformance, AuthStore, SettingsStore, settingsStoreConformance
 const { ConfiguredModelCatalogLive, LocalAuthStoreLive, LocalSettingsStoreLive, MemoryAuthStoreLive, MemorySettingsStoreLive, ModelsTransport } = await import("@xandreed/plugin-models")
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = await import("node:fs")
 const { dirname } = await import("node:path")
-const serviceOf = (tag, layer) => Effect.runPromise(Effect.service(tag).pipe(Effect.provide(layer)))
+const { Redacted } = await import("effect")
+const serviceOf =(tag, layer) => Effect.runPromise(Effect.service(tag).pipe(Effect.provide(layer)))
 const kitHome = mkdtempSync(join(tmpdir(), "efferent-node-kits-home-"))
 const kitCwd = mkdtempSync(join(tmpdir(), "efferent-node-kits-cwd-"))
 // A token endpoint the refresh checks count and hold, and a file the corrupt checks damage, on Node's fetch and fs.
@@ -507,7 +508,7 @@ const stores = await runKit("AuthStore (memory)", authStoreConformance(await ser
   + await runKit("AuthStore (local)", authStoreConformance(await serviceOf(AuthStore, localAuth), { refresh: localEndpoint.probe, corrupt: damagedFile(join(kitHome, ".efferent", "runtime", "auth.json")) }))
   + await runKit("SettingsStore (memory)", settingsStoreConformance(await serviceOf(SettingsStore, MemorySettingsStoreLive()), { writable: true }))
   + await runKit("SettingsStore (local)", settingsStoreConformance(await serviceOf(SettingsStore, LocalSettingsStoreLive(kitCwd, kitHome)), { writable: true, corrupt: damagedFile(join(kitCwd, ".efferent", "config.json")) }))
-  + await runKit("ModelCatalog", modelCatalogConformance(await serviceOf(ModelCatalog, ConfiguredModelCatalogLive.pipe(Layer.provide(MemoryAuthStoreLive(new Map([["opencode", { type: "api_key", key: "k" }]]))))), { includes: ["opencode:glm-5.2"] }))
+  + await runKit("ModelCatalog", modelCatalogConformance(await serviceOf(ModelCatalog, ConfiguredModelCatalogLive.pipe(Layer.provide(MemoryAuthStoreLive(new Map([["opencode", { type: "api_key", key: Redacted.make("k") }]]))))), { includes: ["opencode:glm-5.2"] }))
 rmSync(kitHome, { recursive: true, force: true })
 rmSync(kitCwd, { recursive: true, force: true })
 // The Sessions kit over the packed SessionsLive and in-memory log, each check under a TestClock of its own that the kit moves;

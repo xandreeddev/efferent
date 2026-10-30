@@ -1,10 +1,10 @@
-import { Effect, Result, Option, Schema } from "effect"
+import { Effect, Result, Option, Redacted, Schema } from "effect"
 import { Base64Url } from "effect/encoding"
 import { AuthError } from "@xandreed/core/models"
 import { generatePkce, tokenTime } from "./anthropicOAuth.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
-import { decodeTokenResponse } from "./token-response.entity.functions.js"
+import { decodeTokenResponse, tokenRefusalText } from "./token-response.entity.functions.js"
 
 /** ChatGPT Plus/Pro OAuth protocol used by the OpenAI Codex subscription. */
 export const OPENAI_CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -20,9 +20,10 @@ export const OPENAI_CODEX_REDIRECT_URI = `http://localhost:${OPENAI_CODEX_CALLBA
 const SCOPE = "openid profile email offline_access"
 const ACCOUNT_CLAIM = "https://api.openai.com/auth"
 
+/** The tokens a sign-in or a refresh grants, `Redacted` from the token response on, and the account id read from the access token. */
 export interface OpenAiCodexTokens {
-  readonly access: string
-  readonly refresh: string
+  readonly access: Redacted.Redacted<string>
+  readonly refresh: Redacted.Redacted<string>
   readonly expires: number
   readonly accountId?: string
 }
@@ -55,12 +56,16 @@ export const openAiCodexAccountId = (accessToken: string): Option.Option<string>
     (claims) => Option.fromNullishOr(claims[ACCOUNT_CLAIM]?.chatgpt_account_id),
   )
 
-/** One token-endpoint POST; `previous` is the refresh token a refresh sends, kept when the response does not rotate it. */
+/**
+ * One token-endpoint POST; `body` is the form as sent, its secrets in the
+ * clear. `previous` is the refresh token a refresh sends, kept when the
+ * response does not rotate it.
+ */
 const postToken = (
   body: Record<string, string>,
   stage: string,
   options: TokenRequestOptions,
-  previous: Option.Option<string>,
+  previous: Option.Option<Redacted.Redacted<string>>,
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
   Effect.tryPromise({
     try: async () => {
@@ -76,14 +81,14 @@ const postToken = (
   }).pipe(
     Effect.filterOrFail(
       (response) => response.ok,
-      (response) => oauthError(stage, `status ${response.status}: ${response.text.slice(0, 200)}`),
+      (response) => oauthError(stage, tokenRefusalText(response.status, response.text, body)),
     ),
     Effect.flatMap((response) => decodeTokenResponse(response.text, previous).pipe(Effect.mapError((reason) => oauthError(stage, reason)))),
     Effect.flatMap((issued) => Effect.map(tokenTime(options), (now) => ({
       access: issued.access,
       refresh: issued.refresh,
       expires: now + issued.lifetimeMs,
-      ...Option.match(openAiCodexAccountId(issued.access), { onNone: () => ({}), onSome: (accountId) => ({ accountId }) }),
+      ...Option.match(openAiCodexAccountId(Redacted.value(issued.access)), { onNone: () => ({}), onSome: (accountId) => ({ accountId }) }),
     }))),
   )
 
@@ -109,6 +114,7 @@ export const beginOpenAiCodexOAuth: Effect.Effect<OpenAiCodexOAuthBegin> =
     return { verifier: pkce.verifier, state, authorizeUrl: url.toString(), callbackPort: OPENAI_CODEX_CALLBACK_PORT, callbackPath: OPENAI_CODEX_CALLBACK_PATH }
   })
 
+/** Exchange the authorization code for tokens, `Redacted` (ready for `AuthStore.set`). */
 export const exchangeOpenAiCodexCode = (
   code: string,
   verifier: string,
@@ -116,8 +122,9 @@ export const exchangeOpenAiCodexCode = (
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
   postToken({ grant_type: "authorization_code", client_id: OPENAI_CODEX_CLIENT_ID, code, code_verifier: verifier, redirect_uri: OPENAI_CODEX_REDIRECT_URI }, "code exchange", options, Option.none())
 
+/** Refresh an expired (or near-expiry) access token; the refresh token is unwrapped only into the request form. */
 export const refreshOpenAiCodexToken = (
-  refreshToken: string,
+  refreshToken: Redacted.Redacted<string>,
   options: TokenRequestOptions = {},
 ): Effect.Effect<OpenAiCodexTokens, AuthError> =>
-  postToken({ grant_type: "refresh_token", refresh_token: refreshToken, client_id: OPENAI_CODEX_CLIENT_ID }, "token refresh", options, Option.some(refreshToken))
+  postToken({ grant_type: "refresh_token", refresh_token: Redacted.value(refreshToken), client_id: OPENAI_CODEX_CLIENT_ID }, "token refresh", options, Option.some(refreshToken))

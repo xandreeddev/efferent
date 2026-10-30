@@ -3,6 +3,7 @@ import { Effect, Layer, Option, Schema } from "effect"
 import type { Context } from "effect"
 import { AuthError, AuthStore, Credential } from "@xandreed/core/models"
 import type { ProviderId } from "@xandreed/core"
+import { encodeCredential } from "./credential-input.entity.functions.js"
 import { isSameToken, resolveSlotKey } from "./credential-refresh.entity.functions.js"
 import type { CredentialSlot } from "./credential-refresh.entity.functions.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
@@ -15,7 +16,9 @@ import { namedLock, readJsonObject, withFileLock, writeJsonObject } from "../sto
  * `~/.efferent/auth.json` merged with a local `<cwd>/.efferent/auth.json`
  * (local overrides global per provider). Legacy flat-string entries read as
  * api keys. `resolveKey` refreshes a near-expiry OAuth token first and
- * persists the refreshed credential back to the file that held it.
+ * persists the refreshed credential back to the file that held it. Secrets
+ * are `Redacted` once read and in the clear in the file: every entry is
+ * encoded through `Credential` before it is written.
  */
 
 interface AuthFile {
@@ -29,9 +32,9 @@ const decodeStored = Schema.decodeUnknownOption(Credential)
 /** A flat string is a legacy api key. */
 const decodeLegacyKey = Schema.decodeUnknownOption(Schema.String)
 
-/** An entry as a `Credential`, or a legacy flat string as an api key; none for anything else (a field of the wrong type included). */
+/** An entry as a `Credential`, or a legacy flat string as an api key, its secrets `Redacted`; none for anything else (a field of the wrong type included). */
 const decodeCredential = (raw: Schema.Json): Option.Option<Credential> =>
-  Option.orElse(decodeStored(raw), () => Option.map(decodeLegacyKey(raw), (key) => ({ type: "api_key" as const, key })))
+  Option.orElse(decodeStored(raw), () => Option.flatMap(decodeLegacyKey(raw), (key) => decodeStored({ type: "api_key", key })))
 
 const corrupt = (path: string) => (reason: string) => new AuthError({
   provider: "*",
@@ -53,14 +56,22 @@ const readAuthFile = (path: string): Effect.Effect<AuthFile, AuthError> =>
     }
   }))
 
-/** Write `file` with `provider` set to `credential` (or removed), every other entry kept. Atomic, mode 0600. */
+/**
+ * Write `file` with `provider` set to `credential` (or removed), every other
+ * entry kept. Every credential is encoded first, its secrets in the clear:
+ * `JSON.stringify` of a `Credential` writes `"<redacted>"`, which would erase
+ * them. One that does not encode fails the write before anything changes.
+ * Atomic, mode 0600.
+ */
 const writeAuthFile = (file: AuthFile, provider: string, credential: Option.Option<Credential>): Effect.Effect<void, AuthError> => {
-  const others = (entries: ReadonlyMap<string, unknown>) => [...entries].filter(([key]) => key !== provider)
-  return writeJsonObject(
-    file.path,
-    Object.fromEntries([...others(file.unread), ...others(file.entries), ...Option.toArray(Option.map(credential, (value) => [provider, value] as const))]),
-    Option.some(0o600),
-    (reason) => new AuthError({ provider: "*", message: `auth.json write failed: ${reason}` }),
+  const others = <A>(entries: ReadonlyMap<string, A>) => [...entries].filter(([key]) => key !== provider)
+  const credentials = [...others(file.entries), ...Option.toArray(Option.map(credential, (value) => [provider, value] as const))]
+  return Effect.forEach(credentials, ([key, value]) => Effect.map(encodeCredential(key, value), (encoded) => [key, encoded] as const), { concurrency: 1 }).pipe(
+    Effect.flatMap((encoded) => {
+      // Typed as JSON, so a decoded credential (its secrets `Redacted`) cannot be written by mistake.
+      const record: Schema.JsonObject = Object.fromEntries([...others(file.unread), ...encoded])
+      return writeJsonObject(file.path, record, Option.some(0o600), (reason) => new AuthError({ provider: "*", message: `auth.json write failed: ${reason}` }))
+    }),
   )
 }
 

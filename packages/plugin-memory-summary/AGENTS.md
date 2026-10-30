@@ -11,7 +11,7 @@ Summarizing conversation memory: a `ConversationMemory` with the window strategy
 - Opening without a `UtilityLlm` in the turn's services fails with `memory.summary`.
 - `open` is a `memory.open` span (`Effect.fn`); each ask of the summarizer is a `memory.summarize` span, failed when the call fails or outlasts `summaryTimeoutMs`. A step under the trigger asks nothing and opens no span.
 - Bump `SUMMARY_STRATEGY.version` when a decision changes: every recorded `Compaction` and every `context.built` carries it.
-- A text change updates its exact pin in `src/plugin.adapter.test.ts`.
+- A text change updates its exact pin in `src/plugin.adapter.test.ts`; the sdk compaction golden shows it too, re-recorded with `EFFERENT_UPDATE_MODEL_GOLDEN=1` and the diff reviewed.
 
 ## Public surface
 
@@ -27,9 +27,9 @@ All of it goes to the summarizer (the utility model), not to the agent's model.
 
 | Text | Source | Pinned by |
 |---|---|---|
-| Default `instructions` | `src/plugin.adapter.ts:53` | unpinned (the plugin reference shows it as a default) |
-| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:81`, `:84`, `:87` | exact, `src/plugin.adapter.test.ts:37` |
-| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:84`, `:86` | exact, `src/plugin.adapter.test.ts:37` |
+| Default `instructions` (the plugin reference shows it as a default) | `src/plugin.adapter.ts:53` | exact, `src/plugin.adapter.test.ts:55`; sdk compaction golden |
+| The data rule, the earlier-summary line, `Reply with the summary only.` | `src/plugin.adapter.ts:81`, `:84`, `:87` | exact, `src/plugin.adapter.test.ts:37`; sdk compaction golden |
+| `<earlier-summary>` and `<conversation-transcript>` frames | `src/plugin.adapter.ts:84`, `:86` | exact, `src/plugin.adapter.test.ts:37`; sdk compaction golden |
 
 ## Erasure files
 
@@ -46,6 +46,7 @@ None.
 
 - `src/plugin.adapter.test.ts`: the prompt, a summarizer that answers, fails or stalls (under `TestClock`), alone and in the plugin, and the spans.
 - `packages/sdk/src/memory.conformance.test.ts` runs core's `memoryConformance` against this strategy and checks the `memory.summary` failure without a `UtilityLlm`.
-- Run: `bun test packages/plugin-memory-summary packages/sdk/src/memory.conformance.test.ts`.
+- The sdk compaction golden (`packages/sdk/src/agent.compaction-golden.test.ts`, `packages/sdk/golden/agent-compaction.model.json`) composes it with `cooldownTurns: 0` and a scripted summarizer: two summaries in consecutive turns, the second folding the first, each summarizer prompt recorded and the next request carrying core's handoff.
+- Run: `bun test packages/plugin-memory-summary packages/sdk/src/memory.conformance.test.ts packages/sdk/src/agent.compaction-golden.test.ts`.
 
 See the root AGENTS.md for the enforced rules and the definition of done.

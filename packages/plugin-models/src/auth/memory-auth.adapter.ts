@@ -5,7 +5,7 @@ import type { AuthError, Credential } from "@xandreed/core/models"
 import { HostCredentials } from "../ports/host-credentials.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
-import { toCredential, toCredentialInput } from "./credential-input.entity.functions.js"
+import { encodeCredential, toCredentialInput } from "./credential-input.entity.functions.js"
 import { isSameToken, resolveSlotKey } from "./credential-refresh.entity.functions.js"
 import type { CredentialSlot } from "./credential-refresh.entity.functions.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
@@ -29,7 +29,9 @@ interface ProviderLocks {
  * `seed`. `resolveKey` refreshes a near-expiry anthropic or openai-codex
  * OAuth token in memory, one refresh per provider at a time (through the
  * `ModelsTransport` it was built over, so through the plugin's proxy), and
- * hands the new token to `HostCredentials.save`.
+ * hands the new token to `HostCredentials.save`. Secrets stay `Redacted`
+ * throughout; a `set` whose secrets are not (a plain string from untyped
+ * code) fails with an `AuthError`, as it does on the file store.
  *
  * A login or logout (`set`, `remove`) does not wait for a refresh's token
  * request; it waits only while a refreshed token is committed, which
@@ -47,7 +49,7 @@ export const MemoryAuthStoreLive = (
     const host = yield* Effect.serviceOption(HostCredentials)
     const loaded = yield* Option.match(host, {
       onNone: () => Effect.succeed<ReadonlyMap<string, Credential>>(new Map()),
-      onSome: (credentials) => credentials.load.pipe(Effect.map((all) => new Map([...all].map(([provider, input]) => [provider, toCredential(input)] as const)))),
+      onSome: (credentials) => credentials.load,
     })
     const state = yield* Ref.make<ReadonlyMap<string, Credential>>(new Map([...loaded, ...seed]))
     const locks = yield* SynchronizedRef.make<ReadonlyMap<string, ProviderLocks>>(new Map())
@@ -95,8 +97,8 @@ export const MemoryAuthStoreLive = (
       all: Ref.get(state),
       get: current,
       resolveKey: (provider) => resolveSlotKey(provider, slotOf(provider), tokens),
-      // The host saves first: a login or logout it could not keep changes nothing.
-      set: (provider, credential) => locksOf(provider).pipe(Effect.flatMap((lock) => lock.commit.withPermit(
+      // A credential the file store could not encode is refused here too; the host saves first: a login or logout it could not keep changes nothing.
+      set: (provider, credential) => encodeCredential(provider, credential).pipe(Effect.andThen(locksOf(provider)), Effect.flatMap((lock) => lock.commit.withPermit(
         save(provider, Option.some(credential)).pipe(Effect.andThen(write(provider, Option.some(credential)))),
       ))),
       remove: (provider) => locksOf(provider).pipe(Effect.flatMap((lock) => lock.commit.withPermit(

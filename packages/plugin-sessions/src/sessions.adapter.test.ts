@@ -1027,6 +1027,71 @@ describe("contention and a broken log", () => {
     expect(yield* all(sessions!, address)).toEqual(["turn.started@1"])
   })))
 
+  test("a write is tried the configured number of times: stored when only its last attempt wins, each attempt from a fresh head, a turn's after a rebase", () => withLog((inner) => Effect.gen(function* () {
+    const losing = yield* Ref.make(0)
+    const commits = yield* Ref.make(0)
+    const heads = yield* Ref.make(0)
+    const log = SessionLog.of({
+      ...inner,
+      head: (id) => Ref.update(heads, (n) => n + 1).pipe(Effect.andThen(inner.head(id))),
+      // The next `losing` commits lose to another writer: refused, nothing stored.
+      commit: (id, commit) => Ref.update(commits, (n) => n + 1).pipe(
+        Effect.andThen(Ref.modify(losing, (left) => [left > 0, Math.max(0, left - 1)])),
+        Effect.flatMap((loses) => loses ? Effect.fail(new RevisionConflict({ session: id, expected: commit.expect, actual: commit.expect + 1 })) : inner.commit(id, commit))),
+    })
+    const [sessions] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
+    const address = yield* created(sessions!)
+    const held = yield* created(sessions!)
+    const writer = yield* sessions!.begin(held, say("held"))
+    const note = () => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: "stored" })
+    /** `write` after `conflicts` conflicts in a row: its result (or its failure and attempts), the commits it tried and the heads it read. */
+    const against = <E extends { readonly _tag: string }>(conflicts: number, write: Effect.Effect<{ readonly result: string }, E>) => Effect.gen(function* () {
+      yield* Ref.set(losing, conflicts)
+      yield* Ref.set(commits, 0)
+      yield* Ref.set(heads, 0)
+      const outcome = yield* write.pipe(
+        Effect.map((decided) => decided.result),
+        Effect.catch((error) => Effect.succeed("attempts" in error ? `${error._tag}:${String(error.attempts)}` : error._tag)),
+      )
+      return [outcome, yield* Ref.get(commits), yield* Ref.get(heads)]
+    })
+    expect(yield* against(2, sessions!.transact(address, note))).toEqual(["stored", 3, 3])
+    expect(yield* against(3, sessions!.transact(address, note))).toEqual(["SessionContended:3", 3, 3])
+    // A turn's write plans from where its writer stands: it reads the head only to rebase, after every conflict, the last one included.
+    expect(yield* against(2, writer.transact(note))).toEqual(["stored", 3, 2])
+    expect(yield* against(3, writer.transact(note))).toEqual(["SessionContended:3", 3, 3])
+    expect(yield* all(sessions!, address)).toEqual(["note"])
+    expect(yield* all(sessions!, held)).toEqual(["turn.started@1", "note@1"])
+  })))
+
+  test("a conflict on a turn's last attempt still rebases: a turn taken meanwhile ends its write with TurnClosed, not SessionContended", () => withLog((inner) => Effect.gen(function* () {
+    const [other] = yield* instancesOver(inner, sessionsDefaults)
+    const address = yield* created(other!)
+    const losing = yield* Ref.make(0)
+    /** The other instance's write that wins over the holder's commit: a note, or the turn's cancel for the last one. */
+    const winning = (last: boolean) => last
+      ? other!.cancel(address, 1).pipe(Effect.asVoid)
+      : other!.transact(address, () => Effect.succeed({ drafts: [{ kind: "note", data: {} }], result: undefined })).pipe(Effect.asVoid)
+    const log = SessionLog.of({
+      ...inner,
+      // Each of the next `losing` commits loses to the other instance.
+      commit: (id, commit) => Ref.modify(losing, (left) => [left, Math.max(0, left - 1)]).pipe(Effect.flatMap((left) => left === 0
+        ? inner.commit(id, commit)
+        : winning(left === 1).pipe(Effect.orDie, Effect.andThen(inner.commit(id, commit))))),
+    })
+    const [holder] = yield* instancesOver(log, { ...sessionsDefaults, retries: 3 })
+    const writer = yield* holder!.begin(address, say("taken"))
+    yield* Ref.set(losing, 3)
+    const seen = yield* Ref.make<ReadonlyArray<ReadonlyArray<string>>>([])
+    const refused = yield* Effect.flip(writer.transact((others) => Ref.update(seen, (all) => [...all, kinds(others)]).pipe(
+      Effect.as({ drafts: [{ kind: "late", data: {} }], result: undefined }))))
+    // Three attempts, each after the others' events of the conflict before it.
+    expect(yield* Ref.get(seen)).toEqual([[], ["note"], ["note", "note"]])
+    expect(refusalOf(refused)).toBe("TurnClosed:cancelled")
+    expect((yield* writer.closed).reason).toBe("cancelled")
+    expect(yield* all(other!, address)).toEqual(["turn.started@1", "note", "note", "turn.ended@1"])
+  })))
+
   test("a log that answers what its contract rules out is a defect, not a SessionLogError", () => withLog((inner) => Effect.gen(function* () {
     const broken = yield* Ref.make(false)
     const log = SessionLog.of({
@@ -1227,6 +1292,16 @@ describe("the inbox", () => {
     // Nothing was taken or stored: the item still waits.
     expect((yield* sessions!.get(address)).pending).toBe(1)
     expect(yield* all(sessions!, address)).toEqual(["inbox.queued", "turn.started@1", "turn.ended@1", "inbox.queued"])
+  })))
+
+  test("the items one inbox turn takes are its message, in delivery order, joined by a blank line", () => withLog((log) => Effect.gen(function* () {
+    const [sessions] = yield* instancesOver(log, sessionsDefaults)
+    const address = yield* created(sessions!)
+    yield* sessions!.deliver(address, { id: InboxItemId.make("n1"), source: {}, content: "the first notice" })
+    yield* sessions!.deliver(address, { id: InboxItemId.make("n2"), source: {}, content: "the second notice\nin two lines" })
+    const seen = yield* Deferred.make<string>()
+    expect((yield* sessions!.drain(address, (writer) => Deferred.succeed(seen, writer.admitted.userMessage.text).pipe(Effect.asVoid))).turns).toBe(1)
+    expect(yield* Deferred.await(seen)).toBe("the first notice\n\nthe second notice\nin two lines")
   })))
 })
 

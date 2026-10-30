@@ -62,7 +62,7 @@ nothing fails.
 | `effect/no-let` | `let`, `var` | a fold: `Effect.reduce`, a recursive Effect step, Array combinators, or a `Ref` |
 | `effect/no-loop-statements` | `for`, `for…of`, `for…in`, `while`, `do` | `Effect.forEach`, `Effect.repeat({ while })`, `Effect.whileLoop`, Array combinators (`Effect.iterate` does not exist) |
 | `effect/no-nullable-return` | an exported function returning `A \| undefined` or `A \| null` | `Option<A>` (`Option.fromNullishOr` at the edge) |
-| `effect/match-over-tag-switch` | a `switch`, an else-if ladder or a ternary chain on `_tag`, `.type`, `.role` or `.mode` | `Match.valueTags(x, { … })`, `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Match.discriminators("type")`, `Option.match`, `Result.match`, `Exit.match` |
+| `effect/match-over-tag-switch` | a `switch`, an else-if ladder, an if-return ladder (adjacent `if (x._tag === …) return …`) or a ternary chain on `_tag`, `.type`, `.role` or `.mode` | `Match.valueTags(x, { … })`, `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Match.discriminators("type")`, `Option.match`, `Result.match`, `Exit.match`; `Match.orElse` for a deliberate default |
 | `effect/no-as-any` | `as any`, `as unknown as T` | decode with Schema, or fix the type |
 | `effect/no-as-never` | `as never` outside the `ERASURE_BOUNDARY` files; `as never as T` everywhere, those files included | fix the type; a file added to `ERASURE_BOUNDARY` states its reason in the PR |
 | `effect/no-unknown-requirements` | an `Effect`, `Stream` or `Layer` type with `unknown` as its requirements (`UNKNOWN_REQUIREMENT_EDGES` aside) | name the services in R (`never` for none) or keep R a type parameter; services a config picks at run time are declared by key and checked where they are provided |
@@ -78,7 +78,7 @@ nothing fails.
 | `effect/callback-buffer-size` | `Stream.callback` without a `bufferSize` | pass `{ bufferSize }` |
 | `effect/bounded-pubsub` | `PubSub.unbounded`, or `bounded`, `sliding` or `dropping` with an infinite capacity | a finite capacity: `PubSub.sliding(n)` (a wake-up signal: `sliding(1)`, which never loses the last), `bounded(n)` or `dropping(n)` |
 | `effect/no-process-env` | `process.env` outside a `main.ts` and the bash adapter (`ENVIRONMENT_EDGES`) | `Config.String`, `Config.Redacted`, `Config.option`: the ConfigProvider supplies it |
-| `effect/no-ambient-time-random` | `Date.now`, `new Date()` without arguments, `Math.random`, `randomUUID`, outside `*.adapter.ts` files | `Clock.currentTimeMillis`, `Random` (core's `randomUuid` for ids) |
+| `effect/no-ambient-time-random` | `Date.now`, `new Date()` without arguments; `Math.random`, `randomUUID` outside `*.adapter.ts` files | `Clock.currentTimeMillis`, in adapters too; `Random` (core's `randomUuid` for ids) |
 | `effect/no-locale-compare` | `.localeCompare` | `Order.String` |
 | `effect/require-sort-comparator` | `.sort()` or `.toSorted()` without a comparator | `Arr.sort(xs, Order.String)`, or a comparator |
 | `effect/no-instanceof-tagged-error` | `instanceof` a tagged class (`instanceof Error` is fine) | `Effect.catchTag`, `Predicate.isTagged`, `isHarnessError`, `isTurnError`; not `Schema.is` of the class, which checks the class too |
@@ -86,6 +86,7 @@ nothing fails.
 | `effect/no-option-unwrap` | `Option.getOrNull`, `Option.getOrUndefined` outside `*.adapter.ts` files and kits | `Option.match`, `Option.getOrElse` with a real default, an optional field spread from `Option.match`; unwrap in the adapter that writes the wire |
 | `effect/no-stringified-cause` | `String(e)`, `${e}` or `"…" + e` of a failure inside a tagged error's fields | keep the failure as a value (a `cause` field: `harnessError(code, message, cause)`) and say what failed; text from `reasonOf(cause)` |
 | `effect/no-error-code-compare` | `x.code === "<literal>"` outside the file that declares the error and its `.functions.ts` (kits may compare) | a guard the owning module exports (`isStoreBusy`, `isUnavailable`), `harnessCodeOf(e)` for the framework's code of any failure, or a tagged error matched with `Effect.catchTag` |
+| `effect/no-code-property-guard` | `Predicate.hasProperty(x, "code")` (either form), `"code" in x` | `errorCodeOf(e)` for a Node or SQLite code (`Option.contains(errorCodeOf(e), "ENOENT")`; evals packages take evals' copy), `harnessCodeOf(e)` for the framework's codes, `Effect.catchTag` for a tagged error |
 | `effect/prefer-effect-fn` | an exported function or a service method that only returns `Effect.gen(…)` | `Effect.fn("area.op")(function* (…) { … })`; `Effect.fnUntraced` for a hot helper |
 | `effect/require-concurrency-option` | `Effect.forEach` or `Effect.all` over more than one effect without `concurrency` | state it: `1` when order, a shared resource or the first failure matters; a number or a config value for independent I/O |
 | `effect/branded-id-fields` | in every package's `*.entity.ts` files (and core's `src/spec`): an unbranded id field (`id`, `<x>Id`), also through `.check(…)`, a wrapper (`optionalKey`, `OptionFromNullOr`, `Array`, `withDecodingDefaultKey`, …) or a const of the same file | a brand at the id's definition; reuse it wherever that id is held |
@@ -115,7 +116,7 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 | `x.entity.ts`, `x.usecase.ts` | schemas, brands, tagged errors, derived types | base + those four |
 | `x.entity.functions.ts`, `x.usecase.functions.ts` | the pure behaviour of that pair | base + `no-raw-promise-core`, `no-runtime-imports-core`, `layers-live-at-edges` |
 | `x.port.ts`, `ports/*` | `Context.Service` contracts | base |
-| `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-ambient-time-random` and `no-option-unwrap` |
+| `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-option-unwrap`; `no-ambient-time-random` flags the wall clock only |
 | `x.conformance.ts` | a port's kit, exported and shipped | base except `no-option-unwrap`, `no-error-code-compare` and `no-provider-namespace` |
 | `index.ts`, `main.ts` | the public surface, as explicit named exports; a command line's entry | base (`main.ts` may read `process.env`) |
 | `x.test.ts`, `testing.ts`, `x.testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never`, `no-unknown-requirements` and the rules from `no-json-parse` to `require-concurrency-option` but `no-instanceof-tagged-error` |
@@ -158,6 +159,10 @@ Naming (skill `effect-idioms` §7 has the span policy and names):
 Text the model reads is a contract and part of cached prompt prefixes: frame
 it with core's `src/turn/model-text.ts` (`hostNote`, `framed`, `clipTo`), pin
 it exactly, and follow skill `write-model-text` and `packages/core/AGENTS.md`.
+Each package's `AGENTS.md` lists its texts in a "Model-facing text" table
+whose "Pinned by" column cites the exact test or golden;
+`scripts/model-text-pins.test.ts` fails on a row pinned in part or not at
+all, and on a cited test file or line that does not exist.
 
 ## Definition of done
 

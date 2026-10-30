@@ -18,9 +18,12 @@ export const validateSemanticAnswers = Effect.fnUntraced(function* (input: Seman
     const question = input.questions[id]!
     const answer = answers[id]
     if (!Object.hasOwn(answers, id) || !answer || answer.type !== question.type) return true
-    if (answer.type === "score" && question.type === "score") return answer.score > question.criteria.length - 1
-    if (answer.type === "choice" && question.type === "choice") return !Object.hasOwn(question.criteria, answer.choice)
-    return false
+    // The answer is of the question's type: a score must be on its scale, a choice one it offers.
+    return Match.value(question).pipe(Match.discriminatorsExhaustive("type")({
+      boolean: () => false,
+      score: (scored) => answer.type === "score" && answer.score > scored.criteria.length - 1,
+      choice: (chosen) => answer.type === "choice" && !Object.hasOwn(chosen.criteria, answer.choice),
+    }))
   })) return yield* Effect.fail(invalid("Judge answers do not match question IDs, types or scales"))
   return answers
 })

@@ -78,7 +78,9 @@ execution/environment services. Optional exporters implement `EvaluationExport`.
 
 The CLI provides the resolver and local store. Programmatic consumers provide both
 `EvaluationServicesLive(app)` and an `EvaluationRunStore` implementation to `runEvaluation`
-or `gradeEvaluation`.
+or `gradeEvaluation`. A store implements `writeTrial`, `appendTranscript` and `writeRun`;
+one that keeps only whole trials can ignore appends, since the settled trial carries every
+event.
 
 ## Typed runnable boundary
 
@@ -124,13 +126,17 @@ const registration = defineRunnable({
 
 `EvaluationEnvironment.open` acquires a fresh scoped world. `inspect` observes its resulting state. Acquire resources with `Effect.acquireRelease`; the scope closes after success, failure or timeout. A function evaluation may use a small in-process world; a stateful agent may inspect database records or filesystem changes. Docker is one possible app-owned environment.
 
-`TrialRecorder.record` persists each transcript event during execution. If a target fails, the earlier events remain. The runner persists the terminal execution before grading and each completed grade independently. A grading failure does not erase the target's evidence. A failed trial, grade or assessment records its reason as text: `code: message` for a coded error, `interrupted`, or a defect's message, never a stack trace or the local paths in one, so reports and exports can be shared. A trial that times out or is cancelled still has its world inspected, within the inspection's own deadline, so its outcome is kept.
+`TrialRecorder.record` persists each transcript event during execution: the runner appends it to the store (`EvaluationRunStore.appendTranscript`), so each event costs one write of its own size. If a target fails, the earlier events remain. The trial itself is written when it starts, once it settles (with its whole transcript) and after each grade: the runner persists the terminal execution before grading and each completed grade independently. A grading failure does not erase the target's evidence. A failed trial, grade or assessment records its reason as text: `code: message` for a coded error, `interrupted`, or a defect's message, never a stack trace or the local paths in one, so reports and exports can be shared. A trial that times out or is cancelled still has its world inspected, within the inspection's own deadline, so its outcome is kept.
 
 ## Evidence projection
 
 Each grader binding chooses versioned `EvidenceProjection` metadata and a scope. The app implements the `EvidenceProjector` port; its `project(trial, task, scope)` returns a `GradingContext`. The app selects facts, conversation turns, tool results or outcome fields relevant to that criterion. Avoid sending every model request and every tool schema to a judge.
 
 `gradingContext` encodes the selected schema, measures UTF-8 JSON bytes, adds the reserved rubric/response allowance and rejects over-budget required context as unavailable. It never truncates automatically. The app records optional omissions explicitly and keeps full evidence in the trial. The fingerprint covers the projection identity/version, input and budget. A judge cache also needs grader, rubric, schema, model and settings identity; the context fingerprint alone is insufficient.
+
+## Graders and evaluators
+
+`Grader` and `Grade` are the one assessment model: a grader is its definition and a `GraderAssessment` Layer. An `Evaluator` (a judging primitive such as `semanticEvaluator`, or an app's own over a model) grades behind one: `graderFromEvaluator({ definition, input, evaluator, timeoutMs }, services)` decodes the grading context's input with `input` (the codec the projection encoded it with), runs the evaluator with `services` within `timeoutMs` (90 s), keeps the grader's metrics and turns an `AssessmentError` into the `EvaluationError` of the same code, message and cause. A context that does not decode is an `invalid` grade; an evaluator that does not declare one of the grader's metrics fails the grader's Layer as `invalid`. The runner grades, gates, regrades (`gradeEvaluation`) and calibrates it like any other grader. The dataset-level path (`assess`, `assessAll`, `EvaluationResult`) is deprecated.
 
 ## Local CLI
 
@@ -170,7 +176,10 @@ fingerprints and named approvals with rationales, and writes approved records se
 Applying labels to an app's dataset remains an app-owned, versioned operation.
 
 Writes use a temporary file followed by atomic rename, and a failed write removes its temporary
-file; each trial and grade is durable as it completes. Blocking gate failure exits with status 2.
+file; each trial and grade is durable as it completes. While a trial runs, its transcript events
+are appended to `trials/<id>.events.jsonl`, one JSON line each (mode 0600); the file is removed
+once the settled trial is written, so one left behind belongs to a trial whose process died,
+and holds the events it recorded. Blocking gate failure exits with status 2.
 Missing measurements are unavailable. Ctrl-C or SIGTERM interrupts the command: running trials
 settle as `cancelled`, their scoped worlds close, and the command exits with status 130 (a
 second signal ends it at once). `runCliMain` runs a command this way for an app's own
@@ -184,7 +193,7 @@ efferent-eval export --config eval.config.ts --report report.json --exporter lan
 efferent-eval run function-contract --config eval.config.ts --exporter langsmith
 ```
 
-Register `langfuseExporter(options)` or `langsmithExporter(options)` in the app's `exporters`. Clients are constructed only when exporting. Stable remote IDs map back to local trial IDs and metric identities. Both adapters use the provider's official SDK. Langfuse receives traces and numeric scores; LangSmith receives project runs and feedback. Full encoded trial metadata retains unavailable grades, context, usage and provenance; everything sent is the report's encoded form, so an absent value is `null`. Exporting a report to LangSmith again updates the runs and feedback the first export created.
+Register `langfuseExporter(options)` or `langsmithExporter(options)` in the app's `exporters`. Clients are constructed only when exporting. Stable remote IDs map back to local trial IDs and metric identities. Both adapters use the provider's official SDK. Langfuse receives traces and numeric scores; LangSmith receives project runs and feedback. Both send the scores `exportableScores` lists from the encoded run: each `boolean`, `probability` and `score` metric of a scored grade (a boolean as 0 or 1; a `preference` stays local), keyed `<grader>@<version>/<scope>/<metric>`, with the `seed` (`<trial>/<grader>/<version>/<scope>/<metric>`) each exporter derives the score's remote ID from; an exporter of your own can send the same list. A receipt's `at` is read from Effect's `Clock`. Full encoded trial metadata retains unavailable grades, context, usage and provenance; everything sent is the report's encoded form, so an absent value is `null`. Exporting a report to LangSmith again updates the runs and feedback the first export created.
 
 Export after a run is best-effort and produces separate receipts/errors after the local report is durable. A failed export is a `provider` error whose message carries the service's reason (`LangSmith export: Failed to create project. Received status [401]…`) and whose `cause` is the client's error; a receipt keeps the message only. An export is bounded: each request has its own 30 s limit, and the exporter's `timeoutMs` option (default 300 000) caps the whole export, past which it fails as `provider`. An interrupted export returns at once; Langfuse aborts its requests in flight. The explicit export command can retry a saved report. Live application telemetry is a separate concern and is not reconfigured by evaluation export.
 
@@ -199,10 +208,10 @@ eval.calibrate         calibrateGrader: eval.calibration.id, eval.run.id
    │  └─ (the runnable's own spans; a calibration's eval.calibration.execute)
    └─ eval.regrade     gradeEvaluation, also on its own over saved work: eval.run.id
       └─ eval.grade    gradeTrial, one trial's grades: the trial's ids
-         └─ (the projection's and graders' spans: eval.calibration.project, eval.retrieval.assess)
+         └─ (the projection's and graders' spans: eval.calibration.project, eval.retrieval.assess, eval.evaluator)
 ```
 
-Logs written under `eval.trial` and `eval.grade` carry the same ids as annotations, under the same keys. Dataset-level assessment opens `eval.evaluator` per evaluator, `eval.semantic.run` for `semanticEvaluator`, the judges' `eval.semantic.llm` and `eval.semantic.jev`, and `eval.pairwise` over both orders. Each exporter's `exportRun` is one `eval.export` span carrying `eval.exporter` and `eval.run.id`.
+Logs written under `eval.trial` and `eval.grade` carry the same ids as annotations, under the same keys. An evaluator behind a grader opens `eval.evaluator` under its grade (as the deprecated `assess` does per call), `eval.semantic.run` for `semanticEvaluator`, the judges' `eval.semantic.llm` and `eval.semantic.jev`, and `eval.pairwise` over both orders. Each exporter's `exportRun` is one `eval.export` span carrying `eval.exporter` and `eval.run.id`.
 
 The command line traces through the app. An app's `observability` layer (a `Layer.Layer<never>`, such as `Layer.orDie(OtlpTelemetryFromEnv())` from `@xandreed/plugin-telemetry`) is provided around each command that loads the app, and that command is one `eval.cli` span carrying `eval.command`, over the spans above and the exports' `eval.export`. The layer closes with the command, so its spans are flushed when the command ends and when Ctrl-C or SIGTERM interrupts it. It has no error type: observability never fails an eval. `inspect`, `compare` and `help` load no app and open no span.
 

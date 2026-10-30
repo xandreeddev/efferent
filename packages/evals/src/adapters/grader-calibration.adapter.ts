@@ -101,7 +101,7 @@ const calibrationOf = <I>(options: GraderCalibrationOptions<I>, inputs: Readonly
   const grader: GraderRegistration = {
     definition: { id: EvalId.make(agreementId), version: options.version, kind: "code",
       metrics: ["agreement", "status-agreement", "metric-agreement", "false-pass", "false-fail"],
-      fingerprints: { target: fingerprint(options.grader.definition), comparison: "calibration-agreement:1" } },
+      fingerprints: { target: fingerprint(options.grader.definition), comparison: "calibration-agreement:2" } },
     layer: Layer.succeed(GraderAssessment, {
       assess: (context) => decode(AgreementInput, context.input).pipe(Effect.map(({ observation, reference }) => ({
         status: "scored" as const, metrics: calibrationAgreement(observation, reference, options.grader.definition.metrics),

@@ -1,5 +1,5 @@
-import { Clock, Effect, Match, Option, Redacted, Schema } from "effect"
-import type { Semaphore } from "effect"
+import { Clock, Effect, Equal, Match, Option, Schema } from "effect"
+import type { Redacted, Semaphore } from "effect"
 import { AuthError } from "@xandreed/core/models"
 import type { ProviderId } from "@xandreed/core"
 import type { Credential } from "@xandreed/core/models"
@@ -18,8 +18,9 @@ export const isUsableAt = (credential: OAuthCredential, now: number): boolean =>
 /**
  * Refresh one provider's OAuth credential through that provider's token
  * endpoint: the same credential with the new access token, refresh token
- * and expiry (and account id, where the provider sends one). A provider
- * with no refresh flow fails with an `AuthError` naming it.
+ * and expiry (and account id, where the provider sends one), its tokens
+ * `Redacted`. A provider with no refresh flow fails with an `AuthError`
+ * naming it.
  */
 export const refreshCredential = (
   provider: string,
@@ -40,7 +41,7 @@ export const refreshCredential = (
 
 /** Whether `held` is still the token `stale` is: the same access token, refresh token and expiry. */
 export const isSameToken = (held: Credential, stale: OAuthCredential): boolean =>
-  held.type === "oauth" && held.access === stale.access && held.refresh === stale.refresh && held.expires === stale.expires
+  held.type === "oauth" && Equal.equals(held.access, stale.access) && Equal.equals(held.refresh, stale.refresh) && held.expires === stale.expires
 
 /** One provider's credential as a store keeps it, seen by the refresh. */
 export interface CredentialSlot {
@@ -82,7 +83,7 @@ export const resolveSlotKey = (
           ))
           : Effect.succeedNone)))),
       Effect.flatMap(Option.match({
-        onSome: (access) => Effect.succeed(Option.some(Redacted.make(access))),
+        onSome: (access) => Effect.succeedSome(access),
         // The credential changed meanwhile: resolve what the store holds now.
         onNone: () => resolveSlotKey(provider, slot, tokens),
       })),
@@ -90,10 +91,10 @@ export const resolveSlotKey = (
   return slot.current.pipe(Effect.flatMap(Option.match({
     onNone: () => Effect.succeedNone,
     onSome: (credential) => Match.value(credential).pipe(
-      Match.when({ type: "api_key" }, ({ key }) => Effect.succeed(Option.some(Redacted.make(key)))),
+      Match.when({ type: "api_key" }, ({ key }) => Effect.succeedSome(key)),
       Match.when({ type: "local" }, () => Effect.succeedNone),
       Match.when({ type: "oauth" }, (oauth) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) =>
-        isUsableAt(oauth, now) ? Effect.succeed(Option.some(Redacted.make(oauth.access))) : refreshing(oauth)))),
+        isUsableAt(oauth, now) ? Effect.succeedSome(oauth.access) : refreshing(oauth)))),
       Match.exhaustive,
     ),
   })))

@@ -120,11 +120,11 @@ const SETTINGS = {
 
 /** A credential for every built-in provider, in the catalog's order. */
 const CREDENTIALS = new Map<string, Credential>([
-  ["opencode", { type: "api_key", key: "secret" }],
-  ["openai-codex", { type: "oauth", access: "a", refresh: "r", expires: 1, accountId: "account" }],
-  ["openai", { type: "api_key", key: "secret" }],
-  ["anthropic", { type: "api_key", key: "secret" }],
-  ["google", { type: "api_key", key: "secret" }],
+  ["opencode", { type: "api_key", key: Redacted.make("secret") }],
+  ["openai-codex", { type: "oauth", access: Redacted.make("a"), refresh: Redacted.make("r"), expires: 1, accountId: "account" }],
+  ["openai", { type: "api_key", key: Redacted.make("secret") }],
+  ["anthropic", { type: "api_key", key: Redacted.make("secret") }],
+  ["google", { type: "api_key", key: Redacted.make("secret") }],
 ])
 
 const SELECTIONS: ReadonlyArray<readonly [string, boolean, string, Family]> = [
@@ -182,7 +182,7 @@ describe("the built-in providers, pinned", () => {
     const flags = await Effect.runPromise(Effect.scoped(Effect.forEach(SELECTIONS, ([selection]) =>
       built(selection, CONTEXTS[0]!).pipe(Effect.map((model) => [selection, model.images, model.prependClaudeCode] as const)), { concurrency: 1 })).pipe(Effect.provide(FetchHttpClient.layer)))
     expect(flags).toEqual(SELECTIONS.map(([selection, images]) => [selection, images, false]))
-    const subscription = await Effect.runPromise(Effect.scoped(built("anthropic:claude-sonnet-5", CONTEXTS[0]!, { type: "oauth", access: "a", refresh: "r", expires: 1 }).pipe(
+    const subscription = await Effect.runPromise(Effect.scoped(built("anthropic:claude-sonnet-5", CONTEXTS[0]!, { type: "oauth", access: Redacted.make("a"), refresh: Redacted.make("r"), expires: 1 }).pipe(
       Effect.flatMap((model) => Effect.map(modelRequestDescriptorOf(model.svc), (descriptor) => [model.prependClaudeCode, Option.map(descriptor, (value) => value.settings)] as const)),
     )).pipe(Effect.provide(FetchHttpClient.layer)))
     expect(subscription).toEqual([true, Option.some({ systemPrelude: CLAUDE_CODE_SYSTEM })])
@@ -233,7 +233,7 @@ describe("the built-in providers, pinned", () => {
 describe("the profile table", () => {
   it("a provider that is not built in, an object's own key included, has no profile and lists no models", () => {
     expect(["ollama", "toString", "constructor", "__proto__"].map((provider) => Option.isNone(profileOf(provider)))).toEqual([true, true, true, true])
-    expect(configuredModelCatalog(new Map<string, Credential>([["toString", { type: "api_key", key: "secret" }], ["ollama", { type: "local", baseUrl: "http://127.0.0.1:1/v1" }]]))).toEqual([])
+    expect(configuredModelCatalog(new Map<string, Credential>([["toString", { type: "api_key", key: Redacted.make("secret") }], ["ollama", { type: "local", baseUrl: "http://127.0.0.1:1/v1" }]]))).toEqual([])
   })
 
   it("a listed model's profile is its family's: the table's catalog and its rule agree", () => {
