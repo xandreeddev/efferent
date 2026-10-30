@@ -1202,6 +1202,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/core/conformance` instead of core's deprecated root name.
 - `@xandreed/plugin-session-sqlite`'s tests import the session-log and
   sessions kits from `@xandreed/core/conformance`.
+- `@xandreed/plugin-tasks`'s tests import the task kits from
+  `@xandreed/core/conformance`.
 
 ### Deprecated
 
