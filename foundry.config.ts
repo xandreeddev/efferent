@@ -17,9 +17,12 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  * so any finding anywhere is fresh and fails outright. The committed baseline
  * file exists only as the ratchet mechanism's anchor and stays empty.
  *
- * Boundaries: bun-workspace cross-package imports are bare specifiers, so
- * dependency DIRECTION is expressed via each layer's `externals` allowlist —
- * a package may only name the internal packages beneath it. `effect` admits
+ * Boundaries: a cross-package import names the package (`@xandreed/core`),
+ * and reaches the layer that holds the package's entry: dependency DIRECTION
+ * is each layer's `canImport`, which names only the packages beneath it. The
+ * subpath must be one the package's `exports` lists (a `-tests` layer may
+ * also reach a `testing` module), and a relative import never leaves its
+ * package. `externals` lists the third-party modules alone. `effect` admits
  * Effect's core modules; each `effect/<module>` barrel that was its own v3
  * package (effect/ai was @effect/ai) is allowed by name, or all of them with
  * the raw `effect/` prefix beside `@effect/`. v4 no longer re-exports
@@ -368,10 +371,14 @@ const config: typeof GateSuiteConfig.Encoded = {
   checks: [],
   boundaries: {
     layers: [
-      { name: "evals-cli", path: "packages/evals-cli/src/**", canImport: ["evals"], externals: ["effect", "@xandreed/evals", "node:", "tsx/esm/api", "bun:test"] },
-      { name: "evals-langfuse", path: "packages/evals-langfuse/src/**", canImport: ["evals"], externals: ["effect", "@xandreed/evals", "@langfuse/client", "node:", "bun:test"] },
-      { name: "evals-langsmith", path: "packages/evals-langsmith/src/**", canImport: ["evals"], externals: ["effect", "@xandreed/evals", "langsmith", "node:", "bun:test"] },
-      {name:"evals",path:"packages/evals/src/**",canImport:["core"],externals:["effect","effect/ai","@noble/hashes/","node:","bun:test"]},
+      // The CLI's and the exporters' tests use the evals fixture, a testing module evals does not export.
+      { name: "evals-cli-tests", path: "packages/evals-cli/src/**/*.test.ts", canImport: ["evals-cli", "evals"], externals: ["effect", "node:", "tsx/esm/api", "bun:test"] },
+      { name: "evals-cli", path: "packages/evals-cli/src/**", canImport: ["evals"], externals: ["effect", "node:", "tsx/esm/api", "bun:test"] },
+      { name: "evals-langfuse-tests", path: "packages/evals-langfuse/src/**/*.test.ts", canImport: ["evals-langfuse", "evals"], externals: ["effect", "@langfuse/client", "node:", "bun:test"] },
+      { name: "evals-langfuse", path: "packages/evals-langfuse/src/**", canImport: ["evals"], externals: ["effect", "@langfuse/client", "node:", "bun:test"] },
+      { name: "evals-langsmith-tests", path: "packages/evals-langsmith/src/**/*.test.ts", canImport: ["evals-langsmith", "evals"], externals: ["effect", "langsmith", "node:", "bun:test"] },
+      { name: "evals-langsmith", path: "packages/evals-langsmith/src/**", canImport: ["evals"], externals: ["effect", "langsmith", "node:", "bun:test"] },
+      {name:"evals",path:"packages/evals/src/**",canImport:[],externals:["effect","effect/ai","@noble/hashes/","node:","bun:test"]},
       {
             "name": "core",
             "path": "packages/core/src/**",
@@ -407,7 +414,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "node:",
                   "bun",
                   "bun:",
-                  "@xandreed/core"
             ]
       },
       {
@@ -420,7 +426,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect",
                   "@effect/",
                   "effect/",
-                  "@xandreed/core",
                   "bun:test"
             ]
       },
@@ -434,7 +439,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect",
                   "@effect/",
                   "effect/",
-                  "@xandreed/core",
                   "bun:test"
             ]
       },
@@ -448,7 +452,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect",
                   "@effect/",
                   "effect/",
-                  "@xandreed/core",
                   "bun:test"
             ]
       },
@@ -462,7 +465,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect",
                   "@effect/",
                   "effect/",
-                  "@xandreed/core",
                   "bun:test"
             ]
       },
@@ -480,7 +482,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "node:",
                   "bun",
                   "bun:",
-                  "@xandreed/core",
                   "undici",
                   "ws",
                   "fast-check"
@@ -499,7 +500,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "node:",
                   "bun",
                   "bun:",
-                  "@xandreed/core",
                   "undici",
                   "ws"
             ]
@@ -519,9 +519,7 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "node:",
                   "bun",
                   "bun:",
-                  "@xandreed/core",
                   "ws",
-                  "@xandreed/plugin-sessions"
             ]
       },
       {
@@ -537,7 +535,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "node:",
                   "bun",
                   "bun:",
-                  "@xandreed/core",
                   "ws"
             ]
       },
@@ -551,7 +548,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect",
                   "@effect/",
                   "effect/",
-                  "@xandreed/core",
                   "bun:test"
             ]
       },
@@ -567,8 +563,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect",
                   "@effect/",
                   "effect/",
-                  "@xandreed/core",
-                  "@xandreed/plugin-sessions",
                   "bun:test"
             ]
       },
@@ -582,7 +576,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect",
                   "@effect/",
                   "effect/",
-                  "@xandreed/core",
                   "bun:test"
             ]
       },
@@ -613,14 +606,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect/",
                   "node:",
                   "fast-check",
-                  "@xandreed/core",
-                  "@xandreed/runtime",
-                  "@xandreed/sdk",
-                  "@xandreed/evals",
-                  "@xandreed/plugin-agent-loop",
-                  "@xandreed/plugin-memory-window",
-                  "@xandreed/plugin-sessions",
-                  "@xandreed/plugin-tool-discovery",
                   "bun:test"
             ]
       },
@@ -634,7 +619,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect",
                   "effect/ai",
                   "node:",
-                  "@xandreed/core"
             ]
       },
       {
@@ -654,12 +638,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect/",
                   "bun",
                   "bun:test",
-                  "@xandreed/core",
-                  "@xandreed/sdk",
-                  "@xandreed/plugin-agent-loop",
-                  "@xandreed/plugin-memory-window",
-                  "@xandreed/plugin-tool-discovery",
-                  "@xandreed/plugin-sessions"
             ]
       },
       {
@@ -671,7 +649,6 @@ const config: typeof GateSuiteConfig.Encoded = {
             "externals": [
                   "effect",
                   "effect/",
-                  "@xandreed/core",
                   "bun:test"
             ]
       },
@@ -688,7 +665,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "node:",
                   "bun",
                   "bun:",
-                  "@xandreed/core"
             ]
       },
       // The sdk tests may import the sdk by its package name and plugin-render: the
@@ -719,20 +695,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "node:",
                   "bun",
                   "bun:",
-                  "@xandreed/core",
-                  "@xandreed/runtime",
-                  "@xandreed/sdk",
-                  "@xandreed/plugin-render",
-                  "@xandreed/plugin-models",
-                  "@xandreed/plugin-session-sqlite",
-                  "@xandreed/plugin-sessions",
-                  "@xandreed/plugin-tasks",
-                  "@xandreed/plugin-agent-loop",
-                  "@xandreed/plugin-memory-window",
-                  "@xandreed/plugin-memory-summary",
-                  "@xandreed/plugin-memory-digest",
-                  "@xandreed/plugin-tool-discovery",
-                  "@xandreed/plugin-session-sqlite"
             ]
       },
       {
@@ -744,8 +706,6 @@ const config: typeof GateSuiteConfig.Encoded = {
             ],
             "externals": [
                   "effect",
-                  "@xandreed/core",
-                  "@xandreed/runtime",
                   "bun:test"
             ]
       },
@@ -759,7 +719,6 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "effect",
                   "@effect/",
                   "effect/",
-                  "@xandreed/core",
                   "node:",
                   "bun:test"
             ]
