@@ -5,7 +5,6 @@ import { join } from "node:path"
 import { LanguageModel } from "effect/ai"
 import { Context, Effect, Layer, Option, Redacted, Schema, Stream } from "effect"
 import {
-  AuthStore,
   ConversationId,
   definePlugin,
   PluginInstanceId,
@@ -14,14 +13,13 @@ import {
   SessionEnvironment,
   SessionLogMemoryLive,
   Sessions,
-  SettingsStore,
   TurnAdmissionOpen,
   UserMessage,
 } from "@xandreed/core"
 import type { HarnessConfig, Plugin, Turn } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
-import { HostCredentials, modelsPlugin } from "@xandreed/plugin-models"
+import { AuthStore, HostCredentials, modelsPlugin, SettingsStore } from "@xandreed/plugin-models"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { resolveGraph } from "@xandreed/runtime"

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option, Tracer } from "effect"
-import { AuthStore, CurrentModelCallPolicy, EngineSettings, SettingsStore, UtilityLlm } from "@xandreed/core"
+import { CurrentModelCallPolicy, UtilityLlm } from "@xandreed/core"
+import { AuthStore, EngineSettings, SettingsStore } from "@xandreed/core/models"
 import type { ReasoningEffort } from "@xandreed/core"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { UtilityLlmLive } from "./utilityLlm.js"

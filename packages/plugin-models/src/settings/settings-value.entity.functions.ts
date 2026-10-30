@@ -1,6 +1,7 @@
 import { Effect, Match, Option, Schema } from "effect"
-import { EngineSettings, parseModelSelection, ReasoningEffort, SETTINGS_KEYS, SettingsError } from "@xandreed/core"
-import type { ModelRole, SettingsKey } from "@xandreed/core"
+import { parseModelSelection, ReasoningEffort } from "@xandreed/core"
+import { EngineSettings, SETTINGS_KEYS, SettingsError } from "@xandreed/core/models"
+import type { ModelRole, SettingsKey } from "@xandreed/core/models"
 import type { RoleField, SettingValue } from "./settings-value.entity.js"
 
 /**

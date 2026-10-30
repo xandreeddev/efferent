@@ -1,6 +1,7 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
-import type { AuthError, ProviderId } from "@xandreed/core"
+import type { ProviderId } from "@xandreed/core"
+import type { AuthError } from "@xandreed/core/models"
 import type { CredentialInput } from "../auth/credential-input.entity.js"
 
 /**

@@ -1,5 +1,5 @@
 import { Match, Redacted } from "effect"
-import type { Credential } from "@xandreed/core"
+import type { Credential } from "@xandreed/core/models"
 import { AccountId, InstallationId } from "./credential-input.entity.js"
 import type { CredentialInput, CredentialInputs } from "./credential-input.entity.js"
 

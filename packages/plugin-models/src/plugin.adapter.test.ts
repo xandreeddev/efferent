@@ -6,17 +6,19 @@ import { ConfigProvider, Context, Effect, Option, Redacted, Schema } from "effec
 import { AiError, LanguageModel } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import {
-  AuthStore,
-  authStoreConformance,
   ModelCatalog,
-  modelCatalogConformance,
   ProviderId,
   SessionEnvironment,
-  SettingsStore,
-  settingsStoreConformance,
   UtilityLlm,
 } from "@xandreed/core"
-import type { ConformanceCheck } from "@xandreed/core"
+import {
+  AuthStore,
+  authStoreConformance,
+  SettingsStore,
+  settingsStoreConformance,
+} from "@xandreed/core/models"
+import { modelCatalogConformance } from "@xandreed/core/conformance"
+import type { ConformanceCheck } from "@xandreed/core/conformance"
 import { HostCredentials } from "./ports/host-credentials.port.js"
 import { ModelsTransport } from "./ports/models-transport.port.js"
 import type { ModelsFetch } from "./ports/models-transport.port.js"

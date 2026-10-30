@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { dirname } from "node:path"
 import { Effect, Option } from "effect"
-import type { AuthStoreRefreshProbe, ProviderId } from "@xandreed/core"
+import type { ProviderId } from "@xandreed/core"
+import type { AuthStoreRefreshProbe } from "@xandreed/core/models"
 import type { ModelsFetch } from "./ports/models-transport.port.js"
 
 /**

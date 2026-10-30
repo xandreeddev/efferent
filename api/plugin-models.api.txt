@@ -1,13 +1,19 @@
+class AuthError
+class AuthStore
+class EngineSettings
 class HostCredentials
 class ModelsTransport
 class ProxyConfig
 class ProxyInvalid
 class ProxyUnsupported
+class SettingsError
+class SettingsStore
 const ANTHROPIC_OAUTH_BETA
 const AccountId
 const BUN_WEBSOCKET_PROXY_VERSION
 const CLAUDE_CODE_SYSTEM
 const ConfiguredModelCatalogLive
+const Credential
 const CredentialInput
 const CredentialInputs
 const CurrentModelEndpoints
@@ -43,11 +49,13 @@ const REFRESH_SKEW_MS
 const ROLE_FIELDS
 const RefreshableProvider
 const RoleField
+const SETTINGS_KEYS
 const SettingValue
 const UtilityLlmLive
 const applyRole
 const applySetting
 const authPaths
+const authStoreConformance
 const beginAnthropicOAuth
 const beginOpenAiCodexOAuth
 const buildProvider
@@ -93,6 +101,7 @@ const retryableLlm
 const roleModelView
 const roleSelection
 const settingsFromRecord
+const settingsStoreConformance
 const toChatMessages
 const toChatTools
 const toCredential
@@ -102,6 +111,8 @@ const transportFetch
 const usesOpenCodeResponses
 const withAnthropicCacheBreakpoints
 interface AuthRedirect
+interface AuthStoreConformanceOptions
+interface AuthStoreRefreshProbe
 interface CallBudget
 interface ChatMessageOptions
 interface CompatConfig
@@ -112,9 +123,11 @@ interface OpenAiCodexTokens
 interface OpenAiErrorBody
 interface Pkce
 interface RefreshedTokens
+interface SettingsStoreConformanceOptions
 interface TokenRequestOptions
 interface UsageReading
 type AccountId
+type Credential
 type CredentialInput
 type CredentialInputs
 type ErrorClass
@@ -122,6 +135,7 @@ type HttpProxyOptions
 type InstallationId
 type ModelEndpoint
 type ModelEndpoints
+type ModelRole
 type ModelsFetch
 type NoProxyRule
 type OAuthCredential
@@ -132,4 +146,5 @@ type ReasoningEffort
 type RefreshableProvider
 type RoleField
 type SettingValue
+type SettingsKey
 type WebSocketProxy

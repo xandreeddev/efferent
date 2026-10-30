@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option } from "effect"
-import { SettingsStore } from "@xandreed/core"
+import { SettingsStore } from "@xandreed/core/models"
 import { LocalSettingsStoreLive } from "./localSettings.js"
 
 const setup = (global: Record<string, unknown>, local?: Record<string, unknown>) => {

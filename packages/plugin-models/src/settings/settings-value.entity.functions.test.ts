@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Exit, Option } from "effect"
-import { EngineSettings } from "@xandreed/core"
-import type { SettingsKey } from "@xandreed/core"
+import { EngineSettings } from "@xandreed/core/models"
+import type { SettingsKey } from "@xandreed/core/models"
 import { applyRole, applySetting, coerceSettingValue, recordOfSettings, settingsFromRecord } from "./settings-value.entity.functions.js"
 
 describe("the settings vocabulary", () => {

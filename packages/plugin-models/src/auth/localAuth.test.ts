@@ -3,7 +3,8 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Layer, Option, Redacted } from "effect"
-import { AuthStore, ProviderId } from "@xandreed/core"
+import { ProviderId } from "@xandreed/core"
+import { AuthStore } from "@xandreed/core/models"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import { LocalAuthStoreLive } from "./localAuth.js"
 
