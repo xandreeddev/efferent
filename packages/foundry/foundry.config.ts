@@ -25,32 +25,29 @@ const config: typeof GateSuiteConfig.Encoded = {
   ],
   boundaries: {
     layers: [
-      { name: "domain", path: "src/domain/**", canImport: [], externals: ["effect", "bun:test"] },
-      { name: "ports", path: "src/ports/**", canImport: ["domain"], externals: ["effect", "bun:test"] },
+      // Each folder's tests come before it (the first match wins): they may
+      // import what the folder may, and `bun:test`, which no source imports.
+      { name: "domain-tests", path: "src/domain/**/*.test.ts", canImport: ["domain"], externals: ["effect", "bun:test"] },
+      { name: "domain", path: "src/domain/**", canImport: [], externals: ["effect"] },
+      { name: "ports", path: "src/ports/**", canImport: ["domain"], externals: ["effect"] },
+      { name: "pipeline-tests", path: "src/pipeline/**/*.test.ts", canImport: ["pipeline", "domain", "ports"], externals: ["effect", "bun:test"] },
+      { name: "pipeline", path: "src/pipeline/**", canImport: ["domain", "ports"], externals: ["effect"] },
       {
-        name: "pipeline",
-        path: "src/pipeline/**",
-        canImport: ["domain", "ports"],
-        externals: ["effect", "bun:test"],
+        name: "gates-tests",
+        path: "src/gates/**/*.test.ts",
+        canImport: ["gates", "domain", "ports"],
+        externals: ["effect", "effect/testing", "typescript", "node:", "bun:test"],
       },
+      { name: "gates", path: "src/gates/**", canImport: ["domain", "ports"], externals: ["effect", "typescript", "node:"] },
+      { name: "adapters-tests", path: "src/adapters/**/*.test.ts", canImport: ["adapters", "domain", "ports"], externals: ["effect", "node:", "bun:test"] },
+      { name: "adapters", path: "src/adapters/**", canImport: ["domain", "ports"], externals: ["effect", "node:"] },
       {
-        name: "gates",
-        path: "src/gates/**",
-        canImport: ["domain", "ports"],
-        externals: ["effect", "typescript", "node:", "bun:test"],
-      },
-      {
-        name: "adapters",
-        path: "src/adapters/**",
-        canImport: ["domain", "ports"],
+        name: "cli-tests",
+        path: "src/cli/**/*.test.ts",
+        canImport: ["cli", "domain", "ports", "pipeline", "gates", "adapters"],
         externals: ["effect", "node:", "bun:test"],
       },
-      {
-        name: "cli",
-        path: "src/cli/**",
-        canImport: ["domain", "ports", "pipeline", "gates", "adapters"],
-        externals: ["effect", "node:", "bun:test"],
-      },
+      { name: "cli", path: "src/cli/**", canImport: ["domain", "ports", "pipeline", "gates", "adapters"], externals: ["effect", "node:"] },
     ],
   },
 }

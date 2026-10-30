@@ -1,3 +1,4 @@
+import { Array as Arr } from "effect"
 import type { GateSuiteConfig } from "@xandreed/foundry/domain/Rules.js"
 import {
   effectArchitecturePack,
@@ -22,12 +23,16 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  * is each layer's `canImport`, which names only the packages beneath it. The
  * subpath must be one the package's `exports` lists (a `-tests` layer may
  * also reach a `testing` module), and a relative import never leaves its
- * package. `externals` lists the third-party modules alone. `effect` admits
- * Effect's core modules; each `effect/<module>` barrel that was its own v3
- * package (effect/ai was @effect/ai) is allowed by name, or all of them with
- * the raw `effect/` prefix beside `@effect/`. v4 no longer re-exports
- * fast-check, so property tests name it (core, plugin-models tests) where
- * v3 reached it through `effect`.
+ * package. `externals` lists the third-party modules alone, exactly those
+ * the layer's files import (by an import clause or `import("…")`): one that
+ * none imports fails, so a list only shrinks. `effect` admits Effect's core
+ * modules; each `effect/<module>` barrel (effect/ai was @effect/ai in v3;
+ * effect/testing holds the test services) is named by itself, and no layer
+ * takes the raw `effect/` or `@effect/` prefix. So the provider packages
+ * (`@effect/ai-*`) are the models plugin's alone, Bun the SQLite session
+ * log's alone (`bun:sqlite`; the models plugin reaches Bun's fetch and
+ * WebSocket as globals), and the test libraries (`bun:test`, `fast-check`,
+ * `effect/testing`) the `-tests` layers' alone.
  */
 const CHECKED = [
   "packages/core/src/**",
@@ -80,7 +85,7 @@ const ERASURE_BOUNDARY = [
  * or published, so the rules that guard what crosses a boundary (casts, the
  * environment, time, randomness, decoding) do not apply to it.
  */
-const TEST_SCAFFOLDING = [
+const TEST_SCAFFOLDING: Arr.NonEmptyReadonlyArray<string> = [
   "**/*.test.ts",
   "**/*.test.tsx",
   "**/*.bench.ts",
@@ -101,6 +106,16 @@ const ENVIRONMENT_EDGES = ["**/main.ts", "packages/plugin-workspace/src/bash.ada
 
 /** A package's source, by its directory name: one entry of a list below. */
 const src = (name: string): string => `packages/${name}/src/**`
+
+/**
+ * A package's test layer, `<name>-tests`: its test code, one entry per
+ * TEST_SCAFFOLDING glob (a glob takes no alternatives), placed before the
+ * package's own layer, since the first match wins. The test libraries are
+ * allowed here and in no source layer. It may import what the package's own
+ * layer may, and the package; more only where its tests need it.
+ */
+const testLayer = (name: string, canImport: ReadonlyArray<string>, externals: ReadonlyArray<string>) =>
+  Arr.map(TEST_SCAFFOLDING, (glob) => ({ name: `${name}-tests`, path: `packages/${name}/src/${glob}`, canImport: [...canImport], externals: [...externals] }))
 
 /**
  * Every published entry, one file per line: each `exports` subpath of each
@@ -398,242 +413,72 @@ const config: typeof GateSuiteConfig.Encoded = {
   boundaries: {
     layers: [
       // The CLI's and the exporters' tests use the evals fixture, a testing module evals does not export.
-      { name: "evals-cli-tests", path: "packages/evals-cli/src/**/*.test.ts", canImport: ["evals-cli", "evals"], externals: ["effect", "node:", "tsx/esm/api", "bun:test"] },
-      { name: "evals-cli", path: "packages/evals-cli/src/**", canImport: ["evals"], externals: ["effect", "node:", "tsx/esm/api", "bun:test"] },
-      { name: "evals-langfuse-tests", path: "packages/evals-langfuse/src/**/*.test.ts", canImport: ["evals-langfuse", "evals"], externals: ["effect", "@langfuse/client", "node:", "bun:test"] },
-      { name: "evals-langfuse", path: "packages/evals-langfuse/src/**", canImport: ["evals"], externals: ["effect", "@langfuse/client", "node:", "bun:test"] },
-      { name: "evals-langsmith-tests", path: "packages/evals-langsmith/src/**/*.test.ts", canImport: ["evals-langsmith", "evals"], externals: ["effect", "langsmith", "node:", "bun:test"] },
-      { name: "evals-langsmith", path: "packages/evals-langsmith/src/**", canImport: ["evals"], externals: ["effect", "langsmith", "node:", "bun:test"] },
-      {name:"evals",path:"packages/evals/src/**",canImport:[],externals:["effect","effect/ai","@noble/hashes/","node:","bun:test"]},
+      ...testLayer("evals-cli", ["evals-cli", "evals"], ["effect", "node:", "bun:test"]),
+      { name: "evals-cli", path: src("evals-cli"), canImport: ["evals"], externals: ["effect", "node:", "tsx/esm/api"] },
+      ...testLayer("evals-langfuse", ["evals-langfuse", "evals"], ["effect", "effect/testing", "bun:test"]),
+      { name: "evals-langfuse", path: src("evals-langfuse"), canImport: ["evals"], externals: ["effect", "@langfuse/client", "node:"] },
+      ...testLayer("evals-langsmith", ["evals-langsmith", "evals"], ["effect", "effect/testing", "bun:test"]),
+      { name: "evals-langsmith", path: src("evals-langsmith"), canImport: ["evals"], externals: ["effect", "langsmith", "node:"] },
+      ...testLayer("evals", ["evals"], ["effect", "effect/ai", "node:", "bun:test"]),
+      { name: "evals", path: src("evals"), canImport: [], externals: ["effect", "effect/ai", "@noble/hashes/"] },
       // Core's layers, by a file's role rather than its folder; a glob takes no
-      // alternatives, so a layer may need several entries. From the bottom:
-      // the model (entities, and the References in `loop/`) imports nothing of
-      // core; the ports, the model; the logic (entity functions, `internal/`,
-      // the model-text frames), both; `core` (adapters, the turn's bus,
-      // harness, the memory session, prompt sections), those three; the kits,
-      // those four. The entries (`index.ts`, `conformance/` and `internal/`)
-      // are `core` too, what `@xandreed/core` reaches, and re-export every
-      // layer. `./conformance` is open to every package; `./internal` only to
-      // the agent loop, the models plugin and the sdk, each granted as
-      // `core/internal` in its importer's `canImport`.
-      { name: "core-tests", path: "packages/core/src/**/*.test.ts", canImport: ["core-model", "core-ports", "core-logic", "core", "core-kits"], externals: ["effect", "effect/ai", "fast-check", "bun:test"] },
-      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-kits"], externals: ["effect", "effect/ai"], restricted: ["internal"] },
-      { name: "core-model", path: "packages/core/src/**/*.entity.ts", canImport: [], externals: ["effect", "effect/ai"] },
-      { name: "core-model", path: "packages/core/src/loop/*.ts", canImport: [], externals: ["effect", "effect/ai"] },
+      // alternatives, so a layer may need several entries. Its test code comes
+      // first, then from the bottom: the model (entities, and the References
+      // in `loop/`) imports nothing of core; the ports, the model; the logic
+      // (entity functions, `internal/`, the model-text frames), both; `core`
+      // (adapters, the turn's bus, harness, the memory session, prompt
+      // sections), those three; the kits, those four. The entries (`index.ts`,
+      // `conformance/` and `internal/`) are `core` too, what `@xandreed/core`
+      // reaches, and re-export every layer. `./conformance` is open to every
+      // package; `./internal` only to the agent loop, the models plugin and the
+      // sdk, each granted as `core/internal` in its importer's `canImport`. The
+      // model and `core` import `effect` alone; the ports, logic and kits also
+      // `effect/ai`.
+      ...testLayer("core", ["core-model", "core-ports", "core-logic", "core", "core-kits"], ["effect", "effect/ai", "effect/testing", "fast-check", "bun:test"]),
+      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-kits"], externals: ["effect"], restricted: ["internal"] },
+      { name: "core-model", path: "packages/core/src/**/*.entity.ts", canImport: [], externals: ["effect"] },
+      { name: "core-model", path: "packages/core/src/loop/*.ts", canImport: [], externals: ["effect"] },
       { name: "core-ports", path: "packages/core/src/ports/**", canImport: ["core-model"], externals: ["effect", "effect/ai"] },
       { name: "core-logic", path: "packages/core/src/**/*.entity.functions.ts", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
       { name: "core-logic", path: "packages/core/src/internal/**", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
       { name: "core-logic", path: "packages/core/src/turn/model-text.ts", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
       { name: "core-kits", path: "packages/core/src/**/*.conformance.ts", canImport: ["core-model", "core-ports", "core-logic", "core"], externals: ["effect", "effect/ai"] },
-      { name: "core", path: "packages/core/src/**", canImport: ["core-model", "core-ports", "core-logic"], externals: ["effect", "effect/ai"] },
-      {
-            "name": "foundry",
-            "path": "packages/foundry/src/**",
-            "canImport": [],
-            "externals": [
-                  "effect",
-                  "typescript",
-                  "node:",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "plugin-agent-loop",
-            "path": "packages/plugin-agent-loop/src/**",
-            "canImport": [
-                  "core",
-                  "core/internal"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-            ]
-      },
+      { name: "core", path: "packages/core/src/**", canImport: ["core-model", "core-ports", "core-logic"], externals: ["effect"] },
+      ...testLayer("foundry", ["foundry"], ["effect", "effect/testing", "typescript", "node:", "bun:test"]),
+      { name: "foundry", path: src("foundry"), canImport: [], externals: ["effect", "typescript", "node:"] },
+      ...testLayer("plugin-agent-loop", ["plugin-agent-loop", "core", "core/internal"], ["effect", "effect/ai", "bun:test"]),
+      { name: "plugin-agent-loop", path: src("plugin-agent-loop"), canImport: ["core", "core/internal"], externals: ["effect", "effect/ai"] },
       // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
+      ...testLayer("plugin-memory-window", ["plugin-memory-window", "core", "core/internal"], ["effect", "bun:test"]),
+      { name: "plugin-memory-window", path: src("plugin-memory-window"), canImport: ["core"], externals: ["effect", "effect/ai"] },
+      ...testLayer("plugin-memory-summary", ["plugin-memory-summary", "core"], ["effect", "effect/testing", "bun:test"]),
+      { name: "plugin-memory-summary", path: src("plugin-memory-summary"), canImport: ["core"], externals: ["effect"] },
+      ...testLayer("plugin-memory-digest", ["plugin-memory-digest", "core"], ["effect", "effect/testing", "bun:test"]),
+      { name: "plugin-memory-digest", path: src("plugin-memory-digest"), canImport: ["core"], externals: ["effect"] },
+      ...testLayer("plugin-tool-discovery", ["plugin-tool-discovery", "core"], ["effect", "effect/ai", "bun:test"]),
+      { name: "plugin-tool-discovery", path: src("plugin-tool-discovery"), canImport: ["core"], externals: ["effect", "effect/ai"] },
+      // The one package that imports a provider package (`@effect/ai-*`). It
+      // tells Bun by `process.versions` and reaches its fetch and WebSocket as
+      // globals, so it imports no `bun` module.
+      ...testLayer(
+        "plugin-models",
+        ["plugin-models", "core", "core/internal"],
+        ["effect", "effect/ai", "effect/http", "effect/testing", "@effect/ai-openai", "node:", "fast-check", "bun:test"],
+      ),
       {
-            "name": "plugin-memory-window-tests",
-            "path": "packages/plugin-memory-window/src/**/*.test.ts",
-            "canImport": [
-                  "plugin-memory-window",
-                  "core",
-                  "core/internal"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
-            ]
+        name: "plugin-models",
+        path: src("plugin-models"),
+        canImport: ["core", "core/internal"],
+        externals: ["effect", "effect/ai", "effect/http", "effect/socket", "@effect/ai-anthropic", "@effect/ai-openai", "undici", "ws", "node:"],
       },
-      {
-            "name": "plugin-memory-window",
-            "path": "packages/plugin-memory-window/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "plugin-memory-summary",
-            "path": "packages/plugin-memory-summary/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "plugin-memory-digest",
-            "path": "packages/plugin-memory-digest/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "plugin-tool-discovery",
-            "path": "packages/plugin-tool-discovery/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "plugin-models-tests",
-            "path": "packages/plugin-models/src/**/*.test.ts",
-            "canImport": [
-                  "plugin-models",
-                  "core",
-                  "core/internal"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "undici",
-                  "ws",
-                  "fast-check"
-            ]
-      },
-      {
-            "name": "plugin-models",
-            "path": "packages/plugin-models/src/**",
-            "canImport": [
-                  "core",
-                  "core/internal"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "undici",
-                  "ws"
-            ]
-      },
-      {
-            "name": "plugin-session-sqlite-tests",
-            "path": "packages/plugin-session-sqlite/src/**/*.test*.ts",
-            "canImport": [
-                  "plugin-session-sqlite",
-                  "core",
-                  "plugin-sessions"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "ws",
-            ]
-      },
-      {
-            "name": "plugin-session-sqlite",
-            "path": "packages/plugin-session-sqlite/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-                  "ws"
-            ]
-      },
-      {
-            "name": "plugin-sessions",
-            "path": "packages/plugin-sessions/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "plugin-tasks-tests",
-            "path": "packages/plugin-tasks/src/**/*.test.ts",
-            "canImport": [
-                  "plugin-tasks",
-                  "core",
-                  "plugin-sessions"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "plugin-tasks",
-            "path": "packages/plugin-tasks/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "bun:test"
-            ]
-      },
+      // The one package that imports Bun (`bun:sqlite`), and so the one that
+      // does not load on Node.
+      ...testLayer("plugin-session-sqlite", ["plugin-session-sqlite", "core", "plugin-sessions"], ["effect", "effect/testing", "node:", "bun:sqlite", "bun:test"]),
+      { name: "plugin-session-sqlite", path: src("plugin-session-sqlite"), canImport: ["core"], externals: ["effect", "node:", "bun:sqlite"] },
+      ...testLayer("plugin-sessions", ["plugin-sessions", "core"], ["effect", "effect/testing", "bun:test"]),
+      { name: "plugin-sessions", path: src("plugin-sessions"), canImport: ["core"], externals: ["effect"] },
+      ...testLayer("plugin-tasks", ["plugin-tasks", "core", "plugin-sessions"], ["effect", "effect/testing", "bun:test"]),
+      { name: "plugin-tasks", path: src("plugin-tasks"), canImport: ["core"], externals: ["effect", "effect/ai"] },
       // The plugin test layers that import upward, this one and
       // plugin-telemetry-tests below (sdk, the plugins an agent needs and, here,
       // evals): the skills directory, the workspace tools and the telemetry
@@ -641,165 +486,59 @@ const config: typeof GateSuiteConfig.Encoded = {
       // built or packed, but if sdk ever lists one of these plugins as a
       // devDependency, move its tests to sdk-tests rather than make the two
       // devDependencies a cycle.
-      {
-            "name": "plugin-workspace-tests",
-            "path": "packages/plugin-workspace/src/**/*.test.ts",
-            "canImport": [
-                  "plugin-workspace",
-                  "core",
-                  "runtime",
-                  "sdk",
-                  "evals",
-                  "plugin-agent-loop",
-                  "plugin-memory-window",
-                  "plugin-sessions",
-                  "plugin-tool-discovery",
-                  "core/internal"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "fast-check",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "plugin-workspace",
-            "path": "packages/plugin-workspace/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "effect/ai",
-                  "node:",
-            ]
-      },
-      {
-            "name": "plugin-telemetry-tests",
-            "path": "packages/plugin-telemetry/src/**/*.test*.ts",
-            "canImport": [
-                  "plugin-telemetry",
-                  "core",
-                  "sdk",
-                  "plugin-agent-loop",
-                  "plugin-memory-window",
-                  "plugin-tool-discovery",
-                  "plugin-sessions"
-            ],
-            "externals": [
-                  "effect",
-                  "effect/",
-                  "bun",
-                  "bun:test",
-            ]
-      },
-      {
-            "name": "plugin-telemetry",
-            "path": "packages/plugin-telemetry/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "effect/",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "runtime",
-            "path": "packages/runtime/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-            ]
-      },
+      ...testLayer(
+        "plugin-workspace",
+        [
+          "plugin-workspace",
+          "core",
+          "runtime",
+          "sdk",
+          "evals",
+          "plugin-agent-loop",
+          "plugin-memory-window",
+          "plugin-sessions",
+          "plugin-tool-discovery",
+          "core/internal",
+        ],
+        ["effect", "effect/ai", "node:", "fast-check", "bun:test"],
+      ),
+      { name: "plugin-workspace", path: src("plugin-workspace"), canImport: ["core"], externals: ["effect", "effect/ai", "node:"] },
+      ...testLayer(
+        "plugin-telemetry",
+        ["plugin-telemetry", "core", "sdk", "plugin-agent-loop", "plugin-memory-window", "plugin-tool-discovery", "plugin-sessions"],
+        ["effect", "effect/ai", "effect/http", "bun:test"],
+      ),
+      { name: "plugin-telemetry", path: src("plugin-telemetry"), canImport: ["core"], externals: ["effect", "effect/http", "effect/observability"] },
+      ...testLayer("runtime", ["runtime", "core"], ["effect", "bun:test"]),
+      { name: "runtime", path: src("runtime"), canImport: ["core"], externals: ["effect", "node:"] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
       // as written, so they import only what a consumer can.
-      {
-            "name": "sdk-tests",
-            "path": "packages/sdk/src/**/*.test.ts",
-            "canImport": [
-                  "sdk",
-                  "core",
-                  "core/internal",
-                  "runtime",
-                  "plugin-session-sqlite",
-                  "plugin-agent-loop",
-                  "plugin-memory-window",
-                  "plugin-memory-summary",
-                  "plugin-memory-digest",
-                  "plugin-tool-discovery",
-                  "plugin-sessions",
-                  "plugin-tasks",
-                  "plugin-models",
-                  "plugin-render"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun",
-                  "bun:",
-            ]
-      },
-      {
-            "name": "sdk",
-            "path": "packages/sdk/src/**",
-            "canImport": [
-                  "core",
-                  "core/internal",
-                  "runtime"
-            ],
-            "externals": [
-                  "effect",
-                  "effect/ai",
-                  "bun:test"
-            ]
-      },
+      ...testLayer(
+        "sdk",
+        [
+          "sdk",
+          "core",
+          "core/internal",
+          "runtime",
+          "plugin-session-sqlite",
+          "plugin-agent-loop",
+          "plugin-memory-window",
+          "plugin-memory-summary",
+          "plugin-memory-digest",
+          "plugin-tool-discovery",
+          "plugin-sessions",
+          "plugin-tasks",
+          "plugin-models",
+          "plugin-render",
+        ],
+        ["effect", "effect/ai", "effect/testing", "node:", "bun:test"],
+      ),
+      { name: "sdk", path: src("sdk"), canImport: ["core", "core/internal", "runtime"], externals: ["effect", "effect/ai"] },
       // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
-      {
-            "name": "plugin-render-tests",
-            "path": "packages/plugin-render/src/**/*.test.ts",
-            "canImport": [
-                  "plugin-render",
-                  "core",
-                  "core/internal"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun:test"
-            ]
-      },
-      {
-            "name": "plugin-render",
-            "path": "packages/plugin-render/src/**",
-            "canImport": [
-                  "core"
-            ],
-            "externals": [
-                  "effect",
-                  "@effect/",
-                  "effect/",
-                  "node:",
-                  "bun:test"
-            ]
-      },
-],
+      ...testLayer("plugin-render", ["plugin-render", "core", "core/internal"], ["effect", "node:", "bun:test"]),
+      { name: "plugin-render", path: src("plugin-render"), canImport: ["core"], externals: ["effect", "effect/ai", "node:"] },
+    ],
   },
 }
 

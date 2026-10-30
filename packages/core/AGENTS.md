@@ -73,7 +73,10 @@ file is in the first layer whose glob matches it:
 | `core-logic` | `*.entity.functions.ts`, `internal/**`, `turn/model-text.ts` | model, ports |
 | `core` | everything else: adapters (the turn's bus among them), harness, the memory session, prompt sections; and the entries (`**/index.ts`), which re-export every layer | model, ports, logic |
 | `core-kits` | `*.conformance.ts` | model, ports, logic, core: the step-loop kit runs a loop over the turn's bus |
-| `core-tests` | `*.test.ts` | every layer, and `fast-check` and `bun:test`, which no other layer imports |
+| `core-tests` | test code: `*.test.ts`, `*.bench.ts`, `testing` modules and folders | every layer, and the test libraries `bun:test`, `fast-check` and `effect/testing`, which no other layer imports |
+
+Of the third-party modules, the model and `core` import `effect` alone; the
+ports, the logic and the kits also `effect/ai`.
 
 A port that needs a type from a functions file gets it from the entity file
 (`LogQuery` is in `memory-log.entity.ts`); what code beneath the sdk's

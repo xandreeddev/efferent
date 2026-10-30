@@ -1,6 +1,6 @@
 # @xandreed/plugin-session-sqlite
 
-Core's `SessionLog` port in one SQLite file (`session_heads` and `session_log_events`), and a plugin that pairs it with the open `TurnAdmission`; hosts compose `sessionsPlugin` (plugin-sessions) on top. Bun only: it imports `bun:sqlite` and declares no Node engine, so `verify:packages` never imports it on Node. Layer `plugin-session-sqlite` in `foundry.config.ts` (imports core, `node:` and `bun:`); its tests' layer `plugin-session-sqlite-tests` also imports plugin-sessions.
+Core's `SessionLog` port in one SQLite file (`session_heads` and `session_log_events`), and a plugin that pairs it with the open `TurnAdmission`; hosts compose `sessionsPlugin` (plugin-sessions) on top. Bun only: it imports `bun:sqlite` and declares no Node engine, so `verify:packages` never imports it on Node. Layer `plugin-session-sqlite` in `foundry.config.ts` (imports core, `node:` and `bun:sqlite`, the one Bun module a source layer may import); its tests' layer `plugin-session-sqlite-tests` also imports plugin-sessions.
 
 ## Rules
 
