@@ -1,6 +1,6 @@
 import { AiError, LanguageModel, Prompt } from "effect/ai"
 import type { Response, Tool, Toolkit } from "effect/ai"
-import { Array as Arr, Cause, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Stream } from "effect"
+import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Stream } from "effect"
 import { CurrentTraceContent, foldStreamParts, freezeModelRequest, replayableContext } from "@xandreed/core"
 import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
@@ -387,8 +387,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, R = never>(
     const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
     const pollable: ReadonlySet<string> = new Set(options.pollableTools ?? [])
     const captureTraceContent = options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent))
-    // The callbacks run with the caller's services, under the span current where they are called.
-    const eventContext = replayableContext(yield* Effect.context<R>())
+    // The callbacks run with the caller's services except its step and tolerance (this loop's own win), under the span current where they are called.
+    const eventContext = Context.omit(CurrentAgentStep, CurrentEmptyResponseTolerance)(replayableContext(yield* Effect.context<R>()))
     const onEvent = (event: LoopEvent) => (options.onEvent?.(event) ?? Effect.void).pipe(Effect.provide(eventContext))
     // Resolve the toolkit's handlers once — they're stable across turns.
     const toolkit = yield* options.toolkit

@@ -93,12 +93,13 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  * build sent, and the step's next plan, that one only, rebuilds the context
  * with the same model choice, system prompt, directive and resolved model
  * (no second `policy.model` or `policy.step` call, no second
- * `StepContext`). Any other plan of a step calls the policy again. Each
- * request header records the turn's cache key (`options.cacheKey`) and the
- * `CurrentModelCallPolicy` where this runs; the dispatch check compares them
- * with what the model call will read, `CurrentPromptCacheKey` and
- * `CurrentModelCallPolicy` where the loop dispatches, so a loop that does not
- * stamp the request's `cacheKey` (or changes the call policy) fails with
+ * `StepContext`). Any other plan of a step calls the policy again. The
+ * request's `cacheKey` is the turn's (`options.cacheKey`), its `callPolicy`
+ * the `CurrentModelCallPolicy` where this runs, read once; each request
+ * header records both, and the dispatch check compares them with what the
+ * model call will read, `CurrentPromptCacheKey` and `CurrentModelCallPolicy`
+ * where the loop dispatches, so a loop that does not provide the request's
+ * `cacheKey` and `callPolicy` (`StepLoopReferences`) fails with
  * `request.diverged` before the provider is called.
  */
 export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.fn.Return<StepRequest, TurnError, P | TurnRunServices> {
@@ -232,6 +233,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
     events,
     tasks,
     cacheKey,
+    callPolicy,
     captureTraceContent: policy.captureTraceContent ?? options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent)),
   } satisfies StepRequest
 })

@@ -826,14 +826,15 @@ system text, messages, schemas, tool choice or described model settings fail
 with `request.diverged` before the provider runs; its message starts with the
 first part that differs (`context`, `system`, `messages`, `tools`,
 `toolChoice`, `model`, `cacheKey` or `callPolicy`). The header records the
-turn's cache key and the `CurrentModelCallPolicy` where the turn runs; the
-check compares them with what the model call reads, `CurrentPromptCacheKey`
-and `CurrentModelCallPolicy` where the loop dispatches, so a step loop that
-does not stamp the request's `cacheKey` on its calls fails the step (the
-`stepLoopConformance` kit checks that it does). Prompt data is frozen; a
-stream fallback checks the same contract again, and a failed check fails the
-step, streamed or not, instead of falling back. Host-planned batches make no
-provider request and create no request header.
+turn's cache key and the `CurrentModelCallPolicy` where the turn runs (the
+`StepRequest`'s `cacheKey` and `callPolicy`); the check compares them with
+what the model call reads, `CurrentPromptCacheKey` and
+`CurrentModelCallPolicy` where the loop dispatches, so a step loop that does
+not provide the request's `cacheKey` and `callPolicy` to its calls fails the
+step (the `stepLoopConformance` kit checks that it does). Prompt data is
+frozen; a stream fallback checks the same contract again, and a failed check
+fails the step, streamed or not, instead of falling back. Host-planned
+batches make no provider request and create no request header.
 
 `replayModelRequest(events, runId, step, run?)` reconstructs one historical
 request, that of `step` in the run `run` of the turn (its ordinal: 0, the
@@ -902,6 +903,15 @@ tool and the service, before its first step. The run's `handlers` (and a
 `StepRequest`'s) are a `Context<ToolHandlers>`, what `toolkit.toHandlers`
 returns: provided to the run's `toolkit`, they meet its requirement with no
 cast. A custom `ToolRegistry` builds them the same way, with `toHandlers`.
+
+A custom `StepLoop` provides each of `StepLoopReferences`, whatever its
+caller's (an outer run's, for a run inside a tool): the request's `cacheKey`
+as `CurrentPromptCacheKey` and its `callPolicy` as `CurrentModelCallPolicy`
+to its dispatch checks and model calls; its `captureTraceContent` as
+`CurrentTraceContent` to its model calls; `CurrentEmptyResponseTolerance`
+to its model calls, false until the run has executed a tool call and true
+after; and the current step as `CurrentAgentStep` to its tool handlers and
+model calls. `stepLoopConformance` checks each.
 
 `memoryConformance(memory, services)`, `stepLoopConformance(loop)`,
 `turnConformance(runner, services)`, `sessionLogConformance(log)`,
