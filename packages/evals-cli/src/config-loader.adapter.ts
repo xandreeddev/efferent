@@ -14,6 +14,10 @@ const importDefault = (path: string, args: ReadonlyArray<string>): Effect.Effect
   catch: (error) => new EvaluationError({ code: "invalid", message: `Cannot load evaluation configuration ${path}: ${reasonOf(Cause.die(error))}`, cause: error }),
 })
 
-/** Caller chooses the module; its declaration must not acquire model or infrastructure clients. The default export goes through `parseEvaluationApp`. */
+/**
+ * Caller chooses the module; its declaration must not acquire model or infrastructure clients. The default export goes through `parseEvaluationApp`.
+ *
+ * @public
+ */
 export const loadEvaluationApp = (path: string, args: ReadonlyArray<string> = []): Effect.Effect<EvaluationApp, EvaluationError> =>
   importDefault(path, args).pipe(Effect.flatMap(parseEvaluationApp))
