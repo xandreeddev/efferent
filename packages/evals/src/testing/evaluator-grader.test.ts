@@ -51,6 +51,14 @@ const assessWith = (grader: GraderRegistration, grading: GradingContext) =>
 /** An evaluator of the grader's input that answers with `run`. */
 const scripted = (run: Evaluator<typeof Answer.Type>["run"], metrics: ReadonlyArray<string> = ["correct", "complete"]): Evaluator<typeof Answer.Type> =>
   ({ id: "scripted", version: "1", metrics, run })
+/** The one grade a run of the fixture app gives, `evaluator` behind its grader. */
+const runGradeOf = (evaluator: Evaluator<typeof Answer.Type>) => {
+  const app = appWith(graderFromEvaluator({ definition, input: Answer, evaluator }, Layer.empty))
+  return runEvaluation(app, "run", { ids: ["suite"], split: "validation" }).pipe(
+    Effect.provide(Layer.merge(EvaluationServicesLive(app), store)),
+    Effect.map((report) => report.trials[0]!.grades[0]!),
+  )
+}
 
 test("a semantic evaluator behind a grader grades a trial end to end, keeps the grader's metrics, and its report stores and reads back", async () => {
   const asked: Array<SemanticInput> = []
@@ -101,6 +109,16 @@ test("an AssessmentError becomes the EvaluationError of the same code, message a
   expect([unavailable._tag, unavailable.code, unavailable.message, unavailable.cause]).toEqual(["EvaluationError", "unavailable", "judge busy", cause])
   const own = new EvaluationError({ code: "budget", message: "over budget" })
   expect(await Effect.runPromise(assessWith(graderFromEvaluator({ definition, input: Answer, evaluator: scripted(() => Effect.fail(own)) }, Layer.empty), context({ answer: "a" })).pipe(Effect.flip))).toBe(own)
+})
+
+test("an unavailable evaluator is an unavailable grade, never a measured zero; a crashed one is an error named by its message, never a stack frame or a path", async () => {
+  // Made here, so its stack names this file.
+  const crashed = new Error("judge crashed")
+  const unavailable = await Effect.runPromise(runGradeOf(scripted(() => Effect.fail(new AssessmentError({ code: "unavailable", message: "missing evidence" })))))
+  const died = await Effect.runPromise(runGradeOf(scripted(() => Effect.die(crashed))))
+  expect([unavailable.status, unavailable.metrics, unavailable.reason, Option.isNone(unavailable.usage.costUsd)]).toEqual(["unavailable", [], "unavailable: missing evidence", true])
+  expect([died.status, died.metrics, died.reason]).toEqual(["error", [], "judge crashed"])
+  expect(JSON.stringify([unavailable, died])).not.toContain(import.meta.dir)
 })
 
 test("references go to the grade's metadata; metrics outside the evaluator's declaration, or out of range, are invalid; a slow evaluator times out", async () => {

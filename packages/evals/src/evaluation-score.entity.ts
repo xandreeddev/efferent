@@ -4,17 +4,6 @@ import { EvalPath } from "./domain/identity.entity.js"
 import { Grade } from "./domain/grader.entity.js"
 
 /**
- * Public presentation; metric kinds/ranges and execution provenance stay on the assessment.
- * @deprecated Use `ExportedScore` (`exportableScores`): the scores a run's exporters send.
- */
-export const EvaluationScore = Schema.Struct({
-  key: Schema.NonEmptyString,
-  score: Schema.Union([Schema.Number.pipe(Schema.check(Schema.isFinite())), Schema.Boolean, Schema.Literals(["A", "B", "tie"])]),
-  comment: Schema.String,
-})
-/** @deprecated Use `ExportedScore`. */
-export type EvaluationScore = typeof EvaluationScore.Type
-/**
  * One measured metric of a `scored` grade as a remote score, every value as
  * the run encodes it (an absent one is `null`). `trial` is the local trial's
  * id, `key` names the score (`<grader>@<version>/<scope>/<metric>`), and

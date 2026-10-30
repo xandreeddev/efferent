@@ -180,6 +180,3 @@ export const parseEvaluationApp = (value: unknown): Effect.Effect<EvaluationApp,
         : Effect.fail(new EvaluationError({ code: "invalid", message: refusal(violations), violations }))
     },
   })
-
-/** @deprecated Use `parseEvaluationApp`: the same check, whose refusal lists its `violations`. */
-export const validateEvaluationApp: (app: EvaluationApp) => Effect.Effect<EvaluationApp, EvaluationError> = parseEvaluationApp

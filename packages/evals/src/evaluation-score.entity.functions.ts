@@ -1,14 +1,7 @@
 import { Match, Option } from "effect"
-import type { EvaluationResult, Metric } from "./assessment.entity.js"
+import type { Metric } from "./assessment.entity.js"
 import type { EvaluationRun } from "./domain/evaluation-run.entity.js"
-import type { EvaluationScore, ExportedScore } from "./evaluation-score.entity.js"
-
-/** @deprecated Use `exportableScores`, the scores of a whole run as its exporters send them. */
-export const evaluationScores = (result: EvaluationResult): ReadonlyArray<EvaluationScore> =>
-  result.status === "scored" ? result.metrics.map((metric) => ({
-    key: metric.name, score: metric.value,
-    comment: metric.comment ?? Option.getOrElse(result.reason, () => ""),
-  })) : []
+import type { ExportedScore } from "./evaluation-score.entity.js"
 
 /** A metric as a remote score's number: a boolean is 0 or 1; a preference has none and stays local. */
 const scoreValue = (metric: typeof Metric.Encoded): Option.Option<number> =>

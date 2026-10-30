@@ -183,7 +183,7 @@ if (workspaceTurn.outcome !== "completed" || workspaceNotes !== "- buy oat milk\
 console.log("The workspace tools read, edited and ran a command (stdin, host variable) and read an image in an Agent.turn on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
 `
 await writeFile(join(consumer, "verify.ts"), `
-import { Context, Deferred, Effect, Layer, Option, Ref, Stream } from "effect"
+import { Context, Deferred, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
 import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises"
 import { connect, createServer } from "node:net"
@@ -202,7 +202,7 @@ import { Agent } from "@xandreed/sdk"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { assessAll, semanticEvaluator } from "@xandreed/evals"
+import { EvalId, GraderAssessment, graderFromEvaluator, semanticEvaluator } from "@xandreed/evals"
 import { SemanticJevLive } from "@xandreed/evals"
 const usage = { inputTokens: { total: 3, cacheRead: 1, cacheWrite: 1 }, outputTokens: { total: 2, reasoning: 1 } }
 const turned = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
@@ -230,8 +230,9 @@ if (turned.meta !== JSON.stringify([{ request: "r-1" }, { request: "r-1" }])) pr
 if (turned.resume !== JSON.stringify(["resumes 2", "resume:2", 2])) process.exit(1)
 if (turned.outcome.usage.totalTokens !== 5 || turned.outcome.usage.cacheWriteTokens !== 1 || turned.outcome.usage.reasoningTokens !== 1) process.exit(1)
 const rubric = semanticEvaluator({id:"external-quality",version:"1",questions:{supported:{type:"boolean",instructions:"Is the answer supported?"}},state:(input:{answer:string})=>input.answer})
-const assessments = await Effect.runPromise(assessAll([{evaluator:rubric,select:["supported"]}],{answer:"fixture"}).pipe(Effect.provide(SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))))
-if(assessments[0]?.status!=="scored" || assessments[0]?.metadata.backend!=="jev") process.exit(1)
+const rubricGrader = graderFromEvaluator({definition:{id:EvalId.make("external-quality"),version:"1",kind:"model",metrics:["supported"],fingerprints:{}},input:Schema.Struct({answer:Schema.String}),evaluator:rubric},SemanticJevLive({evaluate:()=>Promise.resolve({answers:{supported:{type:"boolean",probability:0.9}}})}))
+const graded = await Effect.runPromise(GraderAssessment.use((port)=>port.assess({projection:"answer",version:"1",input:{answer:"fixture"},references:[],omissions:[],bytes:0,fingerprint:"fixture"},{id:EvalId.make("consumer"),configuration:{},fingerprints:{}})).pipe(Effect.provide(rubricGrader.layer)))
+if(graded.status!=="scored" || graded.metadata.backend!=="jev") process.exit(1)
 console.log("Composable agent turn with host meta, session fork, resumed turn, eval composition and optional rubric adapter passed")
 const answered = await Effect.runPromise(Effect.scoped(Effect.gen(function*(){
  const done = yield* Deferred.make<string>()

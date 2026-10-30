@@ -1,6 +1,6 @@
 import type { AiError } from "effect/ai"
 import { Effect, Match, Option, Schema } from "effect"
-import { AssessmentError, Metric, type EvaluationResult } from "./assessment.entity.js"
+import { AssessmentError, Metric } from "./assessment.entity.js"
 import type { Dataset } from "./assessment.usecase.js"
 
 /**
@@ -52,15 +52,3 @@ export const numericMetric = (metric: Metric): Option.Option<number> => Match.va
   Match.exhaustive,
 )
 
-/** @deprecated Grade with the evaluator behind a grader (`graderFromEvaluator`) and read the run: its grades and `runGates`. */
-export const summarizeAssessments = (results: ReadonlyArray<EvaluationResult>) => ({
-  total: results.length,
-  scored: results.filter((result) => result.status === "scored").length,
-  errors: results.filter((result) => result.status === "error").length,
-  unavailable: results.filter((result) => result.status === "unavailable").length,
-  skipped: results.filter((result) => result.status === "skipped").length,
-  metrics: Object.fromEntries([...new Set(results.flatMap((result) => result.metrics.map((metric) => `${result.evaluator}/${metric.name}`)))].map((key) => {
-    const values = results.filter((result) => result.status === "scored").flatMap((result) => result.metrics.filter((metric) => `${result.evaluator}/${metric.name}` === key).flatMap((metric) => Option.toArray(numericMetric(metric))))
-    return [key, { count: values.length, mean: values.length ? Option.some(values.reduce((a, b) => a + b, 0) / values.length) : Option.none<number>() }]
-  })),
-})

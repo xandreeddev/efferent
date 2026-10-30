@@ -29,7 +29,6 @@ export {
   defineEvaluationApp,
   evaluationAppViolations,
   parseEvaluationApp,
-  validateEvaluationApp,
 } from "./contracts/evaluation-app.contract.functions.js"
 export { defineRunnable } from "./adapters/runnable.adapter.js"
 export { defineGraderCalibration } from "./adapters/grader-calibration.adapter.js"
@@ -56,14 +55,9 @@ export {
   EvaluationUsage,
   AssessmentError
 } from "./assessment.entity.js"
-export {
-  assess,
-  assessAll,
-  unknownEvaluationUsage
-} from "./assessment.usecase.functions.js"
+export { projectEvaluatorInput, unknownEvaluationUsage } from "./assessment.usecase.functions.js"
 export type {
   Evaluator,
-  EvaluatorBinding,
   Assessment,
   AssessmentInput,
   Dataset,
@@ -92,7 +86,6 @@ export {
 } from "./graders/retrieval/semantic-grader.adapter.js"
 
 export {
-  EvaluationResult,
   EvaluationSplit,
   LabelReview
 } from "./assessment.entity.js"
@@ -100,14 +93,11 @@ export {
   assessmentOfAiError,
   validateDataset,
   validateMetrics,
-  numericMetric,
-  summarizeAssessments
+  numericMetric
 } from "./assessment.entity.functions.js"
 export { fingerprint as evaluationFingerprint } from "./domain/grading-context.entity.functions.js"
 export { isolatedServices } from "./adapters/isolated-services.adapter.js"
 export { argValue, csv, hasFlag, positiveInt } from "./cli.functions.js"
-export { type EvaluatorRegistration } from "./evaluator-registry.usecase.js"
-export { evaluatorRegistry, projectEvaluatorInput } from "./evaluator-registry.usecase.functions.js"
 export {
   SemanticAnswer,
   SemanticAnswers,
@@ -121,8 +111,8 @@ export { SemanticJudge } from "./ports/semantic-judge.port.js"
 export { semanticEvaluator } from "./evaluators/semantic.js"
 export { makeSemanticLlmJudge, SemanticLlmLive, type SemanticLlmOptions } from "./adapters/semantic-llm.adapter.js"
 export { makeSemanticJevJudge, SemanticJevLive, type SemanticJevOptions } from "./adapters/semantic-jev.adapter.js"
-export { EvaluationScore, ExportedScore } from "./evaluation-score.entity.js"
-export { evaluationScores, exportableScores } from "./evaluation-score.entity.functions.js"
+export { ExportedScore } from "./evaluation-score.entity.js"
+export { exportableScores } from "./evaluation-score.entity.functions.js"
 export {
   ActionAssessment,
   ActionId,
