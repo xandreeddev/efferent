@@ -24,6 +24,8 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 - `runLoop` with its types (`RunLoopOptions`, `CompactionPlan`, `StepView`, `LoopToolChoice`, `Phase`), `foldProgress`, `nextPhase`, `DEFAULT_MAX_STEPS`, `DEFAULT_TOOL_CONCURRENCY`, `DEGENERATE_REPEAT_NUDGE`, `DEGENERATE_LOOP_STOP` (`src/loop.ts`).
 - `stepLoopPlugin` (also the default export), `StepLoopLive`, `runSteps`, `STEP_LOOP` (`src/step-loop.adapter.ts`).
 
+The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests, the scripts and the docs import `stepLoopPlugin`, `StepLoopLive` and `runSteps`, and the rest, which no first-party package imports, are tagged `@public` at their declarations (`stepLoopPlugin`'s tag covers the default export).
+
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
 | `stepLoopPlugin` | `@xandreed/plugin-agent-loop/steps` | runtime | `efferent/StepLoop` | none | none (the turn supplies everything per run) |
@@ -32,16 +34,16 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `DEGENERATE_REPEAT_NUDGE` (a user-role message) | `src/loop.ts:276-280` | by reference only, `src/loop.test.ts:231`; wording unpinned |
-| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:282-283` | unpinned |
-| Default malformed corrective (`Your previous reply could not be parsed: …`) | `src/loop.ts:691-694` | contains, `src/loop.test.ts:188`, `:206` |
-| Default incomplete corrective (`The host reports that required actions are incomplete. …`) | `src/loop.ts:745` | unpinned |
+| `DEGENERATE_REPEAT_NUDGE` (a user-role message) | `src/loop.ts:288-292` | by reference only, `src/loop.test.ts:231`; wording unpinned |
+| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:295-296` | unpinned |
+| Default malformed corrective (`Your previous reply could not be parsed: …`) | `src/loop.ts:711-714` | contains, `src/loop.test.ts:188`, `:206` |
+| Default incomplete corrective (`The host reports that required actions are incomplete. …`) | `src/loop.ts:765` | unpinned |
 
 Steering text (`pendingInput`) is the host's; the fold's summary message is core's `handoffToMessage`.
 
 ## Erasure files
 
-`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:465`) and the tool choice into its tool-name union (`:471`).
+`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:485`) and the tool choice into its tool-name union (`:491`).
 
 ## Layout
 

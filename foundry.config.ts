@@ -122,6 +122,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/evals-cli/src/index.ts",
   "packages/plugin-render/src/index.ts",
   "packages/plugin-render/src/output.ts",
+  "packages/plugin-agent-loop/src/index.ts",
 ]
 
 /**
