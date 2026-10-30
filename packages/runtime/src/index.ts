@@ -1,2 +1,2 @@
-export * from "./graph.js"
-export * from "./live-layer.adapter.js"
+export { activateGraph, graphFingerprint, type PluginGraph, type PluginNode, resolveGraph } from "./graph.js"
+export { makeLiveLayer } from "./live-layer.adapter.js"

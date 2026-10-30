@@ -1246,6 +1246,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - The framework guide documents `provideDeclared` (with `ServiceKeys`) and the
   types of the turn's trace and run functions, and the conformance page
   documents `check`, `textReply` and `probeCall`.
+- `@xandreed/runtime` names each export of its root instead of `export *`,
+  and `quality/exports-have-consumers` checks it (`CURATED_ENTRIES`):
+  `makeLiveLayer` is tagged `@public`. Its API is unchanged.
 
 ### Deprecated
 
