@@ -53,7 +53,13 @@ way, without a key.
 ## Credentials and storage
 
 The models plugin keeps its credentials (`AuthStore`) and model settings
-(`SettingsStore`) in one of two places, chosen by its `storage` option.
+(`SettingsStore`) in one of two places, chosen by its `storage` option. Both
+ports are the plugin's own: import them, `Credential`, `AuthError`,
+`EngineSettings` and `SettingsError` from `@xandreed/plugin-models`, and
+their kits from `@xandreed/plugin-models/conformance` (see
+[conformance kits](/docs/concepts/conformance)). Their service keys are
+still `@xandreed/core/AuthStore` and `@xandreed/core/SettingsStore`, so a
+plugin's `provides` and a host's bindings name them as before.
 
 A credential's secrets (an API key, an OAuth access or refresh token) are
 `Redacted` wherever the `AuthStore` takes or hands them out: a login passes

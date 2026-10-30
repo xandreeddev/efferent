@@ -1,5 +1,5 @@
 import { Effect, Match, Schema } from "effect"
-import { AuthError, Credential } from "@xandreed/core/models"
+import { AuthError, Credential } from "../ports/auth-store.port.js"
 import { AccountId, InstallationId } from "./credential-input.entity.js"
 import type { CredentialInput, CredentialInputs } from "./credential-input.entity.js"
 
@@ -16,14 +16,6 @@ export const encodeCredential = (provider: string, credential: Credential): Effe
     provider,
     message: `the ${provider} credential cannot be stored: its secrets must be Redacted values (Redacted.make(...)), and its other fields those of a credential`,
   })))
-
-/**
- * The stored form of a credential a host handed over: the same value, since
- * a stored credential's secrets are `Redacted` too.
- *
- * @deprecated A `CredentialInput` is a `Credential`: use it as it is.
- */
-export const toCredential = (input: CredentialInput): Credential => input
 
 /**
  * A stored credential as a host receives it: the same secrets, already

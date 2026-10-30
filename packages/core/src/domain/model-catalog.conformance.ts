@@ -2,8 +2,8 @@ import { Effect, Option, Schema } from "effect"
 import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, expect } from "../conformance.functions.js"
-import { ModelCatalogEntry } from "../domain/model-catalog.entity.js"
-import { parseModelSelection } from "../domain/model-selection.entity.functions.js"
+import { ModelCatalogEntry } from "./model-catalog.entity.js"
+import { parseModelSelection } from "./model-selection.entity.functions.js"
 import type { ModelCatalog } from "../ports/model-catalog.port.js"
 
 type Catalog = Context.Service.Shape<typeof ModelCatalog>

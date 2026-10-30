@@ -108,9 +108,8 @@ for the span tree, the metrics and serverless flushing.
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores them
 in a SQLite file on Bun, and any other store can implement the `SessionLog` port.
 
-Core ships the port contracts as conformance kits (`@xandreed/core/conformance`;
-the models plugin's from `@xandreed/core/models`), checks any test runner can
-run against your own implementation: `sessionLogConformance` and
+Core ships the port contracts as conformance kits (`@xandreed/core/conformance`),
+checks any test runner can run against your own implementation: `sessionLogConformance` and
 `sessionLogRecoveryConformance` (reopening, two handles, interrupted commits,
 a handle whose scope never closed) for a session store,
 `sessionsConformance` (one open turn per session, keys, resume, the inbox,
@@ -123,13 +122,15 @@ reason) for a tool registry,
 `fileSystemConformance` and `bashConformance` for the `FileSystem` and `Bash`
 ports agent tools work through (`FileSystemMemoryLive` is an in-memory file
 system; `FileSystemLive` and `BashLive` from `@xandreed/plugin-workspace`
-are the local disk and shell, and pass both kits on Bun and Node), and for the
-models plugin's ports `authStoreConformance` (an `AuthStore`: credentials read
-back with every secret `Redacted`, resolve and refresh or fail as they should, one refresh at a time, a
-logout during a refresh sticks, damaged data fails instead of reading empty),
-`settingsStoreConformance` (a `SettingsStore`, writable or read-only: values
-read back typed, clear, bad ones are refused, damaged data fails) and `modelCatalogConformance` (a `ModelCatalog`: valid,
-unique, stable entries). See
+are the local disk and shell, and pass both kits on Bun and Node), and
+`modelCatalogConformance` (a `ModelCatalog`: valid, unique, stable entries).
+The models plugin ships its own ports' kits from
+`@xandreed/plugin-models/conformance`: `authStoreConformance` (an `AuthStore`:
+credentials read back with every secret `Redacted`, resolve and refresh or
+fail as they should, one refresh at a time, a logout during a refresh sticks,
+damaged data fails instead of reading empty) and `settingsStoreConformance`
+(a `SettingsStore`, writable or read-only: values read back typed, clear, bad
+ones are refused, damaged data fails). See
 [conformance kits](packages/website/src/content/docs/concepts/conformance.md).
 
 ### Workspace tools

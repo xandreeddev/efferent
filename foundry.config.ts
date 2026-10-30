@@ -112,7 +112,6 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/core/src/conformance/index.ts",
   "packages/core/src/internal/index.ts",
   "packages/core/src/engine/index.ts",
-  "packages/core/src/models/index.ts",
   "packages/runtime/src/index.ts",
   "packages/evals-langfuse/src/index.ts",
   "packages/evals-langsmith/src/index.ts",
@@ -122,6 +121,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/plugin-render/src/index.ts",
   "packages/plugin-render/src/output.ts",
   "packages/plugin-agent-loop/src/index.ts",
+  "packages/plugin-models/src/conformance/index.ts",
 ]
 
 /**
@@ -386,14 +386,14 @@ const config: typeof GateSuiteConfig.Encoded = {
       // the model-text frames), both; `core` (adapters, harness, the memory
       // session, prompt sections), those three; the turn engine (`engine/`),
       // those four; the kits, the engine too, since two of them run turns over
-      // it. The entries (`index.ts`, `conformance/`, `internal/`, `engine/`
-      // and `models/index.ts`) are `core` too, what `@xandreed/core` reaches,
-      // and re-export every layer. `./conformance` is open to every package;
+      // it. The entries (`index.ts`, `conformance/`, `internal/` and
+      // `engine/`) are `core` too, what `@xandreed/core` reaches, and
+      // re-export every layer. `./conformance` is open to every package;
       // `./internal` only to the agent loop, the models plugin and the sdk,
-      // `./engine` to the sdk and `./models` to the models plugin, each
-      // granted as `core/<subpath>` in its importer's `canImport`.
+      // and `./engine` to the sdk, each granted as `core/<subpath>` in its
+      // importer's `canImport`.
       { name: "core-tests", path: "packages/core/src/**/*.test.ts", canImport: ["core-model", "core-ports", "core-logic", "core", "core-engine", "core-kits"], externals: ["effect", "effect/ai", "fast-check", "bun:test"] },
-      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-engine", "core-kits"], externals: ["effect", "effect/ai"], restricted: ["internal", "engine", "models"] },
+      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-engine", "core-kits"], externals: ["effect", "effect/ai"], restricted: ["internal", "engine"] },
       { name: "core-model", path: "packages/core/src/**/*.entity.ts", canImport: [], externals: ["effect", "effect/ai"] },
       { name: "core-model", path: "packages/core/src/loop/*.ts", canImport: [], externals: ["effect", "effect/ai"] },
       { name: "core-ports", path: "packages/core/src/ports/**", canImport: ["core-model"], externals: ["effect", "effect/ai"] },
@@ -539,8 +539,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "canImport": [
                   "plugin-models",
                   "core",
-                  "core/internal",
-                  "core/models"
+                  "core/internal"
             ],
             "externals": [
                   "effect",
@@ -559,8 +558,7 @@ const config: typeof GateSuiteConfig.Encoded = {
             "path": "packages/plugin-models/src/**",
             "canImport": [
                   "core",
-                  "core/internal",
-                  "core/models"
+                  "core/internal"
             ],
             "externals": [
                   "effect",

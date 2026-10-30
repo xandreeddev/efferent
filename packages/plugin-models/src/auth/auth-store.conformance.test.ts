@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Clock, Deferred, Effect, Match, Option, Redacted, Ref, Schema, Semaphore } from "effect"
-import { ProviderId } from "../domain/model-selection.entity.js"
+import { ProviderId } from "@xandreed/core"
 import { AuthError, AuthStore, Credential } from "../ports/auth-store.port.js"
 import { authStoreConformance } from "./auth-store.conformance.js"
 import type { AuthStoreConformanceOptions, AuthStoreRefreshProbe } from "./auth-store.conformance.js"

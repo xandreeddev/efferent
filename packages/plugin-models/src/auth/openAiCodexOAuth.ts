@@ -1,6 +1,6 @@
 import { Effect, Result, Option, Redacted, Schema } from "effect"
 import { Base64Url } from "effect/encoding"
-import { AuthError } from "@xandreed/core/models"
+import { AuthError } from "../ports/auth-store.port.js"
 import { generatePkce, tokenTime } from "./anthropicOAuth.js"
 import type { TokenRequestOptions } from "./anthropicOAuth.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"

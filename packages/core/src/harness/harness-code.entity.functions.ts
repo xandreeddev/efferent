@@ -14,8 +14,9 @@ const stringField = (value: unknown, key: string): Option.Option<string> =>
  * copy of `@xandreed/core` made it: a `HarnessError`'s own `code`; else the
  * code its tag stands for (`TAGGED_CODES`: `SessionBusy` is `session.busy`,
  * `TurnClosed` is `turn.closed`); else a tagged error's own string `code`
- * (`AuthError`'s `auth.corrupt`). None for anything else: an untagged
- * value, a Node error's `ENOENT` among them (`errorCodeOf` reads that).
+ * (the models plugin's `AuthError` gives `auth.corrupt`). None for anything
+ * else: an untagged value, a Node error's `ENOENT` among them (`errorCodeOf`
+ * reads that).
  */
 export const harnessCodeOf = (error: unknown): Option.Option<string> =>
   isHarnessError(error) ? Option.some(error.code) : Option.flatMap(stringField(error, "_tag"), (tag) =>

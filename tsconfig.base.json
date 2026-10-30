@@ -37,9 +37,6 @@
       "@xandreed/core/engine": [
         "packages/core/src/engine/index.ts"
       ],
-      "@xandreed/core/models": [
-        "packages/core/src/models/index.ts"
-      ],
       "@xandreed/foundry": [
         "packages/foundry/src/index.ts"
       ],
@@ -69,6 +66,9 @@
       ],
       "@xandreed/plugin-models": [
         "packages/plugin-models/src/index.ts"
+      ],
+      "@xandreed/plugin-models/conformance": [
+        "packages/plugin-models/src/conformance/index.ts"
       ],
       "@xandreed/plugin-session-sqlite": [
         "packages/plugin-session-sqlite/src/index.ts"

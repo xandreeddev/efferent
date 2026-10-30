@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Exit, Redacted, Schema } from "effect"
 import { Base64Url } from "effect/encoding"
-import { Credential } from "@xandreed/core/models"
+import { Credential } from "../ports/auth-store.port.js"
 import { exchangeAnthropicCode, refreshAnthropicToken } from "./anthropicOAuth.js"
 import { isSameToken, isUsableAt, REFRESH_SKEW_MS, refreshCredential } from "./credential-refresh.entity.functions.js"
 import type { OAuthCredential } from "./credential-refresh.entity.js"

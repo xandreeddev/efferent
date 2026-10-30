@@ -1,5 +1,5 @@
 import { Context, Effect, Option, Schema } from "effect"
-import { ReasoningEffort } from "../domain/model-call-policy.entity.js"
+import { ReasoningEffort } from "@xandreed/core"
 
 /**
  * The engine's settings — deliberately small. The model roles are the Aider
@@ -63,7 +63,10 @@ export type SettingsKey = (typeof SETTINGS_KEYS)[number]
  * whose backing data cannot be read or decoded fails `load` and every write
  * with a `SettingsError` of code `settings.corrupt` instead of reading it as
  * defaults, so no write replaces settings it could not read.
- * `settingsStoreConformance` checks a store against this contract.
+ * `settingsStoreConformance` (`@xandreed/plugin-models/conformance`) checks
+ * a store against this contract. Its key stays `@xandreed/core/SettingsStore`,
+ * the package it was first declared in: plugins' `provides` and hosts'
+ * bindings name it, so it never changes.
  */
 export class SettingsStore extends Context.Service<SettingsStore, {
     readonly load: Effect.Effect<EngineSettings, SettingsError>

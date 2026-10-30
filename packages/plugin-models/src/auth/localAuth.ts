@@ -1,7 +1,7 @@
 import { join } from "node:path"
 import { Effect, Layer, Option, Schema } from "effect"
 import type { Context } from "effect"
-import { AuthError, AuthStore, Credential } from "@xandreed/core/models"
+import { AuthError, AuthStore, Credential } from "../ports/auth-store.port.js"
 import type { ProviderId } from "@xandreed/core"
 import { encodeCredential } from "./credential-input.entity.functions.js"
 import { isSameToken, resolveSlotKey } from "./credential-refresh.entity.functions.js"

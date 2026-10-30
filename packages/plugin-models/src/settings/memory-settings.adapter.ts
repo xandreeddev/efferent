@@ -1,5 +1,5 @@
 import { Effect, Layer, SynchronizedRef } from "effect"
-import { EngineSettings, SettingsStore } from "@xandreed/core/models"
+import { EngineSettings, SettingsStore } from "../ports/settings-store.port.js"
 import { applyRole, applySetting } from "./settings-value.entity.functions.js"
 
 /**

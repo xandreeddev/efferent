@@ -107,17 +107,18 @@ See [evaluation-domain.md](evaluation-domain.md) for interfaces, lifecycle, comm
 
 ## Distribution
 
-`@xandreed/core` publishes five entries. The root holds the entities, ports,
+`@xandreed/core` publishes four entries. The root holds the entities, ports,
 events, journal kinds, `define*` helpers, errors, model-text frames,
 References and in-memory adapters; `@xandreed/core/conformance` the port
-kits (`check` builds a kit's check); `@xandreed/core/models` the credential
-and settings stores and their kits; `@xandreed/core/internal` the provider
-mapping, stream fold and tool schemas the first-party packages share; and
-`@xandreed/core/engine` the turn engine. The root and `./conformance` are
-semver; `./internal`, `./engine` and `./models` are not (`./engine` moves
-into `@xandreed/sdk` and `./models` into `@xandreed/plugin-models` in the
-next minor release). The root does not repeat what a subpath holds: a kit,
-a store or an engine function is imported from its entry.
+kits (`check` builds a kit's check); `@xandreed/core/internal` the provider
+mapping, stream fold, tool schemas and id helper the first-party packages
+share; and `@xandreed/core/engine` the turn engine. The root and
+`./conformance` are semver; `./internal` and `./engine` are not (`./engine`
+moves into `@xandreed/sdk` in the next minor release). The root does not
+repeat what a subpath holds: a kit or an engine function is imported from
+its entry. The credential and settings stores (`AuthStore`, `SettingsStore`)
+are the models plugin's own ports: `@xandreed/plugin-models` exports them,
+and `@xandreed/plugin-models/conformance` their kits.
 
 `bun run build:packages` creates JavaScript, declarations and versioned manifests
 under `.artifacts/packages`, leaving test code out (`*.test.*`, `testing` modules and
@@ -956,7 +957,7 @@ checks each, with the caller's values around the run and in `handlers`.
 `bashConformance(subject)`, `authStoreConformance(store, { refresh?, corrupt? })`,
 `settingsStoreConformance(store, { writable, corrupt? })` and
 `modelCatalogConformance(catalog, { includes? })` (from `@xandreed/core/conformance`;
-the credential and settings store kits from `@xandreed/core/models`) are
+the credential and settings store kits from `@xandreed/plugin-models/conformance`) are
 the port contracts as runnable checks: each returns `ConformanceCheck`s
 (`name`, and a `run` effect that fails with a `ConformanceFailure` naming the
 broken check) that any test runner can run. Run them against a new strategy,

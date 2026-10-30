@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Ref } from "effect"
-import type { ModelCatalogEntry } from "../domain/model-catalog.entity.js"
+import type { ModelCatalogEntry } from "./model-catalog.entity.js"
 import { ModelCatalog } from "../ports/model-catalog.port.js"
 import { modelCatalogConformance } from "./model-catalog.conformance.js"
 

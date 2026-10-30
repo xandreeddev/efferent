@@ -10,8 +10,7 @@
     ".": "./src/index.ts",
     "./conformance": "./src/conformance/index.ts",
     "./internal": "./src/internal/index.ts",
-    "./engine": "./src/engine/index.ts",
-    "./models": "./src/models/index.ts"
+    "./engine": "./src/engine/index.ts"
   },
   "dependencies": {
     "effect": "4.0.7"

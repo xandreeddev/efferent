@@ -28,11 +28,13 @@ own implementation, from `@xandreed/core/conformance`: see
 | --- | --- | --- |
 | `@xandreed/core` | entities, ports, events and journal kinds, `define*` helpers, errors, model-text frames, References, in-memory adapters | yes |
 | `@xandreed/core/conformance` | the port kits, `ConformanceCheck`, `ConformanceFailure` and `check` | yes |
-| `@xandreed/core/models` | the credential and settings stores (`AuthStore`, `SettingsStore`) and their kits | no; moves into `@xandreed/plugin-models` in the next minor release |
 | `@xandreed/core/engine` | the turn engine: `TurnLive` and the turn's lifecycle | no; moves into `@xandreed/sdk` in the next minor release |
-| `@xandreed/core/internal` | the provider mapping, stream fold and tool schemas the first-party packages share | no |
+| `@xandreed/core/internal` | the provider mapping, stream fold, tool schemas and id helper the first-party packages share | no |
 
-The root does not repeat what a subpath holds: import a kit, a store or an
-engine function from its entry.
+The root does not repeat what a subpath holds: import a kit or an engine
+function from its entry. The credential and settings stores (`AuthStore`,
+`SettingsStore`) are the models plugin's own ports, exported by
+`@xandreed/plugin-models`, with their kits in
+`@xandreed/plugin-models/conformance`.
 
 See [SDK and sessions](/docs/concepts/harness).

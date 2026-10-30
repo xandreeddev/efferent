@@ -1,7 +1,7 @@
 import { join } from "node:path"
 import { Effect, Layer, Option } from "effect"
-import { SettingsError, SettingsStore } from "@xandreed/core/models"
-import type { ModelRole, SettingsKey } from "@xandreed/core/models"
+import { SettingsError, SettingsStore } from "../ports/settings-store.port.js"
+import type { ModelRole, SettingsKey } from "../ports/settings-store.port.js"
 import { readJsonObject, withFileLock, writeJsonObject } from "../storage/json-file.js"
 import { coerceSettingValue, ROLE_FIELDS, roleSelection, settingsFromRecord } from "./settings-value.entity.functions.js"
 

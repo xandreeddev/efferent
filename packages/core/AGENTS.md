@@ -9,25 +9,25 @@ No provider SDKs, filesystem IO, runtime graph, terminal, or host imports.
 `replayableContext`, `CurrentPromptProvenance`). `src/internal` holds what
 the agent loop, the models plugin and the sdk share with core: the provider
 mapping (`mapping.entity.functions.ts`), the stream fold, tool schemas, and
-the JSON, glob and id helpers. `src/engine` holds the turn engine:
+the JSON, glob and id helpers (`randomUuid`, which the models plugin's kits
+use too). `src/engine` holds the turn engine:
 `TurnLive` (`turn.adapter.ts`), a turn's run and lifecycle
 (`turn-run.usecase.functions.ts`, `turn-lifecycle.usecase.functions.ts`) and
 its bus (`turn-bus.adapter.ts`).
 
-The package has five entries, each an `index.ts` of explicit named exports:
+The package has four entries, each an `index.ts` of explicit named exports:
 
 | Entry | Holds | Semver | Who imports it (boundaries) |
 |---|---|---|---|
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
-| `./conformance` (`src/conformance/index.ts`) | every kit but the models plugin's, `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
-| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold and tool schemas | none | plugin-agent-loop, plugin-models, sdk |
+| `./conformance` (`src/conformance/index.ts`) | every kit of core's ports, `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
+| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas and the id helper | none | plugin-agent-loop, plugin-models, sdk |
 | `./engine` (`src/engine/index.ts`) | `TurnLive`, a turn's run and lifecycle, its bus | none; it moves into `@xandreed/sdk` in the next minor release | sdk |
-| `./models` (`src/models/index.ts`) | `AuthStore`, `Credential`, `AuthError`, `SettingsStore`, `EngineSettings` and their kits | none; it moves into `@xandreed/plugin-models` in the next minor release | plugin-models |
 
-A package reaches `./internal`, `./engine` or `./models` only when its
-boundaries layer grants `core/<subpath>` (the core entry layer's
-`restricted`). The root does not repeat what these entries hold: a kit, a
-models store or an engine function is imported from its entry. A few names
+A package reaches `./internal` or `./engine` only when its boundaries
+layer grants `core/<subpath>` (the core entry layer's `restricted`). The
+root does not repeat what these entries hold: a kit or an engine function is
+imported from its entry. A few names
 declared in `internal/` or `engine/` are root API too, declared again at the
 end of `src/index.ts` (the same value, or a type of the same shape, since a
 root entry may not re-export what those folders declare:
@@ -36,7 +36,16 @@ plugin uses them), `harnessDefectsAsFailures` (the sessions plugin and the
 agent loop), and `assistantModel` and `assistantUsage` (documented for
 hosts).
 
-`quality/exports-have-consumers` runs on all five entries (`CURATED_ENTRIES`
+The credential and settings stores (`AuthStore`, `SettingsStore`) are not
+core's: they are the models plugin's own ports, exported with their kits by
+`@xandreed/plugin-models` and its `./conformance`, and they keep the service
+keys they were declared with here (`@xandreed/core/AuthStore`,
+`@xandreed/core/SettingsStore`). Core names them only in prose:
+`HARNESS_CODES` lists their codes (`auth.corrupt`, `settings.corrupt`), as
+it lists every package's. Core's own model ports, `ModelCatalog` and
+`UtilityLlm`, need nothing of theirs.
+
+`quality/exports-have-consumers` runs on all four entries (`CURATED_ENTRIES`
 in `foundry.config.ts`): each export is imported, by its entry's name, from
 another package, a script or a doc code block, or is tagged `@public`.
 `@public`, on the declaration, marks host API: what the README, the guides
@@ -52,9 +61,7 @@ that drops it, with its replacement in the CHANGELOG.
 What a host may still hold from older releases keeps reading: a
 `HarnessConfig` names no profiles, and `resolveGraph` refuses a config that
 still carries `profile` or `profiles` (`config.profile`) rather than ignore
-them; a settings file that still holds the `sandbox` or `viMode` key decodes,
-the key unread (`EngineSettings` names neither, and a store keeps it when it
-writes another).
+them.
 
 The boundaries gate (`foundry.config.ts`) layers core by a file's role; a
 file is in the first layer whose glob matches it:
@@ -127,8 +134,7 @@ sessions in `@xandreed/plugin-sessions`, and the composable agent
 supplies deterministic verification when a host chooses it.
 
 Port contracts ship as conformance kits (`*.conformance.ts`, each exported
-from `src/conformance/index.ts`, the models plugin's from
-`src/models/index.ts`). Run a port's kit against every adapter of it, and
+from `src/conformance/index.ts`). Run a port's kit against every adapter of it, and
 when the port changes, on Node too (`verify:packages`). The kits share
 the helpers in `src/conformance.functions.ts` (`check`, `expect`,
 `fail`, `freshId`, `headerOf`, `atTime`), the step-loop and turn kits
