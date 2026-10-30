@@ -22,15 +22,16 @@ Read one before writing one:
 ## 1. Place it
 
 - In the plugin: `<thing>.journey.test.ts` beside the code. Its tests import
-  `Agent` from `@xandreed/sdk` and the plugins an agent needs, so the package
-  needs a `<name>-tests` layer in `foundry.config.ts` and those packages in
-  its `devDependencies` (as `plugin-workspace-tests`; skill `add-plugin`, step
-  A.3). Core's names come from `@xandreed/core`, which the plugin depends on
-  already: the sdk re-exports only those a host writes beside `Agent`.
+  `Agent` from `@xandreed/sdk` and the plugins an agent needs, so the
+  package's `<name>-tests` layer in `foundry.config.ts` names those packages
+  in its `canImport`, and its `devDependencies` list them (as
+  `plugin-workspace-tests`; skill `add-plugin`, step A.3). Core's names
+  come from `@xandreed/core`, which the plugin depends on already: the sdk
+  re-exports only those a host writes beside `Agent`.
 - Or in `packages/sdk/src`, whose `sdk-tests` layer may import every plugin.
 - A helper several test files share is `<name>.testing.ts`: the build drops
-  it, and the `-tests` layer path must match it (`**/*.test*.ts`, as
-  `plugin-telemetry-tests` does).
+  it, and the package's `-tests` layer covers it with the rest of its test
+  code (`testLayer` in `foundry.config.ts`).
 
 ## 2. Build it
 

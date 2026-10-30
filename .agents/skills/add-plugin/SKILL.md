@@ -22,21 +22,31 @@ data in `foundry.config.ts`.
    `"@xandreed/<name>": ["packages/<name>/src/index.ts"]`.
 3. `foundry.config.ts`:
    - add `"packages/<name>/src/**"` to `CHECKED`;
-   - add a `boundaries.layers` entry: `canImport` names only packages beneath
-     it (`["core"]` for a plugin; an `@xandreed/*` import is checked against
-     it and the target's `exports`), `externals` is the exact allowlist of
-     the third-party imports;
+   - add two `boundaries.layers` entries, its test code's first (the first
+     match wins): `...testLayer("<name>", ["<name>", "core"], ["effect",
+     "bun:test"])`, which covers `*.test.ts`, `*.bench.ts` and the `testing`
+     modules and folders, then `{ name: "<name>", path: src("<name>"),
+     canImport: ["core"], externals: ["effect"] }`. `canImport` names only
+     packages beneath it (`["core"]` for a plugin; an `@xandreed/*` import is
+     checked against it and the target's `exports`); the tests' layer adds
+     the package itself. `externals` is the exact list of the third-party
+     modules the layer's files import, each `effect/<module>` barrel
+     (`effect/ai`…) by name: one that none of them imports fails. The test
+     libraries (`bun:test`, `fast-check`, `effect/testing`) go in the tests'
+     layer only, the provider packages (`@effect/ai-*`) only in
+     `plugin-models`, Bun (`bun:sqlite`) only in `plugin-session-sqlite`: a
+     new package reaches a provider or the host through a port;
    - add `"packages/<name>/src/index.ts"` to `CURATED_ENTRIES`, and the
      file of each subpath its `exports` adds: `quality/exports-have-consumers`
      then wants each export imported by another package, a script or a doc
      code block, or tagged `@public` at its declaration (host API: the
      plugin, whose tag covers the default export, its layer, its config and
      defaults, a port, an adapter, an error a host matches, a kit);
-   - if its tests import more (sdk, runtime, other plugins), add a
-     `<name>-tests` layer BEFORE the package's entry (the first match wins; see
-     `plugin-tasks-tests`) and the matching `devDependencies`. Read the
-     comment above `plugin-workspace-tests` first: never make two packages
-     devDependencies of each other.
+   - if its tests import more (sdk, runtime, other plugins), add those to
+     its tests' layer's `canImport` (see `plugin-tasks`, whose tests also
+     import plugin-sessions) and the matching `devDependencies`. Read the
+     comment above `plugin-workspace`'s tests' layer first: never make two
+     packages devDependencies of each other.
 4. `scripts/build-packages.ts`: add the directory name to `names`.
 5. A plugin package: import it in `scripts/generate-plugin-reference.ts` and
    add its plugins to `firstParty` (docs:generate also exits 1 for any
@@ -123,7 +133,7 @@ export default tasksPlugin
 
 ## Checklist
 
-- [ ] package.json, tsconfig, `paths`, `CHECKED`, `CURATED_ENTRIES`, boundaries layer (and `-tests` layer), build `names`, `firstParty`
+- [ ] package.json, tsconfig, `paths`, `CHECKED`, `CURATED_ENTRIES`, boundaries layers (the package's and its `-tests` layer, test libraries only there), build `names`, `firstParty`
 - [ ] AGENTS.md + CLAUDE.md link, README row
 - [ ] `definePlugin` in a `.adapter.ts`; id, version, scope, flat documented config, defaults exported
 - [ ] Plugin, `PluginLive`, config and defaults exported from `src/index.ts`

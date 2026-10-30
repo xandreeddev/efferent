@@ -7,7 +7,7 @@ import { GateCrash } from "../domain/Errors.js"
 import { Finding } from "../domain/Finding.js"
 import type { LayerConfig, LayerSpec } from "../domain/Rules.js"
 import type { Gate, Workspace } from "../ports/Gate.js"
-import { locationOf, matchesGlob, projectSourceFiles, toWorkspacePath } from "./astWalk.js"
+import { locationOf, matchesGlob, projectSourceFiles, toWorkspacePath, walk } from "./astWalk.js"
 import { TsProject } from "./TsProject.port.js"
 
 export const BOUNDARIES_GATE = GateName.make("boundaries")
@@ -188,13 +188,17 @@ const indexPackages = (rootDir: string, dirs: ReadonlyArray<string>): Effect.Eff
 
 /** Effect v4 folds packages that were separate in v3 (`@effect/ai`,
  * `@effect/platform`, `@effect/sql`…) into these `effect/<module>` barrels
- * (the migration guide's unstable modules). Each stays its own allowance:
- * `effect` admits the core modules only, so a layer allowed `effect` alone
- * cannot reach `effect/ai` any more than it could reach `@effect/ai`.
+ * (the migration guide's unstable modules), and ships its test services
+ * (`TestClock`, `TestConsole`…) as the `effect/testing` barrel. Each stays
+ * its own allowance: `effect` admits the core modules only, so a layer
+ * allowed `effect` alone cannot reach `effect/ai` any more than it could
+ * reach `@effect/ai`, nor `effect/testing` unless it lists it, as a test
+ * layer does.
  */
 const EFFECT_BARRELS: ReadonlySet<string> = new Set([
-  "ai", "cli", "cluster", "devtools", "eventlog", "http", "http-api", "jsonschema", "observability",
-  "persistence", "process", "reactivity", "rpc", "schema", "socket", "sql", "workflow", "workers",
+  "ai", "cli", "cluster", "devtools", "eventlog", "graphql", "http", "http-api", "jsonschema", "net",
+  "observability", "persistence", "process", "reactivity", "rpc", "schema", "socket", "sql", "testing",
+  "workflow", "workers",
 ])
 
 const effectBarrelOf = (specifier: string): Option.Option<string> => {
@@ -202,31 +206,43 @@ const effectBarrelOf = (specifier: string): Option.Option<string> => {
   return name !== undefined && EFFECT_BARRELS.has(name) ? Option.some(`effect/${name}`) : Option.none()
 }
 
-/** A prefix ending in `/` or `:` is a raw prefix (`@effect/` → `@effect/ai-openai`,
- *  `effect/` → `effect/ai`, `node:` → `node:path`); otherwise it matches the
- *  exact package or its subpaths (`effect` → `effect`, `effect/Function` —
- *  never `effect-foo`, and never an Effect barrel, which is named itself). */
-const externalAllowed = (layer: LayerSpec, specifier: string): boolean =>
-  layer.externals.some((prefix) => {
-    if (prefix.endsWith("/") || prefix.endsWith(":")) return specifier.startsWith(prefix)
-    const within = specifier === prefix || specifier.startsWith(`${prefix}/`)
-    return within && Option.match(effectBarrelOf(specifier), {
-      onNone: () => true,
-      onSome: (barrel) => prefix === barrel || prefix.startsWith(`${barrel}/`),
-    })
+/** Whether one `externals` entry admits a specifier. A prefix ending in `/`
+ *  or `:` is a raw prefix (`@effect/` → `@effect/ai-openai`, `effect/` →
+ *  `effect/ai`, `node:` → `node:path`); otherwise it matches the exact
+ *  package or its subpaths (`effect` → `effect`, `effect/Function` — never
+ *  `effect-foo`, and never an Effect barrel, which is named itself). */
+const admits = (prefix: string, specifier: string): boolean => {
+  if (prefix.endsWith("/") || prefix.endsWith(":")) return specifier.startsWith(prefix)
+  const within = specifier === prefix || specifier.startsWith(`${prefix}/`)
+  return within && Option.match(effectBarrelOf(specifier), {
+    onNone: () => true,
+    onSome: (barrel) => prefix === barrel || prefix.startsWith(`${barrel}/`),
   })
+}
 
-/** Every import (and re-export) clause of a source file, with its node. */
+const externalAllowed = (layer: LayerSpec, specifier: string): boolean =>
+  layer.externals.some((prefix) => admits(prefix, specifier))
+
+/** Every module a source file names, with its node: each import and
+ *  re-export clause, and each `import("…")` of a literal specifier wherever
+ *  it is, a dynamic import or an import type. */
 const moduleSpecifiers = (
   sourceFile: ts.SourceFile,
-): ReadonlyArray<{ readonly node: ts.Node; readonly specifier: string }> =>
-  sourceFile.statements.flatMap((statement) =>
-    (ts.isImportDeclaration(statement) || ts.isExportDeclaration(statement)) &&
-    statement.moduleSpecifier !== undefined &&
-    ts.isStringLiteral(statement.moduleSpecifier)
-      ? [{ node: statement, specifier: statement.moduleSpecifier.text }]
-      : [],
-  )
+): ReadonlyArray<{ readonly node: ts.Node; readonly specifier: string }> => {
+  const named: Array<{ readonly node: ts.Node; readonly specifier: string }> = []
+  walk(sourceFile, (node) => {
+    const literal =
+      (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier !== undefined
+        ? node.moduleSpecifier
+        : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+          ? node.arguments[0]
+          : ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)
+            ? node.argument.literal
+            : undefined
+    if (literal !== undefined && ts.isStringLiteralLike(literal)) named.push({ node, specifier: literal.text })
+  })
+  return named
+}
 
 /** One import clause of a file in `layer`. */
 interface ImportSite {
@@ -353,6 +369,10 @@ const checkExternal = (site: ImportSite): ReadonlyArray<Finding> =>
         ),
       ]
 
+/** A bare specifier that names no workspace package. */
+const isExternal = (site: ImportSite): boolean =>
+  !site.specifier.startsWith(".") && !site.index.byName.has(splitBare(site.specifier).name)
+
 const checkSpecifier = (site: ImportSite): ReadonlyArray<Finding> => {
   if (site.specifier.startsWith(".")) return checkRelative(site)
   const { name, subpath } = splitBare(site.specifier)
@@ -362,10 +382,33 @@ const checkSpecifier = (site: ImportSite): ReadonlyArray<Finding> => {
   })
 }
 
+/** The externals a layer lists that none of its files import: each one
+ *  fails, so a list, like an allow list, only shrinks. A layer is every
+ *  entry of its name (a glob takes no alternatives), so an external one
+ *  entry lists counts as used when a file of another entry imports it. */
+const unusedExternals = (layers: LayerConfig, sites: ReadonlyArray<ImportSite>): ReadonlyArray<Finding> =>
+  Arr.dedupe(layers.layers.map((layer) => layer.name)).flatMap((name) => {
+    const imported = sites.filter((site) => site.layer.name === name && isExternal(site)).map((site) => site.specifier)
+    const listed = Arr.dedupe(layers.layers.filter((layer) => layer.name === name).flatMap((layer) => layer.externals))
+    return listed
+      .filter((prefix) => !imported.some((specifier) => admits(prefix, specifier)))
+      .map(
+        (prefix) =>
+          new Finding({
+            rule: ILLEGAL_EXTERNAL,
+            severity: "error",
+            message: `layer "${name}" lists external "${prefix}", which none of its files imports`,
+            location: Option.none(),
+            fixHint: Option.some(`remove "${prefix}" from the externals of layer "${name}" in the profile; the list only shrinks`),
+          }),
+      )
+  })
+
 /**
  * Dependency direction as a GATE, not a convention: each layer declares what
  * it may import (internal layers by name, externals by prefix); everything
- * else is a finding. A bare import that names a package of the workspace (a
+ * else is a finding, and so is an external the layer lists but none of its
+ * files imports. A bare import that names a package of the workspace (a
  * directory above a project file holding a `package.json`) is internal, not
  * external: it reaches the layer holding that package's entry, and only the
  * subpaths its `exports` lists. A relative import never leaves its package.
@@ -394,25 +437,24 @@ export const makeBoundariesGate = (
         workspace.rootDir,
         sourceFiles.map((sourceFile) => dirOf(toWorkspacePath(workspace.rootDir, sourceFile.fileName))),
       )
-      return sourceFiles.flatMap((sourceFile) => {
+      const sites = sourceFiles.flatMap((sourceFile) => {
         const importerRel = toWorkspacePath(workspace.rootDir, sourceFile.fileName)
         return Option.match(layerOf(layers, importerRel), {
-          onNone: () => [] as ReadonlyArray<Finding>,
+          onNone: () => [] as ReadonlyArray<ImportSite>,
           onSome: (layer) =>
-            moduleSpecifiers(sourceFile).flatMap(({ node, specifier }) =>
-              checkSpecifier({
-                layers,
-                index,
-                layer,
-                importerRel,
-                specifier,
-                sourceFile,
-                node,
-                rootDir: workspace.rootDir,
-              }),
-            ),
+            moduleSpecifiers(sourceFile).map(({ node, specifier }): ImportSite => ({
+              layers,
+              index,
+              layer,
+              importerRel,
+              specifier,
+              sourceFile,
+              node,
+              rootDir: workspace.rootDir,
+            })),
         })
       })
+      return [...sites.flatMap(checkSpecifier), ...unusedExternals(layers, sites)]
     },
   ),
 })

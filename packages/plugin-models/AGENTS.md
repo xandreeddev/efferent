@@ -1,6 +1,6 @@
 # @xandreed/plugin-models
 
-The models plugin: the routed `LanguageModel` (opencode, google, anthropic, openai and openai-codex, plus configured OpenAI-compatible endpoints), the fast `UtilityLlm`, the `ModelCatalog`, and the `AuthStore` and `SettingsStore` they read (`.efferent` files with `storage: "local"`, memory with `storage: "memory"`), with the Anthropic and OpenAI subscription sign-ins and one HTTP proxy transport for every call. Node 24.5 and Bun; layer `plugin-models` in `foundry.config.ts` (imports core, the `@effect/` provider packages, `undici`, `ws`, `node:` and `bun`; its tests, layer `plugin-models-tests`, add `fast-check`).
+The models plugin: the routed `LanguageModel` (opencode, google, anthropic, openai and openai-codex, plus configured OpenAI-compatible endpoints), the fast `UtilityLlm`, the `ModelCatalog`, and the `AuthStore` and `SettingsStore` they read (`.efferent` files with `storage: "local"`, memory with `storage: "memory"`), with the Anthropic and OpenAI subscription sign-ins and one HTTP proxy transport for every call. Node 24.5 and Bun; layer `plugin-models` in `foundry.config.ts` (imports core, `effect/ai`, `effect/http`, `effect/socket`, the provider packages `@effect/ai-anthropic` and `@effect/ai-openai`, which no other package may import, `undici`, `ws` and `node:`; it tells Bun by `process.versions` and reaches its `fetch` and `WebSocket` as globals, importing no `bun` module; its tests, layer `plugin-models-tests`, add `bun:test`, `fast-check` and `effect/testing`).
 
 ## Rules
 

@@ -157,15 +157,21 @@ would judge attempt N against attempt N-1's source).
    so the list only shrinks. A rule with findings enters a profile through
    its `include`, one clean package at a time, never through the baseline.
 2. **`boundaries`** — each layer declares `canImport` (internal, by name)
-   and `externals` (by prefix); everything else is a finding. A bare import
+   and `externals` (by prefix); everything else is a finding. It reads
+   import and re-export clauses and every `import("…")` of a literal
+   specifier, dynamic or a type. `effect` admits Effect's core modules, not
+   its barrels (`effect/ai`, `effect/testing`…), each listed by name. An
+   external that none of the layer's files imports is a finding too, so the
+   list only shrinks. A bare import
    that names a workspace package (a directory above a project file that
    holds a `package.json`) is internal: it reaches the layer holding the
    package's entry, only through a subpath its `exports` lists (a `-tests`
    layer may also reach a `testing` module), and a subpath the target layer
    marks `restricted` only when `canImport` names `<layer>/<subpath>`. A
-   relative import never leaves its package. Foundry's own 6-layer config is
-   the dogfood; pointing globs at package dirs makes the monorepo's
-   `cli → adapters → core` rule a real gate.
+   relative import never leaves its package. Foundry's own config, six
+   layers and their tests' layers, is the dogfood; pointing globs at
+   package dirs makes the monorepo's `cli → adapters → core` rule a real
+   gate.
 3. **`typecheck`** — `ts.getPreEmitDiagnostics` on the shared program (no
    subprocess, exact positions) → `ts/<code>` findings.
 4. **`registration`** (`registrationGate.ts`, armed by the config's

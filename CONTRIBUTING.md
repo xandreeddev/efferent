@@ -51,7 +51,8 @@ it is missing from:
 - `CHECKED` in `foundry.config.ts` (`"packages/<name>/src/**"`), so the
   rules check its sources;
 - a `boundaries.layers` entry in `foundry.config.ts`, so its imports are
-  checked (add a `<name>-tests` layer before it if its tests import more);
+  checked, and a `<name>-tests` layer before it (`testLayer`) for its test
+  code, the only layer that may import a test library;
 - `names` in `scripts/build-packages.ts`, so it is built, verified and
   published (foundry, development tooling, is exempt);
 - `compilerOptions.paths` in `tsconfig.base.json` (`"@xandreed/<name>"`);

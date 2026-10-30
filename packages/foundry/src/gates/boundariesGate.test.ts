@@ -9,6 +9,9 @@ import { TsProjectCachedLive } from "./TsProject.port.js"
 const rootDir = path.resolve(import.meta.dir, "../../fixtures/boundaries")
 const ws: Workspace = { rootDir, files: [] }
 
+const where = (finding: { readonly location: Option.Option<{ readonly file: string; readonly line: number }> }): string =>
+  Option.match(finding.location, { onNone: () => "?", onSome: (l) => `${l.file}:${l.line}` })
+
 const layers = Schema.decodeUnknownSync(LayerConfig)({
   layers: [
     { name: "domain", path: "src/domain/**", canImport: [], externals: ["effect"] },
@@ -16,7 +19,7 @@ const layers = Schema.decodeUnknownSync(LayerConfig)({
       name: "adapters",
       path: "src/adapters/**",
       canImport: ["domain"],
-      externals: ["effect", "node:"],
+      externals: ["node:"],
     },
   ],
 })
@@ -41,7 +44,7 @@ describe("boundaries gate", () => {
     const strictLayers = Schema.decodeUnknownSync(LayerConfig)({
       layers: [
         // adapters may no longer use node: — db.ts's node:path import must surface.
-        { name: "adapters", path: "src/adapters/**", canImport: ["domain"], externals: ["effect"] },
+        { name: "adapters", path: "src/adapters/**", canImport: ["domain"], externals: [] },
       ],
     })
     const findings = await Effect.runPromise(
@@ -66,6 +69,46 @@ describe("boundaries gate", () => {
     expect(await run(["effect", "effect/ai"])).toEqual([])
     expect(await run(["effect", "effect/"])).toEqual([])
   })
+
+  const runOver = (layers: ReadonlyArray<unknown>) =>
+    Effect.runPromise(
+      makeBoundariesGate(Schema.decodeUnknownSync(LayerConfig)({ layers }), "tsconfig.json")
+        .run(ws)
+        .pipe(Effect.provide(TsProjectCachedLive)),
+    )
+
+  test("effect/testing (Effect's test services) and effect/net are barrels too: effect does not admit them", async () => {
+    const named = (externals: ReadonlyArray<string>) => runOver([{ name: "named", path: "src/named/**", canImport: [], externals }])
+    const refused = await named(["effect"])
+    expect(refused.map((f) => `${String(f.rule)} ${f.message}`)).toEqual([
+      'boundaries/illegal-external layer "named" must not depend on external "effect/testing"',
+      'boundaries/illegal-external layer "named" must not depend on external "effect/net"',
+    ])
+    expect(await named(["effect", "effect/testing", "effect/net"])).toEqual([])
+  })
+
+  test("a dynamic import and an import type are checked like an import clause", async () => {
+    const dynamic = (externals: ReadonlyArray<string>) => runOver([{ name: "dynamic", path: "src/dynamic/**", canImport: [], externals }])
+    const refused = await dynamic([])
+    expect(refused.map((f) => `${where(f)} ${f.message}`)).toEqual([
+      'src/dynamic/load.ts:1 layer "dynamic" must not depend on external "node:path"',
+      'src/dynamic/load.ts:2 layer "dynamic" must not depend on external "node:os"',
+    ])
+    expect(await dynamic(["node:"])).toEqual([])
+  })
+
+  test("an external none of the layer's files imports fails, so a list only shrinks; a layer is every entry of its name", async () => {
+    const findings = await runOver([
+      { name: "lib", path: "src/domain/**", canImport: [], externals: ["effect"] },
+      { name: "lib", path: "src/barrels/**", canImport: [], externals: ["effect", "effect/ai"] },
+      // effect/ai is imported by the barrels entry's file, so only fast-check is unused.
+      { name: "lib", path: "src/adapters/**", canImport: [], externals: ["node:", "effect/ai", "fast-check"] },
+    ])
+    expect(findings.map((f) => `${where(f)} ${String(f.rule)} ${f.message}`)).toEqual([
+      '? boundaries/illegal-external layer "lib" lists external "fast-check", which none of its files imports',
+    ])
+    expect(Option.getOrElse(findings[0]!.fixHint, () => "")).toContain("the list only shrinks")
+  })
 })
 
 const workspace: Workspace = { rootDir: path.resolve(import.meta.dir, "../../fixtures/boundaries-workspace"), files: [] }
@@ -87,9 +130,6 @@ afterAll(() => workspaceRuntime.dispose())
 
 const runWorkspace = (appCanImport: ReadonlyArray<string>) =>
   workspaceRuntime.runPromise(makeBoundariesGate(workspaceLayers(appCanImport), "tsconfig.json").run(workspace))
-
-const where = (finding: { readonly location: Option.Option<{ readonly file: string; readonly line: number }> }): string =>
-  Option.match(finding.location, { onNone: () => "?", onSome: (l) => `${l.file}:${l.line}` })
 
 const findingsIn = async (appCanImport: ReadonlyArray<string>, file: string) =>
   (await runWorkspace(appCanImport)).filter((finding) => where(finding).startsWith(`packages/app/src/${file}:`))

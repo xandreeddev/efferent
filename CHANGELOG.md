@@ -1875,6 +1875,19 @@ Model-visible text (exact pins and the compaction golden updated):
   `@public` at its declaration (a plugin's tag covers its default export).
 - The registration gate requires each package's root entry in
   `CURATED_ENTRIES`, so a new package is checked from its first change.
+- Every package's test code (test and bench files, `testing` modules and
+  `testing/` folders, as the build leaves it out) is its own `<name>-tests`
+  boundaries layer, placed before the package's layer, and only those layers
+  may import a test library (`bun:test`, `fast-check`, `effect/testing`).
+  The provider packages (`@effect/ai-anthropic`, `@effect/ai-openai`) are
+  allowed in `plugin-models` only and Bun in `plugin-session-sqlite` only
+  (`bun:sqlite`); no layer takes the raw `@effect/` or `effect/` prefix any
+  more, each lists the `effect/<module>` barrels it imports by name.
+- The boundaries gate checks each `import("…")` of a literal specifier, a
+  dynamic import or an import type, like an import clause; fails on an
+  external a layer lists that none of its files imports, so the lists only
+  shrink; and no longer lets `effect` alone admit `effect/testing`,
+  `effect/net` or `effect/graphql`, which are named like the other barrels.
 
 ### Deprecated
 

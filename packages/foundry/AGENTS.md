@@ -53,6 +53,24 @@ src/
 vendor/<pack>/ the packs as plain TS for external workspaces
 ```
 
+A folder's tests (`*.test.ts`) are its `<folder>-tests` layer, placed
+before it: they may import what the folder may, the folder itself and the
+test libraries (`bun:test`; the gates' tests also `effect/testing`), which
+no source layer lists.
+
+The boundaries gate (`gates/boundariesGate.ts`) reads every module a file
+names: its import and re-export clauses, and each `import("…")` of a
+literal specifier, a dynamic import or an import type. An external entry
+ending in `/` or `:` is a raw prefix (`node:`); any other admits that
+package and its subpaths, but `effect` admits Effect's core modules only:
+each barrel in `EFFECT_BARRELS` (`effect/ai`, `effect/http`,
+`effect/testing`…) is listed by name. Like an allow list, `externals` only
+shrinks: an external that none of the layer's files imports is a
+`boundaries/illegal-external` finding, a layer being every entry of its
+name (a glob takes no alternatives). The root profile gives each package's
+test code its `<name>-tests` layer (`testLayer`, one entry per
+`TEST_SCAFFOLDING` glob), the only layers that list a test library.
+
 ## House policies (the gates enforce the enforceable parts)
 
 - **Option, not nullable**: functions never return `A | undefined` / `A | null`
