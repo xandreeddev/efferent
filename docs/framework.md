@@ -1887,6 +1887,22 @@ background tasks. Two layers split the work:
   the write lock, and a file a newer release wrote fails to open with code
   `store.version`, neither read nor written; a 0.14.0 file, without a
   version, opens as it was.
+  `@xandreed/plugin-session-files` ships `SessionLogFilesLive(path)` and
+  `makeSessionLogFiles(path)`, the log as files in a directory, on Node 24 and
+  Bun, local or on a network mount (NFS): one immutable file per commit,
+  written to a temporary file, flushed, then published by an exclusive hard
+  link to its revision's name, so exactly one writer wins each revision and
+  no handle ever waits on a lock (a stopped process blocks nobody). A commit
+  file ends with its length and CRC-32: one at a session's tail that is not
+  whole is moved to `quarantine/` with its bytes kept and the commit before it
+  is the head; damage before the tail fails with `store.decode`. At most two
+  file system calls are in flight per handle, each bounded by `stallMs`
+  (10 s): one that does not answer fails with `store.stalled`, and so does
+  every call after it until one, let through a `stallMs` later, answers (a
+  stalled commit's outcome is known once the head is read again). Like the
+  SQLite log it stamps time with the caller's `Clock`. A directory whose
+  layout a newer release wrote fails to open with `store.version`; one
+  without hard links (some SMB mounts), with `store.open`.
 - **`Sessions`, consumption through a plugin** (`@xandreed/plugin-sessions`,
   requiring `SessionLog` and `TurnAdmission`). Hosts and `Agent.turn` both
   read and write sessions only through it.

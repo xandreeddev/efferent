@@ -1,0 +1,11 @@
+const SessionFilesConfig
+const SessionLogFilesLive
+const default
+const makeSessionLogFiles
+const nodeFilesIo
+const sessionFilesDefaults
+const sessionFilesPlugin
+const sessionLogFilesPlugin
+interface FilesIo
+interface SessionLogFilesOptions
+type SessionFilesConfig

@@ -431,6 +431,15 @@ const runKit = async (kit, checks) => {
 // An in-memory log reopens only when every open shares its store: build it once.
 const memoryLog = await Effect.runPromise(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
 const recovery = await runKit("SessionLog recovery", sessionLogRecoveryConformance({ open: Effect.succeed(memoryLog), callerClock: true }))
+// The durable store on Node: both SessionLog kits over the packed plugin-session-files, in a fresh directory.
+const { makeSessionLogFiles } = await import("@xandreed/plugin-session-files")
+const { sessionLogConformance } = await import("@xandreed/core/conformance")
+const filesFs = await import("node:fs/promises")
+const filesRoot = await filesFs.mkdtemp((await import("node:path")).join((await import("node:os")).tmpdir(), "efferent-node-files-"))
+const filesLog = await Effect.runPromise(Effect.scoped(makeSessionLogFiles(filesRoot + "/kit")))
+const filesKit = await runKit("SessionLog (files)", sessionLogConformance(filesLog))
+const filesRecovery = await runKit("SessionLog recovery (files)", sessionLogRecoveryConformance({ open: makeSessionLogFiles(filesRoot + "/recovery"), callerClock: true }))
+await filesFs.rm(filesRoot, { recursive: true, force: true })
 const fileSystem = await runKit("FileSystem", fileSystemConformance({ open: makeMemoryFileSystem().pipe(Effect.tap((fs) => fs.mkdir("/work")), Effect.map((fs) => ({ fs, root: "/work", symlink: fs.symlink }))) }))
 // The StepLoop and TurnRunner contracts (their usage totals among them) hold on Node too.
 const stepLoop = await runKit("StepLoop", stepLoopConformance(StepLoop.of({ ...STEP_LOOP, run: runSteps })))
@@ -540,7 +549,7 @@ const tasksKit = await runKit("Tasks", tasksConformance(({ runner, executor }) =
   Effect.map((context) => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks) })))))
 const registryKit = await runKit("ToolRegistry", toolRegistryConformance((capabilities, limits) => Layer.build(ToolDiscoveryLive({ ...toolDiscoveryDefaults, ...limits }).pipe(
   Layer.provide(Layer.succeed(Capabilities, capabilities)))).pipe(Effect.map((context) => Context.get(context, ToolRegistry)))))
-console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + "), the Sessions kit over SessionsLive and the memory log (" + sessionsKit + "), the TaskRunner kit over InProcessTaskRunnerLive (" + runnerKit + "), the Tasks kit over TasksLive (" + tasksKit + ") and the ToolRegistry kit over the tool discovery plugin (" + registryKit + ")")
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), both SessionLog kits over the file store in a directory (" + filesKit + " and " + filesRecovery + "), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + "), the Sessions kit over SessionsLive and the memory log (" + sessionsKit + "), the TaskRunner kit over InProcessTaskRunnerLive (" + runnerKit + "), the Tasks kit over TasksLive (" + tasksKit + ") and the ToolRegistry kit over the tool discovery plugin (" + registryKit + ")")
 ${localKits}
 ${workspaceJourney}
 `)

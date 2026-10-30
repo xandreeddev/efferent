@@ -48,6 +48,7 @@ const CHECKED = [
   "packages/plugin-memory-digest/src/**",
   "packages/plugin-tool-discovery/src/**",
   "packages/plugin-models/src/**",
+  "packages/plugin-session-files/src/**",
   "packages/plugin-session-sqlite/src/**",
   "packages/plugin-sessions/src/**",
   "packages/plugin-tasks/src/**",
@@ -147,6 +148,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/plugin-memory-summary/src/index.ts",
   "packages/plugin-memory-digest/src/index.ts",
   "packages/plugin-tool-discovery/src/index.ts",
+  "packages/plugin-session-files/src/index.ts",
   "packages/plugin-session-sqlite/src/index.ts",
   "packages/plugin-sessions/src/index.ts",
   "packages/plugin-tasks/src/index.ts",
@@ -473,6 +475,8 @@ const config: typeof GateSuiteConfig.Encoded = {
       },
       // The one package that imports Bun (`bun:sqlite`), and so the one that
       // does not load on Node.
+      ...testLayer("plugin-session-files", ["plugin-session-files", "core", "plugin-sessions"], ["effect", "effect/testing", "node:", "bun:test", "fast-check"]),
+      { name: "plugin-session-files", path: src("plugin-session-files"), canImport: ["core"], externals: ["effect", "node:"] },
       ...testLayer("plugin-session-sqlite", ["plugin-session-sqlite", "core", "plugin-sessions"], ["effect", "effect/testing", "node:", "bun:sqlite", "bun:test"]),
       { name: "plugin-session-sqlite", path: src("plugin-session-sqlite"), canImport: ["core"], externals: ["effect", "node:", "bun:sqlite"] },
       ...testLayer("plugin-sessions", ["plugin-sessions", "core"], ["effect", "effect/testing", "bun:test"]),
@@ -522,6 +526,7 @@ const config: typeof GateSuiteConfig.Encoded = {
           "core/internal",
           "runtime",
           "plugin-session-sqlite",
+          "plugin-session-files",
           "plugin-agent-loop",
           "plugin-memory-window",
           "plugin-memory-summary",
