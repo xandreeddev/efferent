@@ -1,7 +1,8 @@
 import { AiError, LanguageModel, Prompt } from "effect/ai"
 import type { Response, Tool, Toolkit } from "effect/ai"
 import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Stream } from "effect"
-import { CurrentTraceContent, foldStreamParts, freezeModelRequest, replayableContext } from "@xandreed/core"
+import { CurrentTraceContent, freezeModelRequest, replayableContext } from "@xandreed/core"
+import { foldStreamParts } from "@xandreed/core/internal"
 import { CurrentAgentStep } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { LoopEvent, StepStatus } from "@xandreed/core"
@@ -11,7 +12,8 @@ import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
 import { plannedCallIdOf } from "@xandreed/core"
 import type { RunRef } from "@xandreed/core"
-import { extractModel, extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core"
+import { extractModel } from "@xandreed/core"
+import { extractUsage, handoffToMessage, responseReasoning, responseText, responseToAgentMessages, responseToolCalls, responseToolResults, toPromptMessages, withToolCallIds, withUsageOnAssistant } from "@xandreed/core/internal"
 
 /**
  * A mid-run fold the `compact` callback hands back: everything before
