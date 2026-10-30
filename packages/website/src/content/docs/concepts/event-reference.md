@@ -55,12 +55,13 @@ Published by the step loop as each step starts. `run` is the run of the turn the
 
 ### `tool.started`
 
-Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress` and `tool.completed`; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes `tool.refused` instead, and no other `tool.*` event; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included.
+Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress` and `tool.completed`; `toolCallId`, when present, is the provider pairing key or the loop's deterministic id; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes `tool.refused` instead, and no other `tool.*` event; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included.
 
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
 | `invocationId` | `string` |
+| `toolCallId` | `string` (optional) |
 | `tool` | `string` |
 | `input` | `unknown` |
 | `labels` | `Record<string, string>` |
@@ -68,12 +69,13 @@ Published by the tool registry just before a tool's handler runs. `invocationId`
 
 ### `tool.refused`
 
-Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`.
+Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`.
 
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
 | `invocationId` | `string` |
+| `toolCallId` | `string` (optional) |
 | `tool` | `string` |
 | `input` | `unknown` |
 | `reason` | `"inactive" \| "forbidden" \| "denied" \| "call-limit" \| "tool-call-limit"` |
@@ -81,24 +83,26 @@ Published by the tool registry when it refuses a call before the handler runs, i
 
 ### `tool.progress`
 
-Published by `publishToolProgress` from inside a tool handler, between that call's `tool.started` and `tool.completed` (same `step`, `invocationId` and `tool`). `channel` is stdout or stderr for a command's output as it arrives, status for anything else the tool reports; `text` is that output or message. Transient: never journaled; `tool.completed` carries the result.
+Published by `publishToolProgress` from inside a tool handler, between that call's `tool.started` and `tool.completed` (same `step`, `invocationId`, optional `toolCallId` and `tool`). `channel` is stdout or stderr for a command's output as it arrives, status for anything else the tool reports; `text` is that output or message. Transient: never journaled; `tool.completed` carries the result.
 
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
 | `invocationId` | `string` |
+| `toolCallId` | `string` (optional) |
 | `tool` | `string` |
 | `channel` | `"stdout" \| "stderr" \| "status"` |
 | `text` | `string` |
 
 ### `tool.completed`
 
-Published by the tool registry when a handler returned or failed (`ok`). `result` is the decoded value, `encoded` its wire form as the model receives it. `durationMs` runs from just after `tool.started` to the handler's exit, so it includes any wait for the tool's read or write lane. Journaled as `tool.completed` without `input`, `result` and `encoded`: memory keeps the call and its result (`memory.message`, `memory.tool-result`).
+Published by the tool registry when a handler returned or failed (`ok`). `toolCallId`, when present, pairs it with the assistant's call and its result. `result` is the decoded value, `encoded` its wire form as the model receives it. `durationMs` runs from just after `tool.started` to the handler's exit, so it includes any wait for the tool's read or write lane. Journaled as `tool.completed` without `input`, `result` and `encoded`: memory keeps the call and its result (`memory.message`, `memory.tool-result`).
 
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
 | `invocationId` | `string` |
+| `toolCallId` | `string` (optional) |
 | `tool` | `string` |
 | `input` | `unknown` |
 | `ok` | `boolean` |
@@ -242,9 +246,9 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `step.started` | The turn's bus (stored from `step.started`) | None: tool names. | `step`, `run`, `planned`, `activeTools` |
 | `step.ended` | The turn's bus (stored from `step.ended`) | None: entry ids and tool names. | `step`, `run`, `status`, `results` |
 | `step.usage` | The turn's bus (stored from `assistant.message`) | None: model name, token counts and finish reason. | `step`, `run`, `model`, `usage`, `finishReason` |
-| `tool.started` | The turn's bus (stored from `tool.started`) | Tool input. | `step`, `invocationId`, `tool`, `input`, `labels`, `stage` |
-| `tool.refused` | The turn's bus (stored from `tool.refused`) | The refusal message, which may name missing permissions or quote the host's denial; the input is left out. | `step`, `invocationId`, `tool`, `reason`, `message` |
-| `tool.completed` | The turn's bus (stored from `tool.completed`) | None: input and result are left out. | `step`, `invocationId`, `tool`, `ok`, `durationMs`, `labels`, `stage` |
+| `tool.started` | The turn's bus (stored from `tool.started`) | Tool input. | `step`, `invocationId`, `toolCallId`, `tool`, `input`, `labels`, `stage` |
+| `tool.refused` | The turn's bus (stored from `tool.refused`) | The refusal message, which may name missing permissions or quote the host's denial; the input is left out. | `step`, `invocationId`, `toolCallId`, `tool`, `reason`, `message` |
+| `tool.completed` | The turn's bus (stored from `tool.completed`) | None: input and result are left out. | `step`, `invocationId`, `toolCallId`, `tool`, `ok`, `durationMs`, `labels`, `stage` |
 | `completion.evaluated` | The turn's bus (stored from `completion.evaluated`) | The host's facts behind the verdict. | `step`, `run`, `verdict` |
 | `context.built` | The turn's bus (stored from `context.built`) | None: fingerprints, counts and tool names. | `step`, `turn`, `run`, `strategy`, `strategyVersion`, `fingerprint`, `systemFingerprint`, `estimatedTokens`, `reservedTokens`, `budgetTokens`, `compactions`, `activeTools` |
 | `decision.recorded` | The turn's bus (stored from `decision.recorded`) | Candidate descriptions; the context itself only as a hash. | `record` |

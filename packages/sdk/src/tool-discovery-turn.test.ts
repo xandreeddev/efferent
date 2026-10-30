@@ -26,6 +26,7 @@ import {
   RunContext,
   RunId,
   SessionEnvironment,
+  ToolCallId,
   ToolRegistry,
   TurnMemory,
   turnStartedDraft,
@@ -171,10 +172,11 @@ describe("the registry tells a handler which call it runs for", () => {
   })
 
   test("the invocation is provided innermost: a handler sees its own call even under another tool's", async () => {
-    const outer = Option.some({ invocationId: InvocationId.make("outer-run:call:7"), tool: "delegate", step: 5 })
+    const outer = Option.some({ invocationId: InvocationId.make("outer-run:call:7"), toolCallId: ToolCallId.make("outer-provider-call"), tool: "delegate", step: 5 })
     const turn = await Effect.runPromise(callInTurn(outer))
     expect(turn.saw).toBe("run-1:call:0|report_progress|2")
     expect(turn.events.filter((event) => event._tag === "tool.progress").every((event) => event._tag === "tool.progress" && event.invocationId === "run-1:call:0")).toBe(true)
+    expect(turn.events.every((event) => !("toolCallId" in event))).toBe(true)
   })
 })
 

@@ -1,5 +1,6 @@
 import { Effect, Option, Schema } from "effect"
 import type { InvocationId } from "../domain/run.entity.js"
+import type { ToolCallId } from "../domain/message.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import { CurrentToolInvocation } from "../loop/stepContext.js"
 import { RunContext } from "../ports/run-context.port.js"
@@ -27,6 +28,7 @@ export const onEvent = <Name extends TurnEventName, R>(
 export interface ToolCall<Input, Result> {
   readonly step: number
   readonly invocationId: InvocationId
+  readonly toolCallId?: ToolCallId
   readonly input: Input
   readonly result: Result
 }
@@ -43,7 +45,7 @@ export const onTool = <Params extends Schema.Top, Success extends Schema.Top, R>
     const input = event.input
     const result = event.result
     return isInput(input) && isResult(result)
-      ? Option.some({ step: event.step, invocationId: event.invocationId, input, result })
+      ? Option.some({ step: event.step, invocationId: event.invocationId, ...(event.toolCallId === undefined ? {} : { toolCallId: event.toolCallId }), input, result })
       : Option.none()
   }, handle, options)
 }
@@ -92,6 +94,5 @@ export const publishToolProgress = Effect.fnUntraced(function* (channel: TurnEve
   const invocation = yield* Effect.service(CurrentToolInvocation)
   const run = yield* Effect.serviceOption(RunContext)
   if (Option.isNone(invocation) || Option.isNone(run)) return
-  const { step, invocationId, tool } = invocation.value
-  yield* run.value.events.publish({ _tag: "tool.progress", step, invocationId, tool, channel, text }).pipe(Effect.orDie)
+  yield* run.value.events.publish({ _tag: "tool.progress", ...invocation.value, channel, text }).pipe(Effect.orDie)
 })

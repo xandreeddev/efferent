@@ -318,7 +318,7 @@ describe("a turn's refused calls", () => {
     const { spans, stored } = await Effect.runPromise(traced())
     const refused = stored.filter((event) => event.kind === "tool.refused")
     expect(refused.map((event) => event.data)).toEqual([{
-      step: 1, invocationId: "run-1:call:2", tool: "archive", reason: "tool-call-limit", message: "archive may be called at most once per turn; use what its earlier calls returned",
+      step: 1, invocationId: "run-1:call:2", toolCallId: "c3", tool: "archive", reason: "tool-call-limit", message: "archive may be called at most once per turn; use what its earlier calls returned",
     }])
     const ended = stored.find((event) => event.kind === "step.ended" && event.data.step === 1)
     expect((ended?.data.results as ReadonlyArray<{ readonly tool: string; readonly ok: boolean }>).map((result) => [result.tool, result.ok])).toEqual([["archive", true], ["archive", false]])

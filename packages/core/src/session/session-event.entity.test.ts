@@ -439,3 +439,21 @@ describe("stored events read by their kind", () => {
     expect([read?.data.run, read?.data.render.run]).toEqual([run, run])
   })
 })
+
+test("tool lifecycle journal records retain an optional provider call id and still decode older records", async () => {
+  const events: ReadonlyArray<Extract<TurnEvent, { readonly _tag: "tool.started" | "tool.refused" | "tool.completed" }>> = [
+    { _tag: "tool.started", step: 1, invocationId: InvocationId.make("i"), tool: "lookup", input: {}, labels: {}, stage: Option.none() },
+    { _tag: "tool.refused", step: 1, invocationId: InvocationId.make("i"), tool: "lookup", input: {}, reason: "denied", message: "denied" },
+    { _tag: "tool.completed", step: 1, invocationId: InvocationId.make("i"), tool: "lookup", input: {}, ok: true, result: "ok", encoded: "ok", durationMs: 1, labels: {}, stage: Option.none() },
+  ]
+  const id = ToolCallId.make("provider:call")
+  const records = await Effect.runPromise(Effect.forEach(events, (event) => Effect.gen(function* () {
+    const old = Option.getOrThrow(yield* draftOfTurnEvent(1, event))
+    const added = Option.getOrThrow(yield* draftOfTurnEvent(1, { ...event, toolCallId: id }))
+    const schema = Option.getOrThrow(journalSchemaOf(old.kind))
+    yield* Schema.decodeUnknownEffect(schema)(old.data)
+    yield* Schema.decodeUnknownEffect(schema)(added.data)
+    return ["toolCallId" in old.data, added.data.toolCallId]
+  })))
+  expect(records).toEqual([[false, id], [false, id], [false, id]])
+})

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
-import type { Tool } from "effect/ai"
+import type { Tool, Toolkit } from "effect/ai"
 import { Capabilities, SessionEnvironment, ToolRegistry } from "@xandreed/core"
 import type { Capability } from "@xandreed/core"
 import type { ConformanceCheck } from "@xandreed/core/conformance"
@@ -24,6 +24,20 @@ describe("the tool discovery plugin's registry conforms to the ToolRegistry cont
 })
 
 describe("the ToolRegistry kit catches careless registries", () => {
+  test("one that drops the provider call id fails only the provider-call-id check", async () => {
+    const forgetful = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities, limits).pipe(Effect.map((registry) => ToolRegistry.of({
+      ...registry,
+      open: (session) => registry.open(session).pipe(Effect.flatMap((tools) => tools.toolkit.toHandlers(Object.fromEntries(Object.values(tools.toolkit.tools).map((tool) => {
+        const own: Tool.Handler<string> = tools.handlers.mapUnsafe.get(tool.id)
+        const handler = (params: unknown, context: Toolkit.HandlerContext<Tool.Any>) => own.handler(params, { ...context, toolCallId: undefined }).pipe(
+          Effect.updateContext((input: Context.Context<never>) => Context.merge(own.context, input)),
+        )
+        return [tool.name, handler]
+      }))).pipe(Effect.map((handlers) => ({ ...tools, handlers }))))),
+    })))
+    expect(await failedChecks(toolRegistryConformance(forgetful))).toEqual(["provider-call-id"])
+  })
+
   test("one that ignores the turn's call limit fails only the call-limit refusal", async () => {
     const unlimited = (capabilities: ReadonlyArray<Capability>) => makeRegistry({ ...toolDiscoveryDefaults, maxCallsPerRun: 1_000 }, capabilities).pipe(
       Effect.map((registry) => ToolRegistry.of({ catalog: registry.catalog, open: registry.open })))

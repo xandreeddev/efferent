@@ -845,6 +845,12 @@ output as it arrives, `status` for anything else): it reads
 `CurrentToolInvocation`, which the tool registry sets around each call, so
 the event carries the call's `step`, `invocationId` and `tool`, the ids of
 its `tool.started` and `tool.completed`; outside a tool call it does nothing.
+The invocation and every `tool.*` event also carry an optional `toolCallId`,
+the provider's pairing key from the assistant's tool call and its result.
+When the provider omits it, the loop assigns a deterministic id distinct
+across the session's turns, runs and steps. A direct call through the
+toolkit may omit it. `onTool` passes it to the subscriber too;
+`tool.started`, `tool.refused` and `tool.completed` keep it in the journal.
 Publication is inline
 and ordered, depth-first up to a cap: every subscriber runs before `publish`
 returns, so state a subscriber changes is visible to the next step, and a
