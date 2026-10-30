@@ -114,6 +114,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/core/src/internal/index.ts",
   "packages/core/src/engine/index.ts",
   "packages/core/src/models/index.ts",
+  "packages/runtime/src/index.ts",
 ]
 
 /**

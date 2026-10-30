@@ -20,6 +20,8 @@ The plugin graph: resolves a `HarnessConfig` against the installed plugins (inst
 - `graphFingerprint(graph, scope?)`: sha256 of the instances, bindings and, unless `scope` is `runtime`, the system prompt.
 - `makeLiveLayer(layer)`: scoped generations of a layer, with `use`, `generation` and `replace`.
 
+The root names each export, and `quality/exports-have-consumers` checks each one: sdk imports the graph functions and types, and `makeLiveLayer`, which no first-party package imports, is tagged `@public` (docs/service-generations.md documents it).
+
 No plugins.
 
 ## Model-facing text
