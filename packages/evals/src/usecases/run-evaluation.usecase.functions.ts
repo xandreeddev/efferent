@@ -51,6 +51,7 @@ const annotated =
 const trialPath = (runId: EvalId, suite: EvalId, candidate: EvalId, task: EvalId, sample: number) =>
   EvalPath.make(`${runId}/${suite}/${candidate}/${task}/${sample}`)
 
+/** @public */
 export const gradeTrial = Effect.fn("eval.grade")(
   function* (
     app: EvaluationApp,
@@ -342,7 +343,11 @@ const runTrial = Effect.fn("eval.trial")(
     annotated(trialAttributes({ id: trialPath(runId, suite.id, candidate.id, task.id, sample), runId, suiteId: suite.id, task, candidate, sample }))(effect)
 )
 
-/** Identifies captured execution independently of grader revisions and their reports. */
+/**
+ * Identifies captured execution independently of grader revisions and their reports.
+ *
+ * @public
+ */
 export const executionFingerprint = (run: EvaluationRun) =>
   fingerprint({
     application: run.application,

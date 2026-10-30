@@ -5,6 +5,7 @@ import type { Trial } from "./trial.entity.js"
 import { fingerprint } from "./grading-context.entity.functions.js"
 import { numericMetric } from "../assessment.entity.functions.js"
 
+/** @public */
 export const runGates = (suites: ReadonlyArray<Suite>, trials: EvaluationRun["trials"]): EvaluationRun["gates"] => suites.flatMap((suite) => suite.candidates.flatMap((candidate) => suite.gates.map((gate) => {
   const relevant = trials.filter((trial) => trial.suiteId === suite.id && trial.candidate.id === candidate.id && trial.task.graders.some((binding) => binding.grader === gate.grader))
   const values = relevant.flatMap((trial) => {

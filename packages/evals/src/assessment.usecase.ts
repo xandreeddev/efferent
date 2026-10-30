@@ -1,6 +1,7 @@
 import type { Effect, Schema } from "effect"
 import type { AssessmentError, EvaluationResult, EvaluationSplit, EvaluationUsage, LabelReview, Metric } from "./assessment.entity.js"
 
+/** @public */
 export interface DatasetCase<I, Ref> {
   readonly id: string
   readonly family: string
@@ -10,6 +11,7 @@ export interface DatasetCase<I, Ref> {
   readonly reference: Ref
   readonly provenance: string
 }
+/** @public */
 export interface Dataset<I, Ref> {
   readonly id: string
   readonly version: string
@@ -17,6 +19,7 @@ export interface Dataset<I, Ref> {
   readonly reference: Schema.Codec<Ref>
   readonly cases: ReadonlyArray<DatasetCase<I, Ref>>
 }
+/** @public */
 export interface Assessment {
   readonly metrics: ReadonlyArray<Metric>
   readonly reason: string
@@ -24,6 +27,7 @@ export interface Assessment {
   readonly usage?: EvaluationUsage
   readonly metadata?: Schema.JsonObject
 }
+/** @public */
 export interface Evaluator<I, R = never> {
   readonly id: string
   readonly version: string
@@ -31,11 +35,13 @@ export interface Evaluator<I, R = never> {
   readonly metrics: ReadonlyArray<string>
   readonly run: (input: I) => Effect.Effect<Assessment, AssessmentError, R>
 }
+/** @public */
 export interface EvaluatorBinding<I, R = never> {
   readonly evaluator: Evaluator<I, R>
   readonly select: ReadonlyArray<string>
   readonly timeoutMs?: number
 }
+/** @public */
 export interface AssessmentInput<I, O, E, Ref> {
   readonly input: I
   readonly output: O

@@ -1,13 +1,18 @@
 import { Schema } from "effect"
 import { Metric } from "../assessment.entity.js"
 
-/** Labels describe grader behavior, including an honest refusal to score missing evidence. */
+/**
+ * Labels describe grader behavior, including an honest refusal to score missing evidence.
+ *
+ * @public
+ */
 export const CalibrationObservation = Schema.Struct({
   status: Schema.Literals(["scored", "unavailable", "error", "pending", "skipped"]),
   metrics: Schema.Array(Metric),
   reason: Schema.String,
 })
 export type CalibrationObservation = typeof CalibrationObservation.Type
+/** @public */
 export const CalibrationReference = Schema.Struct({
   status: CalibrationObservation.fields.status,
   metrics: Schema.Array(Schema.Struct({

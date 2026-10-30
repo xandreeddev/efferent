@@ -4,7 +4,11 @@ import type { Candidate } from "../domain/candidate.entity.js"
 import type { EvaluationError } from "../domain/identity.entity.js"
 import type { TrialRecorder } from "./trial-recorder.port.js"
 
-/** Each application creates a port for its specific input, result and live world. */
+/**
+ * Each application creates a port for its specific input, result and live world.
+ *
+ * @public
+ */
 export interface RunnableExecution<I, O, E, W> {
   readonly execute: (
     input: I,

@@ -5,7 +5,11 @@ import type { Outcome } from "../domain/outcome.entity.js"
 import type { EvaluationError } from "../domain/identity.entity.js"
 import type { TrialRecorder } from "./trial-recorder.port.js"
 
-/** Portable boundary of a typed runnable/environment pair. Live worlds never cross it. */
+/**
+ * Portable boundary of a typed runnable/environment pair. Live worlds never cross it.
+ *
+ * @public
+ */
 export class TrialExecution extends Context.Service<TrialExecution, {
   readonly execute: (
     input: Schema.Json,

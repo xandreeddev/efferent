@@ -6,7 +6,11 @@ import type { SemanticInput } from "../semantic.entity.js"
 import { validateSemanticInput, validateSemanticAnswers } from "../semantic.entity.functions.js"
 import { SemanticJudge } from "../ports/semantic-judge.port.js"
 
-/** Optional transport bridge. The host binds its Gateway evaluation model and SDK version. */
+/**
+ * Optional transport bridge. The host binds its Gateway evaluation model and SDK version.
+ *
+ * @public
+ */
 export interface SemanticJevOptions {
   readonly evaluate: (input: SemanticInput, signal: AbortSignal) => PromiseLike<{ readonly answers: unknown }>
   readonly maxInputBytes?: number
@@ -14,6 +18,7 @@ export interface SemanticJevOptions {
   readonly metadata?: Schema.JsonObject
 }
 
+/** @public */
 export const makeSemanticJevJudge = Effect.fnUntraced(function* (options: SemanticJevOptions) {
   const maxInputBytes = options.maxInputBytes ?? 24_000
   const timeoutMs = options.timeoutMs ?? 10_000

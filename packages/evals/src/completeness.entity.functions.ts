@@ -3,7 +3,11 @@ import { AssessmentError } from "./assessment.entity.js"
 import type { Assessment } from "./assessment.usecase.js"
 import { ActionAssessment, CompletenessEvidence } from "./completeness.entity.js"
 
-/** The model labels actions; it never sets the denominator or aggregate score. */
+/**
+ * The model labels actions; it never sets the denominator or aggregate score.
+ *
+ * @public
+ */
 export const assessCompleteness = Effect.fnUntraced(function* (evidence: CompletenessEvidence, raw: ReadonlyArray<ActionAssessment>): Effect.fn.Return<Assessment, AssessmentError> {
   yield* Schema.decodeEffect(Schema.toType(CompletenessEvidence))(evidence).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: `Completeness evidence does not decode: ${error.message}`, cause: error })))
   const actions = yield* Schema.decodeEffect(Schema.toType(Schema.Array(ActionAssessment)))(raw).pipe(Effect.mapError((error) => new AssessmentError({ code: "invalid", message: `Action assessments do not decode: ${error.message}`, cause: error })))

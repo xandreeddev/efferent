@@ -6,13 +6,18 @@ import type { SemanticInput } from "../semantic.entity.js"
 import { semanticResponseSchema, validateSemanticInput, validateSemanticAnswers } from "../semantic.entity.functions.js"
 import { SemanticJudge } from "../ports/semantic-judge.port.js"
 
+/** @public */
 export interface SemanticLlmOptions {
   readonly id: string
   readonly prompt: (input: SemanticInput) => Prompt.Prompt
   readonly metadata?: Schema.JsonObject
 }
 
-/** Captures the supplied model service; each profile can supply its own native prompt builder. */
+/**
+ * Captures the supplied model service; each profile can supply its own native prompt builder.
+ *
+ * @public
+ */
 export const makeSemanticLlmJudge = Effect.fnUntraced(function* (options: SemanticLlmOptions) {
   const model = yield* LanguageModel.LanguageModel
   return SemanticJudge.of({

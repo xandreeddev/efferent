@@ -8,6 +8,7 @@ const agrees = (actual: Metric, expected: Metric, tolerance: number): boolean =>
       ? Math.abs(actual.value - expected.value) <= tolerance
       : actual.kind === expected.kind && actual.value === expected.value
 
+/** @public */
 export const calibrationAgreement = (
   actual: CalibrationObservation,
   reference: CalibrationReference,

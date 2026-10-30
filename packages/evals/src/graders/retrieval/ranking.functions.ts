@@ -1,6 +1,10 @@
 import { Option } from "effect"
 
-/** Unknown relevance remains unavailable. Duplicate hits retain rank but gain no credit. */
+/**
+ * Unknown relevance remains unavailable. Duplicate hits retain rank but gain no credit.
+ *
+ * @public
+ */
 export const rankingMetrics = (retrieved: ReadonlyArray<string>, labels: Readonly<Record<string, number>>, k: number, observedGrades?: ReadonlyArray<number>) => {
   const hits = retrieved.slice(0, k)
   const grades = observedGrades ? observedGrades.slice(0, k) : hits.map((id, index) => hits.indexOf(id) !== index ? 0 : labels[id] ?? 0)

@@ -7,6 +7,7 @@ import type { ContextBudget, GradingContext } from "./grading-context.entity.js"
 /** Object keys in code-unit order, so a fingerprint is the same under every locale. */
 const byKey = Order.mapInput(Order.String, ([key]: readonly [string, unknown]) => key)
 
+/** @public */
 export const fingerprint = (value: unknown): string => {
   const stable = (item: unknown): unknown => Array.isArray(item) ? item.map(stable) : item !== null && typeof item === "object" ? Object.fromEntries(Arr.sort(Object.entries(item), byKey).map(([key, entry]) => [key, stable(entry)])) : item
   return bytesToHex(sha256(new TextEncoder().encode(JSON.stringify(stable(value)))))

@@ -117,6 +117,8 @@ const suiteViolations = (registry: Registry, at: Path, suite: Suite): ReadonlyAr
  * projection, a runnable a task uses without its `environmentFor`
  * environment, a gate whose grader no task binds or whose metric the grader
  * lacks. Pure and total; `parseEvaluationApp` checks the shape first.
+ *
+ * @public
  */
 export const evaluationAppViolations = (app: EvaluationApp): ReadonlyArray<AppViolation> => {
   const registry: Registry = {

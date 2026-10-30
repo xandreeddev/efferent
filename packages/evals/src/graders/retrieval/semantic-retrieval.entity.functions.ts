@@ -13,5 +13,7 @@ const itemsOf: { readonly [M in RetrievalMeasure]: (input: RetrievalContext) => 
  * verdict must carry: the documents (contextual precision, in rank order),
  * the expected claims (contextual recall) or every document's statements
  * (contextual relevancy). The judge returns exactly one verdict per id.
+ *
+ * @public
  */
 export const retrievalItems = (measure: RetrievalMeasure, input: RetrievalContext): ReadonlyArray<RetrievalItem> => itemsOf[measure](input)

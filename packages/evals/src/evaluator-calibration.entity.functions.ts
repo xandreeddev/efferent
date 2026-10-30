@@ -1,7 +1,11 @@
 import { Option } from "effect"
 import type { Metric } from "./assessment.entity.js"
 
-/** Reference labels remain outside the evaluator's prompt. Only matching kinds compare. */
+/**
+ * Reference labels remain outside the evaluator's prompt. Only matching kinds compare.
+ *
+ * @public
+ */
 export const compareCalibrationMetric = (actual: Metric, reference: Metric) => {
   if (actual.name !== reference.name) return { status: "unavailable" as const, reason: "Metric IDs differ" }
   if (actual.kind === "probability" && reference.kind === "boolean") {
@@ -15,7 +19,11 @@ export const compareCalibrationMetric = (actual: Metric, reference: Metric) => {
   return { status: "unavailable" as const, reason: "Incompatible metric kinds or scales" }
 }
 
-/** Aggregate only compatible measured pairs; missing predictions remain coverage gaps. */
+/**
+ * Aggregate only compatible measured pairs; missing predictions remain coverage gaps.
+ *
+ * @public
+ */
 export const summarizeCalibration = (pairs: ReadonlyArray<{ readonly actual: Option.Option<Metric>; readonly reference: Metric }>) => {
   const measured = pairs.flatMap(({ actual, reference }) => Option.toArray(actual).flatMap((metric) => {
     const result = compareCalibrationMetric(metric, reference)
