@@ -235,4 +235,21 @@ describe("a turn whose holder process was killed", () => {
     yield* TestClock.setTime(Date.now() + ttlMs + 1_000)
     yield* reaped(sessions, id)
   }).pipe(Effect.provide(TestClock.layer()))), 30_000)
+
+  test("is resumed at once by a begin with takeOver: inside its lease it is taken over (turn.takeover); under process ownership, its process gone, it is reaped (turn.lease)", () => run(Effect.gen(function* () {
+    const takenOver = (ownership: SessionsConfig["ownership"], mode: "lease" | "process") => Effect.gen(function* () {
+      const path = databasePath()
+      const id = freshId()
+      const turnHolder = yield* holder("hold-turn", path, id, owner, mode)
+      expect(yield* killed(turnHolder)).toBe("SIGKILL")
+      const sessions = yield* sessionsOver(path, { ...sessionsDefaults, ownership })
+      const resumed = yield* sessions.begin({ id, owner }, { _tag: "User", userMessage: new UserMessage({ text: "Continue." }), runId: RunId.make("run-takeover"), key: "resume:1", command: {}, resumes: 1, takeOver: true })
+      const ended = yield* Effect.forEach(yield* sessions.read({ id, owner }, { kinds: ["turn.ended"] }), turnEndedOf)
+      return [resumed.admitted.turn, resumed.admitted.resumes, ended.map((end) => [end.reason, Option.getOrNull(Option.map(end.failure, (failure) => failure.code))])]
+    })
+    // No clock moves: the 60 s lease has not run out, yet the turn is taken over.
+    expect(yield* takenOver({ mode: "lease", ttlMs: 60_000, renew: "on-commit" }, "lease")).toEqual([2, 1, [["interrupted", "turn.takeover"]]])
+    // A turn whose process is gone is held by nobody: the begin reaps it as any begin would, in the same commit.
+    expect(yield* takenOver({ mode: "process" }, "process")).toEqual([2, 1, [["interrupted", "turn.lease"]]])
+  })), 30_000)
 })

@@ -71,7 +71,7 @@ describe("the Sessions kit catches careless backends", () => {
         ),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "race", "resume", "tenure"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, lastWins)))).toEqual(["busy", "duplicate", "lease", "lease-renewal", "process", "race", "resume", "takeover", "tenure"])
   })
 
   test("one whose TurnActivity always reads idle fails only the activity check", async () => {
@@ -88,8 +88,8 @@ describe("the Sessions kit catches careless backends", () => {
       sessions: Sessions.of({
         ...instance.sessions,
         begin: (address, input) => instance.sessions.begin(address, Match.valueTags(input, {
-          User: (user): BeginTurn => ({ _tag: "User", userMessage: user.userMessage, runId: user.runId, key: user.key, command: user.command, ...(user.resumes === undefined ? {} : { resumes: user.resumes }) }),
-          Inbox: (inbox): BeginTurn => ({ _tag: "Inbox", runId: inbox.runId }),
+          User: (user): BeginTurn => ({ _tag: "User", userMessage: user.userMessage, runId: user.runId, key: user.key, command: user.command, ...(user.resumes === undefined ? {} : { resumes: user.resumes }), ...(user.takeOver === undefined ? {} : { takeOver: user.takeOver }) }),
+          Inbox: (inbox): BeginTurn => ({ _tag: "Inbox", runId: inbox.runId, ...(inbox.takeOver === undefined ? {} : { takeOver: inbox.takeOver }) }),
           Task: (task): BeginTurn => ({ _tag: "Task", task: task.task, userMessage: task.userMessage, runId: task.runId, key: task.key }),
         })),
       }),
@@ -143,7 +143,7 @@ describe("the Sessions kit catches careless backends", () => {
         }))),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "transact", "writer"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, coded)))).toEqual(["cancel", "lease", "process", "takeover", "transact", "writer"])
   })
 
   test("one whose turn writers store the closing drafts at once, as a write before the end, fails only the closing check", async () => {
@@ -202,6 +202,14 @@ describe("the Sessions kit catches careless backends", () => {
   test("an instance without a TurnActivity passes, its activity unchecked", async () => {
     const unprobed = (instance: SessionsInstance): SessionsInstance => ({ ...instance, activity: Option.none() })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, unprobed)))).toEqual([])
+  })
+
+  test("one that ignores takeOver (it waits for the lease as for any begin) fails only the takeover check", async () => {
+    const waiting = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({ ...instance.sessions, begin: (address, input) => instance.sessions.begin(address, { ...input, takeOver: false }) }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, waiting)))).toEqual(["takeover"])
   })
 
   test("the dead-holder and tenure checks run only for a backend with process ownership", () => {

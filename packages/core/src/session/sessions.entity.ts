@@ -104,6 +104,20 @@ const Resumes = Schema.optionalKey(Schema.Int)
 const TaskOf = Schema.optionalKey(TaskRef)
 
 /**
+ * Take the session over: the host says the process that holds its open
+ * turn is gone (a restarted worker, a moved session), so the begin closes a
+ * turn still held at once, whatever its lease or holder, as `interrupted`
+ * with code `turn.takeover` (resumable; its inbox items wait again, no
+ * attempt counted), in the commit that opens the new turn; a turn no longer
+ * held is reaped as any begin reaps it (`turn.lease`). A holder still
+ * running is fenced at its next write (`TurnClosed`), but what it did
+ * before is not undone. Without it, a turn still held makes the begin
+ * `SessionBusy`. Input only: never stored, and not part of the key's
+ * fingerprint.
+ */
+const TakeOver = Schema.optionalKey(Schema.Boolean)
+
+/**
  * How a turn begins: a user's message, the inbox's pending items, or a
  * background task's instructions (the one turn of its child session, begun
  * by the tasks plugin; origin `task`, which cannot be resumed).
@@ -118,8 +132,9 @@ export const BeginTurn = Schema.Union([
     meta: TurnMeta,
     /** The turn this one resumes (see `NotResumable` for which turns can be). */
     resumes: Resumes,
+    takeOver: TakeOver,
   }),
-  Schema.TaggedStruct("Inbox", { runId: RunId, meta: TurnMeta }),
+  Schema.TaggedStruct("Inbox", { runId: RunId, meta: TurnMeta, takeOver: TakeOver }),
   Schema.TaggedStruct("Task", {
     task: TaskRef,
     /** The task's instructions, as the model is given them. */
@@ -128,6 +143,7 @@ export const BeginTurn = Schema.Union([
     /** The idempotency key: the task's, so the task's turn begins once. */
     key: Schema.String,
     meta: TurnMeta,
+    takeOver: TakeOver,
   }),
 ])
 export type BeginTurn = typeof BeginTurn.Type

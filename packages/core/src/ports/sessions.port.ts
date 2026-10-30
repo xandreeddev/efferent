@@ -222,8 +222,11 @@ export class Sessions extends Context.Service<Sessions, {
    * error's code (`turnEndingOf`, a `TurnError` carried as a defect
    * included): `turn.failed`, `turn.defect` or `turn.interrupted` when it has
    * none. A `run` that interrupts itself counts an attempt for the items it
-   * took, even when it wrote nothing.
+   * took, even when it wrote nothing. With `takeOver`, each turn begins as
+   * `BeginTurn`'s `takeOver` says: a turn left open by a holder the host
+   * knows is gone is closed at once (`turn.takeover`) instead of waiting
+   * for its lease.
    */
-  readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject }) =>
+  readonly drain: <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean }) =>
     Effect.Effect<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R>
 }>()("efferent/Sessions") {}

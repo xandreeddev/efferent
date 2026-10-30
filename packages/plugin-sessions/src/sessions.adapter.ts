@@ -69,6 +69,7 @@ import { Ownership } from "./sessions-state.entity.js"
 import type { HeldTurn, ProcessLiveness, SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 import { makeTurnWriter } from "./turn-writer.adapter.js"
 import type { OpenWriter } from "./turn-writer.adapter.js"
+import type { ClosedBy } from "./turn-writer.entity.js"
 
 /** One commit outside a turn: what to append and the state after it (nothing, to commit nothing). */
 interface GuardedPlan<A> {
@@ -265,15 +266,23 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   /**
    * An open turn nobody holds any more (its lease ran out, or its process is
    * gone) is closed as interrupted: the drafts that close it, the state
-   * after them, and the turn they close.
+   * after them, and the turn they close. With `takeOver`, the host's word
+   * that its holder is gone, the open turn is closed so whoever holds it,
+   * with code `turn.takeover`, and no attempt is counted: the items it took
+   * were not the reason it stopped.
    */
-  const reaped = (head: SessionHead, state: SessionsState) => Effect.gen(function* () {
-    if (Option.isNone(state.open) || Option.isSome(yield* heldTurn(head, state, holder))) return { drafts: [] as ReadonlyArray<SessionDraft>, state, closed: Option.none<number>() }
+  const reaped = (head: SessionHead, state: SessionsState, takeOver = false) => Effect.gen(function* () {
+    if (Option.isNone(state.open) || (!takeOver && Option.isSome(yield* heldTurn(head, state, holder)))) return { drafts: [] as ReadonlyArray<SessionDraft>, state, closed: Option.none<number>() }
     const turn = state.open.value.turn
-    // A reaped turn counts as an attempt: its holder may have stopped on the items.
-    const after = closedState(state, "interrupted", config.inbox.attempts, true)
-    const closing = yield* turnEndedDraft(turn, { reason: "interrupted", failure: Option.some({ code: "turn.lease", message: "the turn's holder stopped writing" }) })
-      .pipe(Effect.orDie)
+    const taken = takeOver && Option.isSome(yield* heldTurn(head, state, holder))
+    // A reaped turn counts as an attempt: its holder may have stopped on the items. One taken over does not.
+    const after = closedState(state, "interrupted", config.inbox.attempts, !taken)
+    const closing = yield* turnEndedDraft(turn, {
+      reason: "interrupted",
+      failure: Option.some(taken
+        ? { code: "turn.takeover", message: "a new holder took the session over" }
+        : { code: "turn.lease", message: "the turn's holder stopped writing" }),
+    }).pipe(Effect.orDie)
     const dropped = yield* droppedDrafts(after.dropped, turn)
     return { drafts: [closing, ...dropped], state: after.state, closed: Option.some(turn) }
   })
@@ -406,7 +415,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     return yield* Effect.gen(function* () {
       // Only the opening commit is admitted: the writer's later commits run outside the host's admission.
       const begun = yield* restore(admission.admit(toAdmit, guarded(address, (head, stored) => Effect.gen(function* () {
-        const reap = yield* reaped(head, stored)
+        const reap = yield* reaped(head, stored, input.takeOver ?? false)
         const state = reap.state
         const starts = yield* startsOf(address.id)
         // A turn that brings its message (a user's, a task's) is keyed by its caller: the key's earlier turn is this one or a conflict.
@@ -464,7 +473,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
           session: address, turn, runId: input.runId, key, origin, userMessage,
           command: asked.command, claimed, meta, ...resuming, ...tasked,
         }
-        return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next } }
+        return { drafts: [...reap.drafts, starting], next: Option.some(next), result: { admitted, next, tookOver: reap.closed } }
       }), (opened) => Ref.set(unowned, Option.some(opened.admitted)))))
       // The opening plan always commits `turn.started`, last: neither can happen unless the log broke its contract.
       const committed = yield* Option.match(begun.committed, {
@@ -476,6 +485,8 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         onSome: Effect.succeed,
       })
       const turn = begun.result.admitted.turn
+      // A turn taken over that this instance still held: its writer is closed now, not at its next write.
+      yield* Option.match(begun.result.tookOver, { onNone: () => Effect.void, onSome: (taken) => closeLocal(address.id, "interrupted", Option.some(taken)) })
       // A writer that closed without storing its end (the store refused it, the scope's own try included) leaves the
       // turn open in the head under this instance: let it go, so it is not held here until the process exits.
       const letGoUnended = Ref.get(writers).pipe(Effect.flatMap((all) => Option.match(Option.fromNullishOr(all.get(address.id)), {
@@ -523,19 +534,20 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   ), onSession)
 
   /** Close this instance's writer of a session, if it holds `turn` (or any turn). */
-  const closeLocal = (id: string, reason: "cancelled" | "removed", turn: Option.Option<number>) => Ref.get(writers).pipe(Effect.flatMap((all) =>
+  const closeLocal = (id: string, reason: ClosedBy, turn: Option.Option<number>) => Ref.get(writers).pipe(Effect.flatMap((all) =>
     Option.match(Option.fromNullishOr(all.get(id)), {
       onNone: () => Effect.void,
       onSome: (open) => Option.match(turn, { onNone: () => true, onSome: (wanted) => wanted === open.turn }) ? open.close(reason) : Effect.void,
     })))
 
-  const drain = Effect.fn("sessions.drain")(function* <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject }): Effect.fn.Return<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R> {
+  const drain = Effect.fn("sessions.drain")(function* <E, R>(address: SessionAddress, run: (writer: TurnWriter) => Effect.Effect<void, E, R>, options?: { readonly maxTurns?: number; readonly meta?: JsonObject; readonly takeOver?: boolean }): Effect.fn.Return<{ readonly turns: number }, SessionMissing | SessionContended | SessionLogError, R> {
     const maxTurns = options?.maxTurns ?? 3
     const meta = options?.meta
+    const takeOver = options?.takeOver === true ? { takeOver: true } : {}
     /** One inbox turn, if one opens: then whether items still wait after it. */
     const once: Effect.Effect<Option.Option<boolean>, SessionMissing | SessionContended | SessionLogError, R> = Effect.scoped(Effect.gen(function* () {
       const runId = RunId.make(yield* Effect.sync(() => crypto.randomUUID()))
-      const open = yield* openTurn(address, meta === undefined ? { _tag: "Inbox", runId } : { _tag: "Inbox", runId, meta })
+      const open = yield* openTurn(address, meta === undefined ? { _tag: "Inbox", runId, ...takeOver } : { _tag: "Inbox", runId, meta, ...takeOver })
       // A TurnError carried as a defect keeps its own tag and code, as in `Agent.turn`.
       const exit = yield* Effect.exit(harnessDefectsAsFailures(run(open.writer)))
       // The turn ends with what ended `run`: its error's code, `turn.defect` or `turn.interrupted`.
