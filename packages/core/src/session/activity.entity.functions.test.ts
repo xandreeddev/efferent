@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Fiber, Stream, SubscriptionRef } from "effect"
+import { Effect, Fiber, Ref, Stream, SubscriptionRef } from "effect"
 import { TestClock } from "effect/testing"
 import { ConversationId } from "../domain/message.entity.js"
-import { TaskActivity, TurnActivity } from "../ports/activity.port.js"
-import { awaitIdle, processActivity } from "./activity.entity.functions.js"
+import { TaskActivity, TurnActivity, TurnShutdown } from "../ports/activity.port.js"
+import { awaitIdle, processActivity, shutdownGracefully } from "./activity.entity.functions.js"
 import type { ActiveTurn, TurnsInFlight } from "./activity.entity.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000a1")
@@ -98,5 +98,59 @@ describe("awaitIdle", () => {
     yield* SubscriptionRef.set(turns, opened())
     yield* SubscriptionRef.set(tasks, 0)
     expect(yield* Fiber.join(settling)).toEqual(idle)
+  })))
+})
+
+describe("shutdownGracefully", () => {
+  /** A TurnShutdown over the probes: it records each call, and its interrupt closes every open turn. */
+  const stopping = (turns: SubscriptionRef.SubscriptionRef<TurnsInFlight>) => Effect.gen(function* () {
+    const calls = yield* Ref.make<ReadonlyArray<string>>([])
+    const shutdown = TurnShutdown.of({
+      refuse: Ref.update(calls, (all) => [...all, "refuse"]),
+      interrupt: Effect.gen(function* () {
+        yield* Ref.update(calls, (all) => [...all, "interrupt"])
+        const open = (yield* SubscriptionRef.get(turns)).open
+        yield* SubscriptionRef.set(turns, opened())
+        return open
+      }),
+    })
+    return { calls, provideShutdown: <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.provideService(TurnShutdown, shutdown)) }
+  })
+
+  test("it refuses first, and returns at once when the process is idle before the deadline", () => run(Effect.gen(function* () {
+    const { turns, provide } = yield* probes
+    const { calls, provideShutdown } = yield* stopping(turns)
+    yield* SubscriptionRef.set(turns, opened(turn(1, 0)))
+    const shutting = yield* Effect.forkChild(provide(provideShutdown(shutdownGracefully({ deadline: "10 seconds" }))))
+    yield* Effect.yieldNow
+    expect(yield* Ref.get(calls)).toEqual(["refuse"])
+    yield* SubscriptionRef.set(turns, opened())
+    expect(yield* Fiber.join(shutting)).toEqual({ idle: true, interrupted: [], left: idle })
+    expect(yield* Ref.get(calls)).toEqual(["refuse"])
+  })))
+
+  test("at the deadline less its reserve it interrupts what is still open, then waits out the reserve", () => run(Effect.gen(function* () {
+    const { turns, tasks, provide } = yield* probes
+    const { calls, provideShutdown } = yield* stopping(turns)
+    yield* SubscriptionRef.set(turns, opened(turn(1, 0), turn(2, 5)))
+    yield* SubscriptionRef.set(tasks, 1)
+    const shutting = yield* Effect.forkChild(provide(provideShutdown(shutdownGracefully({ deadline: "10 seconds", reserve: "3 seconds" }))))
+    yield* TestClock.adjust("6999 millis")
+    expect(yield* Ref.get(calls)).toEqual(["refuse"])
+    yield* TestClock.adjust("1 millis")
+    expect(yield* Ref.get(calls)).toEqual(["refuse", "interrupt"])
+    // The task its interrupted turn ran ends within the reserve.
+    yield* SubscriptionRef.set(tasks, 0)
+    expect(yield* Fiber.join(shutting)).toEqual({ idle: false, interrupted: [turn(1, 0), turn(2, 5)], left: idle })
+  })))
+
+  test("what is still in flight after the reserve is reported busy; without a TurnShutdown nothing is interrupted", () => run(Effect.gen(function* () {
+    const { turns, provide } = yield* probes
+    yield* SubscriptionRef.set(turns, opened(turn(1, 0)))
+    const shutting = yield* Effect.forkChild(provide(shutdownGracefully({ deadline: "1 second", reserve: "5 seconds" })))
+    // A reserve longer than the deadline is the whole deadline: no wait before the interrupt, which has nothing to call.
+    yield* TestClock.adjust("1 second")
+    const report = yield* Fiber.join(shutting)
+    expect([report.idle, report.interrupted, report.left.busy, report.left.openTurns]).toEqual([false, [], true, [turn(1, 0)]])
   })))
 })

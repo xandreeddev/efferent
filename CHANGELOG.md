@@ -10,6 +10,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- The kits' fixtures name a shutdown: a `SessionsInstance` built for
+  `sessionsConformance` gives `shutdown` (its `TurnShutdown`, as
+  `Context.getOption(context, TurnShutdown)`; `Option.none()` for a
+  `Sessions` without one, whose shutdown check then passes unchecked), and
+  so does a `TasksFixture` for `tasksConformance` (the `TurnShutdown` of the
+  `Sessions` its tasks run over).
+- A host whose own `TurnAdmission` refused turns to drain may keep it, or
+  call `agent.shutdown()` instead (or give `AgentConfig.shutdown`). A turn
+  refused because the process is stopping is a `TurnRefused` of reason
+  `shutdown` (`isShutdownRefusal`), the same code `turn.refused` as before.
 - A custom `Sessions` implements `takeOver` on `begin` and `drain` and
   reruns `sessionsConformance`, which checks it.
 - A host `Sessions` over `@xandreed/plugin-sessions`' state, or tooling that
@@ -874,6 +884,25 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- A shutdown within a deadline: `shutdownGracefully({ deadline, reserve })`
+  in `@xandreed/core` refuses every new begin, waits until idle for the
+  deadline less its reserve (`DEFAULT_SHUTDOWN_RESERVE`, 2 s), then closes
+  the turns still running and waits out the reserve, returning a
+  `ShutdownReport` (`idle`, `interrupted`, `left`). `agent.shutdown(options?)`
+  runs it over the agent's runtime services (a deadline of
+  `DEFAULT_SHUTDOWN_DEADLINE`, 25 s, unless `AgentConfig.shutdown` gives
+  one), and with `AgentConfig.shutdown` closing the agent's scope runs it
+  before the agent's plugins close. The new port `TurnShutdown`
+  (`@xandreed/core/TurnShutdown`), provided by `SessionsLive`: `refuse` fails
+  every begin with `TurnRefused` of reason `shutdown` (`isShutdownRefusal`),
+  deliveries still stored; `interrupt` stores each held turn's end while the
+  log is open, as interrupted with the new code `turn.shutdown` (resumable,
+  no inbox attempt counted), and closes its writer, so `Agent.turn`
+  interrupts the turn. A background task refused by a shutdown now stays
+  pending for the next process's `reconcile` instead of failing with
+  `task.refused`. `sessionsConformance` (`shutdown`) and `tasksConformance`
+  (`shutdown`) check it. `Sessions.cancel` and the shutdown close a turn
+  through one commit (`closeOpen`).
 - `@xandreed/plugin-session-files`: crash tests against real processes,
   on Bun and, in `verify:packages`, on Node: a writer SIGKILLed while it
   commits leaves whole commits, one killed between writing and linking a

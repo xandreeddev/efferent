@@ -46,6 +46,7 @@ class TurnEvents
 class TurnMemory
 class TurnPrompt
 class TurnRefused
+class TurnShutdown
 class TurnTasks
 class TurnToolbox
 class UserMessage
@@ -95,6 +96,8 @@ const CurrentPromptCacheKey
 const CurrentPromptProvenance
 const CurrentToolInvocation
 const CurrentTraceContent
+const DEFAULT_SHUTDOWN_DEADLINE
+const DEFAULT_SHUTDOWN_RESERVE
 const DecisionId
 const DecisionRecord
 const DecisionRecordedEvent
@@ -179,6 +182,7 @@ const SessionLogMemoryLive
 const SessionPage
 const SessionReadQuery
 const SessionView
+const ShutdownReport
 const SkillDefinition
 const SkillFile
 const SkillFileIssue
@@ -284,6 +288,7 @@ const isBudgetTokens
 const isHarnessError
 const isMediaValue
 const isRevisionConflict
+const isShutdownRefusal
 const isStoreBusy
 const isTurnError
 const journalSchemaOf
@@ -328,6 +333,8 @@ const resumeRefusal
 const rewrittenBy
 const sameUserMessage
 const sessionAttributes
+const shutdownGracefully
+const shutdownRefusal
 const skillIssuesText
 const skillsFromFiles
 const sniffImageType
@@ -385,6 +392,7 @@ interface RenderOptions
 interface RequestSnapshot
 interface ResumableTurn
 interface RunTools
+interface ShutdownOptions
 interface SkillMatch
 interface StepDirective
 interface StepInfo
@@ -521,6 +529,7 @@ type SessionLogEvent
 type SessionPage
 type SessionReadQuery
 type SessionView
+type ShutdownReport
 type SkillDefinition
 type SkillFile
 type SkillFileIssue

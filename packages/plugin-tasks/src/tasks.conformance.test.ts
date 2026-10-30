@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Option } from "effect"
-import { SessionLog, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, TaskRefused, TaskRunner, Tasks, TurnAdmissionOpen } from "@xandreed/core"
+import { SessionLog, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, TaskRefused, TaskRunner, Tasks, TurnAdmissionOpen, TurnRefused, TurnShutdown } from "@xandreed/core"
 import { taskRunnerConformance, tasksConformance } from "@xandreed/core/conformance"
 import type { ConformanceCheck, TasksDependencies, TasksFixture } from "@xandreed/core/conformance"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
@@ -42,11 +42,13 @@ type SessionsService = TasksFixture["sessions"]
  * executor.
  */
 const tasksOver = (dependencies: TasksDependencies, wrap: (sessions: SessionsService) => SessionsService = (sessions) => sessions) => Layer.build(TasksLive(tasksDefaults).pipe(Layer.provideMerge(Layer.mergeAll(
-  Layer.effect(Sessions, Effect.map(Effect.service(Sessions), wrap)).pipe(
-    Layer.provide(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))),
+  Layer.effectContext(Effect.gen(function* () {
+    const sessions = yield* Sessions
+    return Context.make(Sessions, wrap(sessions)).pipe(Context.add(TurnShutdown, yield* TurnShutdown))
+  })).pipe(Layer.provide(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), TurnAdmissionOpen))))),
   Layer.succeed(TaskRunner, dependencies.runner),
   Layer.succeed(TaskExecutor, dependencies.executor),
-)))).pipe(Effect.map((context): TasksFixture => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks) })))
+)))).pipe(Effect.map((context): TasksFixture => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks), shutdown: Context.getOption(context, TurnShutdown) })))
 
 describe("TasksLive conforms to the Tasks contract", () => {
   passes(tasksConformance((dependencies) => tasksOver(dependencies)))
@@ -108,6 +110,15 @@ describe("the Tasks kit catches careless backends", () => {
         react: (writer) => withoutTasks(dependencies.executor.react(writer)),
       }),
     })))).toEqual(["executor-tasks"])
+  }, 30_000)
+
+  test("one that fails a task its shutdown refused, as if the host had refused it, fails only the shutdown check", async () => {
+    const unaware = (sessions: SessionsService): SessionsService => Sessions.of({
+      ...sessions,
+      begin: (address, input) => sessions.begin(address, input).pipe(Effect.catchTag("TurnRefused", (refused) =>
+        Effect.fail(new TurnRefused({ session: refused.session, reason: "budget", message: refused.message })))),
+    })
+    expect(await failedChecks(tasksConformance((dependencies) => tasksOver(dependencies, unaware)))).toEqual(["shutdown"])
   }, 30_000)
 
   test("one that lists no task fails the checks that read the list", async () => {

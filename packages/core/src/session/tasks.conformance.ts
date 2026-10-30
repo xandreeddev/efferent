@@ -3,7 +3,7 @@ import type { ConformanceCheck, ConformanceFailure } from "../conformance.entity
 import { check, eventually, expect, fail, freshId, kindsOf, settles } from "../conformance.functions.js"
 import { RunId } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
-import type { TaskActivity } from "../ports/activity.port.js"
+import type { TaskActivity, TurnShutdown } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
 import { TaskExecutor, TaskRunner, Tasks } from "../ports/tasks.port.js"
 import type { TurnOutcome } from "../ports/turn.port.js"
@@ -171,6 +171,8 @@ export interface TasksDependencies {
 export interface TasksFixture {
   readonly sessions: Context.Service.Shape<typeof Sessions>
   readonly tasks: Context.Service.Shape<typeof Tasks>
+  /** That `Sessions`' `TurnShutdown`, when it has one: then a task its shutdown refuses is checked to wait. */
+  readonly shutdown: Option.Option<Context.Service.Shape<typeof TurnShutdown>>
 }
 
 /** One child turn as the kit's executor ran it. */
@@ -222,7 +224,9 @@ const fillInbox = (sessions: Context.Service.Shape<typeof Sessions>, parent: Ses
  * delivers nothing; a task does not start tasks, and a host's fork of the
  * conversation may; and `reconcile` starts a
  * task whose runner never ran it, and delivers, once, a finished result
- * whose delivery was lost. The kit loses one by filling the parent's inbox
+ * whose delivery was lost; over a `Sessions` with a `TurnShutdown`, a task
+ * whose turn its shutdown refuses waits (pending, no failure, no turn run),
+ * for the next process's `reconcile`. The kit loses a delivery by filling the parent's inbox
  * until `deliver` fails with `InboxFull` before the task ends: that check
  * relies on the backend leaving a result the full inbox refused for a later
  * `reconcile`, and runs only over a `Sessions` whose inbox refuses an item
@@ -451,6 +455,18 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       const second = yield* h.tasks.reconcile(h.parent)
       yield* h.idle("reconcile")
       yield* expect("reconcile", second.started === 0 && second.delivered === 0 && (yield* h.turns).length === 1, `reconciling again answered ${JSON.stringify(second)}`)
+    })),
+
+    scoped("a task whose turn a shutdown refuses waits: it reads pending with no failure, and its child runs no turn", "shutdown", (owner) => Effect.gen(function* () {
+      const h = yield* harness(owner)
+      if (Option.isNone(h.shutdown)) return
+      yield* h.shutdown.value.refuse
+      const view = yield* h.tasks.start(h.parent, { instructions: "after the restart", mode: "spawn" })
+      yield* h.idle("shutdown")
+      const status = yield* h.tasks.status(h.parent, view.taskId)
+      const turns = (yield* h.turns).length
+      yield* expect("shutdown", status.status === "pending" && Option.isNone(status.failure) && turns === 0,
+        `a task refused by a shutdown reads ${status.status} (${Option.match(status.failure, { onNone: () => "no failure", onSome: (failure) => failure.code })}) after ${turns} child turns`)
     })),
 
     scoped("reconcile delivers a finished result whose delivery was lost (the parent's inbox was full), once", "reconcile-delivery", (owner) => Effect.gen(function* () {

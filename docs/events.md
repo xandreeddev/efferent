@@ -506,9 +506,12 @@ Three places say how a turn ended; two of them carry the failure's code:
   activity probes from the services it runs with, and without them finds
   none and reports idle at once: with the host
   [below](#serving-turns-over-http), run
-  `awaitIdle({ timeout }).pipe(Effect.provide(host.services))`. See [busy
+  `awaitIdle({ timeout }).pipe(Effect.provide(host.services))`.
+  `agent.shutdown()` stops the turns within a deadline: new turns are
+  refused (`TurnRefused`, reason `shutdown`), those still running at the
+  deadline end interrupted with `turn.shutdown`, resumable. See [busy
   signal and graceful shutdown](framework.md#busy-signal-and-graceful-shutdown)
-  for the whole drain.
+  for the whole shutdown.
 - **Traces.** Every turn `Agent.turn` runs is an `agent.turn` span carrying
   the session, run and turn ids (see [traces and
   metrics](framework.md#traces-and-metrics)).

@@ -32,7 +32,7 @@ export type { /** @public */ NewTurn, /** @public */ TurnInput } from "@xandreed
 export type { Turn, TurnOutcome, /** @public */ TurnPolicy, /** @public */ TurnResult } from "@xandreed/core"
 
 // the sessions turns begin in: their store, its in-memory backend, and admission
-export { SessionLog, SessionLogMemoryLive, Sessions, TurnAdmission, TurnAdmissionOpen, TurnRefused } from "@xandreed/core"
+export { SessionLog, SessionLogMemoryLive, Sessions, /** @public */ TurnAdmission, TurnAdmissionOpen, /** @public */ TurnRefused } from "@xandreed/core"
 
 // the host's tools, skills, prompt sections and plugins, and what a turn's tools work with
 export {
@@ -76,5 +76,13 @@ export {
 } from "@xandreed/core"
 export type { TurnError } from "@xandreed/core"
 
-// what the process still has in flight, for a `/ping` or a drain
-export { awaitIdle, /** @public */ processActivity } from "@xandreed/core"
+// what the process still has in flight, for a `/ping` or a drain, and a shutdown within a deadline
+export {
+  /** @public */ awaitIdle,
+  /** @public */ DEFAULT_SHUTDOWN_DEADLINE,
+  /** @public */ isShutdownRefusal,
+  /** @public */ processActivity,
+  /** @public */ shutdownGracefully,
+  /** @public */ TurnShutdown,
+} from "@xandreed/core"
+export type { ShutdownOptions, /** @public */ ShutdownReport } from "@xandreed/core"

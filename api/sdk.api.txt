@@ -7,10 +7,12 @@ class Sessions
 class TurnAdmission
 class TurnEvents
 class TurnRefused
+class TurnShutdown
 class UserMessage
 const Agent
 const AssistantMessage
 const ConversationId
+const DEFAULT_SHUTDOWN_DEADLINE
 const Failure
 const Media
 const RunId
@@ -34,6 +36,7 @@ const finishTurn
 const guardTurn
 const harnessCodeOf
 const isHarnessError
+const isShutdownRefusal
 const isTurnError
 const mediaFromBase64
 const mediaFromBytes
@@ -44,6 +47,7 @@ const processActivity
 const publishToolProgress
 const runTurnLoop
 const settleTurn
+const shutdownGracefully
 const stepRequestOf
 const subscribeAll
 const traceTurn
@@ -58,6 +62,7 @@ interface AgentConfig
 interface AgentPluginEntry
 interface Capability
 interface NewTurn
+interface ShutdownOptions
 interface Turn
 interface TurnBeginTrace
 interface TurnEventsService
@@ -72,6 +77,7 @@ type Failure
 type Media
 type RunId
 type SessionAddress
+type ShutdownReport
 type TurnBeginError
 type TurnEndedData
 type TurnError

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { SessionLog, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission } from "@xandreed/core"
+import { SessionLog, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission, TurnShutdown } from "@xandreed/core"
 import type { JsonObject, SessionAddress } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
 import type { SessionsSubject } from "@xandreed/core/conformance"
@@ -26,7 +26,7 @@ afterAll(() => Effect.runPromise(Scope.close(scope, Exit.void)).then(() => rmSyn
 
 const instance = (config: SessionsConfig, admission: Context.Service.Shape<typeof TurnAdmission>, liveness?: Parameters<typeof SessionsLive>[1]) =>
   Layer.build(SessionsLive(config, liveness).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), Layer.succeed(TurnAdmission, admission))))).pipe(
-    Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity) })))
+    Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown) })))
 
 /** A session's head state as the next release would leave it: its stored format one above this release's. */
 const newerFormat = (address: SessionAddress) => log.head(address.id).pipe(

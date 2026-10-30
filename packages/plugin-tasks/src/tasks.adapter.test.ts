@@ -14,6 +14,7 @@ import {
   SessionLogError,
   SessionLogMemoryLive,
   Sessions,
+  shutdownRefusal,
   TaskExecutor,
   TaskRunner,
   Tasks,
@@ -393,6 +394,27 @@ describe("limits, failures and budgets", () => {
       return [status.status, Option.getOrNull(Option.map(status.failure, (failure) => failure.code))]
     }), { concurrency: 1 })
     expect(stored).toEqual([["failed", "session.contended"], ["failed", "events.reserved"], ["failed", "session.log"], ["failed", "session.contended"]])
+  })))
+
+  test("a task refused because the process is shutting down waits, its child untouched, and the next reconcile runs it", () => scenario(Effect.gen(function* () {
+    const stopping = yield* Ref.make(true)
+    const admission = Layer.succeed(TurnAdmission, TurnAdmission.of({
+      admit: (turn, open) => Effect.gen(function* () {
+        if ((yield* Ref.get(stopping)) && turn.key.startsWith("task:")) return yield* Effect.fail(shutdownRefusal(turn.session.id))
+        return yield* open
+      }),
+    }))
+    const h = yield* harness({ admission })
+    const task = yield* h.tasks.start(h.parent, { instructions: "after the restart", mode: "spawn" })
+    yield* h.idle
+    const waiting = yield* h.tasks.status(h.parent, task.taskId)
+    expect([waiting.status, Option.isNone(waiting.failure)]).toEqual(["pending", true])
+    expect(yield* h.kinds({ id: task.child, owner })).toEqual([])
+    // The restarted process admits it: its reconcile runs the task.
+    yield* Ref.set(stopping, false)
+    expect((yield* h.tasks.reconcile(h.parent)).started).toBe(1)
+    yield* h.idle
+    expect((yield* h.tasks.status(h.parent, task.taskId)).status).toBe("completed")
   })))
 
   test("a task the host will not admit fails with the host's reason, and the parent still hears of it", () => scenario(Effect.gen(function* () {

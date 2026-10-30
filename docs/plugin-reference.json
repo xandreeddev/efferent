@@ -139,7 +139,8 @@
     "optional": [],
     "provides": [
       "efferent/Sessions",
-      "efferent/TurnActivity"
+      "efferent/TurnActivity",
+      "@xandreed/core/TurnShutdown"
     ],
     "contributes": [],
     "defaults": {

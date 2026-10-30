@@ -6,7 +6,7 @@ import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { RunId } from "../domain/run.entity.js"
 import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
-import type { TurnActivity } from "../ports/activity.port.js"
+import type { TurnActivity, TurnShutdown } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
 import { TurnAdmission } from "../ports/turn-admission.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -24,6 +24,8 @@ export interface SessionsInstance {
   readonly sessions: Service
   /** Its `TurnActivity` (the turns it has in flight), when it provides one: then checked against what it opens. */
   readonly activity: Option.Option<Context.Service.Shape<typeof TurnActivity>>
+  /** Its `TurnShutdown`, when it provides one: then checked to refuse its begins and close its turns. */
+  readonly shutdown: Option.Option<Context.Service.Shape<typeof TurnShutdown>>
 }
 
 /**
@@ -177,10 +179,14 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * newer release stamped refused for every write and turn (`begin`,
  * `deliver`, `drain`, `cancel`, `transact`, `fork`) with a
  * `SessionLogError` of code `session.version`, nothing written, and still
- * read (`get`, `list`, `read`); and, for an instance
+ * read (`get`, `list`, `read`); for an instance with a `TurnShutdown`, a
+ * begin refused (`TurnRefused`, reason `shutdown`) once it refuses, the
+ * turns open before running on and a drain opening nothing, then every
+ * turn it holds closed by `interrupt` as interrupted with `turn.shutdown`,
+ * its writer closed, and resumed by another instance; and, for an instance
  * with a `TurnActivity`, its activity agreeing with what is open, per
  * session and turn, a begin counting from the moment it is asked for (an
- * instance without one passes that check unchecked).
+ * instance without either passes that check unchecked).
  *
  * Checks that move the clock (`advance`) run leases of a second: give the
  * kit a clock it can move at once (`TestClock`) or expect them to take
@@ -832,6 +838,43 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
         })),
       ],
     }),
+
+    scoped("TurnShutdown refuses every begin once it refuses while the open turns run on, then closes every turn the instance holds as interrupted with turn.shutdown and its writer, and another instance resumes it", "shutdown", (owner) => Effect.gen(function* () {
+      const stopping = yield* leased()
+      if (Option.isNone(stopping.shutdown)) return
+      const shutdown = stopping.shutdown.value
+      const successor = yield* leased()
+      const [held, idle] = [yield* created(stopping.sessions, owner), yield* created(stopping.sessions, owner)]
+      const writer = yield* stopping.sessions.begin(held, say("long running"))
+      const refusedBegin = Effect.scoped(stopping.sessions.begin(idle, say("too late"))).pipe(Effect.match({
+        onFailure: (error) => error._tag === "TurnRefused" ? `TurnRefused:${error.reason}` : error._tag,
+        onSuccess: (opened) => `opened turn ${opened.admitted.turn}`,
+      }))
+      yield* shutdown.refuse
+      const refused = yield* refusedBegin
+      yield* expect("shutdown", refused === "TurnRefused:shutdown", `a begin once the instance refuses gave ${refused}`)
+      // Deliveries are still stored; an inbox turn is refused like any other, so a drain opens nothing.
+      yield* stopping.sessions.deliver(idle, item("while-stopping"))
+      const drained = yield* stopping.sessions.drain(idle, () => Effect.void)
+      const waiting = (yield* stopping.sessions.get(idle)).pending
+      yield* expect("shutdown", drained.turns === 0 && waiting === 1, `a drain while refusing ran ${drained.turns} turns and left ${waiting} items waiting`)
+      const running = yield* writeRefused(writer)
+      yield* expect("shutdown", running === "stored", `a write by the turn open before the refusal gave ${running}`)
+      const interrupted = (yield* shutdown.interrupt).map((turn) => `${turn.session === held.id ? "held" : turn.session}:${turn.turn}`).join()
+      yield* expect("shutdown", interrupted === "held:1", `interrupt closed [${interrupted}], not [held:1]`)
+      const ended = endings(yield* successor.sessions.read(held, { kinds: ["turn.ended"] }))
+      yield* expect("shutdown", ended === "1:interrupted:turn.shutdown", `the interrupted turn was closed as ${ended || "nothing"}`)
+      const closed = yield* writer.closed
+      const late = yield* writeRefused(writer)
+      yield* expect("shutdown", closed.reason === "interrupted" && late === "TurnClosed:interrupted", `the interrupted turn's writer was closed as ${closed.reason}, and a write after it gave ${late}`)
+      const still = yield* refusedBegin
+      yield* expect("shutdown", still === "TurnRefused:shutdown", `a begin after the interrupt gave ${still}`)
+      // The next process resumes the interrupted turn, and takes what waited.
+      const resuming = yield* successor.sessions.begin(held, resume(1))
+      yield* expect("shutdown", resuming.admitted.turn === 2 && resuming.admitted.resumes === 1, `another instance resuming turn 1 opened turn ${resuming.admitted.turn}, resuming ${resuming.admitted.resumes ?? "nothing"}`)
+      const taken = yield* successor.sessions.drain(idle, () => Effect.void)
+      yield* expect("shutdown", taken.turns === 1, `another instance's drain of what waited ran ${taken.turns} turns`)
+    })),
 
     scoped("TurnActivity agrees with what is open: a begin counts from the moment it is asked for, then its turn per session and turn until its scope closes", "activity", (owner) => Effect.gen(function* () {
       const gate = yield* Deferred.make<void>()
