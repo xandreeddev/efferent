@@ -10,6 +10,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A host `Sessions` over `@xandreed/plugin-sessions`' state, or tooling that
+  reads the head's `sessions` state, accepts its new optional `format` key.
+  A session a newer release wrote is refused for writes and turns with
+  `SessionLogError` code `session.version` (its `harnessCodeOf` is
+  `session.log`): run it with that release or a later one.
 - `@xandreed/plugin-render`: a host `RenderStore` keeps records under thread,
   principal and surface, scopes `commit` idempotency the same way, accepts a
   `SurfaceFrozen` without a version (and refuses `plan` after it), and reruns
@@ -866,6 +871,19 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- `STORED_FORMAT` in `@xandreed/core`: the version of every shape the
+  framework stores in a session log (journal payloads, `SessionHeader` and
+  `SessionLogEvent`, the tasks plugin's records, the sessions plugin's head
+  state), format 1 as of this release. `bun run docs:generate` fingerprints
+  the shapes into `docs/stored-format.json` and fails on a change that does
+  not bump it. `@xandreed/plugin-sessions` stamps every session it writes
+  with the format, and refuses a session a newer release stamped for
+  `begin`, `deliver`, `drain`, `cancel`, `transact` and `fork` with a
+  `SessionLogError` of code `session.version`, writing nothing; `get`,
+  `list` and `read` still read it. `sessionsConformance` checks the refusal
+  for a subject that gives `newerFormat`. Journal fixtures record their
+  `storedFormat`.
 
 - `reasonOf(cause)` in `@xandreed/core`: a cause as one line of text that is
   safe for reports, stored records and model-facing failures (`code:

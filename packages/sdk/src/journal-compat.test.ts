@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
-import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, RunId, SessionHeader, SessionLogEvent, StoredData } from "@xandreed/core"
+import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, RunId, SessionHeader, SessionLogEvent, STORED_FORMAT, StoredData } from "@xandreed/core"
 import type { StoredKind } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 
@@ -20,6 +20,8 @@ import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, T
 const Fixture = Schema.Struct({
   format: Schema.Literal(1),
   version: Schema.String,
+  /** The stored format that version wrote (`STORED_FORMAT`); fixtures recorded before it existed have none. */
+  storedFormat: Schema.optionalKey(Schema.Int),
   /** The kinds `RESERVED_KINDS` held in that version. */
   reserved: Schema.Array(Schema.String),
   sessions: Schema.Array(Schema.Struct({ header: SessionHeader, events: Schema.Array(SessionLogEvent) })),
@@ -36,6 +38,18 @@ const fixtures = await Effect.runPromise(Effect.forEach(files, (file) => Effect.
   Effect.flatMap(Schema.decodeUnknownEffect(Fixture)),
   Effect.map((fixture) => ({ file, fixture })),
 )))
+
+/** The formats docs/stored-format.json records, each with the fingerprint of its shapes. */
+const StoredFormats = Schema.Struct({ history: Schema.Array(Schema.Struct({ format: Schema.Int, fingerprint: Schema.String })) })
+const recordedFormats = await Effect.runPromise(Effect.tryPromise(() => Bun.file(join(import.meta.dir, "../../../docs/stored-format.json")).text()).pipe(
+  Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(StoredFormats))),
+  Effect.map((record) => record.history.map((row) => row.format)),
+))
+
+test("a fixture's stored format, when it names one, is one this release reads and docs/stored-format.json records", () => {
+  expect(recordedFormats).toContain(STORED_FORMAT)
+  expect(fixtures.flatMap(({ file, fixture }) => fixture.storedFormat === undefined || (fixture.storedFormat <= STORED_FORMAT && recordedFormats.includes(fixture.storedFormat)) ? [] : [`${file}: stored format ${fixture.storedFormat}`])).toEqual([])
+})
 
 test("the journals of every release since 0.13.0 are kept", () => {
   expect(files).toContain("journal-0.13.0.json")

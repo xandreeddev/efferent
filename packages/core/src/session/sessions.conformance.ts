@@ -65,6 +65,14 @@ export interface SessionsSubject {
   }) => Effect.Effect<SessionsInstance, unknown, Scope.Scope>
   /** Move the clock the store and the instances read forward by `millis`: `TestClock.adjust`, or a sleep on a live clock. */
   readonly advance: (millis: number) => Effect.Effect<void>
+  /**
+   * Stamp a session as a newer release would leave it: its stored format
+   * above `STORED_FORMAT`, everything else as it was. The kit calls it on a
+   * session an instance has written to (a turn begun and ended, an item
+   * delivered). Leave it out for a backend that keeps no stored format: the
+   * stored-format check is then not run.
+   */
+  readonly newerFormat?: (address: SessionAddress) => Effect.Effect<void, unknown>
 }
 
 /** Admits every turn. */
@@ -117,6 +125,13 @@ const writeRefused = (writer: TurnWriter) => writer.append([{ kind: "conformance
   Effect.andThen(writer.flush),
   Effect.match({ onFailure: refusalOf, onSuccess: () => "stored" }),
 )
+/** A `SessionLogError` by its tag and fields, whichever copy of core made it. */
+const isStoreError = Schema.is(Schema.Struct({ _tag: Schema.Literal("SessionLogError"), code: Schema.String }))
+/** What a call answered: `SessionLogError(<its own code>)`, another failure's tag, or `done`. */
+const answerOf = <R>(effect: Effect.Effect<unknown, { readonly _tag: string }, R>): Effect.Effect<string, never, R> => effect.pipe(Effect.match({
+  onFailure: (error) => isStoreError(error) ? `SessionLogError(${error.code})` : error._tag,
+  onSuccess: () => "done",
+}))
 /** A scope of the check's own, closed when the check ends if it is still open. */
 const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(scope, Exit.void))
 
@@ -155,7 +170,11 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * the lease from that write; with `processOwned`, a turn whose process
  * stopped reaped, one whose process runs held, and a leased turn held by
  * a process-owned instance within its lease (a turn is judged as it was
- * taken, not by the reader's ownership); and, for an instance
+ * taken, not by the reader's ownership); with `newerFormat`, a session a
+ * newer release stamped refused for every write and turn (`begin`,
+ * `deliver`, `drain`, `cancel`, `transact`, `fork`) with a
+ * `SessionLogError` of code `session.version`, nothing written, and still
+ * read (`get`, `list`, `read`); and, for an instance
  * with a `TurnActivity`, its activity agreeing with what is open, per
  * session and turn, a begin counting from the moment it is asked for (an
  * instance without one passes that check unchecked).
@@ -741,6 +760,40 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
           const reaped = endings(yield* process.sessions.read(address, { kinds: ["turn.ended"] }))
           yield* expect("tenure", next.admitted.turn === 2 && reaped === "1:interrupted:turn.lease",
             `once the lease ran out the process-owned instance opened turn ${next.admitted.turn} and closed the leased one as ${reaped || "nothing"}`)
+        })),
+      ],
+    }),
+
+    ...Option.match(Option.fromNullishOr(subject.newerFormat), {
+      onNone: () => [],
+      onSome: (newerFormat) => [
+        scoped("a session a newer release stamped (its stored format above STORED_FORMAT) refuses every write and turn with session.version, writing nothing, and is still read", "stored-format", (owner) => Effect.gen(function* () {
+          const { sessions } = yield* leased()
+          const address = yield* created(sessions, owner)
+          yield* Effect.scoped(sessions.begin(address, say("before the upgrade")).pipe(Effect.flatMap((writer) => writer.end(completed))))
+          yield* sessions.deliver(address, item("waiting"))
+          yield* newerFormat(address)
+          const before = yield* sessions.get(address)
+          const stored = kindsOf(yield* sessions.read(address))
+          const answers = [
+            yield* answerOf(Effect.scoped(sessions.begin(address, say("after the upgrade")))),
+            yield* answerOf(sessions.deliver(address, item("late"))),
+            yield* answerOf(sessions.drain(address, () => Effect.void)),
+            yield* answerOf(sessions.cancel(address, 1)),
+            yield* answerOf(sessions.transact(address, () => Effect.succeed({ drafts: [{ kind: "conformance.note", data: {} }], result: undefined }))),
+            yield* answerOf(sessions.fork(address, { origin: "conformance", inherit: true })),
+          ]
+          yield* expect("stored-format", answers.every((answer) => answer === "SessionLogError(session.version)"),
+            `begin, deliver, drain, cancel, transact and fork of a newer release's session gave ${answers.join()}`)
+          const after = yield* sessions.get(address)
+          yield* expect("stored-format", after.seq === before.seq && after.updatedAt === before.updatedAt && after.turns === 1 && after.pending === 1 && Option.isNone(after.open),
+            `the refused calls wrote to the session: ${after.turns} turns, ${after.pending} waiting, seq ${before.seq} then ${after.seq}`)
+          const read = kindsOf(yield* sessions.read(address))
+          yield* expect("stored-format", read === stored, `the session was read as ${read}, not ${stored}`)
+          const listed = (yield* sessions.list({ owner })).sessions.map((view) => view.header.id)
+          const children = (yield* sessions.list({ owner, parent: address.id })).sessions.length
+          yield* expect("stored-format", listed.includes(address.id) && children === 0,
+            `the owner's sessions listed ${listed.includes(address.id) ? "it" : "without it"}, and ${children} children under it`)
         })),
       ],
     }),

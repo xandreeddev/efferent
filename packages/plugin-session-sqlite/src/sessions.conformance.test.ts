@@ -4,7 +4,8 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Context, Effect, Exit, Layer, Option, Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { SessionLog, Sessions, TurnActivity, TurnAdmission } from "@xandreed/core"
+import { SessionLog, Sessions, STORED_FORMAT, TurnActivity, TurnAdmission } from "@xandreed/core"
+import type { JsonObject, SessionAddress } from "@xandreed/core"
 import { sessionsConformance } from "@xandreed/core/conformance"
 import type { SessionsSubject } from "@xandreed/core/conformance"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
@@ -27,12 +28,24 @@ const instance = (config: SessionsConfig, admission: Context.Service.Shape<typeo
   Layer.build(SessionsLive(config, liveness).pipe(Layer.provide(Layer.merge(Layer.succeed(SessionLog, log), Layer.succeed(TurnAdmission, admission))))).pipe(
     Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity) })))
 
+/** A session's head state as the next release would leave it: its stored format one above this release's. */
+const newerFormat = (address: SessionAddress) => log.head(address.id).pipe(
+  Effect.flatMap((head) => log.commit(address.id, {
+    expect: head.revision,
+    notAfter: Option.none(),
+    events: [],
+    state: Option.some({ ...head.state, sessions: { ...(head.state["sessions"] as JsonObject), format: STORED_FORMAT + 1 } }),
+  })),
+  Effect.asVoid,
+)
+
 const subject: SessionsSubject = {
   leased: ({ ttlMs, admission }) => instance({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs, renew: "on-commit" } }, admission),
   processOwned: ({ self, running, admission }) => instance({ ...sessionsDefaults, ownership: { mode: "process" } }, admission, {
     liveness: { current: Effect.succeed(Option.some(self)), alive: (pid) => Effect.succeed(running.includes(pid)) },
   }),
   advance: (millis) => TestClock.adjust(millis),
+  newerFormat,
 }
 
 describe("SessionsLive over the SQLite log conforms to the Sessions contract", () => {

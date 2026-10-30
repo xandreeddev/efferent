@@ -33,6 +33,14 @@ export type HeldTurn = typeof HeldTurn.Type
 
 export const SessionsState = Schema.Struct({
   v: Schema.Literal(1),
+  /**
+   * The stored format (core's `STORED_FORMAT`) of the release that last
+   * wrote the session: every commit of this release writes it, raised to its
+   * own when lower. Absent in a state an earlier release wrote, read as 1. A
+   * session whose format is above this release's is refused for writes and
+   * turns (`session.version`).
+   */
+  format: Schema.optionalKey(Schema.Int),
   /** The highest turn number begun (a fork starts from its parent's). */
   turns: Schema.Int,
   open: Schema.OptionFromNullOr(HeldTurn),

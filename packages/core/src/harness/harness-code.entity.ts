@@ -56,6 +56,7 @@ export const HARNESS_CODES = [
   "session.missing",
   "session.nothing-pending",
   "session.state",
+  "session.version",
   "settings.corrupt",
   "skills.duplicate",
   "skills.files",

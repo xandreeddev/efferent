@@ -17,7 +17,7 @@ import type {
   TurnWriter,
 } from "@xandreed/core"
 import type { Context } from "effect"
-import { closedState, droppedData, pendingOf, stateJson, stateOf } from "./sessions-state.entity.functions.js"
+import { closedState, droppedData, pendingOf, stateJson, stateOf, withFormat } from "./sessions-state.entity.functions.js"
 import type { SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 import { admit, beginEnd, close, endPlanOf, endSettled, hold, latch, markTried, opened, scopeEnding, stopped, unended, withdrawEnd } from "./turn-writer.entity.functions.js"
 import { EndStep, WriterPhase } from "./turn-writer.entity.js"
@@ -249,7 +249,8 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       const { position: at, foreign } = yield* Ref.get(cursor)
       const decided = yield* plan(at, foreign)
       const now = yield* storageNow
-      const next = options.renew ? renewed(decided.next, now, false) : decided.next
+      // In this release's stored format: raised once when another instance, of an earlier release, wrote the state since.
+      const next = withFormat(options.renew ? renewed(decided.next, now, false) : decided.next)
       const notAfter = ownership.mode === "lease" ? Option.flatMap(at.state.open, (open) => open.expiresAt) : Option.none()
       const state = next === at.state ? Option.none() : Option.some(yield* stateJson(next).pipe(Effect.mapError((error) => harnessError("session.encode", error.message, error))))
       const committed = yield* log.commit(id, { expect: at.revision, notAfter, events: stamped(decided.drafts), state }).pipe(Effect.catchTags({

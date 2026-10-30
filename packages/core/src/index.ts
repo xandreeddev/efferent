@@ -121,6 +121,7 @@ export {
   TurnStartedData,
 } from "./session/session-event.entity.js"
 export { JOURNAL_KINDS } from "./session/session-event.entity.js"
+export { STORED_FORMAT } from "./session/stored-format.entity.js"
 export {
   entriesOfEvents,
   frameworkDraft,
