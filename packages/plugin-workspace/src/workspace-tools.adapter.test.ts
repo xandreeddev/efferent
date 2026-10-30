@@ -610,7 +610,7 @@ describe("workspaceToolsPlugin", () => {
         { id: PluginInstanceId.make("local"), use: localSystemPlugin.id, options: { exitGraceMs: 100 } },
         { id: PluginInstanceId.make("tools"), use: workspaceToolsPlugin.id, options: { always: ["read", "shell"], tools: ["read", "bash"] } },
       ] }, [workspaceToolsPlugin, localSystemPlugin], [SessionEnvironment.key])
-      const context = yield* activateGraph(graph, "runtime", Context.empty(), yield* Effect.scope)
+      const context = yield* activateGraph(graph, "runtime", Context.make(SessionEnvironment, { workspace: "." }), yield* Effect.scope)
       const contributed: ReadonlyArray<Capability> = Option.getOrElse(Context.getOption(context, Capabilities), () => [])
       return contributed.flatMap((capability) => capability.skills.map((skill) => `${skill.id}:${skill.tools.join(",")}:${skill.always}`))
     }))

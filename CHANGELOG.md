@@ -159,6 +159,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `Sessions.changes` merges the signals a follower has not taken into one:
   a follower that counted signals to count commits reads from its cursor
   after each signal instead.
+- List every service a plugin's layer needs in `requires`, and read an
+  `optional` service with `Effect.serviceOption`. A host calling
+  `activateGraph` must pass any service it named `external` that a plugin
+  requires.
 
 ### Breaking
 
@@ -431,6 +435,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `generateWith(selection, options, isFallback?, budget?)` take an optional
   `CallBudget`; a routed call that once retried for about 40 minutes now
   fails after 600 s.
+- `@xandreed/core`: `definePlugin`'s `requires` and `optional` take service
+  keys (service classes or References), and a plugin's layer may need only
+  the services `requires` lists; a layer needing another one no longer
+  compiles.
+- Activating a plugin without a service its `requires` lists fails with
+  `requires.missing`, naming the plugin and the service, before its layer is
+  built (it used to die mid-activation as `plugin.defect`).
 
 ### Added
 
@@ -564,6 +575,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   past it the export fails as `provider`.
 - `@xandreed/plugin-models` exports `LLM_CALL_BUDGET_MS`, `CallBudget` and
   `makeCallBudget`.
+- `@xandreed/core` exports `provideDeclared` and `ServiceKeys`, and the
+  published codes include `requires.missing`.
 
 ### Changed
 
@@ -829,6 +842,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   session, and a follower that stops reading holds one signal instead of
   one per commit. A session's signal hub exists only while someone follows
   it, and follower streams end when the Sessions layer closes.
+- The summary memory declares the `UtilityLlm` it reads each turn as
+  `optional`.
 
 ### Repository
 

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Redacted, Schema } from "effect"
-import { mergeOptions } from "./plugin.entity.functions.js"
+import { Context, Effect, Redacted, Ref, Schema } from "effect"
+import { ActionPolicy, SessionEnvironment } from "../ports/harness.port.js"
+import { mergeOptions, provideDeclared } from "./plugin.entity.functions.js"
 
 const Ownership = Schema.Union([
   Schema.Struct({ mode: Schema.Literal("lease"), ttlMs: Schema.Number, renew: Schema.Union([Schema.Literal("none"), Schema.Struct({ everyMs: Schema.Number })]) }),
@@ -54,5 +55,31 @@ describe("mergeOptions", () => {
     expect(merge({})).toEqual(defaults)
     const once = merge({ ownership: { mode: "process" }, inbox: { maxPending: 50 } })
     expect(mergeOptions(Config, defaults, once)).toEqual(once)
+  })
+})
+
+describe("provideDeclared", () => {
+  const Prefix = Context.Reference<string>("test/Prefix", { defaultValue: () => "ws" })
+  const workspace = SessionEnvironment.pipe(Effect.map((environment) => environment.workspace))
+
+  test("runs the work where it is called, with that place's services, once every required key is there; a Reference needs none", async () => {
+    const declared = provideDeclared("test/owner", [SessionEnvironment, Prefix])(Effect.all([Prefix, workspace], { concurrency: 1 }))
+    const at = (name: string) => Effect.runPromise(Effect.provide(declared, Context.make(SessionEnvironment, { workspace: name })))
+    expect([await at("a"), await at("b")]).toEqual([["ws", "a"], ["ws", "b"]])
+  })
+
+  test("fails with requires.missing, naming the owner and each missing key, before the work starts", async () => {
+    const started = await Effect.runPromise(Ref.make(false))
+    const declared = provideDeclared("test/owner", [ActionPolicy, Prefix, SessionEnvironment])(Ref.set(started, true))
+    const error = await Effect.runPromise(Effect.flip(declared))
+    expect([error.code, error.message]).toEqual(["requires.missing", `test/owner requires ${ActionPolicy.key}, ${SessionEnvironment.key}`])
+    expect(await Effect.runPromise(Ref.get(started))).toBe(false)
+  })
+
+  test("the work may need only the services it declares", () => {
+    // @ts-expect-error -- the work reads SessionEnvironment, which is not declared.
+    const undeclared = provideDeclared("test/owner", [ActionPolicy])(workspace)
+    const declared = provideDeclared("test/owner", [ActionPolicy, SessionEnvironment])(workspace)
+    expect([Effect.isEffect(undeclared), Effect.isEffect(declared)]).toEqual([true, true])
   })
 })

@@ -16,7 +16,7 @@ The plugin graph: resolves a `HarnessConfig` against the installed plugins (inst
 ## Public surface
 
 - `resolveGraph(config, plugins, external?)`: validates the instances, plugin API versions, options and bindings, and orders the nodes by dependency (`PluginGraph`, `PluginNode` are its types).
-- `activateGraph(graph, lifetime, services, scope)`: builds the nodes of one scope (`runtime` or `session`) in order, checks each provided what it declared, and returns the merged context.
+- `activateGraph(graph, lifetime, services, scope)`: builds the nodes of one scope (`runtime` or `session`) in order, checks each provided what it declared, and returns the merged context. A service named `external` in `resolveGraph` that a plugin requires must be in `services` (or provided by an earlier node): a `definePlugin` plugin fails its activation with `requires.missing` without it.
 - `graphFingerprint(graph, scope?)`: sha256 of the instances, bindings and, unless `scope` is `runtime`, the system prompt.
 - `makeLiveLayer(layer)`: scoped generations of a layer, with `use`, `generation` and `replace`.
 

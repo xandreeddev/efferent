@@ -75,8 +75,11 @@ export default tasksPlugin
   replaces its default (`{ ownership: { mode: "process" } }`). Unknown keys
   fail with `config.options`. Do not merge options yourself in `layer`.
 - `requires`, `provides`, `optional` list service classes; tools, skills and
-  prompt sections arrive through `contributes: [Capabilities]`. Read an
-  `optional` service with `Effect.serviceOption`.
+  prompt sections arrive through `contributes: [Capabilities]`. The layer
+  may need only what `requires` lists (a Reference needs no entry): one that
+  needs another service does not compile, so declare it rather than widen a
+  type. Read an `optional` service with `Effect.serviceOption`, and list in
+  `optional` a service the plugin reads that way per turn too.
 - Export `<thing>Plugin`, `<Thing>PluginLive = <thing>Plugin.live`, the
   config schema and the defaults; `export default` the package's main plugin.
 - A plugin builds only its own services from what it requires. Agents are

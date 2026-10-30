@@ -1,4 +1,4 @@
-import { Option, Schema, SchemaAST } from "effect"
+import { Context, Effect, Option, Schema, SchemaAST } from "effect"
 import { HarnessError } from "./plugin.entity.js"
 
 const harnessErrorShape = Schema.is(Schema.Struct(HarnessError.fields))
@@ -11,6 +11,27 @@ const harnessErrorShape = Schema.is(Schema.Struct(HarnessError.fields))
  * be lost; check errors with this instead.
  */
 export const isHarnessError = (value: unknown): value is HarnessError => harnessErrorShape(value)
+
+/** The services a piece of work declares it reads, as their keys (`definePlugin`'s `requires` and `optional`). */
+export type ServiceKeys = ReadonlyArray<Context.Service.Any>
+
+/**
+ * Runs `effect` where it is called, once every key of `requires` is there,
+ * so it needs only the services it declares; a Reference needs none, it has
+ * a default. A missing one fails with `requires.missing`, naming `owner` and
+ * each missing key, before `effect` starts. This is where work whose
+ * services come from a context typed `never` (a plugin's activation by the
+ * graph) gets them: the context is the caller's own, never one captured
+ * elsewhere, and `effect` may read only what `requires` names.
+ */
+export const provideDeclared = <const Req extends ServiceKeys>(owner: string, requires: Req) =>
+  <A, E, R extends Context.Service.Identifier<Req[number]>>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError> =>
+    Effect.flatMap(Effect.context<never>(), (context): Effect.Effect<A, E | HarnessError> => {
+      const missing = requires.filter((key) => !Context.isReference(key) && !context.mapUnsafe.has(key.key))
+      return missing.length > 0
+        ? Effect.fail(new HarnessError({ code: "requires.missing", message: `${owner} requires ${missing.map((key) => key.key).join(", ")}` }))
+        : effect.pipe(Effect.updateContext((current: Context.Context<never>) => Context.makeUnsafe<R>(current.mapUnsafe)))
+    })
 
 const isPlainObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value) &&

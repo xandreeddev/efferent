@@ -960,6 +960,8 @@ Provides: `efferent/ConversationMemory`
 
 Requires: none
 
+Optional: `@xandreed/core/UtilityLlm`
+
 ### Defaults
 
 ```json

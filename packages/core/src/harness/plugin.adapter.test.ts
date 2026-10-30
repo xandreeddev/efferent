@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Schema } from "effect"
+import { Context, Effect, Layer, Option, Schema } from "effect"
 import { definePlugin } from "./plugin.adapter.js"
 import { ActionPolicy, SessionEnvironment } from "../ports/harness.port.js"
 import { HarnessError } from "./plugin.entity.js"
@@ -122,6 +122,35 @@ describe("definePlugin", () => {
     expect([defect.message, defect.cause]).toEqual(["test/dying died while activating: TypeError: x is not a function", boom])
     const underneath = new Error("disk full")
     expect((await built(new HarnessError({ code: "skills.files", message: "cannot read a skill", cause: underneath }))).cause).toBe(underneath)
+  })
+
+  test("a layer may need only the services `requires` lists: a Reference needs no entry, an optional service is read as an Option", async () => {
+    const Prefix = Context.Reference<string>("test/Prefix", { defaultValue: () => "ws" })
+    const optional = definePlugin({
+      id: "test/optional", version: "1", config: Schema.Struct({}), defaults: {},
+      optional: [ActionPolicy], provides: [SessionEnvironment],
+      layer: () => Layer.effect(SessionEnvironment, Effect.all([Prefix, Effect.serviceOption(ActionPolicy)], { concurrency: 1 }).pipe(
+        Effect.map(([prefix, policy]) => ({ workspace: `${prefix}:${Option.isSome(policy)}` })),
+      )),
+    })
+    const undeclared = definePlugin({
+      id: "test/undeclared", version: "1", config: Schema.Struct({}), defaults: {},
+      optional: [ActionPolicy], provides: [SessionEnvironment],
+      // @ts-expect-error -- the layer needs ActionPolicy, which `requires` does not list (an optional service is read with serviceOption).
+      layer: () => Layer.effect(SessionEnvironment, ActionPolicy.pipe(Effect.as({ workspace: "ws" }))),
+    })
+    expect(await workspaceOf(optional.live())).toMatchObject({ _tag: "Success", success: "ws:false" })
+    expect(await workspaceOf(optional.live().pipe(Layer.provide(approval)))).toMatchObject({ _tag: "Success", success: "ws:true" })
+    expect([optional.requires, optional.optional, undeclared.requires]).toEqual([[], [ActionPolicy.key], []])
+  })
+
+  test("build fails with requires.missing, naming the plugin and each missing key, when a required service is not there", async () => {
+    const error = await Effect.runPromise(Effect.flip(Effect.scoped(namer.build({}, Context.empty()))))
+    expect([error.code, error.plugin, error.message]).toEqual(["requires.missing", "test/namer", `test/namer requires ${ActionPolicy.key}`])
+    expect(await Effect.runPromise(Effect.scoped(namer.build({}, Context.empty())).pipe(
+      Effect.provide(approval),
+      Effect.map((built) => Context.getUnsafe(built, SessionEnvironment).workspace),
+    ))).toBe("ws:true")
   })
 
   test("build matches a HarnessError by its tag and fields, so one from another copy of core keeps its code too", async () => {

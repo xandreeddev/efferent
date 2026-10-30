@@ -152,6 +152,10 @@ default options, required service tags, provided service tags, and Layer factory
 A plugin receives only its declared dependencies (and the fiber's settings:
 logging, tracing and the current span, the clock); a host service it does not
 declare is not there, even one provided around `Agent.define` or `Agent.turn`.
+`definePlugin` holds the layer to its declaration: a layer that needs a
+service `requires` does not list does not compile (a Reference needs no
+entry), a service in `optional` is read with `Effect.serviceOption`, and an
+activation that lacks a required service fails with `requires.missing`.
 Two providers of a service require a `bindings` entry selecting the instance
 id. Runtime plugins cannot require session services. Dependencies are checked
 before activation, and a failed activation closes its partially acquired

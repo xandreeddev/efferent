@@ -2,10 +2,18 @@ import { Cause, Context, Effect, Layer, Schema } from "effect"
 import { reasonOf } from "../domain/failure.entity.functions.js"
 import { HarnessError, PLUGIN_API_VERSION } from "./plugin.entity.js"
 import type { TypedPlugin } from "./plugin.entity.js"
-import { isHarnessError, mergeOptions } from "./plugin.entity.functions.js"
+import { isHarnessError, mergeOptions, provideDeclared } from "./plugin.entity.functions.js"
+import type { ServiceKeys } from "./plugin.entity.functions.js"
 
 /**
  * Layers retain their native types until the validated dynamic loading edge.
+ * The layer may need only the services `requires` lists (a Reference adds
+ * nothing): one that reads an undeclared service does not compile. A
+ * service in `optional` is read with `Effect.serviceOption`, so it is not
+ * in the layer's type; the graph orders the plugin after its provider and
+ * hands it over when there is one. `build` provides the layer what the
+ * graph gives it, once every required key is there (`provideDeclared`:
+ * `requires.missing` otherwise).
  * `build` (the graph's) and `live` (a host's own composition) share one
  * decode: the options merged over the defaults, extra keys refused — so a
  * graph caller, whose options already hold the defaults, decodes the same.
@@ -16,19 +24,24 @@ import { isHarnessError, mergeOptions } from "./plugin.entity.functions.js"
  * message names the plugin and what failed (`reasonOf`: messages, never a
  * stack). `config.options` keeps the schema's failure the same way.
  */
-export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out, E, In>(definition: {
+export const definePlugin = <
+  A extends Readonly<Record<string, unknown>>, I, Out, E,
+  In extends Context.Service.Identifier<Req[number]>,
+  const Req extends ServiceKeys = readonly [],
+>(definition: {
   readonly id: string
   readonly version: string
   readonly apiVersion?: number
   readonly scope?: "runtime" | "session"
-  readonly requires?: ReadonlyArray<{ readonly key: string }>
+  readonly requires?: Req
   readonly provides: ReadonlyArray<{ readonly key: string }>
   readonly contributes?: ReadonlyArray<{ readonly key: string }>
-  readonly optional?: ReadonlyArray<{ readonly key: string }>
+  readonly optional?: ServiceKeys
   readonly config: Schema.Codec<A, I>
   readonly defaults: A
   readonly layer: (config: A) => Layer.Layer<Out, E, In>
 }): TypedPlugin<A, I, Out, E, In> => {
+  const requires = definition.requires ?? ([] as const)
   const decodeOptions = (options: unknown): Effect.Effect<A, Schema.SchemaError> => Schema.decodeUnknownEffect(definition.config)(
     typeof options === "object" && options !== null ? mergeOptions(definition.config, definition.defaults, options) : options ?? definition.defaults,
     { onExcessProperty: "error" },
@@ -42,7 +55,7 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
     version: definition.version,
     apiVersion: definition.apiVersion ?? PLUGIN_API_VERSION,
     scope: definition.scope ?? "session",
-    requires: (definition.requires ?? []).map((tag) => tag.key),
+    requires: requires.map((tag) => tag.key),
     provides: definition.provides.map((tag) => tag.key),
     contributes: (definition.contributes ?? []).map((tag) => tag.key),
     optional: (definition.optional ?? []).map((tag) => tag.key),
@@ -51,11 +64,12 @@ export const definePlugin = <A extends Readonly<Record<string, unknown>>, I, Out
     defaults: definition.defaults,
     build: (options, services) => decodeOptions(options).pipe(
       // Each activation builds its own layers (v4 would reuse ones the caller
-      // memoized), and exposes only what it provides.
-      Effect.flatMap((config) => Layer.build(Layer.fresh(definition.layer(config))).pipe(
-        Effect.provide(Context.makeUnsafe<In>(services.mapUnsafe)),
+      // memoized), in the caller's scope, and exposes only what it provides.
+      Effect.flatMap((config) => Effect.flatMap(Effect.scope, (scope) => Layer.buildWithScope(Layer.fresh(definition.layer(config)), scope).pipe(
+        provideDeclared(definition.id, requires),
+        Effect.provide(services),
         Effect.map((built) => Context.makeUnsafe<never>(Context.omit(Layer.CurrentMemoMap)(built).mapUnsafe)),
-      )),
+      ))),
       // A layer that fails with a HarnessError keeps its code (skills.duplicate, not plugin.activation), as `live` does.
       // Matched by its fields, not `instanceof`: a plugin built against another copy of core fails with that copy's class.
       Effect.mapError((error) => isHarnessError(error)
