@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Redacted } from "effect"
-import type { Credential } from "@xandreed/core/models"
+import type { Credential } from "../ports/auth-store.port.js"
 import { AccountId, InstallationId } from "./credential-input.entity.js"
 import type { CredentialInput } from "./credential-input.entity.js"
 import { credentialsOf, encodeCredential, toCredentialInput } from "./credential-input.entity.functions.js"

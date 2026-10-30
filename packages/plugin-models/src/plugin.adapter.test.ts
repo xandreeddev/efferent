@@ -11,18 +11,15 @@ import {
   SessionEnvironment,
   UtilityLlm,
 } from "@xandreed/core"
-import {
-  AuthStore,
-  authStoreConformance,
-  Credential,
-  SettingsStore,
-  settingsStoreConformance,
-} from "@xandreed/core/models"
 import { modelCatalogConformance } from "@xandreed/core/conformance"
 import type { ConformanceCheck } from "@xandreed/core/conformance"
+import { authStoreConformance } from "./auth/auth-store.conformance.js"
+import { AuthStore, Credential } from "./ports/auth-store.port.js"
 import { HostCredentials } from "./ports/host-credentials.port.js"
 import { ModelsTransport } from "./ports/models-transport.port.js"
 import type { ModelsFetch } from "./ports/models-transport.port.js"
+import { SettingsStore } from "./ports/settings-store.port.js"
+import { settingsStoreConformance } from "./settings/settings-store.conformance.js"
 import { modelsPlugin } from "./plugin.adapter.js"
 import { BUN_WEBSOCKET_PROXY_VERSION } from "./transport/http-proxy.entity.js"
 import { atLeastVersion } from "./transport/http-proxy.entity.functions.js"

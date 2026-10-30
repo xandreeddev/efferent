@@ -45,7 +45,8 @@ export class Thing extends Context.Service<Thing, {
   the form the newest ports use; older keys start with `efferent/`). NEVER
   rename an existing key: keys
   appear in plugins' `provides`/`requires`, `docs/plugin-reference.json` and
-  hosts' `bindings`. A rename is a CHANGELOG **Breaking** entry with a
+  hosts' `bindings`. A port that moves to another package keeps its key
+  (`AuthStore`, now in plugin-models, is still `@xandreed/core/AuthStore`). A rename is a CHANGELOG **Breaking** entry with a
   migration note.
 - Implement methods with `Effect.fn("<thing>.<method>")` so each call is a
   named span (skill `effect-idioms`).

@@ -1,15 +1,16 @@
 import { Effect, Option } from "effect"
 import type { Context, Scope } from "effect"
-import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, expect, fail } from "../conformance.functions.js"
-import { parseModelSelection } from "../domain/model-selection.entity.functions.js"
-import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
-import { canonicalJson } from "../memory/memory-log.entity.functions.js"
+import { canonicalJson, harnessCodeOf, parseModelSelection } from "@xandreed/core"
+import { check, ConformanceFailure } from "@xandreed/core/conformance"
+import type { ConformanceCheck } from "@xandreed/core/conformance"
+import { randomUuid } from "@xandreed/core/internal"
 import { SETTINGS_KEYS } from "../ports/settings-store.port.js"
 import type { EngineSettings, ModelRole, SettingsKey, SettingsStore } from "../ports/settings-store.port.js"
-import { randomUuid } from "../internal/random-id.entity.functions.js"
 
 type Store = Context.Service.Shape<typeof SettingsStore>
+
+const fail = (id: string, message: string) => Effect.fail(new ConformanceFailure({ check: id, message }))
+const expect = (id: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(id, message)
 type Field = keyof Pick<EngineSettings, "model" | "codeModel" | "fastModel" | SettingsKey>
 
 const ROLE_FIELDS: Readonly<Record<ModelRole, Field>> = { general: "model", code: "codeModel", fast: "fastModel" }
@@ -94,7 +95,11 @@ const BAD: ReadonlyArray<{ readonly key: SettingsKey; readonly text: string }> =
   { key: "reasoningEffort", text: "extreme" },
 ]
 
-/** What the kit is told about a store, and can do to it beyond calling it. */
+/**
+ * What the kit is told about a store, and can do to it beyond calling it.
+ *
+ * @public
+ */
 export interface SettingsStoreConformanceOptions {
   /** Whether `setRole` and `set` write, or every write is refused. */
   readonly writable: boolean
@@ -155,6 +160,8 @@ const corruptCheck = (store: Store, writable: boolean, corrupt: Effect.Effect<vo
  * With `options.corrupt`, a store whose backing data cannot be read fails
  * `load` (and, writable, `setRole` and `set`) with a `SettingsError` of code
  * `settings.corrupt` instead of reading it as defaults.
+ *
+ * @public
  */
 export const settingsStoreConformance = (store: Store, options: SettingsStoreConformanceOptions): ReadonlyArray<ConformanceCheck> => [
   check("load is stable: two loads with no write between them agree", "load", () => Effect.gen(function* () {

@@ -1,6 +1,6 @@
 import { Context, Option, Schema } from "effect"
 import type { Effect, Redacted } from "effect"
-import type { ProviderId } from "../domain/model-selection.entity.js"
+import type { ProviderId } from "@xandreed/core"
 
 /** A secret: `Redacted` once decoded, so it prints as `<redacted>`; its encoded form is the plain string. */
 const Secret = Schema.RedactedFromValue(Schema.String)
@@ -54,7 +54,10 @@ export class AuthError extends Schema.TaggedError<AuthError>()("AuthError", {
  * token. A store whose backing data cannot be read or decoded fails every
  * call with an `AuthError` of code `auth.corrupt` instead of reading it as
  * empty, so no write replaces credentials it could not read.
- * `authStoreConformance` checks a store against this contract.
+ * `authStoreConformance` (`@xandreed/plugin-models/conformance`) checks a
+ * store against this contract. Its key stays `@xandreed/core/AuthStore`, the
+ * package it was first declared in: plugins' `provides` and hosts' bindings
+ * name it, so it never changes.
  */
 export class AuthStore extends Context.Service<AuthStore, {
     readonly all: Effect.Effect<ReadonlyMap<string, Credential>, AuthError>

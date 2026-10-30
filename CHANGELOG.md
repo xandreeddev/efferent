@@ -277,6 +277,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `error` case.
 - Import `LoopEvent` from `@xandreed/plugin-agent-loop`:
   `import type { LoopEvent } from "@xandreed/plugin-agent-loop"`.
+- Replace each import from `@xandreed/core/models` with one from
+  `@xandreed/plugin-models` (the stores and their types) or from
+  `@xandreed/plugin-models/conformance` (the two kits and their options),
+  and move a kit imported from `@xandreed/plugin-models` to
+  `@xandreed/plugin-models/conformance`; `tsc` names every import that no
+  longer resolves.
+- Replace `toCredential(input)` with `input`.
 
 ### Breaking
 
@@ -737,6 +744,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   longer name it. The type is unchanged, and no journal kind or stored
   payload changes. `ToolCallSummary`, the shape of an `assistant_message`
   event's tool calls, stays in `@xandreed/core`.
+- `@xandreed/core/models` is gone: the credential and settings stores are
+  `@xandreed/plugin-models`' own ports. Import:
+  - from `@xandreed/plugin-models`: `AuthStore`, `Credential`, `AuthError`,
+    `SettingsStore`, `EngineSettings`, `SETTINGS_KEYS`, `SettingsError`,
+    `ModelRole`, `SettingsKey`;
+  - from `@xandreed/plugin-models/conformance`, and no longer from
+    `@xandreed/plugin-models`: `authStoreConformance`
+    (`AuthStoreConformanceOptions`, `AuthStoreRefreshProbe`) and
+    `settingsStoreConformance` (`SettingsStoreConformanceOptions`).
+
+  The service keys stay `@xandreed/core/AuthStore` and
+  `@xandreed/core/SettingsStore`, so a plugin's `provides` and `requires`
+  and a host's bindings are unchanged. `auth.json`, the settings files and
+  the kits' checks are unchanged too. `modelCatalogConformance` stays in
+  `@xandreed/core/conformance`.
+- `toCredential` is removed from `@xandreed/plugin-models`: a
+  `CredentialInput` is a `Credential` as it is.
 
 ### Added
 

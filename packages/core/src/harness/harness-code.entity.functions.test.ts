@@ -3,7 +3,6 @@ import { Option, Schema } from "effect"
 import { AttachmentRejected } from "../domain/media.entity.js"
 import { ConversationId } from "../domain/message.entity.js"
 import { RunId } from "../domain/run.entity.js"
-import { AuthError } from "../ports/auth-store.port.js"
 import { SessionLogError, SessionMissing } from "../session/session-log.entity.js"
 import {
   KeyConflict,
@@ -24,6 +23,12 @@ import { HarnessError } from "./plugin.entity.js"
 import { isHarnessError } from "./plugin.entity.functions.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000a1")
+
+/** A tagged error of another package's with a code of its own, as the models plugin's `AuthError` carries `auth.corrupt`. */
+class StoreUnreadable extends Schema.TaggedError<StoreUnreadable>()("StoreUnreadable", {
+  message: Schema.String,
+  code: Schema.optionalKey(Schema.Literal("auth.corrupt")),
+}) {}
 
 /** One of each tagged error `TAGGED_CODES` names, as the framework raises it. */
 const tagged = [
@@ -63,8 +68,8 @@ describe("harnessCodeOf", () => {
   })
 
   test("another tagged error gives its own string code", () => {
-    expect(harnessCodeOf(new AuthError({ provider: "anthropic", message: "unreadable", code: "auth.corrupt" }))).toEqual(Option.some("auth.corrupt"))
-    expect(harnessCodeOf(new AuthError({ provider: "anthropic", message: "no key" }))).toEqual(Option.none())
+    expect(harnessCodeOf(new StoreUnreadable({ message: "unreadable", code: "auth.corrupt" }))).toEqual(Option.some("auth.corrupt"))
+    expect(harnessCodeOf(new StoreUnreadable({ message: "no key" }))).toEqual(Option.none())
   })
 
   test("an untagged value gives none, whatever code it carries", () => {

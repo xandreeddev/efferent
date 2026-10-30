@@ -1,7 +1,7 @@
 // `@xandreed/core/internal`: what the agent loop, the models plugin and the
 // sdk share with core, with no semver: the provider mapping, the stream fold,
-// tool schemas and the model a response names. Imported by first-party
-// packages only, each export by one at least.
+// tool schemas, the model a response names and the id helper. Imported by
+// first-party packages only, each export by one at least.
 export {
   extractUsage,
   handoffToMessage,
@@ -16,3 +16,4 @@ export {
 } from "./mapping.entity.functions.js"
 export { foldStreamParts } from "./stream-fold.entity.functions.js"
 export { strictJsonSchema, toolParametersSchema } from "./tool-schema.entity.functions.js"
+export { randomUuid } from "./random-id.entity.functions.js"

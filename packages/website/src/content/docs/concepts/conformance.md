@@ -8,13 +8,14 @@ description: The port contracts as runnable checks, to run against your own adap
 A port says what its methods take and return; a conformance kit says what an
 implementation must do. `@xandreed/core/conformance` ships each contract as a
 list of checks (the models plugin's credential and settings stores' from
-`@xandreed/plugin-models`), so a host that writes its own session store, sessions backend, task
-runner, tasks backend, tool registry, memory strategy, step loop, turn
-composition, file system, shell or model credential and settings store can
-prove it behaves like the first-party ones (`@xandreed/plugin-workspace`'s
-local file system and shell pass the file-system and shell kits on Bun and
-Node; `@xandreed/plugin-sessions`, `@xandreed/plugin-tasks` and
-`@xandreed/plugin-tool-discovery` pass the sessions, task and registry kits).
+`@xandreed/plugin-models/conformance`), so a host that writes its own
+session store, sessions backend, task runner, tasks backend, tool registry,
+memory strategy, step loop, turn composition, file system, shell or model
+credential and settings store can prove it behaves like the first-party
+ones (`@xandreed/plugin-workspace`'s local file system and shell pass the
+file-system and shell kits on Bun and Node; `@xandreed/plugin-sessions`,
+`@xandreed/plugin-tasks` and `@xandreed/plugin-tool-discovery` pass the
+sessions, task and registry kits).
 `@xandreed/plugin-render` does the same for render surfaces, feeds and
 transports (see [render kits](#render-kits)).
 
@@ -693,8 +694,8 @@ const checks = bashConformance({
 ## The AuthStore and SettingsStore kits
 
 `authStoreConformance(store)` and `settingsStoreConformance(store, { writable })`
-call the store and nothing else. Two options reach further, and each turns on
-its checks:
+(from `@xandreed/plugin-models/conformance`) call the store and nothing
+else. Two options reach further, and each turns on its checks:
 
 ```ts
 interface AuthStoreConformanceOptions {
@@ -737,9 +738,10 @@ over its memory store, on Bun and on Node:
 ```ts
 import { Effect, Layer } from "effect"
 import type { Scope } from "effect"
-import { authStoreConformance, AuthStore, LocalAuthStoreLive, ModelsTransport } from "@xandreed/plugin-models"
-import type { AuthStoreRefreshProbe } from "@xandreed/plugin-models"
+import { AuthStore, LocalAuthStoreLive, ModelsTransport } from "@xandreed/plugin-models"
 import type { ModelsFetch } from "@xandreed/plugin-models"
+import { authStoreConformance } from "@xandreed/plugin-models/conformance"
+import type { AuthStoreRefreshProbe } from "@xandreed/plugin-models/conformance"
 
 declare const cwd: string, home: string
 declare const endpoint: { readonly fetch: ModelsFetch; readonly probe: AuthStoreRefreshProbe } // a fetch that answers token requests

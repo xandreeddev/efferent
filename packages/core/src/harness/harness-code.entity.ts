@@ -5,7 +5,8 @@ import { turnBeginCodes } from "../session/sessions.entity.js"
  * Every code the framework's packages raise, or store in a `turn.ended`
  * failure, a task's result or its status: a `HarnessError`'s, a
  * `SessionLogError`'s, the codes the tags of `TAGGED_CODES` stand for, and
- * the tagged errors' own (`AuthError`, `SettingsError`). The list is
+ * the tagged errors' own (the models plugin's `AuthError` and
+ * `SettingsError`). The list is
  * published: a code is never renamed or removed, only added, with its
  * meaning in the event reference (`scripts/generate-event-reference.ts`,
  * which fails on a code a package raises that is not here). A host's and a

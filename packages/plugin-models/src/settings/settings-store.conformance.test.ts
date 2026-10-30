@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Ref, Schema, SynchronizedRef } from "effect"
-import { parseModelSelection } from "../domain/model-selection.entity.functions.js"
+import { parseModelSelection } from "@xandreed/core"
 import { EngineSettings, SettingsError, SettingsStore } from "../ports/settings-store.port.js"
 import type { ModelRole, SettingsKey } from "../ports/settings-store.port.js"
 import { settingsStoreConformance } from "./settings-store.conformance.js"

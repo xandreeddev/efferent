@@ -1,14 +1,16 @@
 import { Clock, Effect, Fiber, Match, Option, Redacted, Schema } from "effect"
 import type { Context, Duration, Scope } from "effect"
-import type { ConformanceCheck } from "../conformance.entity.js"
-import { check, expect, fail } from "../conformance.functions.js"
-import { ProviderId } from "../domain/model-selection.entity.js"
-import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
+import { harnessCodeOf, ProviderId } from "@xandreed/core"
+import { check, ConformanceFailure } from "@xandreed/core/conformance"
+import type { ConformanceCheck } from "@xandreed/core/conformance"
+import { randomUuid } from "@xandreed/core/internal"
 import { Credential } from "../ports/auth-store.port.js"
 import type { AuthStore } from "../ports/auth-store.port.js"
-import { randomUuid } from "../internal/random-id.entity.functions.js"
 
 type Store = Context.Service.Shape<typeof AuthStore>
+
+const fail = (id: string, message: string) => Effect.fail(new ConformanceFailure({ check: id, message }))
+const expect = (id: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> => holds ? Effect.void : fail(id, message)
 
 const HOUR = 3_600_000
 /** How many calls the refresh check makes at once on one expired token. */
@@ -22,6 +24,8 @@ const SETTLE = "100 millis"
  * The token endpoint a store refreshes through, as the kit sees it: the
  * test builds the store over a fetch (or an equivalent) that it controls,
  * and hands the kit this view of it.
+ *
+ * @public
  */
 export interface AuthStoreRefreshProbe {
   /**
@@ -39,7 +43,11 @@ export interface AuthStoreRefreshProbe {
   readonly hold: Effect.Effect<Effect.Effect<void>>
 }
 
-/** What the kit can do to a store beyond calling it; each option turns on its checks. */
+/**
+ * What the kit can do to a store beyond calling it; each option turns on its checks.
+ *
+ * @public
+ */
 export interface AuthStoreConformanceOptions {
   /** The endpoint the store refreshes through: the refresh-once and refresh-remove checks. */
   readonly refresh?: AuthStoreRefreshProbe
@@ -186,6 +194,8 @@ const corruptCheck = (store: Store, corrupt: Effect.Effect<void, never, Scope.Sc
  * run them without a `TestClock`. With
  * `options.corrupt`, a store whose backing data cannot be read fails every
  * call with an `AuthError` of code `auth.corrupt` instead of reading empty.
+ *
+ * @public
  */
 export const authStoreConformance = (store: Store, options: AuthStoreConformanceOptions = {}): ReadonlyArray<ConformanceCheck> => [
   check("an absent provider has no credential, no key and no entry", "absent", () => withProviders(store, 1, ([provider]) => Effect.gen(function* () {

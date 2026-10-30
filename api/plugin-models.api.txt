@@ -55,7 +55,6 @@ const UtilityLlmLive
 const applyRole
 const applySetting
 const authPaths
-const authStoreConformance
 const beginAnthropicOAuth
 const beginOpenAiCodexOAuth
 const buildProvider
@@ -101,18 +100,14 @@ const retryableLlm
 const roleModelView
 const roleSelection
 const settingsFromRecord
-const settingsStoreConformance
 const toChatMessages
 const toChatTools
-const toCredential
 const toCredentialInput
 const toOpenAiCodexRequestBody
 const transportFetch
 const usesOpenCodeResponses
 const withAnthropicCacheBreakpoints
 interface AuthRedirect
-interface AuthStoreConformanceOptions
-interface AuthStoreRefreshProbe
 interface CallBudget
 interface ChatMessageOptions
 interface CompatConfig
@@ -123,7 +118,6 @@ interface OpenAiCodexTokens
 interface OpenAiErrorBody
 interface Pkce
 interface RefreshedTokens
-interface SettingsStoreConformanceOptions
 interface TokenRequestOptions
 interface UsageReading
 type AccountId

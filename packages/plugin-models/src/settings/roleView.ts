@@ -1,5 +1,5 @@
 import { Effect, Layer, Option } from "effect"
-import { EngineSettings, SettingsStore } from "@xandreed/core/models"
+import { EngineSettings, SettingsStore } from "../ports/settings-store.port.js"
 
 /**
  * A role-scoped VIEW of the settings store: `load` re-maps the general

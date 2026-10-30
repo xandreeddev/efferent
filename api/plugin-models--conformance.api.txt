@@ -1,0 +1,5 @@
+const authStoreConformance
+const settingsStoreConformance
+interface AuthStoreConformanceOptions
+interface AuthStoreRefreshProbe
+interface SettingsStoreConformanceOptions

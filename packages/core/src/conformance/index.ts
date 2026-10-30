@@ -23,4 +23,4 @@ export { turnConformance } from "../turn/turn.conformance.js"
 export { toolRegistryConformance } from "../turn/tool-registry.conformance.js"
 export type { ToolRegistryLimits } from "../turn/tool-registry.conformance.js"
 // the model catalog
-export { modelCatalogConformance } from "../models/model-catalog.conformance.js"
+export { modelCatalogConformance } from "../domain/model-catalog.conformance.js"

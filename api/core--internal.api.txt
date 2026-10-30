@@ -1,6 +1,7 @@
 const extractUsage
 const foldStreamParts
 const handoffToMessage
+const randomUuid
 const responseReasoning
 const responseText
 const responseToAgentMessages
