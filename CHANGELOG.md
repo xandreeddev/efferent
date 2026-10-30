@@ -154,6 +154,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   plain-string ids.
 - An evaluation export that runs longer than 5 minutes now fails as
   `provider`: pass a larger `timeoutMs` to the exporter.
+- Hosts that relied on the long retry ladder of a routed call: the call's
+  600 s budget is a constant for now.
 
 ### Breaking
 
@@ -422,6 +424,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `DecisionCaseId`, `RetrievalDocumentId`, `RetrievalItemId`.
 - Brands are type-only: stored data is unchanged, and every journal and
   report still decodes.
+- `@xandreed/plugin-models`: `retryableLlm(label, budget?)` and
+  `generateWith(selection, options, isFallback?, budget?)` take an optional
+  `CallBudget`; a routed call that once retried for about 40 minutes now
+  fails after 600 s.
 
 ### Added
 
@@ -553,6 +559,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/evals-langfuse` and `@xandreed/evals-langsmith`: an optional
   `timeoutMs` (default 300 000) bounds a whole export, `flush` included;
   past it the export fails as `provider`.
+- `@xandreed/plugin-models` exports `LLM_CALL_BUDGET_MS`, `CallBudget` and
+  `makeCallBudget`.
 
 ### Changed
 
@@ -801,6 +809,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/evals-langsmith`: each request has a 30 s limit (was 90 s),
   and an interrupted export returns at once without waiting for its
   requests.
+- A routed `generateText`/`generateObject` call no longer counts tool time
+  against its 300 s attempt timeout: once the call starts a tool it is
+  final, not retried and not sent to `fallbackModel`, so tools never run
+  twice and a long tool no longer fails its step.
+- A routed call's attempts, backoff and fallback share a 600 s budget; a
+  hung provider fails after 600 s, naming the budget and the attempts.
 
 ### Repository
 

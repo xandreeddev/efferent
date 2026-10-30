@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test"
 import { AiError } from "effect/ai"
 import { HttpClientError, HttpClientRequest } from "effect/http"
-import { Cause, Effect, Exit, Fiber, Logger, Option, Ref, References, Stream } from "effect"
+import { Cause, Deferred, Duration, Effect, Exit, Fiber, Logger, Option, Ref, References, Stream } from "effect"
 import { TestClock } from "effect/testing"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import { classifyLlmError, rejectEmptyResponse, retryableLlm, retryableLlmStream } from "./retry.js"
+import { classifyLlmError, LLM_CALL_BUDGET_MS, makeCallBudget, rejectEmptyResponse, retryableLlm, retryableLlmStream } from "./retry.js"
+import type { CallBudget } from "./retry.js"
 
 const request = { method: "POST" as const, url: "https://gw.example/chat", urlParams: [], headers: {} }
 /** A provider status failure, as the adapters build it. */
@@ -104,6 +105,49 @@ describe("retryableLlm", () => {
     expect(logged[0]?.[0]).toStartWith("transient failure exhausted retries: ")
     expect(logged[0]?.[0]).not.toContain("gw:slow")
     expect(logged[0]?.[1]).toBe("gw:slow")
+  })
+})
+
+describe("retryableLlm within a call budget", () => {
+  /** Runs `call` under `retryableLlm` on a test clock moved an hour on: its attempts, its time and its failure. */
+  const run = (
+    call: (budget: CallBudget) => Effect.Effect<unknown, AiError.AiError>,
+    budgetMs?: number,
+    logged: Array<readonly [string, unknown]> = [],
+  ) =>
+    Effect.runPromise(Effect.gen(function* () {
+      const attempts = yield* Ref.make(0)
+      const budget = yield* makeCallBudget(budgetMs)
+      const counted = Ref.update(attempts, (n) => n + 1).pipe(Effect.andThen(call(budget)))
+      const fiber = yield* Effect.forkChild(Effect.timed(Effect.flip(retryableLlm("gw:hung", budget)(counted))))
+      yield* TestClock.adjust("1 hour")
+      const [elapsed, error] = yield* Fiber.join(fiber)
+      return { attempts: yield* Ref.get(attempts), elapsed: Duration.toMillis(elapsed), error: String(error) }
+    }).pipe(Effect.orDie, Effect.provide(TestClock.layer()), Effect.provide(capturingLogs(logged))))
+
+  test("a hung call: the first attempt is cut at 300 s, the next at the budget's deadline, and no attempt follows", async () => {
+    const result = await run(() => Effect.never)
+    expect(result.attempts).toBe(2)
+    expect(result.elapsed).toBe(LLM_CALL_BUDGET_MS)
+    expect(result.error).toContain("the gw:hung call reached its 600s budget after 2 attempts and was cut off")
+  })
+
+  test("no attempt starts at or after the deadline", async () => {
+    const result = await run(() => Effect.succeed("ran"), 0)
+    expect(result.attempts).toBe(0)
+    expect(result.error).toContain("the gw:hung call reached its 0s budget after 0 attempts and was cut off")
+  })
+
+  test("once the call hands a tool call off, its attempt is no longer bounded and a transient failure is final", async () => {
+    const logged: Array<readonly [string, unknown]> = []
+    const result = await run((budget) => Deferred.succeed(budget.handedOff, undefined).pipe(
+      Effect.andThen(Effect.sleep("400 seconds")),
+      Effect.andThen(Effect.fail(httpError(503))),
+    ), undefined, logged)
+    expect(result.attempts).toBe(1)
+    expect(result.elapsed).toBe(400_000)
+    expect(result.error).toContain("Server error")
+    expect(logged.map(([message, model]) => [message.split(": ")[0], model])).toEqual([["transient failure after a tool started was final", "gw:hung"]])
   })
 })
 

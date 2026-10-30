@@ -1,6 +1,6 @@
 import { AiError } from "effect/ai"
 import { HttpClientError } from "effect/http"
-import { Clock, Duration, Effect, Predicate, Ref, Schedule, Stream } from "effect"
+import { Clock, Deferred, Duration, Effect, Predicate, Ref, Schedule, Stream } from "effect"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 
 /**
@@ -9,8 +9,11 @@ import { CurrentEmptyResponseTolerance } from "@xandreed/core"
  *
  * - Retry ONLY transients (429 / 5xx / transport / timeout / empty body) —
  *   never a 4xx client error or a decode failure, which are permanent.
- * - Every request is bounded by a {@link LLM_REQUEST_TIMEOUT_MS} fiber-level
- *   timeout (official provider clients ship none), classified transient.
+ * - Every attempt is bounded by a {@link LLM_REQUEST_TIMEOUT_MS} fiber-level
+ *   timeout (official provider clients ship none), classified transient, and
+ *   a routed call's attempts, backoff and fallback rung by its
+ *   {@link CallBudget}. Tool time counts against neither: once a tool
+ *   handler has started the call is final, never retried, never cut.
  * - An HTTP 200 with no text/tool-call/reasoning content is rejected as a
  *   transient failure (the "empty response that fake-completes a turn
  *   mid-thought" class) and rides the same retries.
@@ -33,8 +36,33 @@ import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 // arrives — the old line streamed, where first-byte came fast. The timeout
 // exists to catch hung sockets; at 120s it would classify a healthy slow
 // thinking turn as transient and retry it into the same wall.
+/** One attempt, until its response is complete. */
 export const LLM_REQUEST_TIMEOUT_MS = 300_000
+/** One routed call: its attempts, their backoff and the fallback rung. */
+export const LLM_CALL_BUDGET_MS = 600_000
 export const MAX_HONORED_RETRY_AFTER_MS = 60_000
+
+/**
+ * The bound of one routed call, shared by its attempts and its fallback rung
+ * (a retry never resets it). No attempt starts at or after `deadline`, and an
+ * attempt is cut at it. `handedOff` is done once the call has handed its
+ * first tool call to the toolkit: from then on the call is final, with no
+ * retry, no fallback and no bound, since a second attempt would run the
+ * tools again; a handler that never ends is bounded by the tool itself.
+ */
+export interface CallBudget {
+  /** Clock millis. */
+  readonly deadline: number
+  /** The budget the deadline was set with, for the message of a call it cuts. */
+  readonly budgetMs: number
+  readonly handedOff: Deferred.Deferred<void>
+}
+
+/** A call's budget, its deadline `budgetMs` from now on the `Clock`. */
+export const makeCallBudget = (budgetMs: number = LLM_CALL_BUDGET_MS): Effect.Effect<CallBudget> =>
+  Effect.all([Clock.currentTimeMillis, Deferred.make<void>()], { concurrency: 1 }).pipe(
+    Effect.map(([now, handedOff]) => ({ deadline: now + budgetMs, budgetMs, handedOff })),
+  )
 
 export type ErrorClass = "transient" | "permanent"
 
@@ -88,7 +116,17 @@ export const classifyLlmError = (error: unknown, now: number): ErrorClass => {
 export const isTransientLlmError = (error: unknown): Effect.Effect<boolean> =>
   Effect.map(Clock.currentTimeMillis, (now) => classifyLlmError(error, now) === "transient")
 
-/** 3 fast retries: exponential 1s → 2s → 4s with ±25% jitter. */
+/**
+ * Whether a call that failed with `error` may try again, by a retry or on
+ * the fallback rung: the failure is transient, no tool call was handed off,
+ * and the budget's deadline has not come.
+ */
+export const canTryAgain = (budget: CallBudget) => (error: unknown): Effect.Effect<boolean> =>
+  Effect.all([isTransientLlmError(error), Deferred.isDone(budget.handedOff), Clock.currentTimeMillis], { concurrency: 1 }).pipe(
+    Effect.map(([transient, handedOff, now]) => transient && !handedOff && now < budget.deadline),
+  )
+
+/** 3 fast retries: exponential 1s → 2s → 4s, each jittered by up to ±20%. */
 const fastRetries = Schedule.max([
   Schedule.exponential(Duration.seconds(1)).pipe(Schedule.jittered),
   Schedule.recurs(3),
@@ -99,6 +137,12 @@ const routerError = (method: string, description: string): AiError.AiError =>
 
 const timeoutError = (label: string, method: string, timeoutMs: number): AiError.AiError =>
   routerError(method, `the ${label} request exceeded ${timeoutMs / 1000}s and was cut off`)
+
+const budgetError = (label: string, budget: CallBudget, attempts: number): AiError.AiError =>
+  routerError(
+    "generateText",
+    `the ${label} call reached its ${budget.budgetMs / 1000}s budget after ${attempts} ${attempts === 1 ? "attempt" : "attempts"} and was cut off`,
+  )
 
 const emptyError = (label: string, method: string): AiError.AiError =>
   routerError(
@@ -140,27 +184,61 @@ export const rejectEmptyResponse =
       ),
     )
 
-/** Timeout + transient-only retries around one routed LLM connect. */
+/**
+ * Fails the attempt it races with `cut` when `ms` pass before the call hands
+ * a tool call off; once the call has, it never ends, so the call runs on
+ * without a bound.
+ */
+const watchdog = (handedOff: Deferred.Deferred<void>, ms: number, cut: AiError.AiError): Effect.Effect<never, AiError.AiError> =>
+  Deferred.await(handedOff).pipe(
+    Effect.timeoutOrElse({ duration: Duration.millis(ms), orElse: () => Effect.fail(cut) }),
+    Effect.andThen(Effect.never),
+  )
+
+/**
+ * Transient-only retries around one routed LLM call, within its budget (a
+ * fresh one when none is given, whose hand-off then nothing marks):
+ *
+ * - An attempt is bounded by {@link LLM_REQUEST_TIMEOUT_MS} or what is left
+ *   of the budget, whichever is less. The bound races the call instead of
+ *   wrapping it, so it stops at the hand-off and tool time never counts.
+ * - A failure is retried only while {@link canTryAgain} holds, and no attempt
+ *   starts at or after the deadline. A call the budget cuts fails naming the
+ *   budget and its attempts.
+ */
 export const retryableLlm =
-  (label: string) =>
-  <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | AiError.AiError, R> =>
-    effect.pipe(
-      Effect.timeoutOrElse({
-        duration: Duration.millis(LLM_REQUEST_TIMEOUT_MS),
-        orElse: () => Effect.fail(timeoutError(label, "generateText", LLM_REQUEST_TIMEOUT_MS)),
-      }),
-      Effect.retry({
-        schedule: fastRetries,
-        while: isTransientLlmError,
-      }),
-      Effect.tapError((error) =>
-        Effect.flatMap(isTransientLlmError(error), (transient) =>
-          transient
-            ? Effect.logWarning(`transient failure exhausted retries: ${String(error)}`).pipe(Effect.annotateLogs("llm.model", label))
-            : Effect.void,
+  (label: string, budget?: CallBudget) =>
+  <A, E, R>(call: Effect.Effect<A, E, R>): Effect.Effect<A, E | AiError.AiError, R> =>
+    Effect.gen(function* () {
+      const bound = budget ?? (yield* makeCallBudget())
+      const attempts = yield* Ref.make(0)
+      const attempt = Effect.all([Clock.currentTimeMillis, Ref.get(attempts)], { concurrency: 1 }).pipe(
+        Effect.flatMap(([now, made]) => {
+          const left = bound.deadline - now
+          if (left <= 0) return Effect.fail(budgetError(label, bound, made))
+          const cut = left < LLM_REQUEST_TIMEOUT_MS
+            ? budgetError(label, bound, made + 1)
+            : timeoutError(label, "generateText", LLM_REQUEST_TIMEOUT_MS)
+          return Ref.set(attempts, made + 1).pipe(
+            Effect.andThen(Effect.raceFirst(call, watchdog(bound.handedOff, Math.min(LLM_REQUEST_TIMEOUT_MS, left), cut))),
+          )
+        }),
+      )
+      return yield* attempt.pipe(
+        Effect.retry({ schedule: fastRetries, while: canTryAgain(bound) }),
+        Effect.tapError((error) =>
+          Effect.all([isTransientLlmError(error), Deferred.isDone(bound.handedOff)], { concurrency: 1 }).pipe(
+            Effect.flatMap(([transient, handedOff]) =>
+              transient
+                ? Effect.logWarning(`${handedOff ? "transient failure after a tool started was final" : "transient failure exhausted retries"}: ${String(error)}`).pipe(
+                  Effect.annotateLogs("llm.model", label),
+                )
+                : Effect.void,
+            ),
+          ),
         ),
-      ),
-    )
+      )
+    })
 
 /** Content-part identity, on the stream vocabulary: a non-empty
  *  text/reasoning delta or a tool call. The retry gate arms on it, the

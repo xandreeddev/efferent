@@ -384,6 +384,14 @@ went wrong. A rate limit (a 429), a server error, a transport failure or a
 timeout is retried three times with backoff, then sent once to the
 `fallbackModel` when one is set; anything else fails at once. A 429 whose
 `Retry-After` is over a minute counts as a daily quota and fails at once too.
+An attempt is cut after 300 s (`LLM_REQUEST_TIMEOUT_MS`), and a
+`generateText` or `generateObject` call has 600 s (`LLM_CALL_BUDGET_MS`) for
+all its attempts, their backoff and the fallback: no attempt starts after
+that, and one still running then is cut, failing with a message that names
+the budget and the attempts made. The step loop's tools run inside the call,
+and once it has started a tool the call is final: it is not retried, does not
+fall back, and neither bound applies, since another attempt would run the
+tools again; a tool bounds itself (a bash timeout, a task's deadline).
 
 - An exhausted balance or quota is a `QuotaExhaustedError`: a 402, or an
   error whose type or code names one (OpenCode's `CreditsError`, OpenAI's
