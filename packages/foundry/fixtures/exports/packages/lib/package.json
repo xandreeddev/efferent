@@ -1,0 +1,9 @@
+{
+  "name": "@fixture/lib",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./extra": { "types": "./src/extra.ts", "default": "./src/extra.ts" },
+    "./tools/*": "./src/tools/*.ts"
+  }
+}

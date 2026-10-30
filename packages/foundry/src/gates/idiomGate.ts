@@ -11,9 +11,21 @@ import type { Gate, Workspace } from "../ports/Gate.js"
 import { includedBy, locationOf, matchesGlob, projectSourceFiles, toWorkspacePath } from "./astWalk.js"
 import { TsProject } from "./TsProject.port.js"
 
+/** The workspace around the checked file, the same object for every call
+ *  of one gate run. */
+export interface RuleWorkspace {
+  /** Absolute: the directory of the config. */
+  readonly rootDir: string
+  /** Every project source file of the shared program, the checked one included. */
+  readonly sourceFiles: ReadonlyArray<ts.SourceFile>
+}
+
 export interface RuleContext {
   readonly sourceFile: ts.SourceFile
   readonly checker: ts.TypeChecker
+  /** For a rule that judges a file by what the rest of the workspace does
+   *  with it (`quality/exports-have-consumers`); per-file rules ignore it. */
+  readonly workspace: RuleWorkspace
 }
 
 export interface RuleMatch {
@@ -104,13 +116,14 @@ export const makeIdiomGate = (
           ),
         )
       const sourceFiles = projectSourceFiles(project, workspace.rootDir)
+      const around: RuleWorkspace = { rootDir: workspace.rootDir, sourceFiles }
       // Every file each rule covers, checked once: the findings, and the
       // allow and boundary entries that no longer excuse anything, read it.
       const checked = sourceFiles.flatMap((sourceFile) => {
         const rel = toWorkspacePath(workspace.rootDir, sourceFile.fileName)
         return active
           .filter((a) => includedBy(a.include, a.exclude, rel))
-          .map((a): Checked => ({ active: a, sourceFile, rel, matches: a.rule.check({ sourceFile, checker: project.checker }) }))
+          .map((a): Checked => ({ active: a, sourceFile, rel, matches: a.rule.check({ sourceFile, checker: project.checker, workspace: around }) }))
       })
       const findings = checked
         .filter((c) => !c.active.allow.includes(c.rel))

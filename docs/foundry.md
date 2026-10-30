@@ -137,7 +137,11 @@ would judge attempt N against attempt N-1's source).
    file declaring it), `effect/prefer-effect-fn` (a function that only
    returns `Effect.gen`) and `effect/require-concurrency-option`), the
    paradigm-neutral `quality` pack (`quality/no-skipped-tests` — a skipped test is the coder
-   gaming the test gate; `quality/no-empty-catch`) and the
+   gaming the test gate; `quality/no-empty-catch`; and
+   `quality/exports-have-consumers`, which judges a package entry by the
+   whole workspace: an export that no other package, script or doc code
+   block imports and no `@public` tag documents, an `export *`, and a
+   `@deprecated` export first-party code still imports) and the
    `effect-architecture` pack (the `architecture/*` file-role rules for
    entity, use-case, port and adapter files, and
    `architecture/role-suffix-required`: every file names its role). A
@@ -226,6 +230,9 @@ never falls back to a builtin set. A `foundry.config.ts` has two channels:
   }]
   ```
 
+  The context also carries `workspace` (the root and every project source
+  file, one object per gate run) for a rule that judges a file by the rest
+  of the workspace.
   The data half is Schema-decoded on OUR side (`RuleId.make` happens in the
   decoder — external workspaces never import foundry); the `check` function
   is wrapped FAIL-CLOSED: a crashing rule (or one returning a non-array)

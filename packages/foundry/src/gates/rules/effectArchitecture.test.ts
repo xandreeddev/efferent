@@ -18,7 +18,7 @@ const run = (
   text: string,
 ): ReadonlyArray<string> =>
   rule
-    .check({ sourceFile: source(name, text), checker: {} as ts.TypeChecker })
+    .check({ sourceFile: source(name, text), checker: {} as ts.TypeChecker, workspace: { rootDir: "/", sourceFiles: [] } })
     .map((match) => match.message)
 
 describe("the Effect architecture pack", () => {

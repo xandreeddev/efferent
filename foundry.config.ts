@@ -103,6 +103,14 @@ const ENVIRONMENT_EDGES = ["**/main.ts", "packages/plugin-workspace/src/bash.ada
 const src = (name: string): string => `packages/${name}/src/**`
 
 /**
+ * The package entries whose every export has a first-party consumer or a
+ * `@public` tag (`quality/exports-have-consumers`): entry files, not
+ * globs, one per line. An entry joins once its surface is curated; none
+ * is yet.
+ */
+const CURATED_ENTRIES: ReadonlyArray<string> = []
+
+/**
  * Open schemas (`effect/no-unknown-json`) core keeps for now. The MCP
  * bridge passes a model's arguments to a server it does not know; a
  * plugin entry's in-code options may hold values that are not JSON (a
@@ -360,6 +368,8 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-unknown-requirements", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_REQUIREMENT_EDGES },
     { rule: "quality/no-skipped-tests", include: CHECKED },
     { rule: "quality/no-empty-catch", include: CHECKED },
+    // One entry at a time (the list above).
+    { rule: "quality/exports-have-consumers", include: CURATED_ENTRIES },
     { rule: "architecture/no-raw-promise-core", include: CHECKED },
     { rule: "architecture/no-runtime-imports-core", include: CHECKED },
     { rule: "architecture/contracts-contain-no-behavior", include: CHECKED },
