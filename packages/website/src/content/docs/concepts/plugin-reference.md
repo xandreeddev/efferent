@@ -669,7 +669,8 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
   "credentials": {},
   "credentialEnv": {},
   "proxy": "",
-  "noProxy": ""
+  "noProxy": "",
+  "thinkingPrefixMismatch": "provider-default"
 }
 ```
 
@@ -828,6 +829,14 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
     },
     "noProxy": {
       "type": "string"
+    },
+    "thinkingPrefixMismatch": {
+      "type": "string",
+      "enum": [
+        "provider-default",
+        "drop_block",
+        "error"
+      ]
     }
   },
   "required": [
@@ -840,7 +849,8 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
     "credentials",
     "credentialEnv",
     "proxy",
-    "noProxy"
+    "noProxy",
+    "thinkingPrefixMismatch"
   ],
   "additionalProperties": true
 }

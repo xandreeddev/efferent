@@ -259,6 +259,23 @@ describe("retryableLlmStream", () => {
     expect(attempts).toHaveLength(2)
   }, 10_000)
 
+  test("signed thinking is content: a signature-only delta or a redacted block arms the gate (no retry after it) and is not an empty stream", async () => {
+    const signature = { type: "reasoning-delta", id: "0", delta: "", metadata: { anthropic: { info: { type: "thinking", signature: "sig" } } } }
+    const redacted = { type: "reasoning-start", id: "1", metadata: { anthropic: { info: { type: "redacted_thinking", redactedData: "data" } } } }
+    const bare = { type: "reasoning-start", id: "2", metadata: {} }
+    // The stream fold keeps a metadata-only reasoning part, so a reply of signed thinking alone is not empty.
+    expect(await collect(retryableLlmStream("test")(scripted([Stream.fromIterable([signature, finish])]).stream))).toEqual([signature, finish])
+    expect(await collect(retryableLlmStream("test")(scripted([Stream.fromIterable([redacted, finish])]).stream))).toEqual([redacted, finish])
+    // After signed thinking, a failure is final: a retry would send it again.
+    const after = scripted([Stream.fromIterable([signature]).pipe(Stream.concat(Stream.fail(transient500))), Stream.fromIterable([delta, finish])])
+    expect((await Effect.runPromiseExit(Stream.runCollect(retryableLlmStream("test")(after.stream))))._tag).toBe("Failure")
+    expect(after.attempts).toHaveLength(1)
+    // A reasoning part with no metadata and no text is not content: the empty stream (its finish withheld) rides the retries.
+    const empty = scripted([Stream.fromIterable([bare, finish]), Stream.fromIterable([delta, finish])])
+    expect(await collect(retryableLlmStream("test")(empty.stream))).toEqual([bare, delta, finish])
+    expect(empty.attempts).toHaveLength(2)
+  }, 10_000)
+
   test("a mid-stream hang trips the idle timeout; armed, so it is final", async () => {
     const { attempts, stream } = scripted([
       Stream.fromIterable([delta]).pipe(Stream.concat(Stream.never)),

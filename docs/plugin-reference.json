@@ -641,7 +641,8 @@
       "credentials": {},
       "credentialEnv": {},
       "proxy": "",
-      "noProxy": ""
+      "noProxy": "",
+      "thinkingPrefixMismatch": "provider-default"
     },
     "schema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -795,6 +796,14 @@
         },
         "noProxy": {
           "type": "string"
+        },
+        "thinkingPrefixMismatch": {
+          "type": "string",
+          "enum": [
+            "provider-default",
+            "drop_block",
+            "error"
+          ]
         }
       },
       "required": [
@@ -807,7 +816,8 @@
         "credentials",
         "credentialEnv",
         "proxy",
-        "noProxy"
+        "noProxy",
+        "thinkingPrefixMismatch"
       ],
       "additionalProperties": true
     }

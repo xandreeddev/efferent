@@ -16,6 +16,8 @@ import { LocalSettingsStoreLive } from "./settings/localSettings.js"
 import { MemorySettingsStoreLive } from "./settings/memory-settings.adapter.js"
 import { HostCredentials } from "./ports/host-credentials.port.js"
 import { CurrentModelEndpoints, ModelEndpoints } from "./ports/model-endpoints.port.js"
+import { CurrentThinkingPrefixMismatch } from "./ports/thinking-binding.port.js"
+import { ThinkingPrefixMismatch } from "./llm/thinking-binding.entity.js"
 import { ModelsTransport } from "./ports/models-transport.port.js"
 import { ProxyUrlOption } from "./transport/http-proxy.entity.js"
 import { modelsTransportFor } from "./transport/models-transport.adapter.js"
@@ -37,6 +39,15 @@ const Config = Schema.Struct({
   proxy: ProxyUrlOption,
   /** Hosts that go direct, in NO_PROXY syntax, added to NO_PROXY from the environment; "*" turns the proxy off. Loopback hosts always go direct. */
   noProxy: Schema.String,
+  /**
+   * What a request to a model that binds its thinking to the conversation
+   * (Claude Fable 5.1, Opus, Sonnet and Haiku 5.5 and later) says about a
+   * thinking block whose conversation changed before it: `provider-default`
+   * sends nothing (an account that enforces the binding then refuses such a
+   * request), `drop_block` has the provider drop the block (reported as
+   * `llm.thinking.dropped`), `error` has it refuse the request.
+   */
+  thinkingPrefixMismatch: ThinkingPrefixMismatch,
   // An unknown key is named, never its value: a misspelt `credentials` may hold a secret.
 }).annotate({ messageUnexpectedKey: "not an option of the models plugin" }).check(Schema.makeFilter((config) =>
   config.storage === "memory" || (Object.keys(config.credentials).length === 0 && Object.keys(config.credentialEnv).length === 0)
@@ -129,7 +140,7 @@ const transportLayer = (config: Config): Effect.Effect<Layer.Layer<never, Harnes
  */
 export const modelsPlugin = definePlugin({
   id: "@xandreed/plugin-models", version: "0.14.0", scope: "runtime", config: Config,
-  defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {}, storage: "local", credentials: {}, credentialEnv: {}, proxy: "", noProxy: "" },
+  defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {}, storage: "local", credentials: {}, credentialEnv: {}, proxy: "", noProxy: "", thinkingPrefixMismatch: "provider-default" },
   requires: [SessionEnvironment],
   optional: [HostCredentials, ModelsTransport],
   provides: [LanguageModel.LanguageModel, UtilityLlm, AuthStore, SettingsStore, ModelCatalog],
@@ -145,7 +156,7 @@ export const modelsPlugin = definePlugin({
     )
     const transport = yield* transportLayer(config)
     // The transport sits beneath everything that calls out: the stores' token refreshes, the routed model and the utility model.
-    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints)).pipe(Layer.provideMerge(transport))
+    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints), Layer.succeed(CurrentThinkingPrefixMismatch, config.thinkingPrefixMismatch)).pipe(Layer.provideMerge(transport))
     return Layer.mergeAll(LanguageModelLive, UtilityLlmLive, ConfiguredModelCatalogLive).pipe(Layer.provideMerge(base))
   })),
 })

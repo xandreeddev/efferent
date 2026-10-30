@@ -36,11 +36,18 @@ export interface ChatRoute {
  */
 export type Route = { readonly _tag: "anthropic" } | ResponsesRoute | { readonly _tag: "openai-codex" } | ChatRoute
 
-/** A model of a built-in provider: whether its route sends it images (where not, they go as label lines), and the efforts it takes. */
+/** A model of a built-in provider: whether its route sends it images (where not, they go as label lines), the efforts it takes, and whether its thinking is bound to the conversation. */
 export interface ModelProfile {
   readonly id: string
   readonly images: boolean
   readonly efforts: ReadonlyArray<ReasoningEffortType>
+  /**
+   * The provider binds each thinking block's signature to the conversation
+   * before it (system, tools, earlier messages): a block sent back after that
+   * prefix changed is refused, unless the request says what to do with it
+   * (the models plugin's `thinkingPrefixMismatch`).
+   */
+  readonly bindsThinking: boolean
 }
 
 /** One built-in provider: its catalog, what each model reads and takes, and the route each is sent over. */

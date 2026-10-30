@@ -43,6 +43,19 @@ const OPENCODE_CHAT: Route = { _tag: "compat", moduleName: "OpenCode", chatUrl: 
  * its reasoning reads 0. */
 const GOOGLE_CHAT: Route = { _tag: "compat", moduleName: "Google", chatUrl: GOOGLE_CHAT_URL, standardOnly: true, usage: { reasoning: false } }
 
+/**
+ * The Claude models that bind thinking to the conversation's prefix: Fable
+ * from 5.1, Opus, Sonnet and Haiku from 5.5, and every later version of the
+ * four families (`claude-<family>-<major>-<minor>`, with or without a date).
+ */
+const bindsThinkingToPrefix = (id: string): boolean => {
+  const version = /^claude-(fable|opus|sonnet|haiku)-(\d+)(?:-(\d{1,2}))?(?:-\d{8})?$/.exec(id)
+  if (version === null) return false
+  const [, family, major, minor] = version
+  const at = Number(major) * 100 + Number(minor ?? 0)
+  return at >= (family === "fable" ? 501 : 505)
+}
+
 /** A profile over its catalog's ids and its rule for any model id. */
 const profile = (
   label: Option.Option<string>,
@@ -67,7 +80,7 @@ export const PROVIDER_PROFILES: { readonly [P in BuiltInProvider]: ProviderProfi
       "deepseek-v4-pro", "deepseek-v4-flash",
     ],
     // The GPT models read images; the chat models are text-only until each is verified.
-    (id) => ({ images: OPENCODE_RESPONSES_MODEL.test(id), efforts: [] }),
+    (id) => ({ images: OPENCODE_RESPONSES_MODEL.test(id), efforts: [], bindsThinking: false }),
     (id) => OPENCODE_RESPONSES_MODEL.test(id) ? OPENCODE_RESPONSES : OPENCODE_CHAT,
   ),
   "openai-codex": profile(
@@ -76,25 +89,26 @@ export const PROVIDER_PROFILES: { readonly [P in BuiltInProvider]: ProviderProfi
     (id) => ({
       images: !TEXT_ONLY_CODEX.has(id),
       efforts: /^gpt-5\.6-(luna|sol|terra)$/.test(id) ? ALL_EFFORTS : /^gpt-5/.test(id) ? SUBSCRIPTION_EFFORTS : [],
+      bindsThinking: false,
     }),
     () => OPENAI_CODEX,
   ),
   openai: profile(
     Option.some("OpenAI API key"),
     ["gpt-5", "gpt-5.1", "gpt-5.2", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.5", "gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"],
-    (id) => ({ images: true, efforts: /^gpt-5/.test(id) ? PUBLIC_EFFORTS : [] }),
+    (id) => ({ images: true, efforts: /^gpt-5/.test(id) ? PUBLIC_EFFORTS : [], bindsThinking: false }),
     () => OPENAI_RESPONSES,
   ),
   anthropic: profile(
     Option.none(),
     ["claude-fable-5", "claude-haiku-4-5", "claude-opus-4-8", "claude-sonnet-5"],
-    () => ({ images: true, efforts: [] }),
+    (id) => ({ images: true, efforts: [], bindsThinking: bindsThinkingToPrefix(id) }),
     () => ANTHROPIC,
   ),
   google: profile(
     Option.none(),
     ["gemini-3-flash", "gemini-3.1-pro", "gemini-3.5-flash"],
-    () => ({ images: true, efforts: [] }),
+    () => ({ images: true, efforts: [], bindsThinking: false }),
     () => GOOGLE_CHAT,
   ),
 }
