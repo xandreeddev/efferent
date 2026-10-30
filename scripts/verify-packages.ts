@@ -5,7 +5,9 @@ import { createServer } from "node:net"
 import { tmpdir } from "node:os"
 import { join, relative } from "node:path"
 import { Result, Schema } from "effect"
+import { apiBuildOf, apiDifferences, apiSnapshot, committedApi } from "./api-snapshot.js"
 import { isTestCode, verifyRefusals } from "./build-check.js"
+import { installedCopies, PEERS } from "./distribution-manifest.js"
 import { importsFor, importsOf, regionsOf } from "./guide-snippets.js"
 import { BuildStamp } from "./publish-plan.js"
 const root = join(import.meta.dir, "..")
@@ -40,6 +42,14 @@ if (refusals.length > 0) {
   console.error(`Refusing to verify:\n${refusals.map((reason) => `  - ${reason}`).join("\n")}`)
   process.exit(1)
 }
+/** What each published entry exports, read from the build's declarations, is what api/ records (scripts/api-snapshot.ts). */
+const api = apiSnapshot(apiBuildOf(root, stamp.success.packages.map((entry) => entry.dir)))
+const apiProblems = [...api.problems, ...(api.problems.length > 0 ? [] : apiDifferences(committedApi(join(root, "api")), api.files))]
+if (apiProblems.length > 0) {
+  console.error(`The public API of the build is not the one api/ records:\n${apiProblems.map((problem) => `  - ${problem}`).join("\n")}\nRun bun run api:update and commit api/ with the change.`)
+  process.exit(1)
+}
+console.log(`The public API of the build matches api/ (${api.files.size} entries)`)
 const tarballs = join(root, ".artifacts/tarballs")
 await mkdir(tarballs, { recursive: true })
 const manifests = Array.from(new Bun.Glob("*/package.json").scanSync({ cwd: packages }))
@@ -67,6 +77,13 @@ await writeFile(join(consumer, "package.json"), JSON.stringify({ private: true, 
 console.log(`Installing from temporary local registry into ${consumer}`)
 const install = Bun.spawn(["bun", "install", "--ignore-scripts", "--no-cache", "--cache-dir", join(consumer, ".install-cache")], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await install.exited !== 0) process.exit(1)
+/** The consumer holds one copy of each package the framework shares with its host: two would split their classes and services. */
+const copies = Array.from(installedCopies(join(consumer, "node_modules"), PEERS)).filter(([, found]) => found.length !== 1)
+if (copies.length > 0) {
+  console.error(`The consumer did not install one copy of each shared package:\n${copies.map(([name, found]) => `  - ${name}: ${found.length === 0 ? "none" : found.map((dir) => relative(consumer, dir)).join(", ")}`).join("\n")}`)
+  process.exit(1)
+}
+console.log(`The consumer installed one copy each of ${PEERS.join(" and ")}`)
 /**
  * The FileSystem and Bash kits over the packed `@xandreed/plugin-workspace`
  * adapters, each check in a fresh directory under the system's temporary

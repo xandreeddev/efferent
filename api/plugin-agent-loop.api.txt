@@ -1,0 +1,17 @@
+const DEFAULT_MAX_STEPS
+const DEFAULT_TOOL_CONCURRENCY
+const DEGENERATE_LOOP_STOP
+const DEGENERATE_REPEAT_NUDGE
+const STEP_LOOP
+const StepLoopLive
+const default
+const foldProgress
+const nextPhase
+const runLoop
+const runSteps
+const stepLoopPlugin
+interface CompactionPlan
+interface RunLoopOptions
+interface StepView
+type LoopToolChoice
+type Phase

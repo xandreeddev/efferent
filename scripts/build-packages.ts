@@ -80,7 +80,7 @@ await Promise.all(names.map(async (name) => {
   if (exports["./*"]) exports["./*.js"] = exports["./*"]
   const missing = Object.entries(original.dependencies ?? {}).filter(([key, value]) => String(value).startsWith("workspace:") && !versions.has(key))
   if (missing.length > 0) { console.error(`Missing distribution dependencies for ${original.name}: ${missing.map(([key]) => key).join(", ")}`); process.exit(1) }
-  // Caret ranges, `effect` as a peer: mixed patch versions install one copy of core and of Effect.
+  // Caret ranges, `@xandreed/core` and `effect` as peers: mixed patch versions install one copy of each.
   const { dependencies, peerDependencies } = distributionDependencies(original, versions)
   const manifest = { ...original, version, private: false, main: "./dist/index.js", types: "./dist/index.d.ts", exports, dependencies, peerDependencies,
     files: ["dist", "skills", "profiles", "README.md", "LICENSE"], license: "MIT",

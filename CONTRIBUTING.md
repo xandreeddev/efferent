@@ -84,6 +84,17 @@ The lists the check reads are the `registration` data in
   [plugin](docs/plugin-reference.json) and [event](docs/event-reference.md)
   references, the guides' snippets and their website pages; CI fails on any
   difference from what is committed.
+- What each published entry exports is recorded in `api/`: one file per
+  entry, `api/<package>.api.txt` for a package's root and
+  `api/<package>--<subpath>.api.txt` for each other entry (every `/` of the
+  subpath a `--`), each the sorted `kind name` lines of its exports, read
+  from the build's declarations (`scripts/api-snapshot.ts`). After a change
+  that adds, removes or renames an export, or turns a value export into a
+  type-only one, run `bun run api:update` (it runs `build:packages`, then
+  rewrites `api/`) and commit the diff; `verify:packages` fails while `api/`
+  differs from the build. A package's root entry may not export a name
+  declared in a package's `src/internal/` or `src/engine/` folder: those
+  modules are published through entries of their own, outside semver.
 - Every release's journal fixture stays readable
   (`packages/sdk/src/journal-compat.test.ts` reads each
   `packages/sdk/fixtures/journal-<version>.json`). A fixture records what a
@@ -145,14 +156,15 @@ bun run publish:packages --publish
 ```
 
 The distribution build resolves `workspace:*` dependencies to caret ranges of
-the matching package versions (`^0.14.0`) and declares `effect` a peer
-dependency at a caret range (`^4.0.7`), never exact pins, so a host on other
-patch versions installs one copy of `@xandreed/core` and of `effect`
-(`scripts/distribution-manifest.ts`). It stamps `build.json` with the commit,
-whether the working tree had changes, the shared version and the packages it
-built. Changes are tracked and untracked files anywhere, plus gitignored files
-in a package's `src`, `skills` or `profiles` folder, which the build copies
-too.
+the matching package versions (`^0.14.0`) and declares `@xandreed/core` and
+`effect` peer dependencies at caret ranges (`^0.14.0`, `^4.0.7`), never exact
+pins, so a host on other patch versions installs one copy of `@xandreed/core`
+and of `effect`, and one whose dependencies cannot share a copy gets a peer
+conflict instead of a second one (`scripts/distribution-manifest.ts`). It
+stamps `build.json` with the commit, whether the working tree had changes, the
+shared version and the packages it built. Changes are tracked and untracked
+files anywhere, plus gitignored files in a package's `src`, `skills` or
+`profiles` folder, which the build copies too.
 `publish:packages` refuses, before publishing anything, when:
 
 - the packages do not all share one version;
@@ -201,5 +213,8 @@ changes. `verify:packages` checks only the build of `HEAD` (`build.json`)
 from a clean tree, and refuses test code in it (`*.test.*`, `testing`
 modules and folders, which the build leaves out); to check a build of
 uncommitted changes, run `bun run verify:packages --allow-dirty` right after
-`bun run build:packages`. The external-consumer test installs local
-tarballs; it never publishes them.
+`bun run build:packages`. It then compares each published entry's exports
+with `api/` and names every line that differs (`bun run api:update` rewrites
+it), and checks the consumer installed exactly one copy of `@xandreed/core`
+and of `effect`. The external-consumer test installs local tarballs; it
+never publishes them.

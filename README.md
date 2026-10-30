@@ -13,13 +13,15 @@ this repository's history.
 ## Install
 
 ```sh
-npm install effect @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
+npm install effect @xandreed/core @xandreed/sdk @xandreed/plugin-agent-loop @xandreed/plugin-models @xandreed/plugin-sessions
 ```
 
-Install `effect` (4.0.7 or a later 4.x) beside them: the packages and your
-code share one copy. Releases after 0.14.0 declare it a peer dependency and
-each other by caret ranges, so other patch versions still install one copy of
-`effect` and of `@xandreed/core`.
+Install `effect` (4.0.7 or a later 4.x) and `@xandreed/core` beside them: the
+packages and your code share one copy of each. Releases after 0.14.0 declare
+both peer dependencies and the other packages by caret ranges, so other patch
+versions still install one copy of `effect` and of `@xandreed/core`, and
+versions that cannot share one are a peer conflict when you install, not a
+second copy.
 
 Every package below is published at `0.14.0` under npm's `latest` tag (npm's
 older `@xandreed/plugin-telemetry` versions, 0.3.0 and 0.4.0, are an earlier,
@@ -271,8 +273,12 @@ bun run --cwd packages/website check
 The distribution build prepares artifacts under `.artifacts/` using each
 package's manifest version and matching internal dependency versions,
 leaving test code out. The consumer check accepts only a build of `HEAD`
-from a clean tree (`--allow-dirty` accepts one of uncommitted changes). It installs local tarballs outside the monorepo, runs a
-composable agent's turn, a session fork, an eval composition and a SQLite
+from a clean tree (`--allow-dirty` accepts one of uncommitted changes), and
+only when what each published entry exports is what `api/` records
+(`bun run api:update` rewrites it from a fresh build). It installs local
+tarballs outside the monorepo, checks they installed one copy of
+`@xandreed/core` and of `effect`, runs a composable agent's turn, a session
+fork, an eval composition and a SQLite
 session log with a background task on Bun, then imports every Node-capable
 package on Node, and runs the `FileSystem` and `Bash` kits over the local
 adapters, loads a `SKILL.md` tree through the skills directory plugin, and

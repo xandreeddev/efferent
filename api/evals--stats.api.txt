@@ -1,0 +1,4 @@
+const mean
+const percentile
+const standardDeviation
+const wilsonInterval
