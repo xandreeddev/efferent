@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Tool } from "effect/ai"
-import { Effect, Layer, Option, Schema } from "effect"
+import { Effect, Layer, Option, Schema, Stream } from "effect"
 import { McpCallOutcome, McpClient, McpError, McpToolDescriptor } from "../ports/mcp-client.port.js"
 import { buildMcpBridge, McpCall } from "./bridge.js"
 
@@ -78,6 +78,17 @@ describe("the MCP bridge — progressive disclosure", () => {
       call.handler({ server: "files", tool: "ghost", args: {} }).pipe(Effect.result),
     )
     expect(JSON.stringify(unknown)).toContain("UnknownMcpTool")
+  })
+
+  test("its handlers, provided to its toolkit as they are, handle a call the model makes", async () => {
+    const bridge = await Effect.runPromise(buildMcpBridge.pipe(Effect.provide(scriptedClient)))
+    // The bridge's tools read no service; its toolkit, typed over any tool, widens them to `any`.
+    const handled = Effect.gen(function* () {
+      const kit = yield* bridge.toolkit.pipe(Effect.provide(bridge.handlers))
+      const results = yield* Stream.runCollect(yield* kit.handle(McpCall.name, { server: "files", tool: "search", args: { query: "hi" } }))
+      return results.at(-1)
+    }) as Effect.Effect<Tool.HandlerResult<Tool.Any> | undefined, unknown>
+    expect(await Effect.runPromise(handled)).toMatchObject({ isFailure: false, result: { hits: ["hi"] } })
   })
 
   test("mcp_call's args decode PRESERVES nested keys — the server gets them verbatim", async () => {

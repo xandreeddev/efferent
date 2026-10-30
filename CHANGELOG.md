@@ -163,6 +163,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `optional` service with `Effect.serviceOption`. A host calling
   `activateGraph` must pass any service it named `external` that a plugin
   requires.
+- A custom `ToolRegistry` returns the context its toolkit's `toHandlers`
+  gives (for no tools, `toolkit.toHandlers({})` on a toolkit typed
+  `Toolkit<Record<string, Tool.Any>>`). A host building a `StepRequest`
+  merges its services into the registry's handlers
+  (`Context.merge(services, tools.handlers)`), and a custom `StepLoop` drops
+  its cast: `request.tools.toolkit.pipe(Effect.provide(request.handlers))`
+  type-checks as is.
 
 ### Breaking
 
@@ -442,6 +449,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Activating a plugin without a service its `requires` lists fails with
   `requires.missing`, naming the plugin and the service, before its layer is
   built (it used to die mid-activation as `plugin.defect`).
+- `@xandreed/core`: `RunTools.handlers`, `StepRequest.handlers` and
+  `McpBridge.handlers` are typed `Context<ToolHandlers>` (new export)
+  instead of `Context<never>`.
 
 ### Added
 
@@ -1042,6 +1052,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A rule's `boundary` globs only shrink, like its `allow` list: a glob that
   names no file the rule checks, or whose files hold no match the rule
   tolerates there, fails the gate.
+- The tool registry and the MCP bridge build their handlers without type
+  erasure and leave the declared erasure boundary.
 
 ## 0.14.0 — 2026-10-29
 

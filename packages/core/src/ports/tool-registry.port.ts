@@ -25,10 +25,18 @@ export interface SkillMatch {
   readonly record: Option.Option<DecisionRecord>
 }
 
+/**
+ * The handlers of a run's tools, as a context: what `RunTools.toolkit`
+ * needs to handle a call. Provided to the toolkit, it meets the toolkit's
+ * requirement as it is, without a cast. A context of typed handlers
+ * (`Toolkit.make(A, B).toHandlers(...)`) is one.
+ */
+export type ToolHandlers = Tool.HandlersFor<Record<string, Tool.Any>>
+
 /** The tools of one run: the full set is fixed at run start; the active set only grows. */
 export interface RunTools {
   readonly toolkit: Toolkit.Toolkit<Record<string, Tool.Any>>
-  readonly handlers: Context.Context<never>
+  readonly handlers: Context.Context<ToolHandlers>
   /** Active tool names in activation order. */
   readonly active: Effect.Effect<ReadonlyArray<string>>
   /**

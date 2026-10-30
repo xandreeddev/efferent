@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Toolkit } from "effect/ai"
+import type { Tool } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Result, Tracer } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
@@ -45,9 +46,10 @@ const registry = ToolRegistry.of({
   open: () => Effect.gen(function* () {
     const run = yield* RunContext
     const active = yield* Ref.make<ReadonlyArray<string>>([])
+    const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.make()
     const tools: RunTools = {
-      toolkit: Toolkit.make(),
-      handlers: Context.empty(),
+      toolkit,
+      handlers: yield* toolkit.toHandlers({}),
       active: Ref.get(active),
       activate: (skills, source) => Ref.updateAndGet(active, (all) => [...all, ...skills.map((skill) => `${skill}@${source}:${run.runId}`)]),
       match: (userMessage) => Effect.succeed({ userMessage, skills: [], probabilities: Option.none(), record: Option.none() }),

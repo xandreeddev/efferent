@@ -225,7 +225,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const request: StepRequest = {
     run: scenario.run ?? FIRST_RUN,
     tools,
-    handlers: Context.merge(handlers, Context.make(LanguageModel.LanguageModel, model)) as Context.Context<never>,
+    handlers: Context.merge(handlers, Context.make(LanguageModel.LanguageModel, model)),
     limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: scenario.streaming ?? false, requireCompletion: scenario.requireCompletion ?? false },
     initial: Option.fromNullishOr(scenario.initial),
     plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(
