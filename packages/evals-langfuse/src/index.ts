@@ -1,1 +1,5 @@
-export * from "./langfuse-export.adapter.js"
+export {
+  EvaluationExportLangfuseLive,
+  langfuseExporter,
+  type LangfuseExportOptions,
+} from "./langfuse-export.adapter.js"

@@ -18,6 +18,8 @@ Exports a saved `EvaluationRun` to Langfuse through its official client (`@langf
 - `langfuseExporter(options)`: an `ExporterRegistration` with id `langfuse`, for an app's `exporters` (the CLI's `--exporter langfuse`).
 - `EvaluationExportLangfuseLive(options)`: the `EvaluationExport` layer itself; `LangfuseExportOptions` (`baseUrl`, `publicKey`, `secretKey`, optional `timeoutMs`; `project` is accepted but not read).
 
+The root names each export, and `quality/exports-have-consumers` checks each one: the packed consumer imports `langfuseExporter`, and `EvaluationExportLangfuseLive` and `LangfuseExportOptions`, which no first-party code imports, are tagged `@public`.
+
 ## Model-facing text
 
 None.
