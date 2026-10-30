@@ -117,6 +117,8 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/runtime/src/index.ts",
   "packages/evals-langfuse/src/index.ts",
   "packages/evals-langsmith/src/index.ts",
+  "packages/evals/src/index.ts",
+  "packages/evals/src/stats.ts",
 ]
 
 /**

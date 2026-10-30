@@ -6,6 +6,7 @@ import type { EvaluatorBinding } from "./assessment.usecase.js"
 
 export const unknownEvaluationUsage = { inputTokens: Option.none<number>(), outputTokens: Option.none<number>(), costUsd: Option.none<number>() }
 
+/** @public */
 export const assess = <I, R>(binding: EvaluatorBinding<I, R>, input: I): Effect.Effect<EvaluationResult, never, R> =>
   Effect.gen(function* () {
     const startedAt = yield* Clock.currentTimeMillis

@@ -20,6 +20,8 @@ import { contextualRelevancy } from "./contextual-relevancy.functions.js"
  * the expected claims) and the units to rule on (`retrievalItems`), each
  * with the id its verdict must carry, one verdict per id. Its answer is
  * decoded (`RetrievalJudgement`), so its ids may be plain strings.
+ *
+ * @public
  */
 export type RetrievalJudge = (
   measure: RetrievalMeasure,
@@ -33,12 +35,18 @@ export type RetrievalJudge = (
  * it, so reports graded under different prompts do not compare as alike.
  * Without one, the fingerprint names only the measure's definition
  * (`retrieval-<measure>:1`), the same whatever the judge's prompt.
+ *
+ * @public
  */
 export type SemanticRetrievalOptions = {
   readonly rubric?: Readonly<Partial<Record<RetrievalMeasure, string>>>
 }
 
-/** The application binds its judge model and cost guard. No provider SDK enters the domain. */
+/**
+ * The application binds its judge model and cost guard. No provider SDK enters the domain.
+ *
+ * @public
+ */
 export const semanticRetrievalGraders = (
   judge: RetrievalJudge,
   options: SemanticRetrievalOptions = {}

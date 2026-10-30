@@ -10,17 +10,25 @@ export const EvalId = Schema.NonEmptyString.check(
   Schema.isPattern(/^[^/@]+$/, { message: "an id is one segment, without \"/\" or \"@\"" })
 ).pipe(Schema.brand("EvalId"))
 export type EvalId = typeof EvalId.Type
-/** An identifier composed of `EvalId` segments joined by "/": a trial's or a transcript event's. */
+/**
+ * An identifier composed of `EvalId` segments joined by "/": a trial's or a transcript event's.
+ *
+ * @public
+ */
 export const EvalPath = Schema.NonEmptyString.check(
   Schema.isPattern(/^[^/@]+(?:\/[^/@]+)*$/, { message: "a path is ids joined by \"/\", without \"@\" or empty segments" })
 ).pipe(Schema.brand("EvalPath"))
 export type EvalPath = typeof EvalPath.Type
+/** @public */
 export const Version = Schema.NonEmptyString
+/** @public */
 export const Fingerprints = Schema.Record(Schema.String, Schema.String)
 /**
  * One reason an evaluation app is refused: `shape` when a value is not what
  * the app's type declares, a cross-reference rule otherwise. `path` leads
  * from the app to the offending value (`["suites", 0, "tasks", 1, "runnable"]`).
+ *
+ * @public
  */
 export const AppViolation = Schema.Struct({
   rule: Schema.Literals([

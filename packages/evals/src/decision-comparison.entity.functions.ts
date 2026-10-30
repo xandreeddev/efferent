@@ -8,6 +8,7 @@ const sampleIndex = (draw: number, position: number, length: number) => {
 }
 const mean = (xs: ReadonlyArray<number>) => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null
 const quantile = (xs: ReadonlyArray<number>, q: number) => [...xs].sort((a, b) => a - b)[Math.max(0, Math.ceil(xs.length * q) - 1)] ?? null
+/** @public */
 export const selectionMetrics = (rows: ReadonlyArray<SelectionObservation>) => {
   const accepted = rows.filter((r) => r.selected !== null)
   // Choice probabilities require a single categorical gold label. Multiple
@@ -22,7 +23,10 @@ export const selectionMetrics = (rows: ReadonlyArray<SelectionObservation>) => {
   }
 }
 /** Matching keys include repetition. Missing pairs are counted, never treated as ties.
- * Bootstrap units are scenario groups, so translations and repetitions stay together. */
+ * Bootstrap units are scenario groups, so translations and repetitions stay together.
+ *
+ * @public
+ */
 export const compareDecisionTrials = (rows: ReadonlyArray<DecisionTrial>, baseline: string) => {
   const base = rows.filter((r) => r.candidate === baseline)
   return [...new Set(rows.map((r) => r.candidate))].map((candidate) => {

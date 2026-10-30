@@ -4,10 +4,12 @@ import { SemanticAnswers, SemanticInput } from "./semantic.entity.js"
 import type { SemanticQuestions } from "./semantic.entity.js"
 
 const invalid = (message: string, cause?: unknown) => new AssessmentError({ code: "invalid", message, cause })
+/** @public */
 export const validateSemanticInput = (input: SemanticInput) => Schema.decodeEffect(Schema.toType(SemanticInput))(input).pipe(
   Effect.mapError((error) => invalid(`Semantic input does not decode: ${error.message}`, error)),
 )
 
+/** @public */
 export const validateSemanticAnswers = Effect.fnUntraced(function* (input: SemanticInput, value: unknown) {
   yield* validateSemanticInput(input)
   const answers = yield* Schema.decodeUnknownEffect(SemanticAnswers)(value).pipe(Effect.mapError((error) => invalid(`Judge answers do not decode: ${error.message}`, error)))
@@ -33,7 +35,11 @@ const exactStruct = <Fields extends Schema.Struct.Fields>(fields: Fields) => {
   )).pipe(Schema.decodeTo(struct))
 }
 
-/** A provider-facing schema with exactly the rubric's question IDs and offered choices. */
+/**
+ * A provider-facing schema with exactly the rubric's question IDs and offered choices.
+ *
+ * @public
+ */
 export const semanticResponseSchema = (questions: SemanticQuestions) => Schema.Struct({
   answers: exactStruct(Object.fromEntries(Object.entries(questions).map(([id, question]) => [id,
     Match.value(question).pipe(

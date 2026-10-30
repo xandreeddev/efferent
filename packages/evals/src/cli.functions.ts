@@ -1,14 +1,20 @@
 import { Effect, Option, Schema } from "effect"
 import { EvaluationError } from "./domain/identity.entity.js"
 
-/** Flag parsing shared by eval command lines; `argv` defaults to the process arguments. */
+/**
+ * Flag parsing shared by eval command lines; `argv` defaults to the process arguments.
+ *
+ * @public
+ */
 export const argValue = (name: string, argv: ReadonlyArray<string> = process.argv): Option.Option<string> => {
   const at = argv.indexOf(name)
   return Option.fromNullishOr(at < 0 ? undefined : argv[at + 1])
 }
 
+/** @public */
 export const hasFlag = (name: string, argv: ReadonlyArray<string> = process.argv): boolean => argv.includes(name)
 
+/** @public */
 export const csv = (name: string, fallback: ReadonlyArray<string>, argv: ReadonlyArray<string> = process.argv): ReadonlyArray<string> =>
   Option.match(argValue(name, argv), {
     onNone: () => fallback,

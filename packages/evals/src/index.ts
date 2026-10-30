@@ -1,29 +1,49 @@
-export * from "./domain/identity.entity.js"
+export { AppViolation, EvalId, EvalPath, EvaluationError, Fingerprints, Version } from "./domain/identity.entity.js"
 export { reasonOf } from "./domain/identity.entity.functions.js"
-export * from "./domain/task.entity.js"
-export * from "./domain/journey.entity.js"
-export * from "./domain/runnable.entity.js"
-export * from "./domain/candidate.entity.js"
-export * from "./domain/transcript.entity.js"
-export * from "./domain/outcome.entity.js"
-export * from "./domain/grading-context.entity.js"
-export * from "./domain/grader.entity.js"
-export * from "./domain/trial.entity.js"
-export * from "./domain/suite.entity.js"
-export * from "./domain/calibration.entity.js"
-export * from "./domain/evaluation-run.entity.js"
-export * from "./domain/task.entity.functions.js"
-export * from "./domain/grading-context.entity.functions.js"
-export * from "./domain/evaluation-run.entity.functions.js"
-export * from "./contracts/evaluation-app.contract.js"
-export * from "./contracts/evaluation-app.contract.functions.js"
-export * from "./adapters/runnable.adapter.js"
-export * from "./adapters/grader-calibration.adapter.js"
-export * from "./domain/grader-calibration.entity.js"
-export * from "./domain/grader-calibration.entity.functions.js"
-export * from "./ports/evaluation-store.port.js"
-export * from "./ports/evaluation-export.port.js"
-export * from "./usecases/run-evaluation.usecase.functions.js"
+export { GraderBinding, Task } from "./domain/task.entity.js"
+export { Journey } from "./domain/journey.entity.js"
+export { Runnable } from "./domain/runnable.entity.js"
+export { Candidate } from "./domain/candidate.entity.js"
+export { Transcript, TranscriptEvent } from "./domain/transcript.entity.js"
+export { Outcome } from "./domain/outcome.entity.js"
+export { ContextBudget, GradingContext } from "./domain/grading-context.entity.js"
+export { Grade, Grader } from "./domain/grader.entity.js"
+export { Trial } from "./domain/trial.entity.js"
+export { Gate, Suite } from "./domain/suite.entity.js"
+export { Calibration } from "./domain/calibration.entity.js"
+export { EvaluationRun, GateFinding } from "./domain/evaluation-run.entity.js"
+export { tasksFromDataset } from "./domain/task.entity.functions.js"
+export { fingerprint, gradingContext } from "./domain/grading-context.entity.functions.js"
+export { comparisonIssues, runGates } from "./domain/evaluation-run.entity.functions.js"
+export {
+  type EnvironmentRegistration,
+  type EvaluationApp,
+  type EvaluationSelection,
+  type ExporterRegistration,
+  type GraderRegistration,
+  type GradingSelection,
+  type ProjectionRegistration,
+  type RunnableRegistration,
+} from "./contracts/evaluation-app.contract.js"
+export {
+  defineEvaluationApp,
+  evaluationAppViolations,
+  parseEvaluationApp,
+  validateEvaluationApp,
+} from "./contracts/evaluation-app.contract.functions.js"
+export { defineRunnable } from "./adapters/runnable.adapter.js"
+export { defineGraderCalibration } from "./adapters/grader-calibration.adapter.js"
+export { CalibrationObservation, CalibrationReference } from "./domain/grader-calibration.entity.js"
+export { calibrationAgreement } from "./domain/grader-calibration.entity.functions.js"
+export { EvaluationRunStore } from "./ports/evaluation-store.port.js"
+export { EvaluationExport, ExportReceipt } from "./ports/evaluation-export.port.js"
+export {
+  calibrateGrader,
+  executionFingerprint,
+  gradeEvaluation,
+  gradeTrial,
+  runEvaluation,
+} from "./usecases/run-evaluation.usecase.functions.js"
 export {
   Metric,
   EvaluationUsage,
@@ -42,16 +62,27 @@ export type {
   Dataset,
   DatasetCase
 } from "./assessment.usecase.js"
-export * from "./stats.js"
-export * from "./graders/retrieval/ranking.functions.js"
-export * from "./graders/retrieval/contextual-precision.functions.js"
-export * from "./graders/retrieval/contextual-recall.functions.js"
-export * from "./graders/retrieval/contextual-relevancy.functions.js"
-export * from "./domain/review.entity.js"
-export * from "./domain/review.entity.functions.js"
-export * from "./graders/retrieval/semantic-retrieval.entity.js"
-export * from "./graders/retrieval/semantic-retrieval.entity.functions.js"
-export * from "./graders/retrieval/semantic-grader.adapter.js"
+export { mean, percentile, standardDeviation, wilsonInterval } from "./stats.js"
+export { rankingMetrics } from "./graders/retrieval/ranking.functions.js"
+export { contextualPrecision } from "./graders/retrieval/contextual-precision.functions.js"
+export { contextualRecall } from "./graders/retrieval/contextual-recall.functions.js"
+export { contextualRelevancy } from "./graders/retrieval/contextual-relevancy.functions.js"
+export { ReviewBundle, ReviewItem } from "./domain/review.entity.js"
+export { approveReviews, reviewBundle } from "./domain/review.entity.functions.js"
+export {
+  RetrievalContext,
+  RetrievalDocumentId,
+  RetrievalItem,
+  RetrievalItemId,
+  RetrievalJudgement,
+  RetrievalMeasure,
+} from "./graders/retrieval/semantic-retrieval.entity.js"
+export { retrievalItems } from "./graders/retrieval/semantic-retrieval.entity.functions.js"
+export {
+  type RetrievalJudge,
+  semanticRetrievalGraders,
+  type SemanticRetrievalOptions,
+} from "./graders/retrieval/semantic-grader.adapter.js"
 
 export {
   EvaluationResult,
@@ -66,31 +97,46 @@ export {
   summarizeAssessments
 } from "./assessment.entity.functions.js"
 export { fingerprint as evaluationFingerprint } from "./domain/grading-context.entity.functions.js"
-export * from "./adapters/isolated-services.adapter.js"
-export * from "./cli.functions.js"
-export * from "./evaluator-calibration.entity.functions.js"
-export * from "./evaluator-registry.usecase.js"
-export * from "./evaluator-registry.usecase.functions.js"
-export * from "./semantic.entity.js"
-export * from "./semantic.entity.functions.js"
-export * from "./ports/semantic-judge.port.js"
-export * from "./evaluators/semantic.js"
-export * from "./adapters/semantic-llm.adapter.js"
-export * from "./adapters/semantic-jev.adapter.js"
-export * from "./evaluation-score.entity.js"
-export * from "./evaluation-score.entity.functions.js"
-export * from "./completeness.entity.js"
-export * from "./completeness.entity.functions.js"
-export * from "./decision-comparison.entity.js"
-export * from "./decision-comparison.entity.functions.js"
+export { isolatedServices } from "./adapters/isolated-services.adapter.js"
+export { argValue, csv, hasFlag, positiveInt } from "./cli.functions.js"
+export { compareCalibrationMetric, summarizeCalibration } from "./evaluator-calibration.entity.functions.js"
+export { type EvaluatorRegistration } from "./evaluator-registry.usecase.js"
+export { evaluatorRegistry, projectEvaluatorInput } from "./evaluator-registry.usecase.functions.js"
+export {
+  SemanticAnswer,
+  SemanticAnswers,
+  SemanticInput,
+  SemanticQuestion,
+  SemanticQuestions,
+  SemanticResult,
+} from "./semantic.entity.js"
+export { semanticResponseSchema, validateSemanticAnswers, validateSemanticInput } from "./semantic.entity.functions.js"
+export { SemanticJudge } from "./ports/semantic-judge.port.js"
+export { semanticEvaluator } from "./evaluators/semantic.js"
+export { makeSemanticLlmJudge, SemanticLlmLive, type SemanticLlmOptions } from "./adapters/semantic-llm.adapter.js"
+export { makeSemanticJevJudge, SemanticJevLive, type SemanticJevOptions } from "./adapters/semantic-jev.adapter.js"
+export { EvaluationScore } from "./evaluation-score.entity.js"
+export { evaluationScores } from "./evaluation-score.entity.functions.js"
+export {
+  ActionAssessment,
+  ActionId,
+  ActionToolReference,
+  CompletenessEvidence,
+  RequiredAction,
+  ToolInvocationId,
+  TraceStepId,
+} from "./completeness.entity.js"
+export { assessCompleteness } from "./completeness.entity.functions.js"
+export { DecisionCaseId, DecisionTrial, SelectionObservation } from "./decision-comparison.entity.js"
+export { compareDecisionTrials, selectionMetrics } from "./decision-comparison.entity.functions.js"
 
-export * from "./domain/evidence-projection.entity.js"
-export * from "./ports/runnable-execution.port.js"
-export * from "./ports/evaluation-environment.port.js"
-export * from "./ports/trial-execution.port.js"
-export * from "./ports/evidence-projector.port.js"
-export * from "./ports/grader-assessment.port.js"
-export * from "./ports/trial-recorder.port.js"
+export { EvidenceProjection } from "./domain/evidence-projection.entity.js"
+export { type RunnableExecution, runnableExecutionPort } from "./ports/runnable-execution.port.js"
+export { type EvaluationEnvironment, evaluationEnvironmentPort } from "./ports/evaluation-environment.port.js"
+export { TrialExecution } from "./ports/trial-execution.port.js"
+export { EvidenceProjector } from "./ports/evidence-projector.port.js"
+export { GraderAssessment } from "./ports/grader-assessment.port.js"
+export { TrialRecorder } from "./ports/trial-recorder.port.js"
 
-export * from "./ports/evaluation-services.port.js"
-export * from "./adapters/evaluation-services.adapter.js"
+export { EvaluationServices } from "./ports/evaluation-services.port.js"
+export { EvaluationServicesLive } from "./adapters/evaluation-services.adapter.js"

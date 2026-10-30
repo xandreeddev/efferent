@@ -1257,6 +1257,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `export *`, and `quality/exports-have-consumers` checks it
   (`CURATED_ENTRIES`): `EvaluationExportLangSmithLive` and
   `LangSmithExportOptions` are tagged `@public`. Its API is unchanged.
+- `@xandreed/evals` names each export of its root instead of `export *`,
+  and `quality/exports-have-consumers` checks the root and `./stats`
+  (`CURATED_ENTRIES`): the exports no first-party code imports are tagged
+  `@public`. Its API is unchanged.
 
 ### Deprecated
 

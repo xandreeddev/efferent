@@ -11,15 +11,21 @@ import type { EvidenceProjector } from "../ports/evidence-projector.port.js"
 import type { GraderAssessment } from "../ports/grader-assessment.port.js"
 import type { EvaluationExport } from "../ports/evaluation-export.port.js"
 
-/** Registrations are static metadata and dependency layers, never executable callbacks. */
+/**
+ * Registrations are static metadata and dependency layers, never executable callbacks.
+ *
+ * @public
+ */
 export interface RunnableRegistration {
   readonly definition: Runnable
   readonly environments: ReadonlyArray<EnvironmentRegistration>
 }
+/** @public */
 export interface EnvironmentRegistration {
   readonly id: string
   readonly layer: Layer.Layer<TrialExecution, EvaluationError>
 }
+/** @public */
 export interface ProjectionRegistration {
   readonly definition: EvidenceProjection
   readonly layer: Layer.Layer<EvidenceProjector, EvaluationError>
@@ -68,6 +74,7 @@ export interface EvaluationSelection {
   readonly concurrency?: number
   readonly timeoutMs?: number
 }
+/** @public */
 export interface GradingSelection {
   readonly graders?: ReadonlyArray<string>
 }

@@ -8,6 +8,8 @@ import type { Dataset } from "./assessment.usecase.js"
  * provider may answer on a retry (a rate limit, a network or server
  * failure, output that did not parse), `provider` otherwise. The message
  * names the reason (`RateLimitError: …`); the `AiError` is the cause.
+ *
+ * @public
  */
 export const assessmentOfAiError = (error: AiError.AiError): AssessmentError => new AssessmentError({
   code: error.isRetryable ? "unavailable" : "provider",
@@ -15,6 +17,7 @@ export const assessmentOfAiError = (error: AiError.AiError): AssessmentError => 
   cause: error,
 })
 
+/** @public */
 export const validateDataset = Effect.fnUntraced(function* <I, Ref>(dataset: Dataset<I, Ref>) {
   const ids = dataset.cases.map((item) => item.id)
   const invalid = !dataset.id.trim() || !dataset.version.trim() || ids.length === 0 || new Set(ids).size !== ids.length ||
@@ -27,6 +30,7 @@ export const validateDataset = Effect.fnUntraced(function* <I, Ref>(dataset: Dat
   return dataset
 })
 
+/** @public */
 export const validateMetrics = (metrics: ReadonlyArray<Metric>, expected: ReadonlyArray<string>) =>
   Schema.decodeEffect(Schema.toType(Schema.Array(Metric)))(metrics).pipe(
     Effect.mapError((error) => new AssessmentError({ code: "invalid", message: `Evaluator returned invalid metrics: ${error.message}`, cause: error })),
@@ -39,6 +43,7 @@ export const validateMetrics = (metrics: ReadonlyArray<Metric>, expected: Readon
     }),
   )
 
+/** @public */
 export const numericMetric = (metric: Metric): Option.Option<number> => Match.value(metric).pipe(
   Match.when({ kind: "boolean" }, (value) => Option.some(value.value ? 1 : 0)),
   Match.when({ kind: "probability" }, (value) => Option.some(value.value)),
@@ -47,6 +52,7 @@ export const numericMetric = (metric: Metric): Option.Option<number> => Match.va
   Match.exhaustive,
 )
 
+/** @public */
 export const summarizeAssessments = (results: ReadonlyArray<EvaluationResult>) => ({
   total: results.length,
   scored: results.filter((result) => result.status === "scored").length,

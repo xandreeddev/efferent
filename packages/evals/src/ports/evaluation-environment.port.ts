@@ -4,7 +4,11 @@ import type { Candidate } from "../domain/candidate.entity.js"
 import type { Outcome } from "../domain/outcome.entity.js"
 import type { EvaluationError } from "../domain/identity.entity.js"
 
-/** The world produced by this port must be the world required by its runnable. */
+/**
+ * The world produced by this port must be the world required by its runnable.
+ *
+ * @public
+ */
 export interface EvaluationEnvironment<I, W> {
   readonly open: (input: I, candidate: Candidate) => Effect.Effect<W, EvaluationError, Scope.Scope>
   readonly inspect: (environment: W) => Effect.Effect<Outcome, EvaluationError>

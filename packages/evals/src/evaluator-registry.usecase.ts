@@ -1,6 +1,10 @@
 import type { Evaluator } from "./assessment.usecase.js"
 
-/** A versioned evaluator or judge an application offers to its calibrations and journeys. */
+/**
+ * A versioned evaluator or judge an application offers to its calibrations and journeys.
+ *
+ * @public
+ */
 export interface EvaluatorRegistration<I, R = never> {
   readonly id: string
   readonly version: string

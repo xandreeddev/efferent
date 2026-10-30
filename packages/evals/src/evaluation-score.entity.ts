@@ -1,6 +1,10 @@
 import { Schema } from "effect"
 
-/** Public presentation; metric kinds/ranges and execution provenance stay on the assessment. */
+/**
+ * Public presentation; metric kinds/ranges and execution provenance stay on the assessment.
+ *
+ * @public
+ */
 export const EvaluationScore = Schema.Struct({
   key: Schema.NonEmptyString,
   score: Schema.Union([Schema.Number.pipe(Schema.check(Schema.isFinite())), Schema.Boolean, Schema.Literals(["A", "B", "tie"])]),

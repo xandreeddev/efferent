@@ -6,7 +6,11 @@ import type { EvidenceProjector } from "./evidence-projector.port.js"
 import type { GraderAssessment } from "./grader-assessment.port.js"
 import type { TrialRecorder } from "./trial-recorder.port.js"
 
-/** Resolves registrations into fresh services inside the caller's trial/grade scope. */
+/**
+ * Resolves registrations into fresh services inside the caller's trial/grade scope.
+ *
+ * @public
+ */
 export class EvaluationServices extends Context.Service<
   EvaluationServices,
   {
