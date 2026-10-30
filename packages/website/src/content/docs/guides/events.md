@@ -282,7 +282,9 @@ What settles, and when:
   and published no `tool.started` or `tool.completed` for it. `reason` is
   `inactive`, `forbidden` (a permission the turn lacks), `denied` (the
   host's `ActionPolicy`), `call-limit` or `tool-call-limit`; `message` is
-  what the model got as the call's result.
+  what the model got as the call's result, as `{ error, message }` under a
+  name of its own (`ToolInactive`, `PermissionDenied`, `PolicyDenied`,
+  `CallLimit`, `ToolCallLimit`): match on `reason`, not on that name.
 - `step.ended.results` lists the step's recorded tool results (memory entry,
   call id, tool, `ok`), refused calls included as not ok: one place to see
   every call the registry handled that did not succeed.

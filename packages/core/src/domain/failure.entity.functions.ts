@@ -45,3 +45,17 @@ export const reasonOf = <E>(cause: Cause.Cause<E>): string => {
     Cause.isFailReason(reason) ? [textOf(reason.error)] : Cause.isDieReason(reason) ? [textOf(reason.defect)] : [])
   return texts.length === 0 ? "failed without an error" : texts.join("; ")
 }
+
+/**
+ * A cause as text the model reads (a tool's failure, a message a task's
+ * notice relays): each error's and defect's message alone, without the
+ * code, tag or class name `reasonOf` puts before it for hosts and logs,
+ * joined by "; "; "interrupted" when the cause holds interruptions only.
+ * Never a stack frame.
+ */
+export const messagesOf = <E>(cause: Cause.Cause<E>): string => {
+  if (Cause.hasInterruptsOnly(cause)) return "interrupted"
+  const texts = cause.reasons.flatMap((reason) =>
+    Cause.isFailReason(reason) ? [messageOf(reason.error)] : Cause.isDieReason(reason) ? [messageOf(reason.defect)] : [])
+  return texts.length === 0 ? "failed without an error" : texts.map((text) => text.length === 0 ? "an error without a message" : text).join("; ")
+}

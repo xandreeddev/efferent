@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Cause, Effect, Option, Schema } from "effect"
 import { HarnessError } from "../harness/plugin.entity.js"
-import { errorCodeOf, reasonOf } from "./failure.entity.functions.js"
+import { errorCodeOf, messagesOf, reasonOf } from "./failure.entity.functions.js"
 
 class NotFound extends Schema.TaggedError<NotFound>()("NotFound", { message: Schema.String }) {}
 class Gone extends Schema.TaggedError<Gone>()("Gone", {}) {}
@@ -46,6 +46,25 @@ describe("reasonOf", () => {
     expect(reasonOf(causeOf(Effect.interrupt))).toBe("interrupted")
     expect(reasonOf(Cause.combine(Cause.interrupt(), Cause.fail(new NotFound({ message: "missing" }))))).toBe("NotFound: missing")
     expect(reasonOf(Cause.empty)).toBe("failed without an error")
+  })
+})
+
+describe("messagesOf", () => {
+  test("keeps each error's message alone: no code, tag or class name, nothing of a stack", () => {
+    const defect = new Error("disk on fire")
+    expect(Array.of<Cause.Cause<unknown>>(
+      Cause.fail(new HarnessError({ code: "events.depth", message: "too deep" })),
+      Cause.fail(new NotFound({ message: "no such skill" })),
+      Cause.fail(new Gone()),
+      Cause.die(new TypeError("x is not a function")),
+      causeOf(Effect.die(defect)),
+      Cause.die("plain text"),
+      Cause.combine(Cause.fail(new HarnessError({ code: "a", message: "one" })), Cause.die(new Error("two"))),
+      causeOf(Effect.interrupt),
+      Cause.empty,
+    ).map((cause) => messagesOf(cause))).toEqual([
+      "too deep", "no such skill", "an error without a message", "x is not a function", "disk on fire", "plain text", "one; two", "interrupted", "failed without an error",
+    ])
   })
 })
 

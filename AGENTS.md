@@ -139,7 +139,8 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 - Errors are told apart by tag and fields (`Effect.catchTag`,
   `isHarnessError`, `isTurnError`, `harnessCodeOf`), never `instanceof` or
   `Schema.is` of the class. A wrapped failure stays a value in a `cause`
-  field; `reasonOf` turns a cause into text; no stack reaches a report or
+  field; `reasonOf` turns a cause into text (`messagesOf` for the model:
+  no code or tag); no stack reaches a report or
   the model.
 
 Naming (skill `effect-idioms` §7 has the span policy and names):

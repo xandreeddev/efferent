@@ -295,6 +295,7 @@ const mediaFromBytes
 const mediaLabel
 const mediaSlotsOf
 const mergeOptions
+const messagesOf
 const modelRequestDescriptorOf
 const noMaintenance
 const normalizeUserMessage

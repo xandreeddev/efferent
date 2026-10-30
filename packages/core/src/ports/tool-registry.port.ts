@@ -44,8 +44,10 @@ export interface RunTools {
   /**
    * Activate skills in one step, so activations running at once each keep the
    * other's tools; returns the active tools after it. A refusal fails with
-   * `skills.unknown` or `capability.forbidden`; any other failure is the
-   * store's, and activates nothing.
+   * `skills.unknown` or `capability.forbidden`, the host's codes (a
+   * `load_skill` the registry serves returns it to the model under a
+   * PascalCase name instead); any other failure is the store's, and
+   * activates nothing.
    */
   readonly activate: (skills: ReadonlyArray<string>, source: ActivationSource) => Effect.Effect<ReadonlyArray<string>, TurnError>
   /** Ask the matcher, without writing anything. */

@@ -192,8 +192,8 @@ describe("workspace tools journey", () => {
     })))
     expect(seen.outcome.outcome).toBe("completed")
     const [, afterEdit, afterShell] = seen.requests
-    expect(afterEdit?.prompt).toContain("capability.forbidden")
-    expect(afterShell?.prompt).toContain("capability.forbidden")
+    expect(afterEdit?.prompt).toContain("PermissionDenied")
+    expect(afterShell?.prompt).toContain("PermissionDenied")
     expect(afterShell?.tools).toEqual(["load_skill", "recall_context", "read", "ls", "find", "grep"])
     expect(seen.probed).toEqual({ error: "ToolInactive", message: "edit is not loaded yet; call load_skill with one of: workspace.edit" })
     expect(seen.notes).toBe("- buy milk\n")

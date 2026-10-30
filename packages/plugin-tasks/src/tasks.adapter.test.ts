@@ -267,7 +267,7 @@ describe("recovery", () => {
     expect(yield* h.tasks.reconcile(h.parent)).toEqual({ delivered: 1, started: 0 })
     expect(yield* h.tasks.reconcile(h.parent)).toEqual({ delivered: 0, started: 0 })
     yield* h.drain(h.parent)
-    expect((yield* h.reactions).at(-1)).toBe(`[Background task ${lost.taskId} partial]\n<task-output>\nhalf of it\n</task-output>`)
+    expect((yield* h.reactions).at(-1)).toBe(`[Background task ${lost.taskId} stopped before it finished]\n<task-output>\nhalf of it\n</task-output>`)
   })))
 
   test("a task whose turn was abandoned is delivered as interrupted", () => scenario(Effect.gen(function* () {
@@ -282,7 +282,7 @@ describe("recovery", () => {
     expect([lost.status, Option.map(lost.failure, (failure) => failure.code)]).toEqual(["interrupted", Option.some("task.lost")])
     expect(yield* h.tasks.reconcile(h.parent)).toEqual({ delivered: 1, started: 0 })
     yield* h.drain(h.parent)
-    expect((yield* h.reactions).at(-1)).toBe(`[Background task ${stuck.taskId} interrupted]\n<task-output>\n(no reply: the task's turn stopped without a result)\n</task-output>`)
+    expect((yield* h.reactions).at(-1)).toBe(`[Background task ${stuck.taskId} was interrupted]\n<task-output>\n(no reply: the task's turn stopped without a result)\n</task-output>`)
     yield* Scope.close(open, Exit.void)
   })))
 

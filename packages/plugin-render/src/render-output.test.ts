@@ -55,11 +55,13 @@ test("render_component's description and parameters, as the model reads them", (
   })
 })
 
-test("a refusal reaches the model as { error: code, message }: the host's admission and journal messages, and the size limit", async () => {
-  const refused = (code: "unavailable" | "storage", message: string) => Effect.fail(new UiOutputError({ code, message }))
-  expect(await called(() => refused("unavailable", "Release revoked"), () => Effect.succeed(receipt))).toEqual([[true, { error: "unavailable", message: "Release revoked" }]])
-  expect(await called(() => Effect.void, () => refused("storage", "Unavailable"))).toEqual([[true, { error: "storage", message: "Unavailable" }]])
-  expect(await called(() => Effect.void, () => Effect.succeed(receipt), 64)).toEqual([[true, { error: "invalid", message: "Component exceeds the configured size limit" }]])
+test("a refusal reaches the model as { error, message }: each code under its name, with the host's admission and journal messages, and the size limit", async () => {
+  const refused = (code: UiOutputError["code"], message: string) => Effect.fail(new UiOutputError({ code, message }))
+  expect(await called(() => refused("forbidden", "Release revoked"), () => Effect.succeed(receipt))).toEqual([[true, { error: "ComponentNotAllowed", message: "Release revoked" }]])
+  expect(await called(() => refused("unavailable", "Admission is restarting"), () => Effect.succeed(receipt))).toEqual([[true, { error: "RendererUnavailable", message: "Admission is restarting" }]])
+  expect(await called(() => Effect.void, () => refused("conflict", "Operation op was already committed with other content"))).toEqual([[true, { error: "OperationIdReused", message: "Operation op was already committed with other content" }]])
+  expect(await called(() => Effect.void, () => refused("storage", "Unavailable"))).toEqual([[true, { error: "StorageUnavailable", message: "Unavailable" }]])
+  expect(await called(() => Effect.void, () => Effect.succeed(receipt), 64)).toEqual([[true, { error: "InvalidComponent", message: "Component exceeds the configured size limit" }]])
 })
 
 test("emit refuses a proposal that does not decode as invalid", async () => {

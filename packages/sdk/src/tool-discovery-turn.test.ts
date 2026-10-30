@@ -302,9 +302,9 @@ describe("the registry refuses a call before its handler runs", () => {
     readonly refusedAt: number
   }> = [
     { reason: "inactive", error: "ToolInactive", message: "archive is not loaded yet; call load_skill with one of: archiving", calls: [[Archive.name, { id: "r1" }]], refusedAt: 0 },
-    { reason: "forbidden", error: "Forbidden", message: "read_vault requires vault.read", calls: [[Vault.name, { key: "k" }]], options: { vaultActive: true }, refusedAt: 0 },
+    { reason: "forbidden", error: "PermissionDenied", message: "read_vault requires vault.read", calls: [[Vault.name, { key: "k" }]], options: { vaultActive: true }, refusedAt: 0 },
     {
-      reason: "denied", error: "Denied", message: "pings are closed today", calls: [[Ping.name, { n: 1 }]], refusedAt: 0,
+      reason: "denied", error: "PolicyDenied", message: "pings are closed today", calls: [[Ping.name, { n: 1 }]], refusedAt: 0,
       options: { policy: { authorize: (tool) => tool === Ping.name ? Effect.fail(new HarnessError({ code: "policy.closed", message: "pings are closed today" })) : Effect.void } },
     },
     {
@@ -411,6 +411,21 @@ describe("a handler that dies", () => {
     expect(logged[0]).toMatchObject({ message: "crash failed unexpectedly", annotations: { tool: "crash", invocationId: "run-1:call:0" } })
     expect(Cause.squash(logged[0]!.cause)).toBe(defect)
   })
+
+  test("names neither the defect's class nor a tagged error's tag: the message alone", async () => {
+    class Jammed extends Schema.TaggedError<Jammed>()("Jammed", { message: Schema.String }) {}
+    const dying = (die: unknown) => defineCapability({
+      id: "crashing", version: "1",
+      tools: [defineTool({ tool: Crash, handler: () => Effect.die(die) })],
+      skills: [defineSkill({ id: "crashing", summary: "Crash.", tools: [Crash.name], always: true })],
+    })
+    const results = await Promise.all([new TypeError("cache is not a function"), new Jammed({ message: "the printer is jammed" })].map((die) =>
+      Effect.runPromise(refusalTurn([[Crash.name, {}]], { capabilities: [dying(die)] }).pipe(Effect.provide(Logger.layer([])))).then((turn) => turn.results)))
+    expect(results).toEqual([
+      [{ error: "ToolDefect", message: "crash failed unexpectedly: cache is not a function" }],
+      [{ error: "ToolDefect", message: "crash failed unexpectedly: the printer is jammed" }],
+    ])
+  })
 })
 
 /* ── activations that fail: a refusal is the request's, a store failure the turn's ── */
@@ -512,12 +527,12 @@ const successOf = <A>(outcome: Result.Result<A, TurnError>): A | string => outco
 describe("load_skill", () => {
   test("a skill the turn may not use is refused as the call's result, for the model to correct", async () => {
     const turn = await Effect.runPromise(matchedTurn([], (tools) => callTool(tools, "load_skill", { skills: ["vault"] })))
-    expect(successOf(turn.outcome)).toEqual({ error: "capability.forbidden", message: "Selection requires permissions this run was not granted (read_vault needs vault.read); it cannot be loaded in this run" })
+    expect(successOf(turn.outcome)).toEqual({ error: "PermissionDenied", message: "Selection requires permissions this run was not granted (read_vault needs vault.read); it cannot be loaded in this run" })
   })
 
   test("skills the catalogue lacks are refused, each named", async () => {
     const turn = await Effect.runPromise(matchedTurn([], (tools) => callTool(tools, "load_skill", { skills: ["filing", "archiving", "sorting"] })))
-    expect(successOf(turn.outcome)).toEqual({ error: "skills.unknown", message: "Unknown skills: filing, sorting; load_skill takes the skills the catalogue lists" })
+    expect(successOf(turn.outcome)).toEqual({ error: "UnknownSkill", message: "Unknown skills: filing, sorting; load_skill takes the skills the catalogue lists" })
   })
 
   test("a load past the turn's limit is refused with the limit", async () => {

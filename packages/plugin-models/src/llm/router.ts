@@ -2,7 +2,7 @@ import { AiError, LanguageModel } from "effect/ai"
 import type { Response, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Cause, Clock, Config, Context, Deferred, Duration, Effect, Layer, Metric, Option, Predicate, Ref, References, Stream } from "effect"
-import { CurrentModelCallPolicy, CurrentTraceContent, describeModel, formatModelSelection, harnessError, parseModelSelection, reasonOf, resolvingModel, stampPartModel, stampResponseModel, storedJson } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentTraceContent, describeModel, formatModelSelection, harnessError, messagesOf, parseModelSelection, resolvingModel, stampPartModel, stampResponseModel, storedJson } from "@xandreed/core"
 import { AuthError, AuthStore } from "../ports/auth-store.port.js"
 import { SettingsStore } from "../ports/settings-store.port.js"
 import { extractUsage } from "@xandreed/core/internal"
@@ -686,7 +686,7 @@ export const LanguageModelLive = Layer.effect(
       streamText: ((options: unknown) =>
         Stream.unwrap(selected.pipe(Effect.map((model) => model.streamText(options as never))))) as never,
     }
-    const asHarness = (error: AiError.AiError) => harnessError("request.model", reasonOf(Cause.fail(error)), error)
+    const asHarness = (error: AiError.AiError) => harnessError("request.model", messagesOf(Cause.fail(error)), error)
     return resolvingModel(
       describeModel(service, currentSelection.pipe(
         Effect.mapError(asHarness),

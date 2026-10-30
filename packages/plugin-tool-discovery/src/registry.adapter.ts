@@ -22,7 +22,7 @@ import {
   isHarnessError,
   isTurnError,
   mediaSlotsOf,
-  reasonOf,
+  messagesOf,
   recordDecision,
   replayableContext,
   resolveCapabilities,
@@ -64,9 +64,15 @@ const failure = (error: string, message: string) => ({ error, message })
 const firstLine = (text: string): string => text.split("\n", 1)[0] ?? ""
 const harness = (code: string, message: string) => new HarnessError({ code, message })
 
-/** The codes an activation is refused with: an unknown skill, a permission not granted. Any other failure (the store's) is not a refusal. */
-const refusalCodes: ReadonlySet<string> = new Set(["skills.unknown", "capability.forbidden"])
-const isRefusal = (error: TurnError): boolean => isHarnessError(error) && refusalCodes.has(error.code)
+/**
+ * The codes an activation is refused with (an unknown skill, a permission not granted), each with the name
+ * `load_skill` returns it to the model under; the code stays the host's. Any other failure (the store's) is not a refusal.
+ */
+const refusalNames: ReadonlyMap<string, string> = new Map([["skills.unknown", "UnknownSkill"], ["capability.forbidden", "PermissionDenied"]])
+/** A refusal of an activation as the model reads it: its name and the refusal's message. */
+const refusalOf = (error: TurnError): Option.Option<Failure> =>
+  isHarnessError(error) ? Option.map(Option.fromNullishOr(refusalNames.get(error.code)), (name) => failure(name, error.message)) : Option.none()
+const isRefusal = (error: TurnError): boolean => Option.isSome(refusalOf(error))
 
 const LoadSkill = Tool.make("load_skill", {
   description: "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
@@ -277,7 +283,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       if (loads >= config.maxSkillLoadsPerRun) return yield* Effect.fail(failure("SkillLoadLimit", `At most ${config.maxSkillLoadsPerRun} skill load${config.maxSkillLoadsPerRun === 1 ? "" : "s"} per turn; work with the tools already loaded`))
       // A refusal is the model's to correct; anything else (the store failing) is the turn's.
       const step = yield* activation(requested, "load_skill").pipe(
-        Effect.catch((error) => isHarnessError(error) && isRefusal(error) ? Effect.fail(failure(error.code, error.message)) : Effect.die(error)),
+        Effect.catch((error) => Option.match(refusalOf(error), { onNone: () => Effect.die(error), onSome: (refusal) => Effect.fail(refusal) })),
       )
       return skillInstructions(skills.filter((skill) => requested.includes(skill.id)), step.tools)
     })
@@ -310,10 +316,10 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
           : `${name} is not loaded yet; call load_skill with one of: ${providers.join(", ")}`)
       }
       const missing = entry.annotations.permissions.filter((permission) => !grants.has(permission))
-      if (missing.length > 0) return yield* refuse("forbidden", "Forbidden", `${name} requires ${missing.join(", ")}`)
+      if (missing.length > 0) return yield* refuse("forbidden", "PermissionDenied", `${name} requires ${missing.join(", ")}`)
       const authorized: Effect.Effect<void, HarnessError> = Option.match(policy, { onNone: () => Effect.void, onSome: (service) => service.authorize(name, params) })
       const denial = yield* authorized.pipe(Effect.match({ onFailure: Option.some, onSuccess: () => Option.none<HarnessError>() }))
-      if (Option.isSome(denial)) return yield* refuse("denied", "Denied", denial.value.message)
+      if (Option.isSome(denial)) return yield* refuse("denied", "PolicyDenied", denial.value.message)
       const counts = yield* Ref.get(calls)
       const total = [...counts.values()].reduce((sum, value) => sum + value, 0)
       if (total >= config.maxCallsPerRun) return yield* refuse("call-limit", "CallLimit", `The turn's ${config.maxCallsPerRun}-call limit is reached; deliver with what you have`)
@@ -335,7 +341,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       // A defect reaches the model (and the journal, through `tool.completed`) as the first line of its message;
       // its stack, with the host's paths, goes to the log only.
       const value: unknown = Exit.isSuccess(exit) ? exit.value
-        : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${firstLine(reasonOf(exit.cause)).slice(0, 300)}`))
+        : Option.getOrElse(Cause.findErrorOption(exit.cause), () => failure("ToolDefect", `${name} failed unexpectedly: ${firstLine(messagesOf(exit.cause)).slice(0, 300)}`))
       // A TurnError the handler died with is the turn's, not the tool's: a subscriber failed on an event the
       // handler published (`tool.progress`, `skills.activated`), or the writer or the store failed load_skill's
       // activation (`TurnClosed`, `SessionLogError`...). Like a failure on `tool.started`, it fails the turn once

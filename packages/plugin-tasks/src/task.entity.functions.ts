@@ -110,15 +110,27 @@ export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option
   },
 })
 
+/** Where a task stands, in the words of its notice's first line, never the status's name. */
+const statusText: Readonly<Record<TaskStatus, string>> = {
+  pending: "has not started yet",
+  running: "is still running",
+  completed: "completed",
+  partial: "stopped before it finished",
+  failed: "failed",
+  cancelled: "was cancelled",
+  interrupted: "was interrupted",
+}
+
 /**
- * What the parent's inbox turn shows the model: a trusted frame around the
- * task's own words, which may not close or reopen the frame (in any case or
- * spacing), clipped to `replyChars` with a counted marker (`clipTo`).
+ * What the parent's inbox turn shows the model: how the task ended, in
+ * words, then a trusted frame around the task's own words, which may not
+ * close or reopen the frame (in any case or spacing), clipped to
+ * `replyChars` with a counted marker (`clipTo`).
  */
 export const noticeOf = (task: TaskView, replyChars: number): string => {
   const output = Option.match(task.reply, {
     onNone: () => Option.match(task.failure, { onNone: () => "(no reply)", onSome: (failure) => `(no reply: ${failure.message})` }),
     onSome: (reply) => clipTo(reply, replyChars),
   })
-  return [`[Background task ${task.taskId} ${task.status}]`, framed("task-output", output)].join("\n")
+  return [`[Background task ${task.taskId} ${statusText[task.status]}]`, framed("task-output", output)].join("\n")
 }

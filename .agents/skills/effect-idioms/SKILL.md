@@ -83,8 +83,9 @@ before using it; do not trust Effect 3 memory.
   (`Schema.optional(Schema.Defect())`), and says what failed; not
   `message: String(e)` (`effect/no-stringified-cause`).
 - Text from a cause is `reasonOf(cause)` (`@xandreed/core`) for anything
-  stored, reported or shown to the model; it reads messages only, so a
-  `cause` never puts a stack there. `Cause.pretty` only inside a log call,
+  stored or reported (each error's code or tag, then its message), and
+  `messagesOf(cause)` for what the model reads (messages alone); neither
+  reads a stack, so a `cause` never puts one there. `Cause.pretty` only inside a log call,
   `Effect.logError("what failed", cause)`, never in data: it carries stack
   frames and host paths.
 - Never swallow: `Effect.ignore({ log: "Warn", message: "…" })` (`"Debug"`

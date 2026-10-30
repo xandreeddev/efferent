@@ -1,5 +1,6 @@
 import { Effect, Layer, Schema } from "effect"
 import { definePlugin } from "@xandreed/core"
+import type { Failure } from "@xandreed/core"
 import { UiOutputError, UiOutputProposal } from "./domain/render-output.entity.js"
 import { UiOutput, UiOutputAdmission, UiOutputContext, UiOutputJournal, UiOutputTools } from "./ports/render-output.port.js"
 import { uiOutputToolkit } from "./render-output.tools.js"
@@ -24,12 +25,22 @@ export const UiOutputLive = (maxBytes = 32_768) => Layer.effect(UiOutput, Effect
   })
 }))
 
+/** Each `UiOutputError` code (the host's, which spans and logs keep) as the name `render_component` returns it to the model under. */
+const failureNames: Readonly<Record<UiOutputError["code"], string>> = {
+  invalid: "InvalidComponent",
+  forbidden: "ComponentNotAllowed",
+  unavailable: "RendererUnavailable",
+  conflict: "OperationIdReused",
+  storage: "StorageUnavailable",
+}
+
+/** A refusal as the model reads it: its name and the message (admission's and the journal's are the host's). */
+const modelFailure = (error: UiOutputError): Failure => ({ error: failureNames[error.code], message: error.message })
+
 /** @public */
 export const UiOutputHandlersLive = uiOutputToolkit.toLayer(Effect.gen(function* () {
   const output = yield* UiOutput
-  return { render_component: (proposal: UiOutputProposal) => output.emit(proposal).pipe(
-    Effect.mapError((error) => ({ error: error.code, message: error.message })),
-  ) }
+  return { render_component: (proposal: UiOutputProposal) => output.emit(proposal).pipe(Effect.mapError(modelFailure)) }
 }))
 
 /**

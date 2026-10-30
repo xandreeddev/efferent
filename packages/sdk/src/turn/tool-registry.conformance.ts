@@ -226,6 +226,13 @@ interface TurnSetup {
 const messageOf = (result: unknown): string =>
   typeof result === "object" && result !== null && "message" in result && typeof result.message === "string" ? result.message : "none"
 
+/** The name a failed call's result carries (`Failure.error`), as the kit reports it. */
+const errorOf = (result: unknown): string =>
+  typeof result === "object" && result !== null && "error" in result && typeof result.error === "string" ? result.error : "none"
+
+/** Whether a failure's name is one the model reads: PascalCase (`ToolInactive`), never a host's code (`skills.unknown`). */
+const isModelName = (name: string): boolean => /^[A-Z][A-Za-z0-9]*$/.test(name)
+
 /** A failure's framework code, as the kit reports it. */
 const codeOf = (error: unknown): string => Option.getOrElse(harnessCodeOf(error), () => "none")
 
@@ -243,7 +250,9 @@ const toolsOf = (data: unknown): ReadonlyArray<string> =>
  * active once the matcher's choice is applied, other skills only once
  * activated, an unknown skill is refused (`skills.unknown`), a skill whose
  * permission is not granted is not activated, and the active set only grows,
- * publishing `skills.activated` for what is new; `load_skill` calls running
+ * publishing `skills.activated` for what is new; `load_skill` refuses an
+ * unknown skill and an ungranted one as the call's result, under a
+ * PascalCase name and never the host's code; `load_skill` calls running
  * at once (tool concurrency above 1) leave every loaded tool active and
  * listed, each published and recorded once; a handled call publishes
  * `tool.started`, its handler's `tool.progress` and `tool.completed` under
@@ -255,7 +264,8 @@ const toolsOf = (data: unknown): ReadonlyArray<string> =>
  * before its handler runs (`inactive`, `forbidden`, `denied`, `call-limit`,
  * `tool-call-limit`) takes its invocation id first, publishes one
  * `tool.refused` with its input and no `tool.started`, never runs the
- * handler, and fails with the refusal's message as its result.
+ * handler, and fails with the refusal's message as its result, under a
+ * PascalCase name (`Failure.error`).
  * The registry publishes these events on the run's bus (`RunContext.events`)
  * only, and never writes the journal itself: the turn journals them (the sdk's
  * `TurnLive` keeps `tool.progress` out and stores a `tool.refused` without
@@ -343,6 +353,7 @@ export const toolRegistryConformance = (
         const outcome = results[refusedAt]!
         yield* expect(id, outcome.isFailure && messageOf(outcome.result) === event.message && event.message.length > 0,
           `the refused call returned ${JSON.stringify(outcome.result)} (failure: ${outcome.isFailure}), not the refusal's message "${event.message}"`)
+        yield* expect(id, isModelName(errorOf(outcome.result)), `the refused call failed as ${errorOf(outcome.result)}, not under a PascalCase name the model reads`)
         const others = events.filter((other) => other._tag !== "tool.refused" && idOf(other) === event.invocationId)
         yield* expect(id, others.length === 0, `the refused call also published ${tags(others)}`)
         const ran = yield* turn.ran
@@ -385,6 +396,14 @@ export const toolRegistryConformance = (
       yield* Effect.result(turn.tools.activate(["kit.vault"], "host"))
       const after = yield* turn.tools.active
       yield* expect("activation", !after.includes(Vault.name) && grown.every((tool) => after.includes(tool)), `after asking for a skill whose permission is not granted the active tools are ${after.join()}`)
+    }))),
+
+    check("load_skill refuses an unknown skill and an ungranted one as the call's result, under a PascalCase name and never the host's code, and activates neither", "load-refusal", () => inTurn({}, (turn) => Effect.gen(function* () {
+      const refusals = yield* Effect.forEach([["kit.no-such-skill"], ["kit.vault"]], (skills) => turn.call(LOAD_SKILL, { skills }), { concurrency: 1 })
+      yield* expect("load-refusal", refusals.every((refusal) => refusal.isFailure && isModelName(errorOf(refusal.result)) && !["", "none"].includes(messageOf(refusal.result))),
+        `load_skill of an unknown and an ungranted skill returned ${JSON.stringify(refusals.map((refusal) => refusal.result))}, not failures under PascalCase names with a message`)
+      const active = yield* turn.tools.active
+      yield* expect("load-refusal", !active.includes(Vault.name), `after load_skill refused kit.vault the active tools are ${active.join()}`)
     }))),
 
     check("skills loaded by concurrent load_skill calls (tool concurrency above 1) all leave their tools active and listed, each activated and recorded once", "concurrent-load", () => inTurn({ grants: ["kit.vault"] }, (turn) => Effect.gen(function* () {

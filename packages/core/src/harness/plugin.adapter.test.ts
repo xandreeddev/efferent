@@ -92,7 +92,7 @@ describe("definePlugin", () => {
     expect((await built(new HarnessError({ code: "skills.root", message: "cannot list skills", cause: underneath }))).cause).toBe(underneath)
   })
 
-  test("any other failure is plugin.activation: what failed is its cause, and its text (not its stack) the message's", async () => {
+  test("any other failure is plugin.activation: what failed is its cause, and its message (not its tag or stack) the message's", async () => {
     class NoShell extends Schema.TaggedError<NoShell>()("NoShell", { message: Schema.String }) {}
     const missing = new NoShell({ message: "no executable zsh" })
     missing.stack = "NoShell: no executable zsh\n    at find (/home/user/project/src/shell.ts:3:9)"
@@ -101,7 +101,7 @@ describe("definePlugin", () => {
       provides: [SessionEnvironment], layer: () => Layer.effect(SessionEnvironment, Effect.fail(missing)),
     })
     const error = await Effect.runPromise(Effect.flip(Effect.scoped(failing.build({}, Context.empty()))))
-    expect([error.code, error.plugin, error.message]).toEqual(["plugin.activation", "test/shell", "test/shell failed to activate: NoShell: no executable zsh"])
+    expect([error.code, error.plugin, error.message]).toEqual(["plugin.activation", "test/shell", "test/shell failed to activate: no executable zsh"])
     expect(error.cause).toBe(missing)
     const undecoded = await Effect.runPromise(Effect.flip(Effect.scoped(namer.build({ loud: true }, Context.empty()))))
     expect([undecoded.code, undecoded.cause]).toMatchObject(["plugin.activation", { _tag: "SchemaError" }])
@@ -119,7 +119,7 @@ describe("definePlugin", () => {
     expect(await built(new Error("boom"))).toMatchObject({ code: "plugin.defect", plugin: "test/dying" })
     const boom = new TypeError("x is not a function")
     const defect = await built(boom)
-    expect([defect.message, defect.cause]).toEqual(["test/dying died while activating: TypeError: x is not a function", boom])
+    expect([defect.message, defect.cause]).toEqual(["test/dying died while activating: x is not a function", boom])
     const underneath = new Error("disk full")
     expect((await built(new HarnessError({ code: "skills.files", message: "cannot read a skill", cause: underneath }))).cause).toBe(underneath)
   })

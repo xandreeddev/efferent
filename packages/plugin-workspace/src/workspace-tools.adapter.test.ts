@@ -240,7 +240,7 @@ describe("confinement", () => {
       }
     }))
     expect([seen.dots, seen.absolute, seen.link, seen.throughDirectory, seen.listOutside]).toEqual(["OutsideWorkspace", "OutsideWorkspace", "OutsideWorkspace", "OutsideWorkspace", "OutsideWorkspace"])
-    expect(seen.dangling).toBe("Invalid")
+    expect(seen.dangling).toBe("BrokenSymlink")
     expect(seen.absoluteInside).toMatchObject({ path: "inside.txt", text: "inside" })
     expect(seen.linkInside).toMatchObject({ path: "alias.txt", text: "inside" })
     expect(seen.untouched).toEqual(["secret.txt"])
@@ -354,7 +354,7 @@ describe("edit", () => {
     }))
     expect(seen).toEqual([
       { error: "IsDirectory", message: "src is a directory; edit takes the path of a file" },
-      { error: "Binary", message: "data.bin is a binary file; edit changes text files only" },
+      { error: "BinaryFile", message: "data.bin is a binary file; edit changes text files only" },
       { error: "FileTooLarge", message: "big.log is 2 KB, more than the 1 KB edit loads; change it with bash (sed -i, or a script)" },
     ])
   })

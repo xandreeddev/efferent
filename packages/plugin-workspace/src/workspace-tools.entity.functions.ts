@@ -1,6 +1,6 @@
 import { Effect, Match, Option, Schema } from "effect"
 import { ImageMediaType, MEDIA_LIMITS, mediaFromBytes, sniffImageType } from "@xandreed/core"
-import type { AttachmentRejectedReason, BashOptions, Media } from "@xandreed/core"
+import type { AttachmentRejectedReason, BashOptions, FsReason, Media } from "@xandreed/core"
 import { renderSearchLines } from "./text-search.entity.functions.js"
 import { formatBytes, headLines, mediaTypeOf } from "./text-window.entity.functions.js"
 import { FindParams, GrepParams, LsParams, ReadParams } from "./workspace-tools.entity.js"
@@ -150,10 +150,22 @@ export const renderRead = (result: ReadResult): string => Match.valueTags(result
   ].join("\n"),
 })
 
+/** Why `read` could not send an image, in words, as the compact view says it (the full view gives the image's own message). */
+const rejectedWhy: Readonly<Record<AttachmentRejectedReason, string>> = {
+  TooLarge: "too large to send",
+  TooManyPixels: "more pixels a side than the limit",
+  Unreadable: "its header gives no size",
+  Empty: "it has no bytes",
+  InvalidBase64: "its data is not base64",
+  UnsupportedType: "not a PNG, JPEG, GIF or WebP image",
+  TooMany: "too many images at once",
+  TooLargeTogether: "too large together with the other images",
+}
+
 export const compactRead = (result: ReadResult): string => Match.valueTags(result, {
   Binary: (binary) => `(read ${binary.path}: binary, ${formatBytes(binary.bytes)})`,
   Image: (read) => `(read ${read.path}: ${read.image.mediaType} image, ${formatBytes(read.image.bytes)})`,
-  ImageRejected: (read) => `(read ${read.path}: ${read.mediaType} image not shown, ${read.reason})`,
+  ImageRejected: (read) => `(read ${read.path}: ${read.mediaType} image not shown, ${rejectedWhy[read.reason]})`,
   Text: (text) => `(read ${text.path}: lines ${text.firstLine}-${text.lastLine} of ${text.totalLines})`,
 })
 
@@ -189,11 +201,22 @@ export const renderFind = (result: FindResult, maxLines: number, maxBytes: numbe
 export const compactFind = (result: FindResult): string =>
   `(find ${result.pattern} in ${result.path}: ${result.truncated ? `${result.paths.length}+ paths` : counted(result.paths.length, "path", "paths")})`
 
-/** The files grep could not read, one line per reason, each naming at most five of them. */
+/** Why grep could not read a file, in words, by the file system's reason (which stays in the result, for hosts). */
+const unreadableWhy: Readonly<Record<FsReason, string>> = {
+  NotFound: "no longer there",
+  NotDirectory: "no longer there",
+  Permission: "permission denied",
+  Invalid: "not a path the file system accepts",
+  Exists: "a file-system error",
+  IsDirectory: "a file-system error",
+  NotEmpty: "a file-system error",
+  Io: "a file-system error",
+}
+
+/** The files grep could not read, one line per reason in words, each naming at most five of them. */
 const unreadableLines = (result: GrepResult): ReadonlyArray<string> =>
-  Array.from(new Set(result.unreadable.map((file) => file.reason)), (reason) => {
-    const paths = result.unreadable.filter((file) => file.reason === reason).map((file) => file.path)
-    const why = reason === "Permission" ? "permission denied" : `a file-system error (${reason})`
+  Array.from(new Set(result.unreadable.map((file) => unreadableWhy[file.reason])), (why) => {
+    const paths = result.unreadable.filter((file) => unreadableWhy[file.reason] === why).map((file) => file.path)
     return `[Could not read ${paths.length} file${paths.length === 1 ? "" : "s"}, ${why}: ${paths.slice(0, 5).join(", ")}${paths.length > 5 ? `, and ${paths.length - 5} more` : ""}.]`
   })
 
@@ -238,5 +261,14 @@ export const renderBash = (result: BashToolResult): string => [
   endOf(result),
 ].join("\n")
 
+/** How a command ended, in the few words of its compact view. */
+const endedIn = (result: BashToolResult): string => Match.value(result.termination).pipe(
+  Match.when("exit", () => `exit ${result.exitCode ?? "?"}`),
+  Match.when("timeout", () => "killed at its timeout"),
+  Match.when("signal", () => `killed by ${result.signal ?? "a signal"}`),
+  Match.when("interrupted", () => "stopped before it finished"),
+  Match.exhaustive,
+)
+
 export const compactBash = (result: BashToolResult): string =>
-  `(ran ${result.command.length > 80 ? `${result.command.slice(0, 80)}…` : result.command}: ${result.termination === "exit" ? `exit ${result.exitCode ?? "?"}` : result.termination}${result.fullOutput === null ? "" : `; output in ${result.fullOutput}`})`
+  `(ran ${result.command.length > 80 ? `${result.command.slice(0, 80)}…` : result.command}: ${endedIn(result)}${result.fullOutput === null ? "" : `; output in ${result.fullOutput}`})`

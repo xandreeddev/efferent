@@ -38,7 +38,7 @@ export {
 } from "./domain/media.entity.functions.js"
 export type { MediaDescription, ToolResultMedia } from "./domain/media.entity.functions.js"
 export { Failure } from "./domain/failure.entity.js"
-export { errorCodeOf, reasonOf } from "./domain/failure.entity.functions.js"
+export { errorCodeOf, messagesOf, reasonOf } from "./domain/failure.entity.functions.js"
 export { BudgetTokens, ModelPrice, TokenUsage, UsageBreakdown } from "./domain/token-usage.entity.js"
 export {
   addUsage,

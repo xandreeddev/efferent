@@ -1003,7 +1003,9 @@ and executor, and checks that the executor's turns run with the backend's
 up to two seconds on the live clock for background work, so run them
 without a `TestClock`; so do the turn kit's checks that cancel a turn or
 fill a background queue. The registry kit runs each turn over `TurnLive` and
-checks every `tool.refused` reason. `@xandreed/plugin-sessions`
+checks every `tool.refused` reason, and that the model reads each refusal,
+and `load_skill`'s, under a PascalCase name, never a host's code.
+`@xandreed/plugin-sessions`
 (over the memory log), `@xandreed/plugin-session-sqlite` (over SQLite),
 `@xandreed/plugin-tasks` and `@xandreed/plugin-tool-discovery` run them, and
 `verify:packages` runs all four on Node.
@@ -1154,7 +1156,11 @@ authorizes: `resolveCapabilities` checks every activation against the turn's
 (active set, grants, `ActionPolicy`, per-turn budgets, read/write lanes): a
 call that runs publishes `tool.started` and `tool.completed` before it
 returns (its handler's `tool.progress` between them), and a refused call
-publishes `tool.refused` instead. A handler that dies returns `ToolDefect`
+publishes `tool.refused` instead. The model reads a refusal as the call's
+result, `{ error, message }`, with a PascalCase name for what is wrong:
+`ToolInactive`, `PermissionDenied` (a permission the turn lacks),
+`PolicyDenied` (the host's `ActionPolicy`), `CallLimit` or `ToolCallLimit`.
+A handler that dies returns `ToolDefect`
 to the model, with the first line of the defect's message only; the whole
 cause, stack included, is logged at error level with the call's `tool` and
 `invocationId`.
@@ -1164,7 +1170,9 @@ recorded and applied under one lock, so `load_skill` calls running at once
 (a step's calls with `toolConcurrency` above 1) each keep the other's tools,
 and each call's "Now available" names the tools it added. Only a refusal
 (`skills.unknown`, `capability.forbidden`) turns an activation down:
-`load_skill` returns it to the model, and `apply` records the matcher's
+`load_skill` returns it to the model as `UnknownSkill` or
+`PermissionDenied` (the codes are the host's: `activate` fails with
+them), and `apply` records the matcher's
 decision as `rejected`. A failure to record the activation is not a
 refusal: it fails the turn from `load_skill`, and fails `apply` without
 recording the decision. Each decision of a run has its own id
@@ -1301,9 +1309,11 @@ turn whose services lack one fails to open its tools with
 | `bash` | `workspace.shell` (`shell.exec`) | `command`, `timeout` (seconds), `stdin` | the output's tail, exit code, signal, termination, the spill file |
 
 A failure is data the model reads in the same run (`{ error, message }`:
-`NotFound`, `OutsideWorkspace`, `Protected`, `NoMatch`, `Ambiguous`,
-`Overlap`, `WouldEmpty`, `FileTooLarge`, `InvalidPattern`, `NotUtf8`,
-`NotAFile`, …); a non-zero
+`NotFound`, `OutsideWorkspace`, `Protected`, `NoMatch`, `AmbiguousMatch`,
+`OverlappingEdits`, `WouldEmpty`, `FileTooLarge`, `InvalidPattern`,
+`NotUtf8`, `NotAFile`, `AlreadyExists`, `AccessDenied`, `FileSystemError`,
+…; a file-system failure's `FsReason` stays the port's, and the model reads
+it under a name of its own); a non-zero
 exit, a signal and a timeout are `bash` results, not failures. The
 `workspace.environment` section (tier `session`, order `sectionOrder`) tells
 the model where the workspace is and how the enabled tools behave; it reads
@@ -1315,7 +1325,7 @@ reach the model.
 `shell.exec` (`WORKSPACE_PERMISSIONS`). Tool discovery grants nothing by
 default: give the grants with its `grants` option or a turn's
 `PermissionGrants`. Without them, `load_skill` refuses `workspace.edit` and
-`workspace.shell` with `capability.forbidden` and the tools stay inactive (a
+`workspace.shell` with `PermissionDenied` and the tools stay inactive (a
 call returns `ToolInactive`); with `edit` or `shell` in `always` and no
 grant, the turn fails with `capability.forbidden`. Without a `Bash` service
 when the agent is defined, there is no `bash` tool and no `workspace.shell`
@@ -2141,8 +2151,9 @@ and the parent's ids, the instructions its message, stored in its
 resumed), runs it through the host's `TaskExecutor.turn` until the runner's
 deadline, records `task.result` before the turn closes, delivers the result
 to the parent's inbox (`task:<id>`, once) and drains the parent, whose
-`TaskExecutor.react` answers it after the turn in flight. The notice frames
-the task's words:
+`TaskExecutor.react` answers it after the turn in flight. The notice says
+how the task ended in words (`completed`, `stopped before it finished`,
+`failed`, `was cancelled`, `was interrupted`), then frames the task's words:
 
 ```text
 [Background task <taskId> completed]

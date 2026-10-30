@@ -275,12 +275,12 @@ describe("runSteps streaming", () => {
 })
 
 describe("runSteps failures", () => {
-  test("a provider failure fails the run with loop.failed, the AiError kept as its cause and its text as the message", async () => {
+  test("a provider failure fails the run with loop.failed, the AiError kept as its cause and its message, without its tag, as the message", async () => {
     const down = AiError.make({ module: "Test", method: "generateText", reason: new AiError.UnknownError({ description: "the provider was down" }) })
     const failed = await Effect.runPromise(Effect.flip(Effect.gen(function* () {
       return yield* runWith(yield* LanguageModel.make({ generateText: () => Effect.fail(down), streamText: () => Stream.fail(down) }), { streaming: false, captureTraceContent: false })
     })))
-    expect([failed._tag, failed._tag === "HarnessError" ? failed.code : null, failed.message]).toEqual(["HarnessError", "loop.failed", "AiError: Test.generateText: the provider was down"])
+    expect([failed._tag, failed._tag === "HarnessError" ? failed.code : null, failed.message]).toEqual(["HarnessError", "loop.failed", "Test.generateText: the provider was down"])
     expect(failed._tag === "HarnessError" ? failed.cause : null).toBe(down)
   })
 

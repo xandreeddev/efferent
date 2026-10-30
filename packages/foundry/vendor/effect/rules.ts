@@ -1025,7 +1025,7 @@ export const noStringifiedCause = {
   defaultSeverity: "error",
   description: "a tagged error keeps the failure it wraps as a value, not as `String(e)`",
   fixHint:
-    "keep the failure as a value (a `cause` field, `Schema.Defect`) and write a message that says what failed; text for a person or the model comes from `reasonOf(cause)` or a decoded error's own `message`",
+    "keep the failure as a value (a `cause` field, `Schema.Defect`) and write a message that says what failed; text for a person comes from `reasonOf(cause)`, for the model from `messagesOf(cause)` (no code or tag), or from a decoded error's own `message`",
   check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
     matchesIn(sourceFile, (node) =>
       ts.isNewExpression(node) && isTaggedClass(checker, node.expression)
