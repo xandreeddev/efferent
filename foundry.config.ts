@@ -557,6 +557,22 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "ws"
             ]
       },
+      // The tests trace a begin as `Agent.turn` does, with the engine's `traceTurnBegin`.
+      {
+            "name": "plugin-sessions-tests",
+            "path": "packages/plugin-sessions/src/**/*.test.ts",
+            "canImport": [
+                  "plugin-sessions",
+                  "core",
+                  "core/engine"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "bun:test"
+            ]
+      },
       {
             "name": "plugin-sessions",
             "path": "packages/plugin-sessions/src/**",
