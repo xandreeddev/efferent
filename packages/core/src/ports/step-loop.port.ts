@@ -58,7 +58,12 @@ export interface StepRequest {
    * including a streaming fallback; a failed check fails the step (a streamed step does not fall back).
    */
   readonly dispatch: (step: number, request: ModelDispatch) => Effect.Effect<void, TurnError>
-  /** Persist a step's appended messages; returns their log entries. */
+  /**
+   * Persist appended messages under `step`; returns their log entries. A
+   * step's tail (the response and its tool results) is recorded under that
+   * step, before its `step.ended`; the loop's own messages (a corrective, a
+   * nudge, a steer) under the next step, which reads them.
+   */
   readonly record: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /**
    * A provider refused the step's request over an image (an `InvalidRequestError`
@@ -71,6 +76,7 @@ export interface StepRequest {
    * with; any other `plan` of a step asks the policy again.
    */
   readonly onMediaRejected: (reason: string) => Effect.Effect<boolean, TurnError>
+  /** The host's verdict after a step that settled with a response (not after a malformed one); its failure fails the run, not the step. */
   readonly completion: (step: StepInfo) => Effect.Effect<CompletionVerdict, HarnessError>
   readonly steering: Effect.Effect<Option.Option<string>, HarnessError>
   readonly correctives: Option.Option<Correctives>
@@ -94,20 +100,32 @@ export interface ModelDispatch {
   readonly model: LanguageModel.LanguageModel
 }
 
-export interface RunResult {
-  readonly outcome: "completed" | "partial"
-  readonly reason: "completed" | "step-cap" | "degenerate-loop"
+/**
+ * How a run of the step loop came out: `completed` when the model stopped
+ * or the completion verdict held; `partial` when the step cap or the
+ * degenerate-loop breaker stopped it, so its `text` is not a deliverable.
+ */
+export type RunResult = {
   readonly text: string
   readonly steps: number
   /** The run's provider calls summed: exactly the usage its `assistant.message` events carried. */
   readonly usage: TokenUsage
-}
+} & (
+  | { readonly outcome: "completed"; readonly reason: "completed" }
+  | { readonly outcome: "partial"; readonly reason: "step-cap" | "degenerate-loop" }
+)
 
 /**
  * THE step loop: iterate provider steps until the model stops, the
  * completion verdict holds, or a limit is hit. Contract (see
  * `stepLoopConformance`): per step `step.started` < `tool.*` < `step.ended`
- * (after the tail is recorded) < `completion.evaluated`; a planned batch
+ * (after the tail is recorded) < `completion.evaluated`; each step that
+ * started ends once, with the status of its own call, tools and tail
+ * (`completed`, `failed`, `cancelled`, or `malformed` for a response the
+ * model could not form, which gets no `completion.evaluated`), so a
+ * completion that fails afterwards leaves it `completed`; nothing is
+ * recorded under a step after its `step.ended` (the loop's own messages,
+ * a corrective, a nudge or a steer, are the next step's); a planned batch
  * makes no provider call; a forced tool choice is honoured; a verdict
  * awaiting tasks joins them and is evaluated once more; no provider call
  * follows a complete verdict; `RunResult.usage` is the sum of the usage

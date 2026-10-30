@@ -1,6 +1,6 @@
 import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import type { Prompt, Response } from "effect/ai"
-import { Context, Effect, Option, Ref, Schema, Stream } from "effect"
+import { Context, Effect, Option, Ref, Result, Schema, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { sameUsage } from "../conformance.functions.js"
@@ -19,6 +19,7 @@ import type { InitialBatch, ToolChoice } from "../ports/capability.port.js"
 import type { RunResult, StepLoop, StepRequest } from "../ports/step-loop.port.js"
 import type { RunTools } from "../ports/tool-registry.port.js"
 import type { TurnTasksService } from "../ports/turn-events.port.js"
+import type { TurnError } from "../session/sessions.entity.js"
 import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
 import type { CompletionVerdict, TurnEvent } from "./turn-event.entity.js"
 
@@ -46,6 +47,11 @@ export const probeCall = (id: string, n: number): ReadonlyArray<Part> => [
   { type: "finish", reason: "tool-calls", usage },
 ]
 export const textReply = (text: string): ReadonlyArray<Part> => [{ type: "text", text }, { type: "finish", reason: "stop", usage }]
+/** A scripted provider reply the model could not form: a call to a tool that does not exist. */
+const malformedCall = (id: string): ReadonlyArray<Part> => [
+  { type: "tool-call", id, name: "no_such_tool", params: {}, providerExecuted: false },
+  { type: "finish", reason: "tool-calls", usage },
+]
 
 type StreamPart = Response.StreamPartEncoded
 /** Anthropic's thinking metadata: the signature of a thinking block, the data of a redacted one. */
@@ -82,7 +88,7 @@ interface Scenario {
   readonly initial?: InitialBatch
   readonly toolChoice?: ToolChoice
   readonly maxSteps?: number
-  readonly completion?: (step: number, tasks: TurnTasksService) => Effect.Effect<CompletionVerdict>
+  readonly completion?: (step: number, tasks: TurnTasksService) => Effect.Effect<CompletionVerdict, HarnessError>
   readonly before?: (tasks: TurnTasksService) => Effect.Effect<void>
   readonly dispatch?: (step: number) => Effect.Effect<void, HarnessError>
   readonly providerCall?: Effect.Effect<void>
@@ -106,6 +112,10 @@ interface Scenario {
   readonly replay?: boolean
   /** The request's `run` (`FIRST_RUN` by default). */
   readonly run?: RunRef
+  /** What the request's `steering` answers, one text per consult, then none (none by default). */
+  readonly steering?: ReadonlyArray<string>
+  /** The request's `limits.requireCompletion` (off by default). */
+  readonly requireCompletion?: boolean
 }
 
 /** A provider's refusal of a request over an image. */
@@ -117,6 +127,8 @@ const imageRefusal = AiError.make({
 interface Observed {
   readonly result: RunResult
   readonly events: ReadonlyArray<TurnEvent>
+  /** Each `record` call, in order: the step it recorded under, and how many events were published before it. */
+  readonly records: ReadonlyArray<{ readonly step: number; readonly after: number }>
   readonly providerCalls: ReadonlyArray<unknown>
   /** The prompt of each provider call. */
   readonly prompts: ReadonlyArray<Prompt.Prompt>
@@ -130,8 +142,11 @@ interface Observed {
 
 const incomplete: CompletionVerdict = { complete: false, awaiting: [], facts: {} }
 
+/** What a scenario's run observed, the run's failure included. */
+type ObservedRun = Omit<Observed, "result"> & { readonly result: Result.Result<RunResult, TurnError> }
+
 /** Run one scenario on the loop with a scripted provider, the `probe` tool and an in-memory record. */
-const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenario): Effect.Effect<Observed, ConformanceFailure> => Effect.scoped(Effect.gen(function* () {
+const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenario): Effect.Effect<ObservedRun> => Effect.scoped(Effect.gen(function* () {
   const scope = yield* Effect.scope
   const events = yield* makeTurnEvents({ maxDepth: 8 })
   const tasks = yield* makeTurnTasks(scope)
@@ -191,8 +206,13 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     skills: [],
   }
   const recorded = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+  const records = yield* Ref.make<ReadonlyArray<{ readonly step: number; readonly after: number }>>([])
   const history = yield* Ref.make<ReadonlyArray<AgentMessage>>([{ role: "user", content: "go" }])
-  const record = (step: number, tail: ReadonlyArray<AgentMessage>) => Ref.update(history, (all) => [...all, ...tail]).pipe(Effect.andThen(Ref.modify(recorded, (all): [ReadonlyArray<LogEntry>, ReadonlyArray<LogEntry>] => {
+  const steers = yield* Ref.make(scenario.steering ?? [])
+  const record = (step: number, tail: ReadonlyArray<AgentMessage>) => Ref.get(seen).pipe(
+    Effect.flatMap((published) => Ref.update(records, (all) => [...all, { step, after: published.length }])),
+    Effect.andThen(Ref.update(history, (all) => [...all, ...tail])),
+  ).pipe(Effect.andThen(Ref.modify(recorded, (all): [ReadonlyArray<LogEntry>, ReadonlyArray<LogEntry>] => {
     const entries = tail.flatMap((message): ReadonlyArray<LogEntry["body"]> => message.role !== "tool"
       ? [{ _tag: "Message", message }]
       : message.content.map((part) => ({
@@ -206,7 +226,7 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     run: scenario.run ?? FIRST_RUN,
     tools,
     handlers: Context.merge(handlers, Context.make(LanguageModel.LanguageModel, model)) as Context.Context<never>,
-    limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: scenario.streaming ?? false, requireCompletion: false },
+    limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: scenario.streaming ?? false, requireCompletion: scenario.requireCompletion ?? false },
     initial: Option.fromNullishOr(scenario.initial),
     plan: (info) => (scenario.planned?.(info.stepIndex) ?? Effect.void).pipe(
       Effect.andThen(scenario.replay === true ? Ref.get(history) : Effect.succeed([{ role: "user" as const, content: "go" }])),
@@ -216,20 +236,27 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
     record,
     onMediaRejected: scenario.onMediaRejected ?? (() => Effect.succeed(false)),
     completion: (info) => scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete),
-    steering: Effect.succeed(Option.none()),
+    steering: Ref.modify(steers, (texts): [Option.Option<string>, ReadonlyArray<string>] => [Option.fromNullishOr(texts[0]), texts.slice(1)]),
     correctives: Option.none(),
     events,
     tasks,
     cacheKey: scenario.cacheKey ?? Option.none(),
     captureTraceContent: scenario.captureTraceContent ?? false,
   }
-  const result = yield* loop.run(request).pipe(Effect.provideService(CurrentTraceContent, scenario.ambientTraceContent ?? false))
+  const result = yield* Effect.result(loop.run(request).pipe(Effect.provideService(CurrentTraceContent, scenario.ambientTraceContent ?? false)))
   return {
-    result, events: yield* Ref.get(seen), providerCalls: yield* Ref.get(calls), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded),
+    result, events: yield* Ref.get(seen), records: yield* Ref.get(records), providerCalls: yield* Ref.get(calls), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded),
     dispatches: yield* Ref.get(dispatches), traceContent: yield* Ref.get(traceContent),
     cacheKeys: { dispatched: yield* Ref.get(dispatchedKeys), called: yield* Ref.get(calledKeys) },
   }
-}).pipe(Effect.mapError((error) => new ConformanceFailure({ check: "run", message: error.message }))))
+}))
+
+/** `observeRun` of a run that must succeed: its failure fails the check. */
+const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenario): Effect.Effect<Observed, ConformanceFailure> =>
+  observeRun(loop, scenario).pipe(Effect.flatMap((observed) => Result.match(observed.result, {
+    onFailure: (error) => Effect.fail(new ConformanceFailure({ check: "run", message: error.message })),
+    onSuccess: (result) => Effect.succeed({ ...observed, result }),
+  })))
 
 const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> =>
   holds ? Effect.void : Effect.fail(new ConformanceFailure({ check, message }))
@@ -240,7 +267,11 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
 
 /**
  * The `StepLoop` contract, as checks any implementation must pass:
- * per-step event order, recorded results on `step.ended`, planned batches
+ * per-step event order, recorded results on `step.ended`, each step ended
+ * once with nothing recorded under it after its `step.ended` (the loop's
+ * correctives, nudges and steers are the next step's), a step whose
+ * completion fails afterwards still `completed`, a malformed step ended
+ * `malformed` with no `completion.evaluated`, planned batches
  * without a provider call, forced tool choices, awaiting verdicts, no call
  * after completion, the run's usage, the step cap, the request's
  * `captureTraceContent` provided to its model calls as `CurrentTraceContent`,
@@ -297,6 +328,51 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
       const expected = recorded.filter((entry) => entry.step === 0 && entry.body._tag === "ToolResult").map((entry) => String(entry.id))
       yield* expect("results", results.length === 1 && results.map((result) => String(result.entry)).join() === expected.join() && results[0]?.tool === Probe.name,
         `expected ${expected.join()}, got ${results.map((result) => result.entry).join()}`)
+    }),
+  },
+  {
+    name: "ends each step once, and records nothing under a step after its step.ended (correctives, nudges and steers included)",
+    run: Effect.gen(function* () {
+      const check = "settled"
+      // A malformed step, a stop the host finds incomplete, a steer, a tool call, then the reply.
+      const { events, records } = yield* observe(loop, {
+        script: [malformedCall("m1"), textReply("not yet"), probeCall("c1", 1), textReply("done")],
+        requireCompletion: true, steering: ["steer"],
+        completion: (step) => Effect.succeed({ complete: step >= 3, awaiting: [], facts: {} }),
+      })
+      const startedSteps = events.flatMap((event) => event._tag === "step.started" ? [event.step] : [])
+      const endedSteps = events.flatMap((event) => event._tag === "step.ended" ? [event.step] : [])
+      yield* expect(check, startedSteps.length > 1 && startedSteps.join() === endedSteps.join(),
+        `the steps started ${startedSteps.join()} and ended ${endedSteps.join()}`)
+      const late = records.filter((record) => {
+        const ended = indexOf(events, "step.ended", record.step)
+        return ended >= 0 && ended < record.after
+      })
+      yield* expect(check, late.length === 0,
+        `recorded under step ${late.map((record) => record.step).join(", ")} after that step's step.ended`)
+    }),
+  },
+  {
+    name: "a completion that fails after a completed step fails the run and leaves that step completed",
+    run: Effect.gen(function* () {
+      const { events, result } = yield* observeRun(loop, {
+        script: [probeCall("c1", 1), textReply("done")],
+        completion: () => Effect.fail(new HarnessError({ code: "conformance.completion", message: "the completion policy failed" })),
+      })
+      const ends = events.flatMap((event) => event._tag === "step.ended" && event.step === 0 ? [event.status] : [])
+      yield* expect("settled", result._tag === "Failure" && ends.join() === "completed",
+        `the run's ${result._tag}; step 0 ended ${JSON.stringify(ends)}`)
+    }),
+  },
+  {
+    name: "a malformed step ends malformed, with no completion.evaluated, and the run goes on",
+    run: Effect.gen(function* () {
+      const { events, result } = yield* observe(loop, { script: [malformedCall("m1"), textReply("done")] })
+      const endsOf = (step: number) => events.flatMap((event) => event._tag === "step.ended" && event.step === step ? [event.status] : [])
+      yield* expect("malformed", endsOf(0).join() === "malformed" && endsOf(1).join() === "completed",
+        `step 0 ended ${JSON.stringify(endsOf(0))}, step 1 ${JSON.stringify(endsOf(1))}`)
+      yield* expect("malformed", indexOf(events, "completion.evaluated", 0) < 0 && result.outcome === "completed" && result.text === "done",
+        `the malformed step's completion was ${indexOf(events, "completion.evaluated", 0) < 0 ? "not " : ""}evaluated; the run ${result.outcome} with ${JSON.stringify(result.text)}`)
     }),
   },
   {

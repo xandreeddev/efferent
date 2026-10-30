@@ -208,10 +208,12 @@ describe("the journal's schemas", () => {
       { _tag: "step.started", step: 0, run, planned: false, activeTools: ["lookup"] },
       { _tag: "tool.refused", step: 0, invocationId: InvocationId.make("i"), tool: "lookup", input: { q: 1 }, reason: "call-limit", message: "limit" },
       { _tag: "stream.fallback", step: 0, run, message: "no stream" },
+      // A step whose response the model could not form.
+      { _tag: "step.ended", step: 2, run, status: "malformed", results: [] },
     ]
     const stored = events.flatMap((event) => Option.toArray(storedOf(1, event)))
     expect(stored.map((draft) => [draft.kind, decodes(draft.kind, draft.data)])).toEqual([
-      ["step.usage", true], ["tool.completed", true], ["step.started", true], ["tool.refused", true], ["stream.fallback", true],
+      ["step.usage", true], ["tool.completed", true], ["step.started", true], ["tool.refused", true], ["stream.fallback", true], ["step.ended", true],
     ])
   })
   test("a memory entry decodes as its kind's envelope; the inbox records decode as written", async () => {

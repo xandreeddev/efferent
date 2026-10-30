@@ -107,18 +107,18 @@ Published by the tool registry when a handler returned or failed (`ok`). `result
 
 ### `step.ended`
 
-Published by the step loop after the step's tail is recorded. `status` is completed, failed or cancelled; `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls included. Journaled as `step.ended`.
+Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, or malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older).
 
 | Field | Type |
 | --- | --- |
 | `step` | `integer` |
 | `run` | `integer` (optional) |
-| `status` | `"completed" \| "failed" \| "cancelled"` |
+| `status` | `"completed" \| "failed" \| "cancelled" \| "malformed"` |
 | `results` | `Array<{ entry, toolCallId, tool, ok }>` |
 
 ### `completion.evaluated`
 
-Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.
+Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.
 
 | Field | Type |
 | --- | --- |

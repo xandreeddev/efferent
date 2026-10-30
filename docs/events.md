@@ -109,10 +109,10 @@ What the frames mean:
   `assistant.message.toolCalls` and `step.ended.results` carry as well).
 - `assistant.message` is published once per provider response, after the
   step's tools have run: it restates the step's text. Replace the step's
-  deltas with it. A step that ends (`step.ended`) without one was a
-  response the model could not form (a tool that does not exist, parameters
-  that do not decode): the loop answered it with a correction, so drop that
-  step's deltas.
+  deltas with it. A step that ends `malformed` (`step.ended.status`) has
+  none: the model could not form its response (a tool that does not exist,
+  parameters that do not decode), and the loop answered it with a
+  correction, so drop that step's deltas.
 - `stream.fallback`: the provider's stream failed before its first part.
   The step, and every later step of the run, is answered without
   streaming: no more deltas, and the text arrives with `assistant.message`.
@@ -286,9 +286,10 @@ What settles, and when:
   every call the registry handled that did not succeed.
 - A call to a tool that does not exist, or whose parameters do not decode,
   never reaches the registry: no tool event, and no entry in
-  `step.ended.results`. The response is malformed: its step ends without
-  `assistant.message`, the loop's correction is recorded as a
-  `memory.message` (a user message), and the model is asked again.
+  `step.ended.results`. The response is malformed: its step ends
+  `malformed`, without `assistant.message` or `completion.evaluated`, the
+  loop's correction is recorded as a `memory.message` (a user message)
+  under the next step, and the model is asked again.
 
 <!-- snippet: packages/sdk/src/events-guide.test.ts#tools -->
 ```ts

@@ -124,6 +124,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - Stored records without `run` read as run 0, so nothing needs migrating:
   pass the run ordinal where the APIs below now take one, add `run` to the
   step events you publish, and rerun the step-loop, turn and memory kits.
+- A `StepLoop` publishes `step.ended` once per step, before evaluating
+  completion, with `malformed` for an undecodable response, and records
+  nothing under a step after its `step.ended`; rerun `stepLoopConformance`.
+- `runLoop` callers publish step ends from `onStepSettled`, not
+  `isComplete`, and record under the `step` that `onTail` passes. Code that
+  builds a `RunResult` returns one of the two shapes; a `match` on step
+  status adds `malformed`.
 
 ### Breaking
 
@@ -353,6 +360,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `stepContextOf(entries, runId, run)`, `modelRequestHeaderOf(…, step, run)`
   and `TurnMemory.startRun` change their types; `startRun` after the reply
   is refused with `turn.closed`.
+- A step loop ends each step exactly once, when the step's own call, tools
+  and tail are done; a completion that fails afterwards fails the run and
+  leaves the step `completed`.
+- `step.ended` has a new status, `malformed`, for a response the model
+  could not form; such a step gets no `completion.evaluated`. 0.14 and
+  older cannot read records with this status.
+- `@xandreed/plugin-agent-loop`: `runLoop` takes `onTail(messages, step)`, a
+  new `onStepSettled(step, status)` and `isComplete(step)`; the loop's
+  corrective, nudges and steers are recorded under the next step.
+- `@xandreed/core`: `RunResult` is a union: `completed`/`completed`, or
+  `partial` with `step-cap` or `degenerate-loop`.
 
 ### Added
 

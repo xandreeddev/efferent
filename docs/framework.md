@@ -419,6 +419,16 @@ settled and streaming execution use the selected model and native Effect prompt.
 A host wanting one route per turn caches the result in its scoped service. The
 loop still validates/adopts tools through its normal host-controlled toolkit.
 
+Each step runs in two parts. It executes: the call, the tools and the tail,
+which `onTail(messages, step)` persists under the step. It settles:
+`onStepSettled(step, status)` runs exactly once, with that execution's exit
+(`completed`, `failed`, `cancelled`, or `malformed`). Then the loop decides:
+`isComplete(step)`, a query that is never asked after a malformed step, the
+degenerate-loop breaker, compaction and steering. A corrective, a nudge or a
+steer goes through `onTail` under the next step. A `StepLoop`'s
+`RunResult` says the same as a union: `completed` with the reason
+`completed`, or `partial` with `step-cap` or `degenerate-loop`.
+
 `@xandreed/evals` provides `DecisionTrial`, `SelectionObservation`,
 `compareDecisionTrials` and `selectionMetrics`. Comparisons pair case/repetition,
 bootstrap scenario groups, preserve infrastructure failures, and leave missing
@@ -682,8 +692,17 @@ returns, so state a subscriber changes is visible to the next step, and a
 subscriber failure fails the turn (one during a tool call, on `tool.progress`
 or an event the handler publishes, also stops the handler; the model never
 sees it as the tool's result). Within a step the order is `step.started`
-< `tool.*` < `step.ended` < `completion.evaluated`. Background work goes to
-`turn.tasks.fork(tag, effect)`.
+< `tool.*` < `step.ended` < `completion.evaluated`. Each step ends once, when
+its own call, tools and tail are done, with their status: `completed`,
+`failed`, `cancelled`, or `malformed` (a response the model could not form,
+a tool that does not exist or parameters that do not decode, which the loop
+answers with a corrective turn; it has no `assistant.message` and no
+`completion.evaluated`). What the loop decides afterwards (the completion
+verdict, compaction, steering) cannot change that status: a completion that
+fails fails the run and leaves the step `completed`. Nothing is recorded
+under a step after its `step.ended`: the loop's own messages, a corrective, a
+nudge or a steer, are recorded under the next step, which reads them.
+Background work goes to `turn.tasks.fork(tag, effect)`.
 
 A subscription can instead run in the background:
 `subscribe(select, handle, { mode: "background" })`, or the same option on

@@ -209,8 +209,17 @@ describe("runLoop", () => {
   })
 
   test("the degenerate-loop breaker nudges once, then force-stops as partial", async () => {
+    const nudgedAt: Array<number> = []
+    const settled: Array<string> = []
     const result = await run(
-      runLoop({ system: "sys", messages: [user("go")], toolkit: kit }),
+      runLoop({
+        system: "sys", messages: [user("go")], toolkit: kit,
+        onTail: (tail, step) => Effect.sync(() => {
+          if (tail.some((m) => m.role === "user")) nudgedAt.push(step)
+          return [] as ReadonlyArray<number>
+        }),
+        onStepSettled: (step, status) => Effect.sync(() => void settled.push(`${step}:${status}`)),
+      }),
       () => [
         { type: "tool-call", id: "c1", name: "echo", params: { value: "same" } },
         finish("tool-calls"),
@@ -222,6 +231,9 @@ describe("runLoop", () => {
       (m) => m.role === "user" && m.content === DEGENERATE_REPEAT_NUDGE,
     )
     expect(nudges).toHaveLength(1)
+    // Step 3 is the third stale one: the nudge is what step 4 reads, recorded under it.
+    expect(nudgedAt).toEqual([4])
+    expect(settled).toEqual(["0:completed", "1:completed", "2:completed", "3:completed", "4:completed", "5:completed"])
   })
 
   test("the step cap stops a run that still wants tools, as partial", async () => {
@@ -360,6 +372,68 @@ describe("runLoop", () => {
     expect(prompts[1]).toContain("the ORIGINAL brief")
     expect(prompts[1]).not.toContain("BAD PLAN")
     expect(events.some((e) => e.type === "compaction")).toBe(false)
+  })
+})
+
+describe("runLoop settles each step once", () => {
+  test("after its tail and before its completion; a corrective, a nudge and a steer are the next step's", async () => {
+    const trail: Array<string> = []
+    const steers = ["steer"]
+    const result = await run(runLoop({
+      system: "sys", messages: [user("go")], toolkit: kit, requireCompletion: true, maxSteps: 6,
+      onTail: (tail, step) => Effect.sync(() => {
+        trail.push(`tail ${step}: ${tail.map((m) => m.role).join(",")}`)
+        return [] as ReadonlyArray<number>
+      }),
+      onStepSettled: (step, status) => Effect.sync(() => void trail.push(`settled ${step}: ${status}`)),
+      isComplete: (step) => Effect.sync(() => {
+        trail.push(`complete? ${step}`)
+        return step >= 3
+      }),
+      pendingInput: () => Effect.sync(() => Option.fromNullishOr(steers.shift())),
+    }), (call) => [
+      [{ type: "tool-call", id: "m1", name: "not_a_tool", params: {} }, finish("tool-calls")],
+      [{ type: "text", text: "I will" }, finish("stop")],
+      [{ type: "tool-call", id: "c1", name: "echo", params: { value: "x" } }, finish("tool-calls")],
+    ][call] ?? [{ type: "text", text: "done" }, finish("stop")])
+    expect([result.outcome, result.finalText]).toEqual(["ok", "done"])
+    expect(trail).toEqual([
+      // A malformed step settles as such, and its completion is never asked.
+      "settled 0: malformed",
+      "tail 1: user",
+      "tail 1: assistant",
+      "settled 1: completed",
+      "complete? 1",
+      // The completion nudge, then the steer: both read by step 2.
+      "tail 2: user",
+      "tail 2: user",
+      "tail 2: assistant,tool",
+      "settled 2: completed",
+      "complete? 2",
+      "tail 3: assistant",
+      "settled 3: completed",
+      "complete? 3",
+    ])
+  })
+
+  test("a step whose call fails settles failed; one whose completion dies afterwards stays completed", async () => {
+    const settledWith = (options: { readonly call: "fails" | "answers"; readonly completion: "dies" | "holds" }) => Effect.runPromise(Effect.gen(function* () {
+      const settled = yield* Ref.make<ReadonlyArray<string>>([])
+      const invalid = AiError.make({ module: "Test", method: "generateText", reason: new AiError.InvalidResponseError({ description: "not a chat completion" }) })
+      const model = yield* LanguageModel.make({
+        generateText: () => (options.call === "fails" ? Effect.fail(invalid) : Effect.succeed([{ type: "text", text: "done" }, finish("stop")])) as never,
+        streamText: () => Stream.die("not scripted") as never,
+      })
+      const exit = yield* Effect.exit(runLoop({
+        system: "sys", messages: [user("go")], toolkit: kit,
+        onStepSettled: (step, status) => Ref.update(settled, (all) => [...all, `${step}:${status}`]),
+        isComplete: () => options.completion === "dies" ? Effect.die("the completion policy broke") : Effect.succeed(true),
+      }).pipe(Effect.provide(handlers), Effect.provideService(LanguageModel.LanguageModel, model)))
+      return { failed: exit._tag === "Failure", settled: yield* Ref.get(settled) }
+    }))
+    expect(await settledWith({ call: "fails", completion: "holds" })).toEqual({ failed: true, settled: ["0:failed"] })
+    expect(await settledWith({ call: "answers", completion: "dies" })).toEqual({ failed: true, settled: ["0:completed"] })
+    expect(await settledWith({ call: "answers", completion: "holds" })).toEqual({ failed: false, settled: ["0:completed"] })
   })
 })
 

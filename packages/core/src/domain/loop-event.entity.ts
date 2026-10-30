@@ -20,6 +20,9 @@ export interface ToolCallSummary {
 
 export type LoopEvent =
   | { readonly type: "turn_start"; readonly turnIndex: number }
+  /** The step settled: its call, its tools and its tail are done, with the
+   *  status `onStepSettled` was given, before the loop decides what follows
+   *  (completion, nudges, compaction, steering). Once per step. */
   | { readonly type: "turn_end"; readonly turnIndex: number; readonly status: StepStatus }
   /**
    * One streamed content increment, TRANSIENT by design: it exists only for
