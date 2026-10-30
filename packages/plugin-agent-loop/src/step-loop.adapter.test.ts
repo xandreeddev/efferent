@@ -67,9 +67,10 @@ const minimalLoop = StepLoop.of({
         Effect.catch((error) => isMalformed(error) ? Effect.succeed(Option.none()) : Effect.fail(error)),
         Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
       )
-      // A malformed step ends as such, without a verdict; its corrective is the next step's.
+      // A malformed step ends as such, without a verdict; its corrective is the next step's, when there is one.
       if (Option.isNone(answered)) {
         yield* request.events.publish({ _tag: "step.ended", step: index, run, status: "malformed", results: [] })
+        if (index + 1 >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text, steps: index + 1, usage } satisfies RunResult
         yield* request.record(index + 1, [{ role: "user", content: "Your reply could not be parsed: call a tool that exists, or answer in text." }])
         return yield* step(index + 1, text, usage)
       }
@@ -110,7 +111,9 @@ conform("a minimal loop", minimalLoop)
  * `runSteps` made careless, as a loop that ends its steps in its completion
  * check would be: a step ends when its completion is evaluated, with that
  * evaluation's exit, a malformed step ends `completed`, and the loop's own
- * messages are recorded under the step it is in.
+ * messages are recorded under the step it is in; and as one that records
+ * the next step's corrective before it knows that step runs: a run the step
+ * cap ends leaves one under the step it never takes.
  */
 const carelessLoop = StepLoop.of({
   id: "careless", version: "1",
@@ -123,14 +126,17 @@ const carelessLoop = StepLoop.of({
       events: { ...request.events, publish: (event) => event._tag === "step.ended" ? endOnce(event) : request.events.publish(event) },
       completion: (info) => request.completion(info).pipe(Effect.onExit((exit) => ended(info.stepIndex, Exit.isSuccess(exit) ? "completed" : "failed").pipe(Effect.orDie))),
       record: (step, tail) => Effect.service(CurrentAgentStep).pipe(Effect.flatMap((current) => request.record(Option.getOrElse(current, () => step), tail))),
-    })
+    }).pipe(Effect.tap((result) => result.reason === "step-cap"
+      ? request.record(result.steps, [{ role: "user", content: "Complete the requested work." }])
+      : Effect.void))
   },
 })
 
-describe("a loop that ends its steps in its completion check", () => {
+describe("a careless loop", () => {
   const checks = stepLoopConformance(carelessLoop)
   test.each([
     "ends each step once, and records nothing under a step after its step.ended (correctives, nudges and steers included)",
+    "records nothing under a step that never starts (the step cap or a complete verdict ends the run first)",
     "a completion that fails after a completed step fails the run and leaves that step completed",
     "a malformed step ends malformed, with no completion.evaluated, and the run goes on",
   ])("fails the kit's check: %s", async (name) => {

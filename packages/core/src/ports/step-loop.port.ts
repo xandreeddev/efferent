@@ -125,7 +125,9 @@ export type RunResult = {
  * model could not form, which gets no `completion.evaluated`), so a
  * completion that fails afterwards leaves it `completed`; nothing is
  * recorded under a step after its `step.ended` (the loop's own messages,
- * a corrective, a nudge or a steer, are the next step's); a planned batch
+ * a corrective, a nudge or a steer, are the next step's), and nothing
+ * under a step that never starts (a run the step cap or a complete verdict
+ * ends records no corrective or nudge for a next step); a planned batch
  * makes no provider call; a forced tool choice is honoured; a verdict
  * awaiting tasks joins them and is evaluated once more; no provider call
  * follows a complete verdict; `RunResult.usage` is the sum of the usage

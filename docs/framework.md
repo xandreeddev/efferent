@@ -425,9 +425,10 @@ which `onTail(messages, step)` persists under the step. It settles:
 (`completed`, `failed`, `cancelled`, or `malformed`). Then the loop decides:
 `isComplete(step)`, a query that is never asked after a malformed step, the
 degenerate-loop breaker, compaction and steering. A corrective, a nudge or a
-steer goes through `onTail` under the next step. A `StepLoop`'s
-`RunResult` says the same as a union: `completed` with the reason
-`completed`, or `partial` with `step-cap` or `degenerate-loop`.
+steer goes through `onTail` under the next step, and only when that step
+runs: a run the step cap, the breaker or completion ends records none. A
+`StepLoop`'s `RunResult` says the same as a union: `completed` with the
+reason `completed`, or `partial` with `step-cap` or `degenerate-loop`.
 
 `@xandreed/evals` provides `DecisionTrial`, `SelectionObservation`,
 `compareDecisionTrials` and `selectionMetrics`. Comparisons pair case/repetition,
@@ -706,7 +707,9 @@ answers with a corrective turn; it has no `assistant.message` and no
 verdict, compaction, steering) cannot change that status: a completion that
 fails fails the run and leaves the step `completed`. Nothing is recorded
 under a step after its `step.ended`: the loop's own messages, a corrective, a
-nudge or a steer, are recorded under the next step, which reads them.
+nudge or a steer, are recorded under the next step, which reads them. Nothing
+is recorded under a step that never starts: a run that the step cap or a
+complete verdict ends records no corrective or nudge for a next step.
 Background work goes to `turn.tasks.fork(tag, effect)`.
 
 A subscription can instead run in the background:

@@ -269,7 +269,9 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * The `StepLoop` contract, as checks any implementation must pass:
  * per-step event order, recorded results on `step.ended`, each step ended
  * once with nothing recorded under it after its `step.ended` (the loop's
- * correctives, nudges and steers are the next step's), a step whose
+ * correctives, nudges and steers are the next step's), nothing recorded
+ * under a step that never starts (the step cap or a complete verdict ending
+ * the run with a corrective or a nudge due), a step whose
  * completion fails afterwards still `completed`, a malformed step ended
  * `malformed` with no `completion.evaluated`, planned batches
  * without a provider call, forced tool choices, awaiting verdicts, no call
@@ -351,6 +353,22 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
       yield* expect(check, late.length === 0,
         `recorded under step ${late.map((record) => record.step).join(", ")} after that step's step.ended`)
     }),
+  },
+  {
+    name: "records nothing under a step that never starts (the step cap or a complete verdict ends the run first)",
+    run: Effect.forEach([
+      // The cap ends a run the host still finds incomplete, and one whose last step was malformed.
+      { maxSteps: 2, requireCompletion: true, script: [textReply("not yet"), textReply("still not")] },
+      { maxSteps: 2, script: [probeCall("c1", 1), malformedCall("m1")] },
+      // A complete verdict ends a run that repeats the same call.
+      { script: [probeCall("c1", 1), probeCall("c2", 1), probeCall("c3", 1), probeCall("c4", 1)], completion: (step: number) => Effect.succeed({ complete: step >= 3, awaiting: [], facts: {} }) },
+    ] satisfies ReadonlyArray<Scenario>, (scenario) => Effect.gen(function* () {
+      const { events, recorded } = yield* observe(loop, scenario)
+      const startedSteps = events.flatMap((event) => event._tag === "step.started" ? [event.step] : [])
+      const stray = recorded.filter((entry) => !startedSteps.includes(entry.step))
+      yield* expect("unstarted", stray.length === 0,
+        `recorded under step ${[...new Set(stray.map((entry) => entry.step))].join(", ")}, which never started (the steps started ${startedSteps.join()})`)
+    }), { concurrency: 1, discard: true }),
   },
   {
     name: "a completion that fails after a completed step fails the run and leaves that step completed",
