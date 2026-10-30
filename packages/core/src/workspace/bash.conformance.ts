@@ -7,7 +7,11 @@ import type { Bash } from "../ports/bash.port.js"
 
 type BashShape = Context.Service.Shape<typeof Bash>
 
-/** One check's Bash adapter and an empty directory its commands run in. */
+/**
+ * One check's Bash adapter and an empty directory its commands run in.
+ *
+ * @public
+ */
 export interface BashFixture {
   readonly bash: BashShape
   /** An absolute directory that exists and is empty. */

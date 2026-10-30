@@ -16,7 +16,12 @@ const OUTCOMES = ["completed", "partial", "failed"] as const
 export const TurnOrigin = Schema.Literals(["user", "inbox", "task"])
 export type TurnOrigin = typeof TurnOrigin.Type
 
-/** How a turn's run came out: what `use` returns (`TurnOutcome`), and what its reply and `turn.ended` event carry. */
+/**
+ * How a turn's run came out: what `use` returns (`TurnOutcome`), and what its
+ * reply and `turn.ended` event carry.
+ *
+ * @public
+ */
 export const TurnOutcomeKind = Schema.Literals(OUTCOMES)
 export type TurnOutcomeKind = typeof TurnOutcomeKind.Type
 

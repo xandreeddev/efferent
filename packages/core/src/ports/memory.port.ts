@@ -77,7 +77,11 @@ export class ResultDigester extends Context.Service<ResultDigester, {
   readonly digest: (task: DigestTask) => Effect.Effect<DigestOutcome, HarnessError>
 }>()("efferent/ResultDigester") {}
 
-/** Read-only memory for tools, sections, matchers and reactions. */
+/**
+ * Read-only memory for tools, sections, matchers and reactions.
+ *
+ * @public
+ */
 export interface MemoryReader {
   readonly turn: Effect.Effect<number>
   readonly entries: Effect.Effect<ReadonlyArray<LogEntry>>
@@ -87,6 +91,7 @@ export interface MemoryReader {
   readonly transcript: (fidelity: "raw" | "model" | "reference") => Effect.Effect<ReadonlyArray<AgentMessage>>
 }
 
+/** @public */
 export interface MaintainSignal {
   readonly phase: "turn-start" | "step"
   readonly lastUsage: Option.Option<TokenUsage>

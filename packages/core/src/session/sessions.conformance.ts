@@ -26,7 +26,12 @@ export interface SessionsInstance {
   readonly activity: Option.Option<Context.Service.Shape<typeof TurnActivity>>
 }
 
-/** A process as the kit names one, for process ownership: its host, its pid and when it started. */
+/**
+ * A process as the kit names one, for process ownership: its host, its pid
+ * and when it started.
+ *
+ * @public
+ */
 export interface SessionsProcess {
   readonly host: string
   readonly pid: number

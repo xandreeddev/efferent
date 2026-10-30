@@ -86,6 +86,7 @@ export interface TurnResult extends TurnOutcome {
   readonly pending?: number
 }
 
+/** @public */
 export interface TurnTools {
   /** Ask the matcher without writing anything (run it beside other pre-turn work). */
   readonly match: (userMessage: UserMessage) => Effect.Effect<SkillMatch, HarnessError>

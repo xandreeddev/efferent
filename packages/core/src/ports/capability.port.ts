@@ -16,6 +16,8 @@ import type { UserMessage } from "../turn/user-message.entity.js"
  * `Select` (preferred) keeps whole items by key and re-renders them, so every
  * identifier the answer may cite survives. `Summarize` is accepted only when
  * every `preserve`d identifier appears verbatim in the summary.
+ *
+ * @public
  */
 export type DigestDefinition<Result, Params> =
   | {
@@ -32,7 +34,12 @@ export type DigestDefinition<Result, Params> =
     readonly preserve: (result: Result) => ReadonlyArray<string>
   }
 
-/** How one tool's result appears in context — owned by the tool, applied by memory. */
+/**
+ * How one tool's result appears in context — owned by the tool, applied by
+ * memory.
+ *
+ * @public
+ */
 export interface ToolViewDefinition<Result, Params> {
   readonly version: string
   /** The exact text the model sees when the result is written. */
@@ -52,7 +59,11 @@ export interface ToolViewDefinition<Result, Params> {
   readonly media: Option.Option<(result: Result, params: Params) => ReadonlyArray<Media>>
 }
 
-/** The view as an author writes it; optional parts default in `defineTool`. */
+/**
+ * The view as an author writes it; optional parts default in `defineTool`.
+ *
+ * @public
+ */
 export interface ToolViewInput<Result, Params> {
   readonly version: string
   readonly render: (result: Result, params: Params) => string
@@ -64,7 +75,12 @@ export interface ToolViewInput<Result, Params> {
   readonly media?: (result: Result, params: Params) => ReadonlyArray<Media>
 }
 
-/** A typed tool definition as its author writes it (see `defineTool`); `R` is the services its handler reads. */
+/**
+ * A typed tool definition as its author writes it (see `defineTool`); `R` is
+ * the services its handler reads.
+ *
+ * @public
+ */
 export interface ToolDefinition<T extends Tool.Any, R> {
   readonly tool: T
   readonly handler: (params: Tool.Parameters<T>) => Effect.Effect<Tool.Success<T>, Tool.Failure<T>, R>
@@ -87,6 +103,7 @@ export interface RegisteredTool {
   readonly annotations: ToolAnnotations
 }
 
+/** @public */
 export interface PromptContext {
   readonly variant: Option.Option<string>
   readonly active: ReadonlyArray<string>
@@ -98,6 +115,8 @@ export interface PromptContext {
  * (turn). `render` reads only the services `requires` names, from where the
  * turn renders it (the run's services); `definePromptSection` checks them by
  * key on each render. A section that reads none is a plain value.
+ *
+ * @public
  */
 export interface PromptSection {
   readonly id: string
@@ -115,20 +134,24 @@ export interface StepInfo {
   readonly lastUsage: Option.Option<TokenUsage>
 }
 
+/** @public */
 export type ToolChoice = "required" | { readonly tool: string }
 
+/** @public */
 export interface StepDirective {
   /** Appended at the end of the context for this step only. */
   readonly context: Option.Option<string>
   readonly toolChoice: Option.Option<ToolChoice>
 }
 
+/** @public */
 export interface InitialBatch {
   readonly calls: ReadonlyArray<{ readonly name: string; readonly params: unknown }>
   /** Skills the batch needs, activated before it runs. */
   readonly skills: ReadonlyArray<string>
 }
 
+/** @public */
 export interface ModelChoice {
   readonly model: LanguageModel.LanguageModel
   /** Selects a system-prompt variant; sections receive it. */
@@ -147,6 +170,7 @@ export interface Capability {
 /** A MULTI-provider key: every contributor's bundle, in graph order. */
 export class Capabilities extends Context.Service<Capabilities, ReadonlyArray<Capability>>()("efferent/Capabilities") {}
 
+/** @public */
 export interface IntentMatch {
   readonly skills: ReadonlyArray<string>
   readonly probabilities: Option.Option<Readonly<Record<string, number>>>

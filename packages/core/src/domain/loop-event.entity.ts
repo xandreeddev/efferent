@@ -12,6 +12,7 @@ import type { StepStatus } from "./turn-vocabulary.entity.js"
  * (`type SessionEvent = LoopEvent | { type: "math_render"; ... }`).
  */
 
+/** @public */
 export interface ToolCallSummary {
   readonly id: string
   readonly toolName: string

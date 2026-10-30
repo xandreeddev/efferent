@@ -6,7 +6,11 @@ import type { JsonObject } from "../session/session-log.entity.js"
 import type { SessionAddress, TurnRefused } from "../session/sessions.entity.js"
 import type { TaskRef } from "../session/tasks.entity.js"
 
-/** The turn a host is asked to admit. */
+/**
+ * The turn a host is asked to admit.
+ *
+ * @public
+ */
 export interface TurnToAdmit {
   readonly session: SessionAddress
   readonly origin: TurnOrigin

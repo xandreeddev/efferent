@@ -4,10 +4,18 @@
  * functions; every package that writes such text uses these.
  */
 
-/** Text the host, not the user, adds as a user-role message. */
+/**
+ * Text the host, not the user, adds as a user-role message.
+ *
+ * @public
+ */
 export const hostNote = (text: string): string => `[Host note: ${text}]`
 
-/** The marker a clip leaves in place of the characters it dropped. */
+/**
+ * The marker a clip leaves in place of the characters it dropped.
+ *
+ * @public
+ */
 export const clippedMarker = (dropped: number): string => `[… ${dropped} characters clipped]`
 
 /**
@@ -15,6 +23,8 @@ export const clippedMarker = (dropped: number): string => `[… ${dropped} chara
  * spacing, made inert (`</TASK-OUTPUT >` becomes `</TASK_OUTPUT >`), so it
  * cannot close or reopen the frame it is put in. The tag is a
  * lowercase name with a hyphen in it.
+ *
+ * @public
  */
 export const escapeFrame = (tag: string, text: string): string =>
   text.replace(new RegExp(`<\\s*/?\\s*${tag}(?![\\w-])[^>]*>`, "gi"), (found) => found.replaceAll("-", "_"))

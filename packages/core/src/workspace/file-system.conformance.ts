@@ -7,7 +7,12 @@ import type { FileSystem } from "../ports/file-system.port.js"
 
 type Fs = Context.Service.Shape<typeof FileSystem>
 
-/** One check's file system: the port, an empty directory to work in, and a way to make links. */
+/**
+ * One check's file system: the port, an empty directory to work in, and a way
+ * to make links.
+ *
+ * @public
+ */
 export interface FileSystemFixture {
   readonly fs: Fs
   /** An absolute directory that exists and is empty; the check works only below it. */

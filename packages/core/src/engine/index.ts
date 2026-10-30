@@ -2,7 +2,7 @@
 // semver; it moves into `@xandreed/sdk` in the next minor release.
 export { TurnLive } from "./turn.adapter.js"
 export { makeTurnEvents, makeTurnTasks } from "./turn-bus.adapter.js"
-export { cacheKeyOf, runTurnLoop, schemaTokens, stepRequestOf } from "./turn-run.usecase.functions.js"
+export { cacheKeyOf, runTurnLoop, stepRequestOf } from "./turn-run.usecase.functions.js"
 export type { TurnRunServices } from "./turn-run.usecase.functions.js"
 export {
   finishTurn,

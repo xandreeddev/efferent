@@ -105,10 +105,16 @@ const src = (name: string): string => `packages/${name}/src/**`
 /**
  * The package entries whose every export has a first-party consumer or a
  * `@public` tag (`quality/exports-have-consumers`): entry files, not
- * globs, one per line. An entry joins once its surface is curated; none
- * is yet.
+ * globs, one per line. An entry joins once its surface is curated: core's
+ * five entries are.
  */
-const CURATED_ENTRIES: ReadonlyArray<string> = []
+const CURATED_ENTRIES: ReadonlyArray<string> = [
+  "packages/core/src/index.ts",
+  "packages/core/src/conformance/index.ts",
+  "packages/core/src/internal/index.ts",
+  "packages/core/src/engine/index.ts",
+  "packages/core/src/models/index.ts",
+]
 
 /**
  * Open schemas (`effect/no-unknown-json`) core keeps for now. The MCP
@@ -148,8 +154,9 @@ const RECORD_CAST_EDGES = [
  * The provider-neutral packages (`effect/no-provider-namespace`): core and
  * the agent loop carry a provider's metadata and options opaque, and write
  * their own under core's `ENGINE_KEY`. Their tests and kits drive the loop
- * with provider-shaped metadata and are left out. The deprecated
- * `extractModel` still reads the stamp the models plugin's router kept
+ * with provider-shaped metadata and are left out. `responseModelOrLegacyOf`
+ * (the agent loop's, through `@xandreed/core/internal`, and the deprecated
+ * `extractModel`) still reads the stamp the models plugin's router kept
  * under `router`, for one minor release; its entry goes with it, and the
  * list only shrinks.
  */

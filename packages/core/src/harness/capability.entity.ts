@@ -6,6 +6,7 @@ import { Schema } from "effect"
  * active set and prompt assembly belong to the plugins that consume them.
  */
 
+/** @public */
 export const ToolAnnotations = Schema.Struct({
   /** Read-only tools share a concurrency lane; others run exclusively. */
   readOnly: Schema.Boolean,
@@ -26,19 +27,37 @@ export type ToolAnnotations = typeof ToolAnnotations.Type
 export const SkillId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("SkillId"))
 export type SkillId = typeof SkillId.Type
 
-/** Names a skill's reference within the skill (a skill file's is its path below the skill's folder). */
+/**
+ * Names a skill's reference within the skill (a skill file's is its path
+ * below the skill's folder).
+ *
+ * @public
+ */
 export const SkillReferenceId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("SkillReferenceId"))
 export type SkillReferenceId = typeof SkillReferenceId.Type
 
-/** Names a host's or a plugin's bundle of tools, skills and prompt sections; `defineCapability` brands the id it is given. */
+/**
+ * Names a host's or a plugin's bundle of tools, skills and prompt sections;
+ * `defineCapability` brands the id it is given.
+ *
+ * @public
+ */
 export const CapabilityId = Schema.String.pipe(Schema.brand("CapabilityId"))
 export type CapabilityId = typeof CapabilityId.Type
 
-/** Names a tool of the catalogue: the registered tool's name. */
+/**
+ * Names a tool of the catalogue: the registered tool's name.
+ *
+ * @public
+ */
 export const CapabilityToolId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("CapabilityToolId"))
 export type CapabilityToolId = typeof CapabilityToolId.Type
 
-/** Tier 3: reference material a loaded skill may read on demand. */
+/**
+ * Tier 3: reference material a loaded skill may read on demand.
+ *
+ * @public
+ */
 export const SkillReference = Schema.Struct({
   id: SkillReferenceId,
   title: Schema.Trimmed.check(Schema.isNonEmpty()),
@@ -66,9 +85,11 @@ export const SkillDefinition = Schema.Struct({
 })
 export type SkillDefinition = typeof SkillDefinition.Type
 
+/** @public */
 export const PromptTier = Schema.Literals(["static", "session", "turn"])
 export type PromptTier = typeof PromptTier.Type
 
+/** @public */
 export const CapabilityTool = Schema.Struct({
   id: CapabilityToolId,
   version: Schema.Trimmed.check(Schema.isNonEmpty()),
@@ -79,6 +100,7 @@ export const CapabilityTool = Schema.Struct({
   outputSchema: Schema.JsonObject,
 })
 export type CapabilityTool = typeof CapabilityTool.Type
+/** @public */
 export const CapabilityRecipe = Schema.Struct({
   id: SkillId,
   version: Schema.Trimmed.check(Schema.isNonEmpty()),
@@ -92,11 +114,13 @@ export const CapabilityCatalog = Schema.Struct({
   tools: Schema.Array(CapabilityTool),
 })
 export type CapabilityCatalog = typeof CapabilityCatalog.Type
+/** @public */
 export const CapabilitySelection = Schema.Struct({
   recipes: Schema.Array(Schema.String),
   tools: Schema.Array(Schema.String),
 })
 export type CapabilitySelection = typeof CapabilitySelection.Type
+/** @public */
 export const ResolvedCapabilities = Schema.Struct({
   catalogVersion: Schema.String,
   recipes: Schema.Array(CapabilityRecipe),

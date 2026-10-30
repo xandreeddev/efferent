@@ -99,7 +99,11 @@ export const StoredData = {
 } as const
 export type StoredKind = keyof typeof StoredData
 
-/** One stored event of a `StoredData` kind, and its data decoded. */
+/**
+ * One stored event of a `StoredData` kind, and its data decoded.
+ *
+ * @public
+ */
 export interface Stored<K extends StoredKind> {
   readonly event: SessionLogEvent
   readonly data: (typeof StoredData)[K]["Type"]
@@ -129,19 +133,39 @@ export const readStored = <K extends StoredKind>(kind: K, events: ReadonlyArray<
   Effect.forEach(events.filter((event) => event.kind === kind), (event) =>
     decodeStored(kind, event).pipe(Effect.map((data): Stored<K> => ({ event, data }))), { concurrency: 1 })
 
-/** What a lookup of a `turn.started` decodes: its run, key and entry, never the user's message (its images are base64). */
+/**
+ * What a lookup of a `turn.started` decodes: its run, key and entry, never
+ * the user's message (its images are base64).
+ *
+ * @public
+ */
 export const TurnStartedKeys = TurnStartedData.mapFields(Struct.pick(["runId", "key", "entry"]))
-/** What a lookup of a `request.prepared` decodes: its run id, run and step, never its system text and tools. */
+/**
+ * What a lookup of a `request.prepared` decodes: its run id, run and step,
+ * never its system text and tools.
+ *
+ * @public
+ */
 export const RequestPreparedKeys = ModelRequestHeader.mapFields(Struct.pick(["runId", "run", "step"]))
 
-/** The kinds a lookup finds by a few keys, and the keys it decodes (`readStoredKeys`). */
+/**
+ * The kinds a lookup finds by a few keys, and the keys it decodes
+ * (`readStoredKeys`).
+ *
+ * @public
+ */
 export const StoredKeys = {
   "turn.started": TurnStartedKeys,
   "request.prepared": RequestPreparedKeys,
 } as const
+/** @public */
 export type KeyedKind = keyof typeof StoredKeys
 
-/** One stored event of a `StoredKeys` kind, and its keys decoded. */
+/**
+ * One stored event of a `StoredKeys` kind, and its keys decoded.
+ *
+ * @public
+ */
 export interface StoredKeysOf<K extends KeyedKind> {
   readonly event: SessionLogEvent
   readonly keys: (typeof StoredKeys)[K]["Type"]
@@ -187,6 +211,8 @@ export const replyEndingOf = (drafts: ReadonlyArray<{ readonly kind: string; rea
  * The stored form of a memory entry (`memory.*`, `turn.reply`): the entry's
  * id, run, step and time, and `body`, the entry's body without its `_tag`
  * (the kind names it, see `MemoryKindOf`).
+ *
+ * @public
  */
 export const StoredMemoryData = <Body extends Schema.Top>(body: Body) => Schema.Struct({
   entry: EntryId,

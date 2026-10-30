@@ -100,6 +100,7 @@ const mergeToolMessages = (messages: ReadonlyArray<AgentMessage>): ReadonlyArray
       : [...merged, message]
   }, [])
 
+/** @public */
 export interface RenderOptions {
   /** Only this strategy's compaction entries apply. */
   readonly strategy: string
@@ -386,10 +387,12 @@ export const rawTranscript = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<A
     return []
   }))
 
+/** @public */
 export const emptyQuery: LogQuery = {
   kinds: [], turns: Option.none(), tool: Option.none(), subject: Option.none(), text: Option.none(), limit: Option.none(),
 }
 
+/** @public */
 export const queryLog = (entries: ReadonlyArray<LogEntry>, query: LogQuery): ReadonlyArray<LogEntry> => {
   const matches = entries.filter((entry) =>
     (query.kinds.length === 0 || query.kinds.includes(entry.body._tag)) &&

@@ -49,7 +49,12 @@ export const addUsage = (a: TokenUsage, b: TokenUsage): TokenUsage => ({
 /** The sum of many usages; `zeroUsage` for none. */
 export const sumUsage = (usages: ReadonlyArray<TokenUsage>): TokenUsage => usages.reduce(addUsage, zeroUsage)
 
-/** The input neither read from nor written to a cache: input minus both, at least 0. */
+/**
+ * The input neither read from nor written to a cache: input minus both, at
+ * least 0.
+ *
+ * @public
+ */
 export const uncachedInputTokens = (usage: TokenUsage): number =>
   Math.max(0, usage.inputTokens - usage.cacheReadTokens - usage.cacheWriteTokens)
 

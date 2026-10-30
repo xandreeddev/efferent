@@ -1236,6 +1236,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/sdk` runs `Agent.turn` on `@xandreed/core/engine`; its tests
   import the kits from `@xandreed/core/conformance` and the tool schema from
   `@xandreed/core/internal`.
+- `quality/exports-have-consumers` runs on core's five entries: every export
+  is imported by another package, a script or a doc code block, tagged
+  `@public` as host API, or deprecated and unused. `@public` marks what the
+  docs describe for hosts and what a plugin, a port's adapter or a kit needs.
+- The agent loop reads a response's model with `responseModelOrLegacyOf`
+  (`@xandreed/core/internal`), which keeps reading the router's old stamp
+  until the next minor release; `extractModel` is its deprecated root alias.
+- The framework guide documents `provideDeclared` (with `ServiceKeys`) and the
+  types of the turn's trace and run functions, and the conformance page
+  documents `check`, `textReply` and `probeCall`.
 
 ### Deprecated
 
@@ -1285,6 +1295,23 @@ the root.
   (with `Profile`, which `resolveGraph` already refuses), and the
   `EngineSettings` keys `sandbox` and `viMode`, which no package reads (a
   settings file that holds them still decodes).
+Each name below still works from `@xandreed/core` (and `@xandreed/sdk`) and is
+removed from the root in the next minor release; no package uses it.
+
+- Media helpers: `base64Length`, `imageSizeOf` (`ImageSize`), `mediaAt`,
+  `mediaFingerprintOf`, `normalizeMedia`.
+- `toFailure`, `defaultAnnotations` and `globMatcher` (`compileGlob` stays).
+- Memory log helpers: `artifactLines`, `buildContext`, `currentTurnOf`,
+  `entriesSendingMedia`, `estimateTokens`, `latestRunOf`, `rawTranscript`,
+  `referenceTranscript`, `stepContextOf`, `subjectsOf`, and `readerOf`.
+- Journal drafts: `draftOfEntry`, `draftOfTurnEvent`, `draftsOfEntries`,
+  `entryOfEvent`, `isFrameworkDraft`.
+- Model request checks: `checkModelRequest`, `modelRequestHeaderOf`,
+  `modelRequestTools`, `reconstructModelRequest` (`ComparedModelRequest`).
+- Prompt sections: `orderSections`, `renderSections`.
+- `schemaTokens`, `safeKeepFrom`, `ToolResultSummary`, `FoldedTurn` and
+  `StreamDelta`, until now deprecated in favour of `@xandreed/core/engine` or
+  `@xandreed/core/internal`, are not exported there.
 
 ## 0.14.0 — 2026-10-29
 

@@ -20,7 +20,7 @@ The package has five entries, each an `index.ts` of explicit named exports:
 |---|---|---|---|
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
 | `./conformance` (`src/conformance/index.ts`) | every kit but the models plugin's, `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
-| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold and tool schemas | none | plugin-agent-loop, plugin-models, sdk |
+| `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold and tool schemas, and `responseModelOrLegacyOf` (the model a response names, reading the router's old stamp too until the next minor release) | none | plugin-agent-loop, plugin-models, sdk |
 | `./engine` (`src/engine/index.ts`) | `TurnLive`, a turn's run and lifecycle, its bus | none; it moves into `@xandreed/sdk` in the next minor release | sdk |
 | `./models` (`src/models/index.ts`) | `AuthStore`, `Credential`, `AuthError`, `SettingsStore`, `EngineSettings` and their kits | none; it moves into `@xandreed/plugin-models` in the next minor release | plugin-models |
 
@@ -32,10 +32,23 @@ end of `src/index.ts`, until the next minor release: the conformance and
 models names as re-exports, the `internal/` and `engine/` names declared
 again (the same value, or a type of the same shape), since a root entry may
 not re-export what those folders declare (`scripts/api-snapshot.ts`). A few
-names declared there stay root API, not deprecated, because packages without
-a grant use them: `compileGlob`, `globMatcher` and their types (the
-workspace plugin), `harnessDefectsAsFailures` (the sessions plugin and the
-agent loop), and `assistantModel` and `assistantUsage`.
+names declared there stay root API, not deprecated: `compileGlob` and its
+types (the workspace plugin uses them), `harnessDefectsAsFailures` (the
+sessions plugin and the agent loop), and `assistantModel` and
+`assistantUsage` (documented for hosts).
+
+`quality/exports-have-consumers` runs on all five entries (`CURATED_ENTRIES`
+in `foundry.config.ts`): each export is imported, by its entry's name, from
+another package, a script or a doc code block, or is tagged `@public`, or is
+`@deprecated` and imported by none. `@public`, on the declaration, marks
+host API: what the README, the guides or the website document for hosts, and
+what a host needs to write a plugin, a port's adapter or a kit (ports and the
+entities in their signatures, `define*`, References, error tags and guards,
+event and stored-payload schemas). An export that is neither is not added:
+use it from first-party code, document and tag it, or leave it unexported.
+Root names no package uses and no host needs are deprecated in the block at
+the end of `src/index.ts` (`@deprecated Removed in the next minor release.`);
+core keeps using them where they are declared.
 
 Deprecated in this release and removed in the next minor one, each with an
 `@deprecated` tag on its declaration: the session chassis (`makeSession`),

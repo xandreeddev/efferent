@@ -27,24 +27,19 @@ export {
   MediaSlot,
 } from "./domain/media.entity.js"
 export {
-  base64Length,
   elideMediaData,
   IMAGE_TOKEN_ESTIMATE,
-  imageSizeOf,
   isMediaValue,
-  mediaAt,
-  mediaFingerprintOf,
   mediaFromBase64,
   mediaFromBytes,
   mediaLabel,
   mediaSlotsOf,
-  normalizeMedia,
   sniffImageType,
   toolResultMedia,
 } from "./domain/media.entity.functions.js"
-export type { ImageSize, MediaDescription, ToolResultMedia } from "./domain/media.entity.functions.js"
+export type { MediaDescription, ToolResultMedia } from "./domain/media.entity.functions.js"
 export { Failure } from "./domain/failure.entity.js"
-export { errorCodeOf, reasonOf, toFailure } from "./domain/failure.entity.functions.js"
+export { errorCodeOf, reasonOf } from "./domain/failure.entity.functions.js"
 export { AgentFailure, AgentFailureCategory } from "./domain/agent-failure.entity.js"
 export type { AgentFailure as AgentFailureType, AgentFailureCategory as AgentFailureCategoryType } from "./domain/agent-failure.entity.js"
 export { toAgentFailure, toolResultFailure } from "./domain/agent-failure.entity.functions.js"
@@ -138,13 +133,8 @@ export {
 } from "./session/session-event.entity.js"
 export { JOURNAL_KINDS } from "./session/session-event.entity.js"
 export {
-  draftOfEntry,
-  draftOfTurnEvent,
-  draftsOfEntries,
   entriesOfEvents,
-  entryOfEvent,
   frameworkDraft,
-  isFrameworkDraft,
   journalSchemaOf,
   replyEndingOf,
   StoredMemoryData,
@@ -264,31 +254,21 @@ export {
 export type { LogQuery } from "./memory/memory-log.entity.js"
 export {
   activationsOf,
-  artifactLines,
-  buildContext,
   canonicalJson,
-  currentTurnOf,
   digestTranscript,
   emptyQuery,
-  entriesSendingMedia,
   entryId,
   estimateMessageTokens,
-  estimateTokens,
   fingerprintOf,
-  latestRunOf,
   ledgerOf,
   pendingCompaction,
   queryLog,
-  rawTranscript,
-  referenceTranscript,
   renderLog,
   rewrittenBy,
-  stepContextOf,
-  subjectsOf,
   toolInputsOf,
 } from "./memory/memory-log.entity.functions.js"
 export type { RenderOptions } from "./memory/memory-log.entity.functions.js"
-export { noMaintenance, openLogSession, readerOf } from "./memory/memory-session.js"
+export { noMaintenance, openLogSession } from "./memory/memory-session.js"
 export type { MaintainDecision, MemoryPolicy } from "./memory/memory-session.js"
 export { ConversationMemory, ResultDigester } from "./ports/memory.port.js"
 export type {
@@ -320,7 +300,6 @@ export {
 } from "./harness/capability.entity.js"
 export {
   catalogOf,
-  defaultAnnotations,
   defineCapability,
   definePromptSection,
   defineSkill,
@@ -392,18 +371,14 @@ export {
   ProviderToolId,
 } from "./turn/model-request.entity.js"
 export {
-  checkModelRequest,
   describeModel,
   freezeModelRequest,
   modelRequestDescriptorOf,
-  modelRequestHeaderOf,
-  modelRequestTools,
-  reconstructModelRequest,
   replayModelRequest,
   resolveModelRequest,
   resolvingModel,
 } from "./turn/model-request.entity.functions.js"
-export type { ComparedModelRequest } from "./turn/model-request.entity.functions.js"
+
 export { TurnEvents, TurnTasks } from "./ports/turn-events.port.js"
 export type { SubscribeOptions, Subscription, TurnEventsService, TurnTasksService } from "./ports/turn-events.port.js"
 export { StepLoop, StepLoopReferences } from "./ports/step-loop.port.js"
@@ -428,7 +403,7 @@ export type {
 export type { TurnResult } from "./ports/turn.port.js"
 export { TurnMemory, TurnPrompt, TurnToolbox } from "./ports/turn-scope.port.js"
 export type { RequestSnapshot, TurnContextEntry, TurnLiveInput, TurnRunOptions } from "./ports/turn-scope.port.js"
-export { orderSections, renderSections } from "./turn/prompt-sections.js"
+
 export { clippedMarker, clipTo, escapeFrame, framed, hostNote } from "./turn/model-text.js"
 export { recordDecision } from "./decision-record.entity.functions.js"
 export { CollectSkillFilesOptions, SkillFile, SkillFileIssue, SkillFilesOptions, SkillTree, SkillTreeEntry } from "./harness/skill-files.entity.js"
@@ -442,13 +417,18 @@ import * as glob from "./internal/glob.entity.functions.js"
 import * as internal from "./internal/index.js"
 import * as json from "./internal/json.entity.functions.js"
 import * as mapping from "./internal/mapping.entity.functions.js"
+import * as streamFold from "./internal/stream-fold.entity.functions.js"
+import * as turnRun from "./engine/turn-run.usecase.functions.js"
 import * as turnBus from "./engine/turn-bus.adapter.js"
 
 export const compileGlob: typeof glob.compileGlob = glob.compileGlob
-export const globMatcher: typeof glob.globMatcher = glob.globMatcher
+/** @public */
 export interface GlobMatcher extends glob.GlobMatcher {}
+/** @public */
 export interface GlobMatchOptions extends glob.GlobMatchOptions {}
+/** @public */
 export const assistantModel: typeof mapping.assistantModel = mapping.assistantModel
+/** @public */
 export const assistantUsage: typeof mapping.assistantUsage = mapping.assistantUsage
 export const harnessDefectsAsFailures: typeof turnBus.harnessDefectsAsFailures = turnBus.harnessDefectsAsFailures
 /**
@@ -588,8 +568,8 @@ export const responseToAgentMessages: typeof internal.responseToAgentMessages = 
 export const responseToolCalls: typeof internal.responseToolCalls = internal.responseToolCalls
 /** @deprecated Import from "@xandreed/core/internal". */
 export const responseToolResults: typeof internal.responseToolResults = internal.responseToolResults
-/** @deprecated Import from "@xandreed/core/internal". */
-export const safeKeepFrom: typeof internal.safeKeepFrom = internal.safeKeepFrom
+/** @deprecated Removed in the next minor release. */
+export const safeKeepFrom: typeof mapping.safeKeepFrom = mapping.safeKeepFrom
 /** @deprecated Import from "@xandreed/core/internal". */
 export const strictJsonSchema: typeof internal.strictJsonSchema = internal.strictJsonSchema
 /** @deprecated Import from "@xandreed/core/internal". */
@@ -600,12 +580,12 @@ export const toPromptMessages: typeof internal.toPromptMessages = internal.toPro
 export const withToolCallIds: typeof internal.withToolCallIds = internal.withToolCallIds
 /** @deprecated Import from "@xandreed/core/internal". */
 export const withUsageOnAssistant: typeof internal.withUsageOnAssistant = internal.withUsageOnAssistant
-/** @deprecated Import from "@xandreed/core/internal". */
-export interface FoldedTurn extends internal.FoldedTurn {}
-/** @deprecated Import from "@xandreed/core/internal". */
-export interface StreamDelta extends internal.StreamDelta {}
-/** @deprecated Import from "@xandreed/core/internal". */
-export interface ToolResultSummary extends internal.ToolResultSummary {}
+/** @deprecated Removed in the next minor release. */
+export interface FoldedTurn extends streamFold.FoldedTurn {}
+/** @deprecated Removed in the next minor release. */
+export interface StreamDelta extends streamFold.StreamDelta {}
+/** @deprecated Removed in the next minor release. */
+export interface ToolResultSummary extends mapping.ToolResultSummary {}
 /** @deprecated Import from "@xandreed/core/engine". */
 export const cacheKeyOf: typeof engine.cacheKeyOf = engine.cacheKeyOf
 /** @deprecated Import from "@xandreed/core/engine". */
@@ -620,8 +600,8 @@ export const makeTurnTasks: typeof engine.makeTurnTasks = engine.makeTurnTasks
 export const openTurnTools: typeof engine.openTurnTools = engine.openTurnTools
 /** @deprecated Import from "@xandreed/core/engine". */
 export const runTurnLoop: typeof engine.runTurnLoop = engine.runTurnLoop
-/** @deprecated Import from "@xandreed/core/engine". */
-export const schemaTokens: typeof engine.schemaTokens = engine.schemaTokens
+/** @deprecated Removed in the next minor release. */
+export const schemaTokens: typeof turnRun.schemaTokens = turnRun.schemaTokens
 /** @deprecated Import from "@xandreed/core/engine". */
 export const settleTurn: typeof engine.settleTurn = engine.settleTurn
 /** @deprecated Import from "@xandreed/core/engine". */
@@ -642,3 +622,90 @@ export type TurnRunServices = engine.TurnRunServices
 export interface TurnBeginTrace extends engine.TurnBeginTrace {}
 /** @deprecated Import from "@xandreed/core/engine". */
 export interface TurnTraceOptions extends engine.TurnTraceOptions {}
+
+// Deprecated: no package uses these, and they are not host API. The next minor
+// release removes them from the root.
+export {
+  /** @deprecated Removed in the next minor release. */
+  base64Length,
+  /** @deprecated Removed in the next minor release. */
+  imageSizeOf,
+  /** @deprecated Removed in the next minor release. */
+  mediaAt,
+  /** @deprecated Removed in the next minor release. */
+  mediaFingerprintOf,
+  /** @deprecated Removed in the next minor release. */
+  normalizeMedia,
+} from "./domain/media.entity.functions.js"
+export type {
+  /** @deprecated Removed in the next minor release. */
+  ImageSize,
+} from "./domain/media.entity.functions.js"
+export {
+  /** @deprecated Removed in the next minor release. */
+  toFailure,
+} from "./domain/failure.entity.functions.js"
+export {
+  /** @deprecated Removed in the next minor release. */
+  defaultAnnotations,
+} from "./harness/capability.entity.functions.js"
+export {
+  /** @deprecated Removed in the next minor release. */
+  artifactLines,
+  /** @deprecated Removed in the next minor release. */
+  buildContext,
+  /** @deprecated Removed in the next minor release. */
+  currentTurnOf,
+  /** @deprecated Removed in the next minor release. */
+  entriesSendingMedia,
+  /** @deprecated Removed in the next minor release. */
+  estimateTokens,
+  /** @deprecated Removed in the next minor release. */
+  latestRunOf,
+  /** @deprecated Removed in the next minor release. */
+  rawTranscript,
+  /** @deprecated Removed in the next minor release. */
+  referenceTranscript,
+  /** @deprecated Removed in the next minor release. */
+  stepContextOf,
+  /** @deprecated Removed in the next minor release. */
+  subjectsOf,
+} from "./memory/memory-log.entity.functions.js"
+export {
+  /** @deprecated Removed in the next minor release. */
+  readerOf,
+} from "./memory/memory-session.js"
+export {
+  /** @deprecated Removed in the next minor release. */
+  draftOfEntry,
+  /** @deprecated Removed in the next minor release. */
+  draftOfTurnEvent,
+  /** @deprecated Removed in the next minor release. */
+  draftsOfEntries,
+  /** @deprecated Removed in the next minor release. */
+  entryOfEvent,
+  /** @deprecated Removed in the next minor release. */
+  isFrameworkDraft,
+} from "./session/session-event.entity.functions.js"
+export {
+  /** @deprecated Removed in the next minor release. */
+  checkModelRequest,
+  /** @deprecated Removed in the next minor release. */
+  modelRequestHeaderOf,
+  /** @deprecated Removed in the next minor release. */
+  modelRequestTools,
+  /** @deprecated Removed in the next minor release. */
+  reconstructModelRequest,
+} from "./turn/model-request.entity.functions.js"
+export type {
+  /** @deprecated Removed in the next minor release. */
+  ComparedModelRequest,
+} from "./turn/model-request.entity.functions.js"
+export {
+  /** @deprecated Removed in the next minor release. */
+  orderSections,
+  /** @deprecated Removed in the next minor release. */
+  renderSections,
+} from "./turn/prompt-sections.js"
+/** @deprecated Removed in the next minor release. */
+export const globMatcher: typeof glob.globMatcher = glob.globMatcher

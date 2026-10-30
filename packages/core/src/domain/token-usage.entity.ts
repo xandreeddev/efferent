@@ -27,6 +27,8 @@ export type TokenUsage = typeof TokenUsage.Type
  * One usage split into the five kinds a call is billed by. Each is at least
  * 0, and for a usage that holds the invariants they sum to `totalTokens`:
  * `input` is the uncached input, `output` the output without reasoning.
+ *
+ * @public
  */
 export const UsageBreakdown = Schema.Struct({
   input: Schema.Number,
@@ -41,6 +43,8 @@ export type UsageBreakdown = typeof UsageBreakdown.Type
  * A request's token budget (`budgetTokens`): an integer of at least 1. It is
  * the target memory compaction keeps each request under (system prompt,
  * tool schemas and messages, estimated), not a provider limit.
+ *
+ * @public
  */
 export const BudgetTokens = Schema.Int.pipe(Schema.check(Schema.isGreaterThanOrEqualTo(1)))
 export type BudgetTokens = typeof BudgetTokens.Type

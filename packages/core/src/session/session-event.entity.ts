@@ -32,7 +32,12 @@ const StoredInboxItemId = Schema.String.pipe(Schema.brand("InboxItemId"))
  * of the framework's kinds is stored with.
  */
 
-/** Opens a turn: who asked, what they said, the host's command, the inbox items it claims and the task it runs. */
+/**
+ * Opens a turn: who asked, what they said, the host's command, the inbox
+ * items it claims and the task it runs.
+ *
+ * @public
+ */
 export const TurnStartedData = Schema.Struct({
   runId: RunId,
   /** The host's idempotency key: a second begin with it is the same turn. */
@@ -70,6 +75,8 @@ export type TurnStartedData = typeof TurnStartedData.Type
  * Closes a turn: the `TurnEnding` its closer recorded (see `TurnFailure` for
  * the codes a failure stores). Not model-visible: what later turns remember
  * is `turn.reply`. A cancel stores no failure.
+ *
+ * @public
  */
 export const TurnEndedData = TurnEnding
 export type TurnEndedData = TurnEnding
@@ -93,6 +100,8 @@ export type InboxDroppedData = typeof InboxDroppedData.Type
  * One step's provider response as stored (`step.usage`): its step, run (a
  * record written before runs were counted reads 0), model and token usage.
  * The rest of `assistant.message` is memory's `memory.message`.
+ *
+ * @public
  */
 export const StepUsageData = Schema.Struct({
   step: Schema.Int,
@@ -118,7 +127,12 @@ export const MemoryKindOf = {
 /** Every kind a memory session is rebuilt from. */
 export const MEMORY_KINDS: ReadonlyArray<string> = ["turn.started", ...Object.values(MemoryKindOf)]
 
-/** The turn's observable events stored from its bus (a host's records keep their own names). */
+/**
+ * The turn's observable events stored from its bus (a host's records keep
+ * their own names).
+ *
+ * @public
+ */
 export const TURN_EVENT_KINDS: ReadonlyArray<string> = [
   "step.started", "step.ended", "step.usage", "tool.started", "tool.refused", "tool.completed",
   "completion.evaluated", "context.built", "decision.recorded", "stream.fallback",
@@ -128,7 +142,11 @@ export const TURN_EVENT_KINDS: ReadonlyArray<string> = [
 /** Bus events not stored from the bus: memory or the session records them itself, and storing them again would be a second copy. */
 export const RECORDED_ELSEWHERE: ReadonlySet<TurnEventName> = new Set<TurnEventName>(["turn.started", "turn.ended", "skills.activated"])
 
-/** The inbox and the session's own records. */
+/**
+ * The inbox and the session's own records.
+ *
+ * @public
+ */
 export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued", "inbox.dropped"]
 
 /**

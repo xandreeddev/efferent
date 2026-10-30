@@ -11,6 +11,8 @@ import type { TurnEvent } from "../turn/turn-event.entity.js"
  *   fiber, so the publisher never waits on it. The turn drains every
  *   background subscription before it ends; a handler failure fails the
  *   next delivery to it and the drain.
+ *
+ * @public
  */
 export interface SubscribeOptions {
   readonly mode?: "inline" | "background"
@@ -28,6 +30,8 @@ export interface SubscribeOptions {
  * subscription order, depth-first (a handler may publish in turn, up to a
  * depth cap). Inline handlers run before `publish` returns; background ones
  * are queued. Background work that is not a reaction belongs in `TurnTasks`.
+ *
+ * @public
  */
 export interface TurnEventsService {
   readonly publish: (event: TurnEvent) => Effect.Effect<void, TurnError>
@@ -53,6 +57,8 @@ export interface TurnEventsService {
 /**
  * Background work of one turn. Tasks run in the turn's scope: the turn
  * awaits them before it ends and interrupts them when it fails.
+ *
+ * @public
  */
 export interface TurnTasksService {
   readonly fork: <R>(tag: string, task: Effect.Effect<void, TurnError, R>) => Effect.Effect<void, never, R>
@@ -67,5 +73,10 @@ export interface TurnTasksService {
 export class TurnEvents extends Context.Service<TurnEvents, TurnEventsService>()("efferent/TurnEvents") {}
 export class TurnTasks extends Context.Service<TurnTasks, TurnTasksService>()("efferent/TurnTasks") {}
 
-/** One subscription, ready to attach to a turn's bus (see `onTool`, `onEvent`). */
+/**
+ * One subscription, ready to attach to a turn's bus (see `onTool`,
+ * `onEvent`).
+ *
+ * @public
+ */
 export type Subscription<R> = (events: TurnEventsService) => Effect.Effect<void, never, R | Scope.Scope>

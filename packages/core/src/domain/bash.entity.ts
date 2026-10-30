@@ -39,6 +39,8 @@ export type BashTermination = typeof BashTermination.Type
  * (`SpawnFailed`), `cwd` does not exist or is not a directory
  * (`CwdMissing`), or the shell is not installed (`ShellMissing`). A command
  * that runs and fails is a result, never a `BashError`.
+ *
+ * @public
  */
 export const BashErrorReason = Schema.Literals(["SpawnFailed", "CwdMissing", "ShellMissing"])
 export type BashErrorReason = typeof BashErrorReason.Type
@@ -68,7 +70,12 @@ export type BashExit = typeof BashExit.Type
 export const BashEvent = Schema.Union([BashChunk, BashExit])
 export type BashEvent = typeof BashEvent.Type
 
-/** A whole command's output and end (`Bash.exec`). A non-zero exit is a result like any other. */
+/**
+ * A whole command's output and end (`Bash.exec`). A non-zero exit is a result
+ * like any other.
+ *
+ * @public
+ */
 export const BashResult = Schema.Struct({
   stdout: Schema.String,
   stderr: Schema.String,

@@ -1,7 +1,13 @@
 import { Schema } from "effect"
 
+/** @public */
 export const PromptId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("PromptId"))
-/** Metadata accompanies a native @effect/ai Prompt; it never replaces its messages. */
+/**
+ * Metadata accompanies a native @effect/ai Prompt; it never replaces its
+ * messages.
+ *
+ * @public
+ */
 export const PromptProvenance = Schema.Struct({
   id: PromptId,
   version: Schema.Trimmed.check(Schema.isNonEmpty()),

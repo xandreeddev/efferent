@@ -77,6 +77,8 @@ export type RecursiveOptions = typeof RecursiveOptions.Type
  * (`.github/**`). `onlyFiles` keeps regular files (not directories, links or
  * other entries). The walk stops once it has found one more than `limit`
  * paths, and reports `truncated`.
+ *
+ * @public
  */
 export const GlobOptions = Schema.Struct({
   cwd: Schema.String,
@@ -91,6 +93,8 @@ export type GlobOptions = typeof GlobOptions.Type
  * What `glob` found: POSIX paths relative to its `cwd`, depth-first with each
  * directory's entries by name (so a directory comes before what it holds),
  * at most `limit` of them; `truncated` when more matched.
+ *
+ * @public
  */
 export const GlobResult = Schema.Struct({
   paths: Schema.Array(Schema.String),

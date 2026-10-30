@@ -13,10 +13,20 @@ type Node =
 /** Every node by its absolute path; `/` is always a directory. */
 type Tree = ReadonlyMap<string, Node>
 
-/** What a seeded path holds: text or bytes (a file), or a symbolic link to `symlink`. */
+/**
+ * What a seeded path holds: text or bytes (a file), or a symbolic link to
+ * `symlink`.
+ *
+ * @public
+ */
 export type MemorySeed = string | Uint8Array | { readonly symlink: string }
 
-/** The in-memory backend: the port, and a way to make the symbolic links a real disk would have. */
+/**
+ * The in-memory backend: the port, and a way to make the symbolic links a
+ * real disk would have.
+ *
+ * @public
+ */
 export type MemoryFileSystem = Context.Service.Shape<typeof FileSystem> & {
   /** Create a symbolic link at `path` to `target` (absolute, or relative to the link's directory), as `ln -s target path` does. */
   readonly symlink: (target: string, path: string) => Effect.Effect<void, FsError>
@@ -231,5 +241,9 @@ export const makeMemoryFileSystem = Effect.fnUntraced(function* (initial: Readon
   return fs
 })
 
-/** An empty in-memory `FileSystem` (see `makeMemoryFileSystem`). */
+/**
+ * An empty in-memory `FileSystem` (see `makeMemoryFileSystem`).
+ *
+ * @public
+ */
 export const FileSystemMemoryLive: Layer.Layer<FileSystem> = Layer.effect(FileSystem, Effect.orDie(makeMemoryFileSystem()))

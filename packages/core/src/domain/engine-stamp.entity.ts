@@ -6,9 +6,16 @@ import { Schema } from "effect"
  * message's `providerOptions` (the turn's usage and model). It is the only
  * key core writes there, and `toPromptMessages` leaves it out of every blob
  * it sends, so no provider receives it.
+ *
+ * @public
  */
 export const ENGINE_KEY = "engine"
 
-/** What a response's finish part carries under {@link ENGINE_KEY}: the resolved `provider:modelId` that produced it. */
+/**
+ * What a response's finish part carries under {@link ENGINE_KEY}: the
+ * resolved `provider:modelId` that produced it.
+ *
+ * @public
+ */
 export const ResponseStamp = Schema.Struct({ model: Schema.NonEmptyString })
 export type ResponseStamp = typeof ResponseStamp.Type

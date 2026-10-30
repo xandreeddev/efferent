@@ -26,6 +26,7 @@ export const CompletionVerdict = Schema.Struct({
 })
 export type CompletionVerdict = typeof CompletionVerdict.Type
 
+/** @public */
 export const TurnStartedEvent = Schema.TaggedStruct("turn.started", {
   runId: RunId,
   turn: Schema.Int,
@@ -38,6 +39,7 @@ export const TurnStartedEvent = Schema.TaggedStruct("turn.started", {
   description: "Published once per turn when memory takes the user's message as turn `turn` (`TurnMemory.persistMessage`; `Agent.turn` runs it before the host's `use`). `runId` names the run, `userMessage` is what the user said (as the session stored it: its images, inline as base64, normalised), `meta` is the host's metadata the turn was begun with (`{}` when none was given; never shown to the model), and `resumes`, present only on a turn that resumes an earlier one, is that turn's number. Not journaled from the bus: the session stored its own `turn.started` when the turn began, with `meta` and `resumes` only when they were given. A subscription made in `use` never sees it; one in the host's per-turn layer or a session plugin does.",
 })
 
+/** @public */
 export const StepStartedEvent = Schema.TaggedStruct("step.started", {
   step: Schema.Int,
   /** The run of the turn the step belongs to (`StepRequest.run`): 0 for its first run. */
@@ -49,6 +51,7 @@ export const StepStartedEvent = Schema.TaggedStruct("step.started", {
   description: "Published by the step loop as each step starts. `run` is the run of the turn the step belongs to (0 for the turn's first run, one up for each later `Turn.run`; a record written before runs were counted reads 0), as on `step.ended`, `assistant.message`, `completion.evaluated`, `context.built` and `stream.fallback`: a step is named by its turn, run and step. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`.",
 })
 
+/** @public */
 export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
   step: Schema.Int,
   invocationId: InvocationId,
@@ -64,6 +67,7 @@ export const ToolStartedEvent = Schema.TaggedStruct("tool.started", {
 export const ToolRefusalReason = Schema.Literals(["inactive", "forbidden", "denied", "call-limit", "tool-call-limit"])
 export type ToolRefusalReason = typeof ToolRefusalReason.Type
 
+/** @public */
 export const ToolRefusedEvent = Schema.TaggedStruct("tool.refused", {
   step: Schema.Int,
   invocationId: InvocationId,
@@ -77,6 +81,7 @@ export const ToolRefusedEvent = Schema.TaggedStruct("tool.refused", {
   description: "Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`.",
 })
 
+/** @public */
 export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
   step: Schema.Int,
   invocationId: InvocationId,
@@ -100,6 +105,8 @@ export const ToolCompletedEvent = Schema.TaggedStruct("tool.completed", {
  * arrives (`stdout`, `stderr`), or a step of a long job (`status`).
  * Transient: shown live, never journaled; `tool.completed` carries the
  * result. A handler publishes it with `publishToolProgress`.
+ *
+ * @public
  */
 export const ToolProgressEvent = Schema.TaggedStruct("tool.progress", {
   step: Schema.Int,
@@ -119,6 +126,7 @@ export const StepResult = Schema.Struct({
 })
 export type StepResult = typeof StepResult.Type
 
+/** @public */
 export const StepEndedEvent = Schema.TaggedStruct("step.ended", {
   step: Schema.Int,
   run: RunKey,
@@ -129,6 +137,7 @@ export const StepEndedEvent = Schema.TaggedStruct("step.ended", {
   description: "Published by the step loop once per step, after the step's tail is recorded and before its completion is evaluated; nothing is recorded under the step after it (the loop's corrective, nudge or steer is the next step's). `status` is how the step's own call, tools and tail came out: completed, failed, cancelled, or malformed (a response the model could not form, a tool that does not exist or parameters that do not decode: the loop answers it with a corrective turn, and the step has no `assistant.message` and no `completion.evaluated`); a completion that fails afterwards fails the run, not the step. `results` are the step's recorded tool results (memory entry, tool call id, tool, ok), in log order, refused calls included. Journaled as `step.ended` (records with status malformed are not read by 0.14 and older).",
 })
 
+/** @public */
 export const CompletionEvaluatedEvent = Schema.TaggedStruct("completion.evaluated", {
   step: Schema.Int,
   run: RunKey,
@@ -137,6 +146,7 @@ export const CompletionEvaluatedEvent = Schema.TaggedStruct("completion.evaluate
   description: "Published by the step loop after `step.ended`, with the verdict of the host's completion policy for that step; none after a malformed step. A verdict that awaits tasks is evaluated again once they finish, publishing a second event. Journaled as `completion.evaluated`.",
 })
 
+/** @public */
 export const SkillsActivatedEvent = Schema.TaggedStruct("skills.activated", {
   skills: Schema.Array(Schema.String),
   tools: Schema.Array(Schema.String),
@@ -145,6 +155,7 @@ export const SkillsActivatedEvent = Schema.TaggedStruct("skills.activated", {
   description: "Published by the tool registry when skills (and their tools) become active: always-on skills, the intent matcher, the model's `load_skill`, or the host. Not journaled from the bus: memory records the activation as `memory.skills`.",
 })
 
+/** @public */
 export const ContextBuiltEvent = Schema.TaggedStruct("context.built", {
   step: Schema.Int,
   turn: Schema.Int,
@@ -163,12 +174,14 @@ export const ContextBuiltEvent = Schema.TaggedStruct("context.built", {
   description: "Published before each provider call, once the step's context is built (none for a planned step 0). It carries the memory strategy and its version, the context and system-prompt fingerprints, the token estimate of the messages, the tokens reserved for the system prompt and tool schemas, the run's `budgetTokens` (the whole request's; memory compacted the messages toward `budgetTokens - reservedTokens`), how many compactions the build applied, and the active tools. Journaled as `context.built` (records written before 0.14.0 have no `budgetTokens`); the full request is journaled beside it as `request.prepared`.",
 })
 
+/** @public */
 export const DecisionRecordedEvent = Schema.TaggedStruct("decision.recorded", {
   record: DecisionRecord,
 }).annotate({
   description: "Published by `recordDecision`, for example when `turn.tools.select` or `apply` records the skill selection: the decision record holds the candidates, the policy version and what was chosen. Journaled as `decision.recorded`.",
 })
 
+/** @public */
 export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
   step: Schema.Int,
   run: RunKey,
@@ -185,7 +198,12 @@ export const AssistantMessageEvent = Schema.TaggedStruct("assistant.message", {
 export const StreamPartId = Schema.String.pipe(Schema.brand("StreamPartId"))
 export type StreamPartId = typeof StreamPartId.Type
 
-/** A streamed increment — transient: never journaled, restated by assistant.message. */
+/**
+ * A streamed increment — transient: never journaled, restated by
+ * assistant.message.
+ *
+ * @public
+ */
 export const AssistantDeltaEvent = Schema.TaggedStruct("assistant.delta", {
   step: Schema.Int,
   channel: Schema.Literals(["text", "reasoning", "tool-params"]),
@@ -195,6 +213,7 @@ export const AssistantDeltaEvent = Schema.TaggedStruct("assistant.delta", {
   description: "Published by the step loop for each streamed increment while `limits.streaming` is on (the default), on channel text, reasoning or tool-params; `id` groups the increments of one content part. Transient: never journaled, and restated in full by `assistant.message`. A stream that falls back to a non-streamed call (`stream.fallback`) publishes none.",
 })
 
+/** @public */
 export const StreamFallbackEvent = Schema.TaggedStruct("stream.fallback", {
   step: Schema.Int,
   run: RunKey,
@@ -204,6 +223,7 @@ export const StreamFallbackEvent = Schema.TaggedStruct("stream.fallback", {
   description: "Published by the step loop when a streamed provider call fails before its first part: the step is answered by a non-streamed call instead, and so is every later step of the run. Once per run at most. `message` is the stream's error as text, cut to 300 characters; it can quote the provider's error. A stream that fails after its first part fails the step instead (its tools may have run). A refusal over an image (an `InvalidRequestError` that names one) is no stream failure: it has no fallback; the turn omits the images and sends the step again (`StepRequest.onMediaRejected`), or the step fails. Journaled as `stream.fallback`.",
 })
 
+/** @public */
 export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {
   runId: RunId,
   turn: Schema.Int,
@@ -215,7 +235,12 @@ export const TurnEndedEvent = Schema.TaggedStruct("turn.ended", {
   description: "Published once when the turn's reply is recorded (`TurnMemory.persistReply`, from `guardTurn`), also when the turn fails, with outcome failed; `usage` is the turn's usage, the usage of its `assistant.message` events summed (`RunContext.usage`). Under `Agent.turn` it is published after `use`, the host's per-turn layer and the turn-dependent plugins have closed, and their subscriptions with them: only a subscription whose scope is still open sees it, such as one made with `Scope.provide(observerScope)` over the caller's outer scope, or one registered around `TurnLive` by a host composing the turn itself. Otherwise read the `TurnResult` `Agent.turn` returns (its `usage` is the same total), or the stored `turn.reply` and `turn.ended`, and `turnUsageOf` over the stored events. Not journaled from the bus: memory stores `turn.reply` and the session its own `turn.ended` (reason and failure, no usage), both in the turn's closing commit, after its reactions: a reaction that fails fails the turn, its stored reply then failed (this event is not published again).",
 })
 
-/** An application's own event (see `defineHostEvent`); `name` is the host's namespace. */
+/**
+ * An application's own event (see `defineHostEvent`); `name` is the host's
+ * namespace.
+ *
+ * @public
+ */
 export const HostEvent = Schema.TaggedStruct("host", {
   name: Schema.Trimmed.check(Schema.isNonEmpty()),
   data: JsonObject,
@@ -253,5 +278,7 @@ export const TransientTurnEvents: ReadonlyArray<TurnEventName> = ["assistant.del
  * lists them). All of them are reserved (`RESERVED_KINDS`): a host event may
  * not take one, whether the journal stores the bus event under that name or
  * not.
+ *
+ * @public
  */
 export const TURN_EVENT_NAMES: ReadonlyArray<TurnEventName> = TurnEvent.discriminants

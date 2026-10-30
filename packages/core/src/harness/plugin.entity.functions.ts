@@ -12,7 +12,12 @@ const harnessErrorShape = Schema.is(Schema.Struct(HarnessError.fields))
  */
 export const isHarnessError = (value: unknown): value is HarnessError => harnessErrorShape(value)
 
-/** The services a piece of work declares it reads, as their keys (`definePlugin`'s `requires` and `optional`). */
+/**
+ * The services a piece of work declares it reads, as their keys
+ * (`definePlugin`'s `requires` and `optional`).
+ *
+ * @public
+ */
 export type ServiceKeys = ReadonlyArray<Context.Service.Any>
 
 /**
@@ -23,6 +28,8 @@ export type ServiceKeys = ReadonlyArray<Context.Service.Any>
  * services come from a context typed `never` (a plugin's activation by the
  * graph) gets them: the context is the caller's own, never one captured
  * elsewhere, and `effect` may read only what `requires` names.
+ *
+ * @public
  */
 export const provideDeclared = <const Req extends ServiceKeys>(owner: string, requires: Req) =>
   <A, E, R extends Context.Service.Identifier<Req[number]>>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E | HarnessError> =>

@@ -33,10 +33,18 @@ export const responseModelOf = (content: ReadonlyArray<Response.AnyPart>): Optio
   Option.flatMap(finishOf(content), (finish) => modelOf(finish.metadata[ENGINE_KEY]))
 
 /**
+ * {@link responseModelOf}, else the stamp the models plugin's router wrote
+ * under its own `router` key before it called {@link stampResponseModel}, for
+ * a model built against that router: the step loop reads it
+ * (`@xandreed/core/internal`) until the next minor release drops that stamp.
+ */
+export const responseModelOrLegacyOf = (content: ReadonlyArray<Response.AnyPart>): Option.Option<string> =>
+  Option.flatMap(finishOf(content), (finish) =>
+    Option.orElse(modelOf(finish.metadata[ENGINE_KEY]), () => modelOf(finish.metadata["router"])))
+
+/**
  * @deprecated Use {@link responseModelOf}. This alias also reads the stamp
  * the models plugin's router wrote under its own `router` key before it
  * called {@link stampResponseModel}; it is removed in the next minor release.
  */
-export const extractModel = (content: ReadonlyArray<Response.AnyPart>): Option.Option<string> =>
-  Option.flatMap(finishOf(content), (finish) =>
-    Option.orElse(modelOf(finish.metadata[ENGINE_KEY]), () => modelOf(finish.metadata["router"])))
+export const extractModel: (content: ReadonlyArray<Response.AnyPart>) => Option.Option<string> = responseModelOrLegacyOf

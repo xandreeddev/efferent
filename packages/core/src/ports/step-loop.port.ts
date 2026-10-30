@@ -26,7 +26,11 @@ export interface LoopLimits {
   readonly requireCompletion: boolean
 }
 
-/** Host wording for the loop's own corrective turns. */
+/**
+ * Host wording for the loop's own corrective turns.
+ *
+ * @public
+ */
 export interface Correctives {
   readonly malformed: (tools: ReadonlyArray<string>, description: string) => string
   readonly incomplete: string

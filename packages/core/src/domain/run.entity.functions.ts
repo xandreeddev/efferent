@@ -7,6 +7,8 @@ const runPrefixOf = (run: RunRef): string => `${run.turn}.${run.ordinal}`
  * The id minted for a provider's id-less tool call of `tool`, the `n`th
  * call (from 0) of `step` in the run `run`: `<turn>.<ordinal>.<step>:<tool>:<n>`.
  * Distinct across the steps and runs of a turn and the turns of a session.
+ *
+ * @public
  */
 export const toolCallIdOf = (run: RunRef, step: number, tool: string, n: number): string => `${runPrefixOf(run)}.${step}:${tool}:${n}`
 

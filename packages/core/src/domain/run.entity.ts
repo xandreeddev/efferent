@@ -30,6 +30,8 @@ export type RunOrdinal = typeof RunOrdinal.Type
  * A run's ordinal as stored, on a request header, a render recipe, a step
  * context and the step events: a record written before runs were counted
  * has none, and reads 0.
+ *
+ * @public
  */
 export const RunKey = RunOrdinal.pipe(Schema.withDecodingDefaultKey(Effect.succeed(0)))
 

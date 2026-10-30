@@ -23,7 +23,12 @@ const failed: TurnOutcome = { outcome: "failed", reply: Option.none() }
 export const openTurnTools: Effect.Effect<RunTools, TurnError, TurnToolbox> =
   TurnToolbox.pipe(Effect.flatMap((toolbox) => toolbox.open))
 
-/** The host's view of the open tools; skills the host activates are recorded as its own. */
+/**
+ * The host's view of the open tools; skills the host activates are recorded
+ * as its own.
+ *
+ * @public
+ */
 export const turnTools: Effect.Effect<TurnTools, TurnError, TurnToolbox> = TurnToolbox.pipe(
   Effect.flatMap((toolbox) => toolbox.tools),
   Effect.map((tools): TurnTools => ({
@@ -88,6 +93,8 @@ const finishing = (restore: Restore, outcome: TurnOutcome): Effect.Effect<void, 
  * fiber is interrupted meanwhile; only the drain can be cut. The reply is
  * stored with the turn's end; when the drain or the flush fails, or the
  * drain is cut, it is downgraded to failed first.
+ *
+ * @public
  */
 export const finishTurn = (outcome: TurnOutcome): Effect.Effect<void, TurnError, TurnMemory | TurnEvents | RunContext> =>
   Effect.uninterruptibleMask((restore) => finishing(restore, outcome))
@@ -187,7 +194,11 @@ export const turnOf = Effect.fnUntraced(function* (options: TurnRunOptions = {})
   } satisfies Turn
 })
 
-/** What a turn's span (`traceTurn`) shows besides the turn's ids. */
+/**
+ * What a turn's span (`traceTurn`) shows besides the turn's ids.
+ *
+ * @public
+ */
 export interface TurnTraceOptions {
   /**
    * The keys of the turn's metadata (`AdmittedTurn.meta`) whose values the
@@ -259,7 +270,11 @@ export const traceTurn = (writer: TurnWriter, options: TurnTraceOptions = {}) =>
       Effect.withSpan("agent.turn", { attributes: turnSpanAttributes(writer.admitted, options.spanMeta ?? []) }),
     )
 
-/** A turn about to begin, as its begin span (`traceTurnBegin`) names it. */
+/**
+ * A turn about to begin, as its begin span (`traceTurnBegin`) names it.
+ *
+ * @public
+ */
 export interface TurnBeginTrace {
   readonly session: ConversationId
   readonly runId: RunId
