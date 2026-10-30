@@ -71,7 +71,7 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
       }),
     })
   }),
-  view: { version: "1", render: renderRead, compact: compactRead, subjects: (result) => fileSubjects(result.path), media: readMedia },
+  view: { version: "2", render: renderRead, compact: compactRead, subjects: (result) => fileSubjects(result.path), media: readMedia },
   annotations: { readOnly: true },
 })
 
@@ -176,6 +176,6 @@ export const grepTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
     })
     return { pattern: params.pattern, path: target.display, ...searched }
   }),
-  view: { version: "2", render: (result, params) => renderGrep(result, (params.context ?? 0) > 0, config.maxLines, config.maxBytes), compact: compactGrep },
+  view: { version: "3", render: (result, params) => renderGrep(result, (params.context ?? 0) > 0, config.maxLines, config.maxBytes), compact: compactGrep },
   annotations: { readOnly: true },
 })

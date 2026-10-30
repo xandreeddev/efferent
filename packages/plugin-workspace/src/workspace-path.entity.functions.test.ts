@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Option, Path, Result } from "effect"
 import { FileSystem, FsError, makeMemoryFileSystem, SessionEnvironment } from "@xandreed/core"
 import type { FsReason } from "@xandreed/core"
-import { checkWritable, compileProtect, displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget } from "./workspace-path.entity.functions.js"
+import { checkWritable, compileProtect, displayOf, excludesBelow, fsFailure, isWithin, openWorkspace, resolveTarget, workspaceMissing } from "./workspace-path.entity.functions.js"
 
 /** A workspace at /work in memory, reached through a link at /link, with a secret beside it and links in and out. */
 const opened = (workspace: string) => Effect.gen(function* () {
@@ -42,7 +42,7 @@ describe("resolveTarget", () => {
   test("escapes by .., by an absolute path and through links are refused; a dangling link is never written through", async () => {
     expect(await Promise.all(["../secret/key", "/secret/key", "out-link", "out-dir/key", "out-dir/new.txt", "src/../../secret/key"].map((input) => resolved("/work", input))))
       .toEqual(Array.from({ length: 6 }, () => "OutsideWorkspace"))
-    expect(await resolved("/work", "dangling")).toBe("Invalid")
+    expect(await resolved("/work", "dangling")).toBe("BrokenSymlink")
     expect(await resolved("/work", "/secret/key", false)).toBe("/secret/key as /secret/key")
     expect(await resolved("/work", "out-link", false)).toBe("/secret/key as out-link")
   })
@@ -54,17 +54,26 @@ describe("resolveTarget", () => {
       { error: "OutsideWorkspace", message: "/secret/key is outside the workspace; use a path under its root" },
       { error: "OutsideWorkspace", message: "out-link leads outside the workspace through a symbolic link" },
       { error: "OutsideWorkspace", message: "out-dir/new.txt leads outside the workspace through a symbolic link" },
-      { error: "Invalid", message: "dangling: it is a symbolic link to something that does not exist" },
+      { error: "BrokenSymlink", message: "dangling: it is a symbolic link to something that does not exist" },
     ])
   })
 
-  test("a workspace that cannot be opened is WorkspaceMissing, with the file system's reason and never its message", async () => {
+  test("a workspace that cannot be opened is WorkspaceMissing, saying why in words, never the reason's name or the file system's message", async () => {
     const missing = await Effect.runPromise(Effect.gen(function* () {
       const fs = yield* makeMemoryFileSystem({ "/work/a.txt": "a" })
       const path = yield* Effect.service(Path.Path).pipe(Effect.provide(Path.layer))
       return yield* Effect.flip(openWorkspace(path).pipe(Effect.provideService(FileSystem, fs), Effect.provideService(SessionEnvironment, { workspace: "/nowhere" })))
     }))
-    expect(missing).toEqual({ error: "WorkspaceMissing", message: "the workspace directory cannot be opened (NotFound), so no workspace tool can run in this session; tell the user" })
+    expect(missing).toEqual({ error: "WorkspaceMissing", message: "the workspace directory does not exist, so no workspace tool can run in this session; tell the user" })
+    const tail = ", so no workspace tool can run in this session; tell the user"
+    const failed = (["NotFound", "NotDirectory", "Permission", "Invalid", "Exists", "IsDirectory", "NotEmpty", "Io"] as const).map(workspaceMissing)
+    expect(failed).toEqual([
+      { error: "WorkspaceMissing", message: `the workspace directory does not exist${tail}` },
+      { error: "WorkspaceMissing", message: `the workspace directory is not a directory${tail}` },
+      { error: "WorkspaceMissing", message: `the workspace directory cannot be opened for lack of permission${tail}` },
+      { error: "WorkspaceMissing", message: `the workspace directory is not a path the file system accepts${tail}` },
+      ...Array.from({ length: 4 }, () => ({ error: "WorkspaceMissing", message: `the workspace directory cannot be opened because of a file-system error${tail}` })),
+    ])
   })
 })
 
@@ -75,11 +84,11 @@ describe("fsFailure", () => {
       { error: "NotFound", message: "src/a.ts does not exist" },
       { error: "IsDirectory", message: "src/a.ts is a directory; give the path of a file" },
       { error: "NotDirectory", message: "src/a.ts is not a directory, or a part of the path before it is a file" },
-      { error: "Permission", message: "permission denied: src/a.ts" },
-      { error: "Exists", message: "src/a.ts already exists, and the file system would not replace it; give another path" },
-      { error: "NotEmpty", message: "src/a.ts is a directory with entries in it; give another path" },
-      { error: "Invalid", message: "src/a.ts is not a path the file system accepts; check it and try again" },
-      { error: "Io", message: "src/a.ts could not be read or written (a file-system error); try again, or give another path" },
+      { error: "AccessDenied", message: "permission denied: src/a.ts" },
+      { error: "AlreadyExists", message: "src/a.ts already exists, and the file system would not replace it; give another path" },
+      { error: "DirectoryNotEmpty", message: "src/a.ts is a directory with entries in it; give another path" },
+      { error: "InvalidPath", message: "src/a.ts is not a path the file system accepts; check it and try again" },
+      { error: "FileSystemError", message: "src/a.ts could not be read or written (a file-system error); try again, or give another path" },
     ])
   })
 })

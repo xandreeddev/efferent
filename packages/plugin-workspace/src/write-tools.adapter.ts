@@ -113,7 +113,7 @@ export const editTool = (context: WorkspaceToolContext): RegisteredTool => defin
         return yield* Effect.fail(failure("FileTooLarge", `${target.display} is ${formatBytes(info.size)}, more than the ${formatBytes(config.maxFileBytes)} edit loads; change it with bash (sed -i, or a script)`))
       }
       const bytes = yield* access.fs.readBytes(target.path).pipe(Effect.mapError(fsFailure(target.display)))
-      if (looksBinary(bytes)) return yield* Effect.fail(failure("Binary", `${target.display} is a binary file; edit changes text files only`))
+      if (looksBinary(bytes)) return yield* Effect.fail(failure("BinaryFile", `${target.display} is a binary file; edit changes text files only`))
       const decoded = decodeText(bytes)
       if (decoded.lossy) {
         return yield* Effect.fail(failure("NotUtf8", `${target.display} is not valid UTF-8 (Latin-1 or another encoding, say); edit changes UTF-8 text files only, since it would replace the bytes it cannot decode. Use bash (sed, iconv) to change it`))

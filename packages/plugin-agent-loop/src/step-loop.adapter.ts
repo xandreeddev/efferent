@@ -1,7 +1,7 @@
 import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Match, Option, Ref, Schema } from "effect"
-import { CurrentAgentStep, CurrentModelCallPolicy, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, reasonOf, StepLoop, StreamPartId, ToolCallId } from "@xandreed/core"
+import { CurrentAgentStep, CurrentModelCallPolicy, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, messagesOf, StepLoop, StreamPartId, ToolCallId } from "@xandreed/core"
 import type { AgentMessage, CompletionVerdict, RunResult, StepInfo, StepRequest, StepStatus, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopEvent } from "./loop-event.entity.js"
@@ -152,8 +152,9 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     Effect.provide(request.handlers),
     // A turn's failure (a HarnessError, the writer's TurnClosed and the other TurnError tags) keeps its tag: the request's
     // callbacks fail with it, typed, and a tool handler's carries it as a defect, which `harnessDefectsAsFailures` restores.
-    // What else failed underneath (a provider's `AiError`) is `loop.failed`, with it as the cause and its text, never its stack, as the message.
-    Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
+    // What else failed underneath (a provider's `AiError`) is `loop.failed`, with it as the cause and its messages (never its tag or stack) as the message,
+    // which a background task's notice may show the model.
+    Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", messagesOf(Cause.fail(error)), error)),
   ))
   // The loop's sum of the usage each `assistant.message` carried.
   const totals = { text: result.finalText, steps: (yield* Ref.get(ledger)).steps, usage: result.usage }

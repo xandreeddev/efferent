@@ -24,9 +24,9 @@ describe("applyTextEdits", () => {
   test("refuses empty, missing, repeated, overlapping and no-op edits", () => {
     expect(errorOf(applyTextEdits(file, [{ oldText: "", newText: "x" }], exact))).toBe("EmptyOldText")
     expect(errorOf(applyTextEdits(file, [{ oldText: "const d", newText: "x" }], exact))).toBe("NoMatch")
-    expect(errorOf(applyTextEdits(file, [{ oldText: "const", newText: "let" }], exact))).toBe("Ambiguous")
-    expect(errorOf(applyTextEdits("aaa", [{ oldText: "aa", newText: "b" }], exact))).toBe("Ambiguous")
-    expect(errorOf(applyTextEdits(file, [{ oldText: "a = 1\nconst b", newText: "x" }, { oldText: "const b = 2", newText: "y" }], exact))).toBe("Overlap")
+    expect(errorOf(applyTextEdits(file, [{ oldText: "const", newText: "let" }], exact))).toBe("AmbiguousMatch")
+    expect(errorOf(applyTextEdits("aaa", [{ oldText: "aa", newText: "b" }], exact))).toBe("AmbiguousMatch")
+    expect(errorOf(applyTextEdits(file, [{ oldText: "a = 1\nconst b", newText: "x" }, { oldText: "const b = 2", newText: "y" }], exact))).toBe("OverlappingEdits")
     expect(errorOf(applyTextEdits(file, [{ oldText: "const b = 2", newText: "const b = 2" }], exact))).toBe("NoChange")
   })
 
@@ -48,10 +48,10 @@ describe("applyTextEdits", () => {
       { error: "EmptyOldText", message: "edit 2's oldText is empty; to create a file or replace all of it, use write" },
       { error: "NoMatch", message: "oldText was not found in the file; read it again and copy the text exactly, whitespace included" },
       { error: "NoMatch", message: "edit 2's oldText was not found in the file; read it again and copy the text exactly, whitespace included" },
-      { error: "Ambiguous", message: "oldText appears 3 times; add surrounding lines so it appears exactly once" },
-      { error: "Ambiguous", message: "oldText appears 2 times; add surrounding lines so it appears exactly once" },
-      { error: "Ambiguous", message: "oldText matches 2 places once whitespace and quotes are normalised; add surrounding lines so it matches exactly once" },
-      { error: "Overlap", message: "edits 2 and 3 change overlapping text; merge them into one edit" },
+      { error: "AmbiguousMatch", message: "oldText appears 3 times; add surrounding lines so it appears exactly once" },
+      { error: "AmbiguousMatch", message: "oldText appears 2 times; add surrounding lines so it appears exactly once" },
+      { error: "AmbiguousMatch", message: "oldText matches 2 places once whitespace and quotes are normalised; add surrounding lines so it matches exactly once" },
+      { error: "OverlappingEdits", message: "edits 2 and 3 change overlapping text; merge them into one edit" },
       { error: "NoChange", message: "the edits leave the file as it is" },
     ])
   })
@@ -77,7 +77,7 @@ describe("applyTextEdits", () => {
     expect(errorOf(applyTextEdits(source, [{ oldText: "return \"quoted\" - value", newText: "x" }], exact))).toBe("NoMatch")
     const plan = Result.getOrThrow(applyTextEdits(source, [{ oldText: "  return  \"quoted\" - value", newText: "    return 1" }], fuzzy))
     expect(plan).toMatchObject({ text: "function f() {\n    return 1\n}\n", normalized: true, firstChangedLine: 2 })
-    expect(errorOf(applyTextEdits("x = 1\n\tx = 1\n", [{ oldText: "x  =  1", newText: "y" }], fuzzy))).toBe("Ambiguous")
+    expect(errorOf(applyTextEdits("x = 1\n\tx = 1\n", [{ oldText: "x  =  1", newText: "y" }], fuzzy))).toBe("AmbiguousMatch")
     expect(normalizeLine("  ‘a’ —\tb  ")).toBe("'a' - b")
   })
 

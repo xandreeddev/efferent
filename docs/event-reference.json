@@ -5571,12 +5571,12 @@
     {
       "code": "skills.unknown",
       "where": "activating a skill (`@xandreed/plugin-tool-discovery`)",
-      "meaning": "No skill of the catalog has that id. `load_skill` returns the refusal to the model as its failure, and the turn goes on."
+      "meaning": "No skill of the catalog has that id. `load_skill` returns the refusal to the model as its failure, named `UnknownSkill`, and the turn goes on."
     },
     {
       "code": "capability.forbidden",
       "where": "`resolveCapabilities`; activating a skill",
-      "meaning": "A tool of the selection needs a permission the turn was not granted. `load_skill` returns the refusal to the model as its failure, and the turn goes on; a matcher's choice it refuses is not activated."
+      "meaning": "A tool of the selection needs a permission the turn was not granted. `load_skill` returns the refusal to the model as its failure, named `PermissionDenied`, and the turn goes on; a matcher's choice it refuses is not activated."
     },
     {
       "code": "capability.catalog",
@@ -5606,7 +5606,7 @@
     {
       "code": "loop.failed",
       "where": "the step loop",
-      "meaning": "The loop failed with an error that is not a `HarnessError` (the model call's own error, for example); the message is that error's text."
+      "meaning": "The loop failed with an error that is not a `HarnessError` (the model call's own error, for example); the message is that error's message, without its tag (`messagesOf`), and the error is the cause."
     },
     {
       "code": "request.encode",

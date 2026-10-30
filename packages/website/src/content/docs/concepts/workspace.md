@@ -46,8 +46,8 @@ turn whose services lack one fails to open its tools with
 | `bash` | `workspace.shell`, needs `shell.exec` | `command`, `timeout` (seconds), `stdin` | the end of the output, how the command ended, and where the whole output was saved |
 
 A failure is a result the model reads and corrects in the same turn
-(`{ error, message }`: `NotFound`, `OutsideWorkspace`, `Protected`,
-`NoMatch`, `Ambiguous`, `NotUtf8`, `NotAFile`, …). A command that exits non-zero, is killed by a
+(`{ error, message }`, named for what is wrong: `NotFound`, `OutsideWorkspace`, `Protected`,
+`NoMatch`, `AmbiguousMatch`, `NotUtf8`, `NotAFile`, `AccessDenied`, …). A command that exits non-zero, is killed by a
 signal or runs past its timeout is a result too. The `workspace.edit` and
 `workspace.shell` skills appear in the skill catalogue; the model loads them
 with `load_skill`.
@@ -57,7 +57,7 @@ with `load_skill`.
 `write` and `edit` need the grant `fs.write`; `bash` needs `shell.exec`.
 Tool discovery grants nothing unless told to, through its `grants` option or
 a turn's `PermissionGrants`, so out of the box the agent can only look.
-Without the grant, `load_skill` answers `capability.forbidden` and the tools
+Without the grant, `load_skill` answers `PermissionDenied` and the tools
 stay unavailable. Putting `edit` or `shell` in the plugin's `always` makes
 them active from the first step, and fails the turn when the grant is
 missing.

@@ -357,14 +357,14 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `skills.files` | `skillsFromFiles`; `@xandreed/plugin-workspace` skills directory (`strict`) | A skills tree has an issue: a `SKILL.md` without frontmatter or description, an id already used, a reference over the size limit. The message names each file. |
 | `skills.root` | `@xandreed/plugin-workspace` skills directory | A `required` skills root does not exist, or a root or a file in it cannot be read. |
 | `skills.limit` | `collectSkillFiles`; `@xandreed/plugin-workspace` skills directory | A skills root holds more files (`maxFiles`) or text (`maxBytes`) than allowed, or the roots more skills than `maxSkills`. |
-| `skills.unknown` | activating a skill (`@xandreed/plugin-tool-discovery`) | No skill of the catalog has that id. `load_skill` returns the refusal to the model as its failure, and the turn goes on. |
-| `capability.forbidden` | `resolveCapabilities`; activating a skill | A tool of the selection needs a permission the turn was not granted. `load_skill` returns the refusal to the model as its failure, and the turn goes on; a matcher's choice it refuses is not activated. |
+| `skills.unknown` | activating a skill (`@xandreed/plugin-tool-discovery`) | No skill of the catalog has that id. `load_skill` returns the refusal to the model as its failure, named `UnknownSkill`, and the turn goes on. |
+| `capability.forbidden` | `resolveCapabilities`; activating a skill | A tool of the selection needs a permission the turn was not granted. `load_skill` returns the refusal to the model as its failure, named `PermissionDenied`, and the turn goes on; a matcher's choice it refuses is not activated. |
 | `capability.catalog` | `resolveCapabilities`; activating a skill | The selection names a skill or a tool the catalog does not hold, or the catalog holds two with one id. |
 | `matcher.timeout` | the skill matcher (`@xandreed/plugin-tool-discovery`) | The matcher did not answer within `matcherTimeoutMs`. The turn goes on: its decision is recorded as failed, and only the always-on skills are active. |
 | `tools.opened` | `openTurnTools` | The turn's tools were opened twice. |
 | `tools.unavailable` | the turn's tools | The tools were used before `openTurnTools` opened them. |
 | `loop.model` | the step loop | The turn's services carry no `LanguageModel`. |
-| `loop.failed` | the step loop | The loop failed with an error that is not a `HarnessError` (the model call's own error, for example); the message is that error's text. |
+| `loop.failed` | the step loop | The loop failed with an error that is not a `HarnessError` (the model call's own error, for example); the message is that error's message, without its tag (`messagesOf`), and the error is the cause. |
 | `request.encode` | the turn, before each provider call | The request header did not encode. |
 | `request.missing` | before each provider call | No stored `request.prepared` header for the step. |
 | `request.decode` | before each provider call | The step's stored `request.prepared` header did not decode. |

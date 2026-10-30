@@ -1,5 +1,5 @@
 import { Cause, Context, Effect, Layer, Schema } from "effect"
-import { reasonOf } from "../domain/failure.entity.functions.js"
+import { messagesOf } from "../domain/failure.entity.functions.js"
 import { HarnessError, PLUGIN_API_VERSION } from "./plugin.entity.js"
 import type { TypedPlugin } from "./plugin.entity.js"
 import { isHarnessError, mergeOptions, provideDeclared } from "./plugin.entity.functions.js"
@@ -21,8 +21,8 @@ import type { ServiceKeys } from "./plugin.entity.functions.js"
  * error's code and cause, as `live` does (and names the plugin when the
  * error does not); any other failure is `plugin.activation`, and any other
  * defect `plugin.defect`. Either keeps what failed as its `cause`, and its
- * message names the plugin and what failed (`reasonOf`: messages, never a
- * stack). `config.options` keeps the schema's failure the same way.
+ * message names the plugin and what failed (`messagesOf`: messages, never a
+ * tag or a stack). `config.options` keeps the schema's failure the same way.
  */
 export const definePlugin = <
   A extends Readonly<Record<string, unknown>>, I, Out, E,
@@ -76,14 +76,14 @@ export const definePlugin = <
         ? named(error)
         : new HarnessError({
           code: "plugin.activation", plugin: definition.id,
-          message: `${definition.id} failed to activate: ${reasonOf(Cause.fail(error))}`, cause: error,
+          message: `${definition.id} failed to activate: ${messagesOf(Cause.fail(error))}`, cause: error,
         })),
       // One that dies with a HarnessError (an `Effect.orDie` over its own failure) keeps its code too.
       Effect.catchDefect((defect) => Effect.fail(isHarnessError(defect)
         ? named(defect)
         : new HarnessError({
           code: "plugin.defect", plugin: definition.id,
-          message: `${definition.id} died while activating: ${reasonOf(Cause.die(defect))}`, cause: defect,
+          message: `${definition.id} died while activating: ${messagesOf(Cause.die(defect))}`, cause: defect,
         }))),
     ),
     live: (options) => Layer.unwrap(decodeOptions(options).pipe(

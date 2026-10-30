@@ -46,7 +46,8 @@ const Glob = Schema.String.check(Schema.makeFilter((glob: string) =>
  * - `always`: the skills active from a turn's first step: `read` by default.
  *   `edit` and `shell` here need their grants (`fs.write`, `shell.exec`), or
  *   the turn fails with `capability.forbidden`; otherwise the model loads
- *   them with `load_skill`, which refuses them without the grants.
+ *   them with `load_skill`, which refuses them without the grants
+ *   (`PermissionDenied`).
  * - `confine`: refuse paths whose real location (links resolved, through the
  *   nearest ancestor that exists) is outside the workspace root.
  * - `protect`: globs, relative to the root, that `write` and `edit` refuse.
@@ -295,7 +296,7 @@ export const GrepLine = Schema.Struct({ path: Schema.String, line: Schema.Int, t
 export type GrepLine = typeof GrepLine.Type
 
 /**
- * A file `grep` could not read, and why (`Permission` when access was denied).
+ * A file `grep` could not read, and why (`Permission` when access was denied); its view says why in words.
  *
  * @public
  */

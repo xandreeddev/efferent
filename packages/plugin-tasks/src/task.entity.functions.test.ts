@@ -42,11 +42,20 @@ describe("the notice of a task that ends without a reply", () => {
       noticeAfter(Exit.fail(new HarnessError({ code: "model.down", message: "the model is unavailable" }))),
     ]).toEqual([
       frame("completed", "(no reply)"),
-      frame("interrupted", "(no reply: the task ran out of time)"),
+      frame("was interrupted", "(no reply: the task ran out of time)"),
       frame("failed", "(no reply: the task's turn failed)"),
       frame("failed", "(no reply: the task's turn failed)"),
       frame("failed", "(no reply: the task's session was too busy: its writes kept conflicting with others)"),
       frame("failed", "(no reply: the model is unavailable)"),
     ])
+  })
+
+  test("says where the task stands in words, never the status's name", () => {
+    const statuses = ["pending", "running", "completed", "partial", "failed", "cancelled", "interrupted"] as const
+    expect(statuses.map((status) => noticeOf({
+      taskId, parent: session, child: taskId, instructions: "look it up", mode: "spawn", status, reply: Option.none(), failure: Option.none(), delivered: false,
+    }, tasksDefaults.replyChars))).toEqual([
+      "has not started yet", "is still running", "completed", "stopped before it finished", "failed", "was cancelled", "was interrupted",
+    ].map((words) => frame(words, "(no reply)")))
   })
 })

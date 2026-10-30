@@ -164,6 +164,6 @@ export const bashTool = (context: WorkspaceToolContext): RegisteredTool => defin
       durationMs: Option.match(gathered.exit, { onNone: () => ended - started, onSome: (exit) => exit.durationMs }),
     }
   }),
-  view: { version: "1", render: renderBash, compact: compactBash },
+  view: { version: "2", render: renderBash, compact: compactBash },
   annotations: { permissions: [WORKSPACE_PERMISSIONS.exec], pollable: true },
 })

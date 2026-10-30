@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
+import type { Tool } from "effect/ai"
 import { Capabilities, SessionEnvironment, ToolRegistry } from "@xandreed/core"
 import type { Capability } from "@xandreed/core"
 import type { ConformanceCheck } from "@xandreed/core/conformance"
@@ -51,6 +52,24 @@ describe("the ToolRegistry kit catches careless registries", () => {
       open: (session) => registry.open(session).pipe(Effect.provideService(SessionEnvironment, { workspace: "the registry's" })),
     })))
     expect(await failedChecks(toolRegistryConformance(own))).toEqual(["requires-missing", "requires-opened"])
+  })
+
+  test("one that returns its failures to the model under a host's code fails the load-refusal check and every refusal's", async () => {
+    // The plugin's handlers, each failure renamed to a framework code on its way to the model.
+    const leaky = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities, limits).pipe(Effect.map((registry) => ToolRegistry.of({
+      ...registry,
+      open: (session) => registry.open(session).pipe(Effect.flatMap((tools) => tools.toolkit.toHandlers(Object.fromEntries(Object.values(tools.toolkit.tools).map((tool) => {
+        const own: Tool.Handler<string> = tools.handlers.mapUnsafe.get(tool.id)
+        const handler = (params: unknown, context: unknown) => own.handler(params, context).pipe(
+          Effect.updateContext((input: Context.Context<never>) => Context.merge(own.context, input)),
+          Effect.mapError((failure: { readonly message: string }) => ({ error: "registry.refused", message: failure.message })),
+        )
+        return [tool.name, handler]
+      }))).pipe(Effect.map((handlers) => ({ ...tools, handlers }))))),
+    })))
+    expect(await failedChecks(toolRegistryConformance(leaky))).toEqual([
+      "load-refusal", "refused-call-limit", "refused-denied", "refused-forbidden", "refused-inactive", "refused-tool-call-limit",
+    ])
   })
 
   test("one whose catalog leaves out the permissions a tool needs fails only the catalog check", async () => {

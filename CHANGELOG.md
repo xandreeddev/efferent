@@ -293,6 +293,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   compile: import that name from `@xandreed/core` instead (installed beside
   the sdk already, as its peer). The values are the same, so code may take a
   name from either package.
+- A host or eval that matched a tool result's `error` on an old name
+  matches the new one; to tell refusals apart, match `tool.refused`'s
+  `reason`, and for a failed activation, `RunTools.activate`'s
+  `HarnessError` code. A third-party `ToolRegistry` returns its refusals
+  and `load_skill`'s under PascalCase names to pass the kit.
+- Code that read the label off a `loop.failed`, `request.model`,
+  `plugin.activation` or `plugin.defect` message (`AiError: …`) reads the
+  error's tag from the `HarnessError`'s `cause` instead.
+- A host that matched a background task's notice on its status word
+  (`partial`) reads the task's status from `Tasks.status`.
 
 ### Breaking
 
@@ -1031,6 +1041,9 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/core`: `LogBody`, `CompactionAction` and `BashEvent` carry the
   tagged-union helpers (`match`, `matchOrElse`, `guards`, `isAnyOf`,
   `cases`).
+- `@xandreed/core`: `messagesOf(cause)`, a cause as text the model reads:
+  each error's and defect's message alone, without the code, tag or class
+  name `reasonOf` puts before it for logs and reports.
 
 ### Changed
 
@@ -1120,6 +1133,56 @@ Model-visible text (exact pins and the compaction golden updated):
   `^[a-f0-9]{64}$` pattern (it was dropped from the JSON Schema);
   `recall_context`'s `UnknownLocator` refusal ends with what to do:
   `; pass a locator exactly as a shortened result shows it`.
+- Every failure a first-party tool returns to the model is named in
+  PascalCase for what is wrong; a host's code is mapped to such a name
+  where the tool builds its `Failure`. The model now reads:
+  - every tool, refused by tool discovery: `Forbidden` → `PermissionDenied`
+    (a permission the turn lacks), `Denied` → `PolicyDenied` (the host's
+    `ActionPolicy`);
+  - `load_skill`: `skills.unknown` → `UnknownSkill`, `capability.forbidden`
+    → `PermissionDenied`;
+  - `render_component`: `invalid` → `InvalidComponent`, `forbidden` →
+    `ComponentNotAllowed`, `unavailable` → `RendererUnavailable`,
+    `conflict` → `OperationIdReused`, `storage` → `StorageUnavailable`;
+  - the workspace tools, for a file-system failure: `Exists` →
+    `AlreadyExists`, `NotEmpty` → `DirectoryNotEmpty`, `Permission` →
+    `AccessDenied`, `Invalid` → `InvalidPath`, `Io` → `FileSystemError`, and
+    `Invalid` → `BrokenSymlink` for a link to nothing;
+  - `edit`: `Ambiguous` → `AmbiguousMatch`, `Overlap` → `OverlappingEdits`,
+    `Binary` → `BinaryFile`.
+- Model-facing text no longer shows a tag, code, enum value or reason name;
+  it says what happened in words:
+  - `grep`'s note on files it could not read: "a file-system error: q", "no
+    longer there: …", not "a file-system error (Io): q" (view version 3);
+  - `read`'s compact form of an image it could not send: "too large to
+    send", "more pixels a side than the limit", not "TooLarge" (view
+    version 2);
+  - `bash`'s compact form: "killed at its timeout", "killed by SIGTERM",
+    "stopped before it finished", not "timeout", "signal", "interrupted"
+    (view version 2);
+  - `WorkspaceMissing`: "the workspace directory does not exist, so …", not
+    "cannot be opened (NotFound), so …";
+  - a background task's notice: "[Background task t-1 stopped before it
+    finished]", "was cancelled", "was interrupted", not "partial",
+    "cancelled", "interrupted";
+  - `ToolDefect`: the defect's message alone, "x is not a function", not
+    "TypeError: x is not a function" or a tagged error's tag.
+- The messages of `loop.failed` (the agent loop), `request.model` (the
+  models plugin's router), `plugin.activation` and `plugin.defect`
+  (`definePlugin`) hold the failure's messages without its tag or class
+  name (`messagesOf`): "Test.generateText: the provider was down", not
+  "AiError: Test.generateText: …". The failure is still their `cause`. A
+  background task's notice shows these messages to the model.
+- Host codes are unchanged: `RunTools.activate` still fails with
+  `skills.unknown` and `capability.forbidden` (and `HARNESS_CODES` keeps
+  them), `FsError.reason`, `UiOutputError.code`, `TaskStatus`,
+  `BashTermination` and the `tool.refused` reasons are as they were, and
+  results store them. Stored tool results keep the names they were recorded
+  with.
+- `toolRegistryConformance` (`@xandreed/sdk/conformance`) checks that a
+  refused call's result, and `load_skill`'s refusal of an unknown skill and
+  of an ungranted one (the new `load-refusal` check), carry a PascalCase
+  `error`, never a host's code.
 
 ### Fixed
 

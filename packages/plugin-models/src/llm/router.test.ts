@@ -386,7 +386,7 @@ describe("LanguageModelLive's step resolution", () => {
       Effect.provide(LanguageModelLive.pipe(Layer.provide(Layer.merge(settings, auth)))),
     )))
     expect(failed.code).toBe("request.model")
-    expect(failed.message).toStartWith("AiError: Router.selection: no model configured")
+    expect(failed.message).toStartWith("Router.selection: no model configured")
     expect(failed.cause).toMatchObject({ _tag: "AiError", module: "Router", method: "selection", reason: { _tag: "UnknownError" } })
   })
 })

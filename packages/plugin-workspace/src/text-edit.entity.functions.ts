@@ -29,7 +29,7 @@ const exactSpan = (base: string, edit: TextEdit, index: number, count: number): 
   const first = base.indexOf(edit.oldText)
   if (first < 0) return Result.succeed(Option.none())
   if (base.indexOf(edit.oldText, first + 1) >= 0) {
-    return Result.fail(failure("Ambiguous", `${label(index, count)} appears ${Math.max(2, base.split(edit.oldText).length - 1)} times; add surrounding lines so it appears exactly once`))
+    return Result.fail(failure("AmbiguousMatch", `${label(index, count)} appears ${Math.max(2, base.split(edit.oldText).length - 1)} times; add surrounding lines so it appears exactly once`))
   }
   return Result.succeed(Option.some({ index, start: first, end: first + edit.oldText.length, newText: edit.newText, normalized: false }))
 }
@@ -54,7 +54,7 @@ const normalizedSpan = (base: string, edit: TextEdit, index: number, count: numb
     .filter((at) => wanted.every((line, offset) => normal[at + offset] === line))
   const [start, ...others] = starts
   if (start === undefined) return Result.succeed(Option.none())
-  if (others.length > 0) return Result.fail(failure("Ambiguous", `${label(index, count)} matches ${starts.length} places once whitespace and quotes are normalised; add surrounding lines so it matches exactly once`))
+  if (others.length > 0) return Result.fail(failure("AmbiguousMatch", `${label(index, count)} matches ${starts.length} places once whitespace and quotes are normalised; add surrounding lines so it matches exactly once`))
   const lineStart = (line: number): number => lines.slice(0, line).reduce((total, text) => total + text.length + 1, 0)
   const after = start + wanted.length
   const lastLine = lines[after - 1] ?? ""
@@ -92,7 +92,7 @@ export const applyTextEdits = (original: string, edits: ReadonlyArray<TextEdit>,
     const clash = ordered.findIndex((span, at) => at > 0 && span.start < (ordered[at - 1]?.end ?? 0))
     if (clash > 0) {
       const [first, second] = [ordered[clash - 1]?.index ?? 0, ordered[clash]?.index ?? 0].sort((left, right) => left - right)
-      return Result.fail(failure("Overlap", `edits ${(first ?? 0) + 1} and ${(second ?? 0) + 1} change overlapping text; merge them into one edit`))
+      return Result.fail(failure("OverlappingEdits", `edits ${(first ?? 0) + 1} and ${(second ?? 0) + 1} change overlapping text; merge them into one edit`))
     }
     const built = ordered.reduce((state, span) => ({ text: state.text + base.slice(state.at, span.start) + span.newText, at: span.end }), { text: "", at: 0 })
     const after = built.text + base.slice(built.at)

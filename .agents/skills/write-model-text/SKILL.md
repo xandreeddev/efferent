@@ -36,10 +36,20 @@ cached prefixes. Treat a wording change like an API change.
 - Annotate every parameter whose meaning or format is not obvious from its
   name. The JSON Schema the model sees keeps types and required keys but not
   every check: state a required format (a hash, a locator) in words.
-- `Failure.error` is PascalCase (`NotFound`, `ToolInactive`); `message`
+- `Failure.error` is PascalCase (`NotFound`, `ToolInactive`) and says what
+  is wrong; a host's code (a `HarnessError`'s, a port's reason or code) is
+  mapped to such a name where the `Failure` is built, never passed through,
+  and keeps its own code for hosts, logs and spans. `message`
   names what is wrong and the call that fixes it. Never `Cause.pretty`
   output, stack frames, host paths or internal `_tag`s: text from a cause is
-  `reasonOf(cause)`, from a defect `reasonOf(Cause.die(defect))`.
+  `messagesOf(cause)`, from a defect `messagesOf(Cause.die(defect))`: messages
+  alone, where `reasonOf` (for logs and reports) puts each error's code or
+  tag before its message.
+- Never interpolate a tag, code, enum value or reason name into a message,
+  a view or a note (`${x._tag}`, `${reason}`, `(${status})`): say it in
+  words through a typed `Record<TheEnum, string>` beside the text, so a new
+  value fails to compile until it has words. A `Failure.error` name is the
+  one place a name is shown, on purpose.
 - Guidance a capability needs at all times goes in its tool descriptions or
   a section it contributes, never in an always-on skill's `instructions`.
 - Tools only grow within a conversation: restrict a step with tool choice or
@@ -112,7 +122,7 @@ exported from `@xandreed/core`); never hand-roll a frame or a marker.
 - [ ] Lives in one place (a description builder, view, failure or prompt function), not inline in logic
 - [ ] Names only visible tools and headings; domain-neutral
 - [ ] Non-obvious parameters annotated; formats stated in words
-- [ ] A failure says what to do next; no internals
+- [ ] A failure says what to do next; no internals; no tag, code or enum value in the text
 - [ ] Untrusted content `framed`, introduced as data, bounded with `clipTo`; host text is `hostNote`
 - [ ] Right tier; `version` bumped if the template changed
 - [ ] Exact test, or the golden re-recorded and reviewed; CHANGELOG entry

@@ -89,7 +89,14 @@ describe("read over a binary file", () => {
     })
     expect(readMedia(result)).toEqual([])
     expect(renderRead(result)).toBe(`[big.png is an image (image/png, 3.8 MB) that read cannot show: the image has ${MEDIA_LIMITS.imageBytes + 1} bytes, more than ${MEDIA_LIMITS.imageBytes}. To see it, make a smaller copy with bash (scaled down or recompressed) and read that.]`)
-    expect(compactRead(result)).toBe("(read big.png: image/png image not shown, TooLarge)")
+    expect(compactRead(result)).toBe("(read big.png: image/png image not shown, too large to send)")
+    // Every reason in words, never its name.
+    const reasons = ["TooLarge", "TooManyPixels", "Unreadable", "Empty", "InvalidBase64", "UnsupportedType", "TooMany", "TooLargeTogether"] as const
+    const rejected = { _tag: "ImageRejected", path: "big.png", mediaType: "image/png", bytes: 1, message: "" } as const
+    expect(reasons.map((reason) => compactRead({ ...rejected, reason }))).toEqual([
+      "too large to send", "more pixels a side than the limit", "its header gives no size", "it has no bytes", "its data is not base64",
+      "not a PNG, JPEG, GIF or WebP image", "too many images at once", "too large together with the other images",
+    ].map((why) => `(read big.png: image/png image not shown, ${why})`))
   })
 
   test("an image over MEDIA_LIMITS.maxPixels a side is a note too", () => {
@@ -254,7 +261,7 @@ describe("result views", () => {
     expect(renderGrep({ ...searched, lines: [], matches: 0, files: 0, skipped: 2, unreadable: [{ path: "x.txt", reason: "Io" }] }, false, 10, 1_024)).toBe([
       "No matches for hit in the workspace root.",
       "[2 files skipped: binary, larger than the read limit, or leading outside the workspace.]",
-      "[Could not read 1 file, a file-system error (Io): x.txt.]",
+      "[Could not read 1 file, a file-system error: x.txt.]",
     ].join("\n"))
     expect(renderGrep({ ...searched, truncated: true }, false, 2, 1_024)).toBe([
       "a.txt:1:hit 1",
@@ -269,7 +276,16 @@ describe("result views", () => {
       "b.txt:1:hit 1",
       "[1 file skipped: binary, larger than the read limit, or leading outside the workspace.]",
       "[Could not read 7 files, permission denied: p1, p2, p3, p4, p5, and 2 more.]",
-      "[Could not read 1 file, a file-system error (Io): q.]",
+      "[Could not read 1 file, a file-system error: q.]",
+    ].join("\n"))
+    // Each reason in words, never its name; reasons that read alike share a line.
+    const every = (["NotFound", "NotDirectory", "Permission", "Invalid", "Exists", "IsDirectory", "NotEmpty", "Io"] as const).map((reason) => ({ path: reason.toLowerCase(), reason }))
+    expect(renderGrep({ ...searched, lines: [], matches: 0, files: 0, unreadable: every }, false, 10, 1_024)).toBe([
+      "No matches for hit in the workspace root.",
+      "[Could not read 2 files, no longer there: notfound, notdirectory.]",
+      "[Could not read 1 file, permission denied: permission.]",
+      "[Could not read 1 file, not a path the file system accepts: invalid.]",
+      "[Could not read 4 files, a file-system error: exists, isdirectory, notempty, io.]",
     ].join("\n"))
     expect([compactGrep(searched), compactGrep({ ...searched, matches: 1, files: 1, truncated: true }), compactGrep({ ...searched, matches: 1, files: 1 })])
       .toEqual(["(grep hit in .: 3 matching lines in 2 files)", "(grep hit in .: 1+ matching lines in 1 file)", "(grep hit in .: 1 matching line in 1 file)"])
@@ -301,7 +317,12 @@ describe("result views", () => {
       "[Output cut: only the end of its last line is shown. Only its start was saved, in out/bash-1.log: the output grew past the size read opens, and the rest was not kept. Read the file with offset to see that start; to see the rest, run the command again with its output filtered (grep, tail, sed -n).]",
       "[Exit code 0.]",
     ].join("\n"))
-    expect([compactBash(ran), compactBash(stopped), compactBash({ ...stopped, command: "x".repeat(81), termination: "timeout", fullOutput: "out/bash-1.log" })])
-      .toEqual(["(ran make: exit 0)", "(ran make: exit ?)", `(ran ${"x".repeat(80)}…: timeout; output in out/bash-1.log)`])
+    expect([
+      compactBash(ran), compactBash(stopped), compactBash({ ...stopped, command: "x".repeat(81), termination: "timeout", fullOutput: "out/bash-1.log" }),
+      compactBash({ ...stopped, termination: "signal", signal: "SIGTERM" }), compactBash({ ...stopped, termination: "signal" }), compactBash({ ...stopped, termination: "interrupted" }),
+    ]).toEqual([
+      "(ran make: exit 0)", "(ran make: exit ?)", `(ran ${"x".repeat(80)}…: killed at its timeout; output in out/bash-1.log)`,
+      "(ran make: killed by SIGTERM)", "(ran make: killed by a signal)", "(ran make: stopped before it finished)",
+    ])
   })
 })
