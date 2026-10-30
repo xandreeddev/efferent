@@ -51,6 +51,7 @@
           "_tag": "context.built",
           "step": 0,
           "turn": 1,
+          "run": 0,
           "strategy": "window",
           "strategyVersion": "1",
           "fingerprint": "9c48f5e0cc",
@@ -69,6 +70,7 @@
           "_tag": "context.built",
           "step": 1,
           "turn": 1,
+          "run": 0,
           "strategy": "window",
           "strategyVersion": "1",
           "fingerprint": "c07c91772d8",
@@ -87,6 +89,7 @@
           "_tag": "context.built",
           "step": 2,
           "turn": 1,
+          "run": 0,
           "strategy": "window",
           "strategyVersion": "1",
           "fingerprint": "9464a1884d4",
@@ -191,11 +194,12 @@
           "_tag": "context.built",
           "step": 1,
           "turn": 4,
+          "run": 0,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "69e6bd65b09",
+          "fingerprint": "5ed25de1b0d",
           "systemFingerprint": "eb326f7eed",
-          "estimatedTokens": 941,
+          "estimatedTokens": 942,
           "reservedTokens": 481,
           "budgetTokens": 64000,
           "compactions": 1,
@@ -211,11 +215,12 @@
           "_tag": "context.built",
           "step": 2,
           "turn": 4,
+          "run": 0,
           "strategy": "window",
           "strategyVersion": "1",
-          "fingerprint": "fe6f6322c9e",
+          "fingerprint": "1fea5a56ca2",
           "systemFingerprint": "eb326f7eed",
-          "estimatedTokens": 1076,
+          "estimatedTokens": 1077,
           "reservedTokens": 481,
           "budgetTokens": 64000,
           "compactions": 1,
@@ -819,7 +824,7 @@
               {
                 "options": {},
                 "type": "tool-call",
-                "id": "planned:0:0",
+                "id": "4.0.planned:0",
                 "name": "lookup",
                 "params": {
                   "query": "gamma"
@@ -835,7 +840,7 @@
               {
                 "options": {},
                 "type": "tool-result",
-                "id": "planned:0:0",
+                "id": "4.0.planned:0",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "FOUND record-gamma-a: gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \nFOUND record-gamma-b: gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \nFOUND record-gamma-c: gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c ",
@@ -1126,7 +1131,7 @@
               {
                 "options": {},
                 "type": "tool-call",
-                "id": "planned:0:0",
+                "id": "4.0.planned:0",
                 "name": "lookup",
                 "params": {
                   "query": "gamma"
@@ -1142,7 +1147,7 @@
               {
                 "options": {},
                 "type": "tool-result",
-                "id": "planned:0:0",
+                "id": "4.0.planned:0",
                 "name": "lookup",
                 "isFailure": false,
                 "result": "FOUND record-gamma-a: gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \nFOUND record-gamma-b: gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \nFOUND record-gamma-c: gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c ",
@@ -1385,6 +1390,7 @@
       "body": {
         "_tag": "StepContext",
         "step": 0,
+        "run": 0,
         "text": "STEP 0"
       }
     },
@@ -1503,6 +1509,7 @@
       "body": {
         "_tag": "StepContext",
         "step": 1,
+        "run": 0,
         "text": "STEP 1"
       }
     },
@@ -1622,6 +1629,7 @@
       "body": {
         "_tag": "StepContext",
         "step": 2,
+        "run": 0,
         "text": "STEP 2"
       }
     },
@@ -1869,7 +1877,7 @@
           "content": [
             {
               "type": "tool-call",
-              "toolCallId": "planned:0:0",
+              "toolCallId": "4.0.planned:0",
               "toolName": "lookup",
               "input": {
                 "query": "gamma"
@@ -1888,7 +1896,7 @@
       "at": 1767225600000,
       "body": {
         "_tag": "ToolResult",
-        "toolCallId": "planned:0:0",
+        "toolCallId": "4.0.planned:0",
         "toolName": "lookup",
         "isError": false,
         "encoded": {

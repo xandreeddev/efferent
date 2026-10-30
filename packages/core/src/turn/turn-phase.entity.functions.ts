@@ -1,4 +1,6 @@
 import { Match, Option, Result } from "effect"
+import { RunOrdinal } from "../domain/run.entity.js"
+import type { RunId, RunRef } from "../domain/run.entity.js"
 import type { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { harnessError } from "../harness/harness-code.entity.functions.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
@@ -35,7 +37,7 @@ export const release = (phase: TurnPhase): TurnPhase =>
 /** The message is recorded as turn `number`: the turn is taken, and the context entries that waited for it are returned, to record next. */
 export const take = (number: number) => (phase: TurnPhase): Transition<ReadonlyArray<TurnContextBody>> => Match.valueTags(phase, {
   Waiting: () => unstarted("The user's message is not being persisted"),
-  Taking: ({ early }) => moved(early, { _tag: "Taken", number, sectioned: false }),
+  Taking: ({ early }) => moved(early, { _tag: "Taken", number, sectioned: false, runs: RunOrdinal.make(0) }),
   Taken: () => persisted,
   Replied: () => persisted,
 })
@@ -54,6 +56,19 @@ export const sectionsDue = (phase: TurnPhase): Transition<boolean> => Match.valu
   Taking: () => unstarted("The turn's sections are recorded after the user's message is persisted"),
   Taken: (taken) => moved(!taken.sectioned, { ...taken, sectioned: true }),
   Replied: () => moved(false, phase),
+})
+
+/**
+ * A run of the step loop starts (`TurnMemory.startRun`): the turn's next
+ * run, under the turn's run id and number, its ordinal counting from 0.
+ * `turn.unstarted` before the message is taken; `turn.closed` once the
+ * reply is recorded, which ends the turn's runs.
+ */
+export const startRun = (id: RunId) => (phase: TurnPhase): Transition<RunRef> => Match.valueTags(phase, {
+  Waiting: () => unstarted("A run starts after the user's message is persisted"),
+  Taking: () => unstarted("A run starts after the user's message is persisted"),
+  Taken: (taken) => moved({ id, turn: taken.number, ordinal: taken.runs }, { ...taken, runs: RunOrdinal.make(taken.runs + 1) }),
+  Replied: () => Result.fail(harnessError("turn.closed", "The turn's reply is recorded: no run starts after it")),
 })
 
 /** The reply, with its outcome: once, after the message is taken, returning the turn's number; none (nothing to record) otherwise. */

@@ -121,6 +121,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   rerun `renderSurfaceConformance`; records are unchanged. Mint scope and
   feed ids with `.make` (`ThreadId.make(…)`, `RunId.make(…)`, …), and give
   each newer writer of a message a higher `fence`.
+- Stored records without `run` read as run 0, so nothing needs migrating:
+  pass the run ordinal where the APIs below now take one, add `run` to the
+  step events you publish, and rerun the step-loop, turn and memory kits.
 
 ### Breaking
 
@@ -341,6 +344,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `PrincipalId`, `RenderMessageId`, `SurfaceId`, `VersionId`, `NodeId`,
   `OperationId`, `RevisionId`), `UiOutputScope.runId` is core's `RunId`,
   and `SseRecordFields` decodes `id` as `sequence` (the wire is unchanged).
+- `@xandreed/core`: `StepRequest.run` (`RunRef`) is required; a custom
+  `StepLoop` puts `run` on `step.*`, `assistant.message`,
+  `completion.evaluated` and `stream.fallback` and mints ids with
+  `toolCallIdOf`/`plannedCallIdOf` (`stepLoopConformance` checks this).
+- `@xandreed/core`: `MemorySession.renderRecipe(stepContext, run)`,
+  `build({ stepContext, run })`, `RenderOptions.run`,
+  `stepContextOf(entries, runId, run)`, `modelRequestHeaderOf(…, step, run)`
+  and `TurnMemory.startRun` change their types; `startRun` after the reply
+  is refused with `turn.closed`.
 
 ### Added
 
@@ -688,6 +700,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   publish re-reads the surface once and resumes or plans the next version.
 - Render: `scope.fence` is enforced; a write under a fence lower than one
   the store accepted for the surface and message is `forbidden`.
+- A turn's later run no longer sends an earlier run's step context, and each
+  run's requests replay from their own header
+  (`replayModelRequest(events, runId, step, run)`).
+- A provider that sends tool calls without ids gets ids distinct across a
+  session's runs and turns: `<turn>.<ordinal>.<step>:<tool>:<n>`, and
+  `<turn>.<ordinal>.planned:<n>` for a planned batch. Earlier sessions keep
+  their stored ids.
 
 ### Repository
 

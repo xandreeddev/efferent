@@ -74,10 +74,13 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
 
 /**
  * Prepare one run of the step loop over the turn's services, in this
- * order: the run's budget is checked (`turn.budget` unless it is an integer
- * of at least 1), the policy's planned skills are activated, the turn-tier
- * sections are recorded, and memory is maintained for the turn's start
- * with the whole budget. Each step gives memory what the system prompt and
+ * order: the run is started (`TurnMemory.startRun`: its ordinal is on the
+ * run's step contexts, request headers and step events, and its dispatch
+ * check reads the header of its own run and step, so each run of a turn
+ * rebuilds its own requests), the run's budget is checked (`turn.budget`
+ * unless it is an integer of at least 1), the policy's planned skills are
+ * activated, the turn-tier sections are recorded, and memory is maintained
+ * for the turn's start with the whole budget. Each step gives memory what the system prompt and
  * the active tools' schemas leave of the budget, and fails with
  * `context.budget` when they leave nothing. Everything
  * where this runs (the policy's services, the turn's, a host layer's) is
@@ -107,9 +110,8 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
   const tasks = yield* TurnTasks
   const tools = yield* (yield* TurnToolbox).tools
   const session = memory.session
-  const runId = (yield* session.renderRecipe("none")).currentRun
+  const run = yield* memory.startRun
   const defaultModel = Context.getOption(runServices, LanguageModel.LanguageModel)
-  const number = yield* memory.number
   const limits: LoopLimits = { ...defaultLimits, ...options.limits, ...policy.limits }
   const budget = policy.budgetTokens ?? options.budgetTokens ?? defaultBudgetTokens
   if (!isBudgetTokens(budget)) return yield* Effect.fail(failure("turn.budget", `budgetTokens must be an integer of at least 1, not ${budget}`))
@@ -134,7 +136,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
     const directive = policy.step === undefined ? noDirective : yield* inRun(policy.step(info))
     yield* Option.match(directive.context, {
       onNone: () => Effect.void,
-      onSome: (text) => session.record([{ _tag: "StepContext", step: info.stepIndex, text }], info.stepIndex).pipe(Effect.asVoid),
+      onSome: (text) => session.record([{ _tag: "StepContext", step: info.stepIndex, run: run.ordinal, text }], info.stepIndex).pipe(Effect.asVoid),
     })
     return { choice, system, directive }
   })
@@ -148,11 +150,11 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
         `The system prompt and tool schemas take ${reserved} tokens, all of the ${budget}-token context budget: raise budgetTokens or offer fewer tools`))
     }
     yield* session.maintain({ phase: "step", lastUsage: info.lastUsage, budgetTokens: budget - reserved, views: tools.views })
-    const built = yield* session.build({ stepContext: stepContext === "tail" ? "tail" : "none" })
-    const render = yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none")
+    const built = yield* session.build({ stepContext: stepContext === "tail" ? "tail" : "none", run: run.ordinal })
+    const render = yield* session.renderRecipe(stepContext === "tail" ? "tail" : "none", run.ordinal)
     // A reaction may record memory now: the header's cut (`through`) keeps it for the next step.
     yield* events.publish({
-      _tag: "context.built", step: info.stepIndex, turn: number,
+      _tag: "context.built", step: info.stepIndex, turn: run.turn, run: run.ordinal,
       strategy: session.strategy.id, strategyVersion: session.strategy.version,
       fingerprint: built.fingerprint, systemFingerprint: fingerprintOf(system),
       estimatedTokens: built.estimatedTokens, reservedTokens: reserved, budgetTokens: budget,
@@ -167,7 +169,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
     })
     yield* Ref.set(planned, Option.some({ step: info.stepIndex, decision: { choice, system, directive }, model, through: built.through, render }))
     yield* memory.prepareRequest({
-      version: 1, runId, step: info.stepIndex,
+      version: 1, runId: run.id, run: run.ordinal, step: info.stepIndex,
       strategyVersion: session.strategy.version,
       system: finalSystem,
       render,
@@ -188,6 +190,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
   })
 
   return {
+    run,
     tools,
     handlers: Context.merge(runServices, tools.handlers),
     limits,
@@ -195,7 +198,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
     plan,
     dispatch: Effect.fnUntraced(function* (step, actual) {
       const stored = yield* memory.requestSnapshot
-      const header = yield* modelRequestHeaderOf(stored.requests, runId, step)
+      const header = yield* modelRequestHeaderOf(stored.requests, run.id, step, run.ordinal)
       const expected = yield* reconstructModelRequest(header, stored.entries)
       yield* checkModelRequest(expected, {
         prompt: actual.prompt,

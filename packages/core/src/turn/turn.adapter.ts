@@ -25,7 +25,7 @@ import { makeTurnEvents, makeTurnTasks } from "./turn-bus.js"
 import type { TurnEvent } from "./turn-event.entity.js"
 import { ModelRequestHeader } from "./model-request.entity.js"
 import type { TurnPhase } from "./turn-phase.entity.js"
-import { addContext, claim, numberOf, release, reply, sectionsDue, take } from "./turn-phase.entity.functions.js"
+import { addContext, claim, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
 import type { Transition } from "./turn-phase.entity.functions.js"
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
@@ -200,6 +200,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       onNone: () => Effect.fail(failure("turn.unstarted", "The user's message is not persisted yet")),
       onSome: (number) => Effect.succeed(number),
     }))),
+    startRun: transition(startRun(admitted.runId)),
     persistMessage: Effect.gen(function* () {
       yield* transition(claim)
       const number = admitted.turn

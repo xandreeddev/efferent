@@ -28,16 +28,16 @@ The step loop: `runLoop`, a provider-agnostic loop over effect/ai's `LanguageMod
 
 | Text | Source | Pinned by |
 |---|---|---|
-| `DEGENERATE_REPEAT_NUDGE` (a user-role message) | `src/loop.ts:241-245` | by reference only, `src/loop.test.ts:211`; wording unpinned |
-| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:247-248` | unpinned |
-| Default malformed corrective (`Your previous reply could not be parsed: …`) | `src/loop.ts:575-578` | contains, `src/loop.test.ts:171`, `:193` |
-| Default incomplete corrective (`The host reports that required actions are incomplete. …`) | `src/loop.ts:659` | unpinned |
+| `DEGENERATE_REPEAT_NUDGE` (a user-role message) | `src/loop.ts:251-255` | by reference only, `src/loop.test.ts:211`; wording unpinned |
+| `DEGENERATE_LOOP_STOP` (the reply of a run the breaker stopped with no text) | `src/loop.ts:257-258` | unpinned |
+| Default malformed corrective (`Your previous reply could not be parsed: …`) | `src/loop.ts:586-589` | contains, `src/loop.test.ts:171`, `:193` |
+| Default incomplete corrective (`The host reports that required actions are incomplete. …`) | `src/loop.ts:670` | unpinned |
 
 Steering text (`pendingInput`) is the host's; the fold's summary message is core's `handoffToMessage`.
 
 ## Erasure files
 
-`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:424`) and the tool choice into its tool-name union (`:430`).
+`src/loop.ts`, the call assembly: the instrumented toolkit's `handle` over the generic `Tools` (`:435`) and the tool choice into its tool-name union (`:441`).
 
 ## Layout
 
@@ -49,7 +49,7 @@ Steering text (`pendingInput`) is the host's; the fold's summary message is core
 
 ## Tests
 
-- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:84`), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
+- `src/step-loop.adapter.test.ts` runs core's `stepLoopConformance` against `StepLoopLive` and a minimal loop (`:86`), plus streaming fallback, failures (`loop.failed`, a turn's own tag) and trace content.
 - `src/loop.test.ts`: scripted-model runs (correctives, breaker, cap, the compact seam, steering, streaming parity and fallback, image refusals, a host's initial batch, spans) and the pure decisions (`:669`).
 - The sdk golden composes `stepLoopPlugin`.
 - Run: `bun test packages/plugin-agent-loop packages/sdk/src/agent.golden.test.ts`.

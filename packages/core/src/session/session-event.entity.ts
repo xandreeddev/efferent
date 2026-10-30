@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { RunId } from "../domain/run.entity.js"
+import { RunId, RunKey } from "../domain/run.entity.js"
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { TurnEnding, TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import { EntryId } from "../memory/memory-log.entity.js"
@@ -82,11 +82,13 @@ export const InboxDroppedData = Schema.Struct({
 export type InboxDroppedData = typeof InboxDroppedData.Type
 
 /**
- * One step's provider response as stored (`step.usage`): its step, model and
- * token usage. The rest of `assistant.message` is memory's `memory.message`.
+ * One step's provider response as stored (`step.usage`): its step, run (a
+ * record written before runs were counted reads 0), model and token usage.
+ * The rest of `assistant.message` is memory's `memory.message`.
  */
 export const StepUsageData = Schema.Struct({
   step: Schema.Int,
+  run: RunKey,
   model: Schema.OptionFromNullOr(Schema.String),
   usage: TokenUsage,
 })

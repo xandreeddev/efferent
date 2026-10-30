@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
 import type { Response, Tool } from "effect/ai"
 import { Cause, Context, Effect, Option, Ref, Stream } from "effect"
-import { addUsage, ConversationId, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, reasonOf, responseText, responseToAgentMessages, responseToolCalls, StepLoop, stepLoopConformance, toPromptMessages, TurnClosed, zeroUsage } from "@xandreed/core"
+import { addUsage, ConversationId, CurrentAgentStep, CurrentPromptCacheKey, CurrentTraceContent, extractUsage, harnessError, HarnessError, isTurnError, makeTurnEvents, makeTurnTasks, plannedCallIdOf, reasonOf, responseText, responseToAgentMessages, responseToolCalls, RunId, RunOrdinal, StepLoop, stepLoopConformance, toPromptMessages, TurnClosed, withToolCallIds, zeroUsage } from "@xandreed/core"
 import type { CompletionVerdict, RunResult, RunTools, StepInfo, StepRequest, TokenUsage, TurnError, TurnEvent } from "@xandreed/core"
 import { runSteps, STEP_LOOP } from "./step-loop.adapter.js"
 
@@ -16,14 +16,15 @@ const minimalLoop = StepLoop.of({
     const handlers = request.handlers as Context.Context<Tool.HandlersFor<Record<string, Tool.Any>>>
     const model = yield* Effect.orDie(Effect.fromOption(Context.getOption(request.handlers, LanguageModel.LanguageModel)))
     const toolkit = yield* request.tools.toolkit.pipe(Effect.provide(handlers))
+    const run = request.run.ordinal
     const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, TurnError> => request.completion(info).pipe(
-      Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, verdict })))
+      Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, run, verdict })))
     const step = (index: number, text: string, usage: TokenUsage): Effect.Effect<RunResult, TurnError> => Effect.gen(function* () {
       if (index >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text, steps: index, usage } satisfies RunResult
       const activeTools = yield* request.tools.active
       const info: StepInfo = { stepIndex: index, activeTools, lastUsage: Option.none() }
       const planned = index === 0 ? request.initial : Option.none()
-      yield* request.events.publish({ _tag: "step.started", step: index, planned: Option.isSome(planned), activeTools })
+      yield* request.events.publish({ _tag: "step.started", step: index, run, planned: Option.isSome(planned), activeTools })
       // One attempt: plan, check the dispatch, call. A refusal over an image is attempted once more after
       // onMediaRejected answers true.
       const attempt = Effect.gen(function* () {
@@ -31,7 +32,7 @@ const minimalLoop = StepLoop.of({
         const provider = Option.isSome(planned)
           ? yield* LanguageModel.make({
             generateText: () => Effect.succeed([
-              ...planned.value.calls.map((call, position) => ({ type: "tool-call" as const, id: `planned:${position}`, name: call.name, params: call.params, providerExecuted: false })),
+              ...planned.value.calls.map((call, position) => ({ type: "tool-call" as const, id: plannedCallIdOf(request.run, position), name: call.name, params: call.params, providerExecuted: false })),
               { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: { total: 0 }, outputTokens: { total: 0 } } },
             ]),
             streamText: () => Stream.empty,
@@ -60,15 +61,16 @@ const minimalLoop = StepLoop.of({
           : Effect.fail(error)),
         Effect.mapError((error) => isTurnError(error) ? error : harnessError("loop.failed", reasonOf(Cause.fail(error)), error)),
       )
-      const content: ReadonlyArray<Response.AnyPart> = response.content
+      // A provider's id-less calls get ids of this run's own.
+      const content: ReadonlyArray<Response.AnyPart> = withToolCallIds(response.content, index, request.run)
       const entries = yield* request.record(index, responseToAgentMessages(content))
       const used = extractUsage(undefined, content)
       const total = addUsage(usage, used)
       yield* request.events.publish({
-        _tag: "assistant.message", step: index, text: responseText(content), reasoning: "", model: Option.none(),
+        _tag: "assistant.message", step: index, run, text: responseText(content), reasoning: "", model: Option.none(),
         toolCalls: responseToolCalls(content).map((call) => ({ id: call.id, tool: call.toolName, input: call.args })), usage: used,
       })
-      yield* request.events.publish({ _tag: "step.ended", step: index, status: "completed", results: entries.flatMap((entry) =>
+      yield* request.events.publish({ _tag: "step.ended", step: index, run, status: "completed", results: entries.flatMap((entry) =>
         entry.body._tag === "ToolResult" ? [{ entry: entry.id, toolCallId: entry.body.toolCallId, tool: entry.body.toolName, ok: !entry.body.isError }] : []) })
       const first = yield* evaluate(info)
       const verdict = first.complete || first.awaiting.length === 0 ? first : yield* request.tasks.await(first.awaiting).pipe(Effect.andThen(evaluate(info)))
@@ -117,6 +119,7 @@ const runWith = (model: LanguageModel.LanguageModel, options: {
   }
   const steps = options.steps ?? 1
   const result = yield* runSteps({
+    run: { id: RunId.make("run-1"), turn: 1, ordinal: RunOrdinal.make(0) },
     tools,
     handlers: Context.make(LanguageModel.LanguageModel, model) as Context.Context<never>,
     limits: { maxSteps: 6, toolConcurrency: 1, streaming: options.streaming, requireCompletion: false },
@@ -155,7 +158,7 @@ describe("runSteps streaming", () => {
     expect(result.outcome).toBe("completed")
     expect(result.text).toBe("answer")
     const fallbacks = events.filter((event) => event._tag === "stream.fallback")
-    expect(fallbacks).toEqual([{ _tag: "stream.fallback", step: 0, message: expect.stringContaining("the gateway closed the stream") }])
+    expect(fallbacks).toEqual([{ _tag: "stream.fallback", step: 0, run: RunOrdinal.make(0), message: expect.stringContaining("the gateway closed the stream") }])
     // Inside its step: after step.started, before the step's assistant.message.
     const tags = events.map((event) => event._tag)
     expect(tags.indexOf("step.started")).toBeLessThan(tags.indexOf("stream.fallback"))

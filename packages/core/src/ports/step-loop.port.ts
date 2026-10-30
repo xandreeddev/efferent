@@ -2,6 +2,7 @@ import { Context } from "effect"
 import type { Effect, Option } from "effect"
 import type { LanguageModel, Prompt, Tool } from "effect/ai"
 import type { AgentMessage } from "../domain/message.entity.js"
+import type { RunRef } from "../domain/run.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { LogEntry } from "../memory/memory-log.entity.js"
@@ -36,6 +37,15 @@ export interface StepPlan {
 }
 
 export interface StepRequest {
+  /**
+   * The run this request is (`TurnMemory.startRun`): the loop puts its
+   * ordinal on the step events it publishes (`step.*`, `assistant.message`,
+   * `completion.evaluated`, `stream.fallback`) and mints the ids of a
+   * provider's id-less tool calls from it (`toolCallIdOf`, and
+   * `plannedCallIdOf` for a planned batch), so they differ across the runs
+   * and turns of a session.
+   */
+  readonly run: RunRef
   readonly tools: RunTools
   /** What the tool handlers run with: the turn's services (its LanguageModel included) and the registry's handlers. */
   readonly handlers: Context.Context<never>
@@ -104,7 +114,8 @@ export interface RunResult {
  * the run's `assistant.message` events carried; the model calls read the
  * request's `captureTraceContent` as `CurrentTraceContent`; a streamed
  * step's reasoning reaches the next request with its provider metadata, as
- * a non-streamed one's does. A loop that streams and falls back to a
+ * a non-streamed one's does; the step events carry the request's run
+ * ordinal, and id-less tool calls get ids distinct across runs and turns. A loop that streams and falls back to a
  * non-streamed call publishes `stream.fallback`; the kit's streams do not
  * fail, so it does not check that.
  * Every real provider attempt runs `request.dispatch` immediately before

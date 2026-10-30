@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Schema } from "effect"
 import { Tool } from "effect/ai"
+import { RunOrdinal } from "../domain/run.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { modelRequestTools } from "./model-request.entity.functions.js"
 import { MemoryRenderRecipe } from "./model-request.entity.js"
@@ -52,5 +53,10 @@ describe("a request header's render recipe", () => {
   test("one written before 0.14.0 has no media budget in characters: it reads the request limit", () => {
     const old = { strategy: "window", currentTurn: 1, currentRun: "r", turnContext: "current", replies: true, stepContext: "tail", digests: true, media: { mode: "none", maxImages: 8 } }
     expect(Schema.decodeUnknownSync(MemoryRenderRecipe)(old).media).toEqual({ mode: "none", maxImages: 8, maxChars: 20_000_000 })
+  })
+
+  test("one written before runs were counted renders the step context of the turn's first run", () => {
+    const old = { strategy: "window", currentTurn: 1, currentRun: "r", turnContext: "current", replies: true, stepContext: "tail", digests: true, media: { mode: "none", maxImages: 8 } }
+    expect(Schema.decodeUnknownSync(MemoryRenderRecipe)(old).run).toBe(RunOrdinal.make(0))
   })
 })

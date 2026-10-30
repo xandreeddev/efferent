@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Option, Schema } from "effect"
 import fc from "fast-check"
 import { ConversationId } from "../domain/message.entity.js"
-import { InvocationId, RunId } from "../domain/run.entity.js"
+import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
 import { EntryId, LogEntry } from "../memory/memory-log.entity.js"
 import type { LogBody } from "../memory/memory-log.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
@@ -96,13 +96,16 @@ describe("the memory log stored as session events", () => {
 
 /** A bus event's stored draft, encoded synchronously (the tests' events all encode). */
 const storedOf = (turn: number, event: TurnEvent) => Effect.runSync(draftOfTurnEvent(turn, event))
+/** The turn's first run, and a later one. */
+const run = RunOrdinal.make(0)
+const later = RunOrdinal.make(2)
 
 describe("the turn's bus events as stored", () => {
   const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
-  test("an assistant message keeps only its step, model and usage; memory holds the content", () => {
-    const event: TurnEvent = { _tag: "assistant.message", step: 1, text: "hello", reasoning: "", model: Option.some("m"), toolCalls: [], usage }
+  test("an assistant message keeps only its step, run, model and usage; memory holds the content", () => {
+    const event: TurnEvent = { _tag: "assistant.message", step: 1, run: later, text: "hello", reasoning: "", model: Option.some("m"), toolCalls: [], usage }
     const stored = storedOf(3, event)
-    expect(Option.map(stored, (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data])).toEqual(Option.some(["step.usage", 3, { step: 1, model: "m", usage }]))
+    expect(Option.map(stored, (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data])).toEqual(Option.some(["step.usage", 3, { step: 1, run: 2, model: "m", usage }]))
   })
   test("a completed tool drops its input and result; transient and duplicated events are not stored", () => {
     const completed: TurnEvent = {
@@ -135,17 +138,17 @@ describe("the turn's bus events as stored", () => {
     expect(big._tag === "Failure" ? big.failure._tag : "stored").toBe("SchemaError")
   })
   test("an event its schema refuses fails with the SchemaError instead of throwing", () => {
-    const fractional: TurnEvent = { _tag: "step.started", step: 1.5, planned: false, activeTools: [] }
-    const untrimmed: TurnEvent = { _tag: "completion.evaluated", step: 0, verdict: { complete: false, awaiting: [" work "], facts: {} } }
+    const fractional: TurnEvent = { _tag: "step.started", step: 1.5, run, planned: false, activeTools: [] }
+    const untrimmed: TurnEvent = { _tag: "completion.evaluated", step: 0, run, verdict: { complete: false, awaiting: [" work "], facts: {} } }
     const results = [fractional, untrimmed].map((event) => Effect.runSync(Effect.result(draftOfTurnEvent(1, event))))
     expect(results.map((result) => result._tag === "Failure" ? result.failure._tag : "stored")).toEqual(["SchemaError", "SchemaError"])
   })
   test("a refused tool call is stored without its input; a stream fallback whole", () => {
     const refused: TurnEvent = { _tag: "tool.refused", step: 1, invocationId: InvocationId.make("run-1:call:3"), tool: "archive", input: { id: "secret" }, reason: "forbidden", message: "archive requires records.write" }
-    const fallback: TurnEvent = { _tag: "stream.fallback", step: 0, message: "the gateway closed the stream" }
+    const fallback: TurnEvent = { _tag: "stream.fallback", step: 0, run, message: "the gateway closed the stream" }
     expect([refused, fallback].map((event) => Option.map(storedOf(4, event), (draft) => [draft.kind, Option.getOrNull(draft.turn), draft.data]))).toEqual([
       Option.some(["tool.refused", 4, { step: 1, invocationId: "run-1:call:3", tool: "archive", reason: "forbidden", message: "archive requires records.write" }]),
-      Option.some(["stream.fallback", 4, { step: 0, message: "the gateway closed the stream" }]),
+      Option.some(["stream.fallback", 4, { step: 0, run: 0, message: "the gateway closed the stream" }]),
     ])
   })
 })
@@ -200,11 +203,11 @@ describe("the journal's schemas", () => {
   test("what the bus stores decodes with its kind's schema, and nothing it omits is required", () => {
     const usage = { inputTokens: 1, outputTokens: 2, totalTokens: 3, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }
     const events: ReadonlyArray<TurnEvent> = [
-      { _tag: "assistant.message", step: 1, text: "hello", reasoning: "", model: Option.none(), toolCalls: [], usage },
+      { _tag: "assistant.message", step: 1, run, text: "hello", reasoning: "", model: Option.none(), toolCalls: [], usage },
       { _tag: "tool.completed", step: 0, invocationId: InvocationId.make("i"), tool: "lookup", input: { q: 1 }, ok: true, result: { r: 1 }, encoded: { r: 1 }, durationMs: 5, labels: {}, stage: Option.none() },
-      { _tag: "step.started", step: 0, planned: false, activeTools: ["lookup"] },
+      { _tag: "step.started", step: 0, run, planned: false, activeTools: ["lookup"] },
       { _tag: "tool.refused", step: 0, invocationId: InvocationId.make("i"), tool: "lookup", input: { q: 1 }, reason: "call-limit", message: "limit" },
-      { _tag: "stream.fallback", step: 0, message: "no stream" },
+      { _tag: "stream.fallback", step: 0, run, message: "no stream" },
     ]
     const stored = events.flatMap((event) => Option.toArray(storedOf(1, event)))
     expect(stored.map((draft) => [draft.kind, decodes(draft.kind, draft.data)])).toEqual([
@@ -212,7 +215,7 @@ describe("the journal's schemas", () => {
     ])
   })
   test("a memory entry decodes as its kind's envelope; the inbox records decode as written", async () => {
-    const entry: LogEntry = { id: EntryId.make("r:1"), runId: RunId.make("r"), turn: 1, step: 0, at: 5, body: { _tag: "StepContext", step: 0, text: "STEP 0" } }
+    const entry: LogEntry = { id: EntryId.make("r:1"), runId: RunId.make("r"), turn: 1, step: 0, at: 5, body: { _tag: "StepContext", step: 0, run, text: "STEP 0" } }
     const draft = Option.getOrThrow(await Effect.runPromise(draftOfEntry(entry)))
     expect([draft.kind, decodes(draft.kind, draft.data), decodes("memory.message", draft.data)]).toEqual(["memory.step", true, false])
     expect(decodes("inbox.queued", { id: "a", source: {}, content: "hello" })).toBe(true)
@@ -323,7 +326,7 @@ describe("stored events read by their kind", () => {
     expect(await Effect.runPromise(readStored("turn.ended", [event(1, "inbox.queued", { id: 5 })]))).toEqual([])
   })
 
-  test("a lookup decodes a turn's keys and a request's run and step, never the rest", async () => {
+  test("a lookup decodes a turn's keys and a request's run id, run and step, never the rest", async () => {
     const broken = { ...started, userMessage: { attachments: "not images" } }
     const starts = [event(1, "turn.started", broken), event(2, "turn.started", { ...started, runId: "run-2", key: "k2", entry: "run-2:0" })]
     // The whole record does not decode; its keys do.
@@ -333,15 +336,19 @@ describe("stored events read by their kind", () => {
       [1, { runId: RunId.make("run-1"), key: "k", entry: EntryId.make("run-1:0") }],
       [2, { runId: RunId.make("run-2"), key: "k2", entry: EntryId.make("run-2:0") }],
     ])
-    const headers = await Effect.runPromise(readStoredKeys("request.prepared", [event(3, "request.prepared", { ...header("run-1", 2, "system"), system: 42 })]))
-    expect(headers.map((found) => found.keys)).toEqual([{ runId: RunId.make("run-1"), step: 2 }])
-    expect(await failed(readStored("request.prepared", headers.map((found) => found.event)))).toBe(true)
+    const headers = await Effect.runPromise(readStoredKeys("request.prepared", [
+      event(3, "request.prepared", { ...header("run-1", 2, "system"), system: 42 }),
+      event(4, "request.prepared", { ...header("run-1", 2, "system"), run: 2 }),
+    ]))
+    expect(headers.map((found) => found.keys)).toEqual([{ runId: RunId.make("run-1"), run, step: 2 }, { runId: RunId.make("run-1"), run: later, step: 2 }])
+    expect(await failed(readStored("request.prepared", headers.slice(0, 1).map((found) => found.event)))).toBe(true)
     // A key that does not decode fails the lookup.
     expect(await failed(readStoredKeys("turn.started", [event(4, "turn.started", { ...started, key: 7 })]))).toBe(true)
   })
 
-  test("a request header decodes whole: one written before 0.14.0 reads the request's media limit", async () => {
+  test("a request header decodes whole: one written before 0.14.0 reads the request's media limit, one written before runs were counted the first run", async () => {
     const [read] = await Effect.runPromise(readStored("request.prepared", [event(1, "request.prepared", header("run-1", 0, "system"))]))
     expect([read?.data.runId, read?.data.step, read?.data.system, read?.data.render.media.maxChars]).toEqual(["run-1", 0, "system", 20_000_000])
+    expect([read?.data.run, read?.data.render.run]).toEqual([run, run])
   })
 })

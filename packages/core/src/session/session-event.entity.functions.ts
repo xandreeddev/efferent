@@ -128,8 +128,8 @@ export const readStored = <K extends StoredKind>(kind: K, events: ReadonlyArray<
 
 /** What a lookup of a `turn.started` decodes: its run, key and entry, never the user's message (its images are base64). */
 export const TurnStartedKeys = TurnStartedData.mapFields(Struct.pick(["runId", "key", "entry"]))
-/** What a lookup of a `request.prepared` decodes: its run and step, never its system text and tools. */
-export const RequestPreparedKeys = ModelRequestHeader.mapFields(Struct.pick(["runId", "step"]))
+/** What a lookup of a `request.prepared` decodes: its run id, run and step, never its system text and tools. */
+export const RequestPreparedKeys = ModelRequestHeader.mapFields(Struct.pick(["runId", "run", "step"]))
 
 /** The kinds a lookup finds by a few keys, and the keys it decodes (`readStoredKeys`). */
 export const StoredKeys = {
@@ -152,7 +152,7 @@ const keyDecoders: { readonly [K in KeyedKind]: (data: unknown) => Effect.Effect
 /**
  * The events of `kind` among these, in order, each with only its keys
  * decoded (`StoredKeys`): how a lookup finds a turn by its key or run, or a
- * request by its run and step, without decoding (or copying) the rest. It
+ * request by its run id, run and step, without decoding (or copying) the rest. It
  * fails as `readStored` does; decode the one event found with `readStored`.
  */
 export const readStoredKeys = <K extends KeyedKind>(kind: K, events: ReadonlyArray<SessionLogEvent>): Effect.Effect<ReadonlyArray<StoredKeysOf<K>>, Schema.SchemaError> =>
@@ -236,7 +236,7 @@ export const turnUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number
 /**
  * The stored form of one bus event of turn `turn`: its name and encoded
  * payload. Transient events are not stored; a host's event keeps its name
- * and data; an assistant message is stored only as the step's model and
+ * and data; an assistant message is stored only as the step's run, model and
  * usage (its content is memory's `memory.message`); `tool.completed` leaves
  * out its input and result, `tool.refused` its input. The payload is stored
  * as JSON (`storedJson`: `undefined` fields dropped). An event its schema
@@ -248,7 +248,7 @@ export const draftOfTurnEvent = (turn: number, event: TurnEventType): Effect.Eff
   if (TransientTurnEvents.includes(event._tag) || RECORDED_ELSEWHERE.has(event._tag)) return Effect.succeed(Option.none())
   if (event._tag === "host") return storedJson(event.data).pipe(Effect.map((data) => Option.some({ kind: event.name, turn: Option.some(turn), data })))
   if (event._tag === "assistant.message") {
-    return encodeStepUsage({ step: event.step, model: event.model, usage: event.usage }).pipe(
+    return encodeStepUsage({ step: event.step, run: event.run, model: event.model, usage: event.usage }).pipe(
       Effect.map((encoded) => Option.some({ kind: "step.usage", turn: Option.some(turn), data: { ...encoded } })),
     )
   }

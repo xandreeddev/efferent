@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option, Tracer } from "effect"
-import { ConversationId, ConversationMemory, entryId, estimateMessageTokens, HarnessError, renderLog, RunContext, RunId, ToolCallId, toolParametersSchema, UserMessage } from "@xandreed/core"
+import { ConversationId, ConversationMemory, entryId, estimateMessageTokens, HarnessError, renderLog, RunContext, RunId, RunOrdinal, ToolCallId, toolParametersSchema, UserMessage } from "@xandreed/core"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { memoryWindowPlugin, RECALL_PAGE_CHARS, recallCapability, recallPage, spillPreview, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
@@ -24,7 +24,7 @@ const log = (big: string): ReadonlyArray<LogEntry> => [
   at(4, 2, { _tag: "TurnStarted", userMessage: new UserMessage({ text: "second question" }) }), call(5, 2, 6), result(6, 2, big),
 ]
 const policy = windowPolicy(config)
-const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: RunId.make("run-2") })
+const render = (entries: ReadonlyArray<LogEntry>) => renderLog(entries, { ...policy.render, stepContext: "tail", strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: RunId.make("run-2"), run: RunOrdinal.make(0) })
 const maintain = (entries: ReadonlyArray<LogEntry>, budgetTokens: number, phase: "turn-start" | "step" = "turn-start") =>
   Effect.runPromise(Effect.result(policy.maintain({ entries, signal: { phase, lastUsage: Option.none(), budgetTokens, views }, turn: 2, runId: RunId.make("run-2"), render })))
 

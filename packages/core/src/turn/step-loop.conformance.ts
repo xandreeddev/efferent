@@ -7,7 +7,8 @@ import { sameUsage } from "../conformance.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
-import { InvocationId, RunId } from "../domain/run.entity.js"
+import { InvocationId, RunId, RunOrdinal } from "../domain/run.entity.js"
+import type { RunRef } from "../domain/run.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import { CurrentPromptCacheKey } from "../loop/cacheKey.js"
 import { CurrentAgentStep } from "../loop/stepContext.js"
@@ -37,6 +38,8 @@ type Part = Response.PartEncoded
 const usage = { inputTokens: { total: 10 }, outputTokens: { total: 2 } }
 /** The run the scenarios' tail entries are recorded under. */
 const RUN = RunId.make("conformance")
+/** The run a scenario is, unless it names another: the first of turn 1. */
+const FIRST_RUN: RunRef = { id: RUN, turn: 1, ordinal: RunOrdinal.make(0) }
 /** A scripted provider reply calling `probe`. */
 export const probeCall = (id: string, n: number): ReadonlyArray<Part> => [
   { type: "tool-call", id, name: Probe.name, params: { n }, providerExecuted: false },
@@ -101,6 +104,8 @@ interface Scenario {
   readonly stream?: ReadonlyArray<ReadonlyArray<StreamPart>>
   /** Each plan holds the messages recorded so far after the user's, as a memory renders them (only the user's by default). */
   readonly replay?: boolean
+  /** The request's `run` (`FIRST_RUN` by default). */
+  readonly run?: RunRef
 }
 
 /** A provider's refusal of a request over an image. */
@@ -198,6 +203,7 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
   })))
   yield* scenario.before?.(tasks) ?? Effect.void
   const request: StepRequest = {
+    run: scenario.run ?? FIRST_RUN,
     tools,
     handlers: Context.merge(handlers, Context.make(LanguageModel.LanguageModel, model)) as Context.Context<never>,
     limits: { maxSteps: scenario.maxSteps ?? 6, toolConcurrency: 1, streaming: scenario.streaming ?? false, requireCompletion: false },
@@ -242,9 +248,10 @@ const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step:
  * `CurrentPromptCacheKey` (the dispatch check compares it with the request's
  * header), a request refused over an image planned again and sent once more
  * when `onMediaRejected` answers true, failing the step when it answers false,
- * and a streamed step's reasoning reaching the next request with its provider
+ * a streamed step's reasoning reaching the next request with its provider
  * metadata (Anthropic's signed and redacted thinking), as a non-streamed one's
- * does.
+ * does, and the ids of planned and id-less tool calls distinct across the runs
+ * and turns of a session, with the request's run ordinal on every step event.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
   {
@@ -412,6 +419,23 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
       const expected = [{ text: "think", options: signed }, { text: "", options: redacted }]
       yield* expect("stream-metadata", prompts.length === 2 && canonicalJson(replayed) === canonicalJson(expected),
         `${prompts.length} provider calls; the second request's reasoning was ${JSON.stringify(replayed)}, not ${JSON.stringify(expected)}`)
+    }),
+  },
+  {
+    name: "id-less tool calls get ids distinct across two runs of a turn and two turns, and the step events carry the run",
+    run: Effect.gen(function* () {
+      const runs: ReadonlyArray<RunRef> = [FIRST_RUN, { ...FIRST_RUN, ordinal: RunOrdinal.make(1) }, { id: RunId.make("conformance-2"), turn: 2, ordinal: RunOrdinal.make(0) }]
+      // A planned call, then a provider's call without an id, in each run.
+      const observed = yield* Effect.forEach(runs, (run) => observe(loop, {
+        run, initial: { calls: [{ name: Probe.name, params: { n: 1 } }], skills: [] }, script: [probeCall("", 2), textReply("done")],
+      }), { concurrency: 1 })
+      const ids = observed.flatMap(({ recorded }) => recorded.flatMap((entry) => entry.body._tag === "ToolResult" ? [String(entry.body.toolCallId)] : []))
+      yield* expect("run-ids", ids.length === 6 && ids.every((id) => id.length > 0) && new Set(ids).size === ids.length,
+        `the planned and id-less calls of two runs of a turn and of another turn were given the ids ${ids.join(", ")}`)
+      const marked = observed.flatMap(({ events }, index) => events.flatMap((event) => "run" in event ? [{ tag: event._tag, run: event.run, expected: runs[index]?.ordinal }] : []))
+      const stray = marked.filter((event) => event.run !== event.expected)
+      yield* expect("run-events", stray.length === 0 && ["step.started", "step.ended", "assistant.message", "completion.evaluated"].every((tag) => marked.some((event) => event.tag === tag)),
+        stray.length === 0 ? `the step events published were ${[...new Set(marked.map((event) => event.tag))].join(", ")}` : `${stray.map((event) => `${event.tag} carried run ${event.run}, not ${event.expected}`).join("; ")}`)
     }),
   },
   {

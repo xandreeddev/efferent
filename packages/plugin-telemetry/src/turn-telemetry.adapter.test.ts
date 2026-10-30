@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Duration, Effect, Exit, Layer, Metric, Option, Tracer } from "effect"
-import { costOf, InvocationId, makeTurnEvents, RunContext, sumUsage, tokenUsage, TurnEvents, usageBreakdown } from "@xandreed/core"
+import { costOf, InvocationId, makeTurnEvents, RunContext, RunOrdinal, sumUsage, tokenUsage, TurnEvents, usageBreakdown } from "@xandreed/core"
 import type { TurnEvent } from "@xandreed/core"
 import { capturingTracer, MODEL, PRICE, RESPONSES, scriptedTurn, valueIn } from "./scripted-turn.testing.js"
 import { TelemetryMetrics } from "./telemetry-metrics.js"
@@ -106,13 +106,14 @@ describe("TurnTelemetryLive in a host's own composition", () => {
   /** A RunContext with only what the layer reads: the session, run and turn. */
   const runContext = Layer.succeed(RunContext, { session: { id: "session-7", owner: "host" }, runId: "run-7", admitted: { turn: 4 } } as never)
   const usage = tokenUsage({ inputTokens: 40, outputTokens: 10, cacheReadTokens: 20, reasoningTokens: 2 })
+  const run = RunOrdinal.make(0)
   const published: ReadonlyArray<TurnEvent> = [
-    { _tag: "step.started", step: 1, planned: false, activeTools: [] },
-    { _tag: "assistant.message", step: 0, text: "", reasoning: "", model: Option.none(), toolCalls: [], usage: tokenUsage({ inputTokens: 0, outputTokens: 0 }) },
-    { _tag: "assistant.message", step: 1, text: "hi", reasoning: "", model: Option.none(), toolCalls: [], usage },
+    { _tag: "step.started", step: 1, run, planned: false, activeTools: [] },
+    { _tag: "assistant.message", step: 0, run, text: "", reasoning: "", model: Option.none(), toolCalls: [], usage: tokenUsage({ inputTokens: 0, outputTokens: 0 }) },
+    { _tag: "assistant.message", step: 1, run, text: "hi", reasoning: "", model: Option.none(), toolCalls: [], usage },
     { _tag: "tool.completed", step: 1, invocationId: InvocationId.make("run-7:call:1"), tool: "probe", input: {}, ok: false, result: "no", encoded: "no", durationMs: 12, labels: {}, stage: Option.none() },
-    { _tag: "stream.fallback", step: 1, message: "cut off" },
-    { _tag: "step.ended", step: 1, status: "failed", results: [] },
+    { _tag: "stream.fallback", step: 1, run, message: "cut off" },
+    { _tag: "step.ended", step: 1, run, status: "failed", results: [] },
   ]
 
   test("writes to the span current where it is built, not the publisher's", async () => {

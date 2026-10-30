@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Toolkit } from "effect/ai"
-import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Tracer } from "effect"
+import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Result, Tracer } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import { failureCode } from "../conformance.functions.js"
@@ -99,6 +99,22 @@ describe("TurnLive", () => {
       before: "turn.unstarted", recordedBefore: 0, number: 1, numberAfter: 1, entries: ["run-1:0:TurnStarted"], again: "turn.persisted",
       stored: ["turn.started", "probe.seen"], storedFirst: ["probe.seen:true"],
     })
+  })
+
+  test("each run of the turn takes the next ordinal, once the message is taken and until the reply", async () => {
+    const seen = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      return yield* inTurn(recorded, Effect.gen(function* () {
+        const turn = yield* TurnMemory
+        const code = <A>(exit: Result.Result<A, HarnessError>) => exit._tag === "Failure" ? exit.failure.code : "started"
+        const early = code(yield* Effect.result(turn.startRun))
+        yield* turn.persistMessage
+        const runs = [yield* turn.startRun, yield* turn.startRun]
+        yield* turn.persistReply({ outcome: "completed", reply: Option.some("done") })
+        return { early, runs: runs.map((run) => `${run.id} turn ${run.turn} run ${run.ordinal}`), after: code(yield* Effect.result(turn.startRun)) }
+      }))
+    }))
+    expect(seen).toEqual({ early: "turn.unstarted", runs: ["run-1 turn 1 run 0", "run-1 turn 1 run 1"], after: "turn.closed" })
   })
 
   test("a message memory would number differently from the session is refused", async () => {

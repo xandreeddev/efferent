@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Option } from "effect"
 import type { Schema } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
-import { RunId } from "../domain/run.entity.js"
+import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import type { JsonObject, SessionLogEvent } from "../session/session-log.entity.js"
 import { modelRequestHeaderOf } from "./model-request.entity.functions.js"
 
@@ -16,12 +16,21 @@ const header = (runId: Schema.Json, step: Schema.Json, system: Schema.Json): Jso
 
 const prepared = (seq: number, data: JsonObject): SessionLogEvent => ({ session, seq, turn: Option.some(1), kind: "request.prepared", at: 0, data })
 
-/** The header found for run-1's step 0, or the code it failed with. */
-const found = (events: ReadonlyArray<SessionLogEvent>) => Effect.runPromise(modelRequestHeaderOf(events, RunId.make("run-1"), 0).pipe(
+/** The header found for step 0 of run-1's run `run` (its first by default), or the code it failed with. */
+const found = (events: ReadonlyArray<SessionLogEvent>, run = 0) => Effect.runPromise(modelRequestHeaderOf(events, RunId.make("run-1"), 0, RunOrdinal.make(run)).pipe(
   Effect.match({ onFailure: (error) => error.code, onSuccess: (decoded) => decoded.system }),
 ))
 
 describe("a request's stored header, found by its run and step", () => {
+  test("each run of a turn finds its own header for a step; one stored before runs were counted is the first run's", async () => {
+    const runs = [
+      prepared(1, header("run-1", 0, "before runs were counted")),
+      prepared(2, { ...header("run-1", 0, "second run"), run: 1 }),
+    ]
+    expect([await found(runs, 0), await found(runs, 1), await found(runs, 2)]).toEqual(["before runs were counted", "second run", "request.missing"])
+    expect(await found([...runs, prepared(3, { ...header("run-1", 0, "first run"), run: 0 })], 0)).toBe("first run")
+  })
+
   test("the last header of the run and step is decoded; one of another run or step is not", async () => {
     expect(await found([
       prepared(1, header("run-1", 0, "first")),

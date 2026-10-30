@@ -6,7 +6,7 @@ import { failureCode, pixelPng } from "../conformance.functions.js"
 import { mediaFromBase64, mediaLabel, mediaSlotsOf } from "../domain/media.entity.functions.js"
 import type { Media } from "../domain/media.entity.js"
 import { ConversationId, ToolCallId } from "../domain/message.entity.js"
-import { RunId } from "../domain/run.entity.js"
+import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { ConversationMemory, LogHandle, MemorySession, ToolViews } from "../ports/memory.port.js"
@@ -19,6 +19,9 @@ import { canonicalJson } from "./memory-log.entity.functions.js"
 import { LogEntry } from "./memory-log.entity.js"
 
 const conversation = ConversationId.make("00000000-0000-4000-8000-00000000c0f0")
+/** The turn's first run, and its second: what a build names for its step context. */
+const firstRun = RunOrdinal.make(0)
+const secondRun = RunOrdinal.make(1)
 
 /**
  * A memory log held as session events, through the storage codec: what a
@@ -80,7 +83,7 @@ const recordTurn = (session: MemorySession, userMessage: string, reply: string) 
 /**
  * The ConversationMemory contract, as checks any strategy must pass: own
  * entry ids, a log that reads back exactly after a reopen, views and
- * artifacts kept, a pure build, the step context only when asked,
+ * artifacts kept, a pure build, the step context only when asked and only its own run's,
  * append-only maintenance, a reference transcript without tool traffic, and
  * a message's images kept through a reopen and built (never with an empty
  * text part): the current turn's as image parts, an earlier turn's as image
@@ -116,7 +119,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       yield* recordTurn(session, "find alpha", "found record-alpha")
       const reopened = yield* open(log, "run-1")
       yield* expect("reopen", (yield* encodeEntries("reopen", yield* reopened.entries)) === (yield* encodeEntries("reopen", yield* session.entries)), "the reopened log differs")
-      const [left, right] = [yield* session.build({ stepContext: "tail" }), yield* reopened.build({ stepContext: "tail" })]
+      const [left, right] = [yield* session.build({ stepContext: "tail", run: firstRun }), yield* reopened.build({ stepContext: "tail", run: firstRun })]
       yield* expect("reopen", left.fingerprint === right.fingerprint, "the reopened session builds a different context")
     })),
     check("tool results keep their views and artifacts", "views", (open, log) => Effect.gen(function* () {
@@ -130,16 +133,18 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
     check("build is a pure fold of the log", "pure", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")
       yield* recordTurn(session, "find alpha", "found record-alpha")
-      const [left, right] = [yield* session.build({ stepContext: "tail" }), yield* session.build({ stepContext: "tail" })]
+      const [left, right] = [yield* session.build({ stepContext: "tail", run: firstRun }), yield* session.build({ stepContext: "tail", run: firstRun })]
       yield* expect("pure", left.fingerprint === right.fingerprint && canonicalJson(left.messages) === canonicalJson(right.messages), "two builds differ")
     })),
-    check("the step context closes the tail only when asked", "step-context", (open, log) => Effect.gen(function* () {
+    check("the step context closes the tail only when asked, and only its own run's", "step-context", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")
       yield* session.record([said("find alpha")], 0)
-      yield* session.record([{ _tag: "StepContext", step: 0, text: "STEP-MARK" }], 0)
-      const tail = canonicalJson((yield* session.build({ stepContext: "tail" })).messages)
-      const none = canonicalJson((yield* session.build({ stepContext: "none" })).messages)
+      yield* session.record([{ _tag: "StepContext", step: 0, run: firstRun, text: "STEP-MARK" }], 0)
+      const tail = canonicalJson((yield* session.build({ stepContext: "tail", run: firstRun })).messages)
+      const none = canonicalJson((yield* session.build({ stepContext: "none", run: firstRun })).messages)
+      const later = canonicalJson((yield* session.build({ stepContext: "tail", run: secondRun })).messages)
       yield* expect("step-context", tail.includes("STEP-MARK") && !none.includes("STEP-MARK"), "the step context is misplaced")
+      yield* expect("step-context", !later.includes("STEP-MARK"), "the turn's second run was built with the first run's step context")
     })),
     check("maintenance only appends to the log", "append-only", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")
@@ -162,7 +167,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       yield* other.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "", attachments: [image] }) }], 0)
       const reopened = yield* open(log, "run-2")
       yield* expect("attachments", (yield* encodeEntries("attachments", yield* reopened.entries)) === (yield* encodeEntries("attachments", yield* other.entries)), "the reopened log lost or changed an image")
-      const users = (yield* reopened.build({ stepContext: "tail" })).messages.filter((message) => message.role === "user")
+      const users = (yield* reopened.build({ stepContext: "tail", run: firstRun })).messages.filter((message) => message.role === "user")
       const shown = users.map((message) => typeof message.content === "string"
         ? message.content.includes(mediaLabel(image)) ? "label" : "missing"
         : message.content.some((part) => part.type === "text" && part.text.length === 0) ? "empty text"
@@ -192,7 +197,7 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       const encoded = yield* encodeEntries("tool-media", entries)
       yield* expect("tool-media", encoded === (yield* encodeEntries("tool-media", yield* session.entries)), "the reopened log lost or changed the result's image")
       yield* expect("tool-media", encoded.split(image.data).length - 1 === 1, "the result's image is not stored exactly once")
-      const parts = (yield* reopened.build({ stepContext: "tail" })).messages.flatMap((message) => message.role === "tool" ? message.content : [])
+      const parts = (yield* reopened.build({ stepContext: "tail", run: firstRun })).messages.flatMap((message) => message.role === "tool" ? message.content : [])
       yield* expect("tool-media", parts.some((part) => (part.media ?? []).some((media) => media.fingerprint === image.fingerprint && media.data === image.data)),
         "the current turn's tool result was built without its image")
     })),

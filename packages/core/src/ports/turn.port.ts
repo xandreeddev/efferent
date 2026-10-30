@@ -114,6 +114,11 @@ export interface Turn {
   readonly context: (entry: { readonly id: string; readonly version: string; readonly text: string }) => Effect.Effect<void, TurnError>
   /** Answer without the loop; still a recorded turn. */
   readonly reply: (text: string) => Effect.Effect<TurnOutcome>
+  /**
+   * One run of the step loop under `policy`. A turn may run it again: each
+   * run takes the turn's next ordinal (`TurnMemory.startRun`), which its
+   * step contexts, requests and step events carry as `run`.
+   */
   readonly run: <R = never>(policy: TurnPolicy<R>) => Effect.Effect<RunResult, TurnError, R>
   /** The turn's usage so far, every run of it included (`RunContext.usage`). */
   readonly usage: Effect.Effect<TokenUsage>

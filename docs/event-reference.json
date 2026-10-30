@@ -176,7 +176,7 @@
     },
     {
       "name": "step.started",
-      "description": "Published by the step loop as each step starts. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`.",
+      "description": "Published by the step loop as each step starts. `run` is the run of the turn the step belongs to (0 for the turn's first run, one up for each later `Turn.run`; a record written before runs were counted reads 0), as on `step.ended`, `assistant.message`, `completion.evaluated`, `context.built` and `stream.fallback`: a step is named by its turn, run and step. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -188,6 +188,11 @@
           "name": "step",
           "type": "integer",
           "required": true
+        },
+        {
+          "name": "run",
+          "type": "integer",
+          "required": false
         },
         {
           "name": "planned",
@@ -215,6 +220,11 @@
             "minimum": -9007199254740991,
             "maximum": 9007199254740991
           },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
           "planned": {
             "type": "boolean"
           },
@@ -232,7 +242,7 @@
           "activeTools"
         ],
         "additionalProperties": true,
-        "description": "Published by the step loop as each step starts. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`."
+        "description": "Published by the step loop as each step starts. `run` is the run of the turn the step belongs to (0 for the turn's first run, one up for each later `Turn.run`; a record written before runs were counted reads 0), as on `step.ended`, `assistant.message`, `completion.evaluated`, `context.built` and `stream.fallback`: a step is named by its turn, run and step. `planned` is true for step 0 of a host-planned batch, which makes no provider call; `activeTools` are the tool names the step offers the model. Journaled as `step.started`."
       }
     },
     {
@@ -656,6 +666,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "status",
           "type": "\"completed\" | \"failed\" | \"cancelled\"",
           "required": true
@@ -679,6 +694,11 @@
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "status": {
@@ -745,6 +765,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "verdict",
           "type": "{ complete, awaiting, facts }",
           "required": true
@@ -763,6 +788,11 @@
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "verdict": {
@@ -888,6 +918,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "strategy",
           "type": "string",
           "required": true
@@ -951,6 +986,11 @@
           "turn": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "strategy": {
@@ -1183,7 +1223,7 @@
     },
     {
       "name": "assistant.message",
-      "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, model, usage): the content itself is memory's `memory.message`.",
+      "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage): the content itself is memory's `memory.message`.",
       "transient": false,
       "stored": {
         "as": "kind",
@@ -1199,6 +1239,11 @@
           "name": "step",
           "type": "integer",
           "required": true
+        },
+        {
+          "name": "run",
+          "type": "integer",
+          "required": false
         },
         {
           "name": "text",
@@ -1239,6 +1284,11 @@
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "text": {
@@ -1391,7 +1441,7 @@
           "usage"
         ],
         "additionalProperties": true,
-        "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, model, usage): the content itself is memory's `memory.message`."
+        "description": "Published by the step loop once per provider response, after that step's tools ran and its tail is recorded: the text, the reasoning, the model, the tool calls and the token usage (input with its cache reads and writes inside, output with its reasoning inside). A host-planned step 0 carries zero usage. Journaled only as `step.usage` (step, run, model, usage): the content itself is memory's `memory.message`."
       }
     },
     {
@@ -1480,6 +1530,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "message",
           "type": "string",
           "required": true
@@ -1498,6 +1553,11 @@
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "message": {
@@ -2212,7 +2272,7 @@
         },
         {
           "name": "body",
-          "type": "{ step, text }",
+          "type": "{ step, run, text }",
           "required": true
         }
       ],
@@ -2221,6 +2281,11 @@
           "name": "step",
           "type": "integer",
           "required": true
+        },
+        {
+          "name": "run",
+          "type": "integer",
+          "required": false
         },
         {
           "name": "text",
@@ -2266,6 +2331,11 @@
               "step": {
                 "type": "integer",
                 "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "run": {
+                "type": "integer",
+                "minimum": 0,
                 "maximum": 9007199254740991
               },
               "text": {
@@ -3781,6 +3851,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "planned",
           "type": "boolean",
           "required": true
@@ -3799,6 +3874,11 @@
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "planned": {
@@ -3830,6 +3910,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "status",
           "type": "\"completed\" | \"failed\" | \"cancelled\"",
           "required": true
@@ -3848,6 +3933,11 @@
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "status": {
@@ -3907,6 +3997,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "model",
           "type": "string | null",
           "required": true
@@ -3925,6 +4020,11 @@
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "model": {
@@ -4315,6 +4415,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "verdict",
           "type": "{ complete, awaiting, facts }",
           "required": true
@@ -4328,6 +4433,11 @@
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "verdict": {
@@ -4377,6 +4487,11 @@
           "name": "turn",
           "type": "integer",
           "required": true
+        },
+        {
+          "name": "run",
+          "type": "integer",
+          "required": false
         },
         {
           "name": "strategy",
@@ -4437,6 +4552,11 @@
           "turn": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "strategy": {
@@ -4663,6 +4783,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "message",
           "type": "string",
           "required": true
@@ -4676,6 +4801,11 @@
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
+            "maximum": 9007199254740991
+          },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
             "maximum": 9007199254740991
           },
           "message": {
@@ -4705,6 +4835,11 @@
           "required": true
         },
         {
+          "name": "run",
+          "type": "integer",
+          "required": false
+        },
+        {
           "name": "step",
           "type": "integer",
           "required": true
@@ -4721,7 +4856,7 @@
         },
         {
           "name": "render",
-          "type": "{ strategy, currentTurn, currentRun, turnContext, replies, stepContext, digests, media }",
+          "type": "{ strategy, currentTurn, currentRun, run, turnContext, replies, stepContext, digests, media }",
           "required": true
         },
         {
@@ -4774,6 +4909,11 @@
           "runId": {
             "type": "string"
           },
+          "run": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
           "step": {
             "type": "integer",
             "minimum": -9007199254740991,
@@ -4798,6 +4938,11 @@
               },
               "currentRun": {
                 "type": "string"
+              },
+              "run": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
               },
               "turnContext": {
                 "type": "string",
@@ -5252,8 +5397,8 @@
   "errorCodes": [
     {
       "code": "turn.closed",
-      "where": "`Agent.turn`, the turn writer (`TurnClosed`)",
-      "meaning": "The turn takes no more writes: someone else closed it (`cancelled`; `interrupted`, reaped; `removed`, its session removed), or it `ended` (its own end stored or under way, or its scope closed). The writer and `Agent.turn` fail with `TurnClosed`, whose `reason` says which; this is the code it stands for."
+      "where": "`Agent.turn`, the turn writer (`TurnClosed`); a run started after the reply (`TurnMemory.startRun`)",
+      "meaning": "The turn takes no more writes: someone else closed it (`cancelled`; `interrupted`, reaped; `removed`, its session removed), or it `ended` (its own end stored or under way, or its scope closed). The writer and `Agent.turn` fail with `TurnClosed`, whose `reason` says which; this is the code it stands for. A run of the step loop started once the turn's reply is recorded fails with a `HarnessError` of this code: the reply ends the turn's runs."
     },
     {
       "code": "turn.failed",
@@ -5293,7 +5438,7 @@
     {
       "code": "turn.unstarted",
       "where": "the turn's memory",
-      "meaning": "Memory was asked to record, or for the turn's number, before the user's message was taken."
+      "meaning": "Memory was asked to record, for the turn's number or to start a run, before the user's message was taken."
     },
     {
       "code": "turn.persisted",

@@ -23,13 +23,16 @@ const resultsOf = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<StepResult> 
  * run goes on without streaming. The run's `captureTraceContent` is
  * `CurrentTraceContent` for its model calls. A request a provider refuses
  * over an image goes to `request.onMediaRejected`; when it records an
- * `OmitMedia`, the step is planned again and sent once more.
+ * `OmitMedia`, the step is planned again and sent once more. Every step
+ * event carries the request's run ordinal, and the ids of a provider's
+ * id-less tool calls are minted from its run (`toolCallIdOf`).
  */
 export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effect.fn.Return<RunResult, TurnError> {
   const model = yield* Option.match(Context.getOption(request.handlers, LanguageModel.LanguageModel), {
     onNone: () => Effect.fail(new HarnessError({ code: "loop.model", message: "The turn's services carry no LanguageModel" })),
     onSome: Effect.succeed,
   })
+  const run = request.run.ordinal
   const hasInitial = Option.isSome(request.initial)
   const isPlanned = (step: number) => hasInitial && step === 0
   const cached = yield* Ref.make(Option.none<{ readonly step: number; readonly plan: StepPlan }>())
@@ -52,11 +55,11 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     if (done.has(step)) return
     yield* Ref.set(ended, new Set([...done, step]))
     const recorded = (yield* Ref.get(results)).get(step) ?? []
-    yield* request.events.publish({ _tag: "step.ended", step, status, results: recorded })
+    yield* request.events.publish({ _tag: "step.ended", step, run, status, results: recorded })
   })
 
   const evaluate = (info: StepInfo): Effect.Effect<CompletionVerdict, TurnError> => request.completion(info).pipe(
-    Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, verdict })),
+    Effect.tap((verdict) => request.events.publish({ _tag: "completion.evaluated", step: info.stepIndex, run, verdict })),
   )
 
   const isComplete = () => Effect.gen(function* () {
@@ -77,14 +80,14 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
       return Effect.gen(function* () {
         if (!isPlanned(event.turnIndex)) yield* Ref.set(lastUsage, Option.some(event.usage))
         yield* request.events.publish({
-          _tag: "assistant.message", step: event.turnIndex, text: event.text, reasoning: event.reasoning,
+          _tag: "assistant.message", step: event.turnIndex, run, text: event.text, reasoning: event.reasoning,
           model: Option.fromNullishOr(event.model), toolCalls: event.toolCalls.map((call) => ({ id: call.id, tool: call.toolName, input: call.args })),
           usage: event.usage,
         })
       }).pipe(Effect.orDie)
     }
     if (event.type === "stream_fallback") {
-      return request.events.publish({ _tag: "stream.fallback", step: event.turnIndex, message: event.message }).pipe(Effect.orDie)
+      return request.events.publish({ _tag: "stream.fallback", step: event.turnIndex, run, message: event.message }).pipe(Effect.orDie)
     }
     if (event.type === "turn_end") {
       const ending = endStep(event.turnIndex, event.status)
@@ -97,6 +100,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
   }
 
   const loop = runLoop<Record<string, Tool.Any>>({
+    run: request.run,
     system: "",
     messages: [],
     toolkit: request.tools.toolkit,
@@ -112,7 +116,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
       const step = yield* currentStep
       const active = yield* request.tools.active
       yield* Ref.update(steps, (count) => Math.max(count, step + 1))
-      yield* request.events.publish({ _tag: "step.started", step, planned: isPlanned(step), activeTools: active })
+      yield* request.events.publish({ _tag: "step.started", step, run, planned: isPlanned(step), activeTools: active })
       return active
     }).pipe(Effect.orDie),
     prepareModel: (step) => infoOf(step.stepIndex, step.activeTools).pipe(
