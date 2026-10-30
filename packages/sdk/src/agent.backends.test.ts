@@ -5,15 +5,16 @@ import { join } from "node:path"
 import { Effect, Layer } from "effect"
 import { SessionLog, SessionLogMemoryLive } from "@xandreed/core"
 import type { JsonObject } from "@xandreed/core"
+import { SessionLogFilesLive } from "@xandreed/plugin-session-files"
 import { SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { Agent } from "./agent.adapter.js"
 import { goldenConfig, goldenTexts, runGolden } from "./agent.golden.test.js"
 
 /*
  * What the model sees must not depend on where a session is stored. The
- * golden conversation runs over each backend (in memory, a SQLite file, and
- * a store that hands every object back with its keys reversed, as a JSON
- * column may reorder them); each must give the golden's model half, byte
+ * golden conversation runs over each backend (in memory, a SQLite file, a
+ * directory of commit files, and a store that hands every object back with
+ * its keys reversed, as a JSON column may reorder them); each must give the golden's model half, byte
  * for byte.
  */
 
@@ -39,6 +40,7 @@ afterAll(() => rmSync(directory, { recursive: true, force: true }))
 const backends: ReadonlyArray<readonly [string, Layer.Layer<SessionLog, unknown>]> = [
   ["in memory", SessionLogMemoryLive],
   ["in a SQLite file", SessionLogSqliteLive(join(directory, "sessions.db"))],
+  ["in a directory, one file per commit", SessionLogFilesLive(join(directory, "sessions"))],
   ["with its keys reordered", keyReversing],
 ]
 

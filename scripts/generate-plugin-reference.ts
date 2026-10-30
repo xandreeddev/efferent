@@ -9,6 +9,7 @@ import * as memorySummary from "@xandreed/plugin-memory-summary"
 import * as memoryWindow from "@xandreed/plugin-memory-window"
 import * as models from "@xandreed/plugin-models"
 import * as render from "@xandreed/plugin-render"
+import * as sessionFiles from "@xandreed/plugin-session-files"
 import * as sessionSqlite from "@xandreed/plugin-session-sqlite"
 import * as sessions from "@xandreed/plugin-sessions"
 import * as tasks from "@xandreed/plugin-tasks"
@@ -21,7 +22,7 @@ const jsonSchemaOf = (schema: Schema.Top) => {
   return { $schema: JsonSchema.META_SCHEMA_URI_DRAFT_07, ...document.schema, ...(Object.keys(document.definitions).length > 0 ? { definitions: document.definitions } : {}) }
 }
 /** Every first-party plugin the framework publishes, in host-graph order. */
-const firstParty: ReadonlyArray<Plugin> = [sessionSqlite.sessionSqlitePlugin, sessionSqlite.sessionLogSqlitePlugin, sessions.sessionsPlugin,
+const firstParty: ReadonlyArray<Plugin> = [sessionFiles.sessionFilesPlugin, sessionFiles.sessionLogFilesPlugin, sessionSqlite.sessionSqlitePlugin, sessionSqlite.sessionLogSqlitePlugin, sessions.sessionsPlugin,
   workspace.localSystemPlugin, workspace.skillsDirectoryPlugin, workspace.workspaceToolsPlugin, models.modelsPlugin, memoryWindow.memoryWindowPlugin, memorySummary.memorySummaryPlugin, memoryDigest.memoryDigestPlugin,
   toolDiscovery.toolDiscoveryPlugin, agentLoop.stepLoopPlugin, tasks.tasksPlugin, telemetry.telemetryPlugin, render.renderSurfacePlugin, render.renderFeedPlugin,
   render.uiOutputPlugin]

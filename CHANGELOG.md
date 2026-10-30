@@ -872,6 +872,17 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- `@xandreed/plugin-session-files`: the session log as files in a
+  directory, on Node 24 and Bun, local or on a network mount
+  (`SessionLogFilesLive(path)`, `makeSessionLogFiles(path, options)`,
+  `sessionFilesPlugin`, `sessionLogFilesPlugin`). One immutable file per
+  commit, published by an exclusive hard link: no locks, and a stopped
+  process blocks nobody. A torn commit at a session's tail is set aside in
+  `quarantine/` and the commit before it is the head; a file system call
+  that does not answer within `stallMs` fails with the new code
+  `store.stalled`. It passes `sessionLogConformance`,
+  `sessionLogRecoveryConformance` (on Bun and, in `verify:packages`, on
+  Node) and `sessionsConformance`.
 - `STORED_FORMAT` in `@xandreed/core`: the version of every shape the
   framework stores in a session log (journal payloads, `SessionHeader` and
   `SessionLogEvent`, the tasks plugin's records, the sessions plugin's head

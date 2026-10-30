@@ -73,6 +73,9 @@
       "@xandreed/plugin-session-sqlite": [
         "packages/plugin-session-sqlite/src/index.ts"
       ],
+      "@xandreed/plugin-session-files": [
+        "packages/plugin-session-files/src/index.ts"
+      ],
       "@xandreed/plugin-sessions": [
         "packages/plugin-sessions/src/index.ts"
       ],

@@ -119,6 +119,17 @@
         "effect": "4.0.7",
       },
     },
+    "packages/plugin-session-files": {
+      "name": "@xandreed/plugin-session-files",
+      "version": "0.14.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "4.0.7",
+      },
+      "devDependencies": {
+        "@xandreed/plugin-sessions": "workspace:*",
+      },
+    },
     "packages/plugin-session-sqlite": {
       "name": "@xandreed/plugin-session-sqlite",
       "version": "0.14.0",
@@ -213,6 +224,7 @@
         "@xandreed/plugin-memory-window": "workspace:*",
         "@xandreed/plugin-models": "workspace:*",
         "@xandreed/plugin-render": "workspace:*",
+        "@xandreed/plugin-session-files": "workspace:*",
         "@xandreed/plugin-session-sqlite": "workspace:*",
         "@xandreed/plugin-sessions": "workspace:*",
         "@xandreed/plugin-tasks": "workspace:*",
@@ -527,6 +539,8 @@
     "@xandreed/plugin-models": ["@xandreed/plugin-models@workspace:packages/plugin-models"],
 
     "@xandreed/plugin-render": ["@xandreed/plugin-render@workspace:packages/plugin-render"],
+
+    "@xandreed/plugin-session-files": ["@xandreed/plugin-session-files@workspace:packages/plugin-session-files"],
 
     "@xandreed/plugin-session-sqlite": ["@xandreed/plugin-session-sqlite@workspace:packages/plugin-session-sqlite"],
 

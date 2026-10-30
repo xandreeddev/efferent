@@ -5715,12 +5715,12 @@
     },
     {
       "code": "store.open",
-      "where": "`@xandreed/plugin-session-sqlite` (a `SessionLogError`)",
-      "meaning": "The database file, or its directory, could not be created or opened."
+      "where": "`@xandreed/plugin-session-sqlite` and `@xandreed/plugin-session-files` (a `SessionLogError`)",
+      "meaning": "The database file, or the store's directory, could not be created or opened; for the file store, also a directory without hard links, which it needs to publish a commit exclusively."
     },
     {
       "code": "store.io",
-      "where": "`@xandreed/plugin-session-sqlite` (a `SessionLogError`)",
+      "where": "`@xandreed/plugin-session-sqlite` and `@xandreed/plugin-session-files` (a `SessionLogError`)",
       "meaning": "A read or a write failed, or a session just created could not be read back."
     },
     {
@@ -5730,8 +5730,8 @@
     },
     {
       "code": "store.decode",
-      "where": "`@xandreed/plugin-session-sqlite` (a `SessionLogError`)",
-      "meaning": "A stored row (a session's head or an event) did not decode."
+      "where": "`@xandreed/plugin-session-sqlite` and `@xandreed/plugin-session-files` (a `SessionLogError`)",
+      "meaning": "A stored row (a session's head or an event), or a commit file before a session's tail, did not decode."
     },
     {
       "code": "store.encode",
@@ -5739,9 +5739,14 @@
       "meaning": "A value to store (an event's data, the session's state or `meta`) is not one JSON can hold (a BigInt, a cycle)."
     },
     {
+      "code": "store.stalled",
+      "where": "`@xandreed/plugin-session-files` (a `SessionLogError`)",
+      "meaning": "A file system call did not answer within `stallMs` (a hung network mount), or the store is failing every call at once after such a stall, until one let through a `stallMs` later answers. A commit that stalled may still land: read the head again before deciding it did not."
+    },
+    {
       "code": "store.version",
-      "where": "`@xandreed/plugin-session-sqlite` (a `SessionLogError`), opening the file",
-      "meaning": "A newer release wrote the database: its schema version (`PRAGMA user_version`) is above the last one this release knows. Nothing was read or written; open it with that release or a later one. A file without a version, as 0.14.0 wrote it, still opens."
+      "where": "`@xandreed/plugin-session-sqlite` and `@xandreed/plugin-session-files` (a `SessionLogError`), opening the store",
+      "meaning": "A newer release wrote the store: the SQLite file's schema version (`PRAGMA user_version`), or the directory's layout (`store.json`), is above the last one this release knows. Nothing was read or written; open it with that release or a later one. A SQLite file without a version, as 0.14.0 wrote it, still opens."
     },
     {
       "code": "tasks.encode",

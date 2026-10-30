@@ -1,5 +1,76 @@
 [
   {
+    "id": "@xandreed/plugin-session-files",
+    "version": "0.14.0",
+    "apiVersion": 3,
+    "scope": "runtime",
+    "requires": [],
+    "optional": [],
+    "provides": [
+      "efferent/SessionLog",
+      "efferent/TurnAdmission"
+    ],
+    "contributes": [],
+    "defaults": {
+      "path": ".efferent/runtime/sessions",
+      "stallMs": 10000
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "stallMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "path",
+        "stallMs"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "id": "@xandreed/plugin-session-files/log",
+    "version": "0.14.0",
+    "apiVersion": 3,
+    "scope": "runtime",
+    "requires": [],
+    "optional": [],
+    "provides": [
+      "efferent/SessionLog"
+    ],
+    "contributes": [],
+    "defaults": {
+      "path": ".efferent/runtime/sessions",
+      "stallMs": 10000
+    },
+    "schema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "type": "object",
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "stallMs": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "path",
+        "stallMs"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
     "id": "@xandreed/plugin-session-sqlite",
     "version": "0.14.0",
     "apiVersion": 3,

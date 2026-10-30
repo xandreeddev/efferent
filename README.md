@@ -113,7 +113,9 @@ for the span tree, the metrics and serverless flushing.
 
 `SessionLogMemoryLive` keeps sessions in memory and runs anywhere;
 `SessionLogSqliteLive(path)` from `@xandreed/plugin-session-sqlite` stores them
-in a SQLite file on Bun, and any other store can implement the `SessionLog` port.
+in a SQLite file on Bun, `SessionLogFilesLive(path)` from
+`@xandreed/plugin-session-files` in a directory on Node or Bun (local, or a
+network mount), and any other store can implement the `SessionLog` port.
 
 Core ships the port contracts as conformance kits (`@xandreed/core/conformance`),
 checks any test runner can run against your own implementation: `sessionLogConformance` and
@@ -256,6 +258,7 @@ Bun, whose fetch applies a proxy from the environment by itself, only
 | `@xandreed/plugin-memory-window`, `-memory-summary`, `-memory-digest` | Conversation memory strategies and tool-result digests |
 | `@xandreed/plugin-tool-discovery` | Tool and skill discovery |
 | `@xandreed/plugin-sessions` | Conversation sessions and the turn lifecycle |
+| `@xandreed/plugin-session-files` | Session store in a directory, local or on a network mount, one file per commit (Node 24 and Bun) |
 | `@xandreed/plugin-session-sqlite` | SQLite session store (Bun only) |
 | `@xandreed/plugin-tasks` | Background tasks |
 | `@xandreed/plugin-render` | Render surfaces, event feeds and streaming |
