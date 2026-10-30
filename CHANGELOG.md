@@ -1212,6 +1212,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/core/conformance` and `TurnLive` from `@xandreed/core/engine`,
   which a `plugin-tool-discovery-tests` boundaries layer grants to its tests
   only.
+- `@xandreed/plugin-memory-window`'s tests read a tool's model-facing schema
+  with `toolParametersSchema` from `@xandreed/core/internal`, which a
+  `plugin-memory-window-tests` boundaries layer grants to its tests only.
 
 ### Deprecated
 

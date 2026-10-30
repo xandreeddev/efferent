@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Option, Tracer } from "effect"
-import { ConversationId, ConversationMemory, entryId, estimateMessageTokens, HarnessError, renderLog, RunContext, RunId, RunOrdinal, ToolCallId, toolParametersSchema, UserMessage } from "@xandreed/core"
+import { ConversationId, ConversationMemory, entryId, estimateMessageTokens, HarnessError, renderLog, RunContext, RunId, RunOrdinal, ToolCallId, UserMessage } from "@xandreed/core"
+import { toolParametersSchema } from "@xandreed/core/internal"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { memoryWindowPlugin, RECALL_PAGE_CHARS, recallCapability, recallPage, spillPreview, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
