@@ -16,6 +16,14 @@ export type TaskMode = typeof TaskMode.Type
 export const TaskStatus = Schema.Literals(["pending", "running", ...TurnEndReason.literals])
 export type TaskStatus = typeof TaskStatus.Type
 
+/**
+ * The task a turn runs: its id (its child session's) and the session that
+ * started it. A task's turn carries it (`BeginTurn.Task`, `AdmittedTurn`,
+ * `TurnToAdmit`, the stored `turn.started`).
+ */
+export const TaskRef = Schema.Struct({ taskId: ConversationId, parent: ConversationId })
+export type TaskRef = typeof TaskRef.Type
+
 export const TaskView = Schema.Struct({
   taskId: ConversationId,
   parent: ConversationId,

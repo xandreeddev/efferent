@@ -65,7 +65,7 @@ const BEGIN_HTTP: Readonly<Record<string, { readonly status: string; readonly me
   KeyConflict: { status: "409", meaning: "The key was begun before with another message, command or `resumes` (the key `resume:<n>` begun again without `resumes` conflicts)." },
   RunIdReused: { status: "409", meaning: "The run id was used before, by an earlier turn of the session or of the history a fork inherits: a run id names one turn's run (memory numbers its entries from it). Begin again with a new run id, a retry under a new key included; nothing was opened." },
   NothingPending: { status: "204", meaning: "An inbox turn found nothing to take (inbox turns only)." },
-  NotResumable: { status: "409", meaning: "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id)." },
+  NotResumable: { status: "409", meaning: "The turn named in `resumes` cannot be resumed: `missing` (no such turn in the session, or `resumes` is not a whole number of at least 1), `inbox` (an inbox turn), `task` (a background task's turn), `superseded` (a user's turn began after it, other than a resume of it that failed, was cancelled or was interrupted) or `finished` (it ended completed, partial or failed). Only the last user's turn, ended cancelled or interrupted, can be; a resume that failed is tried again with a new key (and, as every turn, a new run id)." },
   TurnRefused: { status: "429 for a quota or rate, 403 when not allowed, 503 while draining before a shutdown", meaning: "The host's `TurnAdmission` refused the turn; nothing was opened or counted." },
   SessionMissing: { status: "404", meaning: "No such session for this owner." },
   SessionContended: { status: "503", meaning: "Other writers kept committing to the session first, and nothing was opened. Retry later." },
@@ -280,7 +280,7 @@ const feed = {
 }
 
 const tasks = [
-  { kind: TASK_STARTED, where: "the parent session", when: "`Tasks.start`: the task's instructions, mode and the starter's facts; its child session is created with it.", schema: jsonSchemaOf(TaskStarted) },
+  { kind: TASK_STARTED, where: "the parent session", when: "`Tasks.start`: the task's instructions, mode, the starter's `meta` and, when given, the turn that started it (`startedBy`); its child session is created with it.", schema: jsonSchemaOf(TaskStarted) },
   { kind: TASK_RESULT, where: "the child session", when: "Before the child's turn ends (or outside a turn when the host refused it): the outcome, reply and failure.", schema: jsonSchemaOf(TaskResult) },
   { kind: TASK_CANCELLED, where: "the child, then the parent", when: "`Tasks.cancel`, while the task is pending or running; the first of a result and a cancellation ends the task.", schema: jsonSchemaOf(TaskCancelled) },
 ].map((record) => ({ ...record, fields: fieldsOf(record.schema) }))

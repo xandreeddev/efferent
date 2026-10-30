@@ -8,8 +8,12 @@ import { Schema } from "effect"
 
 const OUTCOMES = ["completed", "partial", "failed"] as const
 
-/** Who began a turn: a user's message, or the inbox's pending items. */
-export const TurnOrigin = Schema.Literals(["user", "inbox"])
+/**
+ * Who began a turn: a user's message, the inbox's pending items, or a
+ * background task (the one turn of its child session). A record holding
+ * `task` is not read by a release before it.
+ */
+export const TurnOrigin = Schema.Literals(["user", "inbox", "task"])
 export type TurnOrigin = typeof TurnOrigin.Type
 
 /** How a turn's run came out: what `use` returns (`TurnOutcome`), and what its reply and `turn.ended` event carry. */

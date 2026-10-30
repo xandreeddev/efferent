@@ -124,7 +124,9 @@ const scopeOfCheck = Effect.acquireRelease(Scope.make(), (scope) => Scope.close(
  * turn of the session, or of the history a fork inherits, was begun with
  * refused as `RunIdReused`, opening nothing; `meta` stored,
  * admitted and shown to the host's admission; the resume rules and every
- * `NotResumable` reason; an image its bytes do not support refused with
+ * `NotResumable` reason; a task's turn (`BeginTurn.Task`) admitted, stored
+ * and shown to the admission with origin `task` and its `TaskRef`, keyed
+ * like a user's and never resumed; an image its bytes do not support refused with
  * `AttachmentRejected` and an inbox turn with nothing to take with
  * `NothingPending`, opening nothing; the writer storing in order and its
  * end storing how the turn ended (completed, failed with a code, a scope
@@ -353,6 +355,33 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       }))
       yield* expect("resume", busyFirst === "SessionBusy", `a resume while a turn is open gave ${busyFirst}`)
       yield* expect("resume", before.turns === 4, `the refused resumes moved the session to ${before.turns} turns`)
+    })),
+
+    scoped("a task's turn is admitted, stored and shown to the host's admission with origin task and its task's ref, keyed like a user's (its task in the fingerprint), and resuming it is NotResumable (task)", "task", (owner) => Effect.gen(function* () {
+      const seen = yield* Ref.make<ReadonlyArray<string>>([])
+      const recording = TurnAdmission.of({ admit: (turn, open) => Ref.update(seen, (all) => [...all, `${turn.origin} ${canonicalJson(turn.task ?? null)}`]).pipe(Effect.andThen(open)) })
+      const { sessions } = yield* leased(LONG, recording)
+      const parent = yield* created(sessions, owner)
+      const spawn = yield* sessions.fork(parent, { origin: "conformance", inherit: false })
+      const child: SessionAddress = { id: spawn.header.id, owner }
+      const ref = { taskId: spawn.header.id, parent: parent.id }
+      const task = (taskRef = ref): BeginTurn => ({ _tag: "Task", task: taskRef, userMessage: new UserMessage({ text: "look it up" }), runId: RunId.make("run-task"), key: "task:k1" })
+      const writer = yield* sessions.begin(child, task())
+      const admitted: AdmittedTurn = writer.admitted
+      yield* expect("task", admitted.origin === "task" && canonicalJson(admitted.task ?? null) === canonicalJson(ref) && admitted.userMessage.text === "look it up"
+        && admitted.key === "task:k1" && canonicalJson(admitted.command) === "{}" && admitted.claimed.length === 0,
+      `the task's turn was admitted as ${canonicalJson({ ...admitted, userMessage: admitted.userMessage.text })}`)
+      const stored = writer.started.data
+      yield* expect("task", stored.origin === "task" && canonicalJson(stored.task ?? null) === canonicalJson(ref),
+        `the task's turn was stored with origin ${canonicalJson(stored.origin ?? null)} and task ${canonicalJson(stored.task ?? null)}`)
+      yield* expect("task", Option.exists((yield* sessions.get(child)).open, (open) => open.origin === "task"), "the session does not show its open turn as a task's")
+      const admittedAs = (yield* Ref.get(seen)).at(0)
+      yield* expect("task", admittedAs === `task ${canonicalJson(ref)}`, `the host's admission was asked for ${admittedAs ?? "nothing"}`)
+      const retries = [yield* refusal(sessions, child, task()), yield* refusal(sessions, child, task({ ...ref, parent: child.id }))]
+      yield* expect("task", retries.join() === "TurnDuplicate,KeyConflict", `the task's key with the same task and with another gave ${retries.join()}`)
+      yield* sessions.cancel(child, admitted.turn)
+      const resumed = yield* refusal(sessions, child, resume(admitted.turn))
+      yield* expect("task", resumed === "NotResumable:task", `resuming the cancelled task's turn gave ${resumed}`)
     })),
 
     scoped("a message whose image its bytes do not support is refused with AttachmentRejected and opens nothing; a good one is stored", "attachments", (owner) => Effect.gen(function* () {

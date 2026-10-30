@@ -278,10 +278,14 @@ subscription sees what, streams a turn to a client over SSE, and follows a
 session's journal from another request or process.
 
 A background task (`@xandreed/plugin-tasks`) is one turn of a child session,
-a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`.
-Its result lands in the parent's inbox once, and the parent answers it after
-the turn in flight. See the framework guide's sessions section for the
-contract, the event vocabulary and the inbox protocol.
+a fork of the conversation or a fresh spawn, run by the host's `TaskRunner`;
+the turn's origin is `task`. Its result lands in the parent's inbox once,
+and the parent answers it after the turn in flight. `agentTaskExecutor`
+from `@xandreed/sdk` runs the child's turn and the parent's reaction
+through the agent; build `Tasks` beside the agent with it
+(`TasksLive(tasksDefaults).pipe(Layer.provide(agentTaskExecutor(agent, { services })))`).
+See the framework guide's sessions section for the contract, the event
+vocabulary and the inbox protocol.
 
 ### Busy signal and graceful shutdown
 

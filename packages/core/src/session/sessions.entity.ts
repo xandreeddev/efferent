@@ -6,6 +6,7 @@ import { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { JsonObject, SessionHeader, SessionListCursor, SessionLogError, SessionMissing } from "./session-log.entity.js"
+import { TaskRef } from "./tasks.entity.js"
 
 /*
  * What hosts and turns see of sessions (the `Sessions` service): addresses,
@@ -91,7 +92,18 @@ const TurnMeta = Schema.optionalKey(JsonObject)
  */
 const Resumes = Schema.optionalKey(Schema.Int)
 
-/** How a turn begins: a user's message, or the inbox's pending items. */
+/**
+ * The task a task's turn runs, stored in its `turn.started` and shown on
+ * `AdmittedTurn` and `TurnToAdmit` (origin `task` only); part of the key's
+ * fingerprint.
+ */
+const TaskOf = Schema.optionalKey(TaskRef)
+
+/**
+ * How a turn begins: a user's message, the inbox's pending items, or a
+ * background task's instructions (the one turn of its child session, begun
+ * by the tasks plugin; origin `task`, which cannot be resumed).
+ */
 export const BeginTurn = Schema.Union([
   Schema.TaggedStruct("User", {
     userMessage: UserMessage,
@@ -104,6 +116,15 @@ export const BeginTurn = Schema.Union([
     resumes: Resumes,
   }),
   Schema.TaggedStruct("Inbox", { runId: RunId, meta: TurnMeta }),
+  Schema.TaggedStruct("Task", {
+    task: TaskRef,
+    /** The task's instructions, as the model is given them. */
+    userMessage: UserMessage,
+    runId: RunId,
+    /** The idempotency key: the task's, so the task's turn begins once. */
+    key: Schema.String,
+    meta: TurnMeta,
+  }),
 ])
 export type BeginTurn = typeof BeginTurn.Type
 
@@ -121,6 +142,8 @@ export const AdmittedTurn = Schema.Struct({
   meta: JsonObject,
   /** The turn this one resumes, when it resumes one. */
   resumes: Resumes,
+  /** The task a task's turn runs (origin `task`). */
+  task: TaskOf,
 })
 export type AdmittedTurn = typeof AdmittedTurn.Type
 
@@ -130,14 +153,14 @@ export class SessionBusy extends Schema.TaggedError<SessionBusy>()("SessionBusy"
   turn: Schema.Int,
 }) {}
 
-/** The key was begun before with the same message, command and `resumes`: that turn is the answer. */
+/** The key was begun before with the same message, command, `resumes` and task: that turn is the answer. */
 export class TurnDuplicate extends Schema.TaggedError<TurnDuplicate>()("TurnDuplicate", {
   session: ConversationId,
   turn: Schema.Int,
   open: Schema.Boolean,
 }) {}
 
-/** The key was begun before with another message, command or `resumes`. */
+/** The key was begun before with another message, command, `resumes` or task. */
 export class KeyConflict extends Schema.TaggedError<KeyConflict>()("KeyConflict", {
   session: ConversationId,
   key: Schema.String,
@@ -148,7 +171,8 @@ export class KeyConflict extends Schema.TaggedError<KeyConflict>()("KeyConflict"
  * A user's turn asked to resume a turn that cannot be resumed: `missing`, no
  * such turn in the session's own log (a fork's inherited turns are its
  * parent's; a `resumes` that is not a whole number of at least 1 names no
- * turn); `inbox`, an inbox turn; `superseded`, a user's turn was begun after
+ * turn); `inbox`, an inbox turn; `task`, a background task's turn;
+ * `superseded`, a user's turn was begun after
  * it (other than a resume of it that failed, was cancelled or was
  * interrupted); `finished`, it ended completed, partial or failed. Only the
  * last user's turn, ended cancelled or interrupted (a turn reaped because
@@ -158,7 +182,7 @@ export class KeyConflict extends Schema.TaggedError<KeyConflict>()("KeyConflict"
 export class NotResumable extends Schema.TaggedError<NotResumable>()("NotResumable", {
   session: ConversationId,
   turn: Schema.Number,
-  reason: Schema.Literals(["missing", "superseded", "finished", "inbox"]),
+  reason: Schema.Literals(["missing", "superseded", "finished", "inbox", "task"]),
 }) {}
 
 /**

@@ -15,9 +15,9 @@ import {
   UserMessage,
 } from "@xandreed/core"
 import type { JsonObject, ReservedKind, SessionAddress, TaskMode, TaskView, TurnError, TurnOutcome, TurnRefused, TurnWriter } from "@xandreed/core"
-import { deliveredOf, deliveryId, endOf, goneEnd, isActive, isChildOf, isFinished, noticeOf, resultOf, startedOf } from "./task.entity.functions.js"
+import { deliveredOf, deliveryId, endOf, goneEnd, isActive, isChildOf, isFinished, isTaskSession, noticeOf, resultOf, startedOf } from "./task.entity.functions.js"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskResult, TaskStarted } from "./task-records.entity.js"
-import type { TaskResult as Result, TaskStarted as Started, TasksConfig } from "./task-records.entity.js"
+import type { TaskResult as Result, TaskStarted as Started, TaskStarter, TasksConfig } from "./task-records.entity.js"
 
 const OUTCOME_KINDS = [TASK_RESULT, TASK_CANCELLED]
 
@@ -109,7 +109,8 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
   })
 
   /**
-   * The child's one turn: begun once (its key is the task's) with the
+   * The child's one turn, a task's (origin `task`, its `TaskRef` the task's
+   * and the parent's ids): begun once (its key is the task's) with the
    * starter's `meta`, its result recorded before it ends unless it was
    * cancelled. Once the turn is begun, a write the turn's writer refuses is
    * logged here: `TurnClosed` (the turn was closed under it: cancelled,
@@ -120,8 +121,8 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     const child = childOf(parent, task.child)
     return Effect.scoped(Effect.gen(function* () {
       const writer = yield* sessions.begin(child, {
-        _tag: "User", userMessage: new UserMessage({ text: task.instructions }), runId: RunId.make(yield* Effect.sync(() => crypto.randomUUID())),
-        key: deliveryId(task.taskId), command: { task: task.taskId }, meta,
+        _tag: "Task", task: { taskId: task.taskId, parent: parent.id }, userMessage: new UserMessage({ text: task.instructions }),
+        runId: RunId.make(yield* Effect.sync(() => crypto.randomUUID())), key: deliveryId(task.taskId), meta,
       })
       // A cancel that landed after the task was read, before its turn began.
       const cancelledFirst = (yield* sessions.read(child, { kinds: [TASK_CANCELLED] })).length > 0
@@ -257,14 +258,24 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
       )),
     )
 
-  const start = (parent: SessionAddress, input: { readonly taskId?: ConversationId; readonly instructions: string; readonly mode: TaskMode; readonly meta?: JsonObject }) => Effect.gen(function* () {
-    const view = yield* sessions.get(parent)
-    if (Option.isSome(view.header.parent)) {
+  const start = (parent: SessionAddress, input: {
+    readonly taskId?: ConversationId
+    readonly instructions: string
+    readonly mode: TaskMode
+    readonly meta?: JsonObject
+    readonly startedBy?: TaskStarter
+  }) => Effect.gen(function* () {
+    // A task's own session starts none; any other may, a host's fork of a conversation included.
+    if (isTaskSession(yield* sessions.get(parent))) {
       return yield* Effect.fail(new TaskRefused({ session: parent.id, reason: "depth", message: "a background task cannot start another task" }))
     }
     const taskId = input.taskId ?? ConversationId.make(yield* Effect.sync(() => crypto.randomUUID()))
     yield* Effect.annotateCurrentSpan("efferent.task.id", taskId)
-    const started: Started = { taskId, instructions: input.instructions, mode: input.mode, meta: input.meta ?? {} }
+    const started: Started = {
+      taskId, instructions: input.instructions, mode: input.mode, meta: input.meta ?? {},
+      // Written only when given: a task a host started is stored as before.
+      ...(input.startedBy === undefined ? {} : { startedBy: input.startedBy }),
+    }
     // Checked against the tasks as stored, and decided again after a conflict, so the decision only reads: the
     // child is created after the record is stored, and the two are not cut apart by an interruption.
     const begun = yield* Effect.uninterruptible(sessions.transact(parent, () => Effect.gen(function* () {

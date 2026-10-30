@@ -12,7 +12,7 @@ describe("the model's task tools", () => {
     expect(taskStatus!.tool.description).toBe("Check a background task this conversation started: whether it is still running, and its result once it has one.")
   })
 
-  test("start_task starts the task with the turn's own meta and the run that started it", async () => {
+  test("start_task starts the task with the turn's own meta, unchanged, and the turn whose run started it", async () => {
     const started = await Effect.runPromise(Effect.gen(function* () {
       const inputs = yield* Ref.make<ReadonlyArray<unknown>>([])
       const taskId = ConversationId.make("00000000-0000-4000-8000-0000000007a1")
@@ -21,14 +21,14 @@ describe("the model's task tools", () => {
         status: "pending", reply: Option.none(), failure: Option.none(), delivered: false,
       }
       const tasks = Tasks.of({ start: (_parent: unknown, input: unknown) => Ref.update(inputs, (all) => [...all, input]).pipe(Effect.as(view)) } as never)
-      const run = RunContext.of({ session: { id: view.parent, owner: "owner-1" }, runId: "run-7", admitted: { meta: { tenant: "acme" } } } as never)
+      const run = RunContext.of({ session: { id: view.parent, owner: "owner-1" }, runId: "run-7", admitted: { turn: 3, meta: { tenant: "acme" } } } as never)
       // The registry erases a handler's requirements; this one needs the run and the tasks.
       const output = yield* (startTask!.handler({ instructions: "count", mode: "spawn" }).pipe(Effect.provideService(Tasks, tasks), Effect.provideService(RunContext, run)) as Effect.Effect<unknown, unknown>)
       return { output, inputs: yield* Ref.get(inputs) }
     }))
     expect(started).toEqual({
       output: { taskId: "00000000-0000-4000-8000-0000000007a1", status: "pending" },
-      inputs: [{ instructions: "count", mode: "spawn", meta: { tenant: "acme", runId: "run-7" } }],
+      inputs: [{ instructions: "count", mode: "spawn", meta: { tenant: "acme" }, startedBy: { runId: "run-7", turn: 3 } }],
     })
   })
 

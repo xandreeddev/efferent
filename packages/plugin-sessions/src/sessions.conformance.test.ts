@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Option } from "effect"
+import { Context, Effect, Layer, Match, Option } from "effect"
 import { TestClock } from "effect/testing"
 import { frameworkDraft, harnessCodeOf, HarnessError, isHarnessError, isTurnError, RunId, SessionLog, SessionLogMemoryLive, Sessions, sessionsConformance, TurnActivity, TurnAdmission } from "@xandreed/core"
-import type { ConformanceCheck, SessionsInstance, SessionsSubject, TurnError, TurnWriter } from "@xandreed/core"
+import type { BeginTurn, ConformanceCheck, SessionsInstance, SessionsSubject, TurnError, TurnWriter } from "@xandreed/core"
 import { SessionsLive } from "./sessions.adapter.js"
 import { sessionsDefaults } from "./sessions-state.entity.js"
 import type { ProcessLiveness, SessionsConfig } from "./sessions-state.entity.js"
@@ -73,12 +73,27 @@ describe("the Sessions kit catches careless backends", () => {
       ...instance,
       sessions: Sessions.of({
         ...instance.sessions,
-        begin: (address, input) => instance.sessions.begin(address, input._tag === "User"
-          ? { _tag: "User", userMessage: input.userMessage, runId: input.runId, key: input.key, command: input.command, ...(input.resumes === undefined ? {} : { resumes: input.resumes }) }
-          : { _tag: "Inbox", runId: input.runId }),
+        begin: (address, input) => instance.sessions.begin(address, Match.valueTags(input, {
+          User: (user): BeginTurn => ({ _tag: "User", userMessage: user.userMessage, runId: user.runId, key: user.key, command: user.command, ...(user.resumes === undefined ? {} : { resumes: user.resumes }) }),
+          Inbox: (inbox): BeginTurn => ({ _tag: "Inbox", runId: inbox.runId }),
+          Task: (task): BeginTurn => ({ _tag: "Task", task: task.task, userMessage: task.userMessage, runId: task.runId, key: task.key }),
+        })),
       }),
     })
     expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, forgetful)))).toEqual(["meta"])
+  })
+
+  test("one that begins a task's turn as a user's, its task in the command, fails only the task check", async () => {
+    const asUser = (instance: SessionsInstance): SessionsInstance => ({
+      ...instance,
+      sessions: Sessions.of({
+        ...instance.sessions,
+        begin: (address, input) => instance.sessions.begin(address, input._tag === "Task"
+          ? { _tag: "User", userMessage: input.userMessage, runId: input.runId, key: input.key, command: { task: input.task.taskId }, ...(input.meta === undefined ? {} : { meta: input.meta }) }
+          : input),
+      }),
+    })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, asUser)))).toEqual(["task"])
   })
 
   test("one whose turn writers take the framework's kinds from anyone fails only the transact check", async () => {

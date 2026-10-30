@@ -283,7 +283,7 @@ export const traceTurn = (writer: TurnWriter, options: TurnTraceOptions = {}) =>
 export interface TurnBeginTrace {
   readonly session: ConversationId
   readonly runId: RunId
-  /** Who begins it: a user (a `User` begin), or the inbox (an `Inbox` begin). */
+  /** Who begins it: a user (a `User` begin), the inbox (an `Inbox` begin) or a background task (a `Task` begin). */
   readonly origin: AdmittedTurn["origin"]
 }
 

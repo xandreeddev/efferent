@@ -23,9 +23,9 @@ transports (see [render kits](#render-kits)).
 | --- | --- | --- |
 | `sessionLogConformance(log)` | dense sequence numbers, one revision per commit, compare-and-swap, the `notAfter` clock check, JSON kept by value (an `undefined` field dropped, not refused), an event as large as a message's images at their limit (`MEDIA_LIMITS.requestChars` base64 characters), reads by position and kind, listing order, children and their removal | a `SessionLog` |
 | `sessionLogRecoveryConformance(subject)` | reopening, several open handles, interrupted commits, a handle whose scope never closed, the exact `notAfter` boundary | a way to open a `SessionLog` |
-| `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; a reused run id (`RunIdReused`) opening nothing; `meta` stored and admitted; every `NotResumable` reason; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds, refused to a turn's writer too unless the framework's turn wrote them; cancel and removal, and a turn nobody holds reaped alike by a cancel or a delivery; the inbox; a write renewing a lease, a lease that ran out and a dead process holder reaped; a turn judged as it was taken, not by the reader's ownership; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
+| `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; a reused run id (`RunIdReused`) opening nothing; `meta` stored and admitted; every `NotResumable` reason; a task's turn (origin `task`, its `TaskRef`) admitted, stored, keyed and never resumed; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds, refused to a turn's writer too unless the framework's turn wrote them; cancel and removal, and a turn nobody holds reaped alike by a cancel or a delivery; the inbox; a write renewing a lease, a lease that ran out and a dead process holder reaped; a turn judged as it was taken, not by the reader's ownership; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
 | `taskRunnerConformance(make, { interruptsOnClose? })` | `run` hands the work over and returns, the work runs once, outlives its caller, is told a deadline not in the past and runs without the caller's services; `TaskActivity` counts it from the hand-over; closing the runner's scope interrupts it | a way to make a `TaskRunner` (and its `TaskActivity`) |
-| `tasksConformance(make)` | a task runs as one turn of a child session (spawn empty, fork with the parent's closed turns), its result reaches the parent's inbox once and the parent reacts once, after the turn in flight; `task.started` once per task, a second start runs nothing, the same id with other instructions `TaskConflict` and an id naming another session `SessionExists`; a failed task says why; cancel; no task starts tasks; `reconcile` starting a task that never ran and delivering a result whose delivery was lost | a way to build `Sessions` and `Tasks` over the kit's runner and executor |
+| `tasksConformance(make)` | a task runs as one turn of a child session (spawn empty, fork with the parent's closed turns), its result reaches the parent's inbox once and the parent reacts once, after the turn in flight; `task.started` once per task, a second start runs nothing, the same id with other instructions `TaskConflict` and an id naming another session `SessionExists`; the child's turn a task's (origin `task`); a failed task says why; cancel; no task starts tasks, a host's fork may; `reconcile` starting a task that never ran and delivering a result whose delivery was lost | a way to build `Sessions` and `Tasks` over the kit's runner and executor |
 | `toolRegistryConformance(make)` | the catalog, activation (always-on, on demand, unknown, ungranted, only growing), concurrent `load_skill` calls each leaving their tools active, activated once, one invocation id per call minted before the checks, `CurrentToolInvocation` and the opener's services in the handler, events published on the run's bus only (never written to the journal by the registry), `PermissionGrants`, a `tool.refused` for each reason (`inactive`, `forbidden`, `denied`, `call-limit`, `tool-call-limit`) | a way to build a `ToolRegistry` over the kit's capabilities |
 | `memoryConformance(memory, services)` | own entry ids, a log that reads back exactly after a reopen, views and artifacts kept, a pure build, the step context only when asked and only its own run's, append-only maintenance, a message's images through a reopen (the current turn's built as image parts, an earlier turn's as image parts or label lines), a tool result's images stored once and the current turn's built as the result's images | a memory strategy |
 | `stepLoopConformance(loop)` | per-step event order, each step ended once with nothing recorded under it after its `step.ended` (correctives, nudges and steers are the next step's), a step whose completion fails afterwards still `completed`, a malformed step ended `malformed` with no `completion.evaluated`, validation before dispatch, planned batches, forced tool choices, no call after completion, the run's usage (the sum of its `assistant.message` usage), the step cap, the request's `captureTraceContent` reaching its model calls as `CurrentTraceContent`, the request's `cacheKey` reaching its dispatch checks and model calls as `CurrentPromptCacheKey`, a request refused over an image planned again and sent once more when `onMediaRejected` answers true (failing when it answers false), a streamed step's reasoning reaching the next request with its provider metadata (signed and redacted thinking) as a non-streamed one's does, planned and id-less tool calls given ids distinct across two runs of a turn and two turns, with the request's run ordinal on every step event | a `StepLoop` |
@@ -249,6 +249,11 @@ The checks:
   retried resume is `TurnDuplicate`, and every other case is `NotResumable`
   with its reason (`finished`, `missing`, `superseded`, `inbox`), or
   `SessionBusy` while a turn is open.
+- **task**: a task's turn (`BeginTurn.Task`) is admitted with origin `task`
+  and its `TaskRef`, stored so in `turn.started`, shown open as a task's and
+  shown to the host's admission; its key's retry is `TurnDuplicate` and
+  another task under the key `KeyConflict`; resuming it, once cancelled, is
+  `NotResumable` (`task`).
 - **attachments**: an image its bytes do not support is
   `AttachmentRejected` and opens nothing; a good one is admitted and stored.
 - **nothing-pending**: an inbox turn with nothing waiting is `NothingPending`
@@ -304,7 +309,8 @@ The kit's own tests run it against careless wrappers of `SessionsLive`: a
 `meta` fails `meta`; leases that writes do not renew (`renew: "none"`) fail
 `lease-renewal`; writers that take the framework's kinds from anyone fail
 `transact`; a `begin` that opens a reused run id's turn under a new one
-fails `run-id`.
+fails `run-id`; a `begin` that opens a task's turn as a user's fails
+`task`.
 
 ## The task kits
 
@@ -376,7 +382,8 @@ const checks = tasksConformance(({ runner, executor }) => Layer.build(TasksLive(
 ```
 
 - **run**: a task runs as one turn of a child session of the parent (a
-  spawn's history is empty); its result reaches the parent's inbox once, and
+  spawn's history is empty), a task's turn (origin `task`, its `TaskRef`
+  the task's and the parent's ids); its result reaches the parent's inbox once, and
   the parent reacts once, to an inbox turn whose item carries the reply; the
   parent records one `task.started`, and lists the task.
 - **start-once**: three starts of one task id, while it runs and after, run
@@ -392,7 +399,8 @@ const checks = tasksConformance(({ runner, executor }) => Layer.build(TasksLive(
 - **cancel**: cancelling a running task ends its child's turn cancelled and
   delivers nothing; a cancelled task is not cancelled again, and an unknown
   one is `TaskMissing`.
-- **depth**: a task's session cannot start tasks (`TaskRefused`, `depth`).
+- **depth**: a task's session cannot start tasks (`TaskRefused`, `depth`);
+  a host's own fork of the conversation can.
 - **reconcile**: a task whose runner dropped it stays `pending` until
   `reconcile` starts it, and then delivers; a second `reconcile` finds
   nothing.
@@ -409,7 +417,9 @@ const checks = tasksConformance(({ runner, executor }) => Layer.build(TasksLive(
 `start` that ignores the task id fails `start-once` and `task-id`, a `list` that returns
 nothing fails `run` and `start-once`, a `reconcile` that does nothing fails
 `reconcile` and `reconcile-delivery`, and one that leaves a result whose
-delivery was lost undelivered fails `reconcile-delivery`.
+delivery was lost undelivered fails `reconcile-delivery`; a `start` that
+judges depth by a session's lineage (refusing a host's fork) fails `depth`,
+and sessions that begin the child's turn as a user's fail `run`.
 
 ## The ToolRegistry kit
 

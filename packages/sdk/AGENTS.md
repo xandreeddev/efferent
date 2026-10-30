@@ -4,7 +4,7 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 
 ## Rules
 
-- The sdk composes and owns no port or adapter: new behaviour goes in core or a plugin, and `agent.adapter.ts` only wires it.
+- The sdk composes and owns no port: new behaviour goes in core or a plugin, and `agent.adapter.ts` only wires it. Its one other adapter, `task-executor.adapter.ts` (`agentTaskExecutor`), only wires `Agent.turn` (any `TurnRunner`) as core's `TaskExecutor`: the tasks plugin begins and ends the turns, the executor runs them. Hosts build `Tasks` beside the agent (`TasksLive(config).pipe(Layer.provide(agentTaskExecutor(agent, { services })))`): a `tasksPlugin` among the agent's own plugins would need the executor before the agent exists.
 - Fail at define time, not at the first turn: no `ConversationMemory`, `ToolRegistry` or `StepLoop` is `config.graph`, a bad `budgetTokens` is `config.budget`.
 - A turn that cannot begin fails with its `TurnBeginError` as it is (a `Sessions.begin` refusal, or `AttachmentRejected`), never a `HarnessError` made from it: hosts match it by tag, and core's `turnBeginCodes` (checked against `TurnBeginError` there) gives its code.
 - Any change to what the model or the journal sees shows in `golden/`: re-record only on purpose (`EFFERENT_UPDATE_MODEL_GOLDEN=1`, `EFFERENT_UPDATE_GOLDEN=1`) and review the diff in the PR.
@@ -15,7 +15,7 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 
 ## Public surface
 
-- `export * from "@xandreed/core"` (`turnBeginCodes` among it), plus `Agent` (`Agent.define`) and the types `AgentConfig` and `AgentPluginEntry` (`src/agent.adapter.ts`).
+- `export * from "@xandreed/core"` (`turnBeginCodes` among it), plus `Agent` (`Agent.define`) and the types `AgentConfig` and `AgentPluginEntry` (`src/agent.adapter.ts`), and `agentTaskExecutor(agent, { services, child?, react? })` (`src/task-executor.adapter.ts`): a `Layer<TaskExecutor>` whose child and reaction turns are, by default, the turn's skills selected, then one run of the step loop, its text the reply.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text
@@ -38,6 +38,7 @@ None.
 | File | Role |
 |---|---|
 | `src/agent.adapter.ts` | `Agent.define`, `agent.turn`, the turn metrics |
+| `src/task-executor.adapter.ts` | `agentTaskExecutor`: core's `TaskExecutor` over `Agent.turn` |
 | `src/index.ts` | core re-export and the sdk's own exports |
 | `src/testing.port.ts` | test-only services for the agent tests |
 | `golden/agent-turn.model.json`, `golden/agent-turn.journal.json` | the golden conversation: what the model and host see, and what is stored |
@@ -47,7 +48,7 @@ None.
 ## Tests
 
 - Golden and composition: `agent.golden.test.ts`, `agent.stream-golden.test.ts`, `agent.backends.test.ts`, `turn-composition.test.ts` (also runs core's `turnConformance`), `plugin-stack.test.ts`.
-- Behaviour: `agent.adapter.test.ts`, `agent.trace.test.ts` (span nesting and ids), `activity.test.ts`, `models-plugin.test.ts`; the key-free journey `resume.journey.test.ts`.
+- Behaviour: `agent.adapter.test.ts`, `agent.trace.test.ts` (span nesting and ids), `activity.test.ts`, `models-plugin.test.ts`; the key-free journeys `resume.journey.test.ts` and `tasks.journey.test.ts` (a background task through `agentTaskExecutor`: start, the child's turn, delivery, `pending`, drain).
 - Kits and compatibility: `memory.conformance.test.ts` (core's `memoryConformance` over the window and summary strategies and a test-only one), `journal-compat.test.ts`, `events-guide.test.ts`.
 - Run: `bun test packages/sdk`.
 

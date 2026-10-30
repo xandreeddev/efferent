@@ -4,6 +4,7 @@ import type { RunId } from "../domain/run.entity.js"
 import type { TurnOrigin } from "../domain/turn-vocabulary.entity.js"
 import type { JsonObject } from "../session/session-log.entity.js"
 import type { SessionAddress, TurnRefused } from "../session/sessions.entity.js"
+import type { TaskRef } from "../session/tasks.entity.js"
 
 /** The turn a host is asked to admit. */
 export interface TurnToAdmit {
@@ -15,6 +16,8 @@ export interface TurnToAdmit {
   readonly meta: JsonObject
   /** The earlier turn a user's turn resumes (a whole number of at least 1), only when it resumes one. */
   readonly resumes?: number
+  /** The task a task's turn runs (origin `task`), only on such a turn: a host counts it as the task's parent's. */
+  readonly task?: TaskRef
 }
 
 /**

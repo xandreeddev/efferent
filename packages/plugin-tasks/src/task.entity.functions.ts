@@ -53,9 +53,12 @@ export const endOf = (view: SessionView, records: ReadonlyArray<SessionLogEvent>
     : { status: "pending", reply: Option.none(), failure: Option.none() }
 }
 
+/** Whether a session is a task's own: its child, forked by a start (origin `task`). A task's session starts no task. */
+export const isTaskSession = (view: SessionView): boolean => view.header.origin === "task"
+
 /** Whether a session is a task child of `parent`: forked from it by a start, not another session under the task's id. */
 export const isChildOf = (view: SessionView, parent: string): boolean =>
-  view.header.origin === "task" && Option.exists(view.header.parent, (lineage) => lineage.id === parent)
+  isTaskSession(view) && Option.exists(view.header.parent, (lineage) => lineage.id === parent)
 
 /** A child that no longer exists: its parent's removal took it. */
 export const goneEnd: TaskEnd = { status: "cancelled", reply: Option.none(), failure: Option.some({ code: "task.removed", message: "the task's session was removed" }) }

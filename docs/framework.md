@@ -151,7 +151,7 @@ agent.turn                       Agent.turn, or a host's composition with traceT
 that could not begin has no `agent.turn`) and encloses the turn-dependent plugins,
 the host's layer, the tools opened, `use`, the reply and the end. It carries
 `efferent.session.id`, `efferent.run.id`, `efferent.turn`,
-`gen_ai.conversation.id` (the session), `efferent.origin` (user or inbox)
+`gen_ai.conversation.id` (the session), `efferent.origin` (user, inbox or task)
 and, on a resume, `efferent.resumes` (the turn it resumes),
 and ends with `efferent.outcome` (completed, partial, failed or interrupted,
 `turnEndingOf` the turn's exit; a turn cancelled or reaped while it ran
@@ -550,7 +550,8 @@ turn: a request id, a client, a tenant. It is stored in the session's
 `turn.started` (only when given, so turns without it are stored as before),
 given to `TurnAdmission` (`TurnToAdmit.meta`), and shown on the writer's
 `admitted`, on `RunContext.admitted` and `Turn.admitted` (with the turn's
-number, key, origin, command and claimed inbox items) and on the bus
+number, key, origin, command, claimed inbox items and, on a background
+task's turn, its `task`) and on the bus
 `turn.started` event; it is `{}` when none was given. The model never sees
 it, and it is not part of the idempotency key's fingerprint (the message,
 the command and `resumes` are): a retry with the same key and other
@@ -1910,7 +1911,7 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 
 | Kind | Written by |
 | --- | --- |
-| `turn.started` (`runId`, `key`, `origin`, `userMessage`, `command`, `claimed`, and `meta` and `resumes` when given) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
+| `turn.started` (`runId`, `key`, `origin`: user, inbox or task; `userMessage`, `command`, `claimed`, and `meta`, `resumes` and a task's `task` when given) | `Sessions.begin`; memory reads it as the turn's TurnStarted |
 | `turn.reply` | memory (`persistReply`), held for the turn's closing commit: stored right before its `turn.ended` |
 | `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`: the failing error's code; otherwise one of the framework's codes, `turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`, or a code the closer passes to `end` itself, such as plugin-tasks' `task.turn` and `task.deadline`) | the writer's `end` (`turnEndingOf` the turn's exit), its scope, a cancel or a reap |
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
@@ -1970,7 +1971,9 @@ during it included), stopping at the end that counts none.
 child session, a fork of the conversation or an empty spawn, whose id is the
 task's. `Tasks.start(parent, { instructions, mode })` records `task.started`
 in the parent, checked against the tasks stored (a task does not start
-tasks; a session runs `maxRunning`, two, at once), creates the child once
+tasks: a session whose origin is `task` is refused with `TaskRefused`
+`depth`, while a host's own fork of a conversation may start them; a
+session runs `maxRunning`, two, at once), creates the child once
 that record is stored (a start refused or not stored leaves none), and
 hands the work to the host's `TaskRunner`: `InProcessTaskRunnerLive` forks
 it on this process (its own fiber, interrupted with the layer, counted by
@@ -1985,7 +1988,11 @@ child (the parent itself, another conversation) is `SessionExists`.
 one as it answers any unknown task. A
 store failure while the child's result is stored is logged as a warning,
 and the task then reads as interrupted (`task.lost`). The work begins the
-child's turn once (its key is the task's), runs it through the host's `TaskExecutor.turn` until the runner's
+child's turn once (its key is the task's) as a task's turn
+(`BeginTurn.Task`: origin `task`, its `task` the `TaskRef` of the task's
+and the parent's ids, the instructions its message, stored in its
+`turn.started` and shown on `admitted` and to `TurnAdmission`; it cannot be
+resumed), runs it through the host's `TaskExecutor.turn` until the runner's
 deadline, records `task.result` before the turn closes, delivers the result
 to the parent's inbox (`task:<id>`, once) and drains the parent, whose
 `TaskExecutor.react` answers it after the turn in flight. The notice frames
@@ -2022,11 +2029,33 @@ reason, a turn past its deadline ends interrupted, and an abandoned turn is
 delivered as interrupted. The `meta` given to `start` goes with the task:
 the child's turn and the parent's reactions to its result are begun with
 it, so a `TurnAdmission` that counts by tenant or quota key counts them as
-the starter's. With `tools`, the model gets `start_task` and
-`task_status` (off by default); `start_task` starts the task with the
-turn's own `meta` and its `runId`, and tells the model that a fork sees the
-conversation up to the user's latest message, not that message or what the
-turn did since.
+the starter's. `startedBy` (a run id and a turn number) records in
+`task.started` the turn whose run started the task. With `tools`, the model
+gets `start_task` and `task_status` (off by default); `start_task` starts
+the task with the turn's own `meta`, unchanged, and the turn as
+`startedBy`, and tells the model that a fork sees the conversation up to
+the user's latest message, not that message or what the turn did since. A
+task's turn stored before tasks had an origin of their own reads as a
+user's, its task id in `command.task`, and a task started before
+`startedBy` may carry its run's id in `meta.runId`.
+
+The executor runs the turns the tasks plugin begins and ends. The sdk's
+`agentTaskExecutor(agent, { services, child?, react? })` is one over an
+agent (`Agent.turn`, or any `TurnRunner`): it runs the child's turn with
+`child(turn, task)` and the parent's reaction with `react(turn)`, each by
+default the turn's skills selected, then one run of the step loop, whose
+text is the reply, with `services` as the turns' services. Build `Tasks`
+beside the agent rather than as one of its plugins (the executor needs the
+agent first):
+
+```ts
+const agent = yield* Agent.define({ plugins, turnServices: [LanguageModel.LanguageModel] })
+const tasks = TasksLive(tasksDefaults).pipe(Layer.provide(Layer.mergeAll(
+  sessionsLayer,
+  InProcessTaskRunnerLive(),
+  agentTaskExecutor(agent, { services: Context.make(LanguageModel.LanguageModel, model) }),
+)))
+```
 
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events
@@ -2158,8 +2187,9 @@ counts as interrupted, including one the resuming begin reaps itself.
 Otherwise the begin fails with `NotResumable` (`session`, `turn` and a
 `reason`) and opens nothing: `missing` (no such turn in this session's own
 log; a fork's inherited turns are its parent's), `inbox` (an inbox turn),
-`superseded` (another user's turn began after it, a resume of it that
-completed or ended partial included) or `finished` (it ended completed,
+`task` (a background task's turn), `superseded` (another user's turn began
+after it, a resume of it that completed or ended partial included) or
+`finished` (it ended completed,
 partial or failed, a `turn.unended` scope included); its code is
 `turn.not-resumable`. The check runs in the commit that opens the
 turn, after the key's (`TurnDuplicate`, `KeyConflict`) and after
