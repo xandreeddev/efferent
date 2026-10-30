@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto"
 import { Clock, Effect, Option } from "effect"
-import { AuthError } from "@xandreed/core"
+import { AuthError } from "@xandreed/core/models"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 import { decodeTokenResponse } from "./token-response.entity.functions.js"

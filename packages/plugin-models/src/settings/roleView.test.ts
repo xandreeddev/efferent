@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Option } from "effect"
-import { EngineSettings, SettingsStore } from "@xandreed/core"
+import { EngineSettings, SettingsStore } from "@xandreed/core/models"
 import { roleModelView } from "./roleView.js"
 
 const inner = (settings: EngineSettings) =>

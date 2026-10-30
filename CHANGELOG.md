@@ -207,6 +207,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   turn's lifecycle functions from `@xandreed/core/engine`; your editor marks
   each root import that has moved. `@xandreed/core/internal` is for the
   framework's own packages: it carries no semver.
+- Import `AuthStore`, `SettingsStore` and the rest of the models storage
+  from `@xandreed/plugin-models` rather than `@xandreed/core`.
 
 ### Breaking
 
@@ -673,6 +675,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   run, lifecycle and bus); it moves into `@xandreed/sdk` in the next minor
   release. `@xandreed/core/internal` holds the provider mapping, stream fold
   and tool schemas the first-party packages share, with no semver.
+- `@xandreed/plugin-models` re-exports the credential and settings stores'
+  contracts and kits (`AuthStore`, `Credential`, `AuthError`,
+  `SettingsStore`, `EngineSettings`, `SETTINGS_KEYS`, `SettingsError`,
+  `ModelRole`, `SettingsKey`, `authStoreConformance`,
+  `settingsStoreConformance` and their option types), which move there in the
+  next minor release.
 
 ### Changed
 

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { Prompt, Tool } from "effect/ai"
 import { Deferred, Effect, Fiber, Option, Schema } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, extractUsage, Failure, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, ToolCallId, toPromptMessages } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, Failure, mediaFromBase64, mediaLabel, modelRequestDescriptorOf, ToolCallId } from "@xandreed/core"
+import { extractUsage, toPromptMessages } from "@xandreed/core/internal"
 import type { AgentMessage } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel, promptWithImageLabels, thinkingParams, toChatMessages } from "./compat.js"
 
