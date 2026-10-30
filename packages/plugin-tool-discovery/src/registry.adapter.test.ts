@@ -29,12 +29,12 @@ import {
   RunId,
   SessionEnvironment,
   ToolRegistry,
-  TurnLive,
   TurnMemory,
   turnStartedDraft,
   TurnToolbox,
   UserMessage,
 } from "@xandreed/core"
+import { TurnLive } from "@xandreed/core/engine"
 import type { Capability, MemoryPolicy, RunTools, SessionLogEvent, ToolInvocation, ToolRefusalReason, TurnDraft, TurnError, TurnEvent, TurnWriter } from "@xandreed/core"
 import { makeRegistry } from "./registry.adapter.js"
 import type { DiscoveryConfig } from "./registry.adapter.js"

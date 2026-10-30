@@ -1208,6 +1208,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/core/conformance` and `traceTurnBegin` from
   `@xandreed/core/engine`, which a `plugin-sessions-tests` boundaries layer
   grants to its tests only.
+- `@xandreed/plugin-tool-discovery`'s tests import the registry kit from
+  `@xandreed/core/conformance` and `TurnLive` from `@xandreed/core/engine`,
+  which a `plugin-tool-discovery-tests` boundaries layer grants to its tests
+  only.
 
 ### Deprecated
 
