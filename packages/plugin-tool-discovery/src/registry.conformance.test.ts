@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Layer } from "effect"
-import { Capabilities, SessionEnvironment, ToolRegistry, toolRegistryConformance } from "@xandreed/core"
-import type { Capability, ConformanceCheck, ToolRegistryLimits } from "@xandreed/core"
+import { Capabilities, SessionEnvironment, ToolRegistry } from "@xandreed/core"
+import { toolRegistryConformance } from "@xandreed/core/conformance"
+import type { Capability } from "@xandreed/core"
+import type { ConformanceCheck, ToolRegistryLimits } from "@xandreed/core/conformance"
 import { toolDiscoveryDefaults, ToolDiscoveryLive } from "./plugin.adapter.js"
 import { makeRegistry } from "./registry.adapter.js"
 

@@ -470,6 +470,22 @@ const config: typeof GateSuiteConfig.Encoded = {
                   "bun:test"
             ]
       },
+      // The registry's tests open its tools in a turn built over the engine (`TurnLive`).
+      {
+            "name": "plugin-tool-discovery-tests",
+            "path": "packages/plugin-tool-discovery/src/**/*.test.ts",
+            "canImport": [
+                  "plugin-tool-discovery",
+                  "core",
+                  "core/engine"
+            ],
+            "externals": [
+                  "effect",
+                  "@effect/",
+                  "effect/",
+                  "bun:test"
+            ]
+      },
       {
             "name": "plugin-tool-discovery",
             "path": "packages/plugin-tool-discovery/src/**",
