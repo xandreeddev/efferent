@@ -38,8 +38,8 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:419` | exact, `src/sessions.adapter.test.ts:1304` (one item, `:1134`) |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:325` | exact, `src/sessions.adapter.test.ts:1285` |
+| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:460` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:363` | exact, `src/sessions.adapter.test.ts:1314` |
 
 ## Erasure files
 
