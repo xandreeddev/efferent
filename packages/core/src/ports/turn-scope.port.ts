@@ -51,8 +51,10 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
   readonly number: Effect.Effect<number, HarnessError>
   /**
    * Record TurnStarted, then publish `turn.started`, and return the turn's
-   * number. Once: a second call fails. Anything built before it (a host
-   * layer, a matcher's history) sees only earlier turns.
+   * number. Once: a second call fails with `turn.persisted`, unless memory
+   * failed to record the message, which then waits to be taken again.
+   * Anything built before it (a host layer, a matcher's history) sees only
+   * earlier turns.
    */
   readonly persistMessage: Effect.Effect<number, TurnError>
   /**
@@ -67,7 +69,11 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
 
 /** The turn's tools: registry-opened once, then shared by the loop, the host and RunContext.activate. */
 export class TurnToolbox extends Context.Service<TurnToolbox, {
-  /** Open the tools. Once: a second call fails. The handlers run with the services of the opener. */
+  /**
+   * Open the tools. Once: a second call fails with `tools.opened`, unless
+   * the open failed, which leaves them closed to open again. The handlers
+   * run with the services of the opener.
+   */
   readonly open: Effect.Effect<RunTools, TurnError>
   /** The open tools; fails with `tools.unavailable` before `open`. */
   readonly tools: Effect.Effect<RunTools, HarnessError>
@@ -81,7 +87,11 @@ export class TurnPrompt extends Context.Service<TurnPrompt, {
    * (SystemPrepared) when it differs from the last one recorded.
    */
   readonly system: (variant: Option.Option<string>) => Effect.Effect<string, TurnError>
-  /** Render the turn-tier sections once, as TurnContext entries (later calls do nothing). */
+  /**
+   * Render the turn-tier sections once, as TurnContext entries (later calls,
+   * and calls after the reply, do nothing); fails with `turn.unstarted`
+   * before `persistMessage`.
+   */
   readonly turnSections: Effect.Effect<void, TurnError>
 }>()("efferent/TurnPrompt") {}
 

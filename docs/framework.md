@@ -1320,16 +1320,19 @@ and `RunContext` (which carries the turn's `session`). It provides:
 
 - `TurnMemory`: the session, the turn's `number`, `persistMessage` (the
   turn's TurnStarted, stored when the turn began, is shown to memory, then
-  `turn.started` is published; once), `context(entry)` (before
+  `turn.started` is published; once, but a message memory failed to record
+  can be taken again), `context(entry)` (before
   `persistMessage` it waits, and is recorded right after the message:
   memory records nothing of the turn before its message, `turn.unstarted`),
   `persistReply(outcome)` (`turn.reply`, then `turn.ended` is published
   with the turn's usage; once, and a no-op when the message was never
   persisted). The stored `turn.ended` is the writer's `end`, the turn's
   closing commit;
-- `TurnToolbox`: `open` (once; the handlers run with the opener's services)
-  and `tools` (fails with `tools.unavailable` before `open`);
-- `TurnPrompt`: `system(variant)` and `turnSections`;
+- `TurnToolbox`: `open` (once, but an open that failed can be retried; the
+  handlers run with the opener's services) and `tools` (fails with
+  `tools.unavailable` before `open`);
+- `TurnPrompt`: `system(variant)` and `turnSections` (once, after
+  `persistMessage`);
 - `RunContext` (its `usage` is the turn's running total: a second bus
   subscriber, after the writer, sums every `assistant.message`; its
   `admitted` is the writer's admitted turn, the host's `meta` included),

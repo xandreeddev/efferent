@@ -451,6 +451,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `TurnOrigin`, `TurnOutcomeKind`, `TurnFailure` and `StepStatus`, and
   `TurnEvent` carries the tagged-union helpers (`cases`, `guards`,
   `isAnyOf`, `match`).
+- `@xandreed/core` exports `TurnContextBody`, the `LogBody` member for a
+  TurnContext entry.
 
 ### Changed
 
@@ -463,6 +465,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   build; the `llm.*` counters and `llm.request.duration` still count the
   request alone. A `UtilityLlm` completion is a `models.utility` span, and
   logs written during a routed call carry the model as `llm.model`.
+- `TurnPrompt.turnSections` fails with `turn.unstarted` before
+  `persistMessage`, even when the turn has no turn-tier sections, and does
+  nothing after the reply.
 
 ### Fixed
 
@@ -663,6 +668,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `replayableContext` also drops the log annotations, log spans and stack
   frame of where a context was captured, so annotations a host set there no
   longer replace the turn's ids on its logs.
+- `TurnMemory.persistMessage` can be called again after memory failed to
+  record the user's message, and the context entries given before it are
+  kept; `TurnToolbox.open` (`openTurnTools`) can be called again after a
+  failed open. Both used to refuse with `turn.persisted` / `tools.opened`.
 
 ### Repository
 
@@ -836,6 +845,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   time over `*.entity.ts` files (`BRANDED_IDS_CLEAN`), in every package
   already clean of it, and in core's `src/domain` and `src/spec`.
 - `effect/branded-id-fields` covers `@xandreed/plugin-sessions`.
+- `TurnLive` keeps the turn's state as one tagged `TurnPhase`, moved by pure
+  transitions in `turn-phase.entity.functions.ts`.
 
 ## 0.14.0 — 2026-10-29
 
