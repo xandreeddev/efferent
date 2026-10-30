@@ -136,7 +136,7 @@ export const recallCapability = defineCapability({
       const view = Option.flatMap(entry, (found) => found.body._tag === "ToolResult" ? Option.some(found.body.view) : Option.none())
       const from = offset ?? 0
       return yield* Option.match(view, {
-        onNone: () => Effect.fail({ error: "UnknownLocator", message: `No stored result has locator ${locator}` }),
+        onNone: () => Effect.fail({ error: "UnknownLocator", message: `No stored result has locator ${locator}; pass a locator exactly as a shortened result shows it` }),
         onSome: (text) => from > 0 && from >= text.length
           ? Effect.fail({ error: "OffsetOutOfRange", message: `The result has ${text.length} characters; pass an offset below ${text.length}` })
           : Effect.succeed(recallPage(locator, text, from)),

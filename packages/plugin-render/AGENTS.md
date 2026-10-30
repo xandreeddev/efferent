@@ -34,9 +34,9 @@ Both entries name each export, and `quality/exports-have-consumers` checks each 
 | Text | Source | Pinned by |
 |---|---|---|
 | `render_component` description | `src/render-output.tools.ts:7` | exact, `src/render-output.test.ts:30` |
-| Its parameters (`UiOutputProposal` fields, no descriptions), as core's `toolParametersSchema` gives them | `src/domain/render-output.entity.ts:75-81` | exact (the whole JSON Schema), `src/render-output.test.ts:31` |
-| Failures as `{ error: code, message }` (admission and journal messages are the host's) | `src/render-output.adapter.ts:31` | exact, `src/render-output.test.ts:54-55` |
-| `invalid` messages: invalid proposal, not serializable, over the size limit | `src/render-output.adapter.ts:15`, `:18`, `:20` | exact, `src/render-output.test.ts:63` (from `emit`: through the toolkit, a proposal that does not decode is refused before the handler), `:56`; not serializable: unreachable, since every value that would not serialize fails the decode first |
+| Its parameters (`UiOutputProposal` and `UiRelease` fields, each with a description; the two hashes with their pattern), as core's `toolParametersSchema` gives them | `src/domain/render-output.entity.ts:78-84`, `:63-70`, `:56` | exact (the whole JSON Schema), `src/render-output.test.ts:31` |
+| Failures as `{ error: code, message }` (admission and journal messages are the host's) | `src/render-output.adapter.ts:31` | exact, `src/render-output.test.ts:60-61` |
+| `invalid` messages: invalid proposal, not serializable, over the size limit | `src/render-output.adapter.ts:15`, `:18`, `:20` | exact, `src/render-output.test.ts:69` (from `emit`: through the toolkit, a proposal that does not decode is refused before the handler), `:62`; not serializable: unreachable, since every value that would not serialize fails the decode first |
 
 ## Erasure files
 
