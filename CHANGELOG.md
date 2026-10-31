@@ -20,6 +20,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `afterRun` effect; `stepRequestOf` remains preparation-only. Selected usage
   and stored format 9 remain unchanged, and version 1 requests still replay.
 
+- Restore the 0.14.0 journal fixture from its release tag and retain newer
+  format 9 replay coverage in a separate unreleased fixture. The journal recorder
+  now requires `--unreleased --force` to refresh development evidence and
+  refuses to overwrite a release fixture.
+
 - Stored format 9 adds `model.called` terminal facts for model attempts,
   including retries, helpers and discarded responses. `turnModelCallsOf`
   exposes actual selections and unknown/partial/final reported usage;

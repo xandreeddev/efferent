@@ -67,8 +67,9 @@ when they do not. Work through this list instead.
   release wrote: do not, unless the step is a CHANGELOG **Breaking** entry
   with a migration.
 - Never re-record a released version's fixture. `bun scripts/record-journal-fixture.ts`
-  records the current version's at release time (skill `release`); `--force`
-  only for the current, unreleased version. A new journal kind must be
+  records the current version's at release time (skill `release`) and refuses
+  to overwrite it. During development, `--unreleased --force` refreshes only
+  `journal-unreleased.json`. A new journal kind must be
   produced by the recorder's scenario, or the next fixture fails "holds every
   journal kind its version reserved".
 

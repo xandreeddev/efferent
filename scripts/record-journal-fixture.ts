@@ -53,12 +53,11 @@ import { Agent } from "@xandreed/sdk"
  * counter (`crypto.randomUUID` is replaced for this process), so it holds no
  * time, path or machine of the recording.
  *
- * It writes `packages/sdk/fixtures/journal-<version>.json`, the version being
- * the packages' shared one, with the kinds that version reserves; the
- * compatibility test reads every fixture in that folder. It refuses to
- * replace an existing fixture: a fixture is what a released version wrote,
- * so record it once, from that release's code. `--force` rewrites it, only
- * for re-recording the current, unreleased version.
+ * The normal release command writes `journal-<version>.json`, using the
+ * packages' shared version, and never replaces an existing release fixture.
+ * `--unreleased` writes the explicitly developmental `journal-unreleased.json`;
+ * only `--unreleased --force` may replace that development fixture. The
+ * compatibility test reads every fixture in that folder.
  *
  * Coverage: five agent turns (a digested tool result, a loaded skill, step
  * context, a system variant and a stream that falls back; a quick reply with
@@ -70,10 +69,17 @@ import { Agent } from "@xandreed/sdk"
  */
 
 const root = join(import.meta.dir, "..")
-const version = (JSON.parse(await readFile(join(root, "packages/core/package.json"), "utf8")) as { readonly version: string }).version
+const packageVersion = (JSON.parse(await readFile(join(root, "packages/core/package.json"), "utf8")) as { readonly version: string }).version
+const unreleased = process.argv.includes("--unreleased")
+const force = process.argv.includes("--force")
+if (force && !unreleased) {
+  console.error("--force requires --unreleased; release fixtures cannot be overwritten.")
+  process.exit(1)
+}
+const version = unreleased ? "unreleased" : packageVersion
 const target = join(root, "packages/sdk/fixtures", `journal-${version}.json`)
-if (existsSync(target) && !process.argv.includes("--force")) {
-  console.error(`${relative(root, target)} exists: a fixture records what a release wrote. Pass --force to record it again.`)
+if (existsSync(target) && !(unreleased && force)) {
+  console.error(`${relative(root, target)} exists: ${unreleased ? "pass --unreleased --force to refresh this development fixture" : "a released fixture cannot be overwritten"}.`)
   process.exit(1)
 }
 
@@ -240,7 +246,7 @@ const record = Effect.gen(function* () {
     system: "FIXTURE system prefix.",
   })
   const address: SessionAddress = { id: conversation, owner: "fixture" }
-  yield* sessions.create({ owner: address.owner, id: conversation, meta: { recorded: version } })
+  yield* sessions.create({ owner: address.owner, id: conversation, meta: { recorded: packageVersion } })
 
   const input = (runId: string, text: string, model: LanguageModel.LanguageModel, extra?: { readonly key: string; readonly command: JsonObject }) => ({
     turn: { session: address, userMessage: new UserMessage({ text }), runId: RunId.make(runId), ...extra },
@@ -337,7 +343,9 @@ const sessions = await Effect.runPromise(record)
 const fixture = {
   format: 1,
   version,
-  description: "Session journals as this version stores them, recorded by scripts/record-journal-fixture.ts. Later versions must read them.",
+  description: unreleased
+    ? "Development session journals, recorded by scripts/record-journal-fixture.ts --unreleased; not a released-version fixture."
+    : "Session journals as this version stores them, recorded by scripts/record-journal-fixture.ts. Later versions must read them.",
   /** The stored format this version writes (`STORED_FORMAT`): later versions find it in docs/stored-format.json's history. */
   storedFormat: STORED_FORMAT,
   /** The kinds this version reserved: the recording holds each, and later versions must keep them reserved. */
@@ -350,6 +358,6 @@ if (/\/home\/|\/Users\/|[A-Z]:\\\\/.test(text)) {
   process.exit(1)
 }
 await mkdir(join(target, ".."), { recursive: true })
-await writeFile(target, text)
+await writeFile(target, text, { flag: unreleased && force ? "w" : "wx" })
 const kinds = new Set(sessions.flatMap((session) => session.events.map((event) => event.kind)))
 console.log(`Recorded ${sessions.reduce((sum, session) => sum + session.events.length, 0)} events of ${kinds.size} kinds in ${sessions.length} sessions to ${relative(root, target)}`)

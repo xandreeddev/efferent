@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test"
-import { readdir } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { readFile, readdir } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
 import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, RunId, SessionHeader, SessionLogEvent, STORED_FORMAT, StoredData } from "@xandreed/core"
@@ -53,7 +54,21 @@ test("a fixture's stored format, when it names one, is one this release reads an
 
 test("the journals of every release since 0.13.0 are kept", () => {
   expect(files).toContain("journal-0.13.0.json")
+  expect(files).toContain("journal-0.14.0.json")
   expect(fixtures.filter(({ file, fixture }) => file !== `journal-${fixture.version}.json`).map(({ file }) => file)).toEqual([])
+})
+
+test("the 0.14.0 fixture keeps the exact bytes published with its release tag", async () => {
+  const released = await readFile(join(directory, "journal-0.14.0.json"))
+  expect(createHash("sha256").update(released).digest("hex")).toBe("342bd192e3c09c3cce7ce2737cc91e14e2389e3bb2cd692e9fc2c2d80a518800")
+})
+
+test("development retains current format and reserved-kind coverage independently of releases", () => {
+  const current = fixtures.find(({ file }) => file === "journal-unreleased.json")?.fixture
+  expect(current?.version).toBe("unreleased")
+  expect(current?.storedFormat).toBe(STORED_FORMAT)
+  expect(current?.reserved).toEqual([...RESERVED_KINDS])
+  expect(current?.reserved).toContain("model.called")
 })
 
 fixtures.forEach(({ fixture }) => describe(`a ${fixture.version} session journal`, () => {

@@ -3,6 +3,7 @@ import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import { Context, Deferred, Effect, Fiber, Layer, Logger, Option, Ref, References, Schema, Scope, Stream } from "effect"
 import {
   ConversationId,
+  CurrentAgentStep,
   CurrentPromptCacheKey,
   DecisionRecord,
   defineCapability,
@@ -771,13 +772,13 @@ describe("Agent.turn", () => {
 
   test("a dispatch check reads from storage only the turn's events, each once", async () => {
     const { reads, started, stored } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const reads = yield* Ref.make<ReadonlyArray<{ readonly after: number; readonly count: number }>>([])
+      const reads = yield* Ref.make<ReadonlyArray<{ readonly after: number; readonly count: number; readonly step: Option.Option<number>; readonly sequences: ReadonlyArray<number> }>>([])
       const counted = Layer.effect(SessionLog, Effect.gen(function* () {
         const inner = yield* SessionLog
         return SessionLog.of({
           ...inner,
           read: (id, query) => inner.read(id, query).pipe(Effect.tap((events) => query.kinds.includes("request.prepared")
-            ? Ref.update(reads, (all) => [...all, { after: query.after, count: events.length }])
+            ? CurrentAgentStep.pipe(Effect.flatMap((step) => Ref.update(reads, (all) => [...all, { after: query.after, count: events.length, step, sequences: events.map((event) => event.seq) }])))
             : Effect.void)),
         })
       })).pipe(Layer.provide(SessionLogMemoryLive))
@@ -790,11 +791,18 @@ describe("Agent.turn", () => {
       const second = (yield* journal.stored).filter((event) => Option.contains(event.turn, 2))
       return { reads: yield* Ref.get(reads), started: second[0]?.seq ?? 0, stored: second.length }
     })))
-    // One read before dispatch and one at settlement per step, always after the last event seen.
-    expect(reads).toHaveLength(6)
+    // The six dispatch/settlement reads retain their exact step correlation.
+    expect(reads.slice(0, 6).map((read) => read.step)).toEqual([0, 0, 1, 1, 2, 2].map(Option.some))
+    // Normal post-run maintenance takes one fresh snapshot with no active step.
+    expect(reads[6]?.step).toEqual(Option.none())
+    expect(reads[6]?.count).toBe(0)
+    expect(reads).toHaveLength(7)
     expect(reads[0]?.after).toBe(started - 1)
     expect(reads.every((read, index) => index === 0 || read.after >= reads[index - 1]!.after + reads[index - 1]!.count)).toBe(true)
     expect(reads.reduce((sum, read) => sum + read.count, 0)).toBeLessThanOrEqual(stored)
+    const sequences = reads.flatMap((read) => read.sequences)
+    expect(new Set(sequences).size).toBe(sequences.length)
+    expect(sequences.every((sequence) => sequence >= started)).toBe(true)
   })
 
   test("a memory write reacting to context.built reaches the next step instead of failing this one", async () => {
