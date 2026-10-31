@@ -9,7 +9,7 @@ type TurnUse = (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, TurnService
 /** The turn's skills selected for its message (the always-on ones and the matcher's), then one run of the step loop: its text is the reply. */
 const oneRun = (turn: Turn): Effect.Effect<TurnOutcome, TurnError> => turn.tools.select(turn.userMessage).pipe(
   Effect.andThen(turn.run({})),
-  Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })),
+  Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: result.outcome === "waiting" ? Option.none() : Option.some(result.text) })),
 )
 
 /**
@@ -20,8 +20,8 @@ const oneRun = (turn: Turn): Effect.Effect<TurnOutcome, TurnError> => turn.tools
  * called with, so the turn's task tools (`start_task`, `task_status`) find
  * the `Tasks` whose work the turn is.
  */
-const runOn = (agent: TurnRunner, services: Context.Context<never>, writer: TurnWriter, use: TurnUse, steering: TurnInput["steering"]) => Tasks.pipe(
-  Effect.flatMap((tasks) => agent.turn({ turn: writer, services: Context.add(services, Tasks, tasks), ...(steering === undefined ? {} : { steering }) }, use)),
+const runOn = (agent: TurnRunner, services: Context.Context<never>, writer: TurnWriter, use: TurnUse, steering: TurnInput["steering"], waiting?: TurnInput["waiting"]) => Tasks.pipe(
+  Effect.flatMap((tasks) => agent.turn({ turn: writer, services: Context.add(services, Tasks, tasks), ...(steering === undefined ? {} : { steering }), ...(waiting === undefined ? {} : { waiting }) }, use)),
   Effect.catch((error) => isTurnError(error) ? Effect.fail(error) : Effect.die(error)),
   Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: result.reply })),
 )
@@ -54,7 +54,7 @@ export const agentTaskExecutor = (agent: TurnRunner, options: {
   const child = options.child ?? oneRun
   const react = options.react ?? oneRun
   return Layer.succeed(TaskExecutor, TaskExecutor.of({
-    turn: (writer, task) => runOn(agent, options.services, writer, (turn) => child(turn, task), options.steering),
+    turn: (writer, task, controls) => runOn(agent, options.services, writer, (turn) => child(turn, task), options.steering, controls?.waiting),
     react: (writer) => runOn(agent, options.services, writer, react, options.steering).pipe(Effect.asVoid),
   }))
 }

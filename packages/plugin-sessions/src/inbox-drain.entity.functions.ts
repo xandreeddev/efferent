@@ -28,7 +28,7 @@ export const drainHistoryOf = (events: ReadonlyArray<DrainEvent>): DrainHistory 
   Ended: (value) => ({
     turns: history.turns.map((turn) => turn.turn === value.turn ? { ...turn, ended: Option.some(value.reason) } : turn),
     slots: history.slots.flatMap((slot) => !Option.contains(slot.claimedBy, value.turn) ? [slot]
-      : value.reason === "completed" || value.reason === "cancelled" || (Option.isNone(slot.delivery) && value.reason === "partial") ? []
+      : value.reason === "completed" || value.reason === "cancelled" || value.reason === "waiting" || (Option.isNone(slot.delivery) && value.reason === "partial") ? []
         : [{ ...slot, claimedBy: Option.none() }]),
   }),
   Removed: (value) => ({ ...history, slots: history.slots.filter((slot) => slot.id !== value.id) }),

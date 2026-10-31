@@ -420,6 +420,7 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
       ...(config.budgetTokens === undefined ? {} : { budgetTokens: config.budgetTokens }),
       cacheKey: Option.orElse(Option.fromNullishOr(input.cacheKey), () => cacheKeyOf(config.cacheKeyPrefix ?? "", writer.admitted.session.id)),
       ...(input.steering === undefined ? {} : { steering: input.steering }),
+      ...(input.waiting === undefined ? {} : { waiting: input.waiting }),
       ...(config.captureTraceContent === undefined ? {} : { captureTraceContent: config.captureTraceContent }),
     }
 

@@ -10,6 +10,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Stored format 15 adds helper question and answer outboxes and the `waiting`
+  turn outcome. Exhaustive outcome/status matches handle `waiting`; it consumes
+  its admitted input and never produces a final `task.result`. Custom `Tasks`
+  implement `ask`, `answer`, `steer` and borrowed-writer `execute`; custom task
+  executors honor the optional sticky waiting control. Rerun the extended
+  Tasks, Sessions, StepLoop and InboxRunner conformance kits. Compose
+  `taskInboxRunner` around the ordinary inbox runner for child follow-ups.
+
 - Stored format 14 adds `tool.intercepted`, the `intercepted` refusal reason,
   loop/direct audit provenance, and optional result-scoped invocation and
   rewritten-input metadata. Custom
@@ -1101,6 +1109,17 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Helpers can ask their parent without keeping a turn or worker open.
+  `ask_parent` yields a waiting turn; `answer_task` stores an immutable answer
+  and delivers it through the child's durable inbox for a later turn.
+  `steer_task`, `cancel_task` and question-aware `task_status` complete version
+  2 of the task tools. Question notices and answers use bounded data frames.
+  Reconciliation repairs interrupted delivery; a full inbox defers an accepted
+  answer. Explicit startup takeover can close an abandoned asking turn without
+  replaying its executor. An optional InboxRunner post-end hook runs only after
+  the end acknowledgment and lets the task bridge repair delivery and schedule
+  parent notice reactions.
 
 - Optional `ToolInterceptor` supplies `Allow`, `Deny`, `Rewrite` or `Respond`
   before a call and `Keep` or `Replace` after an actual handler outcome.

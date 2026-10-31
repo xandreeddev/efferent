@@ -16,6 +16,8 @@ import {
   Sessions,
   shutdownRefusal,
   TaskExecutor,
+  TaskQuestionId,
+  RunOrdinal,
   TaskRunner,
   Tasks,
   TurnAdmission,
@@ -23,7 +25,7 @@ import {
   TurnRefused,
   UserMessage,
 } from "@xandreed/core"
-import type { BeginTurn, SessionAddress, SessionLogEvent, TaskView, TurnError, TurnOutcome, TurnWriter } from "@xandreed/core"
+import type { JsonObject, BeginTurn, SessionAddress, SessionLogEvent, TaskView, TurnError, TurnOutcome, TurnWriter } from "@xandreed/core"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
 import type { SessionsConfig } from "@xandreed/plugin-sessions"
 import { noticeOf } from "./task.entity.functions.js"
@@ -48,7 +50,7 @@ const kinds = (events: ReadonlyArray<SessionLogEvent>) => events.map((event) => 
  * recorded as the text of the turn's message.
  */
 const harness = (input: {
-  readonly turn?: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, TurnError>
+  readonly turn?: Context.Service.Shape<typeof TaskExecutor>["turn"]
   readonly react?: (writer: TurnWriter) => Effect.Effect<void, TurnError>
   readonly admission?: LayerType.Layer<TurnAdmission>
   readonly maxMs?: number
@@ -83,6 +85,7 @@ const harness = (input: {
   const parent = yield* sessions.create({ owner }).pipe(Effect.map((view): SessionAddress => ({ id: view.header.id, owner })))
   return {
     sessions,
+    withConfig: (config: Partial<TasksConfig>) => Layer.build(TasksLive({ ...tasksDefaults, ...input.config, ...config }).pipe(Layer.provide(Layer.mergeAll(Layer.succeed(Sessions, sessions), runner, executor)))).pipe(Effect.map(Context.get(Tasks))),
     tasks: Context.get(context, Tasks),
     parent,
     dropping,
@@ -668,4 +671,104 @@ describe("spans and logs", () => {
       yield* Scope.close(open, Exit.void)
     }).pipe(Effect.provide(capture)))
   })
+})
+
+
+describe("helper execution controls", () => {
+  const question = (writer: TurnWriter, id = "which-source") => ({ questionId: TaskQuestionId.make(id), text: "Which source?", askedBy: { run: { id: writer.admitted.runId, turn: writer.admitted.turn, ordinal: RunOrdinal.make(0) }, step: 0 } })
+
+  test("a durable ask overrides a custom successful outcome and reply even after an early answer", () => scenario(Effect.gen(function* () {
+    const h = yield* harness({ turn: (writer, task) => Tasks.pipe(Effect.flatMap((tasks) => Effect.gen(function* () {
+      const asked = yield* tasks.ask(writer, question(writer)).pipe(Effect.orDie)
+      yield* tasks.answer({ id: task.parent, owner }, task.taskId, { questionId: asked.questionId, text: "Primary source" }).pipe(Effect.orDie)
+      return { outcome: "completed" as const, reply: Option.some("must not become a final result") }
+    }))) })
+    const started = yield* h.tasks.start(h.parent, { instructions: "ask", mode: "spawn" })
+    yield* h.idle
+    const child = { id: started.child, owner }
+    const rows = yield* h.sessions.read(child)
+    expect(rows.filter((row) => row.kind === "turn.ended").map((row) => row.data.reason)).toEqual(["waiting"])
+    expect(rows.filter((row) => row.kind === "task.result")).toEqual([])
+    expect((yield* h.sessions.get(child)).pending).toBe(1)
+  })))
+
+  test("an accepted answer replays its stored input across config changes and retires after cancellation", () => scenario(Effect.gen(function* () {
+    const h = yield* harness({ turn: (writer) => Tasks.pipe(Effect.flatMap((tasks) => tasks.ask(writer, question(writer)).pipe(Effect.orDie)), Effect.as({ outcome: "waiting" as const, reply: Option.none() })) })
+    const started = yield* h.tasks.start(h.parent, { instructions: "ask", mode: "spawn" })
+    yield* h.idle
+    const answer = { questionId: TaskQuestionId.make("which-source"), text: "a".repeat(300) }
+    expect(yield* h.tasks.answer(h.parent, started.taskId, answer)).toEqual({ accepted: true, enqueued: true })
+    const changed = yield* h.withConfig({ replyChars: 100 })
+    expect(yield* changed.answer(h.parent, started.taskId, answer)).toEqual({ accepted: true, enqueued: false })
+    const mismatch = yield* Effect.result(changed.answer(h.parent, started.taskId, { ...answer, text: "changed" }))
+    expect(mismatch._tag === "Failure" ? mismatch.failure._tag : "accepted").toBe("TaskConflict")
+    expect(yield* changed.cancel(h.parent, started.taskId)).toBe(true)
+    expect(yield* changed.answer(h.parent, started.taskId, answer)).toEqual({ accepted: true, enqueued: false })
+  })))
+
+  test("a queued attempt's hard failure stays failed and its accepted question makes the fresh retry bookkeeping only", () => scenario(Effect.gen(function* () {
+    const calls = yield* Ref.make(0)
+    const h = yield* harness({ turn: (writer) => Tasks.pipe(Effect.flatMap((tasks) => Effect.gen(function* () {
+      const count = yield* Ref.updateAndGet(calls, (n) => n + 1)
+      yield* tasks.ask(writer, question(writer, count === 1 ? "first" : "second")).pipe(Effect.orDie)
+      if (count > 1) return yield* Effect.fail(new HarnessError({ code: "model.down", message: "the provider failed after the question" }))
+      return { outcome: "waiting" as const, reply: Option.none() }
+    }))) })
+    const started = yield* h.tasks.start(h.parent, { instructions: "ask", mode: "spawn" })
+    yield* h.idle
+    const child = { id: started.child, owner }
+    yield* h.tasks.answer(h.parent, started.taskId, { questionId: TaskQuestionId.make("first"), text: "continue" })
+    yield* h.sessions.drain(child, (writer) => h.tasks.execute(writer).pipe(Effect.asVoid), { take: "inputs", maxTurns: 1 })
+    expect((yield* h.sessions.read(child)).filter((row) => row.kind === "turn.ended").map((row) => row.data.reason)).toEqual(["waiting", "failed"])
+    expect((yield* h.sessions.get(child)).pending).toBe(1)
+    yield* h.tasks.reconcile(h.parent)
+    yield* h.idle
+    yield* h.sessions.drain(child, (writer) => h.tasks.execute(writer).pipe(Effect.flatMap((result) => writer.end({ reason: result.outcome, failure: Option.none() }))), { take: "inputs", maxTurns: 1 })
+    expect(yield* Ref.get(calls)).toBe(2)
+    expect((yield* h.tasks.status(h.parent, started.taskId)).question?.questionId).toBe(TaskQuestionId.make("second"))
+    expect((yield* h.sessions.read(child)).filter((row) => row.kind === "task.result")).toEqual([])
+  })))
+  test("queued steering before the initial runner keeps its text and cannot skip the task instructions", () => scenario(Effect.gen(function* () {
+    const seen = yield* Ref.make<ReadonlyArray<{ origin: string; message: string; history: ReadonlyArray<SessionLogEvent> }>>([])
+    const h = yield* harness({ turn: (writer) => writer.history([]).pipe(Effect.flatMap((history) => Ref.update(seen, (all) => [...all, { origin: writer.admitted.origin, message: writer.admitted.userMessage.text, history }])), Effect.as({ outcome: "completed" as const, reply: Option.none() })) })
+    yield* Ref.set(h.dropping, true)
+    const task = yield* h.tasks.start(h.parent, { instructions: "Original task instructions", mode: "spawn" })
+    const child = { id: task.child, owner }
+    const id = InboxItemId.make("pending-steer")
+    yield* h.tasks.steer(h.parent, task.taskId, { id, userMessage: new UserMessage({ text: "Inspect the primary source" }), source: {} })
+    yield* Effect.scoped(Effect.gen(function* () {
+      const writer = yield* h.sessions.begin(child, { _tag: "Queued", input: id, runId: RunId.make("before-initial") })
+      const result = yield* h.tasks.execute(writer)
+      expect(result).toEqual({ outcome: "waiting", reply: Option.none() })
+      yield* writer.end({ reason: result.outcome, failure: Option.none() })
+    }))
+    expect(yield* Ref.get(seen)).toEqual([])
+    expect((yield* h.tasks.status(h.parent, task.taskId)).status).toBe("pending")
+    yield* Ref.set(h.dropping, false)
+    yield* h.tasks.reconcile(h.parent)
+    yield* h.idle
+    const runs = yield* Ref.get(seen)
+    expect(runs.map((run) => [run.origin, run.message])).toEqual([["task", "Original task instructions"]])
+    expect(runs[0]?.history.filter((event) => event.kind === "turn.started").map((event) => event.data.userMessage)).toEqual([{ text: "Inspect the primary source" }])
+  })))
+
+  test("reconcile reactions use the pending question's starter metadata rather than an older finished task", () => scenario(Effect.gen(function* () {
+    const metadata = yield* Ref.make<ReadonlyArray<JsonObject>>([])
+    const h = yield* harness({
+      turn: (writer, task) => task.instructions === "old task" ? Effect.succeed({ outcome: "completed", reply: Option.none() }) : Tasks.pipe(Effect.flatMap((tasks) => tasks.ask(writer, question(writer)).pipe(Effect.orDie)), Effect.as({ outcome: "waiting" as const, reply: Option.none() })),
+      react: (writer) => Ref.update(metadata, (all) => [...all, writer.admitted.meta]),
+    })
+    yield* h.tasks.start(h.parent, { instructions: "old task", mode: "spawn", meta: { tenant: "old" } })
+    yield* h.idle
+    yield* Effect.scoped(Effect.gen(function* () {
+      const writer = yield* h.sessions.begin(h.parent, say("hold parent"))
+      yield* h.tasks.start(h.parent, { instructions: "new task", mode: "spawn", meta: { tenant: "new" } })
+      yield* h.idle
+      yield* writer.end(ended)
+    }))
+    yield* h.tasks.reconcile(h.parent, { react: true })
+    yield* h.idle
+    expect(yield* Ref.get(metadata)).toEqual([{ tenant: "old" }, { tenant: "new" }])
+  })))
+
 })

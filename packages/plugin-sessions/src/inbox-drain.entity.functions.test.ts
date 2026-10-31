@@ -45,6 +45,27 @@ describe("inbox drain policy and scheduler", () => {
     expect(drainHistoryOf([...events, { ...started(2, 1), input: Option.some(InboxItemId.make("q")) }, { _tag: "Ended", turn: 2, reason: "cancelled" }, { ...started(3, 1), input: Option.some(InboxItemId.make("q")) }, { _tag: "Ended", turn: 3, reason: "failed" }]).slots.map((slot) => String(slot.id))).toEqual(["notice"])
   })
 
+  test("waiting acknowledges only the asking turn's claim and preserves an early answer for a new turn", () => {
+    const input = InboxItemId.make("asking")
+    const answer = InboxItemId.make("early-answer")
+    const history = drainHistoryOf([
+      { _tag: "Enqueued", id: input, delivery: Option.some("next") },
+      { ...started(1), input: Option.some(input) },
+      { _tag: "Enqueued", id: answer, delivery: Option.some("next") },
+      { _tag: "Ended", turn: 1, reason: "waiting" },
+    ])
+    expect(history.slots.map((slot) => slot.id)).toEqual([answer])
+    expect(targetPending(history, target("asking"), { _tag: "Before" })).toBe(false)
+    expect(targetOf(history, Option.none(), { _tag: "Before" }, false)).toEqual(Option.some(target("early-answer")))
+    expect(targetOf(drainHistoryOf([started(1), { _tag: "Ended", turn: 1, reason: "waiting" }]), Option.none(), { _tag: "Before" }, false)).toEqual(Option.none())
+    const notice = drainHistoryOf([
+      { _tag: "Enqueued", id: input, delivery: Option.none() },
+      { ...started(1), origin: "inbox", claimed: [input] },
+      { _tag: "Ended", turn: 1, reason: "waiting" },
+    ])
+    expect(notice.slots).toEqual([])
+  })
+
   test("wakes preserve a payload's delay; retry tickets yield to other sessions and startup takeover is consumed once", () => {
     const first = address(1)
     const second = address(2)

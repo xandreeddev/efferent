@@ -839,6 +839,35 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* expect("queued-input", !again.enqueued && again.pending === 0 && sameRun === "TurnDuplicate" && duplicate === "TurnDuplicate", `after completion enqueue gave ${canonicalJson(again)}, same-run begin ${sameRun}, new-run begin ${duplicate}`)
     })),
 
+    scoped("waiting acknowledges only its admitted input and keeps an early answer for the next turn", "queued-waiting", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      const input = queued("asking")
+      yield* sessions.enqueue(address, input)
+      const writer = yield* sessions.begin(address, fromQueue("asking", "waiting-ask"))
+      yield* sessions.enqueue(address, queued("early-answer"))
+      yield* sessions.deliver(address, item("untaken-notice"))
+      const ended = yield* writer.end({ reason: "waiting", failure: Option.none() })
+      yield* expect("queued-waiting", ended.pending === 2 && Option.isNone((yield* sessions.get(address)).open),
+        "waiting retained the asking input, consumed an unclaimed answer/notice, or left its writer open")
+      yield* expect("queued-waiting", endings(yield* sessions.read(address, { kinds: ["turn.ended"] })) === `${writer.admitted.turn}:waiting:none`,
+        "the waiting turn's stored ending changed")
+      const duplicate = yield* sessions.enqueue(address, input)
+      yield* expect("queued-waiting", !duplicate.enqueued && duplicate.pending === 2,
+        "the acknowledged asking input was enqueued again")
+      yield* expect("queued-waiting", (yield* refusal(sessions, address, resume(writer.admitted.turn, "waiting-resume"))) === "NotResumable:finished",
+        "a waiting turn accepted a manual resume")
+      const successor = yield* leased()
+      const answer = yield* successor.sessions.begin(address, fromQueue("early-answer", "waiting-answer"))
+      yield* expect("queued-waiting", answer.admitted.input?.id === InboxItemId.make("early-answer") && answer.admitted.claimed.length === 0,
+        "the next turn lost its early answer or claimed an unrelated notice")
+      yield* answer.end(completed)
+      const notice = yield* successor.sessions.begin(address, { _tag: "Inbox", runId: RunId.make("waiting-notice") })
+      yield* notice.end({ reason: "waiting", failure: Option.none() })
+      yield* expect("queued-waiting", (yield* successor.sessions.get(address)).pending === 0,
+        "a notice processed by a waiting turn remained pending")
+    })),
+
     scoped("a queued input id cannot change its message, delivery or source, or collide with a notice, even after completion", "input-conflict", (owner) => Effect.gen(function* () {
       const { sessions } = yield* leased()
       const address = yield* created(sessions, owner)

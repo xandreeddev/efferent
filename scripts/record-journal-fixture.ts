@@ -22,6 +22,7 @@ import {
   RESERVED_KINDS,
   recordCompletion,
   RunId,
+  RunOrdinal,
   SessionHeader,
   SessionLogEvent,
   SessionLogMemoryLive,
@@ -32,6 +33,7 @@ import {
   TaskExecutor,
   TaskRunner,
   Tasks,
+  TaskQuestionId,
   ToolInterceptor,
   TurnAdmissionOpen,
   UserMessage,
@@ -44,7 +46,7 @@ import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
-import { TasksLive, tasksDefaults } from "@xandreed/plugin-tasks"
+import { TASK_ANSWERED, TaskAnswered, TasksLive, tasksDefaults } from "@xandreed/plugin-tasks"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { Agent } from "@xandreed/sdk"
 
@@ -418,12 +420,38 @@ const record = Effect.gen(function* () {
     return yield* Effect.die("the fixture did not record both tool interception phases")
   }
 
+  // Keep this scenario after the preceding sessions so their deterministic
+  // ids and bytes remain unchanged as helper conversations grow.
+  const questionParent: SessionAddress = { id: ConversationId.make(fixedId(0x6023)), owner: address.owner }
+  const questionChild: SessionAddress = { id: ConversationId.make(fixedId(0x7a53)), owner: address.owner }
+  const questionId = TaskQuestionId.make("fixture-question")
+  yield* sessions.create(questionParent)
+  const helperExecutor = Layer.succeed(TaskExecutor, TaskExecutor.of({
+    turn: (writer) => writer.admitted.origin === "task" ? Tasks.pipe(Effect.flatMap((current) => current.ask(writer, {
+      questionId, text: "Which record should I inspect?", askedBy: { run: { id: writer.admitted.runId, turn: writer.admitted.turn, ordinal: RunOrdinal.make(0) }, step: 0 },
+    }).pipe(Effect.orDie)), Effect.as({ outcome: "waiting" as const, reply: Option.none() }))
+      : Effect.succeed({ outcome: "completed" as const, reply: Option.some("The selected record is ready.") }),
+    react: () => Effect.void,
+  }))
+  const helperTasks = Context.get(yield* Layer.build(TasksLive(tasksDefaults).pipe(Layer.provide(Layer.mergeAll(Layer.succeed(Sessions, sessions), runner, helperExecutor)))), Tasks)
+  yield* helperTasks.start(questionParent, { taskId: questionChild.id, instructions: "Inspect the chosen record.", mode: "spawn" })
+  yield* runQueued
+  if ((yield* helperTasks.status(questionParent, questionChild.id)).status !== "waiting") return yield* Effect.die("the fixture helper did not yield waiting")
+  yield* helperTasks.answer(questionParent, questionChild.id, { questionId, text: "Inspect beta." })
+  const answered = (yield* sessions.read(questionChild, { kinds: [TASK_ANSWERED] }))[0]
+  if (answered === undefined) return yield* Effect.die("the fixture helper did not store its answer outbox")
+  const acceptedAnswer = yield* Schema.decodeUnknownEffect(TaskAnswered)(answered.data)
+  const answerWriter = yield* sessions.begin(questionChild, { _tag: "Queued", input: acceptedAnswer.input.id, runId: RunId.make("helper-answer-fixture") })
+  const followed = yield* helperTasks.execute(answerWriter)
+  yield* answerWriter.end({ reason: followed.outcome, failure: Option.none() })
+  yield* helperTasks.reconcile(questionParent)
+
   const journal = (session: SessionAddress) => Effect.gen(function* () {
     const view = yield* sessions.get(session)
     const events = yield* sessions.read(session)
     return { header: Schema.encodeSync(SessionHeader)(view.header), events: Schema.encodeSync(Schema.Array(SessionLogEvent))(events) }
   })
-  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress, interceptedAddress], journal)
+  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress, interceptedAddress, questionParent, questionChild], journal)
 }).pipe(Effect.scoped, Effect.provideService(Clock.Clock, fixedClock))
 
 const sessions = await Effect.runPromise(record)

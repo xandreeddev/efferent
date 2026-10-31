@@ -78,6 +78,25 @@ test("a failed loop preserves its failure and skips normal after-run maintenance
   expect(phases).toEqual(["turn-start"])
 })
 
+test("a waiting run skips end maintenance and an already waiting run skips preparation", async () => {
+  const phases: string[] = []
+  const returned = await Effect.runPromise(setup((input) => Effect.sync(() => {
+    phases.push(input.signal.phase)
+    return { actions: [], digest: [] }
+  }), { id: "test", version: "1", run: () => Effect.sync(() => {
+    phases.push("loop")
+    return { ...result, text: "", outcome: "waiting", reason: "waiting" } as const
+  }) }, Effect.gen(function* () {
+    const first = yield* runTurnLoop({}, { waiting: Effect.succeed(false) })
+    const second = yield* runTurnLoop({}, { waiting: Effect.succeed(true) })
+    return [first, second]
+  })))
+  expect(phases).toEqual(["turn-start", "loop"])
+  expect(returned.map((value) => [value.outcome, value.reason, value.text, value.steps])).toEqual([
+    ["waiting", "waiting", "", 0], ["waiting", "waiting", "", 0],
+  ])
+})
+
 test("stepRequestOf remains preparation-only", async () => {
   const phases: string[] = []
   await Effect.runPromise(setup((input) => Effect.sync(() => { phases.push(input.signal.phase); return { actions: [], digest: [] } }),

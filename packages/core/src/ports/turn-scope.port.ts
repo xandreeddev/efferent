@@ -164,6 +164,8 @@ export interface TurnRunOptions {
   readonly cacheKey?: Option.Option<string>
   /** A mid-run user message, consulted between steps. */
   readonly steering?: Effect.Effect<Option.Option<string>, HarnessError>
+  /** Durable host-owned yield probe, checked before work and after a settled step. */
+  readonly waiting?: Effect.Effect<boolean, TurnError>
   /**
    * Whether the run's spans may carry prompt and response content
    * (`StepRequest.captureTraceContent`) when the policy does not say; when

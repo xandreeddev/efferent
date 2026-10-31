@@ -199,6 +199,7 @@ export type { TurnToAdmit } from "./ports/turn-admission.port.js"
 export { TurnAdmissionOpen } from "./session/turn-admission.open.adapter.js"
 export {
   TaskConflict,
+  TaskControlRefused,
   TaskMissing,
   TaskMode,
   TaskRef,
@@ -206,6 +207,7 @@ export {
   TaskStatus,
   TaskView,
 } from "./session/tasks.entity.js"
+export { TaskQuestion, TaskQuestionId } from "./session/task-question.entity.js"
 export { TaskExecutor, TaskRunner, Tasks } from "./ports/tasks.port.js"
 // what this process is busy with: open turns and running background work, for a `/ping` or a drain
 export { ActiveTurn, ProcessActivity, ShutdownReport, TurnsInFlight, WaitingInputCount } from "./session/activity.entity.js"

@@ -1,6 +1,6 @@
 {
-  "format": 14,
-  "fingerprint": "4be4c798063bea23d4f73dfd5b6e30adf52119bb7382c9eed018b50926ba8c4b",
+  "format": 15,
+  "fingerprint": "59535da3bf8ca91efc3770e250f1ad7d3a987d8dd28067ad59c7f6f380be78c1",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
@@ -16,7 +16,7 @@
     "journal memory.message": "a71375a92b30fb51741f08dc4238b512b050d5295d086b6ce6188490ec5ca51e",
     "journal memory.section": "62511ca5be1cff0fa2a8c4dc7f509f3621237df24882a5e8b4761e00c0e219b7",
     "journal memory.skills": "8c8871b99866a59efd5b79c1760664a8f869535ceec6fedbc2066fdef97a80f2",
-    "journal memory.snapshot": "a1d6f38dc7918d4478f86ee9becd02e91314ce9ace3e2645cd6c6230d00d818c",
+    "journal memory.snapshot": "1fbd37ece87ae7ff3730f8a2e8ce42a6de6d1e144702ff8272611018b0a35187",
     "journal memory.step": "30558108345a1d32f4d01c51452265f1217e741cd7a0ca884f29e2542b1375e3",
     "journal memory.system": "82e793d5ae8e7a0a6cb19cc8b61d719be5d868f9eb33e383d77ae23acdd838e0",
     "journal memory.tool-presentation": "dda56026f79b2528cfa86981b5d76751c871eed04d2b31ab48f70a5ca51dbf4a",
@@ -32,12 +32,14 @@
     "journal tool.intercepted": "06463567bd351a48cdb36ea7114e5fe19d3a80aabf6595fc6985eebf65d44906",
     "journal tool.refused": "f1fb338103827be3fae543dea536565b05ce10667fa43b35b116f97beb636fc3",
     "journal tool.started": "b3bbc328f2086dc498e3066e2a09005784fdf6ecde6fd69915d812e176af8bd6",
-    "journal turn.ended": "9ad790e35056a849ed7121f0d005e0312633732ac43f651e152ff00a71227c3e",
-    "journal turn.reply": "e1cc10fb802d4c6169b1bd494f3777f5f9c506519a75faf36bcd307cd8fbe194",
+    "journal turn.ended": "7ddfbba6f34158c41040e24ebb84e87a6af8fc1bd1f286e5ea0b22626464e556",
+    "journal turn.reply": "f717e492b2d31cdf544cb224ba114e94e03cdc5a1fa43fa0412a5b198805f5a1",
     "journal turn.started": "4a1677b02831623bf526e85353c9882181e926a26cd32b3ea99c9340fbcc2b52",
     "physical MediaEnvelope": "e2d0697123daa4ca58dc097ad39868f058f0b0e8ec7bbc9c8d6219af78578cc1",
     "physical MediaReference": "f089a9d86fb768a081f362a073e42a323b67e4e66a39c7b2dbbe872c7735f37e",
+    "record task.answered": "df9b09c060cb2ca959a99fd9d0ceaccef119768a2c4d319beacf91b10db67545",
     "record task.cancelled": "14149c0a6d2408fae8b6439ffca20b0b153bea6d0e29b253b8122dec3c1cbcc5",
+    "record task.questioned": "73cfe92a6570d95f15a77ea52fc7f7bb829a1dfab43ebfe2f57c4bfabf99fe48",
     "record task.result": "ef9239abd9d58e33ef8efb660c5d318af28154314cd89da15e5e318897a388b1",
     "record task.started": "c698122a42b8efd9873f168212a61ec5fb4c2ff46d2065a212f49954e0b34d59"
   },
@@ -97,6 +99,10 @@
     {
       "format": 14,
       "fingerprint": "4be4c798063bea23d4f73dfd5b6e30adf52119bb7382c9eed018b50926ba8c4b"
+    },
+    {
+      "format": 15,
+      "fingerprint": "59535da3bf8ca91efc3770e250f1ad7d3a987d8dd28067ad59c7f6f380be78c1"
     }
   ]
 }

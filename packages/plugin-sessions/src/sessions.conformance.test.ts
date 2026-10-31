@@ -297,7 +297,7 @@ describe("the Sessions kit catches careless backends", () => {
       ...instance,
       sessions: Sessions.of({ ...instance.sessions, enqueue: () => Effect.succeed({ enqueued: false, pending: 0 }) }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, empty)))).toEqual(["drain-take", "input-conflict", "queued-admission", "queued-input", "queued-race", "queued-resume", "queued-retry", "steering-closed", "steering-pending", "steering-race", "steering-take", "waiting", "waiting-input"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, empty)))).toEqual(["drain-take", "input-conflict", "queued-admission", "queued-input", "queued-race", "queued-resume", "queued-retry", "queued-waiting", "steering-closed", "steering-pending", "steering-race", "steering-take", "waiting", "waiting-input"])
   })
 
   test("one that silently accepts another payload under an input id fails only input-conflict", async () => {
@@ -324,7 +324,18 @@ describe("the Sessions kit catches careless backends", () => {
         })),
       }),
     })
-    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, forgetful)))).toEqual(["queued-input", "queued-resume", "queued-retry"])
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, forgetful)))).toEqual(["queued-input", "queued-resume", "queued-retry", "queued-waiting"])
+  })
+
+  test("one that returns queued input after a waiting end fails the waiting acknowledgment check", async () => {
+    const retained = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer) => ({
+        ...writer,
+        end: (ending) => writer.end(ending.reason === "waiting" ? { ...ending, reason: "interrupted" } : ending),
+      }))),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, retained)).filter((check) => check.name.startsWith("waiting acknowledges only")))).toEqual(["queued-waiting"])
   })
 
   test("one whose explicit user resumes lose input provenance fails only queued-resume", async () => {

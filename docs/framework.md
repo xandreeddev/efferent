@@ -3206,7 +3206,7 @@ startup attempt, never to a later retry or newly discovered session. Scope
 closure stops the drainer's fibers. A provided `TurnShutdown` stops new
 attempts when the host starts shutting down.
 
-**Background tasks** (`@xandreed/plugin-tasks`). A task is one turn of a
+**Background tasks** (`@xandreed/plugin-tasks`). A task runs in a
 child session, a fork of the conversation or an empty spawn, whose id is the
 task's. `Tasks.start(parent, { instructions, mode })` records `task.started`
 in the parent, checked against the tasks stored (a task does not start
@@ -3271,7 +3271,8 @@ the child's turn and the parent's reactions to its result are begun with
 it, so a `TurnAdmission` that counts by tenant or quota key counts them as
 the starter's. `startedBy` (a run id and a turn number) records in
 `task.started` the turn whose run started the task. With `tools`, the model
-gets `start_task` and `task_status` (off by default); `start_task` starts
+gets `start_task`, `task_status`, `ask_parent`, `steer_task`, `answer_task`
+and `cancel_task` (off by default); `start_task` starts
 the task with the turn's own `meta`, unchanged, and the turn as
 `startedBy`, and tells the model that a fork sees the conversation up to
 the user's latest message, not that message or what the turn did since. A
@@ -3302,6 +3303,72 @@ const tasks = TasksLive(tasksDefaults).pipe(Layer.provide(Layer.mergeAll(
   agentTaskExecutor(agent, { services: Context.make(LanguageModel.LanguageModel, model) }),
 )))
 ```
+
+A helper can ask its parent for information with `ask_parent`. The child stores
+`task.questioned` before delivering its separately identified parent notice.
+Its current turn ends `waiting`, with no final task result or deliverable reply.
+The parent sees the outstanding `TaskView.question` or `task_status` question and
+answers with `answer_task`. Hosts use `Tasks.ask(writer, question)` and
+`Tasks.answer(parent, taskId, { questionId, text })` directly. Question IDs are
+stable across retries; model tools derive them from the durable invocation.
+Only one new question is accepted per writer turn, even when its answer arrives
+before that turn closes, and only one question may be outstanding.
+
+An answer commits `task.answered` in the child before enqueueing its exact
+normalized, framed `QueuedInput` with delivery `next`. A full inbox returns
+`{ accepted: true, enqueued: false }`; reconciliation retries delivery from the
+stored payload. Retrying an accepted question or answer preserves its immutable
+content; changed content under the same identity raises `TaskConflict`. An exact
+answer retry after the task has finished cannot revive it. Waiting acknowledges
+only the input admitted to that turn, so an early answer remains for a separate
+follow-up. Waiting turns cannot be resumed as interrupted user turns.
+
+Compose `taskInboxRunner(base)` from `@xandreed/sdk` around the ordinary
+`agentInboxRunner` and provide the drainer's same `Sessions` and `Tasks`.
+It identifies task children from their durable session header and runs
+`Tasks.execute(writer)` on the exact admitted writer. It begins and ends no
+turn. `TaskExecutor.turn` receives an optional `{ waiting }` control;
+`agentTaskExecutor` forwards it to every `turn.run` through `TurnInput.waiting`.
+The loop checks before work and after a successful settled step, before
+completion, joining background tasks, taking more steers or another model call.
+An actual failed or interrupted step keeps its failure. A waiting loop skips
+normal end-of-run memory maintenance. Manual hosts using `prepareRun` own its
+preparation and explicit `afterRun` lifecycle.
+
+`Tasks.steer(parent, taskId, input)` accepts the same normalized user messages and
+attachments as the inbox and assigns delivery `steer`. An unanswered helper
+refuses new steering; answer its question instead. Older steers accepted while
+it ran can still occupy the bounded queue. The task bridge admits them as
+bookkeeping waiting turns, preserving their exact messages in durable
+`turn.started` history and freeing space without invoking the executor. Only
+the latest question's exact accepted answer input may run the helper next.
+Ordinary memory policies still govern how older history is shown: a bounded
+window may drop old messages, and summary/digest strategies may transform them.
+
+Initial task turns keep their existing terminal result policy. Queued
+follow-ups ending partial, failed or interrupted retain their input for ordinary
+drainer recovery and produce no final task result. Completed follow-ups produce
+one; a later question yields waiting again. A waiting task counts against
+`maxRunning` while holding no worker, lease or queued input merely to wait.
+The first task result or cancellation remains terminal, and queued input left
+after cancellation retires without calling the executor.
+
+`InboxRunner.afterEnd(writer, ending)` is optional. The drainer invokes it only
+after receiving the writer's end acknowledgment, interruptibly and outside the
+writer's commit permit. A lost acknowledgment or process death may skip it;
+hook failure cannot reexecute input already consumed by that end. The task
+bridge uses it to call `Tasks.reconcile(parent, { react: true })`, which repairs
+outboxes and explicitly schedules the existing notices-only parent reaction.
+Plain `reconcile(parent)` retains its caller-drains contract.
+
+Default reconciliation leaves an open asking writer alone. At startup, after
+the host knows the previous process is dead, `reconcile(parent, { takeOver:
+true })` can normalize an abandoned asking turn with a bookkeeping Task turn
+and no executor call. Each recovery key includes the question and abandoned
+turn, so another crash remains recoverable. Run this exclusive startup repair
+before enabling new local task or drainer work: boolean takeover replaces the
+current holder, not a named historical holder. If a real answer is already
+accepted, the ordinary inbox drainer's explicit startup takeover handles it.
 
 **Following a session.** plugin-render's `SessionsJournalTailLive` is a
 `JournalTail` over `Sessions`: the render feed replays a session's events

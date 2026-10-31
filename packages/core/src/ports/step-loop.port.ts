@@ -118,6 +118,8 @@ export interface StepRequest {
    * continuation when the hard limits allow it; a capped run consumes none.
    */
   readonly pendingSteers: Effect.Effect<boolean, TurnError>
+  /** Yield before paid work or after a successfully settled step, before completion, awaiting tasks or consuming more input. */
+  readonly waiting?: Effect.Effect<boolean, TurnError>
   /**
    * Take and durably record waiting steers as separate user messages after
    * this step.started and before its plan/dispatch, including step zero.
@@ -179,7 +181,8 @@ export interface ModelDispatch {
 /**
  * How a run of the step loop came out: `completed` when the model stopped
  * or the completion verdict held; `partial` when the step cap or the
- * degenerate-loop breaker stopped it, so its `text` is not a deliverable.
+ * degenerate-loop breaker stopped it, so its `text` is not a deliverable;
+ * `waiting` when the turn's yield probe holds, with empty text and no final reply.
  */
 export type RunResult = {
   readonly text: string
@@ -189,6 +192,7 @@ export type RunResult = {
 } & (
   | { readonly outcome: "completed"; readonly reason: "completed" }
   | { readonly outcome: "partial"; readonly reason: "step-cap" | "degenerate-loop" }
+  | { readonly outcome: "waiting"; readonly reason: "waiting" }
 )
 
 /**

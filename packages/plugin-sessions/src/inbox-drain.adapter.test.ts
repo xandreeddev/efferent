@@ -79,6 +79,70 @@ describe("InboxDrainLive", () => {
 })
 
 describe("InboxDrainLive over real Sessions", () => {
+  test.each(["completed", "waiting"] as const)("afterEnd waits for the %s end ACK and a failed hook cannot retry consumed input", (reason) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* real
+    const address = yield* create(subject.sessions, reason === "waiting" ? 5691 : 5690)
+    yield* subject.sessions.enqueue(address, queued("once"))
+    const committed = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const handed = yield* Deferred.make<void>()
+    const calls = yield* Ref.make(0)
+    const hooks = yield* Ref.make(0)
+    const sessions = Sessions.of({ ...subject.sessions, begin: (address, input) => subject.sessions.begin(address, input).pipe(Effect.map((writer) => ({ ...writer,
+      end: (ending) => writer.end(ending).pipe(Effect.tap(() => Deferred.succeed(committed, undefined).pipe(Effect.andThen(Deferred.await(release))))),
+    }))) })
+    const activity = yield* start(subject, InboxRunner.of({
+      run: () => Ref.update(calls, (n) => n + 1).pipe(Effect.as({ outcome: reason, reply: Option.none() })),
+      afterEnd: (writer, ending) => Effect.gen(function* () {
+        expect(String(writer.admitted.input?.id)).toBe("once")
+        expect(ending.reason).toBe(reason)
+        expect((yield* subject.sessions.get(address).pipe(Effect.orDie)).pending).toBe(0)
+        expect((yield* subject.sessions.read(address, { kinds: ["turn.ended"] }).pipe(Effect.orDie)).map((event) => event.data.reason)).toEqual([reason])
+        yield* Ref.update(hooks, (n) => n + 1)
+        yield* Deferred.succeed(handed, undefined)
+        return yield* Effect.fail(new HarnessError({ code: "task.turn", message: "handoff failed after the end ACK" }))
+      }),
+    }), { owners: [address.owner], sweepIntervalMs: 10, resume: { _tag: "Never" } }, sessions)
+    yield* Deferred.await(committed)
+    expect((yield* subject.sessions.read(address, { kinds: ["turn.ended"] })).map((event) => event.data.reason)).toEqual([reason])
+    expect(yield* Ref.get(hooks)).toBe(0)
+    yield* Deferred.succeed(release, undefined)
+    yield* Deferred.await(handed)
+    yield* activity.idle
+    yield* TestClock.adjust("100 millis")
+    yield* activity.idle
+    expect(yield* Ref.get(calls)).toBe(1)
+    expect(yield* Ref.get(hooks)).toBe(1)
+    expect((yield* subject.sessions.get(address)).pending).toBe(0)
+  })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+
+  test("an end committed with a lost ACK skips afterEnd and a fresh drainer does not execute that input", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const subject = yield* real
+    const address = yield* create(subject.sessions, 5692)
+    yield* subject.sessions.enqueue(address, queued("lost-ack"))
+    const committed = yield* Deferred.make<void>()
+    const calls = yield* Ref.make(0)
+    const hooks = yield* Ref.make(0)
+    const sessions = Sessions.of({ ...subject.sessions, begin: (address, input) => subject.sessions.begin(address, input).pipe(Effect.map((writer) => ({ ...writer,
+      end: (ending) => writer.end(ending).pipe(Effect.andThen(Deferred.succeed(committed, undefined)), Effect.andThen(Effect.fail(new HarnessError({ code: "session.defect", message: "the end ACK was lost" })))),
+    }))) })
+    const activity = yield* start(subject, InboxRunner.of({
+      run: () => Ref.update(calls, (n) => n + 1).pipe(Effect.as({ outcome: "waiting", reply: Option.none() })),
+      afterEnd: () => Ref.update(hooks, (n) => n + 1),
+    }), { owners: [address.owner], sweepIntervalMs: 10, resume: { _tag: "Never" } }, sessions)
+    yield* Deferred.await(committed)
+    yield* activity.idle
+    const foreign = yield* subject.other()
+    const fresh = yield* start(subject, InboxRunner.of({ run: () => Ref.update(calls, (n) => n + 1).pipe(Effect.as({ outcome: "completed", reply: Option.none() })) }),
+      { owners: [address.owner], sweepIntervalMs: 10, resume: { _tag: "Never" } }, foreign)
+    yield* TestClock.adjust("100 millis")
+    yield* fresh.idle
+    expect(yield* Ref.get(calls)).toBe(1)
+    expect(yield* Ref.get(hooks)).toBe(0)
+    expect((yield* foreign.get(address)).pending).toBe(0)
+    expect((yield* foreign.read(address, { kinds: ["turn.ended"] })).map((event) => event.data.reason)).toEqual(["waiting"])
+  })).pipe(Effect.provide(TestClock.layer()), Effect.timeout("3 seconds"))))
+
   test("even the periodic timer waits until the global waiting subscription exists before the startup sweep", () => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const subject = yield* real
     const address = yield* create(subject.sessions, 5602)

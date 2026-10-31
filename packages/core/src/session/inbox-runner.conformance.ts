@@ -68,9 +68,9 @@ export const inboxRunnerConformance = (subject: InboxRunnerSubject): ReadonlyArr
       "the borrowed writer's queued input, origin or attachment changed")
   }))),
 
-  check("the runner preserves completed, partial and failed outcomes and their replies", "outcome", (owner) => Effect.scoped(Effect.gen(function* () {
+  check("the runner preserves completed, partial, failed and waiting outcomes and their replies", "outcome", (owner) => Effect.scoped(Effect.gen(function* () {
     const { writer } = yield* fixture(owner)
-    yield* Effect.forEach(["completed", "partial", "failed"] as const, (outcome) => Effect.gen(function* () {
+    yield* Effect.forEach(["completed", "partial", "failed", "waiting"] as const, (outcome) => Effect.gen(function* () {
       const reply = Option.some(`${outcome} reply`)
       const runner = yield* subject.open({ use: () => Effect.succeed({ outcome, reply }) })
       const result = yield* runner.run(writer)

@@ -41,7 +41,7 @@ const notRun = (call: Response.ToolCallPart<string, unknown>): Response.AnyPart 
  * or a whole step between them restarts nothing. `batch-tail` records the
  * response and all results only after every handler returns.
  */
-type Carelessness = "careful" | "streamed" | "settled" | "cuts-with-calls" | "ends-at-pause" | "uncapped" | "unreset" | "batch-tail"
+type Carelessness = "careful" | "streamed" | "settled" | "cuts-with-calls" | "ends-at-pause" | "uncapped" | "unreset" | "batch-tail" | "waiting"
 
 /**
  * The smallest loop that honours the StepLoop contract, written directly on
@@ -96,6 +96,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
     // output limit, or paused); `toolCalled`: whether the run has executed a tool call, the empty-response
     // tolerance of its model calls; `cuts`: the replies in a row cut at the output limit, each answered with a corrective.
     const step = (index: number, text: string, carried: string, usage: TokenUsage, toolCalled: boolean, cuts: number): Effect.Effect<RunResult, TurnError> => Effect.gen(function* () {
+      if (careless !== "waiting" && (yield* request.waiting ?? Effect.succeed(false))) return { outcome: "waiting", reason: "waiting", text: "", steps: index, usage } satisfies RunResult
       if (index >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text: joined(text, carried, ""), steps: index, usage } satisfies RunResult
       const activeTools = yield* request.tools.active
       const info: StepInfo = { stepIndex: index, activeTools, lastUsage: Option.none() }
@@ -218,6 +219,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
         return yield* step(index + 1, nextText, nextCarried, total, toolCalled, cuts + 1)
       }
       yield* end(index, "completed")
+      if (careless !== "waiting" && (yield* request.waiting ?? Effect.succeed(false))) return { outcome: "waiting", reason: "waiting", text: "", steps: index + 1, usage: total } satisfies RunResult
       const first = yield* evaluate(info)
       const verdict = first.complete || first.awaiting.length === 0 ? first : yield* request.tasks.await(first.awaiting).pipe(Effect.andThen(evaluate(info)))
       const pending = yield* request.pendingSteers
@@ -262,6 +264,10 @@ conform("a minimal loop", minimalLoopOf("careful"))
 const failedChecks = (loop: Context.Service.Shape<typeof StepLoop>) => Effect.runPromise(Effect.forEach(stepLoopConformance(loop), (check) =>
   Effect.result(check.run).pipe(Effect.map((exit) => exit._tag === "Failure" ? [exit.failure.check] : [])), { concurrency: 1 }))
   .then((failed) => [...new Set(failed.flat())].toSorted())
+
+test("ignoring the waiting probe fails its initial and settled checks", async () => {
+  expect(await failedChecks(minimalLoopOf("waiting"))).toEqual(["waiting-initial", "waiting-settled"])
+})
 
 test("the accepted-input check rejects a loop that drops accepted response evidence", async () => {
   const forgetful = StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps({

@@ -1657,7 +1657,7 @@
         },
         {
           "name": "outcome",
-          "type": "\"completed\" | \"partial\" | \"failed\"",
+          "type": "\"completed\" | \"partial\" | \"failed\" | \"waiting\"",
           "required": true
         },
         {
@@ -1694,7 +1694,8 @@
             "enum": [
               "completed",
               "partial",
-              "failed"
+              "failed",
+              "waiting"
             ]
           },
           "reply": {
@@ -4603,7 +4604,7 @@
       "body": [
         {
           "name": "outcome",
-          "type": "\"completed\" | \"partial\" | \"failed\"",
+          "type": "\"completed\" | \"partial\" | \"failed\" | \"waiting\"",
           "required": true
         },
         {
@@ -4652,7 +4653,8 @@
                 "enum": [
                   "completed",
                   "partial",
-                  "failed"
+                  "failed",
+                  "waiting"
                 ]
               },
               "reply": {
@@ -6968,7 +6970,7 @@
       "fields": [
         {
           "name": "reason",
-          "type": "\"completed\" | \"partial\" | \"failed\" | \"cancelled\" | \"interrupted\"",
+          "type": "\"completed\" | \"partial\" | \"failed\" | \"waiting\" | \"cancelled\" | \"interrupted\"",
           "required": true
         },
         {
@@ -6988,6 +6990,7 @@
               "completed",
               "partial",
               "failed",
+              "waiting",
               "cancelled",
               "interrupted"
             ]
@@ -9006,7 +9009,8 @@
                           "enum": [
                             "completed",
                             "partial",
-                            "failed"
+                            "failed",
+                            "waiting"
                           ]
                         },
                         "reply": {

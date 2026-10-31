@@ -90,7 +90,7 @@ export type LoopEvent =
     }
   | {
       readonly type: "agent_end"
-      readonly outcome: "ok" | "partial"
-      readonly reason: "completed" | "step-cap" | "degenerate-loop"
+      readonly outcome: "ok" | "partial" | "waiting"
+      readonly reason: "completed" | "step-cap" | "degenerate-loop" | "waiting"
       readonly finalText: string
     }

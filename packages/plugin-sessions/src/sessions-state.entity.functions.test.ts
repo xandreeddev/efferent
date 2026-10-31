@@ -21,17 +21,27 @@ describe("queued input closure", () => {
     })
   })
 
-  test.each(["completed", "cancelled"] as const)("%s acknowledges queued input", (reason) => {
+  test.each(["completed", "cancelled", "waiting"] as const)("%s acknowledges queued input", (reason) => {
     expect(closedState(held("next"), reason, 2, true).state.inbox).toEqual([])
   })
 
   test("legacy notice closure retains its existing acknowledgement and drop policy", () => {
-    const endings: ReadonlyArray<TurnEndReason> = ["completed", "partial", "cancelled", "failed", "interrupted"]
+    const endings: ReadonlyArray<TurnEndReason> = ["completed", "partial", "cancelled", "waiting", "failed", "interrupted"]
     expect(endings.map((reason) => closedState(held(), reason, 2, true))).toEqual(endings.map((reason) => ({
       state: { ...held(), open: Option.none(), inbox: [] },
       dropped: reason === "failed" || reason === "interrupted" ? [InboxItemId.make("one")] : [],
     })))
     const untried = closedState(held("next"), "interrupted", 2, false)
     expect(untried.state.inbox[0]?.attempts).toBe(10)
+  })
+
+  test("waiting acknowledges this turn's input and notices, preserving an early answer and another turn's claim", () => {
+    const state = held("next")
+    const early = { id: InboxItemId.make("early-answer"), attempts: 0, claimedBy: Option.none(), delivery: "next" as const }
+    const foreign = { id: InboxItemId.make("foreign"), attempts: 0, claimedBy: Option.some(2), delivery: "steer" as const }
+    const notice = { id: InboxItemId.make("notice"), attempts: 0, claimedBy: Option.some(1) }
+    const next = closedState({ ...state, inbox: [...state.inbox, notice, early, foreign] }, "waiting", 2, true)
+    expect(next.state.inbox).toEqual([early, foreign])
+    expect(next.dropped).toEqual([])
   })
 })

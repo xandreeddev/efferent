@@ -59,6 +59,32 @@ const careless = (change: (tasks: TasksFixture["tasks"], sessions: TasksFixture[
   tasksOver(dependencies).pipe(Effect.map((fixture): TasksFixture => ({ ...fixture, tasks: Tasks.of({ ...fixture.tasks, ...change(fixture.tasks, fixture.sessions) }) })))
 
 describe("the Tasks kit catches careless backends", () => {
+  test("one whose ask returns without a durable question fails the question check", async () => {
+    const checks = tasksConformance(careless(() => ({ ask: (_writer, input) => Effect.succeed(input) })))
+      .filter((check) => check.name.startsWith("a durable question"))
+    expect(await failedChecks(checks)).toEqual(["question"])
+  }, 30_000)
+
+  test("one that omits the executor's waiting control fails the sticky question check", async () => {
+    const checks = tasksConformance((dependencies) => tasksOver({ ...dependencies, executor: TaskExecutor.of({
+      ...dependencies.executor,
+      turn: (writer, task) => dependencies.executor.turn(writer, task),
+    }) })).filter((check) => check.name.startsWith("an early answer"))
+    expect(await failedChecks(checks)).toEqual(["question-sticky"])
+  }, 30_000)
+
+  test("one whose answer accepts without enqueueing fails the answer check", async () => {
+    const checks = tasksConformance(careless(() => ({ answer: () => Effect.succeed({ accepted: true, enqueued: false }) })))
+      .filter((check) => check.name.startsWith("an answer queues"))
+    expect(await failedChecks(checks)).toEqual(["answer"])
+  }, 30_000)
+
+  test("one whose steer returns without enqueueing fails the steer check", async () => {
+    const checks = tasksConformance(careless(() => ({ steer: () => Effect.succeed({ enqueued: false, pending: 0 }) })))
+      .filter((check) => check.name.startsWith("steering an active task"))
+    expect(await failedChecks(checks)).toEqual(["steer"])
+  }, 30_000)
+
   test("one whose cancel answers yes and stops nothing fails only the cancel check", async () => {
     expect(await failedChecks(tasksConformance(careless(() => ({ cancel: () => Effect.succeed(true) }))))).toEqual(["cancel"])
   }, 30_000)
@@ -77,14 +103,14 @@ describe("the Tasks kit catches careless backends", () => {
     }))))).toEqual(["depth"])
   }, 30_000)
 
-  test("one whose child turns begin as a user's, the task in their command, fails only the run check", async () => {
+  test("one whose child turns begin as a user's, the task in their command, fails the run and answer checks", async () => {
     const asUser = (sessions: SessionsService): SessionsService => Sessions.of({
       ...sessions,
       begin: (address, input) => sessions.begin(address, input._tag === "Task"
         ? { _tag: "User", userMessage: input.userMessage, runId: input.runId, key: input.key, command: { task: input.task.taskId }, ...(input.meta === undefined ? {} : { meta: input.meta }) }
         : input),
     })
-    expect(await failedChecks(tasksConformance((dependencies) => tasksOver(dependencies, asUser)))).toEqual(["run"])
+    expect(await failedChecks(tasksConformance((dependencies) => tasksOver(dependencies, asUser)))).toEqual(["answer", "run"])
   }, 30_000)
 
   test("one whose reconcile does nothing fails only the reconcile checks", async () => {
@@ -106,7 +132,7 @@ describe("the Tasks kit catches careless backends", () => {
     expect(await failedChecks(tasksConformance((dependencies) => tasksOver({
       ...dependencies,
       executor: TaskExecutor.of({
-        turn: (writer, task) => withoutTasks(dependencies.executor.turn(writer, task)),
+        turn: (writer, task, controls) => withoutTasks(dependencies.executor.turn(writer, task, controls)),
         react: (writer) => withoutTasks(dependencies.executor.react(writer)),
       }),
     })))).toEqual(["executor-tasks"])

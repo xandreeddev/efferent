@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { JsonSchema, Option, Schema } from "effect"
 import { JOURNAL_KINDS, journalSchemaOf, MediaEnvelope, MediaReference, SessionHeader, SessionLogEvent } from "@xandreed/core"
-import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
+import { TASK_ANSWERED, TASK_QUESTIONED, TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskAnswered, TaskQuestioned, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 // The sessions plugin keeps its head state inside the package; the fingerprint reads its schema from the entity file.
 import { SessionsState } from "../packages/plugin-sessions/src/sessions-state.entity.js"
 
@@ -49,6 +49,8 @@ export const storedShapes = (): { readonly shapes: ReadonlyArray<StoredShape>; r
       { name: `record ${TASK_STARTED}`, schema: TaskStarted },
       { name: `record ${TASK_RESULT}`, schema: TaskResult },
       { name: `record ${TASK_CANCELLED}`, schema: TaskCancelled },
+      { name: `record ${TASK_QUESTIONED}`, schema: TaskQuestioned },
+      { name: `record ${TASK_ANSWERED}`, schema: TaskAnswered },
       { name: "SessionsState", schema: SessionsState },
     ],
     problems: kinds.filter(({ schema }) => Option.isNone(schema)).map(({ kind }) => `Journal kind ${kind} has no journal schema (journalSchemaOf)`),

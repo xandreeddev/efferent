@@ -1,9 +1,13 @@
 const InProcessTaskRunnerLive
+const TASK_ANSWERED
 const TASK_CANCELLED
+const TASK_QUESTIONED
 const TASK_RESULT
 const TASK_STARTED
+const TaskAnswered
 const TaskCancelled
 const TaskOutcome
+const TaskQuestioned
 const TaskResult
 const TaskStarted
 const TaskStarter
@@ -15,7 +19,9 @@ const deliveryId
 const tasksCapability
 const tasksDefaults
 const tasksPlugin
+type TaskAnswered
 type TaskOutcome
+type TaskQuestioned
 type TaskResult
 type TaskStarted
 type TaskStarter
