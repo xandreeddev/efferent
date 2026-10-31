@@ -756,13 +756,13 @@ console.log(failuresBunReport.trim())
 await writeFile(join(consumer, "model-retry-consumer.mjs"), await readFile(join(root, "scripts/model-retry-consumer.fixture.mjs"), "utf8"))
 const retryNode = Bun.spawn(["node", "model-retry-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const retryNodeReport = await new Response(retryNode.stdout).text()
-if (await retryNode.exited !== 0 || !retryNodeReport.includes('model-retry {"runtime":"Node"') || (retryNodeReport.match(/"retryVerified":true/g) ?? []).length !== 16 || (retryNodeReport.match(/"accountingVerified":true/g) ?? []).length !== 16) {
+if (await retryNode.exited !== 0 || !retryNodeReport.includes('model-retry {"runtime":"Node"') || (retryNodeReport.match(/"retryVerified":true/g) ?? []).length !== 16 || (retryNodeReport.match(/"accountingVerified":true/g) ?? []).length !== 16 || (retryNodeReport.match(/"hookVerified":true/g) ?? []).length !== 16) {
   console.error("the packed Node request-policy fixture did not preserve bounded attempts and reads"); process.exit(1)
 }
 console.log(retryNodeReport.trim())
 const retryBun = Bun.spawn(["bun", "model-retry-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const retryBunReport = await new Response(retryBun.stdout).text()
-if (await retryBun.exited !== 0 || !retryBunReport.includes('model-retry {"runtime":"Bun"') || (retryBunReport.match(/"retryVerified":true/g) ?? []).length !== 16 || (retryBunReport.match(/"accountingVerified":true/g) ?? []).length !== 16) {
+if (await retryBun.exited !== 0 || !retryBunReport.includes('model-retry {"runtime":"Bun"') || (retryBunReport.match(/"retryVerified":true/g) ?? []).length !== 16 || (retryBunReport.match(/"accountingVerified":true/g) ?? []).length !== 16 || (retryBunReport.match(/"hookVerified":true/g) ?? []).length !== 16) {
   console.error("the packed Bun request-policy fixture did not preserve bounded attempts and reads"); process.exit(1)
 }
 console.log(retryBunReport.trim())
@@ -866,6 +866,17 @@ for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
     console.error(`the packed ${runtime} snapshot journey lost projection reuse, archive recall, fork visibility or atomic recovery`); process.exit(1)
   }
   console.log(snapshotReport.trim())
+}
+// A host request hook is accepted before the durable request and never reapplied on replay.
+await writeFile(join(consumer, "request-hook-consumer.mjs"), await readFile(join(root, "scripts/request-hook-consumer.fixture.mjs"), "utf8"))
+for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+  const hookChild = Bun.spawn([binary, "request-hook-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const hookReport = await new Response(hookChild.stdout).text()
+  const required = ["kitVerified", "actualHookApplied", "oneContext", "placementsVerified", "headerPatchVerified", "materializedV1Verified", "dispatchReplayVerified", "coldReplayHookSkipped", "readOnlyReopenVerified", "patchSnapshotVerified", "durableBeforeAck", "atomicPartsHeaderVerified", "noSendBeforeAck", "heldAckRestartVerified", "takeoverFreshDecisionVerified", "streamFallbackFrozenReuse", "noOpCompatibilityVerified", "originalAckErrorVerified"]
+  if (await hookChild.exited !== 0 || !hookReport.includes(`request-hook {"runtime":"${runtime}"`) || !hookReport.includes('"checks":7') || required.some((name) => !hookReport.includes(`"${name}":true`))) {
+    console.error(`the packed ${runtime} request hook lost accepted controls, frozen retries or durable replay`); process.exit(1)
+  }
+  console.log(hookReport.trim())
 }
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.

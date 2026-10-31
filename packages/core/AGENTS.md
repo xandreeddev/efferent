@@ -113,6 +113,19 @@ lookup keys still fail. Parts are protocol facts, never memory entries.
 `requestHeaderConformance` ships V1/V2, integrity, prefix and lookup checks with
 careless resolver self-tests; the SDK owns atomic part/header writes and ACKs.
 
+`ModelRequestHook.prepare` is optional host policy for a fresh prepared request.
+Its immutable draft contains the full run reference, step, active tool names and
+base system/context/choice. The application helper validates a closed patch,
+replaces system text, appends a nonempty `hostNote` context contribution once,
+and treats null tool choice as automatic. Absence and empty patches preserve
+model-visible bytes; only the accepted normalized patch becomes `header.hook`.
+The helper reads the service at execution, preserves caller Context and original
+`TurnError` identity, and keeps the callback interruptible even under a caller
+mask. Invalid edges or foreign failures use `request.hook` with their cause.
+`modelRequestHookConformance` proves application semantics and copying; the SDK
+journeys separately prove one combined StepContext, durable header ACK before
+dispatch, frozen retries and replay without reapplying the hook.
+
 Plugin and configuration contracts live in `src/harness`; service tags live in
 `src/ports`. Entity files contain schemas and derived types. Behavior belongs
 in paired `.functions.ts` modules. `definePlugin` bridges typed Layers at the
@@ -435,6 +448,8 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 |---|---|---|
 | Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:138-148` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:76` |
 | Unexpected recorder defect reporting message (`recordCompletion`) | `src/domain/model-call.entity.functions.ts:14` | exact, `src/domain/model-call.entity.test.ts:94` |
+| Request-hook context appended to policy context once, with an empty base adding no separator (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:37-41` | exact, `src/turn/model-request-hook.entity.functions.test.ts:26-32` |
+| Request-hook invalid-edge and foreign-failure reporting message (`applyModelRequestHook`) | `src/turn/model-request-hook.entity.functions.ts:12` | exact, `src/turn/model-request-hook.entity.functions.test.ts:38-40` |
 | A host note, `[Host note: …]` (`hostNote`) | `src/turn/model-text.ts:12` | exact, `src/turn/model-text.test.ts:6` |
 | The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact, `src/turn/model-text.test.ts:7`, `:22-27` |
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |

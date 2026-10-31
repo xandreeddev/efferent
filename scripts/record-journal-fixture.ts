@@ -17,6 +17,7 @@ import {
   InboxItemId,
   IntentMatcher,
   ModelCallId,
+  ModelRequestHook,
   onTool,
   RESERVED_KINDS,
   recordCompletion,
@@ -67,7 +68,8 @@ import { Agent } from "@xandreed/sdk"
  * whose turns fail until it is dropped, a background task that completes and
  * is delivered to the inbox, one that is cancelled before it runs, and a
  * queued steer atomically taken before a new turn's first provider step,
- * and a reducing two-turn summary with an atomic render-snapshot pointer.
+ * a reducing two-turn summary with an atomic render-snapshot pointer, and a
+ * host request hook whose accepted patch and combined context are durable.
  */
 
 const root = join(import.meta.dir, "..")
@@ -366,12 +368,37 @@ const record = Effect.gen(function* () {
     return yield* Effect.die("the fixture summary did not publish a memory snapshot")
   }
 
+  // Keep every earlier conversation exact while recording the optional patch
+  // through the real SDK preparation and version 2 header writer.
+  const hookAddress: SessionAddress = { id: ConversationId.make(fixedId(0x6100)), owner: address.owner }
+  yield* sessions.create(hookAddress)
+  const hookAgent = yield* Agent.define({
+    plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin],
+    turnServices: [LanguageModel.LanguageModel, ModelRequestHook],
+    limits: { streaming: false, maxSteps: 1 },
+    system: "FIXTURE request hook base.",
+  })
+  const hookModel = yield* scripted([stop("The prepared request is ready.")])
+  yield* hookAgent.turn({
+    turn: { session: hookAddress, runId: RunId.make("hook-fixture-1"), userMessage: new UserMessage({ text: "Prepare the host request." }) },
+    services: Context.make(Sessions, sessions).pipe(
+      Context.add(LanguageModel.LanguageModel, hookModel),
+      Context.add(ModelRequestHook, ModelRequestHook.of({ prepare: () => Effect.succeed({
+        system: "FIXTURE accepted hook system.", context: "FIXTURE hook context.", toolChoice: null,
+      }) })),
+    ),
+  }, (turn) => Effect.gen(function* () {
+    yield* turn.tools.select(turn.userMessage)
+    const done = yield* turn.run({ step: () => Effect.succeed({ context: Option.some("FIXTURE policy context."), toolChoice: Option.none() }) })
+    return { outcome: done.outcome, reply: Option.some(done.text) }
+  }))
+
   const journal = (session: SessionAddress) => Effect.gen(function* () {
     const view = yield* sessions.get(session)
     const events = yield* sessions.read(session)
     return { header: Schema.encodeSync(SessionHeader)(view.header), events: Schema.encodeSync(Schema.Array(SessionLogEvent))(events) }
   })
-  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress], journal)
+  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress], journal)
 }).pipe(Effect.scoped, Effect.provideService(Clock.Clock, fixedClock))
 
 const sessions = await Effect.runPromise(record)

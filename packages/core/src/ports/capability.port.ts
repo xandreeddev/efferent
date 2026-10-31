@@ -3,6 +3,7 @@ import type { Effect, Option } from "effect"
 import type { LanguageModel, Tool } from "effect/ai"
 import type { Media } from "../domain/media.entity.js"
 import type { AgentMessage } from "../domain/message.entity.js"
+import type { ToolChoice } from "../domain/tool-choice.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import type { CapabilityId, PromptTier, SkillDefinition, ToolAnnotations } from "../harness/capability.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
@@ -134,8 +135,7 @@ export interface StepInfo {
   readonly lastUsage: Option.Option<TokenUsage>
 }
 
-/** @public */
-export type ToolChoice = "required" | { readonly tool: string }
+export type { ToolChoice } from "../domain/tool-choice.entity.js"
 
 /** @public */
 export interface StepDirective {

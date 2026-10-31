@@ -19,6 +19,7 @@ class LeaseExpired
 class MediaStore
 class MediaStoreError
 class ModelCatalog
+class ModelRequestHook
 class ModelSelection
 class NotResumable
 class NothingPending
@@ -179,8 +180,11 @@ const ModelLimits
 const ModelOverflowEvidence
 const ModelPrice
 const ModelRequestDescriptor
+const ModelRequestDraft
 const ModelRequestHeader
 const ModelRequestHeaderV2
+const ModelRequestPatch
+const ModelRequestPreparation
 const ModelRequestTool
 const OpenTurn
 const PLUGIN_API_VERSION
@@ -267,6 +271,7 @@ const ToolAnnotations
 const ToolCallId
 const ToolCallPart
 const ToolCallState
+const ToolChoice
 const ToolCompletedEvent
 const ToolMessage
 const ToolProgressEvent
@@ -593,8 +598,11 @@ type ModelLimits
 type ModelOverflowEvidence
 type ModelPrice
 type ModelRequestDescriptor
+type ModelRequestDraft
 type ModelRequestHeader
 type ModelRequestHeaderV2
+type ModelRequestPatch
+type ModelRequestPreparation
 type ModelRequestTool
 type OpenTurn
 type PartialOptions

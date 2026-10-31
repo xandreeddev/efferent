@@ -10,6 +10,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Stored format 13 adds an optional accepted `hook` patch to request headers.
+  Hosts may provide `ModelRequestHook` to customize system text, append host
+  context, or select tool choice before request preparation. Existing requests
+  remain readable; replay uses recorded controls without invoking current
+  hooks. The shipped `modelRequestHookConformance` kit checks application
+  semantics, with SDK journeys covering persistence and frozen retries.
+
 - Stored format 12 adds `memory.snapshot` render checkpoints and an optional
   head-state pointer. Custom writers may advertise `TurnWriter.memorySnapshot`
   when they atomically publish the pointer with each framework snapshot row;
@@ -1086,6 +1093,13 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Optional per-request `ModelRequestHook.prepare` runs in the actual run and
+  step context before reserves, memory maintenance and durable request writes.
+  It records one combined policy and hook StepContext and the normalized patch
+  in `header.hook`. A prepared decision reuses its patch across transport,
+  stream fallback, media and overflow retries; invalid output fails with
+  `request.hook` before dispatch, while original turn errors remain intact.
 
 - Add durable render snapshots anchored at the first kept turn's actual journal
   position, retaining raw render dependencies and original compaction facts in

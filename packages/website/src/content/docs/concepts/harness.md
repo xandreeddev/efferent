@@ -61,6 +61,17 @@ turn's start, given to the host's `TurnAdmission`, and shown on
 model never sees it, and a retry with the same key and other metadata is
 still the same turn (`turn.duplicate`).
 
+For per-request host policy, provide `ModelRequestHook` from `@xandreed/core`
+in the turn's services. `prepare(draft)` can replace base system text, append
+nonempty context as a host note, and keep, clear or replace tool choice. The
+draft includes the actual run, step and active tool names. The SDK records one
+combined policy and hook StepContext plus optional `header.hook` before
+dispatch; invalid patches fail with `request.hook`. Empty patches preserve
+model bytes. Each fresh prepared decision runs the hook once, while retries
+reuse its frozen patch. Historical replay uses the recorded controls and never
+calls the current hook. See the framework guide's host request-hook contract
+for field semantics and the shipped application conformance kit.
+
 A turn that was cancelled or interrupted (its process stopped, its lease
 was reaped) can be resumed by the next one:
 `turn: { session, userMessage, runId, resumes: 1 }`. Turn 1 must be the

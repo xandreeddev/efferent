@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect"
+import { ModelRequestPatch } from "./model-request-hook.entity.js"
 import { MEDIA_LIMITS } from "../domain/media.entity.js"
 import { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import { RunId, RunKey } from "../domain/run.entity.js"
@@ -103,6 +104,8 @@ export const ModelRequestHeader = Schema.Struct({
   stableMessages: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   tools: Schema.Array(ModelRequestTool),
   toolChoice: Schema.Unknown,
+  /** The normalized host patch already applied to these frozen controls. */
+  hook: Schema.optionalKey(ModelRequestPatch),
   /** None explicitly marks an opaque model whose provider configuration cannot be inspected. */
   model: Schema.OptionFromNullOr(ModelRequestDescriptor),
   cacheKey: Schema.OptionFromNullOr(Schema.String),

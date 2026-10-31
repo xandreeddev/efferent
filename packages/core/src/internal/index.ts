@@ -28,3 +28,5 @@ export { renderSections } from "../turn/prompt-sections.js"
 export { checkModelRequest, modelRequestHeaderOf, modelRequestTools, reconstructModelRequest } from "../turn/model-request.entity.functions.js"
 export { CurrentModelCallNotifications } from "../ports/model-call-recorder.port.js"
 export { encodeRequestPart, prepareRequestParts, sha256Of } from "../turn/request-part.entity.functions.js"
+
+export { applyModelRequestHook } from "../turn/model-request-hook.entity.functions.js"

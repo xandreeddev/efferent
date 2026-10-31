@@ -2750,7 +2750,7 @@
     },
     {
       "kind": "memory.step",
-      "writer": "Memory: the step policy's step context",
+      "writer": "Memory: the combined step policy and optional host-hook context",
       "sensitive": "Step context text.",
       "fields": [
         {
@@ -5690,7 +5690,7 @@
     {
       "kind": "request.prepared",
       "writer": "The turn, before each provider call (`TurnMemory.prepareRequest`)",
-      "sensitive": "Version 1 embeds system text and tool declarations; version 2 references preceding request.part records. Public model configuration and request controls remain in both.",
+      "sensitive": "Version 1 embeds system text and tool declarations; version 2 references preceding request.part records. Public model configuration, request controls and optional accepted host-hook text remain in both.",
       "fields": [
         {
           "name": "version",
@@ -5751,6 +5751,11 @@
           "name": "toolChoice",
           "type": "unknown",
           "required": true
+        },
+        {
+          "name": "hook",
+          "type": "{ system, context, toolChoice }",
+          "required": false
         },
         {
           "name": "model",
@@ -5956,6 +5961,43 @@
                 }
               },
               "toolChoice": {},
+              "hook": {
+                "type": "object",
+                "properties": {
+                  "system": {
+                    "type": "string"
+                  },
+                  "context": {
+                    "type": "string"
+                  },
+                  "toolChoice": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "required"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "tool"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": true
+              },
               "model": {
                 "anyOf": [
                   {
@@ -6190,6 +6232,43 @@
                 }
               },
               "toolChoice": {},
+              "hook": {
+                "type": "object",
+                "properties": {
+                  "system": {
+                    "type": "string"
+                  },
+                  "context": {
+                    "type": "string"
+                  },
+                  "toolChoice": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "required"
+                        ]
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "tool": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "tool"
+                        ],
+                        "additionalProperties": true
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "additionalProperties": true
+              },
               "model": {
                 "anyOf": [
                   {
@@ -8894,6 +8973,11 @@
       "code": "request.memory",
       "where": "`replayModelRequest`",
       "meaning": "The memory events before a stored request did not decode."
+    },
+    {
+      "code": "request.hook",
+      "where": "the turn, before preparing a fresh model request",
+      "meaning": "A host request-hook draft or patch is invalid, a patched tool choice is inactive, or the callback fails unexpectedly. Original turn errors and interruptions retain their identity."
     },
     {
       "code": "memory.log",

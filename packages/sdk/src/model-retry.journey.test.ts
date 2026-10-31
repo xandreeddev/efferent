@@ -16,6 +16,7 @@ test("journey: model request policy bounds sends, waits, reads and frozen-step f
   expect({ code, errors }).toEqual({ code: 0, errors: "" })
   expect(report.match(/"retryVerified":true/g)).toHaveLength(16)
   expect(report.match(/"accountingVerified":true/g)).toHaveLength(16)
+  expect(report.match(/"hookVerified":true/g)).toHaveLength(16)
   expect(report).toContain('"name":"mixed-one-counter-and-tool-once","calls":5,"handlers":1,"headers":[2]')
   expect(report).toContain('"name":"stream-fallback-keeps-frozen-step","calls":2,"handlers":0,"headers":[1]')
   expect(report).toContain('"name":"concurrent-reference-overrides","calls":5')

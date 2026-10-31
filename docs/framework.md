@@ -1094,6 +1094,44 @@ mints for a provider's tool calls that come without one are
 host-planned batch `<turn>.<ordinal>.planned:<n>` (`plannedCallIdOf`), so
 they differ across the runs and turns of a session.
 
+**Host request hooks.** Provide `ModelRequestHook` from `@xandreed/core` in
+the turn's services to customize a fresh prepared model request. Its
+`prepare(draft)` returns `ModelRequestPatch`; the draft contains the full
+`RunRef`, step index, active tool names and policy's system text, context and
+tool choice. The callback runs in that run's actual `CurrentAgentRun` and
+`CurrentAgentStep`, after `policy.model` and `policy.step`, before context
+recording, reserves, maintenance and the request header. A host adapter captures
+any services it needs when built; the port adds no requirements to preparation.
+
+| Patch field | Meaning |
+|---|---|
+| `system` | Replace the base system text verbatim, including an empty string. Omission keeps it. |
+| `context` | Append nonempty host text as one `hostNote`, separated from nonempty policy context by two newlines. Omission or an empty string adds nothing. |
+| `toolChoice` | Omission keeps the policy choice; `null` clears it to automatic choice; `"required"` or `{ tool: name }` replaces it. A selected tool must be active. |
+
+The SDK writes one final combined StepContext when context exists and stores
+the normalized accepted patch in optional `header.hook`. Without a hook the
+field is absent; a returned `{}` records provenance without changing model
+bytes or inventing an empty context entry. Omission does not erase an earlier
+step context. Tail and system placement retain their existing behavior; system
+and tool reserves use the final controls. Treat hook system text as trusted
+host instructions and frame any untrusted content supplied in context.
+
+Drafts and accepted patches are detached snapshots. Invalid fields, an inactive
+patched tool choice, or an unexpected callback failure fail with `request.hook`
+before dispatch. Original `TurnError` values and interruptions retain their
+identity; subsequent writer failures remain write failures. Hooks run outside
+writer and memory permits and are interruptible.
+
+A fresh decision invokes the hook once. Its frozen patch is reused for HTTP
+retries, routed and stream fallback, media replanning and same-step overflow
+recovery. A later normal step or a separately requested fresh manual plan
+invokes it again. Host-planned tool batches and standalone utility/model calls
+have no prepared turn request and skip it. Replay reconstructs the recorded
+effective controls and never invokes or reapplies today's hook. The shipped
+`modelRequestHookConformance` application kit has seven checks; SDK and packed
+process journeys separately prove write acknowledgment and replay behavior.
+
 **The token budget.** `budgetTokens` is the target memory keeps each request
 under: the system prompt, the active tools' schemas and the messages,
 estimated together. It is not a provider limit, and nothing is cut to fit a
@@ -1306,7 +1344,7 @@ and flushes `request.prepared`. Version 2 headers reference reusable system
 text and active tool declarations in preceding `request.part` records. They keep
 tool choice, public requested model
 configuration, prompt cache key, call policy, the optional frozen stable-prefix
-message count, the memory strategy's render
+message count, an optional accepted host-hook patch, the memory strategy's render
 recipe/version and the build's memory cut (`through`, the last memory entry
 the build folded). Messages remain in their original memory events. Historical
 version 1 headers embed the full system text and tools and still replay.
