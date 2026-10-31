@@ -247,6 +247,7 @@ const SkillReferenceId
 const SkillTree
 const SkillTreeEntry
 const SkillsActivatedEvent
+const SpanId
 const StatOptions
 const StepEndedEvent
 const StepLoopReferences
@@ -293,6 +294,8 @@ const ToolRefusedEvent
 const ToolResultInterception
 const ToolResultPart
 const ToolStartedEvent
+const TraceId
+const TraceParent
 const TransientTurnEvents
 const TurnAdmissionOpen
 const TurnBeginError
@@ -344,6 +347,7 @@ const entryId
 const errorCodeOf
 const escapeFrame
 const estimateMessageTokens
+const externalSpanOf
 const fingerprintOf
 const fitTarget
 const formatModelSelection
@@ -433,6 +437,7 @@ const toolCallStatesOf
 const toolInputOf
 const toolInputsOf
 const toolResultMedia
+const traceParentOf
 const turnAttributes
 const turnBeginCodes
 const turnBilledUsageOf
@@ -671,6 +676,7 @@ type SkillReference
 type SkillReferenceId
 type SkillTree
 type SkillTreeEntry
+type SpanId
 type StatOptions
 type StepResult
 type StepStatus
@@ -705,6 +711,8 @@ type ToolMessage
 type ToolRefusalReason
 type ToolResultInterception
 type ToolResultPart
+type TraceId
+type TraceParent
 type TurnBeginError
 type TurnContextBody
 type TurnEndReason

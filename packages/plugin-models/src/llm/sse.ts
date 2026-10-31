@@ -323,11 +323,17 @@ const step = (
   state: SseState,
   payload: string,
   attempt: Option.Option<ModelAttempt>,
+  observeUsage?: (usage: unknown, final: boolean) => Effect.Effect<void>,
 ): Effect.Effect<Emit, AiError.AiError | TurnError> =>
   payload === DONE
     ? Option.match(attempt, { onNone: () => Effect.void, onSome: (value) => completeModelAttempt(value, { _tag: "Completed" }) }).pipe(Effect.andThen(flush(moduleName, reading, state)))
     : decodeStreamChunk(moduleName, payload).pipe(
-      Effect.tap((chunk) => Option.match(attempt, { onNone: () => Effect.void, onSome: (value) => observeModelAttempt(value, chunk.usage, Option.isSome(state.finishReason) || (chunk.choices ?? []).some((choice) => choice.finish_reason != null), reading.reasoning ?? true) })),
+      Effect.tap((chunk) => {
+        const final = Option.isSome(state.finishReason) || (chunk.choices ?? []).some((choice) => choice.finish_reason != null)
+        return Option.match(attempt, { onNone: () => Effect.void, onSome: (value) => observeModelAttempt(value, chunk.usage, final, reading.reasoning ?? true) }).pipe(
+          Effect.andThen(observeUsage?.(chunk.usage, final) ?? Effect.void),
+        )
+      }),
       Effect.flatMap((chunk) => applyChunk(moduleName, state, chunk)),
     )
 
@@ -338,6 +344,8 @@ export const sseStreamParts = (options: {
   readonly attempt?: Option.Option<ModelAttempt>
   /** How the final chunk's usage is read (see `usageFromCompletion`). */
   readonly usage?: UsageReading
+  /** Observe raw cumulative counters before SDK defaults; a finish signal establishes output finality. */
+  readonly observeUsage?: (usage: unknown, final: boolean) => Effect.Effect<void>
 }): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> =>
   Stream.fromReadableStream({
     evaluate: () => options.body,
@@ -359,7 +367,7 @@ export const sseStreamParts = (options: {
     Stream.concat(Stream.succeed(DONE)),
     // Each step's parts are emitted one by one.
     Stream.mapAccumEffect(() => initialState, (state, payload: string) =>
-      step(options.moduleName, options.usage ?? {}, state, payload, options.attempt ?? Option.none()),
+      step(options.moduleName, options.usage ?? {}, state, payload, options.attempt ?? Option.none(), options.observeUsage),
     ),
     Stream.onExit((exit) => Option.match(options.attempt ?? Option.none(), { onNone: () => Effect.void, onSome: (attempt) => completeModelAttempt(attempt, Exit.isSuccess(exit) ? { _tag: "Interrupted" } : modelOutcomeOfExit(exit)).pipe(Effect.catch((error) => Effect.die(error))) })),
     // Fixed SDK stream parts keep their AiError signature; the original recorder TurnError crosses as a defect.

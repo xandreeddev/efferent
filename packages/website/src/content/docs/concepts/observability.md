@@ -126,6 +126,53 @@ OpenTelemetry Node SDK (with HTTP or database auto-instrumentation) gets two
 separate pipelines; traces from both reach a collector but are not
 parent-linked.
 
+## LangSmith
+
+`LangSmithTelemetryLive` sends traces through Effect's OTLP exporter. Choose
+one project or a registered agent/environment and provide a redacted key:
+
+```ts
+import { Config, Effect, Layer } from "effect"
+import { LangSmithTelemetryLive } from "@xandreed/plugin-telemetry"
+
+declare const program: Effect.Effect<void>
+const tracing = Layer.unwrap(Config.Redacted("LANGSMITH_API_KEY").pipe(
+  Effect.map((apiKey) => LangSmithTelemetryLive({
+    apiKey,
+    target: { _tag: "Project", project: "support-agent" },
+    serviceName: "support-agent",
+  })),
+))
+Effect.runFork(program.pipe(Effect.provide(tracing)))
+```
+
+For an agent workspace, use `{ _tag: "Agent", agentId: "support-agent",
+environment: "production" }` instead. The target selects the documented
+exclusive addressing headers. `tracesUrl` is a complete signal URL, used
+verbatim, and defaults to `https://api.smith.langchain.com/otel/v1/traces`.
+See [LangSmith's OTLP reference](https://docs.langchain.com/langsmith/trace-with-opentelemetry)
+for registered agents, regions and self-hosted endpoints.
+
+The layer exports traces only. `LangSmithTelemetryHttpLive` takes the host's
+`HttpClient`; both layers share the existing `flushTelemetry` contract. Resource,
+protocol, compression, interval and shutdown options follow the generic exporter.
+Invalid configuration fails with `config.options` without disclosing the key.
+
+Real native Effect AI operations become LLM runs. Tool invocations become tool
+runs; engine, routing and agent wrappers remain chains, with no duplicate
+inference usage. Planned tool batches are chains. Explicit host inference spans
+can own a boundary instead of their native children. Custom host models that
+do not annotate their actual span keep unknown usage; the exporter never fills
+it from aggregate turn counters. The framework's billing ledger remains the
+authority for physical attempts and reported coverage.
+
+The binding adds no content capture. Existing run/agent `captureTraceContent`
+controls the framework's prompt and response fields; host-authored attributes
+remain the host's responsibility. It aliases already captured engine input/output
+on their chain span and preserves existing clipping. Local collector and
+fresh-process tests verify emitted OTLP and task parents. Live LangSmith
+ingestion and dashboard rendering have not been verified.
+
 ## The span tree
 
 ```text
@@ -191,6 +238,12 @@ the sessions plugin's `sessions.*` (each `Sessions` call but `changes`, with
 `turn_writer.flush` and `turn_writer.end`, each with the turn's ids; the
 render plugin's `render.emit`; and the evals' `eval.*` spans
 ([evals](/docs/concepts/evals/)).
+
+Tasks persist a valid `TraceParent` with their start record. Their initial and
+queued follow-up `task.run` spans restore that parent after a new runner or
+process starts; duplicate start retries preserve the first parent. Bookkeeping
+turns add no execution span. Old records without a parent keep their previous
+ancestry. Disabled or malformed custom tracing never prevents starting a task.
 
 ## The telemetry plugin
 

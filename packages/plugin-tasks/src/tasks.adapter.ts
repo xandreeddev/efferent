@@ -2,6 +2,7 @@ import { Cause, Clock, Context, Effect, Exit, Layer, Option, Ref, Schema } from 
 import {
   ConversationId,
   canonicalJson,
+  externalSpanOf,
   normalizeUserMessage,
   HarnessError,
   TaskControlRefused,
@@ -18,6 +19,7 @@ import {
   TaskRefused,
   TaskRunner,
   Tasks,
+  traceParentOf,
   TurnClosed,
   UserMessage,
 } from "@xandreed/core"
@@ -43,6 +45,13 @@ const sessionIds = (parent: SessionAddress): Record<string, unknown> => ({ "effe
 
 /** The ids one task's spans and logs carry: its parent session's and its own. */
 const taskIds = (parent: SessionAddress, taskId: string): Record<string, unknown> => ({ ...sessionIds(parent), "efferent.task.id": taskId })
+
+/** The durable start, rather than the runner's captured context, parents actual task execution. */
+const taskSpan = <A, E, R>(parent: SessionAddress, taskId: string, started: Started, body: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  body.pipe(Effect.withSpan("task.run", {
+    attributes: taskIds(parent, taskId),
+    ...Option.match(Option.fromNullishOr(started.traceParent), { onNone: () => ({}), onSome: (saved) => ({ parent: externalSpanOf(saved) }) }),
+  }))
 
 /** `effect` with `ids` on the current span and on its logs: in a `Tasks` method's `Effect.fn` pipeable, the current span is the method's. */
 const carrying = <A, E, R>(effect: Effect.Effect<A, E, R>, ids: Record<string, unknown>): Effect.Effect<A, E, R> =>
@@ -208,7 +217,7 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
 
   /** The supplied writer is borrowed. Only the caller may begin or end it. */
   const execute = (writer: TurnWriter): Effect.Effect<TurnOutcome, TurnError> => Effect.gen(function* () {
-    const { parent, child, task } = yield* taskContext(writer)
+    const { parent, child, task, started } = yield* taskContext(writer)
     const records = yield* ownRecords(child)
     if (records.some((event) => OUTCOME_KINDS.includes(event.kind))) return { outcome: "completed" as const, reply: Option.none() }
     if (writer.admitted.origin !== "task" && !initialStarted(records, child.id)) return { outcome: "waiting" as const, reply: Option.none() }
@@ -219,14 +228,17 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
       onSome: (question) => answersOf(records).some((accepted) => accepted.questionId === question.question.questionId && accepted.input.id === writer.admitted.input?.id),
     })
     if ((yield* waiting) || !eligible) return { outcome: "waiting" as const, reply: Option.none() }
-    const exit = yield* Effect.exit(withTasks(executor.turn(writer, { ...task, status: "running" }, { waiting })).pipe(Effect.provideService(CurrentTaskWriter, Option.some(writer))))
-    if (Exit.isSuccess(exit)) {
-      const done = exit.value
-      if (done.outcome === "waiting" || (done.outcome !== "failed" && (yield* waiting))) return { outcome: "waiting" as const, reply: Option.none() }
-      if (writer.admitted.origin === "task" || done.outcome === "completed") yield* recordResult(writer, resultOf(child.id, Exit.succeed(Option.some({ outcome: done.outcome, reply: done.reply }))))
-    } else if (writer.admitted.origin === "task") yield* recordResult(writer, resultOf(child.id, Exit.failCause(exit.cause)))
-    yield* Effect.annotateCurrentSpan("efferent.session.id", parent.id)
-    return yield* exit
+    const execution = Effect.gen(function* () {
+      const exit = yield* Effect.exit(withTasks(executor.turn(writer, { ...task, status: "running" }, { waiting })).pipe(Effect.provideService(CurrentTaskWriter, Option.some(writer))))
+      if (Exit.isSuccess(exit)) {
+        const done = exit.value
+        if (done.outcome === "waiting" || (done.outcome !== "failed" && (yield* waiting))) return { outcome: "waiting" as const, reply: Option.none() }
+        if (writer.admitted.origin === "task" || done.outcome === "completed") yield* recordResult(writer, resultOf(child.id, Exit.succeed(Option.some({ outcome: done.outcome, reply: done.reply }))))
+      } else if (writer.admitted.origin === "task") yield* recordResult(writer, resultOf(child.id, Exit.failCause(exit.cause)))
+      yield* Effect.annotateCurrentSpan("efferent.session.id", parent.id)
+      return yield* exit
+    })
+    return yield* writer.admitted.origin === "task" ? execution : taskSpan(parent, child.id, started, execution)
   }).pipe(
     Effect.catchTags({
       TaskMissing: () => Effect.fail(new HarnessError({ code: "task.turn", message: "the turn does not belong to a background task" })),
@@ -380,23 +392,22 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
    */
   const work = (parent: SessionAddress, taskId: ConversationId) => (deadline: Option.Option<number>): Effect.Effect<void> => Effect.gen(function* () {
     const started = yield* Clock.currentTimeMillis
+    const { started: record, task } = yield* recordOf(parent, taskId)
     const executeBy = Option.map(deadline, (at) => at - Math.min(config.closingReserveMs, Math.floor(Math.max(0, at - started) / 2)))
     const execution = Effect.gen(function* () {
-      const { started: record, task } = yield* recordOf(parent, taskId)
       if (task.status === "pending" && !(yield* hasBegun(parent, task.taskId))) yield* runChild(parent, task, record.meta, executeBy)
       yield* settle(parent, taskId, record.meta, executeBy)
     })
-    yield* Option.match(deadline, {
+    yield* taskSpan(parent, taskId, record, Option.match(deadline, {
       onNone: () => execution,
       onSome: (at) => execution.pipe(Effect.timeoutOption(Math.max(0, at - started)), Effect.flatMap(Option.match({
         onSome: () => Effect.void,
         onNone: () => Clock.currentTimeMillis.pipe(Effect.flatMap((now) =>
           Effect.logWarning(`the background task was cut by the runner's deadline after ${now - started} ms`).pipe(Effect.annotateLogs(taskIds(parent, taskId))))),
       }))),
-    })
+    }).pipe(Effect.catchCause((cause) => Effect.logWarning("the background task stopped", cause).pipe(Effect.annotateLogs(taskIds(parent, taskId))))))
   }).pipe(
     Effect.catchCause((cause) => Effect.logWarning("the background task stopped", cause).pipe(Effect.annotateLogs(taskIds(parent, taskId)))),
-    Effect.withSpan("task.run", { attributes: taskIds(parent, taskId) }),
   )
 
   /**
@@ -427,10 +438,14 @@ export const TasksLive = (config: TasksConfig): Layer.Layer<Tasks, never, Sessio
     }
     const taskId = input.taskId ?? ConversationId.make(yield* Effect.sync(() => crypto.randomUUID()))
     yield* Effect.annotateCurrentSpan("efferent.task.id", taskId)
+    const current = yield* Effect.option(Effect.currentParentSpan)
+    const traceParent = Option.flatMap(current, traceParentOf)
+    if (Option.isSome(current) && Option.isNone(traceParent)) yield* Effect.logDebug("the task's trace parent is invalid; durable ancestry was omitted")
     const started: Started = {
       taskId, instructions: input.instructions, mode: input.mode, meta: input.meta ?? {},
       // Written only when given: a task a host started is stored as before.
       ...(input.startedBy === undefined ? {} : { startedBy: input.startedBy }),
+      ...Option.match(traceParent, { onNone: () => ({}), onSome: (saved) => ({ traceParent: saved }) }),
     }
     // Checked against the tasks as stored, and decided again after a conflict, so the decision only reads: the
     // child is created after the record is stored, and the two are not cut apart by an interruption.

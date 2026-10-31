@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { ConversationId, InboxItem, InboxItemId, JsonObject, QueuedInput, RunId, TaskMode, TaskQuestion, TaskQuestionId, TurnEndReason, TurnFailure } from "@xandreed/core"
+import { ConversationId, InboxItem, InboxItemId, JsonObject, QueuedInput, RunId, TaskMode, TaskQuestion, TaskQuestionId, TraceParent, TurnEndReason, TurnFailure } from "@xandreed/core"
 
 /*
  * What the tasks plugin records. In the parent: `task.started` (the outbox
@@ -54,6 +54,8 @@ export const TaskStarted = Schema.Struct({
    * `meta.runId`.
    */
   startedBy: Schema.optionalKey(TaskStarter),
+  /** The first start's trace ancestry, retained when another runner or process executes the task. */
+  traceParent: Schema.optionalKey(TraceParent),
 })
 export type TaskStarted = typeof TaskStarted.Type
 

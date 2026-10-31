@@ -2,7 +2,7 @@
   "format": 1,
   "version": "unreleased",
   "description": "Development session journals, recorded by scripts/record-journal-fixture.ts --unreleased; not a released-version fixture.",
-  "storedFormat": 15,
+  "storedFormat": 16,
   "reserved": [
     "turn.started",
     "memory.system",
@@ -5643,6 +5643,153 @@
           "session": "00000000-0000-4000-8000-000000007a53",
           "seq": 8,
           "turn": 2,
+          "kind": "turn.ended",
+          "at": 1767225600000,
+          "data": {
+            "reason": "completed",
+            "failure": null
+          }
+        }
+      ]
+    },
+    {
+      "header": {
+        "id": "00000000-0000-4000-8000-000000006024",
+        "owner": "fixture",
+        "origin": "user",
+        "createdAt": 1767225600000,
+        "meta": {},
+        "parent": null
+      },
+      "events": [
+        {
+          "session": "00000000-0000-4000-8000-000000006024",
+          "seq": 1,
+          "turn": null,
+          "kind": "task.started",
+          "at": 1767225600000,
+          "data": {
+            "taskId": "00000000-0000-4000-8000-000000007a54",
+            "instructions": "Inspect the traced record.",
+            "mode": "spawn",
+            "meta": {},
+            "traceParent": {
+              "traceId": "1234567890abcdef1234567890abcdef",
+              "spanId": "0000000000000003",
+              "sampled": true
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006024",
+          "seq": 2,
+          "turn": null,
+          "kind": "inbox.queued",
+          "at": 1767225600000,
+          "data": {
+            "id": "task:00000000-0000-4000-8000-000000007a54",
+            "source": {
+              "kind": "task",
+              "taskId": "00000000-0000-4000-8000-000000007a54",
+              "child": "00000000-0000-4000-8000-000000007a54",
+              "status": "completed"
+            },
+            "content": "[Background task 00000000-0000-4000-8000-000000007a54 completed]\n<task-output>\nfound Inspect the traced record.\n</task-output>"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006024",
+          "seq": 3,
+          "turn": 1,
+          "kind": "turn.started",
+          "at": 1767225600000,
+          "data": {
+            "runId": "00000000-0000-4000-8000-000000000118",
+            "key": "00000000-0000-4000-8000-000000000118",
+            "origin": "inbox",
+            "userMessage": {
+              "text": "[Background task 00000000-0000-4000-8000-000000007a54 completed]\n<task-output>\nfound Inspect the traced record.\n</task-output>"
+            },
+            "command": {},
+            "claimed": [
+              "task:00000000-0000-4000-8000-000000007a54"
+            ],
+            "entry": "00000000-0000-4000-8000-000000000118:0",
+            "at": 1767225600000,
+            "meta": {}
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006024",
+          "seq": 4,
+          "turn": 1,
+          "kind": "turn.ended",
+          "at": 1767225600000,
+          "data": {
+            "reason": "completed",
+            "failure": null
+          }
+        }
+      ]
+    },
+    {
+      "header": {
+        "id": "00000000-0000-4000-8000-000000007a54",
+        "owner": "fixture",
+        "origin": "task",
+        "createdAt": 1767225600000,
+        "meta": {
+          "taskId": "00000000-0000-4000-8000-000000007a54",
+          "mode": "spawn"
+        },
+        "parent": {
+          "id": "00000000-0000-4000-8000-000000006024",
+          "through": 0,
+          "turnAtFork": 0
+        }
+      },
+      "events": [
+        {
+          "session": "00000000-0000-4000-8000-000000007a54",
+          "seq": 1,
+          "turn": 1,
+          "kind": "turn.started",
+          "at": 1767225600000,
+          "data": {
+            "runId": "00000000-0000-4000-8000-000000000117",
+            "key": "task:00000000-0000-4000-8000-000000007a54",
+            "origin": "task",
+            "userMessage": {
+              "text": "Inspect the traced record."
+            },
+            "command": {},
+            "claimed": [],
+            "entry": "00000000-0000-4000-8000-000000000117:0",
+            "at": 1767225600000,
+            "meta": {},
+            "task": {
+              "taskId": "00000000-0000-4000-8000-000000007a54",
+              "parent": "00000000-0000-4000-8000-000000006024"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000007a54",
+          "seq": 2,
+          "turn": 1,
+          "kind": "task.result",
+          "at": 1767225600000,
+          "data": {
+            "taskId": "00000000-0000-4000-8000-000000007a54",
+            "outcome": "completed",
+            "reply": "found Inspect the traced record.",
+            "failure": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000007a54",
+          "seq": 3,
+          "turn": 1,
           "kind": "turn.ended",
           "at": 1767225600000,
           "data": {

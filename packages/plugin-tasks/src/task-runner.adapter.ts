@@ -8,8 +8,9 @@ import { TaskActivity, TaskRunner } from "@xandreed/core"
  * With `maxMs`, each piece of work must be done that long after it starts.
  * The work runs with the services the layer was built with, its trace state
  * included (no `replayableContext`: a new fiber has no other): its spans nest
- * under the span current where the layer was built, and it reads the
- * `CurrentTraceContent` set there.
+ * under the span current where the layer was built unless work restores an
+ * explicit durable parent (Tasks does), and it reads the `CurrentTraceContent`
+ * set there.
  * It also provides `TaskActivity`: the work running now, counted from the
  * moment `run` hands it over until it ends. The fiber is forked and joins
  * the set in one step, so a caller interrupted as it hands work over leaves

@@ -26,6 +26,8 @@ export class Tasks extends Context.Service<Tasks, {
   /**
    * Start a task. The child session is created once `task.started` is
    * stored, so a start that is refused or not stored leaves no child.
+   * Valid current trace ancestry is stored once for execution and recovery;
+   * invalid or disabled tracing omits it without failing the task.
    */
   readonly start: (parent: SessionAddress, input: {
     /**

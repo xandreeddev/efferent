@@ -1817,3 +1817,17 @@ describe("runLoop waiting", () => {
   })
 
 })
+
+test("synthetic planning trace marks only the artificial native inference operation", async () => {
+  const spans: Tracer.NativeSpan[] = []
+  const result = await run(runLoop({
+    system: "sys", messages: [user("go")], toolkit: kit,
+    initialStep: [{ name: "echo", params: { value: "planned" } }],
+    maxSteps: 2,
+  }).pipe(Effect.withTracer(capturingTracer(spans))), () => [{ type: "text", text: "done" }, finish("stop")])
+  expect(result.outcome).toBe("ok")
+  const native = spans.filter((span) => span.name === "LanguageModel.generateText")
+  expect(native).toHaveLength(2)
+  expect(native.map((span) => span.attributes.get("efferent.inference.synthetic"))).toEqual([true, undefined])
+  expect(spans.filter((span) => span.name === "loop.tool_call").map((span) => span.attributes.has("efferent.inference.synthetic"))).toEqual([false])
+})

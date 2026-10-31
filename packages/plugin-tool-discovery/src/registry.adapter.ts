@@ -341,6 +341,10 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
         yield* Option.match(owner, { onNone: () => Effect.void, onSome: (owner) => owner.claim(invocationId).pipe(Effect.orDie) })
         const step = Option.getOrElse(yield* Effect.service(CurrentAgentStep), () => 0)
         const toolCall = context.toolCallId === undefined ? {} : { toolCallId: ToolCallId.make(context.toolCallId) }
+        yield* Effect.annotateCurrentSpan({
+          "efferent.invocation.id": invocationId,
+          ...(context.toolCallId === undefined ? {} : { "efferent.tool.call.id": context.toolCallId }),
+        })
         const identity: ToolInterceptIdentity = { invocationId, tool: name, ...toolCall, run: agentRun, step }
         const audit = (phase: ToolInterceptAudit) => run.events.publish({ _tag: "tool.intercepted", ...identity, phase, source: Option.isSome(owner) ? "loop" : "direct" }).pipe(Effect.andThen(run.flush), Effect.orDie)
         const decode = (schema: Schema.Top, encoded: unknown) => toolInterceptBoundary(
@@ -513,7 +517,10 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
         const ordinary = Exit.isSuccess(exit) || exit.cause.reasons.length > 0 && exit.cause.reasons.every((reason) => Cause.isFailReason(reason) && !isTurnError(reason.error))
         return !ordinary ? Effect.void : Option.match(owner, { onNone: () => Effect.void, onSome: (owner) => Ref.get(metadata).pipe(Effect.flatMap(owner.ready), Effect.orDie) })
       }))
-    }).pipe(Effect.withSpan(`tool.${entry.tool.name}`), Effect.provide(runServices), withToolResultReceiptGuard)
+    }).pipe(Effect.withSpan(`tool.${entry.tool.name}`, { attributes: {
+      "gen_ai.operation.name": "execute_tool",
+      "gen_ai.tool.name": entry.tool.name,
+    } }), Effect.provide(runServices), withToolResultReceiptGuard)
 
     const handlerOf = (entry: RegisteredTool): RegisteredTool["handler"] =>
       entry.tool.name === LoadSkill.name ? (params) => loadSkill(params as { readonly skills: ReadonlyArray<string> })

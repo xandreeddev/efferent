@@ -499,9 +499,12 @@ replace the turn's ids. An
 inline bus subscriber's spans nest under the publisher's. A parent span in
 `TurnInput.services` or `AgentConfig.services` is ignored: to put a turn
 under another span, wrap the `Agent.turn` call in `Effect.withParentSpan`.
-The in-process task runner is the exception: it starts each piece of work
-on a new fiber with the services it was built with, so the work nests under
-the span current where the runner was built. Host code that captures a
+The in-process task runner starts each piece of work on a new fiber with
+the services it was built with. A task stores its valid trace parent in
+`task.started` and explicitly restores it for initial and queued follow-up
+`task.run` spans, including after process restart. Identical start retries keep
+the original parent. Old rows without one retain the runner's previous
+construction ancestry. Host code that captures a
 context to provide it later passes it through `replayableContext` too.
 
 The memory and tasks plugins add spans where their work runs: `memory.open`
@@ -511,6 +514,24 @@ out of time), `tasks.<op>` (each `Tasks` method) and `task.run` (a task's
 work). The task spans and the tasks plugin's logs carry `efferent.session.id`
 (the parent session's) and `efferent.task.id`; the ids stay out of the log
 messages.
+
+The registry's `tool.<name>` span carries neutral `gen_ai.operation.name`
+(`execute_tool`) and `gen_ai.tool.name`, plus `efferent.invocation.id` and the
+available `efferent.tool.call.id`. The latter can identify a provider call or a
+framework-minted call; it is not advertised as a provider-issued identifier.
+An artificial model operation used to run a planned tool batch carries
+`efferent.inference.synthetic`; it makes no inference request.
+
+`LangSmithTelemetryLive` from `@xandreed/plugin-telemetry` binds the existing
+OTLP exporter to LangSmith without another SDK. Its key is `Redacted`; choose
+one project or registered agent/environment, and override the complete
+`tracesUrl` for another region or self-hosted service. The layer exports traces;
+compose generic OTLP metrics separately. Native model operations own inference
+usage, while agent, engine and routing wrappers remain chains. Missing usage
+stays absent; selected-turn totals and the billing ledger retain their separate
+meanings. The observability guide shows configuration and capture controls.
+Local collectors verify emitted OTLP and task ancestry; live LangSmith ingestion
+has not been verified.
 
 **Metrics** (Effect `Metric`s, exported with the spans' exporter):
 

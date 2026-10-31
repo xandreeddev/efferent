@@ -1,6 +1,6 @@
 {
-  "format": 15,
-  "fingerprint": "59535da3bf8ca91efc3770e250f1ad7d3a987d8dd28067ad59c7f6f380be78c1",
+  "format": 16,
+  "fingerprint": "f8dd00e3fbd848c63c3802f9d896c2c8a599ae522c11b82f6d19bb405da370d4",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
@@ -41,7 +41,7 @@
     "record task.cancelled": "14149c0a6d2408fae8b6439ffca20b0b153bea6d0e29b253b8122dec3c1cbcc5",
     "record task.questioned": "73cfe92a6570d95f15a77ea52fc7f7bb829a1dfab43ebfe2f57c4bfabf99fe48",
     "record task.result": "ef9239abd9d58e33ef8efb660c5d318af28154314cd89da15e5e318897a388b1",
-    "record task.started": "c698122a42b8efd9873f168212a61ec5fb4c2ff46d2065a212f49954e0b34d59"
+    "record task.started": "d0df11bcbd6cbc8ce4e3e14c7de50aee35ca4dabfc3e37ffb820eee14f309f8f"
   },
   "history": [
     {
@@ -103,6 +103,10 @@
     {
       "format": 15,
       "fingerprint": "59535da3bf8ca91efc3770e250f1ad7d3a987d8dd28067ad59c7f6f380be78c1"
+    },
+    {
+      "format": 16,
+      "fingerprint": "f8dd00e3fbd848c63c3802f9d896c2c8a599ae522c11b82f6d19bb405da370d4"
     }
   ]
 }
