@@ -6,13 +6,26 @@
 // proxied hosts and directly for loopback and noProxy hosts.
 import { createServer, request as httpRequest } from "node:http"
 import { connect, createServer as createTcpServer } from "node:net"
+import { channel } from "node:diagnostics_channel"
 import { ConfigProvider, Context, Effect, Option } from "effect"
 import { LanguageModel } from "effect/ai"
-import { HttpClientRequest } from "effect/http"
+import { FetchHttpClient, HttpClientRequest } from "effect/http"
 import { SessionEnvironment, UtilityLlm } from "@xandreed/core"
 import { makeOpenAiCodexWebSocketHttpClient, ModelsTransport, ModelsTransportLive, modelsPlugin } from "@xandreed/plugin-models"
 
 const fail = (message) => { console.error(`proxy consumer: ${message}`); process.exit(1) }
+const symbolValue = (value, description) => {
+  const symbol = Object.getOwnPropertySymbols(value).find((key) => key.description === description)
+  return symbol === undefined ? undefined : Reflect.get(value, symbol)
+}
+const clients = []
+const connections = channel("undici:client:connected")
+const observedConnection = ({ socket }) => {
+  const client = socket == null ? undefined : symbolValue(socket, "client")
+  if (client !== undefined) clients.push(client)
+}
+connections.subscribe(observedConnection)
+const originalFetch = globalThis.fetch
 // @xandreed/plugin-models needs Node 24.5: older Node ignores the proxyEnv option the subscription's WebSocket tunnels with.
 const [nodeMajor = 0, nodeMinor = 0] = process.versions.node.split(".").map(Number)
 if (nodeMajor < 24 || (nodeMajor === 24 && nodeMinor < 5)) fail(`@xandreed/plugin-models requires Node 24.5 or newer; this is Node ${process.versions.node}`)
@@ -86,6 +99,7 @@ const failureOf = (promise) => promise.then(() => null, (error) => error)
 // 1. Node's own fetch is captured by the dead environment proxy: the situation the transport must not depend on.
 const nodeOwn = await failureOf(fetch(`http://models.proxy-test.invalid:${chatPort}/`))
 if (nodeOwn?.cause?.code !== "ECONNREFUSED" || !String(nodeOwn.cause.message).includes(String(deadPort))) fail(`Node's own fetch did not go to the dead environment proxy: ${nodeOwn?.cause?.message}`)
+const globalDispatchers = [1, 2].map((version) => Reflect.get(globalThis, Symbol.for(`undici.globalDispatcher.${version}`)))
 
 // 2. The models plugin: a model call and a utility call through the proxy option, a loopback endpoint direct.
 const replies = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -174,7 +188,36 @@ if (off !== "answered off" || proxy.seen.length > 0) fail(`with noProxy "*" a ca
 const offSocket = await withTransport({ noProxy: "*" }, { HTTPS_PROXY: process.env.HTTPS_PROXY ?? "" }, (transport) => Effect.runPromise(transport.webSocketAgent(new URL("wss://chatgpt.com/backend-api/codex/responses"))))
 if (!isDirectAgent(offSocket)) fail(`with noProxy "*" the subscription's WebSocket would not connect directly: ${JSON.stringify(offSocket)}`)
 
+// 9. The default Node route also installs the owned zero-timeout dispatcher.
+const defaultReply = await withTransport({}, {}, (transport) => transport.fetch(`http://127.0.0.1:${chatPort}/v1/chat/completions`, {
+  method: "POST", body: JSON.stringify({ model: "default" }),
+}).then((response) => response.json()))
+if (defaultReply.choices?.[0]?.message?.content !== "answered default") fail("the default managed Node transport did not reach loopback")
+
+// 10. Explicit host Fetch overrides still reach default managed models. No
+// network can answer this endpoint; the host supplies both protocol replies.
+const overridden = []
+const hostFetch = Object.assign(async (input) => {
+  const url = String(input)
+  overridden.push(url)
+  return url.endsWith("/messages")
+    ? Response.json({ id: "msg_host_fetch", type: "message", role: "assistant", model: "claude-opus-4-8", content: [{ type: "text", text: "host messages" }], stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } })
+    : Response.json({ choices: [{ finish_reason: "stop", message: { content: "host compat" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
+}, { preconnect: () => undefined })
+const hostReplies = await Effect.runPromise(Effect.scoped(Effect.forEach([
+  { model: "gateway:fixture", endpoint: { url: "http://host-fetch.invalid/v1", apiKey: "" } },
+  { model: "gateway:claude-opus-4-8", endpoint: { api: "anthropic-messages", url: "http://host-fetch.invalid/v1", apiKey: "" } },
+], ({ model, endpoint }) => Effect.gen(function* () {
+  const services = yield* modelsPlugin.build({ ...modelsPlugin.defaults, storage: "memory", model, endpoints: { gateway: endpoint } }, Context.make(SessionEnvironment, { workspace: process.cwd() }))
+  return (yield* Context.getUnsafe(services, LanguageModel.LanguageModel).generateText({ prompt: "host override" }).pipe(Effect.provideService(FetchHttpClient.Fetch, hostFetch))).text
+}), { concurrency: 1 })).pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env: {} }))))
+if (JSON.stringify(hostReplies) !== JSON.stringify(["host compat", "host messages"]) || overridden.length !== 2) fail("managed Node routing ignored an explicit host Fetch")
+
+if (clients.length < 3 || clients.some((client) => symbolValue(client, "headers timeout") !== 0 || symbolValue(client, "body timeout") !== 0)) fail("an actual managed Node client retained independent header/body deadlines")
+if (clients.some((client) => Reflect.get(client, "destroyed") !== true)) fail("a managed Node client outlived its transport scope")
+if (globalThis.fetch !== originalFetch || globalDispatchers.some((dispatcher, index) => dispatcher !== Reflect.get(globalThis, Symbol.for(`undici.globalDispatcher.${index + 1}`)))) fail("the managed transport changed global fetch or a global dispatcher")
+connections.unsubscribe(observedConnection)
 proxy.close()
 chat.close()
-console.log("On Node with NODE_USE_ENV_PROXY and a dead environment proxy, the models plugin's transport sent model and utility calls through its proxy option (CONNECT), loopback and noProxy hosts direct, honoured HTTP_PROXY with credentials, named a dead proxy without its credentials, failed fast on a resetting proxy, sent the subscription WebSocket's CONNECT through the proxy, and kept every call direct with noProxy \"*\"")
+console.log("On Node with NODE_USE_ENV_PROXY and a dead environment proxy, the models plugin's transport sent model and utility calls through its proxy option (CONNECT), loopback and noProxy hosts direct, honoured HTTP_PROXY with credentials, named a dead proxy without its credentials, failed fast on a resetting proxy, sent the subscription WebSocket's CONNECT through the proxy, and kept every call direct with noProxy \"*\"; managed clients use zero header/body timeouts, close with their scopes, preserve global dispatchers and honour explicit host Fetch overrides")
 process.exit(0)

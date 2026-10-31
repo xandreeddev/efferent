@@ -5,6 +5,8 @@ import { CurrentModelCallPolicy, CurrentPromptCacheKey, Failure, mediaFromBase64
 import { extractUsage, toPromptMessages } from "@xandreed/core/internal"
 import type { AgentMessage } from "@xandreed/core"
 import { fromChatCompletion, makeCompatLanguageModel, promptWithImageLabels, thinkingParams, toChatMessages } from "./compat.js"
+import { CurrentModelRetryPolicy } from "../ports/model-retry-policy.port.js"
+import { modelRetryDefaults } from "./model-retry-policy.entity.js"
 
 const completion = (body: unknown, status = 200): typeof fetch =>
   ((_url: unknown, _init?: unknown) =>
@@ -150,7 +152,7 @@ describe("makeCompatLanguageModel", () => {
         return yield* svc.generateText({
           prompt: [{ role: "user", content: "hi" }],
         } as never)
-      }),
+      }).pipe(Effect.provideService(CurrentModelRetryPolicy, { ...modelRetryDefaults, maxAttempts: 1 })),
     )
     expect(exit._tag).toBe("Failure")
     const rendered = JSON.stringify(exit)
@@ -166,7 +168,7 @@ describe("makeCompatLanguageModel", () => {
         fetchImpl: () => Promise.reject({ code: "ECONNREFUSED", message: "connect refused by http://user:secret@proxy.invalid:8080" }),
       })
       return yield* svc.generateText({ prompt: "hi" })
-    })))
+    })).pipe(Effect.provideService(CurrentModelRetryPolicy, { ...modelRetryDefaults, maxAttempts: 1 })))
     expect(failed.reason._tag).toBe("UnknownError")
     expect(failed.reason.message).toBe("ECONNREFUSED: connect refused by http://<redacted>@proxy.invalid:8080")
   })
@@ -175,7 +177,7 @@ describe("makeCompatLanguageModel", () => {
   const failureOf = (body: unknown, status: number) => Effect.runPromise(Effect.flip(Effect.gen(function* () {
     const svc = yield* makeCompatLanguageModel({ moduleName: "OpenCode", chatUrl: "https://gw.example/chat", apiKey: "k", model: "m", fetchImpl: completion(body, status) })
     return yield* svc.generateText({ prompt: "hi" })
-  })))
+  })).pipe(Effect.provideService(CurrentModelRetryPolicy, { ...modelRetryDefaults, maxAttempts: 1 })))
 
   test("an exhausted balance or quota is a QuotaExhaustedError by status or structured error; a plain 429 stays a rate limit", async () => {
     const credits = await failureOf({ type: "error", error: { type: "CreditsError", message: "Insufficient balance" } }, 401)

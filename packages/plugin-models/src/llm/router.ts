@@ -1,7 +1,7 @@
 import { AiError, LanguageModel } from "effect/ai"
-import type { Response, Tool, Toolkit } from "effect/ai"
+import type { Response } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Cause, Clock, Config, Context, Deferred, Duration, Effect, Layer, Metric, Option, Predicate, Ref, References, Result, Stream } from "effect"
+import { Cause, Clock, Config, Context, Duration, Effect, Layer, Metric, Option, Predicate, Ref, References, Result, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentTraceContent, describeModel, formatModelSelection, harnessError, messagesOf, parseModelSelection, resolvingModel, stampPartModel, stampResponseModel, storedJson } from "@xandreed/core"
 import { AuthError, AuthStore } from "../ports/auth-store.port.js"
 import { SettingsStore } from "../ports/settings-store.port.js"
@@ -13,14 +13,10 @@ import type { BuiltProvider, PromptOptions, ProviderServices } from "./providers
 import { makeOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
 import type { ModelEndpoint, ModelEndpoints } from "../ports/model-endpoints.port.js"
 import { transportFetch } from "../transport/models-transport.adapter.js"
-import {
-  canTryAgain,
-  makeCallBudget,
-  rejectEmptyResponse,
-  retryableLlm,
-  retryableLlmStream,
-} from "./retry.js"
-import type { CallBudget } from "./retry.js"
+import { rejectEmptyResponse, rejectEmptyStream } from "./retry.js"
+import { CurrentModelRequestCall } from "../ports/model-retry-policy.port.js"
+import { enterModelFallback, makeModelRequestCall } from "../transport/resilient-http-client.adapter.js"
+import type { ModelRequestCall } from "../transport/resilient-http-client.adapter.js"
 
 /**
  * The routed `LanguageModel`: every call re-reads the settings selection and
@@ -29,11 +25,10 @@ import type { CallBudget } from "./retry.js"
  * fresh login applies on the next turn with no rebuild. A turn's step
  * resolves the selection once (`resolveModelRequest`): its request header
  * and every attempt of the step, a stream's fallback included, use that
- * selection, and a switch applies from the next step. Each call rides the
- * timeout + transient-retry + empty-response guards from `retry.ts`; a
- * call's attempts (a settled call's fallback rung too) share one
- * `CallBudget`, and the call is final once it hands a tool call to its
- * toolkit.
+ * selection, and a switch applies from the next step. HTTP attempts and
+ * pending body reads follow one request policy. A settled call and its
+ * distinct fallback share one counter/deadline; successful response handoff
+ * ends retries before any toolkit can run.
  *
  * A routed model reads what its calls are built over (the configured
  * endpoints, per-model settings, the transport, a subscription session cache of its own) once,
@@ -303,48 +298,6 @@ const providerStream = (selection: ModelSelection) =>
       Stream.withSpan("providers.generate", { attributes: modelAttributes(selection) }),
     )
 
-const isToolkitWithHandler = (value: unknown): value is Toolkit.WithHandler<Record<string, Tool.Any>> =>
-  Predicate.hasProperty(value, "tools") && Predicate.hasProperty(value, "handle") && Predicate.isFunction(value.handle)
-
-/**
- * The toolkit, its every call first marking the routed call handed off, and
- * counted in `budget.inFlight` from then until its results end.
- */
-const handingOff = <Tools extends Record<string, Tool.Any>>(
-  toolkit: Toolkit.WithHandler<Tools>,
-  budget: CallBudget,
-): Toolkit.WithHandler<Tools> => ({
-  tools: toolkit.tools,
-  handle: (name, params, toolCallId, parseOptions) => {
-    const ended = Ref.update(budget.inFlight, (running) => running - 1)
-    // Counted and uncounted as a pair: interruption waits until the count
-    // has its release attached, on the call or on its results.
-    return Effect.uninterruptibleMask((restore) =>
-      Deferred.succeed(budget.handedOff, undefined).pipe(
-        Effect.andThen(Ref.update(budget.inFlight, (running) => running + 1)),
-        Effect.andThen(restore(toolkit.handle(name, params, toolCallId, parseOptions)).pipe(Effect.onError(() => ended))),
-        Effect.map(Stream.ensuring(ended)),
-      ))
-  },
-})
-
-/**
- * A call's options with its toolkit watched for the hand-off: the first tool
- * call it hands to the toolkit, which starts that tool's handler, completes
- * `budget.handedOff`, and the call is final from then on (`retryableLlm`,
- * `retryableLlmStream`, {@link withFallbackRung}); each handler counts in
- * `budget.inFlight` while it runs. A yieldable `Toolkit` is watched once it
- * resolves; options without a toolkit are returned as they are.
- */
-export const withHandOff = <O extends PromptOptions>(options: O, budget: CallBudget): O => {
-  if (!Predicate.hasProperty(options, "toolkit")) return options
-  const toolkit = options.toolkit
-  const watched = Effect.isEffect(toolkit)
-    ? Effect.map(toolkit, (resolved) => isToolkitWithHandler(resolved) ? handingOff(resolved, budget) : resolved)
-    : isToolkitWithHandler(toolkit) ? handingOff(toolkit, budget) : toolkit
-  return { ...options, toolkit: watched }
-}
-
 /** One routed call's settled response, as {@link generateOver} returns it. */
 type Generated = { readonly content: ReadonlyArray<unknown>; readonly usage: unknown }
 
@@ -358,23 +311,23 @@ export const generateOver = (services: ProviderServices) => <O extends PromptOpt
   selection: ModelSelection,
   options: O,
   isFallback = false,
-  budget?: CallBudget,
+  budget?: ModelRequestCall,
 ): Effect.Effect<Generated, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const label = formatModelSelection(selection)
     const traced = yield* tracedContent
-    const bound = budget ?? (yield* makeCallBudget())
+    const bound = budget ?? (yield* makeModelRequestCall({ reserveFallback: false }))
     const built = yield* providerFor(selection, services)
     return yield* (
       built.svc.generateText(
-        shapeOptions(built, withHandOff(options, bound)) as never,
+        shapeOptions(built, options) as never,
       ) as Effect.Effect<{
         readonly content: ReadonlyArray<Response.AnyPart>
         readonly usage: unknown
       }, AiError.AiError>
     ).pipe(
       rejectEmptyResponse(label),
-      retryableLlm(label, bound),
+      Effect.provideService(CurrentModelRequestCall, Option.some(bound)),
       Effect.map((res) => stampResponse(res, label)),
       // The span carries the WHOLE turn: what finished, what it cost, and
       // the (clipped) thinking — a trace answers "what did the model do"
@@ -402,7 +355,7 @@ export const generateWith = <O extends PromptOptions>(
   selection: ModelSelection,
   options: O,
   isFallback = false,
-  budget?: CallBudget,
+  budget?: ModelRequestCall,
 ): Effect.Effect<Generated, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Effect.flatMap(providerServices, (services) => generateOver(services)(selection, options, isFallback, budget))
 
@@ -414,17 +367,17 @@ const objectOver = (services: ProviderServices) => <O extends PromptOptions>(
   selection: ModelSelection,
   options: O,
   isFallback: boolean,
-  budget: CallBudget,
+  budget: ModelRequestCall,
 ): Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Effect.gen(function* () {
     const label = formatModelSelection(selection)
     const built = yield* providerFor(selection, services)
     // The schema's decoding services are the caller's, erased with its options.
     const call: Effect.Effect<LanguageModel.GenerateObjectResponse<{}, unknown>, AiError.AiError> = built.svc.generateObject(
-      shapeOptions(built, withHandOff(options, budget)) as never,
+      shapeOptions(built, options) as never,
     ) as never
     return yield* call.pipe(
-      retryableLlm(label, budget),
+      Effect.provideService(CurrentModelRequestCall, Option.some(budget)),
       Effect.tap((res) =>
         Effect.annotateCurrentSpan({
           "llm.finish_reason": String(res.finishReason),
@@ -436,25 +389,18 @@ const objectOver = (services: ProviderServices) => <O extends PromptOptions>(
     )
   }).pipe(Effect.scoped, providerCall(selection))
 
-/**
- * The fallback rung: run the primary; if it fails TRANSIENT after the fast
- * retries exhausted, while the call's budget may still try again (no tool
- * call handed off, its deadline not come: `canTryAgain`), and a DIFFERENT
- * fallback selection is configured, run the call once more there, within
- * the same budget. Permanent errors (bad request, decode) pass through — a
- * fallback can't fix those; an unset or identical fallback is a no-op.
- * Exported pure-in-shape so the rung's decision table is testable without
- * building providers.
- */
+/** The fallback rung uses its reserved last attempt only after eligible primary
+ * HTTP failures exhaust their allowance. A committed response, permanent failure
+ * or elapsed deadline cannot start another model call. */
 export const withFallbackRung = <A, E, R>(
   primary: ModelSelection,
   fallback: Option.Option<ModelSelection>,
   call: (selection: ModelSelection, isFallback: boolean) => Effect.Effect<A, E, R>,
-  budget: CallBudget,
-): Effect.Effect<A, E, R> =>
+  budget: ModelRequestCall,
+): Effect.Effect<A, E | AiError.AiError, R> =>
   call(primary, false).pipe(
     Effect.catch((error) =>
-      Effect.flatMap(canTryAgain(budget)(error), (again) =>
+      Effect.flatMap(enterModelFallback(budget, error), (again) =>
         Option.match(
           Option.filter(fallback, (fb) => again && formatModelSelection(fb) !== formatModelSelection(primary)),
           {
@@ -570,12 +516,11 @@ export const tapStreamTelemetry =
 
 /** Build + call one provider streamText for an explicit selection — the
  *  stream twin of {@link generateOver}: same resolution, same option
- *  shaping (anthropic cache breakpoints inherit for free), same budget and
- *  hand-off, same stamp, the stream-aware retry, and finish-part telemetry. */
+ *  shaping, request policy, model stamp and finish-part telemetry. */
 const streamOver = (services: ProviderServices) => <O extends PromptOptions>(
   selection: ModelSelection,
   options: O,
-  budget: CallBudget,
+  budget: ModelRequestCall,
 ): Stream.Stream<unknown, AiError.AiError, AuthStore | HttpClient.HttpClient> =>
   Stream.unwrap(
     Effect.gen(function* () {
@@ -583,10 +528,11 @@ const streamOver = (services: ProviderServices) => <O extends PromptOptions>(
       const built = yield* providerFor(selection, services)
       return (
         built.svc.streamText(
-          shapeOptions(built, withHandOff(options, budget)) as never,
+          shapeOptions(built, options) as never,
         ) as Stream.Stream<Response.AnyPart, AiError.AiError>
       ).pipe(
-        retryableLlmStream(label, budget),
+        rejectEmptyStream(label),
+        Stream.provideService(CurrentModelRequestCall, Option.some(budget)),
         Stream.map((part) => stampPartModel(part, label)),
         tapStreamTelemetry(label),
       )
@@ -611,12 +557,21 @@ const withConfiguredEffortStream = <A, E, R>(
  * call cannot send the call past the proxy. Without a transport the call
  * keeps whatever fetch is in force, the global one by default.
  */
+const requestFetch = (services: ProviderServices): Effect.Effect<typeof globalThis.fetch> => Effect.map(Effect.context<never>(), (context) =>
+  Option.match(services.transport, {
+    onNone: () => Context.get(context, FetchHttpClient.Fetch),
+    onSome: (transport) => Option.getOrElse(
+      Option.filter(Option.fromNullishOr(Context.getOrUndefined(context, FetchHttpClient.Fetch)), () => Option.contains(services.managedTransport, transport)),
+      () => transportFetch(transport),
+    ),
+  }))
+
 export const throughTransport = (services: ProviderServices) => <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
-  Option.match(services.transport, { onNone: () => effect, onSome: (transport) => Effect.provideService(effect, FetchHttpClient.Fetch, transportFetch(transport)) })
+  Effect.flatMap(requestFetch(services), (fetch) => Effect.provideService(effect, FetchHttpClient.Fetch, fetch))
 
 /** {@link throughTransport} for a stream. */
 const throughTransportStream = (services: ProviderServices) => <A, E, R>(stream: Stream.Stream<A, E, R>): Stream.Stream<A, E, R> =>
-  Option.match(services.transport, { onNone: () => stream, onSome: (transport) => Stream.provideService(stream, FetchHttpClient.Fetch, transportFetch(transport)) })
+  Stream.unwrap(Effect.map(requestFetch(services), (fetch) => Stream.provideService(stream, FetchHttpClient.Fetch, fetch)))
 
 /**
  * The provider services of a routed model's layer, read once where it is
@@ -645,7 +600,7 @@ const selectionModel = (
   const service = {
     [LanguageModel.TypeId]: LanguageModel.TypeId,
     generateText: (options: PromptOptions) =>
-      makeCallBudget().pipe(
+      makeModelRequestCall({ reserveFallback: Option.exists(fallback, (value) => formatModelSelection(value) !== formatModelSelection(primary)) }).pipe(
         Effect.flatMap((budget) => withConfiguredEffort(
           withFallbackRung(primary, fallback, (selection, isFallback) => generateOver(services)(selection, options, isFallback, budget), budget),
           effort,
@@ -655,7 +610,7 @@ const selectionModel = (
         Effect.provideService(HttpClient.HttpClient, http),
       ) as never,
     generateObject: ((options: PromptOptions) =>
-      makeCallBudget().pipe(
+      makeModelRequestCall({ reserveFallback: Option.exists(fallback, (value) => formatModelSelection(value) !== formatModelSelection(primary)) }).pipe(
         Effect.flatMap((budget) => withConfiguredEffort(
           withFallbackRung(primary, fallback, (selection, isFallback) => objectOver(services)(selection, options, isFallback, budget), budget),
           effort,
@@ -668,7 +623,7 @@ const selectionModel = (
     // already falls back to generateText in the engine loop, and THAT
     // call rides this router's fallback — one rung, no double-hop.
     streamText: ((options: PromptOptions) =>
-      withConfiguredEffortStream(Stream.unwrap(Effect.map(makeCallBudget(), (budget) => streamOver(services)(primary, options, budget))), effort).pipe(
+      withConfiguredEffortStream(Stream.unwrap(Effect.map(makeModelRequestCall({ reserveFallback: false }), (budget) => streamOver(services)(primary, options, budget))), effort).pipe(
         throughTransportStream(services),
         Stream.provideContext(stores),
         Stream.provideService(HttpClient.HttpClient, http),

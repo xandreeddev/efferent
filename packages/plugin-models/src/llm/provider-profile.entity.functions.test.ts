@@ -216,7 +216,7 @@ describe("the built-in providers, pinned", () => {
     expect(subscription).toEqual([true, Option.some({ model: "claude-sonnet-5", max_tokens: 128_000, output_config: { effort: "high" }, thinking: { type: "adaptive", display: "summarized" }, systemPrelude: CLAUDE_CODE_SYSTEM, promptCache: { _tag: "Auto", ttl: "5m" }, cacheControl: true })])
   })
 
-  it("each route sends to its URL through its client", async () => {
+  it("each route reaches its URL and reports rejection through the shared HTTP boundary", async () => {
     const sent = (selection: string) => {
       const urls: Array<string> = []
       const fetch = ((url: unknown) => {
@@ -233,11 +233,11 @@ describe("the built-in providers, pinned", () => {
       ))
     }
     expect(await Promise.all(["opencode:glm-5.2", "google:gemini-3-flash", "opencode:gpt-5.6-luna", "openai:gpt-5.5", "anthropic:claude-sonnet-5"].map(sent))).toEqual([
-      ["opencode:glm-5.2", ["https://opencode.ai/zen/go/v1/chat/completions"], "OpenCode"],
-      ["google:gemini-3-flash", ["https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"], "Google"],
-      ["opencode:gpt-5.6-luna", ["https://opencode.ai/zen/v1/responses"], "OpenAiClient"],
-      ["openai:gpt-5.5", ["https://api.openai.com/v1/responses"], "OpenAiClient"],
-      ["anthropic:claude-sonnet-5", ["https://api.anthropic.com/v1/messages?beta=true"], "AnthropicClient"],
+      ["opencode:glm-5.2", ["https://opencode.ai/zen/go/v1/chat/completions"], "Models"],
+      ["google:gemini-3-flash", ["https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"], "Models"],
+      ["opencode:gpt-5.6-luna", ["https://opencode.ai/zen/v1/responses"], "Models"],
+      ["openai:gpt-5.5", ["https://api.openai.com/v1/responses"], "Models"],
+      ["anthropic:claude-sonnet-5", ["https://api.anthropic.com/v1/messages?beta=true"], "Models"],
     ])
   })
 

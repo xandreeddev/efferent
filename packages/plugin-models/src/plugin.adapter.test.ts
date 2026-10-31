@@ -350,7 +350,7 @@ describe("models plugin proxy", () => {
     expect(proxy.seen.every((request) => request.kind === "connect" && request.target === "api.anthropic.com:443")).toBe(true)
   }, 30_000)
 
-  test("without a proxy the plugin adds no transport: a FetchHttpClient.Fetch the host provides still carries the SDK providers' calls", async () => {
+  test("without a proxy an explicit FetchHttpClient.Fetch still carries the SDK providers' calls", async () => {
     const reached: Array<string> = []
     const hostFetch = Object.assign((input: string | URL | Request) => {
       reached.push(input instanceof Request ? input.url : String(input))

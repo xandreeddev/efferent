@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { AiError } from "effect/ai"
-import { Effect, Fiber, Option, Schema, Stream } from "effect"
-import { TestClock } from "effect/testing"
+import { Effect, Option, Schema, Stream } from "effect"
 import { ENGINE_KEY, ModelFailureKind, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
 import { makeCompatLanguageModel } from "./compat.js"
 import { mapOpenAiCodexError } from "./openAiCodex.js"
-import { classifyLlmError, makeCallBudget, rejectEmptyResponse, retryableLlm, retryableLlmStream } from "./retry.js"
+import { classifyLlmError, rejectEmptyResponse, rejectEmptyStream } from "./retry.js"
 import { classifyAiError } from "./provider-failure.entity.functions.js"
 
 const encodedError = { error: { type: "invalid_request_error", code: "context_length_exceeded", message: "fixture context refusal" } }
@@ -73,7 +72,7 @@ describe("provider failures survive existing adapter boundaries", () => {
     expect(modelFailureOf(mapOpenAiCodexError("fixture", sdkError(200, {})))).toEqual(Option.some("InvalidResponse"))
   })
 
-  test("semantic permanent stamps override old Unknown retry heuristics, while unknown/rate timing stays unchanged", () => {
+  test("semantic permanent stamps override old Unknown retry heuristics, while unknown and rate-limit semantics stay separate", () => {
     const original = AiError.make({ module: "Fixture", method: "call", reason: new AiError.UnknownError({ description: "fixture" }) })
     ;["ContextOverflow", "Authentication", "InvalidRequest", "Quota", "InvalidResponse"].forEach((kind) => {
       const error = AiError.make({ module: "Fixture", method: "call", reason: new AiError.UnknownError({ metadata: { [ENGINE_KEY]: { failure: kind } } }) })
@@ -83,7 +82,7 @@ describe("provider failures survive existing adapter boundaries", () => {
     expect(classifyLlmError(stampAiErrorFailure(original, "Timeout"), 0)).toBe("transient")
     const limited = AiError.make({ module: "Fixture", method: "call", reason: new AiError.RateLimitError({ http: { request, response: { status: 429, headers: { "retry-after": "120" } } } }) })
     expect(modelFailureOf(limited)).toEqual(Option.some("RateLimit"))
-    expect(classifyLlmError(limited, 0)).toBe("permanent")
+    expect(classifyLlmError(limited, 0)).toBe("transient")
   })
 
   test("structured permanent refusals win over misleading statuses through the actual compat adapter and retry guard", async () => {
@@ -114,20 +113,8 @@ describe("provider failures survive existing adapter boundaries", () => {
 
   test("the stream empty guard retains a stamped failure finish instead of replacing its meaning", async () => {
     const parts = [{ type: "finish", metadata: { [ENGINE_KEY]: { failure: "ContextOverflow" } } }]
-    const result = await Effect.runPromise(Stream.runCollect(retryableLlmStream("fixture")(Stream.fromIterable(parts))).pipe(Effect.timeout("1 second")))
+    const result = await Effect.runPromise(Stream.runCollect(rejectEmptyStream("fixture")(Stream.fromIterable(parts))).pipe(Effect.timeout("1 second")))
     expect(result).toEqual(parts)
   })
 
-  test("the existing total call-budget error carries Timeout without changing its deadline", async () => {
-    const timed = await Effect.runPromise(Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(Effect.gen(function* () {
-        const budget = yield* makeCallBudget(10)
-        return yield* Effect.flip(retryableLlm("fixture", budget)(Effect.never))
-      }))
-      yield* TestClock.adjust("1 second")
-      return yield* Fiber.join(fiber)
-    }).pipe(Effect.provide(TestClock.layer())))
-    expect(modelFailureOf(timed)).toEqual(Option.some("Timeout"))
-    expect(timed.message).toContain("0.01s budget")
-  })
 })

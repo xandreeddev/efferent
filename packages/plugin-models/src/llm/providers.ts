@@ -26,7 +26,7 @@ import { anthropicProfileOf, profileOf } from "./provider-profile.entity.functio
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import type { ModelEndpoint, ModelEndpoints } from "../ports/model-endpoints.port.js"
-import { ModelsTransport } from "../ports/models-transport.port.js"
+import { CurrentManagedModelsTransport, ModelsTransport } from "../ports/models-transport.port.js"
 import type { WebSocketProxy } from "../ports/models-transport.port.js"
 import { CurrentModelSettings } from "../ports/model-settings.port.js"
 import { ModelSettingsError, ModelThinking } from "./model-settings.entity.js"
@@ -39,6 +39,7 @@ import { bindingFor, droppedInBody, droppedInMessageStart, firstEventData, merge
 import { classifyAiError } from "./provider-failure.entity.functions.js"
 import { providerFailureProtocol, withAnthropicFailures, withOpenAiFailures } from "./provider-client.adapter.js"
 import type { ProviderFailureProtocol } from "./provider-failure.entity.js"
+import { resilientHttpClient } from "../transport/resilient-http-client.adapter.js"
 
 /**
  * Per-provider `LanguageModel` construction. Built PER REQUEST from a
@@ -375,6 +376,7 @@ export interface ProviderServices {
   readonly endpoints: ModelEndpoints
   readonly modelSettings: ModelSettingsMap
   readonly transport: Transport
+  readonly managedTransport: Transport
   readonly sessions: Option.Option<OpenAiCodexSessions>
   /** What a request to a model that binds thinking says about a changed prefix (`thinkingPrefixMismatch`). */
   readonly thinkingPrefixMismatch: ThinkingPrefixMismatch
@@ -385,13 +387,14 @@ export const providerServices: Effect.Effect<ProviderServices> = Effect.all({
   endpoints: Effect.service(CurrentModelEndpoints),
   modelSettings: Effect.service(CurrentModelSettings),
   transport: Effect.serviceOption(ModelsTransport),
+  managedTransport: Effect.service(CurrentManagedModelsTransport),
   sessions: Effect.service(CurrentOpenAiCodexSessions),
   thinkingPrefixMismatch: Effect.service(CurrentThinkingPrefixMismatch),
 }, { concurrency: 1 })
 
 /** The compat client's `fetchImpl`: the transport's fetch, or (no transport) the global one. */
-const compatFetch = (transport: Transport) =>
-  Option.match(transport, { onNone: () => ({}), onSome: ({ fetch }) => ({ fetchImpl: fetch }) })
+const compatFetch = (transport: Transport, managed: Transport) =>
+  Option.match(Option.filter(transport, (value) => !Option.contains(managed, value)), { onNone: () => ({}), onSome: ({ fetch }) => ({ fetchImpl: fetch }) })
 
 /**
  * How the OpenAI subscription's WebSocket reaches ChatGPT: what the
@@ -433,6 +436,7 @@ const endpointModel = (
   standardOnly: boolean,
   images: boolean,
   transport: Transport,
+  managedTransport: Transport,
 ): Effect.Effect<Built> =>
   makeCompatLanguageModel({
     moduleName: selection.provider,
@@ -440,7 +444,7 @@ const endpointModel = (
     model: selection.modelId,
     standardOnly,
     images,
-    ...compatFetch(transport),
+    ...compatFetch(transport, managedTransport),
     ...Option.match(key, { onNone: () => ({}), onSome: (apiKey) => ({ apiKey }) }),
   }).pipe(Effect.map((svc) => ({ svc, settings: Option.none(), prependClaudeCode: false, images, route: "compat" as const })))
 
@@ -462,12 +466,12 @@ const buildProviderService = (
         }).pipe(Effect.map((built) => ({ ...built, images: configured.images ?? model.images, route: "anthropic" as const })))
       }
       return otherRouteSettings(selection, services.modelSettings).pipe(Effect.andThen(
-        endpointModel(selection, configured.url, own, configured.standardOnly ?? true, configured.images ?? false, services.transport),
+        endpointModel(selection, configured.url, own, configured.standardOnly ?? true, configured.images ?? false, services.transport, services.managedTransport),
       ))
     })
   }
   if (credential?.type === "local" && credential.baseUrl !== undefined) {
-    return otherRouteSettings(selection, services.modelSettings).pipe(Effect.andThen(endpointModel(selection, credential.baseUrl, Option.none(), true, false, services.transport)))
+    return otherRouteSettings(selection, services.modelSettings).pipe(Effect.andThen(endpointModel(selection, credential.baseUrl, Option.none(), true, false, services.transport, services.managedTransport)))
   }
   return buildBuiltInProvider(selection, credential, key, services)
 }
@@ -480,6 +484,7 @@ interface RouteCall {
   readonly credential: Credential | undefined
   readonly key: Redacted.Redacted<string>
   readonly transport: Transport
+  readonly managedTransport: Transport
   readonly sessions: Option.Option<OpenAiCodexSessions>
   readonly thinkingPrefixMismatch: ThinkingPrefixMismatch
 }
@@ -564,6 +569,11 @@ export const resolveMessagesConfiguration = (
   })
 })
 
+/** The SDK accepts a narrower reader/client error type but leaves typed AiErrors untouched.
+ * Keep the response-reader and client erasure at this existing SDK boundary. */
+const requestClient = (client: HttpClient.HttpClient, protocol: ProviderFailureProtocol): HttpClient.HttpClient =>
+  resilientHttpClient(client, { protocol, adaptResponse: (response) => response as never }) as never
+
 /** One Messages builder for built-in API keys, explicit gateway auth, and subscription OAuth. */
 const anthropicModel = (
   { selection, modelSettings, thinkingPrefixMismatch }: Pick<RouteCall, "selection" | "model" | "modelSettings" | "thinkingPrefixMismatch">,
@@ -576,7 +586,7 @@ const anthropicModel = (
     onSome: () => client.pipe(withAnthropicBetas([THINKING_BINDING_BETA]), reportingDroppedThinking(formatModelSelection(selection))),
   })
   const options = Match.valueTags(authentication, {
-    Subscription: ({ access }): AnthropicClient.Options => ({ transformClient: (client) => bound(anthropicOAuthTransform(access)(client)) }),
+    Subscription: ({ access }): AnthropicClient.Options => ({ transformClient: (client) => bound(requestClient(anthropicOAuthTransform(access)(client), "anthropic")) }),
     Api: ({ key, endpoint }): AnthropicClient.Options => ({
       ...Option.match(key, { onNone: () => ({}), onSome: (apiKey) => Option.exists(endpoint, (value) => value.auth === "bearer") ? {} : { apiKey } }),
       ...Option.match(endpoint, { onNone: () => ({}), onSome: (value) => ({ apiUrl: anthropicBaseUrl(value.url), ...(value.apiVersion === undefined ? {} : { apiVersion: value.apiVersion }) }) }),
@@ -585,7 +595,7 @@ const anthropicModel = (
           onNone: () => client,
           onSome: () => Option.match(key, { onNone: () => client, onSome: (apiKey) => client.pipe(HttpClient.mapRequest((request) => HttpClientRequest.setHeader(request, "Authorization", `Bearer ${Redacted.value(apiKey)}`))) }),
         })
-        return bound(authenticated.pipe(withAnthropicBetas(Option.match(endpoint, { onNone: () => [], onSome: (value) => value.betas ?? [] }))))
+        return bound(requestClient(authenticated.pipe(withAnthropicBetas(Option.match(endpoint, { onNone: () => [], onSome: (value) => value.betas ?? [] }))), "anthropic"))
       },
     }),
   })
@@ -620,7 +630,7 @@ const responsesModel = (route: ResponsesRoute, { selection, model, key }: RouteC
         prompt_cache_key: Option.getOrElse(cacheKey, () => "efferent"),
         ...responsesPolicy(policy, route.effort === "always" || model.efforts.length > 0),
       }
-      return OpenAiClient.make({ apiKey: key, ...Option.match(route.apiUrl, { onNone: () => ({}), onSome: (apiUrl) => ({ apiUrl }) }) }).pipe(
+      return OpenAiClient.make({ apiKey: key, transformClient: (client) => requestClient(client, "openai"), ...Option.match(route.apiUrl, { onNone: () => ({}), onSome: (apiUrl) => ({ apiUrl }) }) }).pipe(
         Effect.flatMap((client) =>
           OpenAiLanguageModel.make({ model: selection.modelId, config }).pipe(Effect.provideService(OpenAiClient.OpenAiClient, withOpenAiFailures(client))),
         ),
@@ -645,7 +655,7 @@ const codexModel = ({ selection, credential, key, transport, sessions }: RouteCa
 }
 
 /** An OpenAI-compatible gateway's chat completions (OpenCode's other models, Gemini). */
-const chatModel = (route: ChatRoute, { selection, model, key, transport }: RouteCall): Building<RouteModel> =>
+const chatModel = (route: ChatRoute, { selection, model, key, transport, managedTransport }: RouteCall): Building<RouteModel> =>
   makeCompatLanguageModel({
     moduleName: route.moduleName,
     chatUrl: route.chatUrl,
@@ -654,7 +664,7 @@ const chatModel = (route: ChatRoute, { selection, model, key, transport }: Route
     standardOnly: route.standardOnly,
     usage: route.usage,
     images: model.images,
-    ...compatFetch(transport),
+    ...compatFetch(transport, managedTransport),
   }).pipe(Effect.map((svc) => ({ svc, settings: Option.none(), prependClaudeCode: false })))
 
 /** A built-in provider's model, by the route its profile names; every route needs a key. */
@@ -662,14 +672,14 @@ const buildBuiltInProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
-  { transport, sessions, thinkingPrefixMismatch, modelSettings }: ProviderServices,
+  { transport, managedTransport, sessions, thinkingPrefixMismatch, modelSettings }: ProviderServices,
 ): Building<Built> =>
   Option.match(profileOf(selection.provider), {
     onNone: () => Effect.fail(notWired(selection)),
     onSome: (profile) => Option.match(Option.fromNullishOr(key), {
       onNone: () => Effect.fail(missingKey(selection)),
       onSome: (found) => {
-        const call: RouteCall = { selection, model: profile.modelOf(selection.modelId), credential, key: found, transport, sessions, thinkingPrefixMismatch, modelSettings }
+        const call: RouteCall = { selection, model: profile.modelOf(selection.modelId), credential, key: found, transport, managedTransport, sessions, thinkingPrefixMismatch, modelSettings }
         const route = profile.routeOf(selection.modelId)
         const built: Building<RouteModel> = Match.valueTags(route, {
           anthropic: () => anthropicModel(call, credential?.type === "oauth" ? { _tag: "Subscription", access: found } : { _tag: "Api", key: Option.some(found), endpoint: Option.none() }),

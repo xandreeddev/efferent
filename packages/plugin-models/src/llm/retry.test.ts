@@ -1,11 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { AiError } from "effect/ai"
 import { HttpClientError, HttpClientRequest } from "effect/http"
-import { Cause, Deferred, Duration, Effect, Exit, Fiber, Logger, Option, Ref, References, Stream } from "effect"
-import { TestClock } from "effect/testing"
-import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import { classifyLlmError, LLM_CALL_BUDGET_MS, makeCallBudget, rejectEmptyResponse, retryableLlm, retryableLlmStream } from "./retry.js"
-import type { CallBudget } from "./retry.js"
+import { Effect, Option, Stream } from "effect"
+import { CurrentEmptyResponseTolerance, modelFailureOf } from "@xandreed/core"
+import { classifyLlmError, rejectEmptyResponse, rejectEmptyStream } from "./retry.js"
 
 const request = { method: "POST" as const, url: "https://gw.example/chat", urlParams: [], headers: {} }
 /** A provider status failure, as the adapters build it. */
@@ -17,12 +15,7 @@ const httpError = (status: number, headers: Record<string, string> = {}) =>
   })
 const reasonError = (reason: AiError.AiErrorReason) => AiError.make({ module: "Test", method: "generateText", reason })
 /** Classified now, on the wall clock. */
-const classify = (error: unknown) => classifyLlmError(error, Date.now())
-
-/** A logger keeping each line's text and its `llm.model` annotation. */
-const capturingLogs = (logged: Array<readonly [string, unknown]>) => Logger.layer([Logger.make((options) => {
-  logged.push([[options.message].flat().join(" "), options.fiber.getRef(References.CurrentLogAnnotations)["llm.model"]])
-})])
+const classify = (error: unknown) => classifyLlmError(error, 0)
 
 describe("classifyLlmError", () => {
   test("429 and 5xx are transient; other 4xx permanent", () => {
@@ -51,25 +44,9 @@ describe("classifyLlmError", () => {
     expect(classify({ _tag: "HttpClientError", reason: { _tag: "TransportError" } })).toBe("permanent")
   })
 
-  test("429 with a Retry-After beyond the honored cap is a DAILY QUOTA — permanent", () => {
-    const quota429 = (retryAfter: string) => httpError(429, { "retry-after": retryAfter })
-    // Seconds form: 1h is a quota, 5s is an outage blip.
-    expect(classify(quota429("3600"))).toBe("permanent")
-    expect(classify(quota429("5"))).toBe("transient")
-    // HTTP-date form: far future = quota.
-    expect(classify(quota429(new Date(Date.now() + 7_200_000).toUTCString()))).toBe(
-      "permanent",
-    )
-    // No header / garbage header: plain transient 429.
-    expect(classify(httpError(429))).toBe("transient")
-    expect(classify(quota429("soon-ish"))).toBe("transient")
-  })
-
-  test("an HTTP-date Retry-After is measured from the time it is classified at", () => {
-    const at = Date.UTC(2026, 0, 1)
-    const quota = httpError(429, { "retry-after": new Date(at + 7_200_000).toUTCString() })
-    expect(classifyLlmError(quota, at)).toBe("permanent")
-    expect(classifyLlmError(quota, at + 7_190_000)).toBe("transient")
+  test("a long Retry-After remains rate limiting; the request policy owns capped sleeps", () => {
+    expect(classify(httpError(429, { "retry-after": "3600" }))).toBe("transient")
+    expect(classify(httpError(429, { "retry-after": "Thu, 01 Jan 2099 00:00:00 GMT" }))).toBe("transient")
   })
 
   test("an exhausted quota is permanent whatever status carried it", () => {
@@ -78,293 +55,37 @@ describe("classifyLlmError", () => {
   })
 })
 
-describe("retryableLlm", () => {
-  /** How many attempts a call failing with `error` (then succeeding) takes, the backoff run on a test clock. */
-  const attempts = (error: AiError.AiError) => Effect.runPromise(Effect.gen(function* () {
-    const count = yield* Ref.make(0)
-    const call = Ref.updateAndGet(count, (n) => n + 1).pipe(Effect.flatMap((n) => n === 1 ? Effect.fail(error) : Effect.succeed("ok")))
-    const fiber = yield* Effect.forkChild(Effect.exit(retryableLlm("test")(call)))
-    yield* TestClock.adjust("1 minute")
-    yield* Fiber.join(fiber)
-    return yield* Ref.get(count)
-  }).pipe(Effect.provide(TestClock.layer())))
-
-  test("an exhausted quota fails at once; a plain 429 is retried", async () => {
-    expect(await attempts(reasonError(new AiError.QuotaExhaustedError({ http: { request, response: { status: 429, headers: {} } } })))).toBe(1)
-    expect(await attempts(httpError(429))).toBe(2)
+describe("empty response guards after HTTP handoff", () => {
+  const finish = { type: "finish", reason: "stop" }
+  test("an empty settled response fails once while real content keeps its identity", async () => {
+    const failed = await Effect.runPromise(Effect.flip(rejectEmptyResponse("fixture")(Effect.succeed({ content: [finish] }))))
+    expect(modelFailureOf(failed)).toEqual(Option.some("Transient"))
+    const response = { content: [{ type: "text", text: "answer" }, finish] }
+    expect(await Effect.runPromise(rejectEmptyResponse("fixture")(Effect.succeed(response)))).toBe(response)
   })
-
-  test("a transient failure that exhausts the retries is logged with its model as an annotation, not in its text", async () => {
-    const logged: Array<readonly [string, unknown]> = []
-    await Effect.runPromise(Effect.gen(function* () {
-      const fiber = yield* Effect.forkChild(Effect.exit(retryableLlm("gw:slow")(Effect.fail(httpError(503)))))
-      yield* TestClock.adjust("1 minute")
-      yield* Fiber.join(fiber)
-    }).pipe(Effect.provide(TestClock.layer()), Effect.provide(capturingLogs(logged))))
-    expect(logged).toHaveLength(1)
-    expect(logged[0]?.[0]).toStartWith("transient failure exhausted retries: ")
-    expect(logged[0]?.[0]).not.toContain("gw:slow")
-    expect(logged[0]?.[1]).toBe("gw:slow")
+  test("a post-tool empty finish is accepted under the loop's tolerance, settled and streamed", async () => {
+    const observed = await Effect.runPromise(Effect.all([
+      rejectEmptyResponse("fixture")(Effect.succeed({ content: [finish] })),
+      Stream.runCollect(rejectEmptyStream("fixture")(Stream.succeed(finish))),
+    ], { concurrency: 1 }).pipe(Effect.provideService(CurrentEmptyResponseTolerance, true)))
+    expect(observed).toEqual([{ content: [finish] }, [finish]])
   })
-})
-
-describe("retryableLlm within a call budget", () => {
-  /** Runs `call` under `retryableLlm` on a test clock moved an hour on: its attempts, its time and its failure. */
-  const run = (
-    call: (budget: CallBudget) => Effect.Effect<unknown, AiError.AiError>,
-    budgetMs?: number,
-    logged: Array<readonly [string, unknown]> = [],
-  ) =>
-    Effect.runPromise(Effect.gen(function* () {
-      const attempts = yield* Ref.make(0)
-      const budget = yield* makeCallBudget(budgetMs)
-      const counted = Ref.update(attempts, (n) => n + 1).pipe(Effect.andThen(call(budget)))
-      const fiber = yield* Effect.forkChild(Effect.timed(Effect.flip(retryableLlm("gw:hung", budget)(counted))))
-      yield* TestClock.adjust("1 hour")
-      const [elapsed, error] = yield* Fiber.join(fiber)
-      return { attempts: yield* Ref.get(attempts), elapsed: Duration.toMillis(elapsed), error: String(error) }
-    }).pipe(Effect.orDie, Effect.provide(TestClock.layer()), Effect.provide(capturingLogs(logged))))
-
-  test("a hung call: the first attempt is cut at 300 s, the next at the budget's deadline, and no attempt follows", async () => {
-    const result = await run(() => Effect.never)
-    expect(result.attempts).toBe(2)
-    expect(result.elapsed).toBe(LLM_CALL_BUDGET_MS)
-    expect(result.error).toContain("the gw:hung call reached its 600s budget after 2 attempts and was cut off")
-  })
-
-  test("no attempt starts at or after the deadline", async () => {
-    const result = await run(() => Effect.succeed("ran"), 0)
-    expect(result.attempts).toBe(0)
-    expect(result.error).toContain("the gw:hung call reached its 0s budget after 0 attempts and was cut off")
-  })
-
-  test("once the call hands a tool call off, its attempt is no longer bounded and a transient failure is final", async () => {
-    const logged: Array<readonly [string, unknown]> = []
-    const result = await run((budget) => Deferred.succeed(budget.handedOff, undefined).pipe(
-      Effect.andThen(Effect.sleep("400 seconds")),
-      Effect.andThen(Effect.fail(httpError(503))),
-    ), undefined, logged)
-    expect(result.attempts).toBe(1)
-    expect(result.elapsed).toBe(400_000)
-    expect(result.error).toContain("Server error")
-    expect(logged.map(([message, model]) => [message.split(": ")[0], model])).toEqual([["transient failure after a tool started was final", "gw:hung"]])
-  })
-})
-
-describe("rejectEmptyResponse", () => {
-  test("an empty-content 200 fails transient; content passes through unchanged", async () => {
-    const empty = await Effect.runPromiseExit(
-      rejectEmptyResponse("test")(Effect.succeed({ content: [{ type: "finish" }] })),
-    )
-    expect(empty._tag).toBe("Failure")
-    const error = Exit.isFailure(empty) ? Cause.findErrorOption(empty.cause) : Option.none()
-    expect(classify(Option.getOrUndefined(error))).toBe("transient")
-
-    const full = await Effect.runPromise(
-      rejectEmptyResponse("test")(
-        Effect.succeed({ content: [{ type: "text", text: "hi" }], usage: { totalTokens: 1 } }),
-      ),
-    )
-    expect(full.usage.totalTokens).toBe(1)
-  })
-
-  test("with the loop's tolerance set, a post-tool empty response passes — the model is DONE, not down", async () => {
-    // Without tolerance the empty rides the retry ladder and parks the turn
-    // (live-caught: math turns burning full 120s budgets after render_math
-    // succeeded, ui composers riding 55s deadlines after their last patch).
-    const passed = await Effect.runPromise(
-      rejectEmptyResponse("test")(Effect.succeed({ content: [{ type: "finish" }] })).pipe(
-        Effect.provideService(CurrentEmptyResponseTolerance, true),
-      ),
-    )
-    expect(passed.content).toEqual([{ type: "finish" }])
-  })
-})
-
-/** Attempt-scripted stream: run N delegates to `runs[attempt]` (clamped to
- *  the last), so retries observably advance the script. */
-const scripted = (runs: ReadonlyArray<Stream.Stream<unknown, unknown>>) => {
-  const attempts: Array<number> = []
-  const stream = Stream.unwrap(
-    Effect.sync(() => {
-      attempts.push(attempts.length + 1)
-      return runs[Math.min(attempts.length - 1, runs.length - 1)] ?? Stream.empty
-    }),
-  )
-  return { attempts, stream }
-}
-
-const transient500 = httpError(500)
-const permanent400 = httpError(400)
-const delta = { type: "text-delta", id: "text-1", delta: "hi" }
-const finish = { type: "finish", reason: "stop", usage: { totalTokens: 1 } }
-
-const collect = (stream: Stream.Stream<unknown, unknown>) =>
-  Effect.runPromise(
-    Stream.runCollect(stream),
-  )
-
-describe("retryableLlmStream", () => {
-  test("a transient failure BEFORE any content retries; the retry's parts arrive once", async () => {
-    const { attempts, stream } = scripted([
-      Stream.fail(transient500),
-      Stream.fromIterable([delta, finish]),
-    ])
-    const parts = await collect(retryableLlmStream("test")(stream))
-    expect(parts).toEqual([delta, finish])
-    expect(attempts).toHaveLength(2)
-  }, 10_000)
-
-  test("AFTER a content part, failures are final — no retry, no duplicates", async () => {
-    const { attempts, stream } = scripted([
-      Stream.fromIterable([delta]).pipe(Stream.concat(Stream.fail(transient500))),
-      Stream.fromIterable([delta, finish]),
-    ])
-    const exit = await Effect.runPromiseExit(
-      Stream.runCollect(retryableLlmStream("test")(stream)),
-    )
-    expect(exit._tag).toBe("Failure")
-    expect(attempts).toHaveLength(1)
-  })
-
-  test("a transient failure after content is logged with its model as an annotation, not in its text", async () => {
-    const logged: Array<readonly [string, unknown]> = []
-    const { stream } = scripted([Stream.fromIterable([delta]).pipe(Stream.concat(Stream.fail(transient500)))])
-    await Effect.runPromise(Effect.exit(Stream.runCollect(retryableLlmStream("gw:slow")(stream))).pipe(Effect.provide(capturingLogs(logged))))
-    expect(logged).toHaveLength(1)
-    expect(logged[0]?.[0]).toStartWith("transient stream failure was final: ")
-    expect(logged[0]?.[0]).not.toContain("gw:slow")
-    expect(logged[0]?.[1]).toBe("gw:slow")
-  })
-
-  test("a permanent error never retries", async () => {
-    const { attempts, stream } = scripted([
-      Stream.fail(permanent400),
-      Stream.fromIterable([delta, finish]),
-    ])
-    const exit = await Effect.runPromiseExit(
-      Stream.runCollect(retryableLlmStream("test")(stream)),
-    )
-    expect(exit._tag).toBe("Failure")
-    expect(attempts).toHaveLength(1)
-  })
-
-  test("an EMPTY stream (finish, zero content) withholds the finish and rides the retries", async () => {
-    const { attempts, stream } = scripted([
-      Stream.fromIterable([finish]),
-      Stream.fromIterable([delta, finish]),
-    ])
-    const parts = await collect(retryableLlmStream("test")(stream))
-    expect(parts).toEqual([delta, finish])
-    expect(attempts).toHaveLength(2)
-  }, 10_000)
-
-  test("signed thinking is content: a signature-only delta or a redacted block arms the gate (no retry after it) and is not an empty stream", async () => {
-    const signature = { type: "reasoning-delta", id: "0", delta: "", metadata: { anthropic: { info: { type: "thinking", signature: "sig" } } } }
-    const redacted = { type: "reasoning-start", id: "1", metadata: { anthropic: { info: { type: "redacted_thinking", redactedData: "data" } } } }
+  test("signed and redacted reasoning count as streamed content without text", async () => {
+    const signature = { type: "reasoning-delta", id: "0", delta: "", metadata: { vendor: { signature: "sig" } } }
+    const redacted = { type: "reasoning-start", id: "1", metadata: { vendor: { redacted: "data" } } }
+    expect(await Effect.runPromise(Effect.all([signature, redacted].map((part) => Stream.runCollect(rejectEmptyStream("fixture")(Stream.fromIterable([part, finish])))), { concurrency: 1 }))).toEqual([[signature, finish], [redacted, finish]])
     const bare = { type: "reasoning-start", id: "2", metadata: {} }
-    // The stream fold keeps a metadata-only reasoning part, so a reply of signed thinking alone is not empty.
-    expect(await collect(retryableLlmStream("test")(scripted([Stream.fromIterable([signature, finish])]).stream))).toEqual([signature, finish])
-    expect(await collect(retryableLlmStream("test")(scripted([Stream.fromIterable([redacted, finish])]).stream))).toEqual([redacted, finish])
-    // After signed thinking, a failure is final: a retry would send it again.
-    const after = scripted([Stream.fromIterable([signature]).pipe(Stream.concat(Stream.fail(transient500))), Stream.fromIterable([delta, finish])])
-    expect((await Effect.runPromiseExit(Stream.runCollect(retryableLlmStream("test")(after.stream))))._tag).toBe("Failure")
-    expect(after.attempts).toHaveLength(1)
-    // A reasoning part with no metadata and no text is not content: the empty stream (its finish withheld) rides the retries.
-    const empty = scripted([Stream.fromIterable([bare, finish]), Stream.fromIterable([delta, finish])])
-    expect(await collect(retryableLlmStream("test")(empty.stream))).toEqual([bare, delta, finish])
-    expect(empty.attempts).toHaveLength(2)
-  }, 10_000)
-
-  test("a mid-stream hang trips the idle timeout; armed, so it is final", async () => {
-    const { attempts, stream } = scripted([
-      Stream.fromIterable([delta]).pipe(Stream.concat(Stream.never)),
-    ])
-    const exit = await Effect.runPromiseExit(
-      Stream.runCollect(retryableLlmStream("test", undefined, 80)(stream)),
-    )
-    expect(exit._tag).toBe("Failure")
-    expect(JSON.stringify(exit)).toContain("was cut off")
+    const failed = await Effect.runPromise(Effect.flip(Stream.runCollect(rejectEmptyStream("fixture")(Stream.fromIterable([bare, finish])))))
+    expect(modelFailureOf(failed)).toEqual(Option.some("Transient"))
+  })
+  test("stream errors retain identity and never resubscribe", async () => {
+    const failure = reasonError(new AiError.InternalProviderError({ description: "stream failed" }))
+    const attempts: Array<number> = []
+    const stream = Stream.unwrap(Effect.sync(() => {
+      attempts.push(1)
+      return Stream.succeed({ type: "text-delta", id: "0", delta: "partial" }).pipe(Stream.concat(Stream.fail(failure)))
+    }))
+    expect(await Effect.runPromise(Effect.flip(Stream.runCollect(rejectEmptyStream("fixture")(stream))))).toBe(failure)
     expect(attempts).toHaveLength(1)
-  })
-})
-
-describe("retryableLlmStream within a call budget", () => {
-  /**
-   * Runs `stream` under `retryableLlmStream` within a budget, on a test clock
-   * moved an hour on: its attempts, its time, and its parts or its failure.
-   * It starts from a woken sleep, so the clock waits for every fiber the
-   * stream forks to suspend before it moves on.
-   */
-  const run = (stream: (budget: CallBudget) => Stream.Stream<unknown, AiError.AiError>, budgetMs?: number) =>
-    Effect.runPromise(Effect.gen(function* () {
-      const attempts = yield* Ref.make(0)
-      const guarded = (budget: CallBudget) =>
-        retryableLlmStream("gw:idle", budget)(Stream.unwrap(Ref.update(attempts, (n) => n + 1).pipe(Effect.as(stream(budget)))))
-      const fiber = yield* Effect.forkChild(Effect.sleep("1 millis").pipe(
-        Effect.andThen(makeCallBudget(budgetMs)),
-        Effect.flatMap((budget) => Effect.timed(Effect.exit(Stream.runCollect(guarded(budget))))),
-      ))
-      yield* TestClock.adjust("1 hour")
-      const [elapsed, exit] = yield* Fiber.join(fiber)
-      return {
-        attempts: yield* Ref.get(attempts),
-        elapsed: Duration.toMillis(elapsed),
-        outcome: Exit.isSuccess(exit) ? exit.value : String(Cause.squash(exit.cause)),
-      }
-    }).pipe(Effect.provide(TestClock.layer())))
-  /** A tool handler of the call running for `duration`, as the hand-off counts one. */
-  const handlerRunning = (budget: CallBudget, duration: Duration.Input) =>
-    Ref.update(budget.inFlight, (running) => running + 1).pipe(
-      Effect.andThen(Effect.sleep(duration)),
-      Effect.andThen(Ref.update(budget.inFlight, (running) => running - 1)),
-    )
-
-  test("a tool handler that runs 400 s leaves its time out of the idle bound: the part after it still arrives", async () => {
-    const result = await run((budget) => Stream.make(delta).pipe(
-      Stream.concat(Stream.fromEffect(handlerRunning(budget, "400 seconds").pipe(Effect.as(finish)))),
-    ))
-    expect(result).toEqual({ attempts: 1, elapsed: 400_000, outcome: [delta, finish] })
-  })
-
-  test("with no handler running, a provider idle for 300 s is cut, and after content the cut is final", async () => {
-    const result = await run(() => Stream.make(delta).pipe(
-      Stream.concat(Stream.fromEffect(Effect.sleep("400 seconds").pipe(Effect.as(finish)))),
-    ))
-    expect(result.attempts).toBe(1)
-    expect(result.elapsed).toBe(300_000)
-    expect(result.outcome).toContain("the gw:idle request exceeded 300s and was cut off")
-  })
-
-  test("the idle bound resumes when the handler ends: a provider idle after it is cut within 300 s of its end", async () => {
-    const result = await run((budget) => Stream.make(delta).pipe(
-      Stream.concat(Stream.fromEffectDrain(handlerRunning(budget, "100 seconds"))),
-      Stream.concat(Stream.never),
-    ))
-    expect(result.attempts).toBe(1)
-    // The bound counts the time no handler runs to within a quarter of it.
-    expect(result.elapsed).toBeGreaterThan(100_000 + 300_000 * 3 / 4)
-    expect(result.elapsed).toBeLessThanOrEqual(100_000 + 300_000)
-    expect(result.outcome).toContain("the gw:idle request exceeded 300s and was cut off")
-  })
-
-  test("a stream that sends nothing: attempt one is cut at 300 s, attempt two at the budget's deadline, and no attempt follows", async () => {
-    const result = await run(() => Stream.never)
-    expect(result.attempts).toBe(2)
-    expect(result.elapsed).toBe(LLM_CALL_BUDGET_MS)
-    expect(result.outcome).toContain("the gw:idle call reached its 600s budget after 2 attempts and was cut off")
-  })
-
-  test("a stream that sends parts but no content is cut at the budget's deadline", async () => {
-    const result = await run(() => Stream.tick("200 seconds").pipe(Stream.map(() => ({ type: "response-metadata" }))))
-    expect(result.attempts).toBe(1)
-    expect(result.elapsed).toBe(LLM_CALL_BUDGET_MS)
-    expect(result.outcome).toContain("the gw:idle call reached its 600s budget after 1 attempt and was cut off")
-  })
-
-  test("no stream attempt starts at or after the deadline", async () => {
-    const result = await run(() => Stream.make(delta, finish), 0)
-    expect(result.attempts).toBe(0)
-    expect(result.outcome).toContain("the gw:idle call reached its 0s budget after 0 attempts and was cut off")
   })
 })

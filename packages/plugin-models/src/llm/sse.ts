@@ -334,7 +334,7 @@ export const sseStreamParts = (options: {
   Stream.fromReadableStream({
     evaluate: () => options.body,
     onError: (cause) =>
-      AiError.make({
+      AiError.isAiError(cause) ? cause : AiError.make({
         module: options.moduleName,
         method: "streamText",
         reason: new AiError.UnknownError({ description: `the response body stream failed: ${redactCredentials(reasonOf(Cause.die(cause)))}` }),

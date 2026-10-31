@@ -217,12 +217,59 @@ and [HTTP errors, byte limits and errors after an SSE 200](https://platform.clau
 
 Context, authentication, invalid-request, quota and invalid-response failures
 do not trigger provider retry, configured fallback or the loop's pre-content
-stream fallback. Rate-limit, transient and timeout failures keep the existing
-retry timings; a long `Retry-After` can make the current policy decline a
-retry without proving exhausted quota. Unstamped malformed model output
+stream fallback. Rate-limit, transient and timeout failures can retry before
+HTTP response handoff under the request policy below. A long `Retry-After`
+is capped and slept, without diagnosing exhausted quota. Unstamped malformed
+model output
 keeps its corrective contract. The existing image-omission replan remains
 available. Existing `TurnError` tags remain unchanged,
 and unrelated unclassified loop failures still use `loop.failed`.
+
+**Model request policy.** `ModelRetryPolicy`, `modelRetryDefaults` and
+`CurrentModelRetryPolicy` are exported by `@xandreed/plugin-models`. Provide
+the full policy through that Reference around a call or `turn.run`; it is
+read when each logical model call executes, including helper completions.
+It is not an `EngineSettings` key or a models-plugin option.
+
+| Field | Default |
+|---|---|
+| `maxAttempts` | `4`, initial send included |
+| `requestTimeoutMs` | `300_000`, pending response headers |
+| `bodyIdleTimeoutMs` | `300_000`, each pending body read |
+| `totalTimeoutMs` | `600_000`, shared logical-call deadline |
+| `retryAfterMaxMs` | `60_000` |
+| `backoff` | `{ initialMs: 1000, maxMs: 4000, jitter: 0.2 }` |
+
+One counter and deadline cover transport failures, rejected HTTP statuses
+and the configured fallback. With a distinct fallback and at least
+two attempts, the final slot is reserved for its single send: the default
+allows three primary sends and one fallback send. An absent or identical
+fallback leaves all four slots for the primary; `maxAttempts: 1` sends only
+the primary. Permanent failures and handed-off responses never use the
+reserved fallback slot. One-shot stream and FormData bodies are not replayed.
+
+Retries happen only before a successful HTTP response is handed to its
+consumer. An HTTP 200 empty response, SDK decoding failure or SSE failure
+does not replay that transport request. Rejected bodies are inspected under
+a 64 KiB ceiling and read bounds. HTTP refusals created at this boundary use
+`AiError.module: "Models"` and method `request`, retaining bounded provider
+descriptions and raw HTTP evidence. Already typed errors keep their provenance.
+The policy sleeps for the greater of the
+capped, jittered exponential backoff and capped `Retry-After` hint, within
+the remaining deadline. Hints accept integer seconds or an HTTP date;
+invalid or negative hints are ignored and past dates mean zero.
+
+Headers and pending body reads are bounded by their timeout and the remaining
+logical-call deadline. A progressing stream may outlast the header timeout;
+the total deadline still bounds its reads. Owned timeouts preserve
+`model.timeout`. Cancellation interrupts waits and forwards abort to the
+underlying request. Tools and callbacks are outside model retries and timeout
+wrappers; the framework loop runs handlers after the whole response. The
+loop's existing pre-content stream-to-settled fallback starts a fresh logical
+budget while reusing the same prepared header, frozen model, prompt and tools.
+It does not reevaluate `policy.model`/`policy.step` or append StepContext.
+OAuth token requests are outside this model-request retry policy. No stored
+shape changes: request headers and stored format 8 retain their contracts.
 
 When a proxy applies, every call the models plugin makes (the provider SDKs,
 the OpenAI-compatible client, OAuth token refreshes, the OpenAI subscription's
@@ -236,8 +283,14 @@ fetch's `proxy` option; Bun's fetch applies a proxy from the environment by
 itself, so there only `NO_PROXY` exempts a host from that one. The routed
 model provides the transport's fetch as `FetchHttpClient.Fetch` innermost on
 every call, so an ambient one cannot route a call past the proxy. Without a
-proxy the plugin adds no transport, and the calls use the runtime's fetch as
-before. A host gives its own transport through `Agent.define({ services })`.
+proxy, managed Node calls still use a scoped undici Agent. Header and body
+timeouts are zero on that Agent and the proxy target and CONNECT pools; Effect's
+request policy owns those bounds. The global dispatcher is unchanged.
+An explicitly provided `FetchHttpClient.Fetch`, even the global fetch itself,
+is preserved on the managed direct route. A proxy or explicit `ModelsTransport`
+stays authoritative; a host's opaque dispatcher settings remain the host's.
+Bun keeps its native fetch/proxy behavior. A host gives its own transport
+through `Agent.define({ services })`.
 See the website's providers page, "Proxy".
 
 ## Evals

@@ -537,7 +537,9 @@ const linkTo = (target, path) => Effect.tryPromise(() => symlink(target, path))
 // The model store kits over every adapter plugin-models ships: in memory, and on files in temporary directories.
 const { ModelCatalog } = await import("@xandreed/core")
 const { modelCatalogConformance } = await import("@xandreed/core/conformance")
-const { authStoreConformance, settingsStoreConformance } = await import("@xandreed/plugin-models/conformance")
+const { authStoreConformance, modelRequestConformance, settingsStoreConformance } = await import("@xandreed/plugin-models/conformance")
+const modelRequestChecks = await runKit("ModelRequest", modelRequestConformance())
+if (modelRequestChecks !== 3) { console.error("the packed default request-policy kit did not run all three checks"); process.exit(1) }
 const { AuthStore, ConfiguredModelCatalogLive, LocalAuthStoreLive, LocalSettingsStoreLive, MemoryAuthStoreLive, MemorySettingsStoreLive, ModelsTransport, SettingsStore } = await import("@xandreed/plugin-models")
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = await import("node:fs")
 const { dirname } = await import("node:path")
@@ -749,6 +751,21 @@ if (await failuresBun.exited !== 0 || !failuresBunReport.includes('model-failure
   console.error("the packed Bun model-failure fixture did not preserve permanent failure behavior"); process.exit(1)
 }
 console.log(failuresBunReport.trim())
+// One request policy owns physical sends and pending reads; tools run after
+// response handoff and the loop's explicit fallback keeps its frozen header.
+await writeFile(join(consumer, "model-retry-consumer.mjs"), await readFile(join(root, "scripts/model-retry-consumer.fixture.mjs"), "utf8"))
+const retryNode = Bun.spawn(["node", "model-retry-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const retryNodeReport = await new Response(retryNode.stdout).text()
+if (await retryNode.exited !== 0 || !retryNodeReport.includes('model-retry {"runtime":"Node"') || (retryNodeReport.match(/"retryVerified":true/g) ?? []).length !== 16) {
+  console.error("the packed Node request-policy fixture did not preserve bounded attempts and reads"); process.exit(1)
+}
+console.log(retryNodeReport.trim())
+const retryBun = Bun.spawn(["bun", "model-retry-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const retryBunReport = await new Response(retryBun.stdout).text()
+if (await retryBun.exited !== 0 || !retryBunReport.includes('model-retry {"runtime":"Bun"') || (retryBunReport.match(/"retryVerified":true/g) ?? []).length !== 16) {
+  console.error("the packed Bun request-policy fixture did not preserve bounded attempts and reads"); process.exit(1)
+}
+console.log(retryBunReport.trim())
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))
