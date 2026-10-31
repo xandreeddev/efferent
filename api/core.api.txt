@@ -148,6 +148,7 @@ const MemoryRenderRecipe
 const ModelCallPolicy
 const ModelCatalogEntry
 const ModelId
+const ModelLimits
 const ModelPrice
 const ModelRequestDescriptor
 const ModelRequestHeader
@@ -518,6 +519,7 @@ type ModelCallPolicyType
 type ModelCatalogEntry
 type ModelCatalogEntryType
 type ModelId
+type ModelLimits
 type ModelPrice
 type ModelRequestDescriptor
 type ModelRequestHeader

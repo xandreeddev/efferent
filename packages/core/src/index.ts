@@ -57,7 +57,7 @@ export {
 } from "./domain/model-selection.entity.js"
 export { ModelCallPolicy, ReasoningEffort } from "./domain/model-call-policy.entity.js"
 export type { ReasoningEffort as ReasoningEffortType } from "./domain/model-call-policy.entity.js"
-export { ModelCatalogEntry } from "./domain/model-catalog.entity.js"
+export { ModelCatalogEntry, ModelLimits } from "./domain/model-catalog.entity.js"
 export type { ModelCatalogEntry as ModelCatalogEntryType } from "./domain/model-catalog.entity.js"
 export type { ModelCallPolicy as ModelCallPolicyType } from "./domain/model-call-policy.entity.js"
 export { CurrentEmptyResponseTolerance, CurrentModelCallPolicy } from "./loop/modelPolicy.js"

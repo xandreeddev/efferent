@@ -13,7 +13,8 @@ const isEntry = Schema.is(ModelCatalogEntry)
 /**
  * The ModelCatalog contract: every entry is a `ModelCatalogEntry`, its
  * `selection` is `"<provider>:<modelId>"` of the entry's own `provider`, no
- * selection is listed twice, two lists with nothing changed between them
+ * known token bounds are positive finite integers, no selection is listed
+ * twice, two lists with nothing changed between them
  * agree, and the selections in `includes` (the models a host expects this
  * catalog to offer) are listed. The kit only reads.
  */

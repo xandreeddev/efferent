@@ -336,7 +336,7 @@ describe("models plugin proxy", () => {
     const proxy = await startRecordingProxy()
     const error = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const services = yield* build(".", {
-        storage: "memory", model: "anthropic:claude-test",
+        storage: "memory", model: "anthropic:claude-opus-4-7",
         credentials: { anthropic: { type: "api_key", key: Redacted.make("anthropic-key") } },
       })
       // The test proxy refuses every host but *.invalid, so the call fails after its CONNECT.
@@ -358,7 +358,7 @@ describe("models plugin proxy", () => {
     }, { preconnect: () => undefined })
     const error = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const services = yield* build(".", {
-        storage: "memory", model: "anthropic:claude-test",
+        storage: "memory", model: "anthropic:claude-opus-4-7",
         credentials: { anthropic: { type: "api_key", key: Redacted.make("anthropic-key") } },
       })
       return yield* Effect.flip(Context.getUnsafe(services, LanguageModel.LanguageModel).generateText({ prompt: "hi" }).pipe(
@@ -378,7 +378,7 @@ describe("models plugin proxy", () => {
     }, { preconnect: () => undefined })
     const error = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const services = yield* build(".", {
-        storage: "memory", model: "anthropic:claude-test",
+        storage: "memory", model: "anthropic:claude-opus-4-7",
         credentials: { anthropic: { type: "api_key", key: Redacted.make("anthropic-key") } },
       }, host.services)
       return yield* Effect.flip(Context.getUnsafe(services, LanguageModel.LanguageModel).generateText({ prompt: "hi" }).pipe(

@@ -431,18 +431,18 @@ describe("thinking on the wire", () => {
 
   const blockBinding = (sent: Sent) => (sent.body["thinking"] as Record<string, unknown> | undefined)?.["block_binding"]
 
-  it("the binding is sent, with its beta, only to a model that binds thinking and only when the plugin asks; the descriptor records it", async () => {
+  it("the binding follows the mismatch setting for adaptive binding models, and the descriptor records resolved controls", async () => {
     const off = await exchange("anthropic:claude-opus-5-5", { reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
-    expect([off.sent[0]?.body["thinking"], off.sent[0]?.beta.includes(THINKING_BINDING_BETA)]).toEqual([undefined, false])
+    expect([off.sent[0]?.body["thinking"], off.sent[0]?.beta.includes(THINKING_BINDING_BETA)]).toEqual([{ type: "adaptive", display: "summarized" }, false])
     const on = await exchange("anthropic:claude-opus-5-5", { mismatch: "drop_block", reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
-    expect(on.sent[0]?.body["thinking"]).toEqual({ type: "adaptive", block_binding: { prefix_mismatch_behavior: "drop_block" } })
+    expect(on.sent[0]?.body["thinking"]).toEqual({ type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } })
     expect(on.sent[0]?.beta.split(",")).toContain(THINKING_BINDING_BETA)
-    expect(Option.map(on.descriptor, (value) => value.settings)).toEqual(Option.some({ systemPrelude: null, thinkingPrefixMismatch: "drop_block" }))
+    expect(Option.map(on.descriptor, (value) => value.settings)).toEqual(Option.some({ model: "claude-opus-5-5", max_tokens: 128_000, output_config: { effort: "medium" }, thinking: { type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } }, systemPrelude: null, thinkingPrefixMismatch: "drop_block" }))
     const refusing = await exchange("anthropic:claude-sonnet-5-5", { mismatch: "error", reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
     expect(blockBinding(refusing.sent[0]!)).toEqual({ prefix_mismatch_behavior: "error" })
     const older = await exchange("anthropic:claude-opus-4-8", { mismatch: "drop_block", reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
-    expect([older.sent[0]?.body["thinking"], older.sent[0]?.beta.includes(THINKING_BINDING_BETA)]).toEqual([undefined, false])
-    expect(Option.map(older.descriptor, (value) => value.settings)).toEqual(Option.some({ systemPrelude: null }))
+    expect([older.sent[0]?.body["thinking"], older.sent[0]?.beta.includes(THINKING_BINDING_BETA)]).toEqual([{ type: "disabled" }, false])
+    expect(Option.map(older.descriptor, (value) => value.settings)).toEqual(Option.some({ model: "claude-opus-4-8", max_tokens: 128_000, output_config: { effort: "high" }, thinking: { type: "disabled" }, systemPrelude: null }))
   })
 
   it("the subscription route adds its betas to the client's own, the binding's included, instead of replacing them", async () => {

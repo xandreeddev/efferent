@@ -1,10 +1,10 @@
-import { LanguageModel, Prompt } from "effect/ai"
+import { AiError, LanguageModel, Prompt } from "effect/ai"
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
-import { Config, Effect, Match, Metric, Option, Predicate, Redacted, Ref, Stream } from "effect"
+import { Config, Effect, Match, Metric, Option, Predicate, Redacted, Ref, Result, Stream } from "effect"
 import type { Context, Schema, Scope } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, modelRequestDescriptorOf } from "@xandreed/core"
+import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, formatModelSelection, modelRequestDescriptorOf } from "@xandreed/core"
 import { AuthError } from "../ports/auth-store.port.js"
 import type { ModelCallPolicy, ModelSelection } from "@xandreed/core"
 import type { Credential } from "../ports/auth-store.port.js"
@@ -16,12 +16,16 @@ import { CurrentOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
 import type { OpenAiCodexSessions } from "./openAiCodexWebSocket.js"
 import { BuiltInProvider } from "./provider-profile.entity.js"
 import type { ChatRoute, ModelProfile, ResponsesRoute, Route } from "./provider-profile.entity.js"
-import { profileOf } from "./provider-profile.entity.functions.js"
+import { anthropicProfileOf, profileOf } from "./provider-profile.entity.functions.js"
 import { openAiCodexAccountId } from "../auth/openAiCodexOAuth.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import type { ModelEndpoint, ModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
 import type { WebSocketProxy } from "../ports/models-transport.port.js"
+import { CurrentModelSettings } from "../ports/model-settings.port.js"
+import { ModelSettingsError, ModelThinking } from "./model-settings.entity.js"
+import type { ModelSettingsMap, ResolvedAnthropicSettings } from "./model-settings.entity.js"
+import { resolveAnthropicSettings, validateAnthropicRequest } from "./model-settings.entity.functions.js"
 import { CurrentThinkingPrefixMismatch } from "../ports/thinking-binding.port.js"
 import { THINKING_BINDING_BETA } from "./thinking-binding.entity.js"
 import type { ThinkingPrefixMismatch } from "./thinking-binding.entity.js"
@@ -58,6 +62,7 @@ export interface BuiltProvider {
 /** The options of a model call, as far as the plugin rewrites them: the prompt. */
 export interface PromptOptions {
   readonly prompt: Prompt.RawInput
+  readonly toolChoice?: LanguageModel.ToolChoice<string> | undefined
 }
 
 /** A call's options with the prompt `f` made of it; every other option is kept. */
@@ -261,15 +266,17 @@ type Transport = Option.Option<Context.Service.Shape<typeof ModelsTransport>>
  */
 export interface ProviderServices {
   readonly endpoints: ModelEndpoints
+  readonly modelSettings: ModelSettingsMap
   readonly transport: Transport
   readonly sessions: Option.Option<OpenAiCodexSessions>
   /** What a request to a model that binds thinking says about a changed prefix (`thinkingPrefixMismatch`). */
   readonly thinkingPrefixMismatch: ThinkingPrefixMismatch
 }
 
-/** The provider services where this runs: `CurrentModelEndpoints`, `ModelsTransport` if provided, `CurrentOpenAiCodexSessions`, `CurrentThinkingPrefixMismatch`. */
+/** The provider services where this runs: `CurrentModelEndpoints`, `CurrentModelSettings`, `ModelsTransport` if provided, `CurrentOpenAiCodexSessions`, `CurrentThinkingPrefixMismatch`. */
 export const providerServices: Effect.Effect<ProviderServices> = Effect.all({
   endpoints: Effect.service(CurrentModelEndpoints),
+  modelSettings: Effect.service(CurrentModelSettings),
   transport: Effect.serviceOption(ModelsTransport),
   sessions: Effect.service(CurrentOpenAiCodexSessions),
   thinkingPrefixMismatch: Effect.service(CurrentThinkingPrefixMismatch),
@@ -310,7 +317,7 @@ interface Built extends RouteModel {
   readonly route: Route["_tag"]
 }
 
-type Building<A> = Effect.Effect<A, AuthError, HttpClient.HttpClient | Scope.Scope>
+type Building<A> = Effect.Effect<A, AuthError | ModelSettingsError, HttpClient.HttpClient | Scope.Scope>
 
 const endpointModel = (
   selection: ModelSelection,
@@ -337,14 +344,23 @@ const buildProviderService = (
   key: Redacted.Redacted<string> | undefined,
   services: ProviderServices,
 ): Building<Built> => {
-  const endpoint = Option.fromNullishOr(services.endpoints[selection.provider])
+  const endpoint = Object.hasOwn(services.endpoints, selection.provider) ? Option.fromNullishOr(services.endpoints[selection.provider]) : Option.none<ModelEndpoint>()
   if (Option.isSome(endpoint)) {
     const configured = endpoint.value
-    return Effect.flatMap(endpointKey(selection, configured, key), (own) =>
-      endpointModel(selection, configured.url, own, configured.standardOnly ?? true, configured.images ?? false, services.transport))
+    return Effect.flatMap(endpointKey(selection, configured, key), (own) => {
+      if (configured.api === "anthropic-messages") {
+        const model = anthropicProfileOf(selection.modelId)
+        return anthropicModel({ selection, model, modelSettings: services.modelSettings, thinkingPrefixMismatch: services.thinkingPrefixMismatch }, {
+          _tag: "Api", key: Option.map(own, Redacted.make), endpoint: Option.some(configured),
+        }).pipe(Effect.map((built) => ({ ...built, images: configured.images ?? model.images, route: "anthropic" as const })))
+      }
+      return otherRouteSettings(selection, services.modelSettings).pipe(Effect.andThen(
+        endpointModel(selection, configured.url, own, configured.standardOnly ?? true, configured.images ?? false, services.transport),
+      ))
+    })
   }
   if (credential?.type === "local" && credential.baseUrl !== undefined) {
-    return endpointModel(selection, credential.baseUrl, Option.none(), true, false, services.transport)
+    return otherRouteSettings(selection, services.modelSettings).pipe(Effect.andThen(endpointModel(selection, credential.baseUrl, Option.none(), true, false, services.transport)))
   }
   return buildBuiltInProvider(selection, credential, key, services)
 }
@@ -353,6 +369,7 @@ const buildProviderService = (
 interface RouteCall {
   readonly selection: ModelSelection
   readonly model: ModelProfile
+  readonly modelSettings: ModelSettingsMap
   readonly credential: Credential | undefined
   readonly key: Redacted.Redacted<string>
   readonly transport: Transport
@@ -360,56 +377,120 @@ interface RouteCall {
   readonly thinkingPrefixMismatch: ThinkingPrefixMismatch
 }
 
-/**
- * The request fields the SDK's types do not have yet: a thinking binding
- * (`block_binding`, sent with its beta). Cast once, here.
- */
-interface ThinkingBindingConfig {
-  readonly thinking: { readonly type: "adaptive"; readonly block_binding: { readonly prefix_mismatch_behavior: "drop_block" | "error" } }
-}
+type MessagesEndpoint = Extract<ModelEndpoint, { readonly api: "anthropic-messages" }>
+type AnthropicAuthentication =
+  | { readonly _tag: "Api"; readonly key: Option.Option<Redacted.Redacted<string>>; readonly endpoint: Option.Option<MessagesEndpoint> }
+  | { readonly _tag: "Subscription"; readonly access: Redacted.Redacted<string> }
+
+/** Accept a root, a proxy prefix or a base ending in /v1, without doubling the Messages path. */
+export const anthropicBaseUrl = (base: string): string => base.replace(/\/+$/, "").replace(/\/v1$/, "")
+
+/** A model configuration failure is not an authentication failure or a retryable provider outage. */
+export const modelSettingsFailure = (error: ModelSettingsError): AiError.AiError => AiError.make({
+  module: "Models", method: "settings", reason: new AiError.InvalidRequestError({ description: error.message }),
+})
+
+const otherRouteSettings = (selection: ModelSelection, settings: ModelSettingsMap) =>
+  Object.hasOwn(settings, formatModelSelection(selection)) && Object.keys(settings[formatModelSelection(selection)] ?? {}).length > 0
+    ? Effect.fail(new ModelSettingsError({ reason: "Selection", message: "per-model settings require an Anthropic Messages route for this selection" })) : Effect.void
+
+const forcedTool = (choice: PromptOptions["toolChoice"]): boolean => choice === "required" ||
+  (Predicate.isObject(choice) && ("tool" in choice || choice.mode === "required"))
 
 /**
- * Anthropic's Messages API over an API key, or over the subscription's OAuth
- * token, whose calls take the Claude Code block first. A model that binds
- * thinking to the conversation, under a `thinkingPrefixMismatch` other than
- * `provider-default`, is sent the binding (adaptive thinking with
- * `block_binding`, and its beta) and has the thinking blocks the provider
- * drops reported; the descriptor records the binding.
+ * Boolean projection of @effect/ai-anthropic 4.0.7's private
+ * getModelCapabilities: its earlier 4.5/Opus 4.1 matches win over legacy
+ * substrings, including in configured deployment IDs. This mirrors SDK
+ * request shaping, not a claim about a model's API capabilities.
  */
-const anthropicModel = ({ selection, model, credential, key, thinkingPrefixMismatch }: RouteCall): Building<RouteModel> => {
-  const oauth = credential?.type === "oauth"
-  const binding = bindingFor(model.bindsThinking, thinkingPrefixMismatch)
+const pinnedAnthropicNativeJson = (model: Schema.Json | undefined): boolean =>
+  typeof model !== "string" ||
+  ["claude-sonnet-4-5", "claude-opus-4-5", "claude-haiku-4-5", "claude-opus-4-1"].some((id) => model.includes(id)) ||
+  !["claude-sonnet-4-0", "claude-sonnet-4-20250514", "claude-opus-4-0", "claude-opus-4-20250514", "claude-3-"].some((id) => model.includes(id))
+
+/** Validate request-dependent controls before the SDK can send a request. Owned model fields keep their resolved precedence. */
+const withAnthropicSettings = (model: LanguageModel.LanguageModel, resolved: ResolvedAnthropicSettings, wire: Schema.JsonObject, binding: boolean): LanguageModel.LanguageModel => {
+  const prepare = (options: PromptOptions, object = false) => Effect.flatMap(Effect.serviceOption(AnthropicLanguageModel.Config), (ambient) => {
+    // Absence is owned too: unsupported effort and unconfigured unknown
+    // thinking must not reappear through the SDK's later context merge.
+    const { thinking: _thinking, output_config: _outputConfig, ...unowned } = Option.getOrElse(ambient, (): typeof AnthropicLanguageModel.Config.Service => ({}))
+    const nativeJson = unowned.structuredOutputs ?? pinnedAnthropicNativeJson(wire["model"])
+    return Effect.fromResult(validateAnthropicRequest(resolved, { forcedTool: forcedTool(options.toolChoice) || (object && !nativeJson), binding })).pipe(
+      Effect.mapError(modelSettingsFailure),
+      Effect.map(() => ({ ...unowned, ...wire })),
+    )
+  })
+  return {
+    ...model,
+    generateText: ((options: PromptOptions) => prepare(options).pipe(Effect.flatMap((config) => model.generateText(options as never).pipe(Effect.provideService(AnthropicLanguageModel.Config, config as never))))) as never,
+    generateObject: ((options: PromptOptions) => prepare(options, true).pipe(Effect.flatMap((config) => model.generateObject(options as never).pipe(Effect.provideService(AnthropicLanguageModel.Config, config as never))))) as never,
+    streamText: ((options: PromptOptions) => Stream.unwrap(prepare(options).pipe(Effect.map((config) => model.streamText(options as never).pipe(Stream.provideService(AnthropicLanguageModel.Config, config as never)))))) as never,
+  }
+}
+
+/** Public Messages controls shared by provider construction and durable routing descriptions; no credentials or client IO. */
+export const resolveMessagesConfiguration = (
+  selection: ModelSelection,
+  modelSettings: ModelSettingsMap,
+  policy: Option.Option<ModelCallPolicy>,
+  thinkingPrefixMismatch: ThinkingPrefixMismatch,
+  endpoint: Option.Option<MessagesEndpoint>,
+) => Result.flatMap(resolveAnthropicSettings(formatModelSelection(selection), modelSettings, policy), (resolved) => {
+  const binding = bindingFor(anthropicProfileOf(selection.modelId).bindsThinking && Option.exists(resolved.thinking, (value) => value._tag === "Adaptive"), thinkingPrefixMismatch)
+  return Result.map(validateAnthropicRequest(resolved, { forcedTool: false, binding: Option.isSome(binding) }), () => {
+    const wire: Schema.JsonObject = {
+      model: selection.modelId,
+      max_tokens: resolved.maxOutputTokens,
+      ...Option.match(resolved.effort, { onNone: () => ({}), onSome: (effort) => ({ output_config: { effort } }) }),
+      ...Option.match(resolved.thinking, { onNone: () => ({}), onSome: (thinking) => ({ thinking: ModelThinking.match(thinking, {
+        Adaptive: (value) => ({ type: "adaptive", display: value.display ?? "summarized", ...Option.match(binding, { onNone: () => ({}), onSome: (behavior) => ({ block_binding: { prefix_mismatch_behavior: behavior } }) }) }),
+        Budget: (value) => ({ type: "enabled", budget_tokens: value.budgetTokens, display: value.display ?? "summarized" }),
+        BetweenTools: () => ({ type: "between_tools" }),
+        Off: () => ({ type: "disabled" }),
+      }) }) }),
+    }
+    const settings: Schema.JsonObject = { ...wire,
+      ...Option.match(endpoint, { onNone: () => ({}), onSome: (value) => ({ endpoint: { api: value.api, url: anthropicBaseUrl(value.url), auth: value.auth ?? "x-api-key", apiVersion: value.apiVersion ?? "2023-06-01", betas: value.betas ?? [] } }) }),
+      ...Option.match(binding, { onNone: () => ({}), onSome: (behavior) => ({ thinkingPrefixMismatch: behavior }) }),
+    }
+    return { resolved, binding, wire, settings }
+  })
+})
+
+/** One Messages builder for built-in API keys, explicit gateway auth, and subscription OAuth. */
+const anthropicModel = (
+  { selection, modelSettings, thinkingPrefixMismatch }: Pick<RouteCall, "selection" | "model" | "modelSettings" | "thinkingPrefixMismatch">,
+  authentication: AnthropicAuthentication,
+): Building<RouteModel> => Effect.gen(function* () {
+  const endpoint = Match.valueTags(authentication, { Api: (value) => value.endpoint, Subscription: () => Option.none<MessagesEndpoint>() })
+  const { resolved, binding, wire, settings } = yield* Effect.fromResult(resolveMessagesConfiguration(selection, modelSettings, yield* CurrentModelCallPolicy, thinkingPrefixMismatch, endpoint))
   const bound = (client: HttpClient.HttpClient) => Option.match(binding, {
     onNone: () => client,
-    onSome: () => client.pipe(withAnthropicBetas([THINKING_BINDING_BETA]), reportingDroppedThinking(`${selection.provider}:${selection.modelId}`)),
+    onSome: () => client.pipe(withAnthropicBetas([THINKING_BINDING_BETA]), reportingDroppedThinking(formatModelSelection(selection))),
   })
-  const config = Option.match(binding, {
-    onNone: () => ({}),
-    onSome: (behavior): ThinkingBindingConfig => ({ thinking: { type: "adaptive", block_binding: { prefix_mismatch_behavior: behavior } } }),
-  })
-  return (
-    oauth
-      ? AnthropicClient.make({
-          apiKey: undefined,
-          transformClient: (client) => bound(anthropicOAuthTransform(key)(client)),
+  const options = Match.valueTags(authentication, {
+    Subscription: ({ access }): AnthropicClient.Options => ({ transformClient: (client) => bound(anthropicOAuthTransform(access)(client)) }),
+    Api: ({ key, endpoint }): AnthropicClient.Options => ({
+      ...Option.match(key, { onNone: () => ({}), onSome: (apiKey) => Option.exists(endpoint, (value) => value.auth === "bearer") ? {} : { apiKey } }),
+      ...Option.match(endpoint, { onNone: () => ({}), onSome: (value) => ({ apiUrl: anthropicBaseUrl(value.url), ...(value.apiVersion === undefined ? {} : { apiVersion: value.apiVersion }) }) }),
+      transformClient: (client) => {
+        const authenticated = Option.match(Option.filter(endpoint, (value) => value.auth === "bearer"), {
+          onNone: () => client,
+          onSome: () => Option.match(key, { onNone: () => client, onSome: (apiKey) => client.pipe(HttpClient.mapRequest((request) => HttpClientRequest.setHeader(request, "Authorization", `Bearer ${Redacted.value(apiKey)}`))) }),
         })
-      : AnthropicClient.make({ apiKey: key, transformClient: bound })
-  ).pipe(
-    Effect.flatMap((client) =>
-      AnthropicLanguageModel.make({ model: selection.modelId, config: config as never }).pipe(
-        Effect.provideService(AnthropicClient.AnthropicClient, client),
-      ),
-    ),
-    Effect.map((svc) => ({
-      svc,
-      settings: Option.some({
-        systemPrelude: oauth ? CLAUDE_CODE_SYSTEM : null,
-        ...Option.match(binding, { onNone: () => ({}), onSome: (behavior) => ({ thinkingPrefixMismatch: behavior }) }),
-      }),
-      prependClaudeCode: oauth,
-    })),
-  )
-}
+        return bound(authenticated.pipe(withAnthropicBetas(Option.match(endpoint, { onNone: () => [], onSome: (value) => value.betas ?? [] }))))
+      },
+    }),
+  })
+  const client = yield* AnthropicClient.make(options)
+  const service = yield* AnthropicLanguageModel.make({ model: selection.modelId, config: wire as never }).pipe(Effect.provideService(AnthropicClient.AnthropicClient, client))
+  const oauth = authentication._tag === "Subscription"
+  return {
+    svc: withAnthropicSettings(service, resolved, wire, Option.isSome(binding)),
+    settings: Option.some({ ...wire, systemPrelude: oauth ? CLAUDE_CODE_SYSTEM : null, ...settings }),
+    prependClaudeCode: oauth,
+  }
+})
 
 /**
  * The OpenAI Responses API (`openai`, OpenCode's GPT models), built with the
@@ -474,22 +555,22 @@ const buildBuiltInProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
-  { transport, sessions, thinkingPrefixMismatch }: ProviderServices,
+  { transport, sessions, thinkingPrefixMismatch, modelSettings }: ProviderServices,
 ): Building<Built> =>
   Option.match(profileOf(selection.provider), {
     onNone: () => Effect.fail(notWired(selection)),
     onSome: (profile) => Option.match(Option.fromNullishOr(key), {
       onNone: () => Effect.fail(missingKey(selection)),
       onSome: (found) => {
-        const call: RouteCall = { selection, model: profile.modelOf(selection.modelId), credential, key: found, transport, sessions, thinkingPrefixMismatch }
+        const call: RouteCall = { selection, model: profile.modelOf(selection.modelId), credential, key: found, transport, sessions, thinkingPrefixMismatch, modelSettings }
         const route = profile.routeOf(selection.modelId)
         const built: Building<RouteModel> = Match.valueTags(route, {
-          anthropic: () => anthropicModel(call),
+          anthropic: () => anthropicModel(call, credential?.type === "oauth" ? { _tag: "Subscription", access: found } : { _tag: "Api", key: Option.some(found), endpoint: Option.none() }),
           "openai-responses": (responses) => responsesModel(responses, call),
           "openai-codex": () => codexModel(call),
           compat: (chat) => chatModel(chat, call),
         })
-        return Effect.map(built, (routed) => ({ ...routed, images: call.model.images, route: route._tag }))
+        return Effect.map(route._tag === "anthropic" ? built : otherRouteSettings(selection, modelSettings).pipe(Effect.andThen(built)), (routed) => ({ ...routed, images: call.model.images, route: route._tag }))
       },
     }),
   })
@@ -514,7 +595,7 @@ export const buildProviderOver = (services: ProviderServices) => (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
-): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key, services).pipe(
+): Effect.Effect<BuiltProvider, AuthError | ModelSettingsError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key, services).pipe(
   Effect.map((built) => ({
     svc: describeModel(built.images ? built.svc : withImageLabels(built.svc), descriptorOf(selection, built)),
     prependClaudeCode: built.prependClaudeCode,
@@ -534,5 +615,5 @@ export const buildProvider = (
   selection: ModelSelection,
   credential: Credential | undefined,
   key: Redacted.Redacted<string> | undefined,
-): Effect.Effect<BuiltProvider, AuthError, HttpClient.HttpClient | Scope.Scope> =>
+): Effect.Effect<BuiltProvider, AuthError | ModelSettingsError, HttpClient.HttpClient | Scope.Scope> =>
   Effect.flatMap(providerServices, (services) => buildProviderOver(services)(selection, credential, key))

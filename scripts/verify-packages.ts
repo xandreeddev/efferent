@@ -575,6 +575,21 @@ const stores = await runKit("AuthStore (memory)", authStoreConformance(await ser
   + await runKit("SettingsStore (memory)", settingsStoreConformance(await serviceOf(SettingsStore, MemorySettingsStoreLive()), { writable: true }))
   + await runKit("SettingsStore (local)", settingsStoreConformance(await serviceOf(SettingsStore, LocalSettingsStoreLive(kitCwd, kitHome)), { writable: true, corrupt: damagedFile(join(kitCwd, ".efferent", "config.json")) }))
   + await runKit("ModelCatalog", modelCatalogConformance(await serviceOf(ModelCatalog, ConfiguredModelCatalogLive.pipe(Layer.provide(MemoryAuthStoreLive(new Map([["opencode", { type: "api_key", key: Redacted.make("k") }]]))))), { includes: ["opencode:glm-5.2"] }))
+const messagesCatalog = await serviceOf(ModelCatalog, ConfiguredModelCatalogLive.pipe(Layer.provide(MemoryAuthStoreLive(new Map([
+  ["anthropic", { type: "api_key", key: Redacted.make("catalog-fixture") }],
+])))))
+const featuredModels = ["claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
+const messagesCatalogChecks = await runKit("ModelCatalog Messages", modelCatalogConformance(messagesCatalog, { includes: featuredModels.map((model) => "anthropic:" + model) }))
+const featuredEntries = await Effect.runPromise(messagesCatalog.list)
+if (!featuredModels.every((model) => featuredEntries.some((entry) => entry.selection === "anthropic:" + model
+  && entry.limits?.contextWindow === 1_000_000 && entry.limits?.maxOutputTokens === 128_000))) {
+  console.error("the packed Messages catalog lost a featured model's neutral token limits"); process.exit(1)
+}
+const invalidCatalog = ModelCatalog.of({ list: Effect.succeed([{ selection: "anthropic:fixture", provider: "anthropic", credential: "api_key", limits: { maxOutputTokens: 0 } }]) })
+const invalidLimitChecks = await Effect.runPromise(Effect.forEach(modelCatalogConformance(invalidCatalog), (check) => Effect.result(check.run).pipe(
+  Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }).pipe(Effect.map((all) => all.flat())))
+if (JSON.stringify(invalidLimitChecks) !== JSON.stringify(["decode"])) { console.error("the packed ModelCatalog kit accepted an invalid token limit"); process.exit(1) }
+console.log("On Node, the four featured Messages models expose neutral token limits, and the ModelCatalog kit rejects an invalid bound (" + messagesCatalogChecks + " checks)")
 rmSync(kitHome, { recursive: true, force: true })
 rmSync(kitCwd, { recursive: true, force: true })
 // The Sessions kit over the packed SessionsLive and in-memory log, each check under a TestClock of its own that the kit moves;
@@ -703,6 +718,21 @@ if (await modelsNode.exited !== 0) process.exit(1)
 if ((await readdir(freshHome)).length > 0 || (await readdir(freshCwd)).length > 0) { console.error("The memory-storage models consumer wrote to its HOME or working directory"); process.exit(1) }
 await rm(freshHome, { recursive: true, force: true })
 await rm(freshCwd, { recursive: true, force: true })
+// Real Agent turns through a local Messages server, settled and SSE, preserve
+// opaque thinking signatures, native controls and durable tool-call identity.
+await writeFile(join(consumer, "anthropic-messages-consumer.mjs"), await readFile(join(root, "scripts/anthropic-messages-consumer.fixture.mjs"), "utf8"))
+const messagesNode = Bun.spawn(["node", "anthropic-messages-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const messagesNodeReport = await new Response(messagesNode.stdout).text()
+if (await messagesNode.exited !== 0 || !messagesNodeReport.includes('anthropic-messages {"runtime":"Node"')) {
+  console.error("the packed Node Messages fixture did not complete its real HTTP turns"); process.exit(1)
+}
+console.log(messagesNodeReport.trim())
+const messagesBun = Bun.spawn(["bun", "anthropic-messages-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const messagesBunReport = await new Response(messagesBun.stdout).text()
+if (await messagesBun.exited !== 0 || !messagesBunReport.includes('anthropic-messages {"runtime":"Bun"')) {
+  console.error("the packed Bun Messages fixture did not complete its real HTTP turns"); process.exit(1)
+}
+console.log(messagesBunReport.trim())
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

@@ -1,17 +1,17 @@
 import { AiError, LanguageModel } from "effect/ai"
 import type { Response, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
-import { Cause, Clock, Config, Context, Deferred, Duration, Effect, Layer, Metric, Option, Predicate, Ref, References, Stream } from "effect"
+import { Cause, Clock, Config, Context, Deferred, Duration, Effect, Layer, Metric, Option, Predicate, Ref, References, Result, Stream } from "effect"
 import { CurrentModelCallPolicy, CurrentTraceContent, describeModel, formatModelSelection, harnessError, messagesOf, parseModelSelection, resolvingModel, stampPartModel, stampResponseModel, storedJson } from "@xandreed/core"
 import { AuthError, AuthStore } from "../ports/auth-store.port.js"
 import { SettingsStore } from "../ports/settings-store.port.js"
 import { extractUsage } from "@xandreed/core/internal"
 import type { ModelSelection, TokenUsage } from "@xandreed/core"
 import type { EngineSettings } from "../ports/settings-store.port.js"
-import { buildProviderOver, endpointOwnKey, prependClaudeCode, providerServices, withAnthropicCacheBreakpoints } from "./providers.js"
+import { buildProviderOver, endpointOwnKey, modelSettingsFailure, prependClaudeCode, providerServices, resolveMessagesConfiguration, withAnthropicCacheBreakpoints } from "./providers.js"
 import type { BuiltProvider, PromptOptions, ProviderServices } from "./providers.js"
 import { makeOpenAiCodexSessions } from "./openAiCodexWebSocket.js"
-import type { ModelEndpoints } from "../ports/model-endpoints.port.js"
+import type { ModelEndpoint, ModelEndpoints } from "../ports/model-endpoints.port.js"
 import { transportFetch } from "../transport/models-transport.adapter.js"
 import {
   canTryAgain,
@@ -36,7 +36,7 @@ import type { CallBudget } from "./retry.js"
  * toolkit.
  *
  * A routed model reads what its calls are built over (the configured
- * endpoints, the transport, a subscription session cache of its own) once,
+ * endpoints, per-model settings, the transport, a subscription session cache of its own) once,
  * where its layer is built, and replays only its stores on a call: what a
  * call carries (its call policy, its prompt cache key, its trace state) is
  * the call's own.
@@ -196,14 +196,34 @@ export const withConfiguredEffort = <A, E, R>(
 
 /** Requested routing profile, before explicit fallback/retry policy chooses a transport attempt. The
  *  call policy is recorded as JSON, as the request header stores it: a field it leaves unset is left out. */
-const describeSelection = (primary: ModelSelection, fallback: Option.Option<ModelSelection>, effort: EngineSettings["reasoningEffort"]) =>
-  Effect.service(CurrentModelCallPolicy).pipe(Effect.flatMap((current) => storedJson({
+const describeSelection = Effect.fnUntraced(function* (primary: ModelSelection, fallback: Option.Option<ModelSelection>, effort: EngineSettings["reasoningEffort"], services: ProviderServices) {
+  const current = yield* CurrentModelCallPolicy
+  const policy = Option.orElse(current, () => Option.map(effort, (value) => ({ effort: value })))
+  const endpoint = Object.hasOwn(services.endpoints, primary.provider) ? Option.fromNullishOr(services.endpoints[primary.provider]) : Option.none<ModelEndpoint>()
+  const messages = Option.filter(endpoint, (value): value is Extract<ModelEndpoint, { readonly api: "anthropic-messages" }> => value.api === "anthropic-messages")
+  const configuration = (configured: typeof messages) => resolveMessagesConfiguration(primary, services.modelSettings, policy, services.thinkingPrefixMismatch, configured)
+  const native = yield* Option.match(messages, {
+    onSome: () => Effect.fromResult(configuration(messages)).pipe(
+      Effect.map((value) => value.settings),
+      Effect.mapError((error) => harnessError("request.model", error.message, error)),
+    ),
+    onNone: () => Effect.succeed(Option.isNone(endpoint) && primary.provider === "anthropic" ? {
+      // A local credential may redirect a builtin provider to chat at call
+      // time. Keep requested profile evidence without asserting that route
+      // or rejecting an unknown model's missing Messages cap prematurely.
+      messagesProfile: { kind: "requested", apiVersion: "2023-06-01", ...Result.match(configuration(Option.none()), {
+        onSuccess: (value) => ({ settings: value.settings }),
+        onFailure: (error) => ({ controls: Object.hasOwn(services.modelSettings, formatModelSelection(primary)) ? services.modelSettings[formatModelSelection(primary)] ?? {} : {}, unresolved: error.reason }),
+      }) },
+    } : {}),
+  })
+  const settings = yield* storedJson({
     fallback: Option.getOrElse(Option.map(fallback, formatModelSelection), () => null),
-    policy: Option.getOrElse(Option.orElse(current, () => Option.map(effort, (value) => ({ effort: value }))), () => null),
-  })), Effect.mapBoth({
-    onFailure: (error) => harnessError("request.model", `the routed model's settings are not JSON: ${error.message}`, error),
-    onSuccess: (settings) => ({ provider: primary.provider, model: primary.modelId, settings }),
-  }))
+    policy: Option.getOrElse(policy, () => null),
+    ...native,
+  }).pipe(Effect.mapError((error) => harnessError("request.model", `the routed model's settings are not JSON: ${error.message}`, error)))
+  return { provider: primary.provider, model: primary.modelId, settings }
+})
 
 /**
  * The credential and key one call uses, under its `models.credentials` span.
@@ -213,7 +233,7 @@ const describeSelection = (primary: ModelSelection, fallback: Option.Option<Mode
  * first.
  */
 const credentialFor = Effect.fn("models.credentials")(function* (selection: ModelSelection, endpoints: ModelEndpoints) {
-  const own = yield* Option.match(Option.fromNullishOr(endpoints[selection.provider]), {
+  const own = yield* Option.match(Object.hasOwn(endpoints, selection.provider) ? Option.fromNullishOr(endpoints[selection.provider]) : Option.none<ModelEndpoint>(), {
     onNone: () => Effect.succeedNone,
     onSome: (endpoint) => endpointOwnKey(endpoint).pipe(
       Effect.mapError((error) => new AuthError({ provider: selection.provider, message: `cannot read the endpoint's key variable: ${error.message}` })),
@@ -243,8 +263,10 @@ const authenticationFailure = (error: AuthError): AiError.AiError =>
 /** The provider one call goes to, built over its credential and the provider services. */
 const providerFor = (selection: ModelSelection, services: ProviderServices) =>
   credentialFor(selection, services.endpoints).pipe(
-    Effect.flatMap(({ credential, key }) => buildProviderOver(services)(selection, credential, key)),
     Effect.mapError(authenticationFailure),
+    Effect.flatMap(({ credential, key }) => buildProviderOver(services)(selection, credential, key).pipe(
+      Effect.mapError((error) => error._tag === "AuthError" ? authenticationFailure(error) : modelSettingsFailure(error)),
+    )),
   )
 
 /** A settled call's counters and duration, as every routed call records them: the provider's call alone, its credential left out. */
@@ -376,7 +398,7 @@ export const generateOver = (services: ProviderServices) => <O extends PromptOpt
   }).pipe(Effect.scoped, providerCall(selection))
 
 /** {@link generateOver} over the provider services where it runs
- *  (`CurrentModelEndpoints`, `ModelsTransport`), for a call made outside a
+ *  (`CurrentModelEndpoints`, `CurrentModelSettings`, `ModelsTransport`), for a call made outside a
  *  routed model. */
 export const generateWith = <O extends PromptOptions>(
   selection: ModelSelection,
@@ -600,7 +622,8 @@ const throughTransportStream = (services: ProviderServices) => <A, E, R>(stream:
 
 /**
  * The provider services of a routed model's layer, read once where it is
- * built: the configured endpoints (`CurrentModelEndpoints`), the transport
+ * built: the configured endpoints (`CurrentModelEndpoints`), per-model controls
+ * (`CurrentModelSettings`), the transport
  * (`ModelsTransport`), and an OpenAI subscription session cache of the
  * layer's own: each conversation keeps its session id while the layer
  * lives, bounded to the conversations used last, and two layers (two agents
@@ -653,14 +676,14 @@ const selectionModel = (
         Stream.provideService(HttpClient.HttpClient, http),
       )) as never,
   } satisfies LanguageModel.LanguageModel
-  return describeModel(service, describeSelection(primary, fallback, effort))
+  return describeModel(service, describeSelection(primary, fallback, effort, services))
 }
 
 /**
  * `LanguageModelLive` — the engine loop's `LanguageModel`, routed per call.
  * Requires `SettingsStore` + `AuthStore`; brings its own fetch-backed
- * `HttpClient` so drivers don't have to. Reads `CurrentModelEndpoints` and
- * `ModelsTransport` once, where it is built: built over a transport (as the
+ * `HttpClient` so drivers don't have to. Reads `CurrentModelEndpoints`,
+ * `CurrentModelSettings` and `ModelsTransport` once, where it is built: built over a transport (as the
  * models plugin builds it), every call goes through that transport.
  *
  * @public
@@ -690,7 +713,7 @@ export const LanguageModelLive = Layer.effect(
     return resolvingModel(
       describeModel(service, currentSelection.pipe(
         Effect.mapError(asHarness),
-        Effect.flatMap(({ primary, fallback, effort }) => describeSelection(primary, fallback, effort)),
+        Effect.flatMap(({ primary, fallback, effort }) => describeSelection(primary, fallback, effort, services)),
         Effect.provide(stores),
       )),
       selected.pipe(Effect.mapError(asHarness)),

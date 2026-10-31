@@ -10,6 +10,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Messages models now resolve output caps from the call policy, then
+  `modelSettings`, then a documented model profile. Unknown/deployment IDs
+  need an explicit output cap. Per-model Messages controls own thinking,
+  effort and output caps; use them instead of ambient SDK control overrides.
+  `thinkingPrefixMismatch` now defaults to `drop_block` for eligible adaptive
+  thinking. Set `provider-default` to omit it; Off and BetweenTools remain
+  honored without binding fields. Existing chat endpoints remain compatible.
+
 - A custom `Sessions` supplies the bounded broadcast `waiting` stream;
   rerun `sessionsConformance`. Kit instances add `waitingInput` (an optional
   `WaitingInput` probe). `ProcessActivity` adds `waiting`, `queuedInput`
@@ -976,6 +984,14 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- Configured Anthropic Messages endpoints with opaque x-api-key or bearer
+  authentication, version headers and merged beta flags. Static per-model
+  thinking, effort and limits honor request-policy precedence and validate
+  model-specific combinations before calls. Profiles include Fable 5.1,
+  Opus 5.5, Sonnet 5.5 and Haiku 5.5; neutral model catalog limits expose
+  documented metadata without inventing unknown model capacities. Routed
+  request headers retain public Messages controls for replay without keys.
+
 - Scoped automatic inbox execution with `InboxDrainLive`, explicit owner
   scopes, fixed workers, startup/local/periodic discovery, bounded backoff,
   interrupted-root resumption before queued work, and startup-only takeover.
@@ -1151,10 +1167,11 @@ stays inside its package, with nothing deprecated first:
   for a subject that gives `newerFormat`. Journal fixtures record their
   `storedFormat`.
 - `@xandreed/plugin-models`: the `thinkingPrefixMismatch` option
-  (`provider-default`, `drop_block`, `error`; default `provider-default`,
-  which sends nothing). For a Claude model that binds thinking to the
-  conversation (Fable 5.1, Opus, Sonnet and Haiku 5.5 and later), any other
-  value sends `thinking.block_binding.prefix_mismatch_behavior` with its
+  (`provider-default`, `drop_block`, `error`; default `drop_block` for
+  eligible adaptive thinking). `provider-default` sends no binding field.
+  For a Claude model that binds thinking to the conversation (Fable 5.1,
+  Opus, Sonnet and Haiku 5.5 and later), effective Adaptive thinking sends
+  the selected `drop_block` or `error` behavior with its
   beta, and the thinking blocks the provider then drops are counted as
   `llm.thinking.dropped` (by reason), put on the call's span and logged.
 - `reasonOf(cause)` in `@xandreed/core`: a cause as one line of text that is
