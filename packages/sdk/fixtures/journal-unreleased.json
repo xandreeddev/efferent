@@ -2,7 +2,7 @@
   "format": 1,
   "version": "unreleased",
   "description": "Development session journals, recorded by scripts/record-journal-fixture.ts --unreleased; not a released-version fixture.",
-  "storedFormat": 12,
+  "storedFormat": 13,
   "reserved": [
     "turn.started",
     "memory.system",
@@ -4078,6 +4078,411 @@
           "session": "00000000-0000-4000-8000-0000000060ff",
           "seq": 28,
           "turn": 2,
+          "kind": "turn.ended",
+          "at": 1767225600000,
+          "data": {
+            "reason": "completed",
+            "failure": null
+          }
+        }
+      ]
+    },
+    {
+      "header": {
+        "id": "00000000-0000-4000-8000-000000006100",
+        "owner": "fixture",
+        "origin": "user",
+        "createdAt": 1767225600000,
+        "meta": {},
+        "parent": null
+      },
+      "events": [
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 1,
+          "turn": 1,
+          "kind": "turn.started",
+          "at": 1767225600000,
+          "data": {
+            "runId": "hook-fixture-1",
+            "key": "hook-fixture-1",
+            "origin": "user",
+            "userMessage": {
+              "text": "Prepare the host request."
+            },
+            "command": {},
+            "claimed": [],
+            "entry": "hook-fixture-1:0",
+            "at": 1767225600000
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 2,
+          "turn": 1,
+          "kind": "memory.skills",
+          "at": 1767225600000,
+          "data": {
+            "entry": "hook-fixture-1:1",
+            "runId": "hook-fixture-1",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "skills": [
+                "memory.recall"
+              ],
+              "tools": [
+                "recall_context"
+              ],
+              "source": "always",
+              "decision": null
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 3,
+          "turn": 1,
+          "kind": "step.started",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "planned": false,
+            "activeTools": [
+              "load_skill",
+              "recall_context"
+            ]
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 4,
+          "turn": 1,
+          "kind": "memory.system",
+          "at": 1767225600000,
+          "data": {
+            "entry": "hook-fixture-1:2",
+            "runId": "hook-fixture-1",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "fingerprint": "8f4ada031a",
+              "text": "FIXTURE request hook base.",
+              "sections": []
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 5,
+          "turn": 1,
+          "kind": "memory.step",
+          "at": 1767225600000,
+          "data": {
+            "entry": "hook-fixture-1:3",
+            "runId": "hook-fixture-1",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "step": 0,
+              "run": 0,
+              "text": "FIXTURE policy context.\n\n[Host note: FIXTURE hook context.]"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 6,
+          "turn": 1,
+          "kind": "context.built",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "turn": 1,
+            "run": 0,
+            "strategy": "window",
+            "strategyVersion": "2",
+            "fingerprint": "dbfa6d1391",
+            "systemFingerprint": "51867e231d",
+            "estimatedTokens": 48,
+            "reservedTokens": 283,
+            "budgetTokens": 64000,
+            "compactions": 0,
+            "activeTools": [
+              "load_skill",
+              "recall_context"
+            ]
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 7,
+          "turn": 1,
+          "kind": "request.part",
+          "at": 1767225600000,
+          "data": {
+            "hash": "0e5cb6ca3ff6ce271958e61afab924d382c87960f9686efa4284b937714c3c84",
+            "part": {
+              "_tag": "System",
+              "text": "FIXTURE accepted hook system."
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 8,
+          "turn": 1,
+          "kind": "request.part",
+          "at": 1767225600000,
+          "data": {
+            "hash": "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d",
+            "part": {
+              "_tag": "Tool",
+              "tool": {
+                "name": "load_skill",
+                "description": "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "skills": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "skills"
+                  ],
+                  "additionalProperties": false
+                },
+                "provider": null
+              }
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 9,
+          "turn": 1,
+          "kind": "request.part",
+          "at": 1767225600000,
+          "data": {
+            "hash": "8fde79b4397e718addc8ec7b84ae7d1a0698f48f90ccad68f66981c8629815db",
+            "part": {
+              "_tag": "Tool",
+              "tool": {
+                "name": "recall_context",
+                "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "locator": {
+                      "type": "string",
+                      "description": "The locator the shortened result shows."
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "The first character to return; 0 by default."
+                    }
+                  },
+                  "required": [
+                    "locator"
+                  ],
+                  "additionalProperties": false
+                },
+                "provider": null
+              }
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 10,
+          "turn": 1,
+          "kind": "request.prepared",
+          "at": 1767225600000,
+          "data": {
+            "version": 2,
+            "runId": "hook-fixture-1",
+            "run": 0,
+            "step": 0,
+            "strategyVersion": "2",
+            "system": "0e5cb6ca3ff6ce271958e61afab924d382c87960f9686efa4284b937714c3c84",
+            "render": {
+              "strategy": "window",
+              "currentTurn": 1,
+              "currentRun": "hook-fixture-1",
+              "run": 0,
+              "turnContext": "current",
+              "replies": true,
+              "stepContext": "tail",
+              "digests": true,
+              "media": {
+                "mode": "inline",
+                "maxImages": 8,
+                "maxChars": 20000000
+              }
+            },
+            "through": "hook-fixture-1:3",
+            "contextFingerprint": "dbfa6d1391",
+            "stableMessages": 1,
+            "tools": [
+              "53deb1c40364fbfdd06fe3fc142c00a5a06a0a6aeb7e14b403c332433c99cf6d",
+              "8fde79b4397e718addc8ec7b84ae7d1a0698f48f90ccad68f66981c8629815db"
+            ],
+            "toolChoice": "auto",
+            "hook": {
+              "system": "FIXTURE accepted hook system.",
+              "context": "FIXTURE hook context.",
+              "toolChoice": null
+            },
+            "model": null,
+            "cacheKey": null,
+            "callPolicy": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 11,
+          "turn": 1,
+          "kind": "model.called",
+          "at": 1767225600000,
+          "data": {
+            "callId": "00000000-0000-4000-8000-000000000111",
+            "attempt": 1,
+            "purpose": "Loop",
+            "method": "Text",
+            "model": null,
+            "runId": "hook-fixture-1",
+            "run": 0,
+            "step": 0,
+            "durationMs": 0,
+            "usage": {
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 100,
+                "outputTokens": 10,
+                "totalTokens": 110,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
+            },
+            "outcome": {
+              "_tag": "Completed"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 12,
+          "turn": 1,
+          "kind": "memory.message",
+          "at": 1767225600000,
+          "data": {
+            "entry": "hook-fixture-1:4",
+            "runId": "hook-fixture-1",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "message": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "The prepared request is ready."
+                  }
+                ],
+                "providerOptions": {
+                  "engine": {
+                    "inputTokens": 100,
+                    "outputTokens": 10,
+                    "totalTokens": 110,
+                    "cacheReadTokens": 0,
+                    "cacheWriteTokens": 0,
+                    "reasoningTokens": 0
+                  }
+                }
+              },
+              "run": 0
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 13,
+          "turn": 1,
+          "kind": "step.usage",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "model": null,
+            "usage": {
+              "inputTokens": 100,
+              "outputTokens": 10,
+              "totalTokens": 110,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "reasoningTokens": 0
+            },
+            "finishReason": "stop"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 14,
+          "turn": 1,
+          "kind": "step.ended",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "status": "completed",
+            "results": []
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 15,
+          "turn": 1,
+          "kind": "completion.evaluated",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "verdict": {
+              "complete": false,
+              "awaiting": [],
+              "facts": {}
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 16,
+          "turn": 1,
+          "kind": "turn.reply",
+          "at": 1767225600000,
+          "data": {
+            "entry": "hook-fixture-1:5",
+            "runId": "hook-fixture-1",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "outcome": "completed",
+              "reply": "The prepared request is ready."
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-000000006100",
+          "seq": 17,
+          "turn": 1,
           "kind": "turn.ended",
           "at": 1767225600000,
           "data": {

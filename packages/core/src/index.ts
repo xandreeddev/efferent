@@ -1,4 +1,7 @@
 // domain
+export { ToolChoice } from "./domain/tool-choice.entity.js"
+export { ModelRequestDraft, ModelRequestPatch, ModelRequestPreparation } from "./turn/model-request-hook.entity.js"
+export { ModelRequestHook } from "./ports/model-request-hook.port.js"
 export {
   AgentMessage,
   AgentResult,
@@ -315,7 +318,6 @@ export type {
   RegisteredTool,
   StepDirective,
   StepInfo,
-  ToolChoice,
   ToolDefinition,
   ToolViewDefinition,
   ToolViewInput,

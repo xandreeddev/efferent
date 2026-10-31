@@ -51,6 +51,7 @@ export const HARNESS_CODES = [
   "request.descriptor",
   "request.diverged",
   "request.encode",
+  "request.hook",
   "request.memory",
   "request.missing",
   "request.model",

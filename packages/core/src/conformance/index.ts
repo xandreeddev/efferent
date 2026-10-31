@@ -37,3 +37,6 @@ export { modelCatalogConformance } from "../domain/model-catalog.conformance.js"
 
 export { imageResizerConformance, imageResizerPng } from "../workspace/image-resizer.conformance.js"
 export type { ImageResizerSubject } from "../workspace/image-resizer.conformance.js"
+
+export { modelRequestHookConformance } from "../turn/model-request-hook.conformance.js"
+export type { ModelRequestHookSubject } from "../turn/model-request-hook.conformance.js"

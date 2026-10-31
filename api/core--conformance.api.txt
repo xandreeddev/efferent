@@ -11,6 +11,7 @@ const memoryConformance
 const memorySnapshotConformance
 const modelCallRecorderConformance
 const modelCatalogConformance
+const modelRequestHookConformance
 const probeCall
 const requestHeaderConformance
 const sessionLogConformance
@@ -32,6 +33,7 @@ interface MediaStoreSubject
 interface MemorySnapshotSubject
 interface ModelCallRecorderFixture
 interface ModelCallRecorderSubject
+interface ModelRequestHookSubject
 interface RequestHeaderSubject
 interface SessionLogSubject
 interface SessionsInstance

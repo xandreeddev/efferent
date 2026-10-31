@@ -38,6 +38,7 @@ import type {
   ModelChoice,
   ModelLimits,
   ModelRequestHeader,
+  ModelRequestPatch,
   ModelSelection,
   RunResult,
   RunTools,
@@ -51,6 +52,7 @@ import type {
   TurnRunOptions,
 } from "@xandreed/core"
 import {
+  applyModelRequestHook,
   checkModelRequest,
   entriesSendingMedia,
   estimateTokens,
@@ -69,6 +71,7 @@ interface StepDecision {
   readonly choice: Option.Option<ModelChoice>
   readonly system: string
   readonly directive: StepDirective
+  readonly hook: Option.Option<ModelRequestPatch>
 }
 
 /** The step planned last: its decision, its resolved model, and the build its request was made of. */
@@ -146,7 +149,11 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  * run with it, without the span current here (`replayableContext`), so
  * their spans nest under the step that calls them. Trace content is the
  * policy's `captureTraceContent`, else the options', else
- * `CurrentTraceContent` here. When a provider refuses a step's request over
+ * `CurrentTraceContent` here. An optional `ModelRequestHook` runs after each
+ * fresh policy decision, before the single combined StepContext, reserves,
+ * maintenance and durable header. Its accepted patch is saved as `header.hook`;
+ * media replanning and same-step overflow reuse the frozen effective controls
+ * without invoking it again. When a provider refuses a step's request over
  * an image, `onMediaRejected` records an `OmitMedia` of the images that
  * build sent, and the step's next plan, that one only, rebuilds the context
  * with the same model choice, system prompt, directive and resolved model
@@ -214,13 +221,18 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
   })
   const decide = (info: StepInfo): Effect.Effect<StepDecision, TurnError> => Effect.gen(function* () {
     const choice = policy.model === undefined ? Option.none<ModelChoice>() : yield* inRun(policy.model(info), Option.some(info.stepIndex))
-    const system = yield* inRun(prompt.system(Option.flatMap(choice, (value) => value.variant)), Option.some(info.stepIndex))
-    const directive = policy.step === undefined ? noDirective : yield* inRun(policy.step(info), Option.some(info.stepIndex))
+    const baseSystem = yield* inRun(prompt.system(Option.flatMap(choice, (value) => value.variant)), Option.some(info.stepIndex))
+    const baseDirective = policy.step === undefined ? noDirective : yield* inRun(policy.step(info), Option.some(info.stepIndex))
+    const prepared = yield* inRun(applyModelRequestHook({
+      run, step: info.stepIndex, activeTools: info.activeTools,
+      system: baseSystem, context: baseDirective.context, toolChoice: baseDirective.toolChoice,
+    }), Option.some(info.stepIndex))
+    const directive: StepDirective = { context: prepared.context, toolChoice: prepared.toolChoice }
     yield* Option.match(directive.context, {
       onNone: () => Effect.void,
       onSome: (text) => session.record([{ _tag: "StepContext", step: info.stepIndex, run: run.ordinal, text }], info.stepIndex).pipe(Effect.asVoid),
     })
-    return { choice, system, directive }
+    return { choice, system: prepared.system, directive, hook: prepared.hook }
   }).pipe(Effect.provideService(CurrentAgentRun, Option.some(run)), Effect.provideService(CurrentAgentStep, Option.some(info.stepIndex)))
 
   const plan = (info: StepInfo): Effect.Effect<StepPlan, TurnError> => Effect.gen(function* () {
@@ -232,7 +244,7 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     }
     const ceiling = yield* Ref.get(inputCeiling)
     const again = Option.filter(yield* Ref.getAndSet(replanning, Option.none()), (last) => last.step === info.stepIndex)
-    const { choice, system, directive } = Option.isSome(again) ? again.value.decision : yield* decide(info)
+    const { choice, system, directive, hook } = Option.isSome(again) ? again.value.decision : yield* decide(info)
     const stepText = stepContext === "system" ? Option.getOrElse(directive.context, () => "") : ""
     const finalSystem = [system, stepText].filter((part) => part.length > 0).join("\n\n")
     const toolTokens = schemaTokens(tools, info.activeTools)
@@ -263,10 +275,11 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
       through: built.through, contextFingerprint: built.fingerprint, stableMessages: built.stableMessages,
       tools: modelRequestTools(info.activeTools.flatMap((name) => tools.toolkit.tools[name] === undefined ? [] : [tools.toolkit.tools[name]])),
       toolChoice: Option.getOrElse(directive.toolChoice, () => "auto"), model: descriptor, cacheKey, callPolicy,
+      ...Option.match(hook, { onNone: () => ({}), onSome: (hook) => ({ hook }) }),
     }
     const outgoing: StepPlan = { model, system: finalSystem, messages: markVolatileContext(built.messages, built.stableMessages), toolChoice: directive.toolChoice }
     const frozen: PlannedStep = {
-      run, step: info.stepIndex, decision: { choice, system, directive }, model, identity,
+      run, step: info.stepIndex, decision: { choice, system, directive, hook }, model, identity,
       through: built.through, render, fingerprint: built.fingerprint,
       estimatedTokens: built.estimatedTokens, reservedTokens: reserved, baseReservedTokens: baseReserved,
       header, outgoing,

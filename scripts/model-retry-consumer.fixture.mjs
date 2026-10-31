@@ -9,7 +9,7 @@ import { Tool } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import {
   ConversationId, defineCapability, defineSkill, defineTool, entriesOfEvents,
-  Failure, harnessCodeOf, journalSchemaOf, readStored, replayModelRequest,
+  Failure, harnessCodeOf, journalSchemaOf, ModelRequestHook, readStored, replayModelRequest,
   RunId, SessionLogMemoryLive, Sessions, turnBilledUsageOf, turnModelCallsOf, TurnAdmissionOpen, UserMessage,
 } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
@@ -197,7 +197,11 @@ const runCase = async (scenario, index) => {
         const published = []
         const modelDecisions = []
         const stepDecisions = []
-        const operation = agent.turn({ turn: { session: address, runId, userMessage: new UserMessage({ text: scenario.mode === "concurrent" ? `concurrent-${suffix === 0 ? "one" : "four"}` : "Inspect the retry fixture." }) }, services: Context.make(Sessions, sessions) },
+        const hookDecisions = []
+        const services = Context.make(Sessions, sessions).pipe(Context.add(ModelRequestHook, ModelRequestHook.of({
+          prepare: (draft) => Effect.sync(() => { hookDecisions.push(draft.step); return {} }),
+        })))
+        const operation = agent.turn({ turn: { session: address, runId, userMessage: new UserMessage({ text: scenario.mode === "concurrent" ? `concurrent-${suffix === 0 ? "one" : "four"}` : "Inspect the retry fixture." }) }, services },
           (turn) => Effect.gen(function* () {
             yield* turn.events.subscribe((event) => Option.some(event), (event) => Effect.sync(() => { published.push(event) }))
             yield* turn.tools.select(turn.userMessage)
@@ -232,7 +236,7 @@ const runCase = async (scenario, index) => {
         const calls = yield* turnModelCallsOf(stored, 1)
         const billed = yield* turnBilledUsageOf(stored, 1)
         assert.ok(!JSON.stringify(stored).includes(placeholder), "request credentials entered the journal")
-        return { result, stored, headers, calls, billed, published, modelDecisions, stepDecisions, runId }
+        return { result, stored, headers, calls, billed, published, modelDecisions, stepDecisions, hookDecisions, runId }
       })
       const outcomes = scenario.mode === "concurrent"
         ? yield* Effect.all([run(0, { maxAttempts: 1 }), run(1, { maxAttempts: 4 })], { concurrency: 2 })
@@ -286,6 +290,8 @@ const runCase = async (scenario, index) => {
         assert.equal(outcome.headers.length, expectedHeaders, `${scenario.name}: transport attempts changed prepared-step count`)
         assert.deepEqual(outcome.modelDecisions, scenario.mode === "mixed-tool" ? [0, 1] : [0], "transport retry reevaluated policy.model")
         assert.deepEqual(outcome.stepDecisions, outcome.modelDecisions, "transport retry reevaluated policy.step")
+        assert.deepEqual(outcome.hookDecisions, outcome.modelDecisions, "transport retry or fallback reevaluated the request hook")
+        assert.ok(outcome.headers.every(({ data }) => JSON.stringify(data.hook) === "{}"), "a retry header lost its accepted empty hook patch")
         assert.equal(outcome.stored.filter((event) => event.kind === "memory.step").length, expectedHeaders, "transport retry duplicated StepContext")
         const entries = yield* entriesOfEvents(outcome.stored)
         assert.equal(entries.filter((entry) => entry.body._tag === "ToolResult").length, scenario.handlers ?? 0, "tool execution was not durable exactly once")
@@ -311,7 +317,7 @@ const runCase = async (scenario, index) => {
         assert.deepEqual(withoutStream(server.requests[0].body), withoutStream(server.requests[1].body), "stream fallback changed the frozen step request")
       }
       if (scenario.mode === "concurrent") assert.deepEqual(Object.fromEntries(server.groups), { one: 1, four: 4 })
-      return { name: scenario.name, calls: server.requests.length, handlers: yield* Ref.get(handlers), headers: outcomes.map((outcome) => outcome.headers.length), retryVerified: true, accountingVerified: true }
+      return { name: scenario.name, calls: server.requests.length, handlers: yield* Ref.get(handlers), headers: outcomes.map((outcome) => outcome.headers.length), retryVerified: true, accountingVerified: true, hookVerified: true }
     })).pipe(Effect.timeout("8 seconds")))
     assert.deepEqual(await readdir(workspace), [], "memory configuration wrote fixture files")
     return report
