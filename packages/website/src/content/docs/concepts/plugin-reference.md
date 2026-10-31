@@ -1472,6 +1472,7 @@ Optional: `@xandreed/core/UtilityLlm`
 
 ```json
 {
+  "summarizeAt": "turn-end",
   "triggerRatio": 0.8,
   "keepRatio": 0.16,
   "cooldownTurns": 3,
@@ -1493,6 +1494,13 @@ Optional: `@xandreed/core/UtilityLlm`
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
   "properties": {
+    "summarizeAt": {
+      "type": "string",
+      "enum": [
+        "step",
+        "turn-end"
+      ]
+    },
     "triggerRatio": {
       "anyOf": [
         {
@@ -1568,6 +1576,7 @@ Optional: `@xandreed/core/UtilityLlm`
     }
   },
   "required": [
+    "summarizeAt",
     "triggerRatio",
     "keepRatio",
     "cooldownTurns",

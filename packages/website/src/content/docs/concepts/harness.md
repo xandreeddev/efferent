@@ -117,6 +117,25 @@ step's `context.built` event records it. The [event reference](/docs/concepts/ev
 lists the framework's stored failure codes; a turn that fails with a
 host's or a plugin's error stores that error's code.
 
+Memory strategies use version 2 decisions. Summaries default to
+`summarizeAt: "turn-end"`: after each successful `turn.run`, including a partial
+return, before that call returns to the host. Choose `"step"` for pre-request
+timing. Failed or interrupted runs skip normal end maintenance. Summaries retain
+whole turns and protect the active admitted turn; end maintenance removes its
+obsolete temporary step context from estimates.
+
+Accepted positive input counts can raise message estimates through
+`scaledTokens`, using the exact prepared message estimate and system/tool reserve.
+The SDK matches the actual selected model and run; helpers, discarded responses
+and aggregate billed usage do not calibrate context. Missing evidence keeps the
+raw estimate. Stored estimates and version 1 replay remain unchanged.
+
+Manual compositions use `prepareRun(policy, options)` from `@xandreed/sdk`, run
+`loop.run(prepared.request)`, then execute the cached `prepared.afterRun` on
+success. `runTurnLoop` does this automatically; `stepRequestOf` stays a
+preparation-only API. No extra scope service is required. A host can run the loop
+several times before choosing its turn reply; each run owns its maintenance.
+
 Each admitted turn runs under an `agent.turn` span carrying
 `efferent.session.id`, `efferent.run.id` and `efferent.turn`, which every
 span under it repeats (the step loop's `engine.run` and `engine.turn`, the

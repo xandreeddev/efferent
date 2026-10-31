@@ -16,6 +16,8 @@ export {
 } from "./domain/message.entity.js"
 export { ENGINE_KEY, ResponseStamp } from "./domain/engine-stamp.entity.js"
 export { responseModelOf, stampPartModel, stampResponseModel } from "./domain/engine-stamp.entity.functions.js"
+export { AcceptedModelInput } from "./domain/accepted-model-input.entity.js"
+export { acceptedModelInputOf } from "./domain/accepted-model-input.entity.functions.js"
 export { ModelFailureKind, ModelFailureStamp } from "./domain/model-failure.entity.js"
 export { ModelCallId, ModelCallPurpose, ModelCallMethod, ModelCallUsage, ModelCallOutcome, ModelCallData, ModelCallLegacyUsage } from "./domain/model-call.entity.js"
 export { recordCompletion } from "./domain/model-call.entity.functions.js"
@@ -255,6 +257,8 @@ export {
 export type { RenderOptions } from "./memory/memory-log.entity.functions.js"
 export { noMaintenance, openLogSession } from "./memory/memory-session.js"
 export type { MaintainDecision, MemoryPolicy } from "./memory/memory-session.js"
+export { MemoryObservation } from "./memory/memory-maintenance.entity.js"
+export { scaledTokens } from "./memory/memory-maintenance.entity.functions.js"
 export { ConversationMemory, ResultDigester } from "./ports/memory.port.js"
 export type {
   DigestOutcome,

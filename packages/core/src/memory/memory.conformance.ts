@@ -234,6 +234,18 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       const after = yield* session.entries
       yield* expect("append-only", (yield* encodeEntries("append-only", after.slice(0, before.length))) === (yield* encodeEntries("append-only", before)), "maintenance rewrote earlier entries")
     })),
+    check("turn-end and overflow maintenance preserve durable history and the current tail", "maintenance-phases", (open, log) => Effect.gen(function* () {
+      const session = yield* open(log, "run-1")
+      yield* session.record([said("current question")], 0)
+      yield* session.recordTail(toolTail, views, 0, firstRun)
+      const before = yield* session.entries
+      yield* session.maintain({ phase: "turn-end", lastUsage: Option.none(), budgetTokens: 100_000, views, render: { run: firstRun, stepContext: "none" } })
+      yield* session.maintain({ phase: "overflow", lastUsage: Option.none(), budgetTokens: 100_000, views, render: { run: firstRun, stepContext: "tail" } })
+      const after = yield* session.entries
+      yield* expect("maintenance-phases", (yield* encodeEntries("maintenance-phases", after.slice(0, before.length))) === (yield* encodeEntries("maintenance-phases", before)), "new maintenance phases rewrote durable history")
+      const built = canonicalJson((yield* session.build({ run: firstRun, stepContext: "none" })).messages)
+      yield* expect("maintenance-phases", built.includes("current question") && built.includes("record-alpha"), "new maintenance phases lost the current user or raw tool result")
+    })),
     check("a message's images survive a reopen; the current turn's are built as image parts, an earlier turn's as image parts or label lines", "attachments", (open, log) => Effect.gen(function* () {
       const image: Media = yield* mediaFromBase64(pixelPng, { name: "pixel.png" }).pipe(
         Effect.mapError((error) => new ConformanceFailure({ check: "attachments", message: error.message })),

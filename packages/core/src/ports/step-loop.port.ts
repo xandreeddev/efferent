@@ -2,6 +2,7 @@ import { Context } from "effect"
 import type { Effect, Option } from "effect"
 import type { LanguageModel, Prompt, Tool } from "effect/ai"
 import type { AgentMessage } from "../domain/message.entity.js"
+import type { AcceptedModelInput } from "../domain/accepted-model-input.entity.js"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import type { RunRef } from "../domain/run.entity.js"
 import type { DegeneratePolicy } from "../domain/loop-limits.entity.js"
@@ -81,8 +82,12 @@ export interface StepRequest {
    * tool result as it returns, before waiting for sibling calls. A step's
    * tail is recorded incrementally before its `step.ended`; the loop's own messages (a corrective, a
    * nudge, a steer) under the next step, which reads them.
+   * Supply `accepted` only for a real accepted model response, including an
+   * empty tail. Omit it for planned batches, results and loop messages. A
+   * supplied fact without usable input or model clears earlier calibration;
+   * omission leaves it unchanged. Persistence must finish before consuming it.
    */
-  readonly record: (step: number, tail: ReadonlyArray<AgentMessage>) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
+  readonly record: (step: number, tail: ReadonlyArray<AgentMessage>, accepted?: AcceptedModelInput) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /** Fresh durable entries of this run's step, including raw results whose presentation or digest did not finish. */
   readonly recorded: (step: number) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /**

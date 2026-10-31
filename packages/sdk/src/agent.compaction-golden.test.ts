@@ -67,10 +67,12 @@ const windowConfig: AgentConfig = {
 /**
  * Summary memory that may summarize in consecutive turns. Each turn's
  * results fit the budget, and pass its trigger once the next turn starts.
+ * This golden uses pre-request timing; the maintenance journey covers the
+ * default after-run lifecycle and its helper accounting.
  */
 const summaryConfig: AgentConfig = {
   ...common,
-  plugins: [{ plugin: memorySummaryPlugin, options: { cooldownTurns: 0 } }, toolDiscoveryPlugin, stepLoopPlugin],
+  plugins: [{ plugin: memorySummaryPlugin, options: { cooldownTurns: 0, summarizeAt: "step" } }, toolDiscoveryPlugin, stepLoopPlugin],
   turnServices: [LanguageModel.LanguageModel, UtilityLlm],
   cacheKeyPrefix: "compaction-summary",
   budgetTokens: 1_100,

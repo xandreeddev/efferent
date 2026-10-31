@@ -197,7 +197,9 @@ export const openLogSession = Effect.fnUntraced(function* (
     const all = presentedEntries(yield* Ref.get(entries))
     const decision = yield* policy.maintain({
       entries: all, signal, turn: currentTurnOf(all), runId,
-      render: (candidate) => renderLog(candidate, renderOptions(candidate, "tail")),
+      render: (candidate) => renderLog(candidate, renderOptions(candidate,
+        signal.phase === "turn-end" ? "none" : signal.render?.stepContext ?? "tail",
+        signal.render?.run ?? latestRunOf(all, runId))),
     })
     const compactions = yield* record(decision.actions.map((action) => ({ _tag: "Compaction" as const, strategy: policy.strategy.id, version: policy.strategy.version, action })), 0)
     const wanted = new Set(decision.digest.map(String))

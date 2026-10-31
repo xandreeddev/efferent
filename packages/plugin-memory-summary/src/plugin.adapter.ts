@@ -1,19 +1,26 @@
-import { Effect, Exit, Layer, Option, Ref, Schema } from "effect"
+import { Cause, Effect, Exit, Layer, Option, Ref, Schema } from "effect"
 import {
   ConversationMemory,
   definePlugin,
   digestTranscript,
   estimateMessageTokens,
+  fingerprintOf,
   framed,
   HarnessError,
   MEDIA_LIMITS,
   openLogSession,
+  pendingCompaction,
+  scaledTokens,
   UtilityLlm,
 } from "@xandreed/core"
-import type { AgentMessage, CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
+import type { CompactionAction, LogEntry, MemoryPolicy } from "@xandreed/core"
+import { SummaryAttempt } from "./summary-attempt.entity.js"
+import { claimSummary, settleSummary } from "./summary-attempt.entity.functions.js"
 
 /** @public */
 export const MemorySummaryConfig = Schema.Struct({
+  /** Normal summary timing; overflow can force a summary independently. */
+  summarizeAt: Schema.Literals(["step", "turn-end"]),
   /** Summarize once the rendered messages pass this share of the budget. */
   triggerRatio: Schema.Number.pipe(Schema.check(Schema.isBetween({ minimum: 0.1, maximum: 1 }))),
   /** Keep at least this share of the budget verbatim (the newest turns). */
@@ -50,6 +57,7 @@ export const MemorySummaryConfig = Schema.Struct({
 export type MemorySummaryConfig = typeof MemorySummaryConfig.Type
 /** @public */
 export const memorySummaryDefaults: MemorySummaryConfig = {
+  summarizeAt: "turn-end",
   triggerRatio: 0.8, keepRatio: 0.16, cooldownTurns: 3, turnContext: "current", replies: true, digests: true, media: "inline",
   maxImages: MEDIA_LIMITS.requestImages, maxMediaChars: MEDIA_LIMITS.requestChars,
   instructions: "Summarize the earlier part of this conversation for the same assistant, which will continue from your summary plus the newest turns. Preserve, in order: the user's goals and constraints; facts and records established (with their identifiers); answers already given; open questions and pending work. Dense prose and lists; never invent anything not in the transcript.",
@@ -57,18 +65,18 @@ export const memorySummaryDefaults: MemorySummaryConfig = {
 }
 
 /** @public */
-export const SUMMARY_STRATEGY = { id: "summary", version: "1" } as const
+export const SUMMARY_STRATEGY = { id: "summary", version: "2" } as const
 
 const latestSummary = (entries: ReadonlyArray<LogEntry>) => Option.fromNullishOr(entries.flatMap((entry) =>
   entry.body._tag === "Compaction" && entry.body.strategy === SUMMARY_STRATEGY.id && entry.body.action._tag === "Summarize"
     ? [{ turn: entry.turn, keepFromTurn: entry.body.action.keepFromTurn, summary: entry.body.action.summary }] : []).at(-1))
 
 /** The newest turn whose verbatim tail still fits the kept share of the budget. */
-const keepFrom = (entries: ReadonlyArray<LogEntry>, turn: number, keepTokens: number, render: (entries: ReadonlyArray<LogEntry>) => ReadonlyArray<AgentMessage>): number =>
+const keepFrom = (entries: ReadonlyArray<LogEntry>, turn: number, keepTokens: number, tokens: (entries: ReadonlyArray<LogEntry>) => number): number =>
   Array.from({ length: turn }, (_, index) => turn - index)
     .reduce((kept, candidate) => {
       const tail = entries.filter((entry) => entry.turn >= candidate)
-      return estimateMessageTokens(render(tail)) <= keepTokens ? candidate : kept
+      return tokens(tail) <= keepTokens ? candidate : kept
     }, turn)
 
 /** The transcript's caps: a tool result in it, and the whole transcript. */
@@ -99,40 +107,82 @@ export const summaryPrompt = (instructions: string, transcript: string, earlier:
  *
  * @public
  */
-export const summaryPolicy = (config: MemorySummaryConfig, summarize: (prompt: string) => Effect.Effect<string, HarnessError>): MemoryPolicy => ({
+export const summaryPolicy = (config: MemorySummaryConfig, summarize: (prompt: string) => Effect.Effect<string, HarnessError>): MemoryPolicy =>
+  policyWithAttempts(config, summarize, Option.none())
+
+/** Only the built-in opener owns per-session paid-attempt state. */
+const policyWithAttempts = (
+  config: MemorySummaryConfig,
+  summarize: (prompt: string) => Effect.Effect<string, HarnessError>,
+  attempt: Option.Option<Ref.Ref<SummaryAttempt>>,
+): MemoryPolicy => ({
   strategy: SUMMARY_STRATEGY,
   render: { turnContext: config.turnContext, replies: config.replies, digests: config.digests, media: { mode: config.media, maxImages: config.maxImages, maxChars: config.maxMediaChars } },
   digestOnWrite: Option.none(),
-  maintain: (input) => decide(config, summarize, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
+  maintain: (input) => decide(config, summarize, attempt, input).pipe(Effect.map((actions) => ({ actions, digest: [] }))),
 })
 
 const decide = (
   config: MemorySummaryConfig,
   summarize: (prompt: string) => Effect.Effect<string, HarnessError>,
-  { entries, signal, turn, render }: Parameters<MemoryPolicy["maintain"]>[0],
+  attempt: Option.Option<Ref.Ref<SummaryAttempt>>,
+  { entries, signal, turn, runId, render }: Parameters<MemoryPolicy["maintain"]>[0],
 ): Effect.Effect<ReadonlyArray<CompactionAction>, HarnessError> => Effect.gen(function* () {
-    const tokens = estimateMessageTokens(render(entries))
+    const force = signal.phase === "overflow"
+    const normal = config.summarizeAt === "turn-end" ? signal.phase === "turn-end" : signal.phase === "turn-start" || signal.phase === "step"
+    if (!force && !normal) return []
+    const tokens = (candidate: ReadonlyArray<LogEntry>) => scaledTokens(estimateMessageTokens(render(candidate)), Option.fromNullishOr(signal.observed))
+    const before = tokens(entries)
     const previous = latestSummary(entries)
     const cooling = Option.match(previous, { onNone: () => false, onSome: (prior) => turn - prior.turn < config.cooldownTurns })
-    if (tokens <= signal.budgetTokens * config.triggerRatio || cooling) return []
-    const from = keepFrom(entries, turn, signal.budgetTokens * config.keepRatio, render)
+    if (!force && (before <= signal.budgetTokens * config.triggerRatio || cooling)) return []
+    const from = keepFrom(entries, turn, signal.budgetTokens * config.keepRatio, tokens)
     const priorKeep = Option.match(previous, { onNone: () => 1, onSome: (prior) => prior.keepFromTurn })
     if (from <= priorKeep) return []
     const folded = entries.filter((entry) => entry.turn >= priorKeep && entry.turn < from)
     const prompt = summaryPrompt(config.instructions, digestTranscript(folded, TRANSCRIPT_CAPS), Option.map(previous, (prior) => prior.summary))
-    const reply = yield* summarize(prompt).pipe(
+    const frontier = `${runId}:${from}:${fingerprintOf(prompt)}`
+    const terminal = yield* Ref.make(Option.none<Exit.Exit<string, HarnessError>>())
+    const timeout = Effect.fail(new HarnessError({ code: "memory.summary", message: `the summarizer did not answer within ${config.summaryTimeoutMs} ms` }))
+    const ask = Effect.suspend(() => summarize(prompt)).pipe(
+      Effect.onExit((exit) => Ref.set(terminal, Option.some(exit))),
       Effect.timeoutOrElse({
         duration: `${config.summaryTimeoutMs} millis`,
-        orElse: () => Effect.fail(new HarnessError({ code: "memory.summary", message: `the summarizer did not answer within ${config.summaryTimeoutMs} ms` })),
+        // The pinned timeout awaits losing-fiber cleanup. A cleanup defect
+        // (including a recorder TurnError) is hard, not an ordinary timeout.
+        orElse: () => Ref.get(terminal).pipe(Effect.flatMap(Option.match({
+          onNone: () => timeout,
+          onSome: (exit) => Exit.match(exit, {
+            onSuccess: () => timeout,
+            onFailure: (cause) => {
+              const defects = cause.reasons.filter(Cause.isDieReason)
+              return defects.length === 0 ? timeout : Effect.failCause(Cause.fromReasons<never>(defects))
+            },
+          }),
+        }))),
       }),
-      // Each ask is a `memory.summarize` span, failed when the summarizer fails or runs out of time.
+      // Each ask is a memory.summarize span, failed on utility failure or timeout.
       Effect.withSpan("memory.summarize"),
       Effect.map((text) => Option.some(text.trim())),
-      Effect.catch((error) => Effect.logWarning(`summary left out: ${error.message}`).pipe(Effect.as(Option.none<string>()))),
     )
+    const reply = yield* Option.match(attempt, {
+      onNone: () => ask,
+      onSome: (state) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+        if (SummaryAttempt.guards.Failed(yield* Ref.get(state))) {
+          yield* Effect.logWarning("summary left out: the summarizer failed earlier in this turn")
+          return Option.none<string>()
+        }
+        if (!(yield* Ref.modify(state, (current) => claimSummary(current, frontier)))) return Option.none<string>()
+        // Only claim/cleanup is masked. Arbitrary callbacks and the provider stay interruptible.
+        return yield* restore(ask).pipe(Effect.onExit((exit) => Ref.update(state, (current) => settleSummary(current, Exit.isSuccess(exit)))))
+      })),
+    }).pipe(Effect.catch((error) => Effect.logWarning(`summary left out: ${error.message}`).pipe(Effect.as(Option.none<string>()))))
     return Option.match(Option.filter(reply, (summary) => summary.length > 0), {
       onNone: () => [],
-      onSome: (summary): ReadonlyArray<CompactionAction> => [{ _tag: "Summarize", keepFromTurn: from, summary }],
+      onSome: (summary): ReadonlyArray<CompactionAction> => {
+        const action: CompactionAction = { _tag: "Summarize", keepFromTurn: from, summary }
+        return tokens([...entries, pendingCompaction(SUMMARY_STRATEGY, action, 0)]) < before ? [action] : []
+      },
     })
 })
 
@@ -152,15 +202,11 @@ export const memorySummaryPlugin = definePlugin({
       strategy: SUMMARY_STRATEGY,
       open: Effect.fn("memory.open")(function* ({ runId, log }) {
         const utility = yield* Effect.serviceOption(UtilityLlm).pipe(Effect.flatMap(Option.match({ onNone: () => Effect.fail(missingUtility), onSome: Effect.succeed })))
-        // Once a call failed or ran out of time, this turn's later steps do not wait on the summarizer again.
-        const failed = yield* Ref.make(false)
-        const policy = summaryPolicy(config, (prompt) => Ref.get(failed).pipe(Effect.flatMap((gaveUp) => gaveUp
-          ? Effect.fail(new HarnessError({ code: "memory.summary", message: "the summarizer failed earlier in this turn" }))
-          : utility.complete(prompt).pipe(
+        const attempt = yield* Ref.make<SummaryAttempt>({ _tag: "Ready", attempted: [] })
+        const policy = policyWithAttempts(config, (prompt) => utility.complete(prompt).pipe(
             Effect.map((completion) => completion.text),
             Effect.mapError((error) => new HarnessError({ code: "memory.summary", message: error.message })),
-            Effect.onExit((exit) => Exit.isSuccess(exit) ? Effect.void : Ref.set(failed, true)),
-          ))))
+          ), Option.some(attempt))
         return yield* openLogSession(log, policy, { runId })
       }),
     })),

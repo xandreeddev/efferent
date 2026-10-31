@@ -304,3 +304,24 @@ test("write and compaction digests serve the newest actual inbox user intent, in
   }))
   expect(observed.seen).toEqual([observed.intent, observed.intent])
 })
+
+test("maintenance renders its explicit run, placement and turn-end without obsolete context", async () => {
+  const shown = await Effect.runPromise(Effect.gen(function* () {
+    const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+    const rendered = yield* Ref.make<ReadonlyArray<string>>([])
+    const log: LogHandle = { read: Ref.get(stored), append: entries => Ref.update(stored, all => [...all, ...entries]) }
+    const session = yield* openLogSession(log, { ...policy, maintain: ({ entries, render }) => Ref.update(rendered, all => [...all, JSON.stringify(render(entries))]).pipe(Effect.as({ actions: [], digest: [] })) }, { runId: RunId.make("scope") })
+    yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "question" }) },
+      { _tag: "StepContext", run: RunOrdinal.make(0), step: 0, text: "FIRST" },
+      { _tag: "StepContext", run: RunOrdinal.make(1), step: 0, text: "SECOND" }], 0)
+    const base = { lastUsage: Option.none(), budgetTokens: 100_000, views }
+    yield* session.maintain({ ...base, phase: "step", render: { run: RunOrdinal.make(0), stepContext: "tail" } })
+    yield* session.maintain({ ...base, phase: "step", render: { run: RunOrdinal.make(0), stepContext: "none" } })
+    yield* session.maintain({ ...base, phase: "turn-end", render: { run: RunOrdinal.make(1), stepContext: "tail" } })
+    yield* session.maintain({ ...base, phase: "turn-end" })
+    yield* session.maintain({ ...base, phase: "step" })
+    return yield* Ref.get(rendered)
+  }))
+  expect(shown.map(text => text.includes("FIRST"))).toEqual([true, false, false, false, false])
+  expect(shown.map(text => text.includes("SECOND"))).toEqual([false, false, false, false, true])
+})

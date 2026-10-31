@@ -229,6 +229,22 @@ reconciliation before another allocation. Keep that contract in
 `memoryConformance`; never consume queue state and append the messages in
 separate commits, or call memory from inside a queued writer decision.
 
+`MaintainSignal` accepts `turn-start`, `step`, `turn-end` and `overflow`.
+Its optional `render` scope names the calling run ordinal and tail placement;
+the sdk always supplies it. Turn-end always renders with no `StepContext`,
+while older callers that omit the scope keep latest-run/tail behavior for
+their existing phases. Never remove the durable step context: an earlier
+request's cut and saved recipe still need it. Transcript defaults are unchanged.
+`MemoryObservation` is runtime accepted-input evidence for the same actual
+model. `scaledTokens` only raises message estimates, subtracts the measured
+system/tool reserve once, and saturates unsafe results conservatively.
+An absent optional observation leaves estimates unchanged. All strategy
+candidate comparisons use the same scale; raw built estimates, fingerprints,
+stable prefixes and stored format 9 remain unchanged. The memory kit checks
+that new phases preserve history and current results without requiring every
+strategy to summarize; its careless phase check is in
+`src/memory/memory-maintenance.conformance.test.ts`.
+
 The step loop and its event vocabulary (`LoopEvent`) live in
 `@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,
 sessions in `@xandreed/plugin-sessions`, and the composable agent

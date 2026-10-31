@@ -1421,6 +1421,7 @@
     ],
     "contributes": [],
     "defaults": {
+      "summarizeAt": "turn-end",
       "triggerRatio": 0.8,
       "keepRatio": 0.16,
       "cooldownTurns": 3,
@@ -1437,6 +1438,13 @@
       "$schema": "http://json-schema.org/draft-07/schema#",
       "type": "object",
       "properties": {
+        "summarizeAt": {
+          "type": "string",
+          "enum": [
+            "step",
+            "turn-end"
+          ]
+        },
         "triggerRatio": {
           "anyOf": [
             {
@@ -1512,6 +1520,7 @@
         }
       },
       "required": [
+        "summarizeAt",
         "triggerRatio",
         "keepRatio",
         "cooldownTurns",
