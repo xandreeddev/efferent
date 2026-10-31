@@ -17,6 +17,10 @@ export {
 export { ENGINE_KEY, ResponseStamp } from "./domain/engine-stamp.entity.js"
 export { responseModelOf, stampPartModel, stampResponseModel } from "./domain/engine-stamp.entity.functions.js"
 export { ModelFailureKind, ModelFailureStamp } from "./domain/model-failure.entity.js"
+export { ModelCallId, ModelCallPurpose, ModelCallMethod, ModelCallUsage, ModelCallOutcome, ModelCallData, ModelCallLegacyUsage } from "./domain/model-call.entity.js"
+export { recordCompletion } from "./domain/model-call.entity.functions.js"
+export { CurrentModelCallRecorder } from "./ports/model-call-recorder.port.js"
+export type { ModelCallRecorder, ModelCallObserver } from "./ports/model-call-recorder.port.js"
 export { modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, stampAiErrorFailure, stampPartFailure, stampResponseFailure } from "./domain/model-failure.entity.functions.js"
 export {
   AttachmentRejected,
@@ -138,7 +142,7 @@ export {
   turnStartedOf,
   unmarkedReservedDraft,
 } from "./session/session-event.entity.functions.js"
-export { turnUsageOf } from "./session/session-event.entity.functions.js"
+export { turnUsageOf, turnModelCallsOf, turnBilledUsageOf } from "./session/session-event.entity.functions.js"
 // stored records read by their fields: decoded whole, or by their keys alone for a lookup
 export { readStored, readStoredKeys, RequestPreparedKeys, StoredData, StoredKeys, TurnStartedKeys } from "./session/session-event.entity.functions.js"
 export type { KeyedKind, Stored, StoredKeysOf, StoredKind } from "./session/session-event.entity.functions.js"
@@ -321,6 +325,7 @@ export {
   ContextBuiltEvent,
   DecisionRecordedEvent,
   HostEvent,
+  ModelCalledEvent,
   SkillsActivatedEvent,
   StepEndedEvent,
   StepResult,

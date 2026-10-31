@@ -26,6 +26,7 @@
     "inbox.queued",
     "inbox.dropped",
     "inbox.taken",
+    "model.called",
     "tool.progress",
     "skills.activated",
     "assistant.message",
@@ -1862,6 +1863,414 @@
         ],
         "additionalProperties": true,
         "description": "An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it, as JSON (`defineHostEvent` writes it through JSON text, so `undefined` fields are dropped and a value JSON cannot hold fails the publish with `events.encode`). Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`."
+      }
+    },
+    {
+      "name": "model.called",
+      "description": "Published after the turn-owned model-call recorder durably appends and flushes one terminal physical attempt. Provider outcomes are independent of downstream acceptance; Agent turns await recording before tool admission, while direct SDK streaming consumers follow their SDK's consumption policy. Retries and configured fallback share callId and use distinct positive attempts; a loop stream fallback has a new callId while retaining its frozen request header. The actual invoked model, loop/helper purpose, method, optional run and step, duration, provider outcome and Known/Partial/Unknown usage are metadata only. Not journaled from the bus: the recorder stores model.called directly. Unknown usage is not known zero; partial reported subtotals and terminal-only records do not establish an exact provider bill or recover a SIGKILL gap.",
+      "transient": false,
+      "stored": {
+        "as": "recorded-elsewhere",
+        "where": "the recorder's directly appended and flushed `model.called` fact"
+      },
+      "fields": [
+        {
+          "name": "callId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "attempt",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "purpose",
+          "type": "\"Loop\" | \"Helper\"",
+          "required": true
+        },
+        {
+          "name": "method",
+          "type": "\"Text\" | \"Object\" | \"Stream\"",
+          "required": true
+        },
+        {
+          "name": "model",
+          "type": "{ provider, modelId } | null",
+          "required": true
+        },
+        {
+          "name": "runId",
+          "type": "string | null",
+          "required": true
+        },
+        {
+          "name": "run",
+          "type": "integer | null",
+          "required": true
+        },
+        {
+          "name": "step",
+          "type": "integer | null",
+          "required": true
+        },
+        {
+          "name": "durationMs",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "usage",
+          "type": "{ _tag } | { _tag, usage } | { _tag, usage, reported }",
+          "required": true
+        },
+        {
+          "name": "outcome",
+          "type": "{ _tag } | { _tag, failure }",
+          "required": true
+        }
+      ],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "_tag": {
+            "type": "string",
+            "enum": [
+              "model.called"
+            ]
+          },
+          "callId": {
+            "type": "string",
+            "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "Loop",
+              "Helper"
+            ]
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "Text",
+              "Object",
+              "Stream"
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ModelSelectionEncoded"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "durationMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Known"
+                    ]
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "outputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "totalTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cacheReadTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cacheWriteTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "reasoningTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens",
+                      "totalTokens",
+                      "cacheReadTokens",
+                      "cacheWriteTokens",
+                      "reasoningTokens"
+                    ],
+                    "additionalProperties": true
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "usage"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Partial"
+                    ]
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "outputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "totalTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cacheReadTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cacheWriteTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "reasoningTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens",
+                      "totalTokens",
+                      "cacheReadTokens",
+                      "cacheWriteTokens",
+                      "reasoningTokens"
+                    ],
+                    "additionalProperties": true
+                  },
+                  "reported": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "inputTokens",
+                        "outputTokens",
+                        "cacheReadTokens",
+                        "cacheWriteTokens",
+                        "reasoningTokens"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "usage",
+                  "reported"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Completed"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Failed"
+                    ]
+                  },
+                  "failure": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "ContextOverflow",
+                          "Authentication",
+                          "InvalidRequest",
+                          "RateLimit",
+                          "Quota",
+                          "Transient",
+                          "InvalidResponse",
+                          "Timeout",
+                          "Unknown"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "failure"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Interrupted"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "_tag",
+          "callId",
+          "attempt",
+          "purpose",
+          "method",
+          "model",
+          "runId",
+          "run",
+          "step",
+          "durationMs",
+          "usage",
+          "outcome"
+        ],
+        "additionalProperties": true,
+        "definitions": {
+          "ModelSelectionEncoded": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "modelId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "modelId"
+            ],
+            "additionalProperties": true
+          }
+        }
       }
     }
   ],
@@ -5920,6 +6329,404 @@
         ],
         "additionalProperties": true
       }
+    },
+    {
+      "kind": "model.called",
+      "writer": "The turn-owned model-call recorder, directly appended and flushed before notification",
+      "sensitive": "Actual model selection, usage precision/counts, outcome and correlation metadata; no prompts, credentials, endpoint settings or provider bodies.",
+      "fields": [
+        {
+          "name": "callId",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "attempt",
+          "type": "integer",
+          "required": true
+        },
+        {
+          "name": "purpose",
+          "type": "\"Loop\" | \"Helper\"",
+          "required": true
+        },
+        {
+          "name": "method",
+          "type": "\"Text\" | \"Object\" | \"Stream\"",
+          "required": true
+        },
+        {
+          "name": "model",
+          "type": "{ provider, modelId } | null",
+          "required": true
+        },
+        {
+          "name": "runId",
+          "type": "string | null",
+          "required": true
+        },
+        {
+          "name": "run",
+          "type": "integer | null",
+          "required": true
+        },
+        {
+          "name": "step",
+          "type": "integer | null",
+          "required": true
+        },
+        {
+          "name": "durationMs",
+          "type": "number",
+          "required": true
+        },
+        {
+          "name": "usage",
+          "type": "{ _tag } | { _tag, usage } | { _tag, usage, reported }",
+          "required": true
+        },
+        {
+          "name": "outcome",
+          "type": "{ _tag } | { _tag, failure }",
+          "required": true
+        }
+      ],
+      "body": [],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "callId": {
+            "type": "string",
+            "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+            "minLength": 1
+          },
+          "attempt": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 9007199254740991
+          },
+          "purpose": {
+            "type": "string",
+            "enum": [
+              "Loop",
+              "Helper"
+            ]
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "Text",
+              "Object",
+              "Stream"
+            ]
+          },
+          "model": {
+            "anyOf": [
+              {
+                "$ref": "#/definitions/ModelSelectionEncoded"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "runId": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "run": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "step": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "durationMs": {
+            "type": "number",
+            "minimum": 0
+          },
+          "usage": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Known"
+                    ]
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "outputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "totalTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cacheReadTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cacheWriteTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "reasoningTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens",
+                      "totalTokens",
+                      "cacheReadTokens",
+                      "cacheWriteTokens",
+                      "reasoningTokens"
+                    ],
+                    "additionalProperties": true
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "usage"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Partial"
+                    ]
+                  },
+                  "usage": {
+                    "type": "object",
+                    "properties": {
+                      "inputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "outputTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "totalTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cacheReadTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "cacheWriteTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "reasoningTokens": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "inputTokens",
+                      "outputTokens",
+                      "totalTokens",
+                      "cacheReadTokens",
+                      "cacheWriteTokens",
+                      "reasoningTokens"
+                    ],
+                    "additionalProperties": true
+                  },
+                  "reported": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "inputTokens",
+                        "outputTokens",
+                        "cacheReadTokens",
+                        "cacheWriteTokens",
+                        "reasoningTokens"
+                      ]
+                    }
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "usage",
+                  "reported"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Completed"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Failed"
+                    ]
+                  },
+                  "failure": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "enum": [
+                          "ContextOverflow",
+                          "Authentication",
+                          "InvalidRequest",
+                          "RateLimit",
+                          "Quota",
+                          "Transient",
+                          "InvalidResponse",
+                          "Timeout",
+                          "Unknown"
+                        ]
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "failure"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Interrupted"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "callId",
+          "attempt",
+          "purpose",
+          "method",
+          "model",
+          "runId",
+          "run",
+          "step",
+          "durationMs",
+          "usage",
+          "outcome"
+        ],
+        "additionalProperties": true,
+        "definitions": {
+          "ModelSelectionEncoded": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "type": "string"
+              },
+              "modelId": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "provider",
+              "modelId"
+            ],
+            "additionalProperties": true
+          }
+        }
+      }
     }
   ],
   "beginCodes": [
@@ -6008,8 +6815,8 @@
     },
     {
       "code": "turn.defect",
-      "where": "stored `turn.ended` failure (`turnEndingOf`)",
-      "meaning": "The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `TurnError` carried as a defect (a `HarnessError`, `TurnClosed`, ...) back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`."
+      "where": "stored `turn.ended` failure (`turnEndingOf`) or the `recordCompletion` recorder boundary",
+      "meaning": "The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `recordCompletion` converts an unexpected recorder defect to a typed `HarnessError` with a fixed recording-failure message and the original defect as its cause, preventing model replay. `Agent.turn`, `Sessions.drain` and `recordCompletion` restore a `TurnError` carried as a defect (a `HarnessError`, `TurnClosed`, ...) to a failure, so it keeps its own identity and code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`."
     },
     {
       "code": "turn.interrupted",

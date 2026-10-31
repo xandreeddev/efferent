@@ -2,6 +2,8 @@ import { Context, Effect, Option, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
 import {
   canonicalJson,
+  CurrentAgentRun,
+  CurrentAgentStep,
   CurrentModelCallPolicy,
   CurrentPromptCacheKey,
   CurrentTraceContent,
@@ -131,7 +133,6 @@ export const cacheKeyOf = (prefix: string, conversation: string): Option.Option<
  */
 export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.fn.Return<StepRequest, TurnError, P | TurnRunServices> {
   const runServices = replayableContext(yield* Effect.context<P>())
-  const inRun = <A, E>(effect: Effect.Effect<A, E, P>): Effect.Effect<A, E> => effect.pipe(Effect.provide(runServices))
   const memory = yield* TurnMemory
   const prompt = yield* TurnPrompt
   const events = yield* TurnEvents
@@ -139,6 +140,11 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
   const tools = yield* (yield* TurnToolbox).tools
   const session = memory.session
   const run = yield* memory.startRun
+  const inRun = <A, E>(effect: Effect.Effect<A, E, P>, step: Option.Option<number> = Option.none()): Effect.Effect<A, E> => effect.pipe(
+    Effect.provideService(CurrentAgentRun, Option.some(run)),
+    Effect.provideService(CurrentAgentStep, step),
+    Effect.provide(runServices),
+  )
   const defaultModel = Context.getOption(runServices, LanguageModel.LanguageModel)
   const limits: LoopLimits = { ...defaultLimits, ...options.limits, ...policy.limits }
   const budget = policy.budgetTokens ?? options.budgetTokens ?? defaultBudgetTokens
@@ -151,7 +157,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
     onSome: (batch) => batch.skills.length === 0 ? Effect.void : tools.activate(batch.skills, "host").pipe(Effect.asVoid),
   })
   yield* inRun(prompt.turnSections)
-  yield* session.maintain({ phase: "turn-start", lastUsage: Option.none(), budgetTokens: budget, views: tools.views })
+  yield* inRun(session.maintain({ phase: "turn-start", lastUsage: Option.none(), budgetTokens: budget, views: tools.views }))
 
   // The step planned last, and what its build sent: the refusal names that build's images. `replanning`
   // is the step `onMediaRejected` refused, once: only its next plan keeps the model choice, system
@@ -159,15 +165,15 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
   const planned = yield* Ref.make(Option.none<PlannedStep>())
   const replanning = yield* Ref.make(Option.none<PlannedStep>())
   const decide = (info: StepInfo): Effect.Effect<StepDecision, TurnError> => Effect.gen(function* () {
-    const choice = policy.model === undefined ? Option.none<ModelChoice>() : yield* inRun(policy.model(info))
-    const system = yield* inRun(prompt.system(Option.flatMap(choice, (value) => value.variant)))
-    const directive = policy.step === undefined ? noDirective : yield* inRun(policy.step(info))
+    const choice = policy.model === undefined ? Option.none<ModelChoice>() : yield* inRun(policy.model(info), Option.some(info.stepIndex))
+    const system = yield* inRun(prompt.system(Option.flatMap(choice, (value) => value.variant)), Option.some(info.stepIndex))
+    const directive = policy.step === undefined ? noDirective : yield* inRun(policy.step(info), Option.some(info.stepIndex))
     yield* Option.match(directive.context, {
       onNone: () => Effect.void,
       onSome: (text) => session.record([{ _tag: "StepContext", step: info.stepIndex, run: run.ordinal, text }], info.stepIndex).pipe(Effect.asVoid),
     })
     return { choice, system, directive }
-  })
+  }).pipe(Effect.provideService(CurrentAgentRun, Option.some(run)), Effect.provideService(CurrentAgentStep, Option.some(info.stepIndex)))
 
   const plan = (info: StepInfo): Effect.Effect<StepPlan, TurnError> => Effect.gen(function* () {
     const again = Option.filter(yield* Ref.getAndSet(replanning, Option.none()), (last) => last.step === info.stepIndex)
@@ -216,7 +222,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
       messages: markVolatileContext(built.messages, built.stableMessages),
       toolChoice: directive.toolChoice,
     }
-  })
+  }).pipe(Effect.provideService(CurrentAgentRun, Option.some(run)), Effect.provideService(CurrentAgentStep, Option.some(info.stepIndex)))
 
   return {
     run,
@@ -239,7 +245,9 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
         callPolicy: yield* Effect.service(CurrentModelCallPolicy),
       })
     }),
-    record: (step, tail) => session.recordTail(tail, tools.views, step, run.ordinal),
+    record: (step, tail) => session.recordTail(tail, tools.views, step, run.ordinal).pipe(
+      Effect.provideService(CurrentAgentRun, Option.some(run)), Effect.provideService(CurrentAgentStep, Option.some(step)),
+    ),
     pendingSteers: memory.pendingSteers,
     steer: (step) => memory.steer(step, run.ordinal),
     recorded: (step) => memory.requestSnapshot.pipe(Effect.map(({ entries }) => entries.filter((entry) =>
@@ -260,7 +268,7 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
       yield* Ref.set(replanning, last)
       return true
     }),
-    completion: (info) => policy.completion === undefined ? Effect.succeed(incomplete) : inRun(policy.completion(info)).pipe(Effect.map(normalVerdict)),
+    completion: (info) => policy.completion === undefined ? Effect.succeed(incomplete) : inRun(policy.completion(info), Option.some(info.stepIndex)).pipe(Effect.map(normalVerdict)),
     steering: options.steering ?? Effect.succeed(Option.none()),
     correctives: Option.fromNullishOr(policy.correctives),
     events,

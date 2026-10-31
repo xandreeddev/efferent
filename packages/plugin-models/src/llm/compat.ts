@@ -2,9 +2,9 @@ import { AiError, LanguageModel, Prompt, Tool, type Response as ResponseParts } 
 import { Cause, Effect, Match, MutableRef, Option, Ref, Schema, Stream } from "effect"
 import { Base64 } from "effect/encoding"
 import { FetchHttpClient, HttpClient, HttpClientError, HttpClientRequest } from "effect/http"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, reasonOf } from "@xandreed/core"
+import { isTurnError, ModelId, ModelSelection, ProviderId, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ImageMediaType, mediaLabel, reasonOf } from "@xandreed/core"
 import { strictJsonSchema, toolParametersSchema } from "@xandreed/core/internal"
-import type { ModelCallPolicy } from "@xandreed/core"
+import type { ModelCallPolicy, TurnError } from "@xandreed/core"
 import { finishReasonFromWire, sseStreamParts, toolCallParams, usageFromCompletion } from "./sse.js"
 import type { UsageReading } from "./sse.js"
 import type { ChatCompletion } from "./chat-wire.entity.js"
@@ -13,7 +13,9 @@ import { publicReasoningEffort } from "./modelCatalog.js"
 import type { ModelsFetch } from "../ports/models-transport.port.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
 import { transportFetch } from "../transport/models-transport.adapter.js"
-import { resilientRequest } from "../transport/resilient-http-client.adapter.js"
+import { completeModelAttempt, modelAttemptOf, observeModelAttempt, retainModelAttempt } from "./model-completion.adapter.js"
+import { ProviderUsageBody } from "./model-usage.entity.js"
+import { resilientRequest, withModelRequestCall, withModelRequestStream } from "../transport/resilient-http-client.adapter.js"
 import { classifyAiError } from "./provider-failure.entity.functions.js"
 
 /**
@@ -91,9 +93,9 @@ export interface CompatConfig {
 }
 
 /** A request that failed before any response, described by the failure's text as `reasonOf` reads it (never a stack: an `AiError` reason has no slot for the failure itself), proxy credentials redacted (the description can reach a session log). */
-const aiUnknown = (moduleName: string, method: string, error: unknown): AiError.AiError => {
+const aiUnknown = (moduleName: string, method: string, error: unknown): AiError.AiError | TurnError => {
   const cause = HttpClientError.isHttpClientError(error) && error.cause !== undefined ? error.cause : error
-  return AiError.isAiError(cause) ? cause : AiError.make({ module: moduleName, method, reason: new AiError.UnknownError({ description: redactCredentials(reasonOf(Cause.die(cause))) }) })
+  return AiError.isAiError(cause) || isTurnError(cause) ? cause : AiError.make({ module: moduleName, method, reason: new AiError.UnknownError({ description: redactCredentials(reasonOf(Cause.die(cause))) }) })
 }
 
 const invalidOutput = (moduleName: string, method: string, description: string): AiError.AiError =>
@@ -450,6 +452,7 @@ const postChat = (
   body: Json,
   buffered = false,
 ): Effect.Effect<Response, AiError.AiError> => {
+  const selected: { response?: Response } = {}
   const send = Effect.gen(function* () {
     const client = yield* Effect.service(HttpClient.HttpClient).pipe(Effect.provide(FetchHttpClient.layer))
     const metadata = yield* Ref.make({ statusText: "" })
@@ -470,16 +473,22 @@ const postChat = (
     // Buffer settled calls within the public accounting hook. Streaming calls
     // expose a new Web body backed only by the guarded reader, never its source.
     const content = buffered ? yield* response.arrayBuffer : yield* Stream.toReadableStreamEffect(response.stream)
+    if (buffered && content instanceof ArrayBuffer) {
+      const body = Schema.decodeUnknownOption(Schema.fromJsonString(ProviderUsageBody))(new TextDecoder().decode(content))
+      yield* Option.match(body, { onNone: () => Effect.void, onSome: (value) => observeModelAttempt(response.modelAttempt.completion, value.usage, true, config.usage?.reasoning ?? true) })
+      yield* completeModelAttempt(response.modelAttempt.completion, { _tag: "Completed" })
+    }
     const { statusText } = yield* Ref.get(metadata)
     return yield* Effect.try({
-      try: () => Object.defineProperty(new Response([204, 205, 304].includes(response.status) ? null : content, {
+      try: () => retainModelAttempt(response, Object.defineProperty(new Response([204, 205, 304].includes(response.status) ? null : content, {
         status: response.status, statusText, headers: response.headers,
-      }), "url", { value: response.url }),
+      }), "url", { value: response.url })),
       catch: (error) => aiUnknown(config.moduleName, method, error),
     })
-  }).pipe(Effect.mapError((error) => aiUnknown(config.moduleName, method, error)))
-  const request = (config.beforeRequest?.(body) ?? Effect.void).pipe(Effect.andThen(send))
-  return config.aroundRequest === undefined ? request : config.aroundRequest(body, request)
+  }).pipe(Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.fail(aiUnknown(config.moduleName, method, error))))
+  const request = (config.beforeRequest?.(body) ?? Effect.void).pipe(Effect.andThen(send), Effect.tap((response) => Effect.sync(() => { selected.response = response })))
+  const guarded = request.pipe(Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.fail(error)))
+  return config.aroundRequest === undefined ? guarded : config.aroundRequest(body, guarded).pipe(Effect.map((returned) => selected.response === undefined ? returned : retainModelAttempt(selected.response, returned)))
 }
 
 /** A non-OK status → an `AiError` whose reason follows the status and keeps
@@ -489,7 +498,7 @@ const failStatus = (
   config: CompatConfig,
   method: string,
   res: Response,
-): Effect.Effect<never, AiError.AiError> =>
+): Effect.Effect<never, AiError.AiError | TurnError> =>
   Effect.gen(function* () {
     const text = yield* Effect.tryPromise({
       try: () => res.text(),
@@ -515,10 +524,11 @@ const failStatus = (
 /** @public */
 export const makeCompatLanguageModel = (
   config: CompatConfig,
-): Effect.Effect<LanguageModel.LanguageModel> =>
-  LanguageModel.make({
+): Effect.Effect<LanguageModel.LanguageModel> => {
+  const selection = new ModelSelection({ provider: ProviderId.make(config.moduleName), modelId: ModelId.make(config.model) })
+  return LanguageModel.make({
     generateText: (options) =>
-      Effect.gen(function* () {
+      withModelRequestCall(options.responseFormat.type === "json" ? "Object" : "Text", selection, Effect.gen(function* () {
         const res = yield* postChat(
           config,
           "generateText",
@@ -534,9 +544,9 @@ export const makeCompatLanguageModel = (
         })
         const parsed = yield* decodeChatCompletion(config.moduleName, text)
         return (yield* fromChatCompletion(config.moduleName, parsed, config.usage)) as never
-      }).pipe(Effect.mapError((error) => classifyAiError(error, "compat"))),
+      })).pipe(Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.fail(classifyAiError(error, "compat")))),
     streamText: (options) =>
-      Stream.unwrap(
+      withModelRequestStream("Stream", selection, Stream.unwrap(
         Effect.gen(function* () {
           const res = yield* postChat(
             config,
@@ -550,9 +560,9 @@ export const makeCompatLanguageModel = (
           if (body === null) {
             return yield* Effect.fail(invalidResponse(config.moduleName, "streamText", "the streaming response carried no body"))
           }
-          return sseStreamParts({ moduleName: config.moduleName, body, ...(config.usage === undefined ? {} : { usage: config.usage }) })
+          return sseStreamParts({ moduleName: config.moduleName, body, attempt: modelAttemptOf(res), ...(config.usage === undefined ? {} : { usage: config.usage }) })
         }),
-      ).pipe(Stream.mapError((error) => classifyAiError(error, "compat"))) as never,
+      )).pipe(Stream.catch((error) => isTurnError(error) ? Stream.die(error) : Stream.fail(classifyAiError(error, "compat")))) as never,
   }).pipe(Effect.map((model) => describeModel(model,
     Effect.all({ cacheKey: Effect.service(CurrentPromptCacheKey), policy: Effect.service(CurrentModelCallPolicy) }, { concurrency: 1 }).pipe(
       Effect.map(({ cacheKey, policy }) => {
@@ -561,3 +571,4 @@ export const makeCompatLanguageModel = (
       }),
     ),
   )))
+}

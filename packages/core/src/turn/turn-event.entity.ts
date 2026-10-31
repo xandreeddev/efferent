@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { ModelCallData } from "../domain/model-call.entity.js"
 import { DecisionRecord } from "../decision-record.entity.js"
 import { InvocationId, RunId, RunKey } from "../domain/run.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
@@ -254,6 +255,14 @@ export const HostEvent = Schema.TaggedStruct("host", {
   description: "An application's own event (`defineHostEvent`), published by the host's code, tools or tasks. `name` is the host's namespace and `data` the payload as its schema encodes it, as JSON (`defineHostEvent` writes it through JSON text, so `undefined` fields are dropped and a value JSON cannot hold fails the publish with `events.encode`). Journaled under `name` as its kind; a name in `RESERVED_KINDS` fails the publish with `events.reserved`.",
 })
 
+/** A durable terminal model-attempt fact, published only after append and flush. @public */
+export const ModelCalledEvent = ModelCallData.mapFields((fields) => ({ _tag: Schema.tag("model.called"), ...fields }), {
+  // Adding only a tag preserves every field used by the correlation check.
+  unsafePreserveChecks: true,
+}).annotate({
+  description: "Published after the turn-owned model-call recorder durably appends and flushes one terminal physical attempt. Provider outcomes are independent of downstream acceptance; Agent turns await recording before tool admission, while direct SDK streaming consumers follow their SDK's consumption policy. Retries and configured fallback share callId and use distinct positive attempts; a loop stream fallback has a new callId while retaining its frozen request header. The actual invoked model, loop/helper purpose, method, optional run and step, duration, provider outcome and Known/Partial/Unknown usage are metadata only. Not journaled from the bus: the recorder stores model.called directly. Unknown usage is not known zero; partial reported subtotals and terminal-only records do not establish an exact provider bill or recover a SIGKILL gap.",
+})
+
 export const TurnEvent = Schema.Union(
   [TurnStartedEvent,
   StepStartedEvent,
@@ -270,7 +279,8 @@ export const TurnEvent = Schema.Union(
   AssistantDeltaEvent,
   StreamFallbackEvent,
   TurnEndedEvent,
-  HostEvent],
+  HostEvent,
+  ModelCalledEvent],
 ).pipe(Schema.toTaggedUnion("_tag"))
 export type TurnEvent = typeof TurnEvent.Type
 export type TurnEventName = TurnEvent["_tag"]

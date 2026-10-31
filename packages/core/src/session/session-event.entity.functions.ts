@@ -1,5 +1,6 @@
 import { Effect, Option, Schema, Struct } from "effect"
 import { RunId } from "../domain/run.entity.js"
+import { ModelCallData, ModelCallUsage } from "../domain/model-call.entity.js"
 import { sumUsage } from "../domain/token-usage.entity.functions.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
 import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
@@ -98,6 +99,7 @@ export const StoredData = {
   "inbox.dropped": InboxDroppedData,
   "step.usage": StepUsageData,
   "request.prepared": ModelRequestHeader,
+  "model.called": ModelCallData,
 } as const
 export type StoredKind = keyof typeof StoredData
 
@@ -120,6 +122,7 @@ const storedDecoders: { readonly [K in StoredKind]: (data: unknown) => Effect.Ef
   "inbox.dropped": Schema.decodeUnknownEffect(InboxDroppedData),
   "step.usage": Schema.decodeUnknownEffect(StepUsageData),
   "request.prepared": Schema.decodeUnknownEffect(ModelRequestHeader),
+  "model.called": Schema.decodeUnknownEffect(ModelCallData),
 }
 
 /** One event's data decoded as `kind`'s, read with sorted keys (`canonical`), whatever its own kind. */
@@ -279,6 +282,28 @@ export const turnUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number
   readStored("step.usage", events.filter((event) => Option.contains(event.turn, turn))).pipe(
     Effect.map((records) => sumUsage(records.map((record) => record.data.usage))),
   )
+
+/** Terminal model attempts in journal order; malformed and duplicate attempt keys fail. @public */
+export const turnModelCallsOf = (events: ReadonlyArray<SessionLogEvent>, turn: number): Effect.Effect<ReadonlyArray<ModelCallData>, Schema.SchemaError> =>
+  readStored("model.called", events.filter((event) => Option.contains(event.turn, turn))).pipe(
+    Effect.map((records) => records.map((record) => record.data)),
+    Effect.flatMap((calls) => Schema.encodeEffect(uniqueModelCalls)(calls).pipe(Effect.as(calls))),
+  )
+
+const uniqueModelCalls = Schema.Array(ModelCallData).check(Schema.makeFilter((calls) =>
+  new Set(calls.map((call) => JSON.stringify([call.callId, call.attempt]))).size === calls.length
+    ? true : "duplicate model call attempt"))
+
+/**
+ * Observed Known/Partial usage subtotals. ANY ledger suppresses selected usage,
+ * including Unknown-only/known-zero ledgers; no ledger falls back to turnUsageOf.
+ * Read turnModelCallsOf for coverage: this subtotal is not an exact provider bill.
+ *
+ * @public
+ */
+export const turnBilledUsageOf = (events: ReadonlyArray<SessionLogEvent>, turn: number): Effect.Effect<TokenUsage, Schema.SchemaError> =>
+  turnModelCallsOf(events, turn).pipe(Effect.flatMap((calls) => calls.length === 0 ? turnUsageOf(events, turn)
+    : Schema.encodeEffect(ModelCallUsage.cases.Known.fields.usage)(sumUsage(calls.flatMap((call) => call.usage._tag === "Unknown" ? [] : [call.usage.usage])))))
 
 /**
  * The stored form of one bus event of turn `turn`: its name and encoded

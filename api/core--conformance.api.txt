@@ -7,6 +7,7 @@ const imageResizerPng
 const inMemoryLog
 const inboxRunnerConformance
 const memoryConformance
+const modelCallRecorderConformance
 const modelCatalogConformance
 const probeCall
 const sessionLogConformance
@@ -24,6 +25,8 @@ interface FileSystemFixture
 interface FileSystemSubject
 interface ImageResizerSubject
 interface InboxRunnerSubject
+interface ModelCallRecorderFixture
+interface ModelCallRecorderSubject
 interface SessionLogSubject
 interface SessionsInstance
 interface SessionsProcess

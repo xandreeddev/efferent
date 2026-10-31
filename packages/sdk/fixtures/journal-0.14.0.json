@@ -2,6 +2,7 @@
   "format": 1,
   "version": "0.14.0",
   "description": "Session journals as this version stores them, recorded by scripts/record-journal-fixture.ts. Later versions must read them.",
+  "storedFormat": 9,
   "reserved": [
     "turn.started",
     "memory.system",
@@ -13,6 +14,7 @@
     "memory.skills",
     "memory.compaction",
     "turn.reply",
+    "memory.tool-presentation",
     "step.started",
     "step.ended",
     "step.usage",
@@ -27,6 +29,8 @@
     "turn.ended",
     "inbox.queued",
     "inbox.dropped",
+    "inbox.taken",
+    "model.called",
     "tool.progress",
     "skills.activated",
     "assistant.message",
@@ -119,7 +123,7 @@
           "data": {
             "record": {
               "version": 1,
-              "id": "run-1:skill-selection",
+              "id": "run-1:skill-selection:0",
               "family": "skill-selection",
               "contextHash": "d26a44e149",
               "candidateHash": "4e0a621020",
@@ -171,6 +175,7 @@
           "at": 1767225600000,
           "data": {
             "step": 0,
+            "run": 0,
             "planned": false,
             "activeTools": [
               "load_skill",
@@ -231,6 +236,7 @@
             "at": 1767225600000,
             "body": {
               "step": 0,
+              "run": 0,
               "text": "STEP 0"
             }
           }
@@ -244,12 +250,13 @@
           "data": {
             "step": 0,
             "turn": 1,
+            "run": 0,
             "strategy": "window",
             "strategyVersion": "1",
             "fingerprint": "9c48f5e0cc",
             "systemFingerprint": "e35b4014ef",
             "estimatedTokens": 68,
-            "reservedTokens": 304,
+            "reservedTokens": 398,
             "budgetTokens": 64000,
             "compactions": 0,
             "activeTools": [
@@ -268,6 +275,7 @@
           "data": {
             "version": 1,
             "runId": "run-1",
+            "run": 0,
             "step": 0,
             "strategyVersion": "1",
             "system": "FIXTURE system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a fixture agent.",
@@ -275,6 +283,7 @@
               "strategy": "window",
               "currentTurn": 1,
               "currentRun": "run-1",
+              "run": 0,
               "turnContext": "current",
               "replies": true,
               "stepContext": "tail",
@@ -287,6 +296,7 @@
             },
             "through": "run-1:5",
             "contextFingerprint": "9c48f5e0cc",
+            "stableMessages": 3,
             "tools": [
               {
                 "name": "load_skill",
@@ -327,12 +337,19 @@
               },
               {
                 "name": "recall_context",
-                "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+                "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
                 "parameters": {
                   "type": "object",
                   "properties": {
                     "locator": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "The locator the shortened result shows."
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "The first character to return; 0 by default."
                     }
                   },
                   "required": [
@@ -357,6 +374,7 @@
           "at": 1767225600000,
           "data": {
             "step": 0,
+            "run": 0,
             "message": "not scripted"
           }
         },
@@ -364,38 +382,37 @@
           "session": "00000000-0000-4000-8000-00000000601d",
           "seq": 12,
           "turn": 1,
-          "kind": "tool.started",
+          "kind": "model.called",
           "at": 1767225600000,
           "data": {
+            "callId": "00000000-0000-4000-8000-000000000102",
+            "attempt": 1,
+            "purpose": "Loop",
+            "method": "Text",
+            "model": null,
+            "runId": "run-1",
+            "run": 0,
             "step": 0,
-            "invocationId": "run-1:call:0",
-            "tool": "lookup",
-            "input": {
-              "query": "alpha"
+            "durationMs": 0,
+            "usage": {
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 100,
+                "outputTokens": 10,
+                "totalTokens": 110,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
             },
-            "labels": {},
-            "stage": null
+            "outcome": {
+              "_tag": "Completed"
+            }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
           "seq": 13,
-          "turn": 1,
-          "kind": "tool.completed",
-          "at": 1767225600000,
-          "data": {
-            "step": 0,
-            "invocationId": "run-1:call:0",
-            "tool": "lookup",
-            "ok": true,
-            "durationMs": 0,
-            "labels": {},
-            "stage": null
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 14,
           "turn": 1,
           "kind": "memory.message",
           "at": 1767225600000,
@@ -428,13 +445,70 @@
                     "reasoningTokens": 0
                   }
                 }
-              }
+              },
+              "run": 0
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 14,
+          "turn": 1,
+          "kind": "step.usage",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "model": null,
+            "usage": {
+              "inputTokens": 100,
+              "outputTokens": 10,
+              "totalTokens": 110,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "reasoningTokens": 0
+            },
+            "finishReason": "tool-calls"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
           "seq": 15,
+          "turn": 1,
+          "kind": "tool.started",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "invocationId": "run-1:call:0",
+            "toolCallId": "c1",
+            "tool": "lookup",
+            "input": {
+              "query": "alpha"
+            },
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 16,
+          "turn": 1,
+          "kind": "tool.completed",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "invocationId": "run-1:call:0",
+            "toolCallId": "c1",
+            "tool": "lookup",
+            "ok": true,
+            "durationMs": 0,
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 17,
           "turn": 1,
           "kind": "memory.tool-result",
           "at": 1767225600000,
@@ -445,6 +519,7 @@
             "at": 1767225600000,
             "body": {
               "toolCallId": "c1",
+              "run": 0,
               "toolName": "lookup",
               "isError": false,
               "encoded": {
@@ -463,6 +538,27 @@
                   }
                 ]
               },
+              "view": "{\"items\":[{\"detail\":\"alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a \",\"id\":\"record-alpha-a\"},{\"detail\":\"alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b \",\"id\":\"record-alpha-b\"},{\"detail\":\"alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c \",\"id\":\"record-alpha-c\"}]}",
+              "viewVersion": "raw",
+              "subjects": [],
+              "artifacts": [],
+              "pinned": false
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 18,
+          "turn": 1,
+          "kind": "memory.tool-presentation",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-1:8",
+            "runId": "run-1",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "entry": "run-1:7",
               "view": "FOUND record-alpha-a: alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a alpha a \nFOUND record-alpha-b: alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b alpha b \nFOUND record-alpha-c: alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c alpha c ",
               "viewVersion": "1",
               "subjects": [
@@ -486,18 +582,52 @@
                 }
               ],
               "artifacts": [],
-              "pinned": false
+              "pinned": false,
+              "media": [],
+              "mediaNotes": []
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 16,
+          "seq": 19,
+          "turn": 1,
+          "kind": "model.called",
+          "at": 1767225600000,
+          "data": {
+            "callId": "00000000-0000-4000-8000-000000000103",
+            "attempt": 1,
+            "purpose": "Helper",
+            "method": "Text",
+            "model": null,
+            "runId": "run-1",
+            "run": 0,
+            "step": 0,
+            "durationMs": 0,
+            "usage": {
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 1,
+                "totalTokens": 2,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
+            },
+            "outcome": {
+              "_tag": "Completed"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 20,
           "turn": 1,
           "kind": "memory.digest",
           "at": 1767225600000,
           "data": {
-            "entry": "run-1:8",
+            "entry": "run-1:9",
             "runId": "run-1",
             "step": 0,
             "at": 1767225600000,
@@ -516,31 +646,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 17,
-          "turn": 1,
-          "kind": "step.usage",
-          "at": 1767225600000,
-          "data": {
-            "step": 0,
-            "model": null,
-            "usage": {
-              "inputTokens": 100,
-              "outputTokens": 10,
-              "totalTokens": 110,
-              "cacheReadTokens": 0,
-              "cacheWriteTokens": 0,
-              "reasoningTokens": 0
-            }
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 18,
+          "seq": 21,
           "turn": 1,
           "kind": "step.ended",
           "at": 1767225600000,
           "data": {
             "step": 0,
+            "run": 0,
             "status": "completed",
             "results": [
               {
@@ -554,12 +666,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 19,
+          "seq": 22,
           "turn": 1,
           "kind": "completion.evaluated",
           "at": 1767225600000,
           "data": {
             "step": 0,
+            "run": 0,
             "verdict": {
               "complete": false,
               "awaiting": [],
@@ -569,12 +682,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 20,
+          "seq": 23,
           "turn": 1,
           "kind": "step.started",
           "at": 1767225600000,
           "data": {
             "step": 1,
+            "run": 0,
             "planned": false,
             "activeTools": [
               "load_skill",
@@ -585,36 +699,38 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 21,
+          "seq": 24,
           "turn": 1,
           "kind": "memory.step",
           "at": 1767225600000,
           "data": {
-            "entry": "run-1:9",
+            "entry": "run-1:10",
             "runId": "run-1",
             "step": 1,
             "at": 1767225600000,
             "body": {
               "step": 1,
+              "run": 0,
               "text": "STEP 1"
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 22,
+          "seq": 25,
           "turn": 1,
           "kind": "context.built",
           "at": 1767225600000,
           "data": {
             "step": 1,
             "turn": 1,
+            "run": 0,
             "strategy": "window",
             "strategyVersion": "1",
             "fingerprint": "c07c91772d8",
             "systemFingerprint": "e35b4014ef",
             "estimatedTokens": 242,
-            "reservedTokens": 304,
+            "reservedTokens": 398,
             "budgetTokens": 64000,
             "compactions": 0,
             "activeTools": [
@@ -626,13 +742,14 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 23,
+          "seq": 26,
           "turn": 1,
           "kind": "request.prepared",
           "at": 1767225600000,
           "data": {
             "version": 1,
             "runId": "run-1",
+            "run": 0,
             "step": 1,
             "strategyVersion": "1",
             "system": "FIXTURE system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a fixture agent.",
@@ -640,6 +757,7 @@
               "strategy": "window",
               "currentTurn": 1,
               "currentRun": "run-1",
+              "run": 0,
               "turnContext": "current",
               "replies": true,
               "stepContext": "tail",
@@ -650,8 +768,9 @@
                 "maxChars": 20000000
               }
             },
-            "through": "run-1:9",
+            "through": "run-1:10",
             "contextFingerprint": "c07c91772d8",
+            "stableMessages": 5,
             "tools": [
               {
                 "name": "load_skill",
@@ -692,12 +811,19 @@
               },
               {
                 "name": "recall_context",
-                "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+                "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
                 "parameters": {
                   "type": "object",
                   "properties": {
                     "locator": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "The locator the shortened result shows."
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "The first character to return; 0 by default."
                     }
                   },
                   "required": [
@@ -716,65 +842,39 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 24,
+          "seq": 27,
           "turn": 1,
-          "kind": "tool.started",
+          "kind": "model.called",
           "at": 1767225600000,
           "data": {
-            "step": 1,
-            "invocationId": "run-1:call:1",
-            "tool": "load_skill",
-            "input": {
-              "skills": [
-                "delivery"
-              ]
-            },
-            "labels": {},
-            "stage": null
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 25,
-          "turn": 1,
-          "kind": "memory.skills",
-          "at": 1767225600000,
-          "data": {
-            "entry": "run-1:10",
+            "callId": "00000000-0000-4000-8000-000000000104",
+            "attempt": 1,
+            "purpose": "Loop",
+            "method": "Text",
+            "model": null,
             "runId": "run-1",
-            "step": 0,
-            "at": 1767225600000,
-            "body": {
-              "skills": [
-                "delivery"
-              ],
-              "tools": [
-                "deliver"
-              ],
-              "source": "load_skill",
-              "decision": null
+            "run": 0,
+            "step": 1,
+            "durationMs": 0,
+            "usage": {
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 100,
+                "outputTokens": 10,
+                "totalTokens": 110,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
+            },
+            "outcome": {
+              "_tag": "Completed"
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 26,
-          "turn": 1,
-          "kind": "tool.completed",
-          "at": 1767225600000,
-          "data": {
-            "step": 1,
-            "invocationId": "run-1:call:1",
-            "tool": "load_skill",
-            "ok": true,
-            "durationMs": 0,
-            "labels": {},
-            "stage": null
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 27,
+          "seq": 28,
           "turn": 1,
           "kind": "memory.message",
           "at": 1767225600000,
@@ -809,31 +909,8 @@
                     "reasoningTokens": 0
                   }
                 }
-              }
-            }
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 28,
-          "turn": 1,
-          "kind": "memory.tool-result",
-          "at": 1767225600000,
-          "data": {
-            "entry": "run-1:12",
-            "runId": "run-1",
-            "step": 1,
-            "at": 1767225600000,
-            "body": {
-              "toolCallId": "c2",
-              "toolName": "load_skill",
-              "isError": false,
-              "encoded": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
-              "view": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
-              "viewVersion": "raw",
-              "subjects": [],
-              "artifacts": [],
-              "pinned": true
+              },
+              "run": 0
             }
           }
         },
@@ -845,6 +922,7 @@
           "at": 1767225600000,
           "data": {
             "step": 1,
+            "run": 0,
             "model": null,
             "usage": {
               "inputTokens": 100,
@@ -853,21 +931,131 @@
               "cacheReadTokens": 0,
               "cacheWriteTokens": 0,
               "reasoningTokens": 0
-            }
+            },
+            "finishReason": "tool-calls"
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
           "seq": 30,
           "turn": 1,
+          "kind": "tool.started",
+          "at": 1767225600000,
+          "data": {
+            "step": 1,
+            "invocationId": "run-1:call:1",
+            "toolCallId": "c2",
+            "tool": "load_skill",
+            "input": {
+              "skills": [
+                "delivery"
+              ]
+            },
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 31,
+          "turn": 1,
+          "kind": "memory.skills",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-1:12",
+            "runId": "run-1",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "skills": [
+                "delivery"
+              ],
+              "tools": [
+                "deliver"
+              ],
+              "source": "load_skill",
+              "decision": null
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 32,
+          "turn": 1,
+          "kind": "tool.completed",
+          "at": 1767225600000,
+          "data": {
+            "step": 1,
+            "invocationId": "run-1:call:1",
+            "toolCallId": "c2",
+            "tool": "load_skill",
+            "ok": true,
+            "durationMs": 0,
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 33,
+          "turn": 1,
+          "kind": "memory.tool-result",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-1:13",
+            "runId": "run-1",
+            "step": 1,
+            "at": 1767225600000,
+            "body": {
+              "toolCallId": "c2",
+              "run": 0,
+              "toolName": "load_skill",
+              "isError": false,
+              "encoded": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
+              "view": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
+              "viewVersion": "raw",
+              "subjects": [],
+              "artifacts": [],
+              "pinned": false
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 34,
+          "turn": 1,
+          "kind": "memory.tool-presentation",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-1:14",
+            "runId": "run-1",
+            "step": 1,
+            "at": 1767225600000,
+            "body": {
+              "entry": "run-1:13",
+              "view": "## delivery\nDeliver once, with the record id.\nTools: deliver\n\nNow available: deliver",
+              "viewVersion": "raw",
+              "subjects": [],
+              "artifacts": [],
+              "pinned": true,
+              "media": [],
+              "mediaNotes": []
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 35,
+          "turn": 1,
           "kind": "step.ended",
           "at": 1767225600000,
           "data": {
             "step": 1,
+            "run": 0,
             "status": "completed",
             "results": [
               {
-                "entry": "run-1:12",
+                "entry": "run-1:13",
                 "toolCallId": "c2",
                 "tool": "load_skill",
                 "ok": true
@@ -877,12 +1065,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 31,
+          "seq": 36,
           "turn": 1,
           "kind": "completion.evaluated",
           "at": 1767225600000,
           "data": {
             "step": 1,
+            "run": 0,
             "verdict": {
               "complete": false,
               "awaiting": [],
@@ -892,12 +1081,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 32,
+          "seq": 37,
           "turn": 1,
           "kind": "step.started",
           "at": 1767225600000,
           "data": {
             "step": 2,
+            "run": 0,
             "planned": false,
             "activeTools": [
               "load_skill",
@@ -909,12 +1099,12 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 33,
+          "seq": 38,
           "turn": 1,
           "kind": "memory.system",
           "at": 1767225600000,
           "data": {
-            "entry": "run-1:13",
+            "entry": "run-1:15",
             "runId": "run-1",
             "step": 0,
             "at": 1767225600000,
@@ -948,36 +1138,38 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 34,
+          "seq": 39,
           "turn": 1,
           "kind": "memory.step",
           "at": 1767225600000,
           "data": {
-            "entry": "run-1:14",
+            "entry": "run-1:16",
             "runId": "run-1",
             "step": 2,
             "at": 1767225600000,
             "body": {
               "step": 2,
+              "run": 0,
               "text": "STEP 2"
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 35,
+          "seq": 40,
           "turn": 1,
           "kind": "context.built",
           "at": 1767225600000,
           "data": {
             "step": 2,
             "turn": 1,
+            "run": 0,
             "strategy": "window",
             "strategyVersion": "1",
             "fingerprint": "9464a1884d4",
             "systemFingerprint": "da652cecef",
             "estimatedTokens": 412,
-            "reservedTokens": 348,
+            "reservedTokens": 442,
             "budgetTokens": 64000,
             "compactions": 0,
             "activeTools": [
@@ -990,13 +1182,14 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 36,
+          "seq": 41,
           "turn": 1,
           "kind": "request.prepared",
           "at": 1767225600000,
           "data": {
             "version": 1,
             "runId": "run-1",
+            "run": 0,
             "step": 2,
             "strategyVersion": "1",
             "system": "FIXTURE system prefix.\n\nSTATIC rules.\n\nSTYLE brief.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a fixture agent.",
@@ -1004,6 +1197,7 @@
               "strategy": "window",
               "currentTurn": 1,
               "currentRun": "run-1",
+              "run": 0,
               "turnContext": "current",
               "replies": true,
               "stepContext": "tail",
@@ -1014,8 +1208,9 @@
                 "maxChars": 20000000
               }
             },
-            "through": "run-1:14",
+            "through": "run-1:16",
             "contextFingerprint": "9464a1884d4",
+            "stableMessages": 7,
             "tools": [
               {
                 "name": "load_skill",
@@ -1056,12 +1251,19 @@
               },
               {
                 "name": "recall_context",
-                "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+                "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
                 "parameters": {
                   "type": "object",
                   "properties": {
                     "locator": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "The locator the shortened result shows."
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "The first character to return; 0 by default."
                     }
                   },
                   "required": [
@@ -1097,45 +1299,44 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 37,
+          "seq": 42,
           "turn": 1,
-          "kind": "tool.started",
+          "kind": "model.called",
           "at": 1767225600000,
           "data": {
+            "callId": "00000000-0000-4000-8000-000000000105",
+            "attempt": 1,
+            "purpose": "Loop",
+            "method": "Text",
+            "model": null,
+            "runId": "run-1",
+            "run": 0,
             "step": 2,
-            "invocationId": "run-1:call:2",
-            "tool": "deliver",
-            "input": {
-              "text": "record-alpha-b"
-            },
-            "labels": {},
-            "stage": null
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 38,
-          "turn": 1,
-          "kind": "tool.completed",
-          "at": 1767225600000,
-          "data": {
-            "step": 2,
-            "invocationId": "run-1:call:2",
-            "tool": "deliver",
-            "ok": true,
             "durationMs": 0,
-            "labels": {},
-            "stage": null
+            "usage": {
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 100,
+                "outputTokens": 10,
+                "totalTokens": 110,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
+            },
+            "outcome": {
+              "_tag": "Completed"
+            }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 39,
+          "seq": 43,
           "turn": 1,
           "kind": "memory.message",
           "at": 1767225600000,
           "data": {
-            "entry": "run-1:15",
+            "entry": "run-1:17",
             "runId": "run-1",
             "step": 2,
             "at": 1767225600000,
@@ -1163,23 +1364,81 @@
                     "reasoningTokens": 0
                   }
                 }
-              }
+              },
+              "run": 0
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 40,
+          "seq": 44,
+          "turn": 1,
+          "kind": "step.usage",
+          "at": 1767225600000,
+          "data": {
+            "step": 2,
+            "run": 0,
+            "model": null,
+            "usage": {
+              "inputTokens": 100,
+              "outputTokens": 10,
+              "totalTokens": 110,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "reasoningTokens": 0
+            },
+            "finishReason": "tool-calls"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 45,
+          "turn": 1,
+          "kind": "tool.started",
+          "at": 1767225600000,
+          "data": {
+            "step": 2,
+            "invocationId": "run-1:call:2",
+            "toolCallId": "c3",
+            "tool": "deliver",
+            "input": {
+              "text": "record-alpha-b"
+            },
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 46,
+          "turn": 1,
+          "kind": "tool.completed",
+          "at": 1767225600000,
+          "data": {
+            "step": 2,
+            "invocationId": "run-1:call:2",
+            "toolCallId": "c3",
+            "tool": "deliver",
+            "ok": true,
+            "durationMs": 0,
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 47,
           "turn": 1,
           "kind": "memory.tool-result",
           "at": 1767225600000,
           "data": {
-            "entry": "run-1:16",
+            "entry": "run-1:18",
             "runId": "run-1",
             "step": 2,
             "at": 1767225600000,
             "body": {
               "toolCallId": "c3",
+              "run": 0,
               "toolName": "deliver",
               "isError": false,
               "encoded": true,
@@ -1193,35 +1452,17 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 41,
-          "turn": 1,
-          "kind": "step.usage",
-          "at": 1767225600000,
-          "data": {
-            "step": 2,
-            "model": null,
-            "usage": {
-              "inputTokens": 100,
-              "outputTokens": 10,
-              "totalTokens": 110,
-              "cacheReadTokens": 0,
-              "cacheWriteTokens": 0,
-              "reasoningTokens": 0
-            }
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 42,
+          "seq": 48,
           "turn": 1,
           "kind": "step.ended",
           "at": 1767225600000,
           "data": {
             "step": 2,
+            "run": 0,
             "status": "completed",
             "results": [
               {
-                "entry": "run-1:16",
+                "entry": "run-1:18",
                 "toolCallId": "c3",
                 "tool": "deliver",
                 "ok": true
@@ -1231,12 +1472,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 43,
+          "seq": 49,
           "turn": 1,
           "kind": "completion.evaluated",
           "at": 1767225600000,
           "data": {
             "step": 2,
+            "run": 0,
             "verdict": {
               "complete": true,
               "awaiting": [],
@@ -1246,12 +1488,12 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 44,
+          "seq": 50,
           "turn": 1,
           "kind": "turn.reply",
           "at": 1767225600000,
           "data": {
-            "entry": "run-1:17",
+            "entry": "run-1:19",
             "runId": "run-1",
             "step": 0,
             "at": 1767225600000,
@@ -1263,7 +1505,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 45,
+          "seq": 51,
           "turn": 1,
           "kind": "turn.ended",
           "at": 1767225600000,
@@ -1274,7 +1516,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 46,
+          "seq": 52,
           "turn": 2,
           "kind": "turn.started",
           "at": 1767225600000,
@@ -1293,7 +1535,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 47,
+          "seq": 53,
           "turn": 2,
           "kind": "note.prepared",
           "at": 1767225600000,
@@ -1303,7 +1545,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 48,
+          "seq": 54,
           "turn": 2,
           "kind": "turn.reply",
           "at": 1767225600000,
@@ -1320,7 +1562,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 49,
+          "seq": 55,
           "turn": 2,
           "kind": "turn.ended",
           "at": 1767225600000,
@@ -1331,7 +1573,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 50,
+          "seq": 56,
           "turn": 3,
           "kind": "turn.started",
           "at": 1767225600000,
@@ -1350,7 +1592,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 51,
+          "seq": 57,
           "turn": 3,
           "kind": "memory.section",
           "at": 1767225600000,
@@ -1368,7 +1610,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 52,
+          "seq": 58,
           "turn": 3,
           "kind": "turn.reply",
           "at": 1767225600000,
@@ -1385,7 +1627,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 53,
+          "seq": 59,
           "turn": 3,
           "kind": "turn.ended",
           "at": 1767225600000,
@@ -1399,7 +1641,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 54,
+          "seq": 60,
           "turn": 4,
           "kind": "turn.started",
           "at": 1767225600000,
@@ -1418,7 +1660,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 55,
+          "seq": 61,
           "turn": 4,
           "kind": "memory.skills",
           "at": 1767225600000,
@@ -1441,14 +1683,14 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 56,
+          "seq": 62,
           "turn": 4,
           "kind": "decision.recorded",
           "at": 1767225600000,
           "data": {
             "record": {
               "version": 1,
-              "id": "run-4:skill-selection",
+              "id": "run-4:skill-selection:0",
               "family": "skill-selection",
               "contextHash": "b4bdf27c64",
               "candidateHash": "4e0a621020",
@@ -1476,7 +1718,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 57,
+          "seq": 63,
           "turn": 4,
           "kind": "memory.message",
           "at": 1767225600000,
@@ -1491,7 +1733,7 @@
                 "content": [
                   {
                     "type": "tool-call",
-                    "toolCallId": "run-4:matcher",
+                    "toolCallId": "run-4:matcher:0",
                     "toolName": "load_skill",
                     "input": {
                       "skills": [
@@ -1506,7 +1748,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 58,
+          "seq": 64,
           "turn": 4,
           "kind": "memory.tool-result",
           "at": 1767225600000,
@@ -1516,7 +1758,7 @@
             "step": 0,
             "at": 1767225600000,
             "body": {
-              "toolCallId": "run-4:matcher",
+              "toolCallId": "run-4:matcher:0",
               "toolName": "load_skill",
               "isError": false,
               "encoded": "## notes\nNote what the user asks to keep.\nTools: note",
@@ -1524,18 +1766,41 @@
               "viewVersion": "raw",
               "subjects": [],
               "artifacts": [],
-              "pinned": true
+              "pinned": false
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 59,
+          "seq": 65,
+          "turn": 4,
+          "kind": "memory.tool-presentation",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-4:4",
+            "runId": "run-4",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "entry": "run-4:3",
+              "view": "## notes\nNote what the user asks to keep.\nTools: note",
+              "viewVersion": "raw",
+              "subjects": [],
+              "artifacts": [],
+              "pinned": true,
+              "media": [],
+              "mediaNotes": []
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 66,
           "turn": 4,
           "kind": "memory.section",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:4",
+            "entry": "run-4:5",
             "runId": "run-4",
             "step": 0,
             "at": 1767225600000,
@@ -1548,12 +1813,12 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 60,
+          "seq": 67,
           "turn": 4,
           "kind": "memory.compaction",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:5",
+            "entry": "run-4:6",
             "runId": "run-4",
             "step": 0,
             "at": 1767225600000,
@@ -1574,12 +1839,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 61,
+          "seq": 68,
           "turn": 4,
           "kind": "step.started",
           "at": 1767225600000,
           "data": {
             "step": 0,
+            "run": 0,
             "planned": true,
             "activeTools": [
               "load_skill",
@@ -1592,13 +1858,65 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 62,
+          "seq": 69,
+          "turn": 4,
+          "kind": "memory.message",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-4:7",
+            "runId": "run-4",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "message": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "tool-call",
+                    "toolCallId": "4.0.planned:0",
+                    "toolName": "lookup",
+                    "input": {
+                      "query": "gamma"
+                    },
+                    "providerExecuted": false
+                  }
+                ]
+              },
+              "run": 0
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 70,
+          "turn": 4,
+          "kind": "step.usage",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "model": null,
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "totalTokens": 0,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "reasoningTokens": 0
+            },
+            "finishReason": "tool-calls"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 71,
           "turn": 4,
           "kind": "tool.started",
           "at": 1767225600000,
           "data": {
             "step": 0,
             "invocationId": "run-4:call:0",
+            "toolCallId": "4.0.planned:0",
             "tool": "lookup",
             "input": {
               "query": "gamma"
@@ -1609,13 +1927,14 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 63,
+          "seq": 72,
           "turn": 4,
           "kind": "tool.completed",
           "at": 1767225600000,
           "data": {
             "step": 0,
             "invocationId": "run-4:call:0",
+            "toolCallId": "4.0.planned:0",
             "tool": "lookup",
             "ok": true,
             "durationMs": 0,
@@ -1625,46 +1944,18 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 64,
-          "turn": 4,
-          "kind": "memory.message",
-          "at": 1767225600000,
-          "data": {
-            "entry": "run-4:6",
-            "runId": "run-4",
-            "step": 0,
-            "at": 1767225600000,
-            "body": {
-              "message": {
-                "role": "assistant",
-                "content": [
-                  {
-                    "type": "tool-call",
-                    "toolCallId": "planned:0:0",
-                    "toolName": "lookup",
-                    "input": {
-                      "query": "gamma"
-                    },
-                    "providerExecuted": false
-                  }
-                ]
-              }
-            }
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 65,
+          "seq": 73,
           "turn": 4,
           "kind": "memory.tool-result",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:7",
+            "entry": "run-4:8",
             "runId": "run-4",
             "step": 0,
             "at": 1767225600000,
             "body": {
-              "toolCallId": "planned:0:0",
+              "toolCallId": "4.0.planned:0",
+              "run": 0,
               "toolName": "lookup",
               "isError": false,
               "encoded": {
@@ -1683,6 +1974,27 @@
                   }
                 ]
               },
+              "view": "{\"items\":[{\"detail\":\"gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \",\"id\":\"record-gamma-a\"},{\"detail\":\"gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \",\"id\":\"record-gamma-b\"},{\"detail\":\"gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c \",\"id\":\"record-gamma-c\"}]}",
+              "viewVersion": "raw",
+              "subjects": [],
+              "artifacts": [],
+              "pinned": false
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 74,
+          "turn": 4,
+          "kind": "memory.tool-presentation",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-4:9",
+            "runId": "run-4",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "entry": "run-4:8",
               "view": "FOUND record-gamma-a: gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a gamma a \nFOUND record-gamma-b: gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b gamma b \nFOUND record-gamma-c: gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c gamma c ",
               "viewVersion": "1",
               "subjects": [
@@ -1706,42 +2018,58 @@
                 }
               ],
               "artifacts": [],
-              "pinned": false
+              "pinned": false,
+              "media": [],
+              "mediaNotes": []
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 66,
+          "seq": 75,
           "turn": 4,
-          "kind": "step.usage",
+          "kind": "model.called",
           "at": 1767225600000,
           "data": {
-            "step": 0,
+            "callId": "00000000-0000-4000-8000-000000000106",
+            "attempt": 1,
+            "purpose": "Helper",
+            "method": "Text",
             "model": null,
+            "runId": "run-4",
+            "run": 0,
+            "step": 0,
+            "durationMs": 0,
             "usage": {
-              "inputTokens": 0,
-              "outputTokens": 0,
-              "totalTokens": 0,
-              "cacheReadTokens": 0,
-              "cacheWriteTokens": 0,
-              "reasoningTokens": 0
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 1,
+                "outputTokens": 1,
+                "totalTokens": 2,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
+            },
+            "outcome": {
+              "_tag": "Completed"
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 67,
+          "seq": 76,
           "turn": 4,
           "kind": "step.ended",
           "at": 1767225600000,
           "data": {
             "step": 0,
+            "run": 0,
             "status": "completed",
             "results": [
               {
-                "entry": "run-4:7",
-                "toolCallId": "planned:0:0",
+                "entry": "run-4:8",
+                "toolCallId": "4.0.planned:0",
                 "tool": "lookup",
                 "ok": true
               }
@@ -1750,12 +2078,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 68,
+          "seq": 77,
           "turn": 4,
           "kind": "completion.evaluated",
           "at": 1767225600000,
           "data": {
             "step": 0,
+            "run": 0,
             "verdict": {
               "complete": false,
               "awaiting": [],
@@ -1765,12 +2094,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 69,
+          "seq": 78,
           "turn": 4,
           "kind": "step.started",
           "at": 1767225600000,
           "data": {
             "step": 1,
+            "run": 0,
             "planned": false,
             "activeTools": [
               "load_skill",
@@ -1783,12 +2113,12 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 70,
+          "seq": 79,
           "turn": 4,
           "kind": "memory.system",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:8",
+            "entry": "run-4:10",
             "runId": "run-4",
             "step": 0,
             "at": 1767225600000,
@@ -1822,19 +2152,20 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 71,
+          "seq": 80,
           "turn": 4,
           "kind": "context.built",
           "at": 1767225600000,
           "data": {
             "step": 1,
             "turn": 4,
+            "run": 0,
             "strategy": "window",
             "strategyVersion": "1",
-            "fingerprint": "f518144ead5",
+            "fingerprint": "3623b0a2add",
             "systemFingerprint": "e35b4014ef",
-            "estimatedTokens": 923,
-            "reservedTokens": 388,
+            "estimatedTokens": 926,
+            "reservedTokens": 482,
             "budgetTokens": 64000,
             "compactions": 1,
             "activeTools": [
@@ -1848,13 +2179,14 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 72,
+          "seq": 81,
           "turn": 4,
           "kind": "request.prepared",
           "at": 1767225600000,
           "data": {
             "version": 1,
             "runId": "run-4",
+            "run": 0,
             "step": 1,
             "strategyVersion": "1",
             "system": "FIXTURE system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a fixture agent.",
@@ -1862,6 +2194,7 @@
               "strategy": "window",
               "currentTurn": 4,
               "currentRun": "run-4",
+              "run": 0,
               "turnContext": "current",
               "replies": true,
               "stepContext": "tail",
@@ -1872,8 +2205,9 @@
                 "maxChars": 20000000
               }
             },
-            "through": "run-4:8",
-            "contextFingerprint": "f518144ead5",
+            "through": "run-4:10",
+            "contextFingerprint": "3623b0a2add",
+            "stableMessages": 17,
             "tools": [
               {
                 "name": "load_skill",
@@ -1914,12 +2248,19 @@
               },
               {
                 "name": "recall_context",
-                "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+                "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
                 "parameters": {
                   "type": "object",
                   "properties": {
                     "locator": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "The locator the shortened result shows."
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "The first character to return; 0 by default."
                     }
                   },
                   "required": [
@@ -1974,59 +2315,44 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 73,
+          "seq": 82,
           "turn": 4,
-          "kind": "tool.started",
+          "kind": "model.called",
           "at": 1767225600000,
           "data": {
+            "callId": "00000000-0000-4000-8000-000000000107",
+            "attempt": 1,
+            "purpose": "Loop",
+            "method": "Text",
+            "model": null,
+            "runId": "run-4",
+            "run": 0,
             "step": 1,
-            "invocationId": "run-4:call:1",
-            "tool": "note",
-            "input": {
-              "text": "gamma"
-            },
-            "labels": {},
-            "stage": null
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 74,
-          "turn": 4,
-          "kind": "tool.completed",
-          "at": 1767225600000,
-          "data": {
-            "step": 1,
-            "invocationId": "run-4:call:1",
-            "tool": "note",
-            "ok": true,
             "durationMs": 0,
-            "labels": {},
-            "stage": null
+            "usage": {
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 100,
+                "outputTokens": 10,
+                "totalTokens": 110,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
+            },
+            "outcome": {
+              "_tag": "Completed"
+            }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 75,
-          "turn": 4,
-          "kind": "tool.refused",
-          "at": 1767225600000,
-          "data": {
-            "step": 1,
-            "invocationId": "run-4:call:2",
-            "tool": "note",
-            "reason": "tool-call-limit",
-            "message": "note may be called at most 1 times per turn"
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 76,
+          "seq": 83,
           "turn": 4,
           "kind": "memory.message",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:9",
+            "entry": "run-4:11",
             "runId": "run-4",
             "step": 1,
             "at": 1767225600000,
@@ -2063,23 +2389,81 @@
                     "reasoningTokens": 0
                   }
                 }
-              }
+              },
+              "run": 0
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 77,
+          "seq": 84,
+          "turn": 4,
+          "kind": "step.usage",
+          "at": 1767225600000,
+          "data": {
+            "step": 1,
+            "run": 0,
+            "model": null,
+            "usage": {
+              "inputTokens": 100,
+              "outputTokens": 10,
+              "totalTokens": 110,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "reasoningTokens": 0
+            },
+            "finishReason": "tool-calls"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 85,
+          "turn": 4,
+          "kind": "tool.started",
+          "at": 1767225600000,
+          "data": {
+            "step": 1,
+            "invocationId": "run-4:call:1",
+            "toolCallId": "e1",
+            "tool": "note",
+            "input": {
+              "text": "gamma"
+            },
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 86,
+          "turn": 4,
+          "kind": "tool.completed",
+          "at": 1767225600000,
+          "data": {
+            "step": 1,
+            "invocationId": "run-4:call:1",
+            "toolCallId": "e1",
+            "tool": "note",
+            "ok": true,
+            "durationMs": 0,
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 87,
           "turn": 4,
           "kind": "memory.tool-result",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:10",
+            "entry": "run-4:12",
             "runId": "run-4",
             "step": 1,
             "at": 1767225600000,
             "body": {
               "toolCallId": "e1",
+              "run": 0,
               "toolName": "note",
               "isError": false,
               "encoded": true,
@@ -2093,24 +2477,40 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 78,
+          "seq": 88,
+          "turn": 4,
+          "kind": "tool.refused",
+          "at": 1767225600000,
+          "data": {
+            "step": 1,
+            "invocationId": "run-4:call:2",
+            "toolCallId": "e1b",
+            "tool": "note",
+            "reason": "tool-call-limit",
+            "message": "note may be called at most once per turn; use what its earlier calls returned"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 89,
           "turn": 4,
           "kind": "memory.tool-result",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:11",
+            "entry": "run-4:13",
             "runId": "run-4",
             "step": 1,
             "at": 1767225600000,
             "body": {
               "toolCallId": "e1b",
+              "run": 0,
               "toolName": "note",
               "isError": true,
               "encoded": {
                 "error": "ToolCallLimit",
-                "message": "note may be called at most 1 times per turn"
+                "message": "note may be called at most once per turn; use what its earlier calls returned"
               },
-              "view": "{\"error\":\"ToolCallLimit\",\"message\":\"note may be called at most 1 times per turn\"}",
+              "view": "{\"error\":\"ToolCallLimit\",\"message\":\"note may be called at most once per turn; use what its earlier calls returned\"}",
               "viewVersion": "raw",
               "subjects": [],
               "artifacts": [],
@@ -2120,41 +2520,23 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 79,
-          "turn": 4,
-          "kind": "step.usage",
-          "at": 1767225600000,
-          "data": {
-            "step": 1,
-            "model": null,
-            "usage": {
-              "inputTokens": 100,
-              "outputTokens": 10,
-              "totalTokens": 110,
-              "cacheReadTokens": 0,
-              "cacheWriteTokens": 0,
-              "reasoningTokens": 0
-            }
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 80,
+          "seq": 90,
           "turn": 4,
           "kind": "step.ended",
           "at": 1767225600000,
           "data": {
             "step": 1,
+            "run": 0,
             "status": "completed",
             "results": [
               {
-                "entry": "run-4:10",
+                "entry": "run-4:12",
                 "toolCallId": "e1",
                 "tool": "note",
                 "ok": true
               },
               {
-                "entry": "run-4:11",
+                "entry": "run-4:13",
                 "toolCallId": "e1b",
                 "tool": "note",
                 "ok": false
@@ -2164,12 +2546,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 81,
+          "seq": 91,
           "turn": 4,
           "kind": "completion.evaluated",
           "at": 1767225600000,
           "data": {
             "step": 1,
+            "run": 0,
             "verdict": {
               "complete": false,
               "awaiting": [],
@@ -2179,12 +2562,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 82,
+          "seq": 92,
           "turn": 4,
           "kind": "step.started",
           "at": 1767225600000,
           "data": {
             "step": 2,
+            "run": 0,
             "planned": false,
             "activeTools": [
               "load_skill",
@@ -2197,19 +2581,20 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 83,
+          "seq": 93,
           "turn": 4,
           "kind": "context.built",
           "at": 1767225600000,
           "data": {
             "step": 2,
             "turn": 4,
+            "run": 0,
             "strategy": "window",
             "strategyVersion": "1",
-            "fingerprint": "5af7ee4cd8c",
+            "fingerprint": "475b1e18db6",
             "systemFingerprint": "e35b4014ef",
-            "estimatedTokens": 1154,
-            "reservedTokens": 388,
+            "estimatedTokens": 1169,
+            "reservedTokens": 482,
             "budgetTokens": 64000,
             "compactions": 1,
             "activeTools": [
@@ -2223,13 +2608,14 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 84,
+          "seq": 94,
           "turn": 4,
           "kind": "request.prepared",
           "at": 1767225600000,
           "data": {
             "version": 1,
             "runId": "run-4",
+            "run": 0,
             "step": 2,
             "strategyVersion": "1",
             "system": "FIXTURE system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a fixture agent.",
@@ -2237,6 +2623,7 @@
               "strategy": "window",
               "currentTurn": 4,
               "currentRun": "run-4",
+              "run": 0,
               "turnContext": "current",
               "replies": true,
               "stepContext": "tail",
@@ -2247,8 +2634,9 @@
                 "maxChars": 20000000
               }
             },
-            "through": "run-4:11",
-            "contextFingerprint": "5af7ee4cd8c",
+            "through": "run-4:13",
+            "contextFingerprint": "475b1e18db6",
+            "stableMessages": 19,
             "tools": [
               {
                 "name": "load_skill",
@@ -2289,12 +2677,19 @@
               },
               {
                 "name": "recall_context",
-                "description": "Read the full text of an earlier result that was shortened to save context. Pass the locator shown in the shortened result.",
+                "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
                 "parameters": {
                   "type": "object",
                   "properties": {
                     "locator": {
-                      "type": "string"
+                      "type": "string",
+                      "description": "The locator the shortened result shows."
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "The first character to return; 0 by default."
                     }
                   },
                   "required": [
@@ -2347,45 +2742,44 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 85,
+          "seq": 95,
           "turn": 4,
-          "kind": "tool.started",
+          "kind": "model.called",
           "at": 1767225600000,
           "data": {
+            "callId": "00000000-0000-4000-8000-000000000108",
+            "attempt": 1,
+            "purpose": "Loop",
+            "method": "Text",
+            "model": null,
+            "runId": "run-4",
+            "run": 0,
             "step": 2,
-            "invocationId": "run-4:call:3",
-            "tool": "deliver",
-            "input": {
-              "text": "record-gamma-a"
-            },
-            "labels": {},
-            "stage": null
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 86,
-          "turn": 4,
-          "kind": "tool.completed",
-          "at": 1767225600000,
-          "data": {
-            "step": 2,
-            "invocationId": "run-4:call:3",
-            "tool": "deliver",
-            "ok": true,
             "durationMs": 0,
-            "labels": {},
-            "stage": null
+            "usage": {
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 100,
+                "outputTokens": 10,
+                "totalTokens": 110,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
+            },
+            "outcome": {
+              "_tag": "Completed"
+            }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 87,
+          "seq": 96,
           "turn": 4,
           "kind": "memory.message",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:12",
+            "entry": "run-4:14",
             "runId": "run-4",
             "step": 2,
             "at": 1767225600000,
@@ -2413,23 +2807,81 @@
                     "reasoningTokens": 0
                   }
                 }
-              }
+              },
+              "run": 0
             }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 88,
+          "seq": 97,
+          "turn": 4,
+          "kind": "step.usage",
+          "at": 1767225600000,
+          "data": {
+            "step": 2,
+            "run": 0,
+            "model": null,
+            "usage": {
+              "inputTokens": 100,
+              "outputTokens": 10,
+              "totalTokens": 110,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "reasoningTokens": 0
+            },
+            "finishReason": "tool-calls"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 98,
+          "turn": 4,
+          "kind": "tool.started",
+          "at": 1767225600000,
+          "data": {
+            "step": 2,
+            "invocationId": "run-4:call:3",
+            "toolCallId": "e2",
+            "tool": "deliver",
+            "input": {
+              "text": "record-gamma-a"
+            },
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 99,
+          "turn": 4,
+          "kind": "tool.completed",
+          "at": 1767225600000,
+          "data": {
+            "step": 2,
+            "invocationId": "run-4:call:3",
+            "toolCallId": "e2",
+            "tool": "deliver",
+            "ok": true,
+            "durationMs": 0,
+            "labels": {},
+            "stage": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 100,
           "turn": 4,
           "kind": "memory.tool-result",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:13",
+            "entry": "run-4:15",
             "runId": "run-4",
             "step": 2,
             "at": 1767225600000,
             "body": {
               "toolCallId": "e2",
+              "run": 0,
               "toolName": "deliver",
               "isError": false,
               "encoded": true,
@@ -2443,35 +2895,17 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 89,
-          "turn": 4,
-          "kind": "step.usage",
-          "at": 1767225600000,
-          "data": {
-            "step": 2,
-            "model": null,
-            "usage": {
-              "inputTokens": 100,
-              "outputTokens": 10,
-              "totalTokens": 110,
-              "cacheReadTokens": 0,
-              "cacheWriteTokens": 0,
-              "reasoningTokens": 0
-            }
-          }
-        },
-        {
-          "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 90,
+          "seq": 101,
           "turn": 4,
           "kind": "step.ended",
           "at": 1767225600000,
           "data": {
             "step": 2,
+            "run": 0,
             "status": "completed",
             "results": [
               {
-                "entry": "run-4:13",
+                "entry": "run-4:15",
                 "toolCallId": "e2",
                 "tool": "deliver",
                 "ok": true
@@ -2481,12 +2915,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 91,
+          "seq": 102,
           "turn": 4,
           "kind": "completion.evaluated",
           "at": 1767225600000,
           "data": {
             "step": 2,
+            "run": 0,
             "verdict": {
               "complete": true,
               "awaiting": [],
@@ -2496,12 +2931,12 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 92,
+          "seq": 103,
           "turn": 4,
           "kind": "turn.reply",
           "at": 1767225600000,
           "data": {
-            "entry": "run-4:14",
+            "entry": "run-4:16",
             "runId": "run-4",
             "step": 0,
             "at": 1767225600000,
@@ -2513,7 +2948,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 93,
+          "seq": 104,
           "turn": 4,
           "kind": "turn.ended",
           "at": 1767225600000,
@@ -2524,7 +2959,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 94,
+          "seq": 105,
           "turn": null,
           "kind": "inbox.queued",
           "at": 1767225600000,
@@ -2539,13 +2974,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 95,
+          "seq": 106,
           "turn": 5,
           "kind": "turn.started",
           "at": 1767225600000,
           "data": {
-            "runId": "00000000-0000-4000-8000-000000000106",
-            "key": "00000000-0000-4000-8000-000000000106",
+            "runId": "00000000-0000-4000-8000-000000000109",
+            "key": "00000000-0000-4000-8000-000000000109",
             "origin": "inbox",
             "userMessage": {
               "text": "Remind the user about record-alpha-b."
@@ -2554,13 +2989,13 @@
             "claimed": [
               "reminder-1"
             ],
-            "entry": "00000000-0000-4000-8000-000000000106:0",
+            "entry": "00000000-0000-4000-8000-000000000109:0",
             "at": 1767225600000
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 96,
+          "seq": 107,
           "turn": 5,
           "kind": "turn.ended",
           "at": 1767225600000,
@@ -2574,13 +3009,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 97,
+          "seq": 108,
           "turn": 6,
           "kind": "turn.started",
           "at": 1767225600000,
           "data": {
-            "runId": "00000000-0000-4000-8000-000000000107",
-            "key": "00000000-0000-4000-8000-000000000107",
+            "runId": "00000000-0000-4000-8000-00000000010a",
+            "key": "00000000-0000-4000-8000-00000000010a",
             "origin": "inbox",
             "userMessage": {
               "text": "Remind the user about record-alpha-b."
@@ -2589,13 +3024,13 @@
             "claimed": [
               "reminder-1"
             ],
-            "entry": "00000000-0000-4000-8000-000000000107:0",
+            "entry": "00000000-0000-4000-8000-00000000010a:0",
             "at": 1767225600000
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 98,
+          "seq": 109,
           "turn": 6,
           "kind": "turn.ended",
           "at": 1767225600000,
@@ -2609,7 +3044,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 99,
+          "seq": 110,
           "turn": 6,
           "kind": "inbox.dropped",
           "at": 1767225600000,
@@ -2620,7 +3055,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 100,
+          "seq": 111,
           "turn": null,
           "kind": "task.started",
           "at": 1767225600000,
@@ -2635,7 +3070,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 101,
+          "seq": 112,
           "turn": null,
           "kind": "inbox.queued",
           "at": 1767225600000,
@@ -2652,13 +3087,13 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 102,
+          "seq": 113,
           "turn": 7,
           "kind": "turn.started",
           "at": 1767225600000,
           "data": {
-            "runId": "00000000-0000-4000-8000-00000000010a",
-            "key": "00000000-0000-4000-8000-00000000010a",
+            "runId": "00000000-0000-4000-8000-00000000010c",
+            "key": "00000000-0000-4000-8000-00000000010c",
             "origin": "inbox",
             "userMessage": {
               "text": "[Background task 00000000-0000-4000-8000-000000007a51 completed]\n<task-output>\nfound find beta\n</task-output>"
@@ -2667,13 +3102,16 @@
             "claimed": [
               "task:00000000-0000-4000-8000-000000007a51"
             ],
-            "entry": "00000000-0000-4000-8000-00000000010a:0",
-            "at": 1767225600000
+            "entry": "00000000-0000-4000-8000-00000000010c:0",
+            "at": 1767225600000,
+            "meta": {
+              "runId": "run-4"
+            }
           }
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 103,
+          "seq": 114,
           "turn": 7,
           "kind": "turn.ended",
           "at": 1767225600000,
@@ -2684,7 +3122,7 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 104,
+          "seq": 115,
           "turn": null,
           "kind": "task.started",
           "at": 1767225600000,
@@ -2697,12 +3135,488 @@
         },
         {
           "session": "00000000-0000-4000-8000-00000000601d",
-          "seq": 105,
+          "seq": 116,
           "turn": null,
           "kind": "task.cancelled",
           "at": 1767225600000,
           "data": {
             "taskId": "00000000-0000-4000-8000-000000007a52"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 117,
+          "turn": null,
+          "kind": "inbox.queued",
+          "at": 1767225600000,
+          "data": {
+            "id": "steer-1",
+            "source": {
+              "kind": "host",
+              "channel": "fixture"
+            },
+            "content": "",
+            "input": {
+              "userMessage": {
+                "text": "Use the revised record selection."
+              },
+              "delivery": "steer"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 118,
+          "turn": 8,
+          "kind": "turn.started",
+          "at": 1767225600000,
+          "data": {
+            "runId": "run-8",
+            "key": "run-8",
+            "origin": "user",
+            "userMessage": {
+              "text": "apply the queued update"
+            },
+            "command": {},
+            "claimed": [],
+            "entry": "run-8:0",
+            "at": 1767225600000
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 119,
+          "turn": 8,
+          "kind": "decision.recorded",
+          "at": 1767225600000,
+          "data": {
+            "record": {
+              "version": 1,
+              "id": "run-8:skill-selection:0",
+              "family": "skill-selection",
+              "contextHash": "3d19b8cf68",
+              "candidateHash": "4e0a621020",
+              "policyVersion": "keyword@1",
+              "candidates": [
+                {
+                  "id": "delivery",
+                  "description": "Deliver a final answer."
+                },
+                {
+                  "id": "notes",
+                  "description": "Take notes."
+                }
+              ],
+              "attempts": [],
+              "selection": null,
+              "validation": "abstained",
+              "fallback": null,
+              "applied": null,
+              "probabilities": {
+                "notes": 0.1
+              }
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 120,
+          "turn": 8,
+          "kind": "memory.section",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-8:1",
+            "runId": "run-8",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "sectionId": "turn-note",
+              "version": "1",
+              "text": "TURN active: load_skill, lookup, recall_context, deliver, note"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 121,
+          "turn": 8,
+          "kind": "memory.compaction",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-8:2",
+            "runId": "run-8",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "strategy": "window",
+              "version": "1",
+              "action": {
+                "_tag": "CompactViews",
+                "entries": [
+                  "run-4:8"
+                ],
+                "texts": [
+                  "(earlier lookup found record-gamma-a, record-gamma-b, record-gamma-c)"
+                ]
+              }
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 122,
+          "turn": 8,
+          "kind": "step.started",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "planned": false,
+            "activeTools": [
+              "load_skill",
+              "lookup",
+              "recall_context",
+              "deliver",
+              "note"
+            ]
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 123,
+          "turn": 8,
+          "kind": "memory.message",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-8:3",
+            "runId": "run-8",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "message": {
+                "role": "user",
+                "content": "Use the revised record selection."
+              },
+              "run": 0,
+              "inbox": "steer-1"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 124,
+          "turn": 8,
+          "kind": "inbox.taken",
+          "at": 1767225600000,
+          "data": {
+            "id": "steer-1",
+            "entry": "run-8:3"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 125,
+          "turn": 8,
+          "kind": "context.built",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "turn": 8,
+            "run": 0,
+            "strategy": "window",
+            "strategyVersion": "1",
+            "fingerprint": "e06ef7181005",
+            "systemFingerprint": "e35b4014ef",
+            "estimatedTokens": 1366,
+            "reservedTokens": 482,
+            "budgetTokens": 64000,
+            "compactions": 2,
+            "activeTools": [
+              "load_skill",
+              "lookup",
+              "recall_context",
+              "deliver",
+              "note"
+            ]
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 126,
+          "turn": 8,
+          "kind": "request.prepared",
+          "at": 1767225600000,
+          "data": {
+            "version": 1,
+            "runId": "run-8",
+            "run": 0,
+            "step": 0,
+            "strategyVersion": "1",
+            "system": "FIXTURE system prefix.\n\nSTATIC rules.\n\nSTYLE plain.\n\n## Skills (call load_skill before doing work one covers; its tools become available next step)\n- delivery: Deliver a final answer.\n- notes: Take notes.\n\nSESSION persona: a fixture agent.",
+            "render": {
+              "strategy": "window",
+              "currentTurn": 8,
+              "currentRun": "run-8",
+              "run": 0,
+              "turnContext": "current",
+              "replies": true,
+              "stepContext": "tail",
+              "digests": true,
+              "media": {
+                "mode": "inline",
+                "maxImages": 8,
+                "maxChars": 20000000
+              }
+            },
+            "through": "run-8:3",
+            "contextFingerprint": "e06ef7181005",
+            "stableMessages": 27,
+            "tools": [
+              {
+                "name": "load_skill",
+                "description": "Load one or more skills from the catalogue: returns their instructions and makes their tools available from the next step. Load a skill before doing work it covers.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "skills": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "skills"
+                  ],
+                  "additionalProperties": false
+                },
+                "provider": null
+              },
+              {
+                "name": "lookup",
+                "description": "Look records up by query.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "query": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "query"
+                  ],
+                  "additionalProperties": false
+                },
+                "provider": null
+              },
+              {
+                "name": "recall_context",
+                "description": "Read an earlier result that was shortened to save context, by the locator its shortened form shows. Returns at most 8000 characters from offset (0 by default); when more remain, the reply ends with the offset to pass next.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "locator": {
+                      "type": "string",
+                      "description": "The locator the shortened result shows."
+                    },
+                    "offset": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991,
+                      "description": "The first character to return; 0 by default."
+                    }
+                  },
+                  "required": [
+                    "locator"
+                  ],
+                  "additionalProperties": false
+                },
+                "provider": null
+              },
+              {
+                "name": "deliver",
+                "description": "Deliver the final answer.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "additionalProperties": false
+                },
+                "provider": null
+              },
+              {
+                "name": "note",
+                "description": "Take a note.",
+                "parameters": {
+                  "type": "object",
+                  "properties": {
+                    "text": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "text"
+                  ],
+                  "additionalProperties": false
+                },
+                "provider": null
+              }
+            ],
+            "toolChoice": "auto",
+            "model": null,
+            "cacheKey": "fixture:00000000-0000-4000-8000-00000000601d",
+            "callPolicy": null
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 127,
+          "turn": 8,
+          "kind": "model.called",
+          "at": 1767225600000,
+          "data": {
+            "callId": "00000000-0000-4000-8000-00000000010d",
+            "attempt": 1,
+            "purpose": "Loop",
+            "method": "Text",
+            "model": null,
+            "runId": "run-8",
+            "run": 0,
+            "step": 0,
+            "durationMs": 0,
+            "usage": {
+              "_tag": "Known",
+              "usage": {
+                "inputTokens": 100,
+                "outputTokens": 10,
+                "totalTokens": 110,
+                "cacheReadTokens": 0,
+                "cacheWriteTokens": 0,
+                "reasoningTokens": 0
+              }
+            },
+            "outcome": {
+              "_tag": "Completed"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 128,
+          "turn": 8,
+          "kind": "memory.message",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-8:4",
+            "runId": "run-8",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "message": {
+                "role": "assistant",
+                "content": [
+                  {
+                    "type": "text",
+                    "text": "the revised selection is ready"
+                  }
+                ],
+                "providerOptions": {
+                  "engine": {
+                    "inputTokens": 100,
+                    "outputTokens": 10,
+                    "totalTokens": 110,
+                    "cacheReadTokens": 0,
+                    "cacheWriteTokens": 0,
+                    "reasoningTokens": 0
+                  }
+                }
+              },
+              "run": 0
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 129,
+          "turn": 8,
+          "kind": "step.usage",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "model": null,
+            "usage": {
+              "inputTokens": 100,
+              "outputTokens": 10,
+              "totalTokens": 110,
+              "cacheReadTokens": 0,
+              "cacheWriteTokens": 0,
+              "reasoningTokens": 0
+            },
+            "finishReason": "stop"
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 130,
+          "turn": 8,
+          "kind": "step.ended",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "status": "completed",
+            "results": []
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 131,
+          "turn": 8,
+          "kind": "completion.evaluated",
+          "at": 1767225600000,
+          "data": {
+            "step": 0,
+            "run": 0,
+            "verdict": {
+              "complete": false,
+              "awaiting": [],
+              "facts": {}
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 132,
+          "turn": 8,
+          "kind": "turn.reply",
+          "at": 1767225600000,
+          "data": {
+            "entry": "run-8:5",
+            "runId": "run-8",
+            "step": 0,
+            "at": 1767225600000,
+            "body": {
+              "outcome": "completed",
+              "reply": "the revised selection is ready"
+            }
+          }
+        },
+        {
+          "session": "00000000-0000-4000-8000-00000000601d",
+          "seq": 133,
+          "turn": 8,
+          "kind": "turn.ended",
+          "at": 1767225600000,
+          "data": {
+            "reason": "completed",
+            "failure": null
           }
         }
       ]
@@ -2719,7 +3633,7 @@
         },
         "parent": {
           "id": "00000000-0000-4000-8000-00000000601d",
-          "through": 98,
+          "through": 109,
           "turnAtFork": 6
         }
       },
@@ -2731,18 +3645,23 @@
           "kind": "turn.started",
           "at": 1767225600000,
           "data": {
-            "runId": "00000000-0000-4000-8000-000000000109",
+            "runId": "00000000-0000-4000-8000-00000000010b",
             "key": "task:00000000-0000-4000-8000-000000007a51",
-            "origin": "user",
+            "origin": "task",
             "userMessage": {
               "text": "find beta"
             },
-            "command": {
-              "task": "00000000-0000-4000-8000-000000007a51"
-            },
+            "command": {},
             "claimed": [],
-            "entry": "00000000-0000-4000-8000-000000000109:0",
-            "at": 1767225600000
+            "entry": "00000000-0000-4000-8000-00000000010b:0",
+            "at": 1767225600000,
+            "meta": {
+              "runId": "run-4"
+            },
+            "task": {
+              "taskId": "00000000-0000-4000-8000-000000007a51",
+              "parent": "00000000-0000-4000-8000-00000000601d"
+            }
           }
         },
         {

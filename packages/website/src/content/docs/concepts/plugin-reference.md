@@ -1833,6 +1833,8 @@ Provides: none
 
 Requires: `efferent/RunContext`, `efferent/TurnEvents`
 
+Optional: `@xandreed/core/CurrentModelCallRecorder`
+
 ### Defaults
 
 ```json

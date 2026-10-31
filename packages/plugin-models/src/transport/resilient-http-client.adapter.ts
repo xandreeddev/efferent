@@ -1,9 +1,9 @@
-import { Clock, Duration, Effect, Inspectable, Match, Option, Random, Ref, Schema, Stream } from "effect"
+import { Clock, Duration, Effect, Exit, Inspectable, Match, Option, Random, Ref, Schema, Stream } from "effect"
 import { AiError } from "effect/ai"
 import { HttpClient, HttpClientError, HttpClientResponse, UrlParams } from "effect/http"
 import type { HttpClientRequest } from "effect/http"
-import { modelFailureMessageOf, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
-import type { ModelFailureKind } from "@xandreed/core"
+import { isTurnError, modelFailureMessageOf, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
+import type { ModelCallMethod, ModelFailureKind, ModelSelection, TurnError } from "@xandreed/core"
 import { ModelRequestState, ModelRetryPolicy } from "../llm/model-retry-policy.entity.js"
 import { enterFallbackState, retryableModelFailure, retryDelayMillis, startAttemptState } from "../llm/model-retry-policy.entity.functions.js"
 import { CurrentModelRequestCall, CurrentModelRetryPolicy } from "../ports/model-retry-policy.port.js"
@@ -11,8 +11,11 @@ import { ProviderErrorBody } from "../llm/provider-failure.entity.js"
 import type { ProviderFailureProtocol } from "../llm/provider-failure.entity.js"
 import { classifyAiError } from "../llm/provider-failure.entity.functions.js"
 import { classifyLlmError } from "../llm/retry.js"
+import { attachModelAttempt, beginModelAttempt, completeModelAttempt, completePendingAttempts, makeCompletionCall, observeModelBody } from "../llm/model-completion.adapter.js"
+import type { ModelAttempt, ModelCompletionCall } from "../llm/model-completion.adapter.js"
+import { CurrentModelCallMetadataOwner, CurrentModelCallMethod, CurrentModelCallSelection } from "../ports/model-call-completion.port.js"
 
-export type ResilientHttpError = HttpClientError.HttpClientError | AiError.AiError
+export type ResilientHttpError = HttpClientError.HttpClientError | AiError.AiError | TurnError
 type BodyReaders = "json" | "text" | "arrayBuffer" | "urlParamsBody" | "formData" | "stream"
 /** Exact body-reader error channels before the existing SDK-boundary adaptation. */
 export type ResilientHttpResponse = Omit<HttpClientResponse.HttpClientResponse, BodyReaders> & {
@@ -22,12 +25,13 @@ export type ResilientHttpResponse = Omit<HttpClientResponse.HttpClientResponse, 
   readonly urlParamsBody: Effect.Effect<UrlParams.UrlParams, ResilientHttpError>
   readonly formData: Effect.Effect<FormData, ResilientHttpError>
   readonly stream: Stream.Stream<Uint8Array, ResilientHttpError>
-  readonly modelAttempt: { readonly call: ModelRequestCall; readonly ordinal: number }
+  readonly modelAttempt: { readonly call: ModelRequestCall; readonly ordinal: number; readonly completion: ModelAttempt }
 }
 
 /** One call's ephemeral identity and observable physical-attempt state; no stored ledger. */
 export interface ModelRequestCall {
   readonly policy: ModelRetryPolicy
+  readonly completion: ModelCompletionCall
   readonly startedAt: number
   readonly deadline: number
   readonly reserveFallback: boolean
@@ -40,7 +44,7 @@ export const makeModelRequestCall = Effect.fnUntraced(function* (options: { read
   const policy = yield* Schema.decodeUnknownEffect(ModelRetryPolicy)(yield* CurrentModelRetryPolicy, { onExcessProperty: "error" }).pipe(Effect.mapError(() => stampAiErrorFailure(AiError.make({ module: "Models", method: "requestPolicy", reason: new AiError.InvalidRequestError({ description: modelFailureMessageOf("InvalidRequest") }) }), "InvalidRequest")))
   const startedAt = yield* Clock.currentTimeMillis
   const state = yield* Ref.make<ModelRequestState>({ _tag: "Ready", rung: "Primary", attempts: 0 })
-  return { policy, startedAt, deadline: startedAt + policy.totalTimeoutMs, reserveFallback: options.reserveFallback, state }
+  return { policy, completion: yield* makeCompletionCall(), startedAt, deadline: startedAt + policy.totalTimeoutMs, reserveFallback: options.reserveFallback, state }
 })
 
 export const modelRequestSnapshot = (call: ModelRequestCall): Effect.Effect<ModelRequestState> => Ref.get(call.state)
@@ -77,7 +81,7 @@ class GuardedResponse implements ResilientHttpResponse {
     original: HttpClientResponse.HttpClientResponse,
     readonly stream: Stream.Stream<Uint8Array, ResilientHttpError>,
     readonly buffered: Effect.Effect<Uint8Array<ArrayBuffer>, ResilientHttpError>,
-    readonly modelAttempt: { readonly call: ModelRequestCall; readonly ordinal: number },
+    readonly modelAttempt: { readonly call: ModelRequestCall; readonly ordinal: number; readonly completion: ModelAttempt },
   ) { this.#original = original }
   get request() { return this.#original.request }
   get url() { return this.#original.url }
@@ -89,7 +93,7 @@ class GuardedResponse implements ResilientHttpResponse {
   get pipe() { return this.#original.pipe }
   get arrayBuffer() { return Effect.map(this.buffered, (bytes) => bytes.buffer) }
   get text() { return Effect.map(this.buffered, (bytes) => new TextDecoder().decode(bytes)) }
-  get json() { return this.text.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))), Effect.mapError((cause) => AiError.isAiError(cause) || HttpClientError.isHttpClientError(cause) ? cause : this.decodeFailure(cause))) }
+  get json() { return this.text.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Json))), Effect.mapError((cause) => AiError.isAiError(cause) || HttpClientError.isHttpClientError(cause) || isTurnError(cause) ? cause : this.decodeFailure(cause))) }
   get urlParamsBody() { return Effect.map(this.text, (text) => UrlParams.fromInput(new URLSearchParams(text))) }
   get formData() { return this.buffered.pipe(Effect.flatMap((bytes) => Effect.tryPromise({ try: () => new Response(bytes, { headers: this.headers }).formData(), catch: (cause) => this.decodeFailure(cause) }))) }
   private decodeFailure(cause: unknown) { return new HttpClientError.HttpClientError({ reason: new HttpClientError.DecodeError({ request: this.request, response: this.#original, cause, description: modelFailureMessageOf("InvalidResponse") }) }) }
@@ -98,10 +102,10 @@ class GuardedResponse implements ResilientHttpResponse {
   [Inspectable.NodeInspectSymbol]() { return this.toJSON() }
 }
 
-const wrapResponse = Effect.fnUntraced(function* (response: HttpClientResponse.HttpClientResponse, call: ModelRequestCall, ordinal: number) {
+const wrapResponse = Effect.fnUntraced(function* (response: HttpClientResponse.HttpClientResponse, call: ModelRequestCall, ordinal: number, completion: ModelAttempt) {
   const stream = guardedBody(response, call)
   const buffered = yield* Effect.cached(Stream.runCollect(stream).pipe(Effect.map(concatenate)))
-  return new GuardedResponse(response, stream, buffered, { call, ordinal })
+  return attachModelAttempt(completion, new GuardedResponse(response, stream, buffered, { call, ordinal, completion }))
 })
 
 const httpDetails = (response: HttpClientResponse.HttpClientResponse, body: string): typeof AiError.HttpContext.Type => {
@@ -130,7 +134,7 @@ const responseFailure = (response: HttpClientResponse.HttpClientResponse, text: 
   return stampAiErrorFailure(AiError.make({ module: "Models", method: "request", reason }), kind)
 }
 
-const errorBody = Effect.fnUntraced(function* (response: HttpClientResponse.HttpClientResponse, call: ModelRequestCall): Effect.fn.Return<string, ResilientHttpError> {
+const errorBody = Effect.fnUntraced(function* (response: HttpClientResponse.HttpClientResponse, call: ModelRequestCall, attempt: ModelAttempt): Effect.fn.Return<string, ResilientHttpError> {
   const bytes = new Uint8Array(65536)
   const retained = yield* Ref.make(0)
   const size = yield* Stream.runFoldEffect(guardedBody(response, call), () => 0, (size, piece) => {
@@ -139,12 +143,12 @@ const errorBody = Effect.fnUntraced(function* (response: HttpClientResponse.Http
     return size + piece.byteLength > bytes.byteLength
       ? Effect.fail(stampAiErrorFailure(AiError.make({ module: "Models", method: "request", reason: new AiError.InvalidResponseError({ description: modelFailureMessageOf("InvalidResponse"), http: httpDetails(response, new TextDecoder().decode(bytes)) }) }), "InvalidResponse"))
       : Ref.set(retained, size + piece.byteLength).pipe(Effect.as(size + piece.byteLength))
-  }).pipe(Effect.catchTag("HttpClientError", (error) =>
+  }).pipe(Effect.tap((size) => observeModelBody(attempt, new TextDecoder().decode(bytes.subarray(0, size)), true)), Effect.catchTag("HttpClientError", (error) =>
     // These are byte-read failures on an already rejected response, before
     // SDK/JSON decoding. Known status and any retained evidence still apply.
     ["DecodeError", "EmptyBodyError", "TransportError"].includes(error.reason._tag)
-      ? Ref.get(retained) : Effect.fail(error),
-  ))
+      ? Ref.get(retained).pipe(Effect.tap((size) => observeModelBody(attempt, new TextDecoder().decode(bytes.subarray(0, size)), false))) : Effect.fail(error),
+  ), Effect.tapError(() => Ref.get(retained).pipe(Effect.flatMap((size) => observeModelBody(attempt, new TextDecoder().decode(bytes.subarray(0, size)), false)))))
   return new TextDecoder().decode(bytes.subarray(0, size))
 })
 
@@ -187,14 +191,17 @@ export const resilientRequest = Effect.fn("models.request")(function* <R>(client
     const started = yield* Ref.modify(call.state, (state) => Option.match(startAttemptState(state, call.policy, call.reserveFallback), { onNone: () => [Option.none<number>(), state] as const, onSome: (next) => [Option.some(next.attempts), next] as const }))
     if (Option.isNone(started)) return yield* Option.match(previous, { onNone: () => Effect.fail(stampAiErrorFailure(AiError.make({ module: "Models", method: "request", reason: new AiError.InvalidRequestError({ description: modelFailureMessageOf("InvalidRequest") }) }), "InvalidRequest")), onSome: Effect.fail })
     const ordinal = started.value
+    const attempt = yield* beginModelAttempt(call.completion, ordinal, options.protocol)
     const execute = client.execute(request).pipe(Effect.provideService(CurrentModelRequestCall, Option.some(call)), Effect.catchTag("HttpClientError", (error) => error.reason._tag === "StatusCodeError" ? Effect.succeed(error.reason.response) : Effect.fail(error)))
     const result = yield* Effect.result(pendingRead(execute, call, call.policy.requestTimeoutMs).pipe(Effect.flatMap((response): Effect.Effect<ResilientHttpResponse, ResilientHttpError> => response.status >= 200 && response.status < 300
-      ? Ref.update(call.state, (state): ModelRequestState => state._tag === "Sending" && state.attempts === ordinal ? { _tag: "Committed", rung: state.rung, attempts: ordinal } : state).pipe(Effect.andThen(wrapResponse(response, call, ordinal)))
-      : errorBody(response, call).pipe(Effect.flatMap((body) => Effect.fail(responseFailure(response, body, options.protocol)))),
+      ? Ref.update(call.state, (state): ModelRequestState => state._tag === "Sending" && state.attempts === ordinal ? { _tag: "Committed", rung: state.rung, attempts: ordinal } : state).pipe(Effect.andThen(wrapResponse(response, call, ordinal, attempt)))
+      : errorBody(response, call, attempt).pipe(Effect.flatMap((body) => Effect.fail(responseFailure(response, body, options.protocol)))),
     )))
     if (result._tag === "Success") return result.success
     const failure = result.failure
+    if (isTurnError(failure)) return yield* Effect.fail(failure)
     const kind = errorKind(failure)
+    yield* completeModelAttempt(attempt, { _tag: "Failed", failure: Option.some(kind) })
     const now = yield* Clock.currentTimeMillis
     const hint = AiError.isAiError(failure) && "http" in failure.reason ? Option.fromNullishOr(failure.reason.http?.response?.headers["retry-after"]) : Option.none()
     const serverHint = Option.filter(hint, (value): value is string => typeof value === "string")
@@ -203,10 +210,41 @@ export const resilientRequest = Effect.fn("models.request")(function* <R>(client
     const state = yield* Ref.get(call.state)
     return Option.isSome(startAttemptState(state, call.policy, call.reserveFallback)) ? yield* run(Option.some(failure)) : yield* Effect.fail(failure)
   })
-  return yield* run(Option.none())
+  return yield* run(Option.none()).pipe(Effect.onExit((exit) => Exit.isFailure(exit) ? completePendingAttempts(call.completion, exit) : Effect.void))
 })
 
 export const resilientHttpClient = <R>(client: HttpClient.HttpClient.With<HttpClientError.HttpClientError, R>, options: { readonly protocol: ProviderFailureProtocol; readonly adaptResponse: (response: ResilientHttpResponse) => HttpClientResponse.HttpClientResponse }): HttpClient.HttpClient.With<ResilientHttpError, R> => HttpClient.makeWith(
   (prepared) => Effect.flatMap(prepared, (request) => resilientRequest(HttpClient.makeWith(client.postprocess, Effect.succeed), request, options).pipe(Effect.map(options.adaptResponse))),
   client.preprocess,
 )
+
+
+/** One provider invocation owns cleanup of a handed-off body that failed before raw decoding. */
+export const withModelRequestCall = <A, E, R>(method: ModelCallMethod, selection: ModelSelection, operation: Effect.Effect<A, E, R>): Effect.Effect<A, E | AiError.AiError | TurnError, R> => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+  const call = yield* requestCall()
+  const inherited = Option.contains(yield* CurrentModelCallMetadataOwner, call.completion.callId)
+  const effectiveMethod = inherited ? yield* CurrentModelCallMethod : method
+  const effectiveSelection = inherited ? yield* CurrentModelCallSelection : Option.some(selection)
+  const result = yield* Effect.exit(restore(operation.pipe(
+    Effect.provideService(CurrentModelRequestCall, Option.some(call)),
+    Effect.provideService(CurrentModelCallMethod, effectiveMethod), Effect.provideService(CurrentModelCallSelection, effectiveSelection),
+    Effect.provideService(CurrentModelCallMetadataOwner, Option.some(call.completion.callId)),
+  )))
+  yield* completePendingAttempts(call.completion, result)
+  return yield* Exit.match(result, { onSuccess: Effect.succeed, onFailure: Effect.failCause })
+}))
+
+/** Fixed SDK streams bridge an original recorder TurnError as a defect; no data/error relabeling. */
+export const withModelRequestStream = <A, E, R>(method: ModelCallMethod, selection: ModelSelection, stream: Stream.Stream<A, E, R>): Stream.Stream<A, E | AiError.AiError | TurnError, R> => Stream.unwrap(Effect.gen(function* () {
+  const call = yield* requestCall()
+  const inherited = Option.contains(yield* CurrentModelCallMetadataOwner, call.completion.callId)
+  const effectiveMethod = inherited ? yield* CurrentModelCallMethod : method
+  const effectiveSelection = inherited ? yield* CurrentModelCallSelection : Option.some(selection)
+  return stream.pipe(
+    Stream.provideService(CurrentModelRequestCall, Option.some(call)),
+    Stream.provideService(CurrentModelCallMethod, effectiveMethod), Stream.provideService(CurrentModelCallSelection, effectiveSelection),
+    Stream.provideService(CurrentModelCallMetadataOwner, Option.some(call.completion.callId)),
+    Stream.onEnd(completePendingAttempts(call.completion, Exit.succeed(undefined))),
+    Stream.onExit((exit) => completePendingAttempts(call.completion, Exit.isSuccess(exit) ? Exit.interrupt() : exit).pipe(Effect.catch((error) => Effect.die(error)))),
+  )
+}))

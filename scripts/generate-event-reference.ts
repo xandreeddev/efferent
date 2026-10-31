@@ -50,6 +50,7 @@ const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensi
   "inbox.queued": { writer: "plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input)", sensitive: "The item's content, user message, attachments and source." },
   "inbox.dropped": { writer: "plugin-sessions: the end of the last turn that took the item and failed", sensitive: "None: the item id." },
   "inbox.taken": { writer: "plugin-sessions: `TurnWriter.take`, in the same commit as the exact user memory.message and removal of the pending steer", sensitive: "None: the input id and raw memory entry id; message and image bytes stay in memory.message." },
+  "model.called": { writer: "The turn-owned model-call recorder, directly appended and flushed before notification", sensitive: "Actual model selection, usage precision/counts, outcome and correlation metadata; no prompts, credentials, endpoint settings or provider bodies." },
 }
 
 /** Where a bus event recorded elsewhere ends up. */
@@ -57,6 +58,7 @@ const RECORDED_AS: Readonly<Record<string, string>> = {
   "turn.started": "the session's own `turn.started`, written when the turn began",
   "turn.ended": "memory's `turn.reply` and the session's own `turn.ended`",
   "skills.activated": "memory's `memory.skills`",
+  "model.called": "the recorder's directly appended and flushed `model.called` fact",
 }
 
 /** A suggested HTTP status for each begin code, for a host that serves turns over HTTP. */
@@ -88,7 +90,7 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "images.unavailable", where: "imageResizerPlugin activation", meaning: "No configured image conversion tool is available through Bash. Install ImageMagick, libvips or sips, or provide another ImageResizer adapter." },
   { code: "turn.closed", where: "`Agent.turn`, the turn writer (`TurnClosed`); a run started after the reply (`TurnMemory.startRun`)", meaning: "The turn takes no more writes: someone else closed it (`cancelled`; `interrupted`, reaped; `removed`, its session removed), or it `ended` (its own end stored or under way, or its scope closed). The writer and `Agent.turn` fail with `TurnClosed`, whose `reason` says which; this is the code it stands for. A run of the step loop started once the turn's reply is recorded fails with a `HarnessError` of this code: the reply ends the turn's runs." },
   { code: "turn.failed", where: "stored `turn.ended` failure (`turnEndingOf`)", meaning: "The turn failed with an error `harnessCodeOf` gives no code for (a tagged error without a `code`, or an untagged value, even one carrying a `code` such as a Node error's); the message is `<_tag>: <message>`, or the error as text (reason failed)." },
-  { code: "turn.defect", where: "stored `turn.ended` failure (`turnEndingOf`)", meaning: "The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `TurnError` carried as a defect (a `HarnessError`, `TurnClosed`, ...) back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`." },
+  { code: "turn.defect", where: "stored `turn.ended` failure (`turnEndingOf`) or the `recordCompletion` recorder boundary", meaning: "The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `recordCompletion` converts an unexpected recorder defect to a typed `HarnessError` with a fixed recording-failure message and the original defect as its cause, preventing model replay. `Agent.turn`, `Sessions.drain` and `recordCompletion` restore a `TurnError` carried as a defect (a `HarnessError`, `TurnClosed`, ...) to a failure, so it keeps its own identity and code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`." },
   { code: "turn.interrupted", where: "stored `turn.ended` failure", meaning: "The turn was interrupted before it ended: its body (`turnEndingOf`), the scope its writer lived in, or its begin after the opening commit (reason interrupted)." },
   { code: "turn.unended", where: "stored `turn.ended` failure", meaning: "The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, and a turn that held a completed or partial reply ends as that reply implies, not with this code." },
   { code: "turn.lease", where: "stored `turn.ended` failure", meaning: "The turn's holder stopped writing and another instance reaped it (reason interrupted)." },

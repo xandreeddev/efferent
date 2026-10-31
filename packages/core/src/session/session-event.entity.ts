@@ -152,7 +152,7 @@ export const TURN_EVENT_KINDS: ReadonlyArray<string> = [
 ]
 
 /** Bus events not stored from the bus: memory or the session records them itself, and storing them again would be a second copy. */
-export const RECORDED_ELSEWHERE: ReadonlySet<TurnEventName> = new Set<TurnEventName>(["turn.started", "turn.ended", "skills.activated"])
+export const RECORDED_ELSEWHERE: ReadonlySet<TurnEventName> = new Set<TurnEventName>(["turn.started", "turn.ended", "skills.activated", "model.called"])
 
 /**
  * The inbox and the session's own records.
@@ -169,7 +169,7 @@ export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued
  * the memory events: a host that redacts memory, or exports or streams
  * session events, handles it the same way.
  */
-export const JOURNAL_KINDS: ReadonlyArray<string> = [...MEMORY_KINDS, ...TURN_EVENT_KINDS, ...SESSION_KINDS]
+export const JOURNAL_KINDS: ReadonlyArray<string> = [...MEMORY_KINDS, ...TURN_EVENT_KINDS, ...SESSION_KINDS, "model.called"]
 
 /**
  * Names only Efferent uses: a host event or a host record under one of

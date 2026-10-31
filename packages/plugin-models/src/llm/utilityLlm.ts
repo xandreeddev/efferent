@@ -1,11 +1,12 @@
 import { Prompt, Response } from "effect/ai"
 import { FetchHttpClient, HttpClient } from "effect/http"
 import { Cause, Context, Effect, Layer, Option } from "effect"
-import { parseModelSelection, reasonOf, UtilityError, UtilityLlm } from "@xandreed/core"
+import { isTurnError, parseModelSelection, reasonOf, responseModelOf, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
 import { AuthStore } from "../ports/auth-store.port.js"
 import { SettingsStore } from "../ports/settings-store.port.js"
 import { extractUsage } from "@xandreed/core/internal"
 import { generateOver, layerProviderServices, throughTransport, withConfiguredEffort } from "./router.js"
+import { CurrentModelCallPurpose } from "../ports/model-call-completion.port.js"
 
 /**
  * The fast helper tier: one-shot completions on `fastModel ?? model`, at
@@ -48,7 +49,12 @@ export const UtilityLlmLive = Layer.effect(
           toolChoice: "none",
           responseFormat: { type: "text" },
         }), Option.orElse(loaded.fastReasoningEffort, () => loaded.reasoningEffort)).pipe(
-          Effect.mapError((e) => new UtilityError({ message: reasonOf(Cause.fail(e)), cause: e })),
+          Effect.provideService(CurrentModelCallPurpose, "Helper"),
+          // Fixed helper signatures carry the original durable-write failure as
+          // a defect; the turn boundary restores it, before any soft helper catch.
+          Effect.catch((error) => isTurnError(error)
+            ? Effect.die(error)
+            : Effect.fail(new UtilityError({ message: reasonOf(Cause.fail(error)), cause: error }))),
           // The transport's fetch innermost, as the routed model sets it (router.ts).
           throughTransport(services),
           Effect.provide(stores),
@@ -57,7 +63,11 @@ export const UtilityLlmLive = Layer.effect(
         const parts = res.content.filter(Response.isPart)
         const text = parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("")
         // The loop's own reading of provider usage, so both count alike.
-        return { text, usage: extractUsage(res.usage, parts) }
+        const model = Option.flatMap(responseModelOf(parts), parseModelSelection)
+        return new UtilityCompletion({
+          text, usage: extractUsage(res.usage, parts),
+          ...Option.match(model, { onNone: () => ({}), onSome: (selection) => ({ model: selection }) }),
+        })
       }),
     }
   }),

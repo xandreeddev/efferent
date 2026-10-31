@@ -4,7 +4,7 @@ import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Config, Effect, Match, Metric, Option, Predicate, Redacted, Ref, Result, Stream } from "effect"
 import type { Context, Schema, Scope } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, formatModelSelection, modelRequestDescriptorOf } from "@xandreed/core"
+import { isTurnError, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, formatModelSelection, modelRequestDescriptorOf } from "@xandreed/core"
 import { isVolatileContext, stripVolatileContext } from "@xandreed/core/internal"
 import { CurrentPromptCacheFrame } from "../ports/prompt-cache-frame.port.js"
 import { PromptCacheError } from "./prompt-cache.entity.js"
@@ -39,7 +39,8 @@ import { bindingFor, droppedInBody, droppedInMessageStart, firstEventData, merge
 import { classifyAiError } from "./provider-failure.entity.functions.js"
 import { providerFailureProtocol, withAnthropicFailures, withOpenAiFailures } from "./provider-client.adapter.js"
 import type { ProviderFailureProtocol } from "./provider-failure.entity.js"
-import { resilientHttpClient } from "../transport/resilient-http-client.adapter.js"
+import { retainModelAttempt } from "./model-completion.adapter.js"
+import { resilientHttpClient, withModelRequestCall, withModelRequestStream } from "../transport/resilient-http-client.adapter.js"
 
 /**
  * Per-provider `LanguageModel` construction. Built PER REQUEST from a
@@ -111,6 +112,14 @@ const withProviderFailures = (model: LanguageModel.LanguageModel, protocol: Prov
   }
 }
 
+/** The provider's actual alias and invocation kind accompany every physical attempt. */
+const withProviderAccounting = (model: LanguageModel.LanguageModel, selection: ModelSelection): LanguageModel.LanguageModel => ({
+  ...model,
+  generateText: ((options: PromptOptions) => withModelRequestCall("Text", selection, model.generateText(options as never)).pipe(Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.fail(error)))) as never,
+  generateObject: ((options: PromptOptions) => withModelRequestCall("Object", selection, model.generateObject(options as never)).pipe(Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.fail(error)))) as never,
+  streamText: ((options: PromptOptions) => withModelRequestStream("Stream", selection, model.streamText(options as never))) as never,
+})
+
 /**
  * Every request with `betas` added to its `anthropic-beta` header, after
  * the ones the client set itself (`mergeBetas`): a beta is never sent by
@@ -175,7 +184,7 @@ const peekedFirstEvent = <E>(body: Stream.Stream<Uint8Array, E>, report: (reason
  */
 const reportingDroppedThinking = (label: string) => (client: HttpClient.HttpClient): HttpClient.HttpClient =>
   HttpClient.transformResponse(client, Effect.flatMap((response) => {
-    const rebuilt = (body: BodyInit) => HttpClientResponse.fromWeb(response.request, new Response(body, { status: response.status, headers: new Headers(Object.entries(response.headers)) }))
+    const rebuilt = (body: BodyInit) => retainModelAttempt(response, HttpClientResponse.fromWeb(response.request, new Response(body, { status: response.status, headers: new Headers(Object.entries(response.headers)) })))
     return (response.headers["content-type"] ?? "").includes("text/event-stream")
       ? Effect.map(peekedFirstEvent(response.stream, reportDropped(label)), rebuilt)
       : response.text.pipe(Effect.tap((text) => reportDropped(label)(droppedInBody(text))), Effect.map(rebuilt))
@@ -714,7 +723,7 @@ export const buildProviderOver = (services: ProviderServices) => (
   key: Redacted.Redacted<string> | undefined,
 ): Effect.Effect<BuiltProvider, AuthError | ModelSettingsError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key, services).pipe(
   Effect.map((built) => {
-    const classified = withProviderFailures(built.svc, providerFailureProtocol(built.route))
+    const classified = withProviderAccounting(withProviderFailures(built.svc, providerFailureProtocol(built.route)), selection)
     const labeled = built.images ? classified : withImageLabels(classified)
     return {
       svc: describeModel(built.route === "anthropic" ? labeled : withStrippedVolatileContext(labeled), descriptorOf(selection, built)),

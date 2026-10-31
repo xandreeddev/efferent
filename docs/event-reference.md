@@ -26,6 +26,7 @@ There are two kinds of events. The **bus** carries a turn's typed events (`TurnE
 | `stream.fallback` | no | `stream.fallback` |
 | `turn.ended` | no | Recorded elsewhere: memory's `turn.reply` and the session's own `turn.ended` |
 | `host` | no | Under its `name` |
+| `model.called` | no | Recorded elsewhere: the recorder's directly appended and flushed `model.called` fact |
 
 ### `turn.started`
 
@@ -224,6 +225,24 @@ An application's own event (`defineHostEvent`), published by the host's code, to
 | `name` | `string` |
 | `data` | `object` |
 
+### `model.called`
+
+Published after the turn-owned model-call recorder durably appends and flushes one terminal physical attempt. Provider outcomes are independent of downstream acceptance; Agent turns await recording before tool admission, while direct SDK streaming consumers follow their SDK's consumption policy. Retries and configured fallback share callId and use distinct positive attempts; a loop stream fallback has a new callId while retaining its frozen request header. The actual invoked model, loop/helper purpose, method, optional run and step, duration, provider outcome and Known/Partial/Unknown usage are metadata only. Not journaled from the bus: the recorder stores model.called directly. Unknown usage is not known zero; partial reported subtotals and terminal-only records do not establish an exact provider bill or recover a SIGKILL gap.
+
+| Field | Type |
+| --- | --- |
+| `callId` | `string` |
+| `attempt` | `integer` |
+| `purpose` | `"Loop" \| "Helper"` |
+| `method` | `"Text" \| "Object" \| "Stream"` |
+| `model` | `{ provider, modelId } \| null` |
+| `runId` | `string \| null` |
+| `run` | `integer \| null` |
+| `step` | `integer \| null` |
+| `durationMs` | `number` |
+| `usage` | `{ _tag } \| { _tag, usage } \| { _tag, usage, reported }` |
+| `outcome` | `{ _tag } \| { _tag, failure }` |
+
 ## Journal kinds
 
 Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; `seq` is dense from 1 and is the cursor for `Sessions.read({ after })`. These are the kinds the framework writes. `journalSchemaOf(kind)` (from `@xandreed/core`) gives the schema of each kind's `data`. A host that exports, streams or redacts session events must treat the sensitive kinds like the conversation itself: `request.prepared`, `memory.system`, `memory.section` and `memory.step` hold the system prompt and the host's context.
@@ -256,6 +275,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `inbox.queued` | plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input) | The item's content, user message, attachments and source. | `id`, `source`, `content`, `input` |
 | `inbox.dropped` | plugin-sessions: the end of the last turn that took the item and failed | None: the item id. | `id`, `reason` |
 | `inbox.taken` | plugin-sessions: `TurnWriter.take`, in the same commit as the exact user memory.message and removal of the pending steer | None: the input id and raw memory entry id; message and image bytes stay in memory.message. | `id`, `entry` |
+| `model.called` | The turn-owned model-call recorder, directly appended and flushed before notification | Actual model selection, usage precision/counts, outcome and correlation metadata; no prompts, credentials, endpoint settings or provider bodies. | `callId`, `attempt`, `purpose`, `method`, `model`, `runId`, `run`, `step`, `durationMs`, `usage`, `outcome` |
 
 A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's id, run, step and time, and its body without the `_tag` (the kind names it). Memory is rebuilt from these events by `entriesOfEvents`.
 
@@ -305,6 +325,7 @@ turn.ended
 inbox.queued
 inbox.dropped
 inbox.taken
+model.called
 tool.progress
 skills.activated
 assistant.message
@@ -341,7 +362,7 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `images.unavailable` | imageResizerPlugin activation | No configured image conversion tool is available through Bash. Install ImageMagick, libvips or sips, or provide another ImageResizer adapter. |
 | `turn.closed` | `Agent.turn`, the turn writer (`TurnClosed`); a run started after the reply (`TurnMemory.startRun`) | The turn takes no more writes: someone else closed it (`cancelled`; `interrupted`, reaped; `removed`, its session removed), or it `ended` (its own end stored or under way, or its scope closed). The writer and `Agent.turn` fail with `TurnClosed`, whose `reason` says which; this is the code it stands for. A run of the step loop started once the turn's reply is recorded fails with a `HarnessError` of this code: the reply ends the turn's runs. |
 | `turn.failed` | stored `turn.ended` failure (`turnEndingOf`) | The turn failed with an error `harnessCodeOf` gives no code for (a tagged error without a `code`, or an untagged value, even one carrying a `code` such as a Node error's); the message is `<_tag>: <message>`, or the error as text (reason failed). |
-| `turn.defect` | stored `turn.ended` failure (`turnEndingOf`) | The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `Agent.turn` and `Sessions.drain` first turn a `TurnError` carried as a defect (a `HarnessError`, `TurnClosed`, ...) back into a failure, so it keeps its own code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`. |
+| `turn.defect` | stored `turn.ended` failure (`turnEndingOf`) or the `recordCompletion` recorder boundary | The turn died with a defect, an unexpected error; the message is the defect as text (reason failed). `recordCompletion` converts an unexpected recorder defect to a typed `HarnessError` with a fixed recording-failure message and the original defect as its cause, preventing model replay. `Agent.turn`, `Sessions.drain` and `recordCompletion` restore a `TurnError` carried as a defect (a `HarnessError`, `TurnClosed`, ...) to a failure, so it keeps its own identity and code; a runner calling `turnEndingOf` itself does the same with `harnessDefectsAsFailures`. |
 | `turn.interrupted` | stored `turn.ended` failure | The turn was interrupted before it ended: its body (`turnEndingOf`), the scope its writer lived in, or its begin after the opening commit (reason interrupted). |
 | `turn.unended` | stored `turn.ended` failure | The turn's scope closed, without an interruption, before anyone tried to end the turn (reason failed). An end that was tried but could not be stored is tried again by the scope with that same ending, and a turn that held a completed or partial reply ends as that reply implies, not with this code. |
 | `turn.lease` | stored `turn.ended` failure | The turn's holder stopped writing and another instance reaped it (reason interrupted). |

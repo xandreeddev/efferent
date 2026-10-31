@@ -157,6 +157,43 @@ reasons, including `NetworkError`, retain identity. `modelFailureCodeOf` names
 the published code and `modelFailureMessageOf` supplies the shared fixed
 reporting text. Provider evidence is interpreted in the models plugin.
 
+`ModelCallData` is metadata for one terminal physical model attempt. One
+`ModelCallId` spans its retries/configured fallback; `attempt` is positive.
+Store the actual `ModelSelection`, never requested candidates or descriptor
+settings. Known usage is distinct from Partial reported subtotals and Unknown;
+new counts are strict normalized integers without tightening legacy TokenUsage.
+Run id/ordinal appear together and a step needs that run. Provider outcome
+precedes downstream empty/schema/tool acceptance and is independent of usage.
+
+`CurrentModelCallRecorder` is read by `recordCompletion` at execution and
+defaults to a no-op outside turns. Its record method fails with original
+`TurnError`; unexpected recorder defects become `turn.defect` with their
+original cause, including defects while invoking a host's method. An original
+`TurnError` carried as a defect retains identity. Optional observation is owned by the turn, with bootstrap/live
+dedup and a final legacy-per-model callback. `replayed` means durable before
+this TurnLive opened, not merely delivered during registration. Observers
+are soft; append/flush is hard. The sdk owns the recorder adapter and the
+turn's lifetime, including helper calls in bootstrap and finalizers.
+
+`model.called` is directly appended and flushed before notification, listed
+in `RECORDED_ELSEWHERE` to avoid a second bus write, and appended to reserved
+journal kinds. Stored format 9 adds its payload; old request headers and
+memory fingerprints remain unchanged. `turnModelCallsOf` rejects malformed
+and duplicate keys even when identical. `turnBilledUsageOf` sums ledger
+Known/Partial subtotals when ANY call exists; Unknown-only and Known-zero
+ledgers never fall back. Only no ledger uses legacy `turnUsageOf`. Preserve
+selected TurnResult/RunContext usage. Raw calls expose coverage; terminal-only
+records cannot recover a SIGKILL gap or establish an exact provider bill.
+
+The shipped `modelCallRecorderConformance` kit proves a full durable and
+observing adapter (its fixture requires observe, although the public recorder
+permits simple collectors without it). It checks durability before callbacks,
+sticky ACK/error results, terminal dedup, bootstrap provenance, observer
+lifetime and soft observer defects. Its careless self-tests are in core;
+the real TurnLive adapter runs the kit in sdk and packed verification.
+`UtilityCompletion.model` is an optional actual selection, preserving old
+constructors and structural helper stubs without claiming their identity.
+
 Session input contracts live in `src/session/sessions.entity.ts` and
 `src/ports/sessions.port.ts`: `QueuedInput` holds one normalized
 `UserMessage`, a stable `InboxItemId`, `InputDelivery` (`steer` or `next`)
@@ -313,6 +350,7 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | Text | Source | Pinned by |
 |---|---|---|
 | Shared reporting messages for all nine model-failure kinds (`modelFailureMessageOf`), used by failed responses and native provider failure descriptions | `src/domain/model-failure.entity.functions.ts:111-121` | exact, `packages/plugin-agent-loop/src/model-failures.test.ts:53-63`, asserted through the loop at `:76` |
+| Unexpected recorder defect reporting message (`recordCompletion`) | `src/domain/model-call.entity.functions.ts:13` | exact, `src/domain/model-call.entity.test.ts:94` |
 | A host note, `[Host note: …]` (`hostNote`) | `src/turn/model-text.ts:12` | exact, `src/turn/model-text.test.ts:6` |
 | The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact, `src/turn/model-text.test.ts:7`, `:22-27` |
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |

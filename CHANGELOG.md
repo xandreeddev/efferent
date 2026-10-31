@@ -10,6 +10,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Stored format 9 adds `model.called` terminal facts for model attempts,
+  including retries, helpers and discarded responses. `turnModelCallsOf`
+  exposes actual selections and unknown/partial/final reported usage;
+  `turnBilledUsageOf` sums reported subtotals and uses legacy selected usage
+  only when no ledger facts exist. Selected turn/run usage is unchanged.
+  Custom model adapters can use `recordCompletion` with the turn's
+  `CurrentModelCallRecorder`; durable recording failures stop dispatch and
+  preserve their original `TurnError`. `UtilityCompletion.model` is optional
+  and names the actual selection. Telemetry prices helper and late-finalizer
+  calls without counting selected response usage twice.
+
 - Model HTTP retries now use the full `CurrentModelRetryPolicy` Reference
   (`ModelRetryPolicy`, `modelRetryDefaults`) at call execution. The default
   four attempts include the initial send and a distinct configured fallback's
