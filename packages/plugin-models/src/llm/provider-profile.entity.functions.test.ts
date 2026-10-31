@@ -3,7 +3,7 @@ import { Effect, Option, Redacted } from "effect"
 import { AiError } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, modelRequestDescriptorOf, parseModelSelection } from "@xandreed/core"
-import type { ModelCallPolicy } from "@xandreed/core"
+import type { ModelCallPolicy, ModelLimits } from "@xandreed/core"
 import type { Credential } from "../ports/auth-store.port.js"
 import { CLAUDE_CODE_SYSTEM } from "../auth/anthropicOAuth.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
@@ -21,7 +21,7 @@ import { buildProvider } from "./providers.js"
 type Family = keyof typeof SETTINGS
 
 /** Selection, catalog label ("" for none), reads images, efforts (comma-joined), settings family. */
-const CATALOG: ReadonlyArray<readonly [string, string, boolean, string, Family]> = [
+const CATALOG: ReadonlyArray<readonly [string, string, boolean, string, Family, ModelLimits?]> = [
   ["opencode:glm-5.2", "", false, "", "chat"],
   ["opencode:glm-5.1", "", false, "", "chat"],
   ["opencode:kimi-k2.7-code", "", false, "", "chat-thinking-high"],
@@ -52,10 +52,14 @@ const CATALOG: ReadonlyArray<readonly [string, string, boolean, string, Family]>
   ["openai:gpt-5.6-luna", "OpenAI API key · gpt-5.6-luna", true, "low,medium,high", "responses-effort"],
   ["openai:gpt-5.6-sol", "OpenAI API key · gpt-5.6-sol", true, "low,medium,high", "responses-effort"],
   ["openai:gpt-5.6-terra", "OpenAI API key · gpt-5.6-terra", true, "low,medium,high", "responses-effort"],
-  ["anthropic:claude-fable-5", "", true, "", "anthropic"],
-  ["anthropic:claude-haiku-4-5", "", true, "", "anthropic"],
-  ["anthropic:claude-opus-4-8", "", true, "", "anthropic"],
-  ["anthropic:claude-sonnet-5", "", true, "", "anthropic"],
+  ["anthropic:claude-fable-5", "", true, "low,medium,high,xhigh,max", "anthropic-high", { contextWindow: 1_000_000, maxOutputTokens: 128_000 }],
+  ["anthropic:claude-haiku-4-5", "", true, "", "anthropic-legacy", { contextWindow: 200_000, maxOutputTokens: 64_000 }],
+  ["anthropic:claude-opus-4-8", "", true, "low,medium,high,xhigh,max", "anthropic-off", { contextWindow: 1_000_000, maxOutputTokens: 128_000 }],
+  ["anthropic:claude-sonnet-5", "", true, "low,medium,high,xhigh,max", "anthropic-high", { contextWindow: 1_000_000, maxOutputTokens: 128_000 }],
+  ["anthropic:claude-fable-5-1", "", true, "low,medium,high,xhigh,max", "anthropic-bound-high", { contextWindow: 1_000_000, maxOutputTokens: 128_000 }],
+  ["anthropic:claude-opus-5-5", "", true, "low,medium,high,xhigh,max", "anthropic-bound-medium", { contextWindow: 1_000_000, maxOutputTokens: 128_000 }],
+  ["anthropic:claude-sonnet-5-5", "", true, "low,medium,high,xhigh,max", "anthropic-bound-high", { contextWindow: 1_000_000, maxOutputTokens: 128_000 }],
+  ["anthropic:claude-haiku-5-5", "", true, "low,medium,high,xhigh,max", "anthropic-bound-medium", { contextWindow: 1_000_000, maxOutputTokens: 128_000 }],
   ["google:gemini-3-flash", "", true, "", "standard-chat"],
   ["google:gemini-3.1-pro", "", true, "", "standard-chat"],
   ["google:gemini-3.5-flash", "", true, "", "standard-chat"],
@@ -69,7 +73,6 @@ const UNLISTED: ReadonlyArray<readonly [string, boolean, string, Family]> = [
   ["openai-codex:gpt-6", true, "", "codex"],
   ["openai:gpt-4.1", true, "", "responses"],
   ["openai:o3", true, "", "responses"],
-  ["anthropic:claude-next", true, "", "anthropic"],
   ["google:gemini-next", true, "", "standard-chat"],
 ]
 
@@ -115,7 +118,31 @@ const SETTINGS = {
     `{"strictJsonSchema":false,"store":false,"stream":true,"prompt_cache_key":"lane","text":{"verbosity":"low"},"reasoning":{"effort":"max","summary":"auto"}}`,
     `{"strictJsonSchema":false,"store":false,"stream":true,"prompt_cache_key":"efferent","text":{"verbosity":"low"},"reasoning":{"effort":"none","summary":"auto"}}`,
   ],
-  anthropic: [`{"systemPrelude":null}`, `{"systemPrelude":null}`, `{"systemPrelude":null}`],
+  "anthropic-high": [
+    `{"max_tokens":128000,"output_config":{"effort":"high"},"thinking":{"type":"adaptive","display":"summarized"},"systemPrelude":null}`,
+    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"adaptive","display":"summarized"},"systemPrelude":null}`,
+    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"adaptive","display":"summarized"},"systemPrelude":null}`,
+  ],
+  "anthropic-bound-high": [
+    `{"max_tokens":128000,"output_config":{"effort":"high"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
+  ],
+  "anthropic-bound-medium": [
+    `{"max_tokens":128000,"output_config":{"effort":"medium"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
+    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"}},"systemPrelude":null,"thinkingPrefixMismatch":"drop_block"}`,
+  ],
+  "anthropic-off": [
+    `{"max_tokens":128000,"output_config":{"effort":"high"},"thinking":{"type":"disabled"},"systemPrelude":null}`,
+    `{"max_tokens":32,"output_config":{"effort":"max"},"thinking":{"type":"disabled"},"systemPrelude":null}`,
+    `{"max_tokens":128000,"output_config":{"effort":"low"},"thinking":{"type":"disabled"},"systemPrelude":null}`,
+  ],
+  "anthropic-legacy": [
+    `{"max_tokens":64000,"thinking":{"type":"disabled"},"systemPrelude":null}`,
+    `{"max_tokens":32,"thinking":{"type":"disabled"},"systemPrelude":null}`,
+    `{"max_tokens":64000,"thinking":{"type":"disabled"},"systemPrelude":null}`,
+  ],
 } as const
 
 /** A credential for every built-in provider, in the catalog's order. */
@@ -156,12 +183,13 @@ const settingsOf = (selection: string, context: (typeof CONTEXTS)[number]) =>
 
 describe("the built-in providers, pinned", () => {
   it("the catalog lists every built-in model with its label and input, in order", () => {
-    expect(configuredModelCatalog(CREDENTIALS)).toEqual(CATALOG.map(([selection, label, images]) => ({
+    expect(configuredModelCatalog(CREDENTIALS)).toEqual(CATALOG.map(([selection, label, images, , , limits]) => ({
       selection,
       ...(label.length > 0 ? { label } : {}),
       provider: providerOf(selection),
       credential: CREDENTIALS.get(providerOf(selection))?.type ?? "local",
       input: images ? ["text", "image"] : ["text"],
+      ...(limits === undefined ? {} : { limits }),
     })))
   })
 
@@ -175,7 +203,7 @@ describe("the built-in providers, pinned", () => {
   it("each built-in selection's descriptor records its family's settings in every context", async () => {
     const actual = await Promise.all(CONTEXTS.map((context) => Promise.all(SELECTIONS.map(([selection]) => settingsOf(selection, context)))))
     expect(actual).toEqual(CONTEXTS.map((_, index) => SELECTIONS.map(([selection, , , family]) =>
-      JSON.stringify({ provider: providerOf(selection), model: selection.slice(selection.indexOf(":") + 1), settings: SETTINGS[family][index] }))))
+      JSON.stringify({ provider: providerOf(selection), model: selection.slice(selection.indexOf(":") + 1), settings: family.startsWith("anthropic") ? JSON.stringify({ model: selection.slice(selection.indexOf(":") + 1), ...JSON.parse(SETTINGS[family][index] ?? "{}") }) : SETTINGS[family][index] }))))
   })
 
   it("each built model reads images as its selection does; only the Anthropic subscription prepends the Claude Code block", async () => {
@@ -185,7 +213,7 @@ describe("the built-in providers, pinned", () => {
     const subscription = await Effect.runPromise(Effect.scoped(built("anthropic:claude-sonnet-5", CONTEXTS[0]!, { type: "oauth", access: Redacted.make("a"), refresh: Redacted.make("r"), expires: 1 }).pipe(
       Effect.flatMap((model) => Effect.map(modelRequestDescriptorOf(model.svc), (descriptor) => [model.prependClaudeCode, Option.map(descriptor, (value) => value.settings)] as const)),
     )).pipe(Effect.provide(FetchHttpClient.layer)))
-    expect(subscription).toEqual([true, Option.some({ systemPrelude: CLAUDE_CODE_SYSTEM })])
+    expect(subscription).toEqual([true, Option.some({ model: "claude-sonnet-5", max_tokens: 128_000, output_config: { effort: "high" }, thinking: { type: "adaptive", display: "summarized" }, systemPrelude: CLAUDE_CODE_SYSTEM })])
   })
 
   it("each route sends to its URL through its client", async () => {
@@ -252,5 +280,22 @@ describe("the profile table", () => {
       "anthropic:claude-fable-5", "anthropic:claude-opus-4-8", "anthropic:claude-sonnet-5", "anthropic:claude-haiku-4-5", "anthropic:claude-haiku-4-5-20251001",
       "anthropic:claude-opus-5", "anthropic:claude-mythos-5-1", "openai:gpt-5.5", "openai-codex:gpt-5.6-sol", "opencode:glm-5.2", "google:gemini-3.1-pro",
     ].map(binds)).toEqual([false, false, false, false, false, false, false, false, false, false, false])
+  })
+})
+
+describe("documented Messages profile limits", () => {
+  it("adds the four featured models without removing existing selections", () => {
+    const ids = PROVIDER_PROFILES.anthropic.models.map((model) => model.id)
+    expect(ids).toEqual(expect.arrayContaining(["claude-fable-5", "claude-haiku-4-5", "claude-opus-4-8", "claude-sonnet-5", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]))
+  })
+  it("exposes advertised limits for featured models and the legacy Haiku cap", () => {
+    expect(Option.getOrThrow(modelProfileOf("anthropic:claude-fable-5-1"))).toMatchObject({ limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 } })
+    expect(Option.getOrThrow(modelProfileOf("anthropic:claude-haiku-4-5"))).toMatchObject({ limits: { contextWindow: 200_000, maxOutputTokens: 64_000 } })
+  })
+  it("an unknown model remains a selectable family profile but needs an explicit output cap to build", async () => {
+    expect(modelProfileOf("anthropic:claude-next")).toEqual(Option.some({ id: "claude-next", images: true, efforts: [], bindsThinking: false }))
+    const unknown = await Effect.runPromise(Effect.scoped(Effect.result(built("anthropic:claude-next", CONTEXTS[0]!))).pipe(Effect.provide(FetchHttpClient.layer)))
+    expect(unknown).toMatchObject({ _tag: "Failure", failure: { _tag: "ModelSettingsError", reason: "OutputLimit" } })
+    expect(JSON.parse(await settingsOf("anthropic:claude-next", CONTEXTS[1]!))).toEqual({ provider: "anthropic", model: "claude-next", settings: JSON.stringify({ model: "claude-next", max_tokens: 32, output_config: { effort: "max" }, systemPrelude: null }) })
   })
 })

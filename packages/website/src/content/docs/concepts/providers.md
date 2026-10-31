@@ -31,7 +31,7 @@ it under `endpoints` and select its models as `<name>:<model id>`:
 } }
 ```
 
-Requests go to `<url>/chat/completions`. The key is optional: the plugin uses
+With absent `api` or `api: "chat-completions"`, requests go to `<url>/chat/completions`. The key is optional: the plugin uses
 `apiKey`, then the environment variable named by `apiKeyEnv`, then a key stored
 for that name; with none it sends no `Authorization` header. The variable is
 read with Effect's `Config`, from the current `ConfigProvider` (the process
@@ -49,6 +49,82 @@ configuration names an environment variable instead.
 replaces it. A `local`
 credential with a `baseUrl` (stored, or given in `credentials`) routes the same
 way, without a key.
+
+## Anthropic Messages gateways and per-model controls
+
+A Messages compatible gateway uses `api: "anthropic-messages"`. Root URLs,
+proxy prefixes and bases ending in `/v1` are accepted; `/v1/messages` is
+appended once. Keys follow the precedence above and are sent verbatim through
+`auth: "x-api-key"` (default) or `"bearer"`. `apiVersion` controls the version
+header; it defaults to the pinned client's `2023-06-01`. `betas` add flags to
+the SDK's own header with duplicates removed. A bearer gateway does not add
+Claude Code subscription instructions or subscription betas. Messages routes
+read images by default; `images: false` sends labels instead. Their options
+exclude chat-only `standardOnly`.
+
+```ts
+import { Redacted } from "effect"
+import { modelsPlugin } from "@xandreed/plugin-models"
+
+declare const gatewayKey: string
+const messages = { plugin: modelsPlugin, options: {
+  model: "gateway:claude-fable-5-1",
+  endpoints: { gateway: {
+    api: "anthropic-messages", url: "https://gateway.example/v1",
+    auth: "bearer", apiKey: Redacted.make(gatewayKey), apiVersion: "2026-10-21",
+  } },
+  modelSettings: { "gateway:claude-fable-5-1": {
+    thinking: { _tag: "Adaptive", display: "summarized" },
+    effort: "high", limits: { maxOutputTokens: 16_384 },
+  } },
+} }
+```
+
+`modelSettings` keys name the full selection, including a gateway alias.
+These static Messages controls are captured when the models layer is built;
+the writable role/model choices remain in `SettingsStore`. A call policy's
+cap and effort win over per-model settings, followed by the model profile.
+Legacy Haiku 4.5 and Sonnet 4.5 ignore generic policy effort and reject explicit
+per-model effort because they support no effort control.
+Unknown/deployment aliases need an explicit `maxOutputTokens`; the SDK's
+implicit output default is not used. `ModelCatalogEntry.limits` reports known
+static `contextWindow` and `maxOutputTokens` with host overrides. It does not
+estimate current usage or invent limits for unknown models. Configured gateway
+settings do not themselves declare new catalog entries.
+
+Thinking modes carry their own fields: `Adaptive` has optional `display`,
+`Budget` has `budgetTokens` and optional `display`, while `BetweenTools` and
+`Off` carry no companions. Supported display defaults to `summarized`.
+Budget is at least 1024 and smaller than the effective output cap.
+
+| Model | Supported controls relevant here | Default effort |
+|---|---|---|
+| Fable 5.1 | Adaptive | high |
+| Opus 5.5 | Adaptive | medium |
+| Sonnet 5.5 | Adaptive; BetweenTools at low/medium/high | high |
+| Haiku 5.5 | Adaptive; Off at low/medium/high | medium |
+| Opus 5 | Adaptive; Off at low/medium/high | high |
+| Opus 4.7/4.8 | Off by default; Adaptive when selected | high |
+
+These are static [model](https://platform.claude.com/docs/en/models/overview)
+and [thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)
+documentation facts checked on 2026-10-31. Future Fable 5.x adaptive-only
+matching is local policy. Native xhigh/max effort values stay native; the
+neutral none hint maps to low. Known older models accept manual budgets only
+where their profile documents support; unknown aliases may opt into budgets
+with explicit settings. Unsupported modes, effort, budgets and forced
+tool choices fail locally before I/O. Per-model settings on other protocols
+are refused.
+
+For adaptive models that bind thinking to the prefix, `thinkingPrefixMismatch`
+defaults to `drop_block`, with its beta and dropped-block reporting. Set
+`provider-default` to omit that control or `error` to request rejection. Off
+and BetweenTools add neither binding nor its beta automatically; explicit
+endpoint beta flags are preserved. The existing client version stays
+the default; an explicit `apiVersion` sets the header. Use a host
+`ModelsTransport` for any required workspace header. Local fixtures verify
+request bytes and replay; acceptance by a real provider is separate live
+versioned evidence.
 
 ## Credentials and storage
 

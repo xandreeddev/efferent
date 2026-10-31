@@ -910,12 +910,13 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
   "fallbackModel": "",
   "inheritPrevious": true,
   "endpoints": {},
+  "modelSettings": {},
   "storage": "local",
   "credentials": {},
   "credentialEnv": {},
   "proxy": "",
   "noProxy": "",
-  "thinkingPrefixMismatch": "provider-default"
+  "thinkingPrefixMismatch": "drop_block"
 }
 ```
 
@@ -941,34 +942,215 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
     "endpoints": {
       "type": "object",
       "additionalProperties": {
-        "type": "object",
-        "properties": {
-          "url": {
-            "type": "string"
-          },
-          "apiKey": {
-            "anyOf": [
-              {
+        "anyOf": [
+          {
+            "type": "object",
+            "properties": {
+              "url": {
                 "type": "string"
               },
-              {
+              "apiKey": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "apiKeyEnv": {
                 "type": "string"
+              },
+              "images": {
+                "type": "boolean"
+              },
+              "api": {
+                "type": "string",
+                "enum": [
+                  "chat-completions"
+                ]
+              },
+              "standardOnly": {
+                "type": "boolean"
+              }
+            },
+            "required": [
+              "url"
+            ],
+            "additionalProperties": true
+          },
+          {
+            "type": "object",
+            "properties": {
+              "url": {
+                "type": "string"
+              },
+              "apiKey": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "apiKeyEnv": {
+                "type": "string"
+              },
+              "images": {
+                "type": "boolean"
+              },
+              "api": {
+                "type": "string",
+                "enum": [
+                  "anthropic-messages"
+                ]
+              },
+              "auth": {
+                "type": "string",
+                "enum": [
+                  "x-api-key",
+                  "bearer"
+                ]
+              },
+              "apiVersion": {
+                "type": "string"
+              },
+              "betas": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "url",
+              "api"
+            ],
+            "additionalProperties": true
+          }
+        ]
+      }
+    },
+    "modelSettings": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "thinking": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Adaptive"
+                    ]
+                  },
+                  "display": {
+                    "type": "string",
+                    "enum": [
+                      "summarized",
+                      "omitted"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Budget"
+                    ]
+                  },
+                  "budgetTokens": {
+                    "type": "integer",
+                    "minimum": 1024,
+                    "maximum": 9007199254740991
+                  },
+                  "display": {
+                    "type": "string",
+                    "enum": [
+                      "summarized",
+                      "omitted"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "budgetTokens"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "BetweenTools"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Off"
+                    ]
+                  }
+                },
+                "required": [
+                  "_tag"
+                ],
+                "additionalProperties": true
               }
             ]
           },
-          "apiKeyEnv": {
-            "type": "string"
+          "effort": {
+            "type": "string",
+            "enum": [
+              "none",
+              "low",
+              "medium",
+              "high",
+              "xhigh",
+              "max"
+            ]
           },
-          "standardOnly": {
-            "type": "boolean"
-          },
-          "images": {
-            "type": "boolean"
+          "limits": {
+            "type": "object",
+            "properties": {
+              "contextWindow": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              },
+              "maxOutputTokens": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9007199254740991
+              }
+            },
+            "additionalProperties": true
           }
         },
-        "required": [
-          "url"
-        ],
         "additionalProperties": true
       }
     },
@@ -1090,6 +1272,7 @@ Optional: `@xandreed/plugin-models/HostCredentials`, `@xandreed/plugin-models/Mo
     "fallbackModel",
     "inheritPrevious",
     "endpoints",
+    "modelSettings",
     "storage",
     "credentials",
     "credentialEnv",

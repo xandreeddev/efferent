@@ -238,6 +238,11 @@ The key comes from `apiKey`, the environment variable `apiKeyEnv` names, or a
 stored key; with none, no `Authorization` header is sent. See
 [plugin configuration](packages/website/src/content/docs/concepts/providers.md#model-endpoints).
 
+An Anthropic Messages gateway selects `api: "anthropic-messages"` on its endpoint.
+It supports `x-api-key` or bearer authentication, explicit version and beta
+headers, and per-model thinking, effort and limits through `modelSettings`. See
+[Messages gateways](packages/website/src/content/docs/concepts/providers.md#anthropic-messages-gateways-and-per-model-controls).
+
 The models plugin is built once per agent, and a turn's own services win over
 it. By default (`storage: "local"`) it inherits existing model settings and
 sign-ins from `.efferent` files; explicit plugin options take precedence, and

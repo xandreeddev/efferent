@@ -1,6 +1,18 @@
 import { Schema } from "effect"
 import type { Option } from "effect"
-import type { ReasoningEffortType } from "@xandreed/core"
+import type { ModelLimits, ReasoningEffortType } from "@xandreed/core"
+import { AnthropicEffort, ModelThinking } from "./model-settings.entity.js"
+
+/** Documented native controls, or an explicitly labelled family policy for future IDs. */
+export const AnthropicModelTraits = Schema.Struct({
+  source: Schema.Literals(["documented", "family-policy"]),
+  modes: Schema.Array(Schema.Literals(ModelThinking.discriminants)),
+  defaultThinking: Schema.OptionFromNullOr(ModelThinking),
+  defaultEffort: Schema.OptionFromNullOr(AnthropicEffort),
+  forcedTools: Schema.OptionFromNullOr(Schema.Boolean),
+  reducedEfforts: Schema.OptionFromNullOr(Schema.Array(AnthropicEffort)),
+})
+export type AnthropicModelTraits = typeof AnthropicModelTraits.Type
 
 /** The providers the models plugin builds itself; any other is a configured endpoint. */
 export const BuiltInProvider = Schema.Literals(["opencode", "openai-codex", "openai", "anthropic", "google"])
@@ -41,6 +53,8 @@ export interface ModelProfile {
   readonly id: string
   readonly images: boolean
   readonly efforts: ReadonlyArray<ReasoningEffortType>
+  readonly limits?: ModelLimits
+  readonly anthropic?: AnthropicModelTraits
   /**
    * The provider binds each thinking block's signature to the conversation
    * before it (system, tools, earlier messages): a block sent back after that

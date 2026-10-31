@@ -71,6 +71,68 @@ no file: credentials come from `credentials` (`Redacted` secrets),
 memory, and `inheritPrevious` is ignored. See the website's providers page,
 "Credentials and storage".
 
+Configured model endpoints keep chat completions when `api` is absent or
+`"chat-completions"`. Select `api: "anthropic-messages"` for a Messages
+compatible gateway. Its `url` is a base: root and proxy prefixes are kept,
+a final `/v1` is accepted once, and requests go to `/v1/messages`. `auth`
+chooses `"x-api-key"` (default) or `"bearer"`; `apiVersion` sets the version
+header, and `betas` merge with the SDK's own flags. Keys remain opaque and
+follow `apiKey`, then `apiKeyEnv`, then the credential store. An explicit
+empty key sends no authentication. A configured bearer gateway has no
+subscription prelude or subscription beta flags. Existing chat endpoints
+retain `standardOnly` and default `images: false`; Messages endpoints read
+images by default, with an explicit false override.
+
+`modelSettings` maps full `provider:modelId` selections to static Messages
+controls: tagged `thinking`, native `effort`, and `limits` (`contextWindow`,
+`maxOutputTokens`). It is captured when the models layer is built, separately
+from the writable role selections in `SettingsStore`. A call policy takes
+precedence over model settings, then the documented profile supplies defaults.
+Legacy Haiku 4.5 and Sonnet 4.5 ignore generic policy effort and reject
+explicit per-model effort because those profiles support no effort control.
+`max_tokens` always comes from that resolution. Unknown or deployment aliases
+need an explicit output cap; their undocumented limits are omitted from the
+catalog. `ModelCatalogEntry.limits` is provider-neutral metadata, not a measured
+context-usage estimate. Per-model controls on another protocol are refused.
+
+```ts
+import { Redacted } from "effect"
+import { modelsPlugin } from "@xandreed/plugin-models"
+
+declare const gatewayKey: string
+const messages = { plugin: modelsPlugin, options: {
+  model: "gateway:claude-sonnet-5-5",
+  endpoints: { gateway: {
+    api: "anthropic-messages", url: "https://gateway.example/proxy/v1",
+    auth: "bearer", apiKey: Redacted.make(gatewayKey),
+    apiVersion: "2026-10-21", betas: ["thinking-binding-controls-2026-08-01"],
+  } },
+  modelSettings: { "gateway:claude-sonnet-5-5": {
+    thinking: { _tag: "Adaptive", display: "summarized" },
+    effort: "high", limits: { maxOutputTokens: 16_384 },
+  } },
+} }
+```
+
+The static profiles include Fable 5.1, Opus 5.5, Sonnet 5.5 and Haiku 5.5
+with documented 1M context and 128K output limits. Supported Adaptive and
+Budget thinking default to `display: "summarized"`. Fable 5.x and Opus 5.5
+stay adaptive; Sonnet 5.5 supports `BetweenTools` at low/medium/high effort;
+Haiku 5.5 and Opus 5 support `Off` at those efforts. Opus 4.7/4.8 default
+to Off. `Budget` carries `budgetTokens` (at least 1024 and below the request's
+output cap). Known profiles accept it only where documented; an unknown
+alias may opt into it with explicit settings. Off and BetweenTools
+carry no display, budget or binding fields. Native xhigh/max efforts are
+preserved; neutral none maps to low on this route. Unsupported combinations
+and forced-tool choices are refused before a network call. The profiles and
+constraints follow the [model](https://platform.claude.com/docs/en/models/overview)
+and [thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)
+documentation checked on 2026-10-31; family rules for future Fable 5.x IDs are
+local policy. The pinned client keeps `2023-06-01` as its default API version;
+setting `apiVersion` changes the header. A host transport can add a required
+workspace header. Fake-server tests verify bytes and control flow; live
+provider acceptance requires configured credentials and versioned evidence.
+
 When a proxy applies, every call the models plugin makes (the provider SDKs,
 the OpenAI-compatible client, OAuth token refreshes, the OpenAI subscription's
 WebSocket) goes through one `ModelsTransport`, built from the plugin's `proxy`
@@ -415,7 +477,7 @@ What each provider reports:
 | `openai`, `openai-codex` and OpenCode `gpt-*` models (Responses API) | `input_tokens`; reads: `input_tokens_details.cached_tokens` | `input_tokens_details.cache_write_tokens` when sent, else 0 | `output_tokens_details.reasoning_tokens` |
 | OpenCode's other models (chat completions) | `prompt_tokens`; reads: `prompt_cache_hit_tokens`, `cached_tokens` or `prompt_tokens_details.cached_tokens` | `prompt_tokens_details.cache_write_tokens` when sent, else 0 | `completion_tokens_details.reasoning_tokens` |
 | `google` (Gemini's OpenAI-compatible API) | as chat completions | as chat completions | 0: not read (Gemini's `completion_tokens` may leave its thoughts out) |
-| configured endpoints and `local` credentials | as chat completions | as chat completions | `completion_tokens_details.reasoning_tokens`, whatever `standardOnly` says |
+| configured chat endpoints and `local` credentials | as chat completions | as chat completions | `completion_tokens_details.reasoning_tokens`, whatever `standardOnly` says |
 
 ## Host-planned initial tool batch
 
@@ -1042,10 +1104,12 @@ conversation before it: a block sent back after an earlier part of the
 conversation changed (the step context, a compaction, a tool activated
 mid-run) is refused by an account that enforces the binding. The models
 plugin's `thinkingPrefixMismatch` says what such a request asks for:
-`provider-default` (the default) sends nothing; `drop_block` has the provider
+`drop_block` (the default for eligible adaptive thinking) has the provider
 drop that block and the later ones for the request, counted as
-`llm.thinking.dropped` and logged; `error` has it refuse the request. The
-models that do not bind are sent neither. That metadata is stored
+`llm.thinking.dropped` and logged; `error` has it refuse the request.
+`provider-default` sends no binding field. Models that do not bind, and Off
+or BetweenTools modes, add neither binding nor its beta automatically. Explicit
+endpoint beta flags are preserved. That metadata is stored
 as JSON in `providerOptions` (`ProviderOptions`, keyed by provider), less
 core's own `engine` key (`ENGINE_KEY`), which no request carries. A model
 that sends each call on to another, such as the settings-backed router,
@@ -1068,6 +1132,12 @@ included, fails each dispatch with `request.descriptor`, so settings built
 from optional fields go through `storedJson` first. An undescribed model is recorded as
 explicitly opaque: its prompt/tools are checked, but its private provider
 settings cannot be validated. Credentials never belong in `settings`.
+For configured Messages endpoints the routed descriptor records resolved
+thinking, effort and output caps plus the public endpoint protocol, version
+and beta configuration. A builtin Anthropic selection records those defaults
+as a requested `messagesProfile` candidate: a local credential can redirect
+the actual call to chat completions. Per-attempt transport and credential
+choices remain adapter behavior.
 A model that reads its configuration per call, such as the settings-backed
 router, is `resolvingModel(model, resolve)`: each step resolves it once
 (`resolveModelRequest`), and the resolved model serves the step's header and
@@ -2044,16 +2114,16 @@ then a `file` part per image):
 
 | Route | A user's images | A tool result's images |
 |---|---|---|
-| `anthropic` (Messages API) | image blocks | image blocks inside the `tool_result` |
+| `anthropic` and configured Messages endpoints (unless `images: false`) | image blocks | image blocks inside the `tool_result` |
 | `openai`, `openai-codex`, OpenCode `gpt-*` (Responses API) | `input_image` | `input_image` inside the `function_call_output` |
-| `google` (Gemini's chat completions), a configured endpoint with `images: true` | `image_url` parts (`data:` URLs) | one user message after the batch's tool messages, each result's images captioned `Images returned by <tool> (call <id>):` (merged with a user message that follows, captioned `The user's message:` when it has images of its own) |
-| OpenCode's other models, `openai-codex:gpt-5.3-codex-spark`, configured endpoints without `images`, a `local` credential's URL | a label line per image | a label line per image |
+| `google` (Gemini's chat completions), a configured chat endpoint with `images: true` | `image_url` parts (`data:` URLs) | one user message after the batch's tool messages, each result's images captioned `Images returned by <tool> (call <id>):` (merged with a user message that follows, captioned `The user's message:` when it has images of its own) |
+| OpenCode's other models, `openai-codex:gpt-5.3-codex-spark`, configured chat endpoints without `images`, a `local` credential's URL | a label line per image | a label line per image |
 
 `imageInputFor(selection)` (`@xandreed/plugin-models`) says whether a
 built-in route reads images, and the model catalog states it per model
 (`ModelCatalogEntry.input`, `["text", "image"]` or `["text"]`) for a host's
 attach button, for the route the model is sent through: a configured
-endpoint of a built-in provider's name by its `images`, a `local`
+endpoint of a built-in provider's name by its protocol and `images`, a `local`
 credential's URL as text only. On a route that does not, the models plugin sends every image
 as its label line (`promptWithImageLabels`) instead of a provider error.
 

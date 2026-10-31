@@ -5,6 +5,8 @@ import { modelCatalogConformance } from "@xandreed/core/conformance"
 import type { ModelCatalogEntryType } from "@xandreed/core"
 import type { Credential } from "../ports/auth-store.port.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
+import type { ModelEndpoints } from "../ports/model-endpoints.port.js"
+import { CurrentModelSettings } from "../ports/model-settings.port.js"
 import { MemoryAuthStoreLive } from "../auth/memory-auth.adapter.js"
 import { configuredModelCatalog, ConfiguredModelCatalogLive, imageInputFor, reasoningEffortsFor } from "./modelCatalog.js"
 
@@ -82,5 +84,51 @@ describe("image input per route", () => {
       Effect.provideService(CurrentModelEndpoints, { anthropic: { url: "http://127.0.0.1:2/v1" } }),
     ))
     expect(inputOf(live, "anthropic:claude-sonnet-5")).toEqual(["text"])
+  })
+})
+
+describe("Messages catalog limits", () => {
+  const credentials = new Map<string, Credential>([["anthropic", { type: "api_key", key: Redacted.make("secret") }], ["openai", { type: "api_key", key: Redacted.make("secret") }]])
+  const limits = (entries: ReadonlyArray<ModelCatalogEntryType>, model: string) => entries.find((entry) => entry.selection === model)?.limits
+
+  it("ignores inherited endpoint entries when advertising the actual route's images and limits", () => {
+    const endpoints: ModelEndpoints = Object.create({
+      anthropic: { url: "https://ignored.example/v1", images: false },
+      openai: { api: "anthropic-messages", url: "https://ignored.example", images: false },
+    })
+    const entries = configuredModelCatalog(credentials, endpoints, { "openai:gpt-5.5": { limits: { maxOutputTokens: 4096 } } })
+    expect(entries.find((entry) => entry.selection === "anthropic:claude-fable-5-1")).toMatchObject({
+      input: ["text", "image"], limits: { contextWindow: 1_000_000, maxOutputTokens: 128_000 },
+    })
+    expect(entries.find((entry) => entry.selection === "openai:gpt-5.5")?.input).toEqual(["text", "image"])
+    expect(limits(entries, "openai:gpt-5.5")).toBeUndefined()
+  })
+
+  it("reports static model limits and full-selection host overrides for Messages routes only", () => {
+    const configured = { "anthropic:claude-opus-5-5": { limits: { maxOutputTokens: 8192 } }, "openai:gpt-5.5": { limits: { maxOutputTokens: 4096 } } }
+    const builtin = configuredModelCatalog(credentials, {}, configured)
+    expect(limits(builtin, "anthropic:claude-opus-5-5")).toEqual({ contextWindow: 1_000_000, maxOutputTokens: 8192 })
+    expect(limits(builtin, "anthropic:claude-haiku-4-5")).toEqual({ contextWindow: 200_000, maxOutputTokens: 64_000 })
+    expect(limits(builtin, "openai:gpt-5.5")).toBeUndefined()
+    const chat = configuredModelCatalog(credentials, { anthropic: { url: "http://127.0.0.1:1/v1" } }, configured)
+    expect(limits(chat, "anthropic:claude-opus-5-5")).toBeUndefined()
+  })
+
+  it("a Messages override of a builtin provider uses model-ID traits or explicit limits, not that provider's old route", () => {
+    const entries = configuredModelCatalog(credentials, { openai: { api: "anthropic-messages", url: "http://127.0.0.1:1" } }, { "openai:gpt-5.5": { limits: { maxOutputTokens: 4096 } } })
+    expect(limits(entries, "openai:gpt-5.5")).toEqual({ maxOutputTokens: 4096 })
+    expect(entries.find((entry) => entry.selection === "openai:gpt-5.5")?.input).toEqual(["text", "image"])
+    const labels = configuredModelCatalog(credentials, { openai: { api: "anthropic-messages", url: "http://127.0.0.1:1", images: false } })
+    expect(labels.find((entry) => entry.selection === "openai:gpt-5.5")?.input).toEqual(["text"])
+    expect(limits(labels, "openai:gpt-5.5")).toBeUndefined()
+  })
+
+  it("the live catalog captures settings, and custom gateway settings do not declare catalog selections", () => {
+    const entries = Effect.runSync(Effect.service(ModelCatalog).pipe(
+      Effect.flatMap((catalog) => catalog.list), Effect.provide(ConfiguredModelCatalogLive), Effect.provide(MemoryAuthStoreLive(credentials)),
+      Effect.provideService(CurrentModelSettings, { "anthropic:claude-fable-5-1": { limits: { maxOutputTokens: 2048 } }, "gateway:claude-opus-5-5": { limits: { maxOutputTokens: 1024 } } }),
+    ))
+    expect(limits(entries, "anthropic:claude-fable-5-1")).toEqual({ contextWindow: 1_000_000, maxOutputTokens: 2048 })
+    expect(entries.some((entry) => entry.selection.startsWith("gateway:"))).toBe(false)
   })
 })

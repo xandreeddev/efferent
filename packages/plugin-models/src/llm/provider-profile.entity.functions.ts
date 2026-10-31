@@ -1,8 +1,8 @@
 import { Option, Schema } from "effect"
 import { parseModelSelection } from "@xandreed/core"
-import type { ReasoningEffortType } from "@xandreed/core"
+import type { ModelLimits, ReasoningEffortType } from "@xandreed/core"
 import { BuiltInProvider } from "./provider-profile.entity.js"
-import type { ModelProfile, ProviderProfile, Route } from "./provider-profile.entity.js"
+import type { AnthropicModelTraits, ModelProfile, ProviderProfile, Route } from "./provider-profile.entity.js"
 
 /**
  * The built-in providers, one profile each. The catalog, the image and
@@ -56,6 +56,43 @@ const bindsThinkingToPrefix = (id: string): boolean => {
   return at >= (family === "fable" ? 501 : 505)
 }
 
+/** Static documentation, checked 2026-10-31: thinking/effort tables and each model's overview. */
+const NATIVE_EFFORTS: ReadonlyArray<ReasoningEffortType> = ["low", "medium", "high", "xhigh", "max"]
+const advertised = (contextWindow: number, maxOutputTokens = 128_000): ModelLimits => ({ contextWindow, maxOutputTokens })
+const adaptive = { _tag: "Adaptive", display: "summarized" } as const
+const off = { _tag: "Off" } as const
+const controls = (modes: AnthropicModelTraits["modes"], defaultThinking: AnthropicModelTraits["defaultThinking"], defaultEffort: AnthropicModelTraits["defaultEffort"], forcedTools: AnthropicModelTraits["forcedTools"], reducedEfforts: AnthropicModelTraits["reducedEfforts"] = Option.none()): AnthropicModelTraits => ({ source: "documented", modes, defaultThinking, defaultEffort, forcedTools, reducedEfforts })
+const knownAnthropic: Readonly<Record<string, Omit<ModelProfile, "id">>> = {
+  "claude-fable-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: false, limits: advertised(1_000_000), anthropic: controls(["Adaptive"], Option.some(adaptive), Option.some("high"), Option.some(true)) },
+  "claude-fable-5-1": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: true, limits: advertised(1_000_000), anthropic: controls(["Adaptive"], Option.some(adaptive), Option.some("high"), Option.some(false)) },
+  "claude-opus-5-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: true, limits: advertised(1_000_000), anthropic: controls(["Adaptive"], Option.some(adaptive), Option.some("medium"), Option.some(false)) },
+  "claude-sonnet-5-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: true, limits: advertised(1_000_000), anthropic: controls(["Adaptive", "BetweenTools"], Option.some(adaptive), Option.some("high"), Option.some(false), Option.some(["low", "medium", "high"])) },
+  "claude-haiku-5-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: true, limits: advertised(1_000_000), anthropic: controls(["Adaptive", "Off"], Option.some(adaptive), Option.some("medium"), Option.some(true), Option.some(["low", "medium", "high"])) },
+  "claude-opus-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: false, limits: { maxOutputTokens: 128_000 }, anthropic: controls(["Adaptive", "Off"], Option.some(adaptive), Option.some("high"), Option.some(true), Option.some(["low", "medium", "high"])) },
+  "claude-sonnet-5": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: false, limits: advertised(1_000_000), anthropic: controls(["Adaptive", "Off"], Option.some(adaptive), Option.some("high"), Option.some(true)) },
+  "claude-opus-4-8": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: false, limits: advertised(1_000_000), anthropic: controls(["Adaptive", "Off"], Option.some(off), Option.some("high"), Option.some(true)) },
+  "claude-opus-4-7": { images: true, efforts: NATIVE_EFFORTS, bindsThinking: false, limits: { maxOutputTokens: 128_000 }, anthropic: controls(["Adaptive", "Off"], Option.some(off), Option.some("high"), Option.some(true)) },
+  "claude-opus-4-6": { images: true, efforts: ["low", "medium", "high", "max"], bindsThinking: false, limits: advertised(1_000_000), anthropic: controls(["Adaptive", "Budget", "Off"], Option.some(off), Option.some("high"), Option.some(true)) },
+  "claude-sonnet-4-6": { images: true, efforts: ["low", "medium", "high", "max"], bindsThinking: false, limits: { maxOutputTokens: 128_000 }, anthropic: controls(["Adaptive", "Budget", "Off"], Option.some(off), Option.some("high"), Option.some(true)) },
+  "claude-opus-4-5": { images: true, efforts: ["low", "medium", "high"], bindsThinking: false, limits: { maxOutputTokens: 64_000 }, anthropic: controls(["Budget", "Off"], Option.some(off), Option.some("high"), Option.some(true)) },
+  "claude-sonnet-4-5": { images: true, efforts: [], bindsThinking: false, limits: { maxOutputTokens: 64_000 }, anthropic: controls(["Budget", "Off"], Option.some(off), Option.none(), Option.some(true)) },
+  "claude-haiku-4-5": { images: true, efforts: [], bindsThinking: false, limits: advertised(200_000, 64_000), anthropic: controls(["Budget", "Off"], Option.some(off), Option.none(), Option.some(true)) },
+}
+
+/** Model-ID traits work for a configured Messages gateway as well as the builtin provider. */
+export const anthropicProfileOf = (modelId: string): ModelProfile => {
+  const base = modelId.replace(/-\d{8}$/, "")
+  const known = Object.hasOwn(knownAnthropic, base) ? knownAnthropic[base] : undefined
+  if (known !== undefined) return { id: modelId, ...known }
+  // The approved future Fable5.x rule is local policy, not documentation of an unreleased model's caps.
+  if (/^claude-fable-5(?:-\d{1,2})?$/.test(base)) return {
+    id: modelId, images: true, efforts: [], bindsThinking: bindsThinkingToPrefix(modelId), anthropic: {
+      source: "family-policy", modes: ["Adaptive"], defaultThinking: Option.some(adaptive), defaultEffort: Option.none(), forcedTools: Option.none(), reducedEfforts: Option.none(),
+    },
+  }
+  return { id: modelId, images: true, efforts: [], bindsThinking: bindsThinkingToPrefix(modelId) }
+}
+
 /** A profile over its catalog's ids and its rule for any model id. */
 const profile = (
   label: Option.Option<string>,
@@ -101,8 +138,8 @@ export const PROVIDER_PROFILES: { readonly [P in BuiltInProvider]: ProviderProfi
   ),
   anthropic: profile(
     Option.none(),
-    ["claude-fable-5", "claude-haiku-4-5", "claude-opus-4-8", "claude-sonnet-5"],
-    (id) => ({ images: true, efforts: [], bindsThinking: bindsThinkingToPrefix(id) }),
+    ["claude-fable-5", "claude-haiku-4-5", "claude-opus-4-8", "claude-sonnet-5", "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"],
+    (id) => { const { id: _id, ...traits } = anthropicProfileOf(id); return traits },
     () => ANTHROPIC,
   ),
   google: profile(

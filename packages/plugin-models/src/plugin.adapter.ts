@@ -16,6 +16,8 @@ import { LocalSettingsStoreLive } from "./settings/localSettings.js"
 import { MemorySettingsStoreLive } from "./settings/memory-settings.adapter.js"
 import { HostCredentials } from "./ports/host-credentials.port.js"
 import { CurrentModelEndpoints, ModelEndpoints } from "./ports/model-endpoints.port.js"
+import { CurrentModelSettings } from "./ports/model-settings.port.js"
+import { ModelSettingsMap } from "./llm/model-settings.entity.js"
 import { CurrentThinkingPrefixMismatch } from "./ports/thinking-binding.port.js"
 import { ThinkingPrefixMismatch } from "./llm/thinking-binding.entity.js"
 import { ModelsTransport } from "./ports/models-transport.port.js"
@@ -29,6 +31,8 @@ const Config = Schema.Struct({
   /** Local storage only: read the settings and sign-ins of `~/.efferent` and `<workspace>/.efferent` as fallbacks. */
   inheritPrevious: Schema.Boolean,
   endpoints: ModelEndpoints,
+  /** Static controls for each full provider:modelId selection on a Messages route. */
+  modelSettings: ModelSettingsMap,
   /** `local`: settings and credentials in `.efferent` files; `memory`: in memory only, never read from or written to disk. */
   storage: Schema.Literals(["local", "memory"]),
   /** Memory storage only: credentials by provider id, secrets as `Redacted` values. */
@@ -140,7 +144,7 @@ const transportLayer = (config: Config): Effect.Effect<Layer.Layer<never, Harnes
  */
 export const modelsPlugin = definePlugin({
   id: "@xandreed/plugin-models", version: "0.14.0", scope: "runtime", config: Config,
-  defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {}, storage: "local", credentials: {}, credentialEnv: {}, proxy: "", noProxy: "", thinkingPrefixMismatch: "provider-default" },
+  defaults: { model: "", fastModel: "", fallbackModel: "", inheritPrevious: true, endpoints: {}, modelSettings: {}, storage: "local", credentials: {}, credentialEnv: {}, proxy: "", noProxy: "", thinkingPrefixMismatch: "drop_block" },
   requires: [SessionEnvironment],
   optional: [HostCredentials, ModelsTransport],
   provides: [LanguageModel.LanguageModel, UtilityLlm, AuthStore, SettingsStore, ModelCatalog],
@@ -156,7 +160,7 @@ export const modelsPlugin = definePlugin({
     )
     const transport = yield* transportLayer(config)
     // The transport sits beneath everything that calls out: the stores' token refreshes, the routed model and the utility model.
-    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints), Layer.succeed(CurrentThinkingPrefixMismatch, config.thinkingPrefixMismatch)).pipe(Layer.provideMerge(transport))
+    const base = Layer.mergeAll(stores, Layer.succeed(CurrentModelEndpoints, config.endpoints), Layer.succeed(CurrentModelSettings, config.modelSettings), Layer.succeed(CurrentThinkingPrefixMismatch, config.thinkingPrefixMismatch)).pipe(Layer.provideMerge(transport))
     return Layer.mergeAll(LanguageModelLive, UtilityLlmLive, ConfiguredModelCatalogLive).pipe(Layer.provideMerge(base))
   })),
 })
