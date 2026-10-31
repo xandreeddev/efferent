@@ -100,6 +100,8 @@ const recordingWriter = (refuses: Option.Option<string> = Option.none()) => Effe
     started,
     history: () => Effect.succeed([]),
     snapshot: () => Ref.get(stored),
+    steers: Effect.succeed([]),
+    take: () => Effect.succeed(false),
     append,
     write: (op) => op,
     transact: (decide) => decide([]).pipe(Effect.flatMap((decision) => append(decision.drafts).pipe(Effect.as({ result: decision.result, events: [] })))),

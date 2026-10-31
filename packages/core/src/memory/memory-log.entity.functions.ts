@@ -6,7 +6,7 @@ import type { AgentMessage, ToolCallPart, ToolResultPart, UserContentPart } from
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { handoffToMessage } from "../internal/mapping.entity.functions.js"
 import { clippedMarker, clipTo, framed, hostNote } from "../turn/model-text.js"
-import { attachmentsOf, userMessageText } from "../turn/user-message.entity.functions.js"
+import { attachmentsOf, userMessageOf, userMessageText } from "../turn/user-message.entity.functions.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { ArtifactRef, BuiltContext, EntryId, LogEntry, LogQuery, Subject } from "./memory-log.entity.js"
 import { CompactionAction, EntryId as EntryIdSchema, LogBody } from "./memory-log.entity.js"
@@ -207,7 +207,8 @@ const mediaPlan = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): Me
   const imagesOf = (entry: LogEntry): ReadonlyArray<LogImage> => {
     const body = entry.body
     if (!kept(entry) || applied.omitted.has(entry.id)) return []
-    if (body._tag === "TurnStarted") return attachmentsOf(body.userMessage).map((media, index) => ({ key: imageKey(entry, index), media }))
+    const userMessage = userMessageIn(entry)
+    if (Option.isSome(userMessage)) return attachmentsOf(userMessage.value).map((media, index) => ({ key: imageKey(entry, index), media }))
     if (body._tag !== "ToolResult" || body.isError || applied.views.has(entry.id) || digests.has(entry.id)) return []
     return (body.media ?? []).flatMap((slot, index) => Option.toArray(Option.map(mediaAt(body.encoded, slot), (media) => ({ key: imageKey(entry, index), media }))))
   }
@@ -219,7 +220,7 @@ const mediaPlan = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): Me
       }
         : { ...choice, full: true }
   const current = entries.filter((entry) => entry.turn === options.currentTurn)
-  const attachments = current.flatMap((entry) => entry.body._tag === "TurnStarted" ? imagesOf(entry).map((image) => [image]) : [])
+  const attachments = current.flatMap((entry) => Option.isSome(userMessageIn(entry)) ? imagesOf(entry).map((image) => [image]) : [])
   const results = current.flatMap((entry) => entry.body._tag === "ToolResult" ? [imagesOf(entry)] : []).filter((group) => group.length > 0).reverse()
   const older = options.media.mode === "none" ? [] : entries.flatMap((entry) => entry.turn < options.currentTurn ? imagesOf(entry).map((image) => ({ turn: entry.turn, image })) : [])
   const earlier = [...new Set(older.map((item) => item.turn))].sort((left, right) => right - left)
@@ -285,7 +286,7 @@ export const renderLog = (stored: ReadonlyArray<LogEntry>, options: RenderOption
       if (!kept(entry) && !pinnedExchange) return state
       const text = assistantText(b.message)
       return {
-        out: [...state.out, b.message],
+        out: [...state.out, Option.match(userMessageIn(entry), { onNone: () => b.message, onSome: (message) => userMessageContent(entry, message, inline) })],
         lastText: Option.match(text, { onNone: () => state.lastText, onSome: (value) => new Map([...state.lastText, [entry.turn, value]]) }),
       }
     },
@@ -382,7 +383,7 @@ export const referenceTranscript = (entries: ReadonlyArray<LogEntry>): ReadonlyA
   presentedEntries(entries).flatMap((entry): ReadonlyArray<AgentMessage> => LogBody.match(entry.body, {
     ...omitted,
     TurnStarted: (body): ReadonlyArray<AgentMessage> => [userRoleMessage(userMessageText(body.userMessage))],
-    Message: () => [],
+    Message: (): ReadonlyArray<AgentMessage> => Option.toArray(Option.map(userMessageIn(entry), (message) => userRoleMessage(userMessageText(message)))),
     ToolResult: () => [],
     TurnEnded: (body): ReadonlyArray<AgentMessage> => Option.match(body.reply, { onNone: () => [], onSome: (text) => text.length === 0 ? [] : [{ role: "assistant", content: [{ type: "text", text }] }] }),
   }))
@@ -396,7 +397,7 @@ export const rawTranscript = (entries: ReadonlyArray<LogEntry>): ReadonlyArray<A
   mergeToolMessages(presentedEntries(entries).flatMap((entry): ReadonlyArray<AgentMessage> => LogBody.match(entry.body, {
     ...omitted,
     TurnStarted: (body): ReadonlyArray<AgentMessage> => [userRoleMessage(userMessageText(body.userMessage))],
-    Message: (body): ReadonlyArray<AgentMessage> => [body.message],
+    Message: (body): ReadonlyArray<AgentMessage> => [Option.match(userMessageIn(entry), { onNone: () => body.message, onSome: (message) => userRoleMessage(userMessageText(message)) })],
     ToolResult: (body): ReadonlyArray<AgentMessage> => [{ role: "tool", content: [{ type: "tool-result", toolCallId: body.toolCallId, toolName: body.toolName, output: elideMediaData(body.encoded), isError: body.isError }] }],
     TurnEnded: () => [],
   })))
@@ -464,7 +465,10 @@ export const digestTranscript = (stored: ReadonlyArray<LogEntry>, caps: { readon
   const parts = entries.flatMap((entry): ReadonlyArray<readonly [label: string, text: string]> => LogBody.match(entry.body, {
     ...omitted,
     TurnStarted: (body): ReadonlyArray<readonly [string, string]> => [["User", userMessageText(body.userMessage)]],
-    Message: (body): ReadonlyArray<readonly [string, string]> => Option.toArray(Option.map(assistantText(body.message), (text) => ["Assistant", text] as const)),
+    Message: (body): ReadonlyArray<readonly [string, string]> => Option.match(userMessageIn(entry), {
+      onNone: () => Option.toArray(Option.map(assistantText(body.message), (text) => ["Assistant", text] as const)),
+      onSome: (message) => [["User", userMessageText(message)]],
+    }),
     ToolResult: (body): ReadonlyArray<readonly [string, string]> => [[`Tool ${body.toolName}${body.isError ? " (failed)" : ""}`, clipTo(body.view, caps.result)]],
     TurnEnded: (body): ReadonlyArray<readonly [string, string]> => Option.toArray(Option.map(Option.filter(body.reply, (reply) => reply !== lastAssistant.get(entry.turn)), (reply) => ["Reply", reply] as const)),
   }))
@@ -499,7 +503,8 @@ export const ledgerOf = (entries: ReadonlyArray<LogEntry>, throughTurn: number, 
   const turns = [...new Set(kept.map((entry) => entry.turn))].sort((left, right) => left - right)
   const lines = turns.flatMap((turn) => {
     const inTurn = kept.filter((entry) => entry.turn === turn)
-    const asked = inTurn.flatMap((entry) => entry.body._tag === "TurnStarted" ? [userMessageText(entry.body.userMessage)] : []).at(0)
+    const questions = inTurn.flatMap((entry) => Option.toArray(Option.map(userMessageIn(entry), userMessageText)))
+    const asked = questions.length === 0 ? undefined : questions.join("\n")
     const reply = inTurn.flatMap((entry) => entry.body._tag === "TurnEnded" ? Option.toArray(entry.body.reply) : []).at(-1)
     return asked === undefined ? [] : [`- Asked: ${ledgerText(asked, perTurnChars)}${reply === undefined ? "" : ` — replied: ${ledgerText(reply, perTurnChars)}`}`]
   })
@@ -593,3 +598,10 @@ const toolExchangesOf = (entries: ReadonlyArray<LogEntry>): {
   const moved = new Set(paired.map((pair) => pair.result.id))
   return { results, ordered: entries.flatMap((entry) => moved.has(entry.id) ? [] : [entry, ...(results.get(entry.id) ?? [])]) }
 }
+
+/** Actual user intent: the initial message or an inbox-marked user message, never a host corrective. */
+export const userMessageIn = (entry: LogEntry): Option.Option<UserMessage> => Match.value(entry.body).pipe(
+  Match.tag("TurnStarted", (body) => Option.some(body.userMessage)),
+  Match.tag("Message", (body) => body.inbox !== undefined && body.message.role === "user" ? userMessageOf(body.message) : Option.none<UserMessage>()),
+  Match.orElse(() => Option.none<UserMessage>()),
+)

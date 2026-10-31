@@ -238,6 +238,8 @@ export const stepRequestOf = Effect.fnUntraced(function* <P>(policy: TurnPolicy<
       })
     }),
     record: (step, tail) => session.recordTail(tail, tools.views, step, run.ordinal),
+    pendingSteers: memory.pendingSteers,
+    steer: (step) => memory.steer(step, run.ordinal),
     recorded: (step) => memory.requestSnapshot.pipe(Effect.map(({ entries }) => entries.filter((entry) =>
       entry.runId === run.id && entry.turn === run.turn && entry.step === step
       && (entry.body._tag === "Message" || entry.body._tag === "ToolResult") && entry.body.run === run.ordinal))),

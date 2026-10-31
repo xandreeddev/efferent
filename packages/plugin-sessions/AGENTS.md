@@ -16,8 +16,10 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 - Normalize queued messages before storage. One input id names its normalized message, delivery and source forever: identical enqueue returns false even after completion; another payload or an id used by a notice is `InputConflict`. Keep the payload only in `inbox.queued.input` (legacy `content` empty), with its delivery marker in the head; never duplicate attachment bytes in the head.
 - A Queued begin claims exactly its named input in the opening CAS, with origin user, its exact message and no claimed notices. Resolve its actual initial or retry key before admission, then recheck its pending claim in the opening plan. Carry full provenance on `AdmittedTurn.input`, only its id on `turn.started.input` and `TurnToAdmit.input`; include identity in the key fingerprint.
 - Reclaim a queued input when an ordinary User begin resumes its root, in the same opening commit. A successful resume acknowledges it once; a failed resume returns it. A manually resumed cancellation keeps provenance without recreating an acknowledged slot.
-- Keep `Inbox` begins and `admitted.claimed` notice-only. `drain` selects `all`, `inputs` or `notices`; queued inputs run singly in enqueue order, with either delivery value currently starting a queued user turn. All selects the oldest waiting kind, and an Inbox then takes the notice batch.
-- Count notice attempts by the existing write/interruption rules; drop a notice once `inbox.attempts` turns took it and failed. Queued input is never dropped by attempts: failed, partial and interrupted turns return it; completion or explicit cancellation acknowledges it. Preserve the absent delivery marker of legacy notice slots.
+- Keep `Inbox` begins and `admitted.claimed` notice-only. `drain` selects `all`, `inputs` or `notices`; queued inputs run singly in enqueue order, with an untaken steer still eligible for its own queued user turn. All selects the oldest waiting kind, and an Inbox then takes the notice batch.
+- `TurnWriter.steers` reads fresh pending steers in queue order, including other instances' commits, without recording an attempt. Exclude next input, notices and claimed initial input. `take(entries)` refreshes/rebases before eligibility checks; a stale selection returns false without a commit or attempt.
+- A successful take validates one exact user `Message` per distinct input id, with this turn/run and fresh entry ids; one CAS stores every message, its `inbox.taken` receipt and slot removal. Keep messages and queue consumption in one commit, and never call memory or flush the writer from its queued decision. A taken steer is acknowledged by that durable message across failed turns; the receipt's outer turn anchors later `TurnDuplicate`, before run-id reuse checks, without inventing a turn.started input link.
+- Count notice attempts by the existing write/interruption rules; drop a notice once `inbox.attempts` turns took it and failed. Untaken queued input is never dropped by attempts: failed, partial and interrupted turns return it; completion or explicit cancellation acknowledges it. Preserve the absent delivery marker of legacy notice slots.
 - Keep `TurnActivity` exact: a begin counts from the request until its writer is handed over, then the turn until the writer's scope closes (`awaitIdle` relies on it).
 - Close an open turn from outside through `closeOpen` (a cancel, a shutdown): one guarded commit that reaps a turn nobody holds instead, else stores its `turn.ended`, then closes this instance's writer of it with the same reason.
 - Run a turn's time limit (the begin's `timeLimitMs`, else `turns.timeLimitMs`) as a fiber in the turn's scope, from when its writer is handed over: past it, close the turn as interrupted with `turn.time-limit`, an attempt counted, its writer's `TurnClosed` `timed-out` (`closeForTimeLimit`); the scope's close stops the timer.
@@ -31,7 +33,7 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 ## Public surface
 
 - `sessionsPlugin` (also the default export) and `SessionsPluginLive` (its `.live` layer); `SessionsLive(config, { liveness })` for hosts that compose layers; `processLiveness` (type `ProcessLiveness`).
-- Core contracts implemented here: `Sessions.enqueue`, `BeginTurn.Queued`, `QueuedInput` and `InputDelivery`; the core entry exports those schemas and `InputConflict`. `drain.take` defaults to all; reaction-only hosts select notices.
+- Core contracts implemented here: `Sessions.enqueue`, `BeginTurn.Queued`, `QueuedInput`, `InputDelivery`, `TurnWriter.steers` and `take`; the core entry exports those schemas and `InputConflict`. `drain.take` defaults to all; reaction-only hosts select notices.
 - Config: `SessionsConfig`, `sessionsDefaults` (a 60 s lease, a keep-alive every 20 s, a turn time limit of 6 hours), `Ownership`; `HolderProcess`, where a process-owned turn's holder runs (what `ProcessLiveness.current` returns). The state the plugin keeps in the session head (`SessionsState`, `HeldTurn`, `InboxSlot`) is its own and stays inside the package.
 
 The root names each export, and `quality/exports-have-consumers` checks each one: other packages' tests, the scripts and the docs import `sessionsPlugin`, `SessionsPluginLive`, `SessionsLive`, `SessionsConfig`, `sessionsDefaults` and `ProcessLiveness`, and the rest are tagged `@public` at their declarations (`sessionsPlugin`'s tag covers the default export).
@@ -44,8 +46,8 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:518` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:408` | exact, `src/sessions.adapter.test.ts:1314` |
+| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:537` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:421` | exact, `src/sessions.adapter.test.ts:1314` |
 
 ## Erasure files
 
@@ -69,6 +71,7 @@ None.
 
 - `src/sessions.adapter.test.ts`: one turn at a time, leases, activity, cancel and removal, check then append, contention and a broken log, the inbox, resuming, forks, admission, and the spans and log annotations, over the in-memory log.
 - `src/turn-writer.entity.functions.test.ts`: the writer's transitions, as tables, phase by phase. `src/sessions-state.entity.functions.test.ts` distinguishes bounded notice attempts from retained queued input and cancellation acknowledgments.
+- `src/durable-steering.adapter.test.ts`: read-only probes and false takes, CAS against concurrent enqueues/cancellation, lost take acknowledgments, reused ids and newer-format fencing.
 - `src/sessions.conformance.test.ts`: core's `sessionsConformance` over the in-memory log, and the kit's self-tests (careless instances that must fail the named checks, a writer raising its refusals as `HarnessError` codes and one storing its closing drafts at once among them).
 - `packages/sdk/src/sessions-begin-trace.test.ts`: under a begin traced as `Agent.turn` traces it (the sdk's `traceTurnBegin`), the begin holds only its own work and the writer's commits nest under the calls that asked for them, with the turn's ids.
 - `packages/sdk/src/queued-input.journey.test.ts`: normalized queued attachments through a prebegun writer and real agent, plus an interrupted queued root reclaimed by an explicit user resume.

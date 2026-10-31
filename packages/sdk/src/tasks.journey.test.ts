@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { LanguageModel } from "effect/ai"
-import { Context, Effect, Layer, Option, Ref, Stream } from "effect"
-import { ConversationId, RunId, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage, zeroUsage } from "@xandreed/core"
+import { Context, Deferred, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
+import { ConversationId, InboxItemId, RunId, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, Tasks, TurnAdmissionOpen, UserMessage, zeroUsage } from "@xandreed/core"
 import type { SessionLogEvent, Turn, TurnRunner } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -75,6 +75,63 @@ const tasksBeside = (executor: (agent: Agent) => Layer.Layer<TaskExecutor>) => E
 })
 
 describe("journey: a background task through the agent", () => {
+  test("a child receives a durable steer through its prebegun executor turn before completing", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const prompts = yield* Ref.make<ReadonlyArray<string>>([])
+      const provider = yield* LanguageModel.make({
+        generateText: (options) => {
+          const prompt = JSON.stringify(options.prompt.content)
+          return Ref.update(prompts, (all) => [...all, prompt]).pipe(Effect.andThen(
+            prompt.includes("adjust using beta") ? Effect.succeed(text("beta counted") as never)
+              : prompt.includes("count alpha") ? Deferred.succeed(entered, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.as(text("alpha counted") as never))
+                : Effect.succeed(text("heard") as never),
+          ))
+        },
+        streamText: () => Stream.die("not scripted"),
+      })
+      const { sessions, tasks, idle } = yield* tasksBeside((agent) => agentTaskExecutor(agent, { services: Context.make(LanguageModel.LanguageModel, provider) }))
+      yield* Effect.acquireRelease(Effect.void, () => Deferred.succeed(release, undefined))
+      const task = yield* tasks.start(session, { instructions: "count alpha", mode: "spawn" })
+      yield* Deferred.await(entered)
+      const child = { id: task.child, owner: session.owner }
+      const queued = yield* sessions.enqueue(child, { id: InboxItemId.make("child-steer"), delivery: "steer", userMessage: new UserMessage({ text: "adjust using beta" }), source: { kind: "journey" } })
+      yield* Deferred.succeed(release, undefined)
+      yield* idle
+      return { queued, prompts: yield* Ref.get(prompts), child: yield* sessions.read(child), task: yield* tasks.status(session, task.taskId) }
+    }).pipe(Effect.timeout("3 seconds"))))
+    expect(observed.queued).toEqual({ enqueued: true, pending: 1 })
+    expect(observed.prompts.filter((prompt) => prompt.includes("adjust using beta"))).toHaveLength(1)
+    expect(ofKind(observed.child, "inbox.taken").map((event) => event.data.id)).toEqual(["child-steer"])
+    const steerMessage = Schema.decodeUnknownOption(Schema.Struct({ body: Schema.Struct({ inbox: Schema.Literal("child-steer") }) }))
+    expect(ofKind(observed.child, "memory.message").filter((event) => Option.isSome(steerMessage(event.data)))).toHaveLength(1)
+    expect([observed.task.status, Option.getOrNull(observed.task.reply)]).toEqual(["completed", "beta counted"])
+  })
+
+  test("the executor forwards optional nondurable steering to the child and reaction turns", async () => {
+    const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const found = yield* Ref.make<ReadonlyArray<string>>([])
+      const runner: TurnRunner = {
+        turn: (input) => Effect.gen(function* () {
+          const steering = yield* input.steering ?? Effect.succeed(Option.none<string>())
+          const tasks = yield* Effect.fromOption(Context.getOption(input.services, Tasks)).pipe(Effect.orDie)
+          const listed = yield* tasks.list(session).pipe(Effect.orDie)
+          const answer = `${listed.map((task) => task.status).join()}:${Option.getOrElse(steering, () => "missing")}`
+          yield* Ref.update(found, (all) => [...all, answer])
+          return { outcome: "completed" as const, reply: Option.some(answer), usage: zeroUsage }
+        }),
+      }
+      const { tasks, idle } = yield* tasksBeside(() => agentTaskExecutor(runner, {
+        services: Context.empty(), steering: Effect.succeed(Option.some("check the latest state")),
+      }))
+      yield* tasks.start(session, { instructions: "anything", mode: "spawn" })
+      yield* idle
+      return yield* Ref.get(found)
+    })))
+    expect(observed).toEqual(["running:check the latest state", "completed:check the latest state"])
+  })
+
   test("start a task, its child turn runs through the agent, its result waits for the turn in flight, and the caller's drain answers it", async () => {
     const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       // The task's turns (the child's, then the parent's reaction) talk to their own scripted provider.

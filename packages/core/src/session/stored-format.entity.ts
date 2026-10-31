@@ -19,4 +19,4 @@
  *
  * @public
  */
-export const STORED_FORMAT: number = 5
+export const STORED_FORMAT: number = 6

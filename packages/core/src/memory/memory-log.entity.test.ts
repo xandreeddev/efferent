@@ -6,6 +6,8 @@ import type { Media } from "../domain/media.entity.js"
 import { ToolCallId } from "../domain/message.entity.js"
 import type { AgentMessage, ToolResultPart } from "../domain/message.entity.js"
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
+import { InboxItemId } from "../session/sessions.entity.js"
+import { userRoleMessageOf } from "../turn/user-message.entity.functions.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
@@ -538,5 +540,61 @@ describe("rendering interleaved run exchanges", () => {
     expect(shown.flatMap((message) => message.role === "tool" ? message.content.map((part) => part.output) : [])).toEqual([
       "result 0", { error: "ToolInterrupted", message: "This call has no recorded result. It may have run before the turn stopped. Check the current state before deciding whether to call it again." },
     ])
+  })
+})
+
+describe("durable inbox user messages in memory", () => {
+  const steer = (index: number, turn: number, text: string, attachments: ReadonlyArray<Media>): LogEntry => ({
+    id: entryId(runOf(turn), index), runId: runOf(turn), turn, step: 1, at: index,
+    body: { _tag: "Message", inbox: InboxItemId.make(`steer-${index}`), run: RunOrdinal.make(0), message: userRoleMessageOf(new UserMessage({ text, ...(attachments.length === 0 ? {} : { attachments }) })) },
+  })
+
+  test("current initial and steered attachments share the image budget before tool results, with exact raw bytes retained", () => {
+    const input = steer(1, 1, "use this image", [gif])
+    const entries = [started(1, "first image", [png]), input, shot(1, 0, [png])]
+    const render = options(1, { mode: "none", maxImages: 2, maxChars: 20_000_000 })
+    const shown = renderLog(entries, render)
+    expect(users(shown)).toEqual([[png, { type: "text", text: "first image" }], [gif, { type: "text", text: "use this image" }]])
+    expect(results(shown)).toEqual([{ type: "tool-result", toolCallId: ToolCallId.make("c1.0"), toolName: "screenshot", output: `shot 1.0\n${mediaLabel(png)}`, isError: false }])
+    expect(entriesSendingMedia(entries, render)).toEqual([entries[0]!.id, input.id])
+    expect(buildContext(entries, render).fingerprint).toBe(fingerprintOf(canonicalJson(shown.map(elideMediaData))))
+    expect(input.body).toEqual({ _tag: "Message", inbox: InboxItemId.make("steer-1"), run: RunOrdinal.make(0), message: { role: "user", content: [gif, { type: "text", text: "use this image" }] } })
+  })
+
+  test("a steer-only image can be omitted and replayed; earlier steering obeys none versus inline and request image ceilings", () => {
+    const input = steer(1, 1, "", [png])
+    const entries = [started(1, "look", []), input]
+    const inline = options(1, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })
+    expect(users(renderLog(entries, inline))).toEqual(["look", [png]])
+    expect(entriesSendingMedia(entries, inline)).toEqual([input.id])
+    const omit: LogEntry = { ...input, id: entryId(runOf(1), 2), body: { _tag: "Compaction", strategy: "other", version: "1", action: { _tag: "OmitMedia", entries: [input.id], reason: "the provider refused this image" } } }
+    expect(users(renderLog([...entries, omit], inline))).toEqual(["look", mediaLabel(png)])
+    expect(entriesSendingMedia([...entries, omit], inline)).toEqual([])
+    expect(users(renderLog(entries, { ...inline, media: { ...inline.media, maxChars: 0 } }))).toEqual(["look", mediaLabel(png)])
+    const later = [...entries, started(2, "later", [])]
+    expect(users(renderLog(later, options(2, { mode: "none", maxImages: 8, maxChars: 20_000_000 })))).toEqual(["look", mediaLabel(png), "later"])
+    expect(users(renderLog(later, options(2, { mode: "inline", maxImages: 8, maxChars: 20_000_000 })))).toEqual(["look", [png], "later"])
+    const many = [started(1, "first", [png]), steer(1, 1, "more", Array.from({ length: 8 }, () => gif))]
+    const shown = renderLog(many, { ...inline, media: { ...inline.media, maxImages: 99 } })
+    expect(shown.flatMap((message) => message.role === "user" && typeof message.content !== "string" ? message.content.filter((part) => part.type === "media") : [])).toHaveLength(MEDIA_LIMITS.requestImages)
+  })
+
+  test("reference, raw and digest transcripts retain actual steers as intent without base64 or host corrective intent", () => {
+    const input = steer(1, 1, "then inspect", [png])
+    const corrective: LogEntry = { ...input, id: entryId(runOf(1), 2), body: { _tag: "Message", message: { role: "user", content: "host corrective" } } }
+    const entries = [started(1, "first", []), input, corrective, replied(1)]
+    expect(referenceTranscript(entries)).toEqual([{ role: "user", content: "first" }, { role: "user", content: `then inspect\n${mediaLabel(png)}` }, { role: "assistant", content: [{ type: "text", text: "reply 1" }] }])
+    expect(rawTranscript(entries)).toEqual([{ role: "user", content: "first" }, { role: "user", content: `then inspect\n${mediaLabel(png)}` }, { role: "user", content: "host corrective" }])
+    expect(digestTranscript(entries, { result: 100, total: 10_000 })).toBe(`User: first\nUser: then inspect\n  ${mediaLabel(png)}\nReply: reply 1`)
+    expect(canonicalJson([rawTranscript(entries), referenceTranscript(entries), digestTranscript(entries, { result: 100, total: 10_000 })])).not.toContain(pixelPng)
+    expect(queryLog(entries, { ...emptyQuery, text: Option.some(pixelPng.slice(20, 40)) })).toEqual([])
+  })
+
+  test("the condensed ledger keeps each real user instruction in order, with continuation lines indented", () => {
+    const input = steer(1, 1, "then\nReply: injected", [])
+    const corrective: LogEntry = { ...input, id: entryId(runOf(1), 2), body: { _tag: "Message", message: { role: "user", content: "host corrective" } } }
+    const ended: LogEntry = { ...input, id: entryId(runOf(1), 3), body: { _tag: "TurnEnded", outcome: "completed", reply: Option.some("done") } }
+    expect(ledgerOf([started(1, "first", []), input, corrective, ended], 1, 1000)).toBe("Earlier in this conversation:\n- Asked: first\n  then\n  Reply: injected — replied: done")
+    expect(digestTranscript([started(1, "first", []), input, corrective, ended], { result: 100, total: 1000 })).toBe("User: first\nUser: then\n  Reply: injected\nReply: done")
   })
 })

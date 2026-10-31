@@ -2,6 +2,7 @@ import { Schema, SchemaTransformation } from "effect"
 import type { Option } from "effect"
 import { Media, MediaSlot } from "../domain/media.entity.js"
 import { AgentMessage, ToolCallId } from "../domain/message.entity.js"
+import { InboxItemId } from "../session/sessions.entity.js"
 import { RunId, RunKey, RunOrdinal } from "../domain/run.entity.js"
 import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { DecisionId } from "../decision-record.entity.js"
@@ -126,7 +127,12 @@ export const LogBody = Schema.Union(
     }),
   )),
   TurnContextBody,
-  Schema.TaggedStruct("Message", { message: AgentMessage, run: Schema.optionalKey(RunOrdinal) }),
+  Schema.TaggedStruct("Message", {
+    message: AgentMessage,
+    run: Schema.optionalKey(RunOrdinal),
+    /** The immutable queued input consumed with this exact user message. */
+    inbox: Schema.optionalKey(InboxItemId),
+  }).check(Schema.makeFilter((body) => body.inbox === undefined || body.message.role === "user" ? true : "an inbox message must have the user role")),
   Schema.TaggedStruct("ToolResult", {
     toolCallId: ToolCallId,
     run: Schema.optionalKey(RunOrdinal),

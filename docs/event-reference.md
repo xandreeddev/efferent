@@ -234,7 +234,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `memory.system` | Memory, when the turn's system prompt (or a variant) changes | The full system prompt text. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.section` | Memory: `turn.context(…)` and turn-tier prompt sections | Turn sections: the host's context for this turn, as the model sees it. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.step` | Memory: the step policy's step context | Step context text. | `entry`, `runId`, `step`, `at`, `body` |
-| `memory.message` | Memory: the step loop's recorded messages | User and assistant text, reasoning, tool call inputs. | `entry`, `runId`, `step`, `at`, `body` |
+| `memory.message` | Memory: the step loop's recorded messages; `TurnWriter.take` for queued steering, atomically with its receipt | User and assistant text, reasoning, tool call inputs, and a steer's images inline as base64. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.tool-result` | Memory: the step loop's recorded tool results | Tool output, encoded (a tool's images, inline as base64, included) and as the model saw it. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.digest` | Memory: a digester (`plugin-memory-digest`) | Tool output, digested. | `entry`, `runId`, `step`, `at`, `body` |
 | `memory.skills` | Memory: the tool registry's skill activations | None: skill and tool names. | `entry`, `runId`, `step`, `at`, `body` |
@@ -255,6 +255,7 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `turn.ended` | plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap | Failure messages, which may quote errors. | `reason`, `failure` |
 | `inbox.queued` | plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input) | The item's content, user message, attachments and source. | `id`, `source`, `content`, `input` |
 | `inbox.dropped` | plugin-sessions: the end of the last turn that took the item and failed | None: the item id. | `id`, `reason` |
+| `inbox.taken` | plugin-sessions: `TurnWriter.take`, in the same commit as the exact user memory.message and removal of the pending steer | None: the input id and raw memory entry id; message and image bytes stay in memory.message. | `id`, `entry` |
 
 A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's id, run, step and time, and its body without the `_tag` (the kind names it). Memory is rebuilt from these events by `entriesOfEvents`.
 
@@ -263,7 +264,7 @@ A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's
 | `memory.system` | `fingerprint`: `string`, `text`: `string`, `sections`: `Array<{ id, version, fingerprint }>` |
 | `memory.section` | `sectionId`: `string`, `version`: `string`, `text`: `string` |
 | `memory.step` | `step`: `integer`, `run`: `integer`, `text`: `string` |
-| `memory.message` | `message`: `{ role, content, providerOptions }`, `run`: `integer` |
+| `memory.message` | `message`: `{ role, content, providerOptions }`, `run`: `integer`, `inbox`: `string` |
 | `memory.tool-result` | `toolCallId`: `string`, `run`: `integer`, `toolName`: `string`, `isError`: `boolean`, `encoded`: `unknown`, `view`: `string`, `viewVersion`: `string`, `subjects`: `Array<{ kind, id, label, data }>`, `artifacts`: `Array<{ id, kind, mediaType, url, alt }>`, `pinned`: `boolean`, `media`: `Array<{ path, fingerprint, mediaType, bytes }>`, `mediaNotes`: `Array<string>` |
 | `memory.digest` | `entry`: `string`, `version`: `string`, `mode`: `"select" \| "summarize"`, `keep`: `Array<string>`, `text`: `string`, `digester`: `string`, `trigger`: `"write" \| "compaction"` |
 | `memory.skills` | `skills`: `Array<string>`, `tools`: `Array<string>`, `source`: `"always" \| "matcher" \| "load_skill" \| "host"`, `decision`: `string \| null` |
@@ -303,6 +304,7 @@ request.prepared
 turn.ended
 inbox.queued
 inbox.dropped
+inbox.taken
 tool.progress
 skills.activated
 assistant.message

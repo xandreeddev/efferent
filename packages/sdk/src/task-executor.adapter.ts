@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Option } from "effect"
 import type { Scope } from "effect"
 import { isTurnError, TaskExecutor, Tasks } from "@xandreed/core"
-import type { TaskView, Turn, TurnError, TurnOutcome, TurnRunner, TurnServices, TurnWriter } from "@xandreed/core"
+import type { TaskView, Turn, TurnError, TurnInput, TurnOutcome, TurnRunner, TurnServices, TurnWriter } from "@xandreed/core"
 
 /** What a task's turn runs once it is composed: a `use` of `Agent.turn`, with the turn's services. */
 type TurnUse = (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, TurnServices | Scope.Scope>
@@ -20,8 +20,8 @@ const oneRun = (turn: Turn): Effect.Effect<TurnOutcome, TurnError> => turn.tools
  * called with, so the turn's task tools (`start_task`, `task_status`) find
  * the `Tasks` whose work the turn is.
  */
-const runOn = (agent: TurnRunner, services: Context.Context<never>, writer: TurnWriter, use: TurnUse) => Tasks.pipe(
-  Effect.flatMap((tasks) => agent.turn({ turn: writer, services: Context.add(services, Tasks, tasks) }, use)),
+const runOn = (agent: TurnRunner, services: Context.Context<never>, writer: TurnWriter, use: TurnUse, steering: TurnInput["steering"]) => Tasks.pipe(
+  Effect.flatMap((tasks) => agent.turn({ turn: writer, services: Context.add(services, Tasks, tasks), ...(steering === undefined ? {} : { steering }) }, use)),
   Effect.catch((error) => isTurnError(error) ? Effect.fail(error) : Effect.die(error)),
   Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: result.reply })),
 )
@@ -44,6 +44,8 @@ const runOn = (agent: TurnRunner, services: Context.Context<never>, writer: Turn
  */
 export const agentTaskExecutor = (agent: TurnRunner, options: {
   readonly services: Context.Context<never>
+  /** Optional in-memory steering for both turns; durable input uses their writers' queued steers. */
+  readonly steering?: TurnInput["steering"]
   /** The child's turn, given the task it runs. */
   readonly child?: (turn: Turn, task: TaskView) => Effect.Effect<TurnOutcome, TurnError, TurnServices | Scope.Scope>
   /** The parent's turn that answers the results waiting in its inbox. */
@@ -52,7 +54,7 @@ export const agentTaskExecutor = (agent: TurnRunner, options: {
   const child = options.child ?? oneRun
   const react = options.react ?? oneRun
   return Layer.succeed(TaskExecutor, TaskExecutor.of({
-    turn: (writer, task) => runOn(agent, options.services, writer, (turn) => child(turn, task)),
-    react: (writer) => runOn(agent, options.services, writer, react).pipe(Effect.asVoid),
+    turn: (writer, task) => runOn(agent, options.services, writer, (turn) => child(turn, task), options.steering),
+    react: (writer) => runOn(agent, options.services, writer, react, options.steering).pipe(Effect.asVoid),
   }))
 }

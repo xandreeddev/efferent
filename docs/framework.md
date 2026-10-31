@@ -482,11 +482,16 @@ which `onTail(messages, step)` persists under the step. It settles:
 (`completed`, `failed`, `cancelled`, `malformed` or `truncated`). Then the
 loop decides: `isComplete(step)`, a query that is never asked after a
 malformed or a truncated step, the degenerate-loop breaker, compaction and
-steering. A corrective, a nudge or a steer goes through `onTail` under the
-next step, and only when that step runs: a run the step cap, the breaker or
+steering. A corrective, a nudge or an in-memory steer goes through `onTail`
+under the next step, and only when that step runs: a run the step cap, the breaker or
 completion ends records none. A `StepLoop`'s `RunResult` says the same as a
 union: `completed` with the reason `completed`, or `partial` with
-`step-cap` or `degenerate-loop`.
+`step-cap` or `degenerate-loop`. Durable input has a separate probe and
+take: `StepRequest.pendingSteers` checks after settlement, and
+`StepRequest.steer(step)` commits exact user messages after that next
+`step.started`, before its plan, including step zero. The returned messages
+are already durable and are never passed through `onTail` again.
+`runLoop` exposes the same pair as `durableInput: { pending, take }`.
 
 **The step's response.** A provider's response ends with a finish reason
 (`FinishReason`, effect/ai's list), which says whether it is whole: `stop`
@@ -1066,7 +1071,20 @@ the turn's `LogHandle` (the entries of earlier turns, and appends through the
 turn's writer). It reads what a strategy
 needs per turn (a `ResultDigester`, a summarizer's `UtilityLlm`) with
 `Effect.serviceOption` from the environment it is opened in; provide them to
-the open, not as an argument. `ToolRegistry.open(session)` requires
+the open, not as an argument.
+
+`MemorySession.record(bodies, step, commit?)` also supports an alternate
+atomic commit, used for steering's memory entries and inbox acknowledgment.
+The callback receives prepared entries under memory's allocation lock.
+`true` commits the whole batch; `false` returns no entries and changes
+neither the cache nor the next entry id. A failed acknowledgment triggers
+a fresh durable snapshot before another allocation: a commit that landed
+keeps its ids, a proven refusal consumes none, and an outcome that cannot
+be read reserves its attempted ids. The original error is preserved.
+Custom memory adapters implement this contract as well as ordinary appends;
+`memoryConformance` checks it.
+
+`ToolRegistry.open(session)` requires
 `RunContext` and a scope, and its handlers run with the services of where it
 is opened (captured at open); the `IntentMatcher`, `ActionPolicy` and
 `PermissionGrants` there are used when present. Every service a tool
@@ -1657,7 +1675,8 @@ tasks, with the writer as the bus's first subscriber, then the memory
 session (opened where the layer is built, over the session's earlier turns)
 and `RunContext` (which carries the turn's `session`). It provides:
 
-- `TurnMemory`: the session, the turn's `number`, `startRun` (the next run
+- `TurnMemory`: the session, `pendingSteers` (a fresh read), `steer(step,
+  run)` (atomic user-message recording before planning), the turn's `number`, `startRun` (the next run
   of the step loop, its ordinal counting from 0; `turn.closed` once the
   reply is recorded), `persistMessage` (the
   turn's TurnStarted, stored when the turn began, is shown to memory, then
@@ -1958,7 +1977,8 @@ summaries read a message as `userMessageText`: its text, then one label line
 per image; the raw transcript shows a tool result's images with their data
 elided. `queryLog` searches with each image's data elided
 (`elideMediaData`). The bus and stored `turn.started` carry a user's images'
-base64; the bus's `tool.completed` (the stored one leaves the result out) and
+base64; a taken steer keeps its images in the inbox-marked
+`memory.message`, with the receipt holding only ids. The bus's `tool.completed` (the stored one leaves the result out) and
 the stored `memory.tool-result` (its `encoded` result) a tool's: elide them
 before streaming events to a browser. The skill
 matcher's decision hash adds the images' fingerprints only when there are
@@ -2274,6 +2294,7 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 | `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.refused`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded`, `stream.fallback` | the turn's bus |
 | `request.prepared` (the request's header: system text, tool declarations, model, cache key) | the turn, before each provider call (`TurnMemory.prepareRequest`) |
 | `inbox.queued`, `inbox.dropped` | `deliver` or `enqueue`; a notice claim that failed too often |
+| `inbox.taken` (`id`, `entry`) | `TurnWriter.take`, atomically with its user `memory.message` and queue removal |
 | `task.started`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |
 | anything else | the host, through the writer or `transact` |
 
@@ -2285,7 +2306,7 @@ SQLite and key-reordering stores against the golden requests.
 
 A record is read by its fields only once decoded. `readStored(kind, events)`
 decodes the events of one of the kinds in `StoredData` (`turn.started`,
-`turn.ended`, `inbox.queued`, `inbox.dropped`, `step.usage`,
+`turn.ended`, `inbox.queued`, `inbox.dropped`, `inbox.taken`, `step.usage`,
 `request.prepared`) with that kind's schema and fails with the first
 `SchemaError`; a lookup by key goes through `readStoredKeys`, which decodes
 a `turn.started`'s `runId`, `key`, `entry` and optional `input` and `resumes`
@@ -2317,9 +2338,9 @@ delivery, source })` stores one `QueuedInput` for a later user turn.
 storage exactly as for a direct begin. Each input keeps its own message;
 inputs are never joined into one message. `source` is host metadata and is
 never added to the model's message. `delivery` is `next` or `steer`; both
-are eligible for an input drain. In this release a `steer` waits for a
-queued user turn too; consumption inside a running turn is a separate
-capability.
+are eligible for an input drain. A running turn takes waiting steers
+between steps, as described below; an untaken steer can still start its
+own queued user turn.
 
 Enqueue returns `{ enqueued, pending }`. Repeating the same id with the
 same normalized message, delivery and source returns `enqueued: false`,
@@ -2341,7 +2362,7 @@ needs a fresh run id. A missing input is `NothingPending`; an input already
 acknowledged is `TurnDuplicate`. A direct `User` begin still refuses a
 busy session; enqueue is the explicit way to save work while a turn runs.
 
-Queued input remains pending after failed, partial or interrupted turns,
+Untaken queued input remains pending after failed, partial or interrupted turns,
 across reopenings and regardless of the notice attempt ceiling. A
 completed turn acknowledges it. Explicit cancellation also acknowledges
 it, so a later drain does not undo the user's stop request. A user turn
@@ -2358,6 +2379,55 @@ gets `SessionMissing`. The host's `TurnAdmission` sees the actual attempt
 key and input id before the opening commit. A refusal leaves the input
 pending. Queue claims obey the same one-open-turn rule and explicit
 `takeOver` option as direct user turns.
+
+**Durable steering.** Enqueue with `delivery: "steer"` to add user input to
+the running turn. Before each step's plan, including step zero after a
+resume, the loop takes every waiting steer, each as its own exact user
+message. The take runs after `step.started` and before the request is
+built. `delivery: "next"`, notices and the input already claimed as this
+turn's initial message stay untouched.
+
+`TurnWriter.steers` reads the fresh pending steers, including inputs
+another instance enqueued. `TurnWriter.take(entries)` validates prepared
+inbox-marked user messages against the immutable queue records, then makes
+one compare-and-swap commit: the `memory.message` entries, one
+`inbox.taken` receipt per input, and removal of those pending slots.
+`memory.message.body.inbox` holds the input id, and the receipt holds only
+`{ id, entry }`; the message's run ordinal and step stay on the raw memory
+entry. Receipts copy no message or image bytes. A stale or ineligible
+selection returns `false` and records nothing; invalid entries fail.
+
+A taken steer is acknowledged by its stored message. If the turn fails or
+the process stops before the next provider call, replay includes the
+message and the input is not delivered again. `enqueue` of the same input
+still returns false. A queued begin for an input already taken returns
+`TurnDuplicate`, anchored to the receipt's consuming turn, without
+fabricating a `turn.started.input` for it.
+
+After each step settles, the loop checks pending durable steering; for a
+whole reply this follows the host's completion verdict, including a true
+verdict for a final response. Waiting steering requests another step when
+the hard limits allow it. At the step cap, the run returns partial and the
+steers remain queued: nothing is consumed or recorded under a step that
+never starts. The degenerate-loop breaker and unrecoverable failures also
+leave waiting input queued. An empty final probe is the completion
+boundary. An input committed after that probe waits for the next turn,
+even if the current turn has not stored its end yet.
+
+Steering images use the same request budgets and omission labels as the
+initial user's attachments. An `OmitMedia` compaction can name their
+message entries; image refusal recovery and replay use the same selection.
+Raw and reference transcripts show image labels rather than base64.
+Summaries and condensed ledgers include actual inbox-marked user messages,
+with continuation lines indented, while keeping host correctives out of
+user intent. Result digests use the newest actual user message, including
+a durable steer.
+
+`TurnInput.steering` remains an in-memory effect returning optional text.
+It is consulted only on a continuing path and is not durable; use enqueue
+for input that must survive a restart. `agentTaskExecutor` uses the child's
+or reaction's writer for durable steering and forwards its optional
+`steering` effect to both turns.
 
 **Draining selected work.** `drain(address, run, { take, maxTurns, meta })`
 executes pending work while the session is free and the host admits it,

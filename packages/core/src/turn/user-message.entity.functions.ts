@@ -1,8 +1,10 @@
-import { Effect } from "effect"
+import { Effect, Schema } from "effect"
+import type { Option } from "effect"
 import { AttachmentRejected, MEDIA_LIMITS } from "../domain/media.entity.js"
 import type { Media } from "../domain/media.entity.js"
 import { mediaLabel, normalizeMedia } from "../domain/media.entity.functions.js"
 import { UserMessage } from "./user-message.entity.js"
+import type { UserRoleMessage } from "../domain/message.entity.js"
 
 /** The message's images, in order (none for a text-only message). */
 export const attachmentsOf = (message: UserMessage): ReadonlyArray<Media> => message.attachments ?? []
@@ -13,6 +15,25 @@ export const attachmentsOf = (message: UserMessage): ReadonlyArray<Media> => mes
  */
 export const userMessageText = (message: UserMessage): string =>
   [message.text, ...attachmentsOf(message).map(mediaLabel)].filter((line) => line.length > 0).join("\n")
+
+/**
+ * The exact raw user message, images first; presentation budgets apply only when memory renders it.
+ * @public
+ */
+export const userRoleMessageOf = (message: UserMessage): UserRoleMessage => {
+  const images = attachmentsOf(message)
+  return { role: "user", content: images.length === 0 ? message.text : [...images, ...(message.text.length === 0 ? [] : [{ type: "text" as const, text: message.text }])] }
+}
+
+/**
+ * Recover real user intent from raw parts without normalizing or copying their image bytes. Empty messages are absent.
+ * @public
+ */
+export const userMessageOf = (message: UserRoleMessage): Option.Option<UserMessage> => {
+  const parts = typeof message.content === "string" ? [{ type: "text" as const, text: message.content }] : message.content
+  const images = parts.flatMap((part) => part.type === "media" ? [part] : [])
+  return Schema.decodeUnknownOption(UserMessage)({ text: parts.flatMap((part) => part.type === "text" ? [part.text] : []).join(""), ...(images.length === 0 ? {} : { attachments: images }) })
+}
 
 const sameMedia = (left: Media, right: Media): boolean =>
   left.fingerprint === right.fingerprint && left.mediaType === right.mediaType && left.bytes === right.bytes

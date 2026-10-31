@@ -3,7 +3,8 @@ import type { Prompt, Response } from "effect/ai"
 import { Context, Deferred, Effect, Option, Ref, Result, Schema, Stream } from "effect"
 import { ConformanceFailure } from "../conformance.entity.js"
 import type { ConformanceCheck } from "../conformance.entity.js"
-import { sameUsage } from "../conformance.functions.js"
+import { pixelPng, sameUsage } from "../conformance.functions.js"
+import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
 import type { FinishReason, StepStatus } from "../domain/turn-vocabulary.entity.js"
@@ -168,6 +169,12 @@ interface Scenario {
   readonly run?: RunRef
   /** What the request's `steering` answers, one text per consult, then none (none by default). */
   readonly steering?: ReadonlyArray<string>
+  /** Durable queued messages, delivered at the named boundary. */
+  readonly durableSteering?: {
+    readonly at: "initial" | "completion" | "settled" | "empty-probe"
+    readonly messages: ReadonlyArray<AgentMessage>
+    readonly failure?: TurnError
+  }
   /** The request's `limits.requireCompletion` (off by default). */
   readonly requireCompletion?: boolean
 }
@@ -189,6 +196,11 @@ interface Observed {
   readonly recorded: ReadonlyArray<LogEntry>
   /** The durable log when each tool handler began. */
   readonly atHandlers: ReadonlyArray<ReadonlyArray<LogEntry>>
+  readonly durable: {
+    readonly pending: ReadonlyArray<AgentMessage>
+    readonly taken: ReadonlyArray<{ readonly step: number; readonly after: number }>
+    readonly probes: number
+  }
   readonly dispatches: ReadonlyArray<number>
   /** `CurrentTraceContent` as each provider call read it. */
   readonly traceContent: ReadonlyArray<boolean>
@@ -213,7 +225,14 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const events = yield* makeTurnEvents({ maxDepth: 8 })
   const tasks = yield* makeTurnTasks(scope)
   const seen = yield* Ref.make<ReadonlyArray<TurnEvent>>([])
-  yield* events.subscribe(Option.some, (event: TurnEvent) => Ref.update(seen, (all) => [...all, event]))
+  const waitingSteers = yield* Ref.make<ReadonlyArray<AgentMessage>>(scenario.durableSteering?.at === "initial" ? scenario.durableSteering.messages : [])
+  const deliveredSteers = yield* Ref.make(scenario.durableSteering?.at === "initial")
+  const takenSteers = yield* Ref.make<ReadonlyArray<{ readonly step: number; readonly after: number }>>([])
+  const steerProbes = yield* Ref.make(0)
+  const deliverSteers = Ref.getAndSet(deliveredSteers, true).pipe(Effect.flatMap((delivered) => delivered ? Effect.void : Ref.update(waitingSteers, (all) => [...all, ...(scenario.durableSteering?.messages ?? [])])))
+  yield* events.subscribe(Option.some, (event: TurnEvent) => Ref.update(seen, (all) => [...all, event]).pipe(
+    Effect.andThen(event._tag === "step.ended" && scenario.durableSteering?.at === "settled" ? deliverSteers : Effect.void),
+  ))
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([])
   const prompts = yield* Ref.make<ReadonlyArray<Prompt.Prompt>>([])
   const dispatches = yield* Ref.make<ReadonlyArray<number>>([])
@@ -328,7 +347,21 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     record,
     recorded: (step) => Ref.get(recorded).pipe(Effect.map((all) => all.filter((entry) => entry.step === step))),
     onMediaRejected: scenario.onMediaRejected ?? (() => Effect.succeed(false)),
-    completion: (info) => scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete),
+    completion: (info) => (scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete)).pipe(Effect.tap(() => scenario.durableSteering?.at === "completion" ? deliverSteers : Effect.void)),
+    pendingSteers: Ref.update(steerProbes, (count) => count + 1).pipe(Effect.andThen(Ref.get(waitingSteers)), Effect.flatMap((waiting) =>
+      waiting.length === 0 && scenario.durableSteering?.at === "empty-probe"
+        ? Ref.get(calls).pipe(Effect.flatMap((called) => called.length > 0 ? deliverSteers : Effect.void), Effect.as(false))
+        : Effect.succeed(waiting.length > 0))),
+    steer: Effect.fnUntraced(function* (step: number) {
+      const messages = yield* Ref.get(waitingSteers)
+      if (messages.length === 0) return []
+      if (scenario.durableSteering?.failure !== undefined) return yield* Effect.fail(scenario.durableSteering.failure)
+      const published = yield* Ref.get(seen)
+      yield* Ref.update(takenSteers, (all) => [...all, { step, after: published.length }])
+      yield* record(step, messages)
+      yield* Ref.set(waitingSteers, [])
+      return messages
+    }),
     steering: Ref.modify(steers, (texts): [Option.Option<string>, ReadonlyArray<string>] => [Option.fromNullishOr(texts[0]), texts.slice(1)]),
     correctives: Option.none(),
     events,
@@ -348,6 +381,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   ))
   return {
     result, events: yield* Ref.get(seen), records: yield* Ref.get(records), providerCalls: yield* Ref.get(calls), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded), atHandlers: yield* Ref.get(atHandlers),
+    durable: { pending: yield* Ref.get(waitingSteers), taken: yield* Ref.get(takenSteers), probes: yield* Ref.get(steerProbes) },
     dispatches: yield* Ref.get(dispatches), traceContent: yield* Ref.get(traceContent),
     cacheKeys: { dispatched: yield* Ref.get(dispatchedKeys), called: yield* Ref.get(calledKeys) },
     callPolicies: { dispatched: yield* Ref.get(dispatchedPolicies), called: yield* Ref.get(calledPolicies) },
@@ -613,6 +647,71 @@ export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>
       const expected = recorded.filter((entry) => entry.step === 0 && entry.body._tag === "ToolResult").map((entry) => String(entry.id))
       yield* expect("results", results.length === 1 && results.map((result) => String(result.entry)).join() === expected.join() && results[0]?.tool === Probe.name,
         `expected ${expected.join()}, got ${results.map((result) => result.entry).join()}`)
+    }),
+  },
+  {
+    name: "consumes durable steers before the first step plan, once per separate exact user message",
+    run: Effect.gen(function* () {
+      const message: AgentMessage = { role: "user", content: "the durable instruction before step zero" }
+      const observed = yield* observe(loop, { script: [textReply("done")], replay: true, durableSteering: { at: "initial", messages: [message] } })
+      const stored = observed.recorded.filter((entry) => entry.body._tag === "Message" && canonicalJson(entry.body.message) === canonicalJson(message))
+      yield* expect("steering-first", observed.providerCalls.length === 1 && canonicalJson(observed.prompts[0]).includes("the durable instruction before step zero")
+        && stored.length === 1 && observed.durable.pending.length === 0, "preexisting steering was missed, recorded twice or taken after the first plan")
+      yield* expect("steering-first", observed.durable.taken.every((taken) => taken.after > indexOf(observed.events, "step.started", taken.step)), "a durable steer was recorded before its step started")
+    }),
+  },
+  {
+    name: "durable steers arriving with a final completion verdict force another step and retain separate messages and images",
+    run: Effect.gen(function* () {
+      const image = yield* mediaFromBase64(pixelPng).pipe(Effect.orDie)
+      const messages: ReadonlyArray<AgentMessage> = [{ role: "user", content: "the first durable change" }, { role: "user", content: [image, { type: "text", text: "the second durable image change" }] }]
+      const observed = yield* observe(loop, {
+        script: [textReply("the old final reply"), textReply("the revised final reply")], replay: true,
+        completion: () => Effect.succeed({ complete: true, awaiting: [], facts: {} }),
+        durableSteering: { at: "completion", messages },
+      })
+      yield* expect("durable-steering", observed.providerCalls.length === 2 && observed.result.text === "the revised final reply" && observed.durable.pending.length === 0,
+        "a true completion verdict skipped durable steering or did not complete the revised request")
+      const second = canonicalJson(observed.prompts[1])
+      yield* expect("durable-steering", second.includes("the first durable change") && second.includes("the second durable image change") && second.includes(pixelPng), "a durable steer's exact text or attachment was lost before dispatch")
+      const taken = observed.recorded.filter((entry) => entry.body._tag === "Message" && messages.some((message) => canonicalJson(entry.body._tag === "Message" ? entry.body.message : {}) === canonicalJson(message)))
+      yield* expect("durable-steering", taken.length === 2 && taken.every((entry) => entry.step === 1)
+        && observed.durable.taken.every((point) => point.after > indexOf(observed.events, "step.started", point.step)), "steers were merged, duplicated or recorded outside their next started step")
+    }),
+  },
+  {
+    name: "pending durable steers at the step cap remain queued with nothing recorded under an unstarted step",
+    run: Effect.forEach([
+      { script: [textReply("final at the cap")] },
+      { script: [malformedCall("cap-malformed")] },
+      { script: [cutText("length", "cut at the cap")] },
+      { script: [], initial: { calls: [{ name: Probe.name, params: { n: 1 } }], skills: [] } },
+    ], (scenario) => Effect.gen(function* () {
+      const message: AgentMessage = { role: "user", content: "leave this steer queued at the cap" }
+      const observed = yield* observe(loop, { ...scenario, maxSteps: 1, durableSteering: { at: "settled", messages: [message] } })
+      yield* expect("steering-cap", observed.result.outcome === "partial" && observed.result.reason === "step-cap" && observed.durable.pending.length === 1
+        && observed.durable.taken.length === 0 && observed.recorded.every((entry) => entry.step === 0), "the cap consumed steering, completed unfinished input or recorded a nonexistent next step")
+      yield* expect("steering-cap", observed.durable.probes > 0, "a settled final step never checked pending steering")
+    }), { concurrency: 1, discard: true }),
+  },
+  {
+    name: "steering enqueued after the final empty probe waits for the next turn without another provider call",
+    run: Effect.gen(function* () {
+      const message: AgentMessage = { role: "user", content: "arrived after the empty final probe" }
+      const observed = yield* observe(loop, { script: [textReply("complete")], durableSteering: { at: "empty-probe", messages: [message] } })
+      yield* expect("steering-empty-poll", observed.result.outcome === "completed" && observed.providerCalls.length === 1 && observed.durable.pending.length === 1
+        && observed.durable.taken.length === 0, "the final probe was skipped or a later arrival was consumed after completion")
+    }),
+  },
+  {
+    name: "a failed durable steering commit prevents the provider request and leaves the input waiting",
+    run: Effect.gen(function* () {
+      const message: AgentMessage = { role: "user", content: "the steer whose commit is refused" }
+      const observed = yield* observeRun(loop, {
+        script: [textReply("must not be requested")], durableSteering: { at: "initial", messages: [message], failure: new HarnessError({ code: "conformance.steering", message: "the steering commit was refused" }) },
+      })
+      yield* expect("steering-error", failedWith(observed.result, "conformance.steering") && observed.providerCalls.length === 0 && observed.durable.pending.length === 1
+        && observed.recorded.length === 0 && statusesOf(observed.events).join() === "failed", "a failed steer was lost, sent anyway or failed outside its started step")
     }),
   },
   {

@@ -97,6 +97,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
       const info: StepInfo = { stepIndex: index, activeTools, lastUsage: Option.none() }
       const planned = index === 0 ? request.initial : Option.none()
       yield* request.events.publish({ _tag: "step.started", step: index, run, planned: Option.isSome(planned), activeTools })
+      yield* request.steer(index)
       // Careless, a reply's calls are effect/ai's to resolve (a streamed one's, or every one's); otherwise the
       // loop's, once it knows the reply is whole.
       const streamedThrough = careless === "streamed" && request.limits.streaming && Option.isNone(planned)
@@ -149,6 +150,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
       // A malformed step ends as such, without a verdict; its corrective is the next step's, when there is one.
       if (Option.isNone(answered)) {
         yield* end(index, "malformed")
+        yield* request.pendingSteers
         if (index + 1 >= request.limits.maxSteps) return { outcome: "partial", reason: "step-cap", text: joined(text, carried, ""), steps: index + 1, usage } satisfies RunResult
         yield* request.record(index + 1, [{ role: "user", content: "Your reply could not be parsed: call a tool that exists, or answer in text." }])
         return yield* step(index + 1, text, carried, usage, toolCalled, careless === "unreset" ? cuts : 0)
@@ -180,6 +182,7 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
       // A reply cut short: its calls were answered, not run, and it gets no verdict.
       if (cut) {
         yield* end(index, "truncated")
+        yield* request.pendingSteers
         if (response.finishReason !== "length" || (cuts >= 2 && careless !== "uncapped")) return yield* Effect.fail(harnessError("loop.truncated", `the reply at step ${index} was cut short (${response.finishReason})`))
         // A reply of text alone is gone on from, its text carried to the next reply's; one with calls is replied anew.
         const [nextText, nextCarried] = calls.length === 0 ? [text, carried + reply] : [joined(text, carried, reply), ""]
@@ -195,10 +198,11 @@ const minimalLoopOf = (careless: Carelessness) => StepLoop.of({
       yield* end(index, "completed")
       const first = yield* evaluate(info)
       const verdict = first.complete || first.awaiting.length === 0 ? first : yield* request.tasks.await(first.awaiting).pipe(Effect.andThen(evaluate(info)))
+      const pending = yield* request.pendingSteers
       const paused = response.finishReason === "pause" && careless !== "ends-at-pause"
       // A step that is no cut restarts the count of cuts in a row.
       const counted = careless === "unreset" ? cuts : 0
-      if (verdict.complete || (calls.length === 0 && !paused)) return { outcome: "completed", reason: "completed", text: joined(text, carried, reply), steps: index + 1, usage: total } satisfies RunResult
+      if (!pending && (verdict.complete || (calls.length === 0 && !paused))) return { outcome: "completed", reason: "completed", text: joined(text, carried, reply), steps: index + 1, usage: total } satisfies RunResult
       // A paused reply goes on: the next call continues it, its text carried to the next reply's.
       return yield* (paused
         ? step(index + 1, text, carried + reply, total, toolCalled || calls.length > 0, counted)
@@ -232,6 +236,30 @@ const failedChecks = (loop: Context.Service.Shape<typeof StepLoop>) => Effect.ru
 const republishing = (rewrite: (event: TurnEvent) => TurnEvent) => StepLoop.of({
   id: "republishing", version: "1",
   run: (request) => runSteps({ ...request, events: { ...request.events, publish: (event) => request.events.publish(rewrite(event)) } }),
+})
+
+describe("a loop careless with durable steering", () => {
+  test("ignoring the final pending probe loses new work or its completion boundary", async () => {
+    expect(await failedChecks(StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps({ ...request, pendingSteers: Effect.succeed(false) }) })))
+      .toEqual(["durable-steering", "steering-cap", "steering-empty-poll"])
+  })
+
+  test("skipping atomic take loses first-step input and its failures", async () => {
+    expect(await failedChecks(StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps({ ...request, steer: () => Effect.succeed([]) }) })))
+      .toEqual(["durable-steering", "steering-error", "steering-first"])
+  })
+
+  test("recording already committed steering a second time duplicates intent", async () => {
+    expect(await failedChecks(StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps({
+      ...request, steer: (step) => request.steer(step).pipe(Effect.tap((messages) => messages.length === 0 ? Effect.void : request.record(step, messages))),
+    }) }))).toEqual(["durable-steering", "steering-first"])
+  })
+
+  test("taking during the final probe records input under a step that never starts", async () => {
+    expect(await failedChecks(StepLoop.of({ ...STEP_LOOP, run: (request) => runSteps({
+      ...request, pendingSteers: request.steer(999).pipe(Effect.map((messages) => messages.length > 0)),
+    }) }))).toEqual(["durable-steering", "steering-cap", "steering-empty-poll"])
+  })
 })
 
 describe("a loop careless with a reply cut short", () => {
@@ -384,6 +412,8 @@ const runWith = (model: LanguageModel.LanguageModel, options: {
     dispatch: () => Effect.void,
     record: () => Effect.succeed([]),
     recorded: () => Effect.succeed([]),
+    pendingSteers: Effect.succeed(false),
+    steer: () => Effect.succeed([]),
     onMediaRejected: () => Effect.succeed(false),
     // Complete after `steps` steps; a model stop ends the run earlier.
     completion: (info) => Effect.succeed({ complete: info.stepIndex + 1 >= steps, awaiting: [], facts: {} }),

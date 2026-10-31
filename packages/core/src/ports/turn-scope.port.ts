@@ -1,6 +1,7 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
-import type { RunRef } from "../domain/run.entity.js"
+import type { RunOrdinal, RunRef } from "../domain/run.entity.js"
+import type { AgentMessage } from "../domain/message.entity.js"
 import type { HarnessError } from "../harness/plugin.entity.js"
 import type { MemoryReader, MemorySession } from "./memory.port.js"
 import type { TurnWriter } from "./sessions.port.js"
@@ -48,6 +49,10 @@ export interface RequestSnapshot {
 export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
   readonly strategy: { readonly id: string; readonly version: string }
   readonly session: MemorySession
+  /** Fresh availability probe; an empty final probe leaves later arrivals for the next turn. */
+  readonly pendingSteers: Effect.Effect<boolean, TurnError>
+  /** Atomically consume waiting steers as exact user messages under this started step before planning its request. */
+  readonly steer: (step: number, run: RunOrdinal) => Effect.Effect<ReadonlyArray<AgentMessage>, TurnError>
   /** Record and flush a request's reconstruction header before dispatch. */
   readonly prepareRequest: (header: ModelRequestHeader) => Effect.Effect<void, TurnError>
   /**

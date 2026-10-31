@@ -102,3 +102,33 @@ test("the memory kit rejects a session that drops the run ordinal from recorded 
     Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
   expect(failures.flat()).toEqual(["run-ordinal"])
 })
+
+test("the memory kit rejects a session that ignores the alternate commit", async () => {
+  const careless = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => openLogSession(log, rollingPolicy, { runId }).pipe(Effect.map((session) => ({
+      ...session,
+      record: (bodies, step) => session.record(bodies, step),
+    }))),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(careless), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["alternate-commit"])
+})
+
+test("the memory kit rejects a session that erases the inbox user's provenance", async () => {
+  const careless = ConversationMemory.of({
+    strategy: rollingPolicy.strategy,
+    open: ({ runId, log }) => openLogSession(log, rollingPolicy, { runId }).pipe(Effect.map((session) => ({
+      ...session,
+      record: (bodies, step, commit) => session.record(bodies.map((body) => {
+        if (body._tag !== "Message") return body
+        const { inbox: _inbox, ...without } = body
+        return without
+      }), step, commit),
+    }))),
+  })
+  const failures = await Effect.runPromise(Effect.forEach(memoryConformance(careless), (check) =>
+    Effect.result(check.run).pipe(Effect.map((result) => result._tag === "Failure" ? [result.failure.check] : [])), { concurrency: 1 }))
+  expect(failures.flat()).toEqual(["inbox-intent"])
+})

@@ -22,6 +22,7 @@ import {
   renderLog,
   subjectsOf,
   toolInputOf,
+  userMessageIn,
 } from "./memory-log.entity.functions.js"
 
 /**
@@ -71,7 +72,7 @@ export const readerOf = (session: MemorySession): MemoryReader => ({
 
 /** The latest user message of the log — what a digest must serve. */
 const latestUserMessage = (entries: ReadonlyArray<LogEntry>): Option.Option<UserMessage> =>
-  Option.fromNullishOr(entries.flatMap((entry) => entry.body._tag === "TurnStarted" ? [entry.body.userMessage] : []).at(-1))
+  Option.fromNullishOr(entries.flatMap((entry) => Option.toArray(userMessageIn(entry))).at(-1))
 
 /**
  * The shared session over a log handle. It loads the log once, assigns
@@ -109,18 +110,19 @@ export const openLogSession = Effect.fnUntraced(function* (
   // One record at a time: ids, the stored order and the session's order agree (a request is
   // rebuilt from the stored entries up to its build's last one). A failed acknowledgement
   // is reconciled from storage; a proven refusal takes no id, an uncertain write reserves it.
-  const record = (bodies: ReadonlyArray<LogBody>, step: number) => bodies.length === 0 ? Effect.succeed<ReadonlyArray<LogEntry>>([]) : writing.withPermits(1)(Effect.gen(function* () {
+  const record = (bodies: ReadonlyArray<LogBody>, step: number, commit?: (entries: ReadonlyArray<LogEntry>) => Effect.Effect<boolean, TurnError>) => bodies.length === 0 ? Effect.succeed<ReadonlyArray<LogEntry>>([]) : writing.withPermits(1)(Effect.gen(function* () {
     const current = currentTurnOf(yield* Ref.get(entries))
     const turn = bodies.some((body) => body._tag === "TurnStarted") ? current + 1 : Math.max(current, 1)
     const at = yield* Clock.currentTimeMillis
     const start = yield* Ref.get(counter)
     const appended = bodies.map((body, index): LogEntry => ({ id: entryId(runId, start + index), runId, turn, step, at, body }))
-    yield* log.append(appended).pipe(Effect.onError(() => (log.snapshot ?? log.read).pipe(
+    const accepted = yield* (commit === undefined ? log.append(appended).pipe(Effect.as(true)) : commit(appended)).pipe(Effect.onError(() => (log.snapshot ?? log.read).pipe(
       Effect.flatMap((actual) => Ref.set(entries, actual).pipe(Effect.andThen(Ref.set(counter, nextIndex(actual))))),
       Effect.catchCause((cause) => Effect.logWarning("the memory append failed and its durable snapshot could not be read", cause).pipe(
         Effect.andThen(Ref.update(counter, (next) => Math.max(next, start + bodies.length))),
       )),
     )))
+    if (!accepted) return []
     yield* Ref.set(counter, start + bodies.length)
     yield* Ref.update(entries, (all) => [...all, ...appended])
     return appended

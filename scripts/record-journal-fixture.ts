@@ -56,12 +56,13 @@ import { Agent } from "@xandreed/sdk"
  * so record it once, from that release's code. `--force` rewrites it, only
  * for re-recording the current, unreleased version.
  *
- * Coverage: four agent turns (a digested tool result, a loaded skill, step
+ * Coverage: five agent turns (a digested tool result, a loaded skill, step
  * context, a system variant and a stream that falls back; a quick reply with
  * a host event; a failure; a matcher-seeded skill, a planned batch, a call
  * the registry refuses and a compaction), an inbox item
  * whose turns fail until it is dropped, a background task that completes and
- * is delivered to the inbox, and one that is cancelled before it runs.
+ * is delivered to the inbox, one that is cancelled before it runs, and a
+ * queued steer atomically taken before a new turn's first provider step.
  */
 
 const root = join(import.meta.dir, "..")
@@ -288,6 +289,18 @@ const record = Effect.gen(function* () {
   yield* tasks.start(address, { taskId: cancelledTask, instructions: "find delta", mode: "spawn" })
   yield* tasks.cancel(address, cancelledTask)
   yield* runQueued
+
+  // 8. A queued steer becomes a separate raw user message before step zero;
+  // its inbox.taken receipt is stored atomically with that message.
+  yield* sessions.enqueue(address, {
+    id: InboxItemId.make("steer-1"), userMessage: new UserMessage({ text: "Use the revised record selection." }),
+    delivery: "steer", source: { kind: "host", channel: "fixture" },
+  })
+  yield* turnOf(input("run-8", "apply the queued update", yield* scripted([stop("the revised selection is ready")])), (turn) => Effect.gen(function* () {
+    yield* turn.tools.select(turn.userMessage)
+    const result = yield* turn.run({})
+    return { outcome: result.outcome, reply: Option.some(result.text) } satisfies TurnOutcome
+  }))
 
   const journal = (session: SessionAddress) => Effect.gen(function* () {
     const view = yield* sessions.get(session)

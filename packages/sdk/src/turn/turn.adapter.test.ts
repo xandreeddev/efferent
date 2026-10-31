@@ -6,17 +6,22 @@ import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
 import {
   ConversationMemory,
+  entriesOfEvents,
   harnessCodeOf,
   HarnessError,
+  InboxItemId,
   openLogSession,
   RunContext,
   RunId,
+  RunOrdinal,
   ToolRegistry,
   TurnEvents,
   TurnMemory,
   TurnTasks,
   TurnToolbox,
+  UserMessage,
 } from "@xandreed/core"
+import { draftsOfEntries } from "@xandreed/core/internal"
 import type { MemoryPolicy, RunTools, ToolViews, TurnOutcome } from "@xandreed/core"
 import { recordingTurnWriter } from "./testing.js"
 import { TurnLive } from "./turn.adapter.js"
@@ -240,6 +245,105 @@ describe("TurnLive", () => {
       )
     }))
     expect(seen).toEqual({ first: "tools.duplicate", between: "tools.unavailable", again: "open", active: ["notes@host:run-1"] })
+  })
+})
+
+describe("TurnMemory durable steering boundaries", () => {
+  test("before persistMessage and after persistReply, neither the pending probe nor take reads or consumes inputs", async () => {
+    const seen = await Effect.runPromise(Effect.gen(function* () {
+      const recorded = yield* begun()
+      const reads = yield* Ref.make(0)
+      const takes = yield* Ref.make(0)
+      const input = { id: InboxItemId.make("gate-steer"), delivery: "steer" as const, source: {}, userMessage: new UserMessage({ text: "user instruction" }) }
+      const guarded = { ...recorded, writer: {
+        ...recorded.writer,
+        steers: Ref.update(reads, (n) => n + 1).pipe(Effect.as([input])),
+        take: () => Ref.update(takes, (n) => n + 1).pipe(Effect.as(false)),
+      } }
+      return yield* inTurn(guarded, Effect.gen(function* () {
+        const memory = yield* TurnMemory
+        const earlyProbe = yield* Effect.flip(memory.pendingSteers)
+        const earlyTake = yield* Effect.flip(memory.steer(0, RunOrdinal.make(0)))
+        const before = [yield* Ref.get(reads), yield* Ref.get(takes)]
+        yield* memory.persistMessage
+        const acceptedPhase = yield* memory.steer(0, RunOrdinal.make(0))
+        yield* memory.persistReply({ outcome: "completed", reply: Option.some("done") })
+        const lateProbe = yield* Effect.flip(memory.pendingSteers)
+        const lateTake = yield* Effect.flip(memory.steer(1, RunOrdinal.make(0)))
+        return { early: [failureCode(earlyProbe), failureCode(earlyTake)], before, acceptedPhase, late: [failureCode(lateProbe), failureCode(lateTake)], calls: [yield* Ref.get(reads), yield* Ref.get(takes)] }
+      }))
+    }))
+    expect(seen).toEqual({ early: ["turn.unstarted", "turn.unstarted"], before: [0, 0], acceptedPhase: [], late: ["turn.closed", "turn.closed"], calls: [1, 1] })
+  })
+
+  test("a normal record already holding memory allocation can finish before a concurrent steer without reversing the holding lock", async () => {
+    const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const recorded = yield* begun()
+      const recording = yield* Deferred.make<void>()
+      const steering = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const pending = yield* Ref.make(true)
+      const input = { id: InboxItemId.make("lock-steer"), delivery: "steer" as const, source: {}, userMessage: new UserMessage({ text: "user instruction" }) }
+      const writer = { ...recorded.writer,
+        steers: Ref.get(pending).pipe(Effect.map((waiting) => waiting ? [input] : [])),
+        take: (entries: Parameters<typeof draftsOfEntries>[0]) => draftsOfEntries(entries).pipe(Effect.orDie,
+          Effect.flatMap((drafts) => recorded.writer.append(drafts)), Effect.andThen(Ref.set(pending, false)), Effect.as(true)),
+      }
+      const ordered = ConversationMemory.of({
+        strategy: policy.strategy,
+        open: ({ runId, log }) => openLogSession(log, policy, { runId }).pipe(Effect.map((session) => ({ ...session,
+          record: (bodies, step, commit) => commit !== undefined
+            ? Deferred.succeed(steering, undefined).pipe(Effect.andThen(session.record(bodies, step, commit)))
+            : bodies.some((body) => body._tag === "Message" && body.message.role === "user" && body.message.content === "ordinary")
+              ? session.record(bodies, step, (entries) => Deferred.succeed(recording, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.andThen(log.append(entries)), Effect.as(true)))
+              : session.record(bodies, step),
+        }))),
+      })
+      return yield* Effect.gen(function* () {
+        const memory = yield* TurnMemory
+        yield* memory.persistMessage
+        const normal = yield* Effect.forkChild(memory.session.record([{ _tag: "Message", message: { role: "user", content: "ordinary" } }], 0))
+        yield* Deferred.await(recording)
+        const steer = yield* Effect.forkChild(memory.steer(0, RunOrdinal.make(0)))
+        const done = yield* Effect.gen(function* () {
+          yield* Deferred.await(steering)
+          yield* Deferred.succeed(release, undefined)
+          return { normal: yield* Fiber.join(normal), steer: yield* Fiber.join(steer), entries: yield* memory.entries }
+        }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
+        return { ids: done.entries.map((entry) => String(entry.id)), normal: done.normal.map((entry) => String(entry.id)), steer: done.steer }
+      }).pipe(
+        Effect.provide(TurnLive({ turn: writer })),
+        Effect.provide(Layer.merge(Layer.succeed(ConversationMemory, ordered), Layer.succeed(ToolRegistry, registry))),
+      )
+    })).pipe(Effect.timeout("3 seconds")))
+    expect(seen).toEqual({ ids: ["run-1:0", "run-1:1", "run-1:2"], normal: ["run-1:1"], steer: [{ role: "user", content: "user instruction" }] })
+  })
+
+  test("a steer losing the reply race preserves already accepted closing entries and their reserved ids", async () => {
+    const seen = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const recorded = yield* begun()
+      const reading = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const input = { id: InboxItemId.make("late-steer"), delivery: "steer" as const, source: {}, userMessage: new UserMessage({ text: "late instruction" }) }
+      const late = { ...recorded, writer: { ...recorded.writer,
+        steers: Deferred.succeed(reading, undefined).pipe(Effect.andThen(Deferred.await(release)), Effect.as([input])),
+      } }
+      const result = yield* inTurn(late, Effect.gen(function* () {
+        const memory = yield* TurnMemory
+        yield* memory.persistMessage
+        const steering = yield* Effect.forkChild(Effect.result(memory.steer(1, RunOrdinal.make(0))))
+        yield* Deferred.await(reading)
+        yield* memory.persistReply({ outcome: "completed", reply: Option.some("done") })
+        yield* Deferred.succeed(release, undefined)
+        const refused = yield* Fiber.join(steering)
+        const afterward = yield* memory.session.record([{ _tag: "Message", message: { role: "user", content: "closing context" } }], 1)
+        return { refused: refused._tag === "Failure" ? failureCode(refused.failure) : "accepted", afterward: afterward.map((entry) => String(entry.id)), cache: (yield* memory.entries).map((entry) => String(entry.id)) }
+      }))
+      yield* recorded.writer.end({ reason: "completed", failure: Option.none() })
+      const stored = yield* entriesOfEvents(yield* Ref.get(recorded.stored))
+      return { ...result, stored: stored.map((entry) => String(entry.id)) }
+    })).pipe(Effect.timeout("3 seconds")))
+    expect(seen).toEqual({ refused: "turn.closed", afterward: ["run-1:2"], cache: ["run-1:0", "run-1:1", "run-1:2"], stored: ["run-1:0", "run-1:1", "run-1:2"] })
   })
 })
 

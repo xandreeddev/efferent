@@ -367,6 +367,19 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     Effect.flatMap((events) => readStored("inbox.queued", events).pipe(Effect.mapError(storage("session.decode")))),
   )
 
+  /** A consumed steer is acknowledged by its receipt's outer turn, not a fabricated queued begin. */
+  const takenInputOf = (id: ConversationId, wanted: InboxItemId, through: number) => log.read(id, { after: 0, limit: Option.none(), kinds: ["inbox.taken"] }).pipe(
+    Effect.flatMap((events) => readStored("inbox.taken", events.filter((event) => event.seq <= through)).pipe(Effect.mapError(storage("session.decode")))),
+    Effect.flatMap((taken) => {
+      const receipt = taken.find(({ data }) => data.id === wanted)
+      if (receipt === undefined) return Effect.succeedNone
+      return Option.match(Option.filter(receipt.event.turn, (turn) => Number.isSafeInteger(turn) && turn >= 1), {
+        onNone: () => Effect.fail(new SessionLogError({ code: "session.decode", message: "a consumed input receipt has no consuming turn" })),
+        onSome: (turn) => Effect.succeedSome(turn),
+      })
+    }),
+  )
+
   /** Immutable user input, decoded separately from legacy notice deliveries. */
   const queuedInputOf = (id: ConversationId, wanted: InboxItemId) => queuedIn(id).pipe(Effect.map((queued) =>
     Option.fromNullishOr(queued.flatMap(({ data }): ReadonlyArray<QueuedInput> => data.id === wanted && data.input !== undefined
@@ -476,6 +489,12 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
         const reap = yield* reaped(head, stored, input.takeOver ?? false)
         const state = reap.state
         const starts = yield* startsOf(address.id)
+        if (input._tag === "Queued") {
+          const taken = yield* takenInputOf(address.id, input.input, head.seq)
+          if (Option.isSome(taken)) return yield* Effect.fail(new TurnDuplicate({
+            session: address.id, turn: taken.value, open: Option.exists(state.open, (open) => open.turn === taken.value),
+          }))
+        }
         // A turn that brings its message (a user's, a task's) is keyed by its caller: the key's earlier turn is this one or a conflict.
         if (Option.isSome(asked.userMessage)) {
           const brought = asked.userMessage.value
