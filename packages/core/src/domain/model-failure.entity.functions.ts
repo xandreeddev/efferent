@@ -4,7 +4,7 @@ import type { Response } from "effect/ai"
 import type { HarnessCode } from "../harness/harness-code.entity.js"
 import { mergeEngineStamp } from "./engine-stamp.entity.functions.js"
 import { ENGINE_KEY } from "./engine-stamp.entity.js"
-import { ModelFailureStamp } from "./model-failure.entity.js"
+import { ModelFailureStamp, ModelOverflowEvidence } from "./model-failure.entity.js"
 import type { ModelFailureKind } from "./model-failure.entity.js"
 
 const decodeStamp = Schema.decodeUnknownOption(ModelFailureStamp)
@@ -60,17 +60,44 @@ export const modelFailureOf = (value: unknown): Option.Option<ModelFailureKind> 
   ? Option.orElse(firstFailure(value, explicitFailure), () => firstFailure(value, fallbackFailure))
   : Option.orElse(explicitFailure(value), () => fallbackFailure(value))
 
+const decodeOverflow = Schema.decodeUnknownOption(ModelOverflowEvidence)
+const overflowMetadata = (value: unknown): Option.Option<ModelOverflowEvidence> => {
+  if (!Predicate.hasProperty(value, "metadata") || !Object.hasOwn(value, "metadata")) return Option.none()
+  const metadata = value.metadata
+  if (!Predicate.isObject(metadata) || !Object.hasOwn(metadata, ENGINE_KEY)) return Option.none()
+  const stamp = metadata[ENGINE_KEY]
+  return Predicate.isObject(stamp) && Object.hasOwn(stamp, "overflow") && Option.contains(stampIn(metadata), "ContextOverflow")
+    ? decodeOverflow(stamp["overflow"]) : Option.none()
+}
+const overflowOf = (value: unknown): Option.Option<ModelOverflowEvidence> => {
+  if (AiError.isAiError(value)) return overflowMetadata(value.reason)
+  return Option.isSome(metadataStamp(value)) ? overflowMetadata(value)
+    : Option.flatMap(partError(value), (error) => overflowMetadata(error.reason))
+}
+
+/** Checked evidence from the same explicit ContextOverflow stamp; no provider or cause inspection. @public */
+export const modelOverflowEvidenceOf = (value: unknown): Option.Option<ModelOverflowEvidence> => Array.isArray(value)
+  ? Option.flatMap(Option.fromNullishOr(value.find((part) => Option.isSome(explicitFailure(part)))), overflowOf)
+  : overflowOf(value)
+
+const failureStamp = (kind: ModelFailureKind, evidence?: ModelOverflowEvidence): Schema.JsonObject => ({
+  failure: kind,
+  ...(kind !== "ContextOverflow" || evidence === undefined ? {} : { overflow: {
+    model: { provider: evidence.model.provider, modelId: evidence.model.modelId }, limits: { ...evidence.limits },
+  } }),
+})
+
 /** Stamp a response part without mutating it or replacing other metadata. @public */
-export const stampPartFailure = (part: Response.AnyPart, kind: ModelFailureKind): Response.AnyPart =>
-  ({ ...part, metadata: mergeEngineStamp(part.metadata, { failure: kind }) })
+export const stampPartFailure = (part: Response.AnyPart, kind: ModelFailureKind, evidence?: ModelOverflowEvidence): Response.AnyPart =>
+  ({ ...part, metadata: mergeEngineStamp(part.metadata, failureStamp(kind, evidence)) })
 
 /** Stamp every part of a nonempty response; an empty failure uses the error channel. @public */
-export const stampResponseFailure = (content: ReadonlyArray<Response.AnyPart>, kind: ModelFailureKind): ReadonlyArray<Response.AnyPart> =>
-  content.map((part) => stampPartFailure(part, kind))
+export const stampResponseFailure = (content: ReadonlyArray<Response.AnyPart>, kind: ModelFailureKind, evidence?: ModelOverflowEvidence): ReadonlyArray<Response.AnyPart> =>
+  content.map((part) => stampPartFailure(part, kind, evidence))
 
 /** Copy a metadata-bearing reason through its concrete constructor; metadata-less reasons retain identity. */
-const stampedReason = (reason: AiError.AiErrorReason, kind: ModelFailureKind): AiError.AiErrorReason => {
-  const metadata = (original: AiError.ProviderMetadata) => mergeEngineStamp(original, { failure: kind })
+const stampedReason = (reason: AiError.AiErrorReason, kind: ModelFailureKind, evidence?: ModelOverflowEvidence): AiError.AiErrorReason => {
+  const metadata = (original: AiError.ProviderMetadata) => mergeEngineStamp(original, failureStamp(kind, evidence))
   return Match.valueTags(reason, {
     RateLimitError: (value) => new AiError.RateLimitError({ retryAfter: value.retryAfter, http: value.http, metadata: metadata(value.metadata) }),
     QuotaExhaustedError: (value) => new AiError.QuotaExhaustedError({ resetAt: value.resetAt, http: value.http, metadata: metadata(value.metadata) }),
@@ -95,8 +122,8 @@ const stampedReason = (reason: AiError.AiErrorReason, kind: ModelFailureKind): A
 }
 
 /** Preserve concrete AiError/reason classes and declared evidence while adding an explicit neutral stamp. @public */
-export const stampAiErrorFailure = (error: AiError.AiError, kind: ModelFailureKind): AiError.AiError => {
-  const reason = stampedReason(error.reason, kind)
+export const stampAiErrorFailure = (error: AiError.AiError, kind: ModelFailureKind, evidence?: ModelOverflowEvidence): AiError.AiError => {
+  const reason = stampedReason(error.reason, kind, evidence)
   return reason === error.reason ? error : AiError.make({ module: error.module, method: error.method, reason })
 }
 

@@ -4,6 +4,7 @@ import type { LanguageModel, Prompt, Tool } from "effect/ai"
 import type { AgentMessage } from "../domain/message.entity.js"
 import type { AcceptedModelInput } from "../domain/accepted-model-input.entity.js"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
+import type { ModelOverflowEvidence } from "../domain/model-failure.entity.js"
 import type { RunRef } from "../domain/run.entity.js"
 import type { DegeneratePolicy } from "../domain/loop-limits.entity.js"
 import type { TokenUsage } from "../domain/token-usage.entity.js"
@@ -101,6 +102,13 @@ export interface StepRequest {
    * with; any other `plan` of a step asks the policy again.
    */
   readonly onMediaRejected: (reason: string) => Effect.Effect<boolean, TurnError>
+  /**
+   * Reduce the same step's context after an explicit overflow, before any
+   * visible delta. True authorizes one resend with a freshly prepared header;
+   * false or absence preserves the original failure. Evidence names the actual
+   * overflowing model when known. Callback failures retain their identity.
+   */
+  readonly onContextOverflow?: (step: number, evidence?: ModelOverflowEvidence) => Effect.Effect<boolean, TurnError>
   /** The host's verdict after a step that settled with a whole response (not after a malformed or a truncated one); its failure fails the run, not the step. */
   readonly completion: (step: StepInfo) => Effect.Effect<CompletionVerdict, HarnessError>
   /**
@@ -217,7 +225,7 @@ export type RunResult = {
  * a non-streamed one's does; the step events carry the request's run
  * ordinal, and id-less tool calls get ids distinct across runs and turns. A loop that streams and falls back to a
  * non-streamed call publishes `stream.fallback`. Known permanent model
- * failures bypass that fallback. A classified failure fails with its
+ * failures bypass that fallback. An unrecovered classified failure fails with its
  * `model.*` code before response persistence, tool handlers or correctives;
  * the original error or failed response remains its cause. Explicit stamps
  * precede malformed-output handling; unstamped malformed output retains its
@@ -227,6 +235,9 @@ export type RunResult = {
  * batches skip that hook because they make no provider request. A request
  * a provider refuses over an image is sent once more after
  * `request.onMediaRejected` answers true, planned again first.
+ * Explicit context overflow may use optional `onContextOverflow` once per
+ * step before a nonempty assistant delta, with a fresh plan/header and the
+ * original choices. Absence or refusal preserves its original failure.
  */
 export class StepLoop extends Context.Service<StepLoop, {
   readonly id: string

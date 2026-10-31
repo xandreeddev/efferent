@@ -7,6 +7,9 @@ import { pixelPng, sameUsage } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { Failure } from "../domain/failure.entity.js"
 import type { ModelCallPolicy } from "../domain/model-call-policy.entity.js"
+import type { ModelOverflowEvidence } from "../domain/model-failure.entity.js"
+import { stampAiErrorFailure } from "../domain/model-failure.entity.functions.js"
+import { ModelId, ModelSelection, ProviderId } from "../domain/model-selection.entity.js"
 import type { FinishReason, StepStatus } from "../domain/turn-vocabulary.entity.js"
 import { harnessCodeOf } from "../harness/harness-code.entity.functions.js"
 import { HarnessError } from "../harness/plugin.entity.js"
@@ -135,6 +138,9 @@ interface Scenario {
   readonly providerCall?: Effect.Effect<void>
   /** A typed model failure, before a response or stream part arrives. */
   readonly failure?: AiError.AiError
+  /** Errors at selected physical calls, after any scripted stream prefix. */
+  readonly failures?: ReadonlyArray<{ readonly at: number; readonly error: AiError.AiError }>
+  readonly overflow?: (step: number, evidence?: ModelOverflowEvidence) => Effect.Effect<boolean, TurnError>
   /** Runs inside each probe handler, before it returns its result. */
   readonly handle?: (n: number) => Effect.Effect<void>
   /** Reject a record before it is stored, as a durable writer can. */
@@ -197,6 +203,7 @@ interface Observed {
   /** Each `record` call, in order: the step it recorded under, and how many events were published before it. */
   readonly records: ReadonlyArray<{ readonly step: number; readonly after: number; readonly tail: ReadonlyArray<AgentMessage>; readonly accepted: Option.Option<AcceptedModelInput> }>
   readonly providerCalls: ReadonlyArray<unknown>
+  readonly overflows: ReadonlyArray<{ readonly step: number; readonly evidence: Option.Option<ModelOverflowEvidence> }>
   /** The prompt of each provider call. */
   readonly prompts: ReadonlyArray<Prompt.Prompt>
   readonly recorded: ReadonlyArray<LogEntry>
@@ -241,6 +248,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     Effect.andThen(event._tag === "step.ended" && scenario.durableSteering?.at === "settled" ? deliverSteers : Effect.void),
   ))
   const calls = yield* Ref.make<ReadonlyArray<unknown>>([])
+  const overflows = yield* Ref.make<Observed["overflows"]>([])
   const prompts = yield* Ref.make<ReadonlyArray<Prompt.Prompt>>([])
   const dispatches = yield* Ref.make<ReadonlyArray<number>>([])
   const traceContent = yield* Ref.make<ReadonlyArray<boolean>>([])
@@ -272,9 +280,11 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
   const stream = scenario.stream
   const model = yield* LanguageModel.make({
     generateText: (options) => called(options).pipe(
-      Effect.flatMap((index) => scenario.failure !== undefined ? Effect.fail(scenario.failure) : scenario.refuseFirst === true && index === 0
-        ? Effect.fail(imageRefusal)
-        : Effect.succeed([...(scenario.script[index] ?? textReply("done"))])),
+      Effect.flatMap((index) => {
+        const failure = scenario.failure ?? scenario.failures?.find((failure) => failure.at === index)?.error
+        return failure !== undefined ? Effect.fail(failure) : scenario.refuseFirst === true && index === 0
+          ? Effect.fail(imageRefusal) : Effect.succeed([...(scenario.script[index] ?? textReply("done"))])
+      }),
     ),
     streamText: (options) => scenario.failure !== undefined
       ? Stream.unwrap(called(options).pipe(Effect.as(Stream.fail(scenario.failure)))) : stream === undefined
@@ -282,8 +292,11 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
       // One part per chunk, the fiber yielding on each, as a provider streams them over the wire: what a part
       // sets off (a tool handler that effect/ai's own resolution forks once the next part arrives) gets to
       // start before the finish arrives.
-      : Stream.unwrap(called(options).pipe(Effect.map((index) =>
-        Stream.fromIterable(stream[index] ?? streamedText("done"), { chunkSize: 1 }).pipe(Stream.tap(() => Effect.yieldNow))))),
+      : Stream.unwrap(called(options).pipe(Effect.map((index) => {
+        const failure = scenario.failures?.find((failure) => failure.at === index)?.error
+        const prefix = Stream.fromIterable(stream[index] ?? streamedText("done"), { chunkSize: 1 }).pipe(Stream.tap(() => Effect.yieldNow))
+        return failure === undefined ? prefix : Stream.concat(prefix, Stream.fail(failure))
+      }))),
   })
   const invocations = yield* Ref.make(0)
   const handlers = yield* typed.toHandlers({
@@ -364,6 +377,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     record,
     recorded: (step) => Ref.get(recorded).pipe(Effect.map((all) => all.filter((entry) => entry.step === step))),
     onMediaRejected: scenario.onMediaRejected ?? (() => Effect.succeed(false)),
+    ...(scenario.overflow === undefined ? {} : { onContextOverflow: (step: number, evidence?: ModelOverflowEvidence) => Ref.update(overflows, (all) => [...all, { step, evidence: Option.fromNullishOr(evidence) }]).pipe(Effect.andThen(scenario.overflow?.(step, evidence) ?? Effect.succeed(false))) }),
     completion: (info) => (scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete)).pipe(Effect.tap(() => scenario.durableSteering?.at === "completion" ? deliverSteers : Effect.void)),
     pendingSteers: Ref.update(steerProbes, (count) => count + 1).pipe(Effect.andThen(Ref.get(waitingSteers)), Effect.flatMap((waiting) =>
       waiting.length === 0 && scenario.durableSteering?.at === "empty-probe"
@@ -398,7 +412,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     Effect.provideService(CurrentAgentRun, scenario.ambientRun ?? Option.none()),
   ))
   return {
-    result, events: yield* Ref.get(seen), records: yield* Ref.get(records), providerCalls: yield* Ref.get(calls), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded), atHandlers: yield* Ref.get(atHandlers),
+    result, events: yield* Ref.get(seen), records: yield* Ref.get(records), providerCalls: yield* Ref.get(calls), overflows: yield* Ref.get(overflows), prompts: yield* Ref.get(prompts), recorded: yield* Ref.get(recorded), atHandlers: yield* Ref.get(atHandlers),
     durable: { pending: yield* Ref.get(waitingSteers), taken: yield* Ref.get(takenSteers), probes: yield* Ref.get(steerProbes) },
     dispatches: yield* Ref.get(dispatches), traceContent: yield* Ref.get(traceContent),
     cacheKeys: { dispatched: yield* Ref.get(dispatchedKeys), called: yield* Ref.get(calledKeys) },
@@ -482,6 +496,10 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
  * `record` even for empty tails, before handlers, with no such fact for a
  * planned batch, tool result or corrective (`accepted-input`); a failed
  * record stops the execution and fails the step;
+ * explicit overflow offered once to the optional recovery hook before a
+ * visible delta, same-step replanning/dispatch and no rejected calls or tail
+ * (`context-overflow`, `overflow-visible`); declined recovery and callback
+ * failures preserving the original failure;
  * nothing recorded under it after its `step.ended` (the loop's
  * correctives, nudges and steers are the next step's, the corrective after
  * a reply cut at the output limit among them), nothing recorded under a
@@ -535,6 +553,65 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
  * and turns of a session, with the request's run ordinal on every step event.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
+  {
+    name: "recovers explicit context overflow once within a step before recording or running rejected calls",
+    run: Effect.gen(function* () {
+      const check = "context-overflow"
+      const evidence: ModelOverflowEvidence = { model: new ModelSelection({ provider: ProviderId.make("actual"), modelId: ModelId.make("fallback") }), limits: { contextWindow: 2000, maxOutputTokens: 200 } }
+      const failure = stampAiErrorFailure(AiError.make({ module: "Conformance", method: "generateText", reason: new AiError.InvalidOutputError({ description: "context rejected" }) }), "ContextOverflow", evidence)
+      const rejected: ReadonlyArray<Part> = probeCall("rejected-call", 1).map((part) => ({ ...part, metadata: { engine: { failure: "ContextOverflow", overflow: { model: { provider: "actual", modelId: "fallback" }, limits: { contextWindow: 2000, maxOutputTokens: 200 } } } } }))
+      yield* Effect.forEach([false, true], (typed) => Effect.gen(function* () {
+        const plans = yield* Ref.make(0)
+        const observed = yield* observeRun(loop, {
+          script: [rejected, probeCall("accepted-call", 7)], maxSteps: 1, overflow: () => Effect.succeed(true),
+          ...(typed ? { failures: [{ at: 0, error: failure }] } : {}),
+          planned: () => Ref.update(plans, (count) => count + 1),
+        })
+        yield* expect(check, observed.providerCalls.length === 2 && observed.overflows.length === 1 && observed.dispatches.join() === "0,0" && (yield* Ref.get(plans)) === 2,
+          "overflow did not replan and validate exactly one resend under the same step")
+        yield* expect(check, observed.overflows[0]?.step === 0 && canonicalJson(observed.overflows[0]?.evidence) === canonicalJson(Option.some(evidence)), "the hook lost the actual overflow evidence")
+        yield* expect(check, statusesOf(observed.events).join() === "completed" && observed.steps.handled.length === 1 && Result.isSuccess(observed.result) && observed.result.success.steps === 1,
+          "a recovered attempt started another step or ran a rejected call")
+        yield* expect(check, !canonicalJson(observed.recorded).includes("rejected-call") && observed.records.filter((record) => Option.isSome(record.accepted)).length === 1,
+          "the rejected attempt persisted a tail or accepted-input fact")
+      }), { concurrency: 1 })
+      const repeated = yield* observeRun(loop, { script: [], failures: [{ at: 0, error: failure }, { at: 1, error: failure }], overflow: () => Effect.succeed(true) })
+      yield* expect(check, failedWith(repeated.result, "model.context-overflow") && repeated.providerCalls.length === 2 && repeated.overflows.length === 1 && repeated.recorded.length === 0,
+        "a repeated same-step overflow exceeded its single resend or wrote rejected output")
+      const declined = yield* observeRun(loop, { script: [], failures: [{ at: 0, error: failure }], overflow: () => Effect.succeed(false) })
+      yield* expect(check, declined.providerCalls.length === 1 && declined.overflows.length === 1 && Result.isFailure(declined.result) && declined.result.failure._tag === "HarnessError" && declined.result.failure.cause === failure,
+        "declining overflow changed the original error or sent again")
+      const hard = new HarnessError({ code: "events.encode", message: "recovery could not record" })
+      yield* Effect.forEach([Effect.fail(hard), Effect.die(hard)], (fail) => Effect.gen(function* () {
+        const stopped = yield* observeRun(loop, { script: [], failures: [{ at: 0, error: failure }], overflow: () => fail })
+        yield* expect(check, stopped.providerCalls.length === 1 && Result.isFailure(stopped.result) && stopped.result.failure === hard, "a recovery callback failure was swallowed or retried")
+      }), { concurrency: 1 })
+    }),
+  },
+  {
+    name: "recovers silent streamed overflow but never replays an overflow after visible deltas",
+    run: Effect.gen(function* () {
+      const check = "overflow-visible"
+      const failure = stampAiErrorFailure(AiError.make({ module: "Conformance", method: "streamText", reason: new AiError.InvalidRequestError({ description: "context rejected" }) }), "ContextOverflow")
+      const prefixes: ReadonlyArray<ReadonlyArray<StreamPart>> = [[], [{ type: "response-metadata", id: "silent", modelId: "opaque" }], [{ type: "tool-params-start", id: "silent-call", name: Probe.name }],
+        [{ type: "text-start", id: "text" }, { type: "text-delta", id: "text", delta: "visible" }],
+        [{ type: "reasoning-start", id: "thinking" }, { type: "reasoning-delta", id: "thinking", delta: "visible" }],
+        [{ type: "tool-params-start", id: "call", name: Probe.name }, { type: "tool-params-delta", id: "call", delta: "{" }],
+      ]
+      yield* Effect.forEach(prefixes, (prefix) => Effect.gen(function* () {
+        const observed = yield* observeRun(loop, { script: [], stream: [prefix, streamedText("done")], streaming: true,
+          failures: [{ at: 0, error: failure }], overflow: () => Effect.succeed(true) })
+        // A custom loop may use settled calls even when streaming is offered.
+        // The boundary is a delta actually published, not a provider fixture's prefix.
+        const visible = prefix.some((part) => "delta" in part && typeof part.delta === "string" && part.delta.length > 0)
+          && observed.events.some((event) => event._tag === "assistant.delta" && event.delta.length > 0)
+        yield* expect(check, observed.providerCalls.length === (visible ? 1 : 2) && observed.overflows.length === (visible ? 0 : 1)
+          && (visible ? failedWith(observed.result, "model.context-overflow") : Result.isSuccess(observed.result)), "overflow visibility did not bound recovery")
+        yield* expect(check, !observed.events.some((event) => event._tag === "stream.fallback") && (visible ? observed.records.length === 0 : true),
+          "overflow reopened settled fallback or recorded rejected streamed output")
+      }), { concurrency: 1 })
+    }),
+  },
   {
     name: "forwards accepted model input including empty tails, excluding planned, result and corrective writes",
     run: Effect.gen(function* () {

@@ -18,12 +18,12 @@ export { ENGINE_KEY, ResponseStamp } from "./domain/engine-stamp.entity.js"
 export { responseModelOf, stampPartModel, stampResponseModel } from "./domain/engine-stamp.entity.functions.js"
 export { AcceptedModelInput } from "./domain/accepted-model-input.entity.js"
 export { acceptedModelInputOf } from "./domain/accepted-model-input.entity.functions.js"
-export { ModelFailureKind, ModelFailureStamp } from "./domain/model-failure.entity.js"
+export { ModelFailureKind, ModelFailureStamp, ModelOverflowEvidence } from "./domain/model-failure.entity.js"
 export { ModelCallId, ModelCallPurpose, ModelCallMethod, ModelCallUsage, ModelCallOutcome, ModelCallData, ModelCallLegacyUsage } from "./domain/model-call.entity.js"
 export { recordCompletion } from "./domain/model-call.entity.functions.js"
 export { CurrentModelCallRecorder } from "./ports/model-call-recorder.port.js"
 export type { ModelCallRecorder, ModelCallObserver } from "./ports/model-call-recorder.port.js"
-export { modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, stampAiErrorFailure, stampPartFailure, stampResponseFailure } from "./domain/model-failure.entity.functions.js"
+export { modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, modelOverflowEvidenceOf, stampAiErrorFailure, stampPartFailure, stampResponseFailure } from "./domain/model-failure.entity.functions.js"
 export {
   AttachmentRejected,
   AttachmentRejectedReason,

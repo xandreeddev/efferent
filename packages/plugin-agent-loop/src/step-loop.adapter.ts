@@ -2,7 +2,7 @@ import { LanguageModel, Prompt } from "effect/ai"
 import type { Tool } from "effect/ai"
 import { Cause, Context, Effect, Layer, Match, Option, Ref, Schema } from "effect"
 import { CurrentAgentRun, CurrentAgentStep, CurrentModelCallPolicy, CurrentPromptCacheKey, definePlugin, harnessDefectsAsFailures, harnessError, HarnessError, isTurnError, messagesOf, modelFailureCodeOf, modelFailureOf, StepLoop, StreamPartId, ToolCallId } from "@xandreed/core"
-import type { AgentMessage, CompletionVerdict, RunResult, StepInfo, StepRequest, StepStatus, TurnError } from "@xandreed/core"
+import type { AgentMessage, CompletionVerdict, ModelOverflowEvidence, RunResult, StepInfo, StepRequest, StepStatus, TurnError } from "@xandreed/core"
 import { runLoop } from "./loop.js"
 import type { LoopEvent } from "./loop-event.entity.js"
 import type { LoopToolChoice } from "./loop.js"
@@ -48,6 +48,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
   const hasInitial = Option.isSome(request.initial)
   const isPlanned = (step: number) => hasInitial && step === 0
   const ledger = yield* Ref.make(emptyLedger)
+  const onOverflow = request.onContextOverflow
   const currentStep = Effect.service(CurrentAgentStep).pipe(Effect.map(Option.getOrElse(() => 0)))
   const infoOf = (step: number, activeTools: ReadonlyArray<string>) =>
     Ref.get(ledger).pipe(Effect.map((current): StepInfo => ({ stepIndex: step, activeTools, lastUsage: current.lastUsage })))
@@ -140,6 +141,9 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     onMediaRejected: (reason) => request.onMediaRejected(reason).pipe(
       Effect.tap((retry) => retry ? Ref.update(ledger, replanned) : Effect.void),
     ),
+    ...(onOverflow === undefined ? {} : { onContextOverflow: (step: number, evidence?: ModelOverflowEvidence) => onOverflow(step, evidence).pipe(
+      Effect.tap((retry) => retry ? Ref.update(ledger, replanned) : Effect.void),
+    ) }),
     isComplete,
     onStepSettled: settle,
     pendingInput: () => request.steering,

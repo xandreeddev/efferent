@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test"
 import { Effect, Option } from "effect"
-import { entryId, estimateMessageTokens, ModelId, ModelSelection, ProviderId, renderLog, RunId, RunOrdinal, ToolCallId, UserMessage } from "@xandreed/core"
+import { entryId, estimateMessageTokens, ModelId, ModelSelection, pendingCompaction, ProviderId, renderLog, RunId, RunOrdinal, scaledTokens, ToolCallId, UserMessage } from "@xandreed/core"
 import type { LogEntry, MaintainSignal, MemoryObservation } from "@xandreed/core"
 import { memoryWindowDefaults, WINDOW_STRATEGY, windowPolicy } from "./plugin.adapter.js"
 
@@ -35,4 +35,18 @@ test("advisory dropping never expands a small old turn into a larger ledger", as
   const all = [older, current]
   const actualRender = (candidate: ReadonlyArray<LogEntry>) => renderLog(candidate, { ...policy.render, strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: id, run: RunOrdinal.make(0), stepContext: "none" })
   expect((await Effect.runPromise(policy.maintain({ entries: all, signal: { ...signal, phase: "turn-end", budgetTokens: 1 }, turn: 2, runId: id, render: actualRender }))).actions).toEqual([])
+})
+
+test("overflow returns a strict old-history reduction even when the protected current turn cannot fit", async () => {
+  const older: LogEntry = { ...entries[0]!, body: { _tag: "TurnStarted", userMessage: new UserMessage({ text: "earlier evidence ".repeat(400) }) } }
+  const current: LogEntry = { ...entries[0]!, id: entryId(id, 2), turn: 2, body: { _tag: "TurnStarted", userMessage: new UserMessage({ text: "protected current evidence ".repeat(100) }) } }
+  const all = [older, current]
+  const actualRender = (candidate: ReadonlyArray<LogEntry>) => renderLog(candidate, { ...policy.render, strategy: WINDOW_STRATEGY.id, currentTurn: 2, currentRun: id, run: RunOrdinal.make(0), stepContext: "none" })
+  const decided = await Effect.runPromise(policy.maintain({ entries: all, signal: { ...signal, phase: "overflow", budgetTokens: 1, observed }, turn: 2, runId: id, render: actualRender }))
+  expect(decided.actions).toMatchObject([{ _tag: "DropTurns", throughTurn: 1 }])
+  const after = [...all, ...decided.actions.map(action => pendingCompaction(WINDOW_STRATEGY, action, 0))]
+  expect(scaledTokens(estimateMessageTokens(actualRender(after)), Option.some(observed))).toBeLessThan(scaledTokens(estimateMessageTokens(actualRender(all)), Option.some(observed)))
+  expect(estimateMessageTokens(actualRender(after))).toBeGreaterThan(1)
+  expect(JSON.stringify(actualRender(after))).toContain("protected current evidence")
+  expect(all).toEqual([older, current])
 })

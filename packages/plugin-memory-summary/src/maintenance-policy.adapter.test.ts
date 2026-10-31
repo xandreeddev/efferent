@@ -139,3 +139,22 @@ test("a summary timeout preserves a recorder failure raised by cancellation clea
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) expect(Cause.squash(exit.cause)).toBe(failure)
 })
+
+test("overflow can reduce another older frontier during cooldown while retaining irreducible current history", async () => {
+  await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const prompts = yield* Ref.make<ReadonlyArray<string>>([])
+    const session = yield* openBuiltIn(prompt => Ref.update(prompts, all => [...all, prompt]).pipe(Effect.as("Earlier checkpoints preserved.")), 0.6)
+    const first = yield* session.maintain({ ...signal, budgetTokens: 1100 })
+    expect(first).toMatchObject([{ body: { _tag: "Compaction", action: { _tag: "Summarize", keepFromTurn: 3 } } }])
+    const before = yield* session.build({ run: RunOrdinal.make(0), stepContext: "none" })
+    const next = yield* session.maintain({ ...signal, phase: "overflow", budgetTokens: 200 })
+    expect(next).toMatchObject([{ body: { _tag: "Compaction", action: { _tag: "Summarize", keepFromTurn: 4 } } }])
+    const after = yield* session.build({ run: RunOrdinal.make(0), stepContext: "none" })
+    expect(estimateMessageTokens(after.messages)).toBeLessThan(estimateMessageTokens(before.messages))
+    expect(estimateMessageTokens(after.messages)).toBeGreaterThan(200)
+    expect(JSON.stringify(after.messages)).toContain("answer4")
+    expect(yield* Ref.get(prompts).pipe(Effect.map(all => all.length))).toBe(2)
+    expect(yield* session.entries).toHaveLength(history.length + 2)
+    expect((yield* session.entries).slice(0, history.length)).toEqual([...history])
+  })))
+})

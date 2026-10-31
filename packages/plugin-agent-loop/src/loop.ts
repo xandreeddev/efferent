@@ -1,11 +1,11 @@
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
 import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Schema, Stream } from "effect"
-import { acceptedModelInputOf, CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, replayableContext } from "@xandreed/core"
+import { acceptedModelInputOf, CurrentTraceContent, freezeModelRequest, modelFailureCodeOf, modelFailureMessageOf, modelFailureOf, modelOverflowEvidenceOf, replayableContext } from "@xandreed/core"
 import { foldStreamParts } from "@xandreed/core/internal"
 import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, MalformedLimit } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
-import type { AcceptedModelInput, AgentMessage, AgentResult, HarnessError, ModelFailureKind, StepStatus } from "@xandreed/core"
+import type { AcceptedModelInput, AgentMessage, AgentResult, HarnessError, ModelFailureKind, ModelOverflowEvidence, StepStatus } from "@xandreed/core"
 import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, isTurnError, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
@@ -15,6 +15,7 @@ import { extractUsage, handoffToMessage, responseReasoning, responseText, respon
 import type { LoopEvent } from "./loop-event.entity.js"
 import { DUPLICATE_CALL_IDS, duplicateCallCorrective, lengthCorrective, malformedCall, MAX_CUT_CORRECTIVES, replyCutFailure, truncatedMessage, verdictOf } from "./response-gate.entity.functions.js"
 import type { CutReason } from "./response-gate.entity.js"
+import { claimRecovery, initialAttempt, settledAttempt, visibleAttempt } from "./request-attempt.entity.functions.js"
 
 /**
  * A mid-run fold the `compact` callback hands back: everything before
@@ -86,6 +87,13 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
    * sends it once more; false, or absent: the step fails with the refusal.
    */
   readonly onMediaRejected?: (reason: string) => Effect.Effect<boolean, E, R>
+  /**
+   * Compact an explicit overflowing request before any nonempty assistant
+   * delta escaped. True authorizes one same-step resend with fresh context;
+   * false or absence preserves the original failure. Callback failures stay
+   * the caller's. The step's choices and model remain frozen.
+   */
+  readonly onContextOverflow?: (step: number, evidence?: ModelOverflowEvidence) => Effect.Effect<boolean, E, R>
   readonly system: string | Prompt.Prompt
   /** The READ side of memory: when present, each provider step sends these
    * messages instead of the loop's own buffer. Persistence still flows through
@@ -597,6 +605,11 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
         // `onMediaRejected` dealt with the images. Once a part arrived, deltas went out, so a refusal
         // then fails the step like any other failure after the first part.
         const partSeen = yield* Ref.make(false)
+        const attemptState = yield* Ref.make(initialAttempt(state.streamingHealthy))
+        // Callback errors share E with provider errors; retain their origin so
+        // even a callback's AiError cannot be mistaken for a retryable call.
+        const callbackFailure = yield* Ref.make(Option.none<E>())
+        const guardedCallback = <A>(callback: Effect.Effect<A, E>) => callback.pipe(Effect.tapError((error) => Ref.set(callbackFailure, Option.some(error))))
         // The step's tools, run by the loop once its response is whole (never by the model call), each
         // between its tool_start and tool_end events.
         const toolSequence = yield* Ref.make(0)
@@ -621,7 +634,8 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           }) as never,
         }
         const attempt = Effect.gen(function* () {
-          const visible = options.render === undefined ? state.messages : yield* options.render(stepView).pipe(Effect.provide(eventContext))
+          yield* Ref.set(partSeen, false)
+          const visible = options.render === undefined ? state.messages : yield* guardedCallback(options.render(stepView).pipe(Effect.provide(eventContext)))
           const prompt = freezeModelRequest(Prompt.concat(instructions, Prompt.make(toPromptMessages(visible))))
 
           if (captureTraceContent)
@@ -640,9 +654,9 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
           })
 
           const dispatchModel = Option.isSome(prepared) ? prepared.value.model : yield* LanguageModel.LanguageModel
-          const beforeDispatch = options.beforeDispatch === undefined ? Effect.void : options.beforeDispatch(state.turnIndex, {
+          const beforeDispatch = options.beforeDispatch === undefined ? Effect.void : guardedCallback(options.beforeDispatch(state.turnIndex, {
             prompt, tools: Object.values(selectedTools), toolChoice: Option.getOrElse(directive, () => "auto"), model: dispatchModel,
-          }).pipe(Effect.provide(eventContext))
+          }).pipe(Effect.provide(eventContext)))
 
           /** Both paths land on the SAME settled shape — after this point the
            *  turn body is identical code, streamed or not. */
@@ -680,15 +694,14 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
               (Stream.unwrap(Effect.sync(() => dispatchModel.streamText(callOptions))) as Stream.Stream<Response.AnyPart, AiError.AiError | E, LanguageModel.LanguageModel>).pipe(
                 Stream.tap(() => Ref.set(partSeen, true)),
               ),
-              (delta) =>
-                onEvent({
+              (delta) => (delta.delta.length === 0 ? Effect.void : Ref.update(attemptState, visibleAttempt)).pipe(Effect.andThen(guardedCallback(onEvent({
                   type: "assistant_delta",
                   turnIndex: state.turnIndex,
                   channel: delta.channel,
                   id: delta.id,
                   delta: delta.delta,
                   ...(delta.toolName === undefined ? {} : { toolName: delta.toolName }),
-                }),
+                })))),
             ).pipe(
               Effect.map((turn) =>
                 Result.succeed({
@@ -700,13 +713,12 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
                 }),
               ),
               // An image refusal is the request's, not the stream's: no fallback would send it.
-              Effect.catch((err) =>
-                Ref.get(partSeen).pipe(
-                  Effect.flatMap((armed) =>
-                    armed || isTurnError(err) || isImageRejection(err) || isPermanentModelFailure(err) ? Effect.fail(err) : Effect.succeed(Result.fail(failureText(err))),
-                  ),
-                ),
-              ),
+              Effect.catch((err) => Effect.gen(function* () {
+                const armed = yield* Ref.get(partSeen)
+                const callback = yield* Ref.get(callbackFailure)
+                return yield* armed || Option.exists(callback, (failure) => failure === err) || isTurnError(err) || isImageRejection(err) || isPermanentModelFailure(err)
+                  ? Effect.fail(err) : Effect.succeed(Result.fail(failureText(err)))
+              })),
               Effect.catchDefect((defect) =>
                 Ref.get(partSeen).pipe(
                   Effect.flatMap((armed) =>
@@ -717,11 +729,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
             )
             return yield* Result.match(folded, {
               onSuccess: Effect.succeed,
-              onFailure: (failure) =>
-                Effect.logWarning(
+              onFailure: (failure) => Ref.update(attemptState, settledAttempt).pipe(Effect.andThen(Effect.logWarning(
                   "streaming failed before any part arrived — falling back to generateText for this run",
-                ).pipe(
-                  Effect.andThen(onEvent({ type: "stream_fallback", turnIndex: state.turnIndex, message: failure.slice(0, FALLBACK_MESSAGE_CHARS) })),
+                )),
+                  Effect.andThen(guardedCallback(onEvent({ type: "stream_fallback", turnIndex: state.turnIndex, message: failure.slice(0, FALLBACK_MESSAGE_CHARS) }))),
                   Effect.andThen(Metric.update(tagged(engineCorrections, { "engine.kind": "stream-fallback" }), 1)),
                   Effect.andThen(settled(false)),
                 ),
@@ -739,29 +750,45 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
             yield* Effect.annotateCurrentSpan("engine.step.host_planned", true)
             return yield* settled(state.streamingHealthy).pipe(Effect.provideService(LanguageModel.LanguageModel, provider))
           })
-          const useStreaming = options.streaming === true && state.streamingHealthy
-          return yield* (planned ? initial : useStreaming ? streamed : settled(state.streamingHealthy))
+          const streamable = (yield* Ref.get(attemptState))._tag === "Streamable"
+          const useStreaming = options.streaming === true && streamable
+          return yield* (planned ? initial : useStreaming ? streamed : settled(streamable))
         })
-        const outcome = yield* attempt.pipe(
-          Effect.catch((err) => Effect.gen(function* () {
-            const onMediaRejected = options.onMediaRejected
-            const armed = yield* Ref.get(partSeen)
-            if (planned || armed || onMediaRejected === undefined || !isImageRejection(err)) return yield* Effect.fail(err)
-            return yield* onMediaRejected(clip(err.reason.message, 600)).pipe(
-              Effect.provide(eventContext),
-              Effect.flatMap((retry) => retry
-                ? Effect.logWarning(`the provider refused an image; sending the step again with its images as labels: ${clip(err.reason.message, 300)}`).pipe(
-                  Effect.andThen(Metric.update(tagged(engineCorrections, { "engine.kind": "media-rejected" }), 1)),
-                  Effect.andThen(attempt),
-                )
-                : Effect.fail(err)),
-            )
-          })),
-          Effect.catch((err) =>
-            isMalformed(err)
+        type Attempted = Effect.Success<typeof attempt>
+        const send: Effect.Effect<Attempted, AiError.AiError | E | HarnessError, LanguageModel.LanguageModel> = Effect.suspend(() => attempt.pipe(
+          Effect.result,
+          Effect.flatMap((result) => {
+            const overflow = (error: AiError.AiError | E | HarnessError, source: unknown): Effect.Effect<Attempted, AiError.AiError | E | HarnessError, LanguageModel.LanguageModel> => Effect.gen(function* () {
+              const hook = options.onContextOverflow
+              if (planned || hook === undefined || !(yield* Ref.modify(attemptState, (current) => claimRecovery(current, "overflow")))) return yield* Effect.fail(error)
+              const evidence = modelOverflowEvidenceOf(source)
+              const retry = yield* guardedCallback(hook(state.turnIndex, ...Option.toArray(evidence)).pipe(Effect.provide(eventContext)))
+              return yield* retry ? send : Effect.fail(error)
+            })
+            return Result.match(result, {
+              onSuccess: (value) => Option.contains(modelFailureOf(value.content), "ContextOverflow")
+                ? overflow(harnessError("model.context-overflow", modelFailureMessageOf("ContextOverflow"), value), value.content)
+                : Effect.succeed(value),
+              onFailure: (error) => Effect.gen(function* () {
+                if (isTurnError(error) || Option.exists(yield* Ref.get(callbackFailure), (failure) => failure === error)) return yield* Effect.fail(error)
+                if (Option.contains(modelFailureOf(error), "ContextOverflow")) return yield* overflow(error, error)
+                const hook = options.onMediaRejected
+                if (planned || (yield* Ref.get(partSeen)) || hook === undefined || !isImageRejection(error)
+                  || !(yield* Ref.modify(attemptState, (current) => claimRecovery(current, "media")))) return yield* Effect.fail(error)
+                const retry = yield* guardedCallback(hook(clip(error.reason.message, 600)).pipe(Effect.provide(eventContext)))
+                return yield* retry ? Effect.logWarning(`the provider refused an image; sending the step again with its images as labels: ${clip(error.reason.message, 300)}`).pipe(
+                  Effect.andThen(Metric.update(tagged(engineCorrections, { "engine.kind": "media-rejected" }), 1)), Effect.andThen(send),
+                ) : Effect.fail(error)
+              }),
+            })
+          }),
+        ))
+        const outcome = yield* send.pipe(
+          Effect.catch((err) => Ref.get(callbackFailure).pipe(Effect.flatMap((callback) =>
+            !Option.exists(callback, (failure) => failure === err) && isMalformed(err)
               ? Effect.succeed({ _tag: "malformed" as const, err: err as MalformedResponse })
               : Effect.fail(err),
-          ),
+          ))),
           // Once the run has tool calls, a following empty response is the
           // model saying "done" — adapters must return it (the fold below
           // ends the turn) instead of rejecting it into the patient outage

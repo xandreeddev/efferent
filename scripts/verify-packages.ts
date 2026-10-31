@@ -736,8 +736,8 @@ if (await messagesBun.exited !== 0 || !messagesBunReport.includes('anthropic-mes
   console.error("the packed Bun Messages fixture did not complete its real HTTP turns"); process.exit(1)
 }
 console.log(messagesBunReport.trim())
-// Permanent model failures retain exact durable codes without retries, stream
-// fallback or tool dispatch; ordinary output limits keep bounded correctives.
+// Permanent model failures retain exact durable codes; irreducible context
+// failures run no tools, while ordinary output limits keep bounded correctives.
 await writeFile(join(consumer, "model-failures-consumer.mjs"), await readFile(join(root, "scripts/model-failures-consumer.fixture.mjs"), "utf8"))
 const failuresNode = Bun.spawn(["node", "model-failures-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const failuresNodeReport = await new Response(failuresNode.stdout).text()
@@ -811,6 +811,21 @@ if (await maintenanceBun.exited !== 0 || !maintenanceBunReport.includes('memory-
   console.error("the packed Bun maintenance lifecycle lost accepted input, timing or manual completion"); process.exit(1)
 }
 console.log(maintenanceBunReport.trim())
+// Recovery sends one provably smaller same-step request, preserves actual route
+// limits and accounting, and declines after visible output or without progress.
+await writeFile(join(consumer, "context-overflow-consumer.mjs"), await readFile(join(root, "scripts/context-overflow-consumer.fixture.mjs"), "utf8"))
+const overflowNode = Bun.spawn(["node", "context-overflow-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const overflowNodeReport = await new Response(overflowNode.stdout).text()
+if (await overflowNode.exited !== 0 || !overflowNodeReport.includes('context-overflow {"runtime":"Node"') || (overflowNodeReport.match(/"recoveryVerified":true/g) ?? []).length !== 9 || (overflowNodeReport.match(/"replayVerified":true/g) ?? []).length !== 9 || (overflowNodeReport.match(/"accountingVerified":true/g) ?? []).length !== 9) {
+  console.error("the packed Node context-overflow fixture lost bounded recovery, replay or accounting"); process.exit(1)
+}
+console.log(overflowNodeReport.trim())
+const overflowBun = Bun.spawn(["bun", "context-overflow-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const overflowBunReport = await new Response(overflowBun.stdout).text()
+if (await overflowBun.exited !== 0 || !overflowBunReport.includes('context-overflow {"runtime":"Bun"') || (overflowBunReport.match(/"recoveryVerified":true/g) ?? []).length !== 9 || (overflowBunReport.match(/"replayVerified":true/g) ?? []).length !== 9 || (overflowBunReport.match(/"accountingVerified":true/g) ?? []).length !== 9) {
+  console.error("the packed Bun context-overflow fixture lost bounded recovery, replay or accounting"); process.exit(1)
+}
+console.log(overflowBunReport.trim())
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

@@ -68,10 +68,10 @@ session's last turn begun by a user, with only inbox turns (and resumes
 of it that did not complete) after it, and must have ended cancelled or
 interrupted; otherwise the turn fails to begin with `NotResumable`
 (`turn.not-resumable`).
-Memory keeps what turn 1 stored: its message and its whole steps (a step's
-tool calls and their results are stored together once its tools return, so
-a call that was still running is gone), then the new turn's message, which
-may be the original message again or "Continue where you stopped.". That is
+Memory keeps what turn 1 stored: its message, assistant tool calls stored before
+their handlers, and each result as it returned. A call without a result is shown
+as `ToolInterrupted`; `toolCallStatesOf` exposes its exact durable state. The
+new turn's message may be the original message again or "Continue where you stopped.". That is
 what a plain new turn would see too: `resumes` records which turn the new
 one continues, and changes nothing the model is sent. A cancelled turn
 stores no reply; an interrupted one may keep a failed reply with no text.
@@ -123,6 +123,16 @@ return, before that call returns to the host. Choose `"step"` for pre-request
 timing. Failed or interrupted runs skip normal end maintenance. Summaries retain
 whole turns and protect the active admitted turn; end maintenance removes its
 obsolete temporary step context from estimates.
+
+On a classified context overflow, the SDK can compact to a strictly smaller
+request and resend once per step. Recovery uses the existing `budgetTokens`
+and known model limits; its run ceiling only shrinks. It preserves the frozen
+step choice and records a new request header before dispatch. Protected current
+history or a failed reduction keeps the original overflow. Once a nonempty
+streamed assistant delta is visible, recovery declines so it cannot silently
+repeat the answer. Failed attempts and summary helpers stay in billed usage;
+selected usage includes accepted responses only. Custom loops honor the optional
+`StepRequest.onContextOverflow` hook and rerun `stepLoopConformance`.
 
 Accepted positive input counts can raise message estimates through
 `scaledTokens`, using the exact prepared message estimate and system/tool reserve.
