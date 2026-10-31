@@ -21,6 +21,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   retaining the defaults. Custom loops provide `CurrentAgentRun`; rerun the
   step-loop and tool-registry conformance kits.
 
+- A custom `Sessions` supplies the bounded broadcast `waiting` stream;
+  rerun `sessionsConformance`. Kit instances add `waitingInput` (an optional
+  `WaitingInput` probe). `ProcessActivity` adds `waiting`, `queuedInput`
+  and `inFlight`; `busy` includes queued input. `processActivity`,
+  `Agent.activity` and default `awaitIdle` preserve `SessionLogError` from
+  queue reads. `awaitIdle({ queued: false })` and shutdown stay infallible
+  and wait only for running work, retaining cached backlog for restart.
+
+- A whole `WorkspaceToolsConfig` adds `imageMaxSide: 8000` (or spreads its
+  defaults). It applies when an optional `ImageResizer` is present. The
+  `read` result view advances to version 3; fitted images may carry scalar
+  `original` metadata, while earlier image results still decode.
+
 - A custom `TurnWriter` supplies fresh `steers` and an atomic `take` that
   stores user messages, `inbox.taken` receipts and queue removal together.
   A custom `MemorySession.record` honors its optional commit callback:
@@ -974,6 +987,21 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Scoped automatic inbox execution with `InboxDrainLive`, explicit owner
+  scopes, fixed workers, startup/local/periodic discovery, bounded backoff,
+  interrupted-root resumption before queued work, and startup-only takeover.
+  SDK's `agentInboxRunner` executes prebegun turns through the agent without
+  owning their ends; the core `InboxRunner` kit checks its contract.
+  `WaitingInput` and `DrainActivity` make queued and running work observable.
+
+- Optional workspace image fitting through the new `ImageResizer` port and
+  `imageResizerPlugin`, backed by installed ImageMagick, libvips or sips.
+  Larger reads fit provider byte/pixel limits and an optional host side
+  limit, preserve source files and expose scalar original-image metadata.
+  The CLI has bounded attempts, scoped cleanup and `images.unavailable`
+  activation failures; the portable conformance kit includes valid PNG
+  fixtures and careless-adapter checks.
 
 - Durable in-turn steering: each pending `delivery: "steer"` input is
   taken as its own normalized user message at a started step, before

@@ -4,10 +4,14 @@ class Bash
 class BashError
 class Capabilities
 class ConversationMemory
+class DrainActivity
 class FileSystem
 class FsError
 class HarnessError
+class ImageResizeError
+class ImageResizer
 class InboxFull
+class InboxRunner
 class InputConflict
 class IntentMatcher
 class KeyConflict
@@ -54,6 +58,7 @@ class UserMessage
 class UtilityCompletion
 class UtilityError
 class UtilityLlm
+class WaitingInput
 const ActivationSource
 const ActiveTurn
 const AdmittedTurn
@@ -120,7 +125,10 @@ const HarnessCode
 const HarnessConfig
 const HostEvent
 const IMAGE_TOKEN_ESTIMATE
+const ImageFitTarget
+const ImageInput
 const ImageMediaType
+const ImageResizeReason
 const InboxDroppedData
 const InboxItem
 const InboxItemId
@@ -254,13 +262,13 @@ const TurnsInFlight
 const UsageBreakdown
 const UserContentPart
 const UserRoleMessage
+const WaitingInputCount
 const WriteOptions
 const activationsOf
 const addUsage
 const assistantModel
 const assistantUsage
 const attachmentsOf
-const awaitIdle
 const canonicalJson
 const catalogOf
 const clipTo
@@ -286,6 +294,7 @@ const errorCodeOf
 const escapeFrame
 const estimateMessageTokens
 const fingerprintOf
+const fitTarget
 const formatModelSelection
 const framed
 const frameworkDraft
@@ -294,6 +303,7 @@ const harnessCodeOf
 const harnessDefectsAsFailures
 const harnessError
 const hostNote
+const imageSizeOf
 const isBudgetTokens
 const isHarnessError
 const isMediaValue
@@ -342,6 +352,7 @@ const responseModelOf
 const resumeRefusal
 const rewrittenBy
 const sameUserMessage
+const scaledSize
 const sessionAttributes
 const shutdownGracefully
 const shutdownRefusal
@@ -376,6 +387,7 @@ const userMessageText
 const userRoleMessageOf
 const walkGlob
 const zeroUsage
+function awaitIdle
 interface Capability
 interface Correctives
 interface Decided
@@ -484,7 +496,10 @@ type GlobOptions
 type GlobResult
 type HarnessCode
 type HarnessConfig
+type ImageFitTarget
+type ImageInput
 type ImageMediaType
+type ImageResizeReason
 type InboxDroppedData
 type InboxItem
 type InboxItemId
@@ -601,4 +616,5 @@ type TurnsInFlight
 type UsageBreakdown
 type UserContentPart
 type UserRoleMessage
+type WaitingInputCount
 type WriteOptions

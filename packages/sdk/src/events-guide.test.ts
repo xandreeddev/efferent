@@ -712,7 +712,7 @@ describe("serving turns over HTTP", () => {
     expect(framesOf(yield* Effect.promise(() => first.text())).at(-1)?.data.outcome).toBe("completed")
     yield* settled
     expect(yield* Effect.promise(() => pingRoute(host).then((response) => response.json()))).toEqual({ busy: false, stopping: false, openTurns: 0, beginningTurns: 0, runningTasks: 0 })
-    expect(yield* awaitIdle({ timeout: "1 second" }).pipe(Effect.provide(host.services))).toEqual({ busy: false, stopping: false, openTurns: [], beginningTurns: 0, runningTasks: 0 })
+    expect(yield* awaitIdle({ timeout: "1 second" }).pipe(Effect.provide(host.services))).toEqual({ busy: false, stopping: false, openTurns: [], beginningTurns: 0, runningTasks: 0, waiting: [], queuedInput: 0, inFlight: false })
     // A SIGTERM: once the agent is stopping, the ping answers 503.
     yield* host.agent.shutdown({ deadline: "1 second" })
     expect(yield* Effect.promise(() => pingRoute(host).then((response) => response.json().then((body) => [response.status, body.stopping])))).toEqual([503, true])

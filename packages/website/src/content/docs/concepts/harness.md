@@ -302,6 +302,23 @@ parent through the executor's `react` provides its `Tasks` too); build
 See the framework guide's sessions section for the contract, the event
 vocabulary and the inbox protocol.
 
+### Automatic inbox execution
+
+Queue user messages with `Sessions.enqueue`, choosing `delivery: "steer"`
+for a running turn or `"next"` for a separate user turn. `InboxDrainLive`
+from `@xandreed/plugin-sessions` runs explicit owner scopes after startup,
+local wakes and periodic sweeps. Build it beside the agent with SDK's
+`agentInboxRunner`, capturing the same Sessions instance. The runner uses
+`Agent.turn` on the prebegun writer; the drainer owns admission and ending.
+
+The default four fixed workers serialize each session and retry unfinished
+work with bounded backoff. `resume: { _tag: "Before" }` first resumes an
+eligible interrupted user root, with the configurable message `Continue.`.
+`{ _tag: "Never" }` skips automatic resumption. `takeOver: true` asserts a
+previous holder is gone, only for an initial startup attempt. An intentional
+cancellation stops automatic resumption of that branch. Closing the scope
+stops the drainer. See the framework guide for a full composition example.
+
 ### Busy signal and graceful shutdown
 
 `SessionsPluginLive` also provides `TurnActivity` (the turns this process
@@ -310,16 +327,20 @@ progress, from before the host's admission until the writer is handed over)
 and `TurnShutdown` (how it stops), and `InProcessTaskRunnerLive` provides
 `TaskActivity` (the background work it runs). `processActivity` from
 `@xandreed/core` reads the activity into
-`{ openTurns, beginningTurns, runningTasks, busy }`, and `agent.activity`
+`{ openTurns, beginningTurns, runningTasks, waiting, queuedInput, inFlight, busy, stopping }`, and `agent.activity`
 does so over the agent's runtime services: what a `/ping` reports.
-`awaitIdle({ timeout })` waits until nothing is open, beginning or running
-and returns the activity then (`busy: true` with what is left when the
-timeout comes first).
+`WaitingInput` counts unclaimed queued user inputs in owner-checked sessions
+this instance knows, excluding notices. `DrainActivity` counts active drain
+attempts. `busy` includes queued input; `inFlight` identifies running work.
+`awaitIdle({ timeout })` waits for both; `queued: false` skips queue reads
+and waits only for running work. A timeout reports cached queue counts.
+Queue storage errors remain typed `SessionLogError`. Probes installed beside
+the agent are read through `processActivity` over that composed context.
 
 `agent.shutdown(options?)` stops the turns within a deadline, while the
-services are still open: it refuses every new begin (`TurnRefused`, reason
+services are still open: it retains queued input for restart, refuses every new begin (`TurnRefused`, reason
 `shutdown`: `isShutdownRefusal`, a 503), waits until idle for the deadline
-less its reserve (2 s by default), then closes the turns still running as
+less its reserve (2 s by default), using `queued: false`, then closes the turns still running as
 interrupted with the code `turn.shutdown`, their ends stored while the log
 is open, and waits out the reserve. Each such turn's body is interrupted
 (`Agent.turn` races its writer closing) and it can be resumed at once by

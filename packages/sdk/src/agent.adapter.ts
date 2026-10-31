@@ -2,6 +2,8 @@ import { Cause, Clock, Context, Duration, Effect, Exit, Metric, Option, Schema }
 import type { Layer, Scope } from "effect"
 import {
   CurrentTraceContent,
+  DrainActivity,
+  WaitingInput,
   CapabilitiesLive,
   DEFAULT_SHUTDOWN_DEADLINE,
   Capabilities,
@@ -39,6 +41,7 @@ import type {
   NewTurn,
   Plugin,
   ProcessActivity,
+  SessionLogError,
   ShutdownOptions,
   ShutdownReport,
   Turn,
@@ -147,11 +150,12 @@ export interface Agent {
    * runtime services see it: the `TurnActivity` of a runtime-scoped
    * sessions plugin in its graph (or one in `services`), and the
    * `TaskActivity` of a task runner in `services` (`InProcessTaskRunnerLive`
-   * built into them). A probe that is not there counts nothing: a Sessions
+   * built into them), owner-observed `WaitingInput`, and active `DrainActivity`.
+   * Queue storage failures remain SessionLogError. A missing probe counts nothing: a Sessions
    * the host passes only in a turn's services is not seen here (read
    * `processActivity` with the host's own services instead).
    */
-  readonly activity: Effect.Effect<ProcessActivity>
+  readonly activity: Effect.Effect<ProcessActivity, SessionLogError>
   /**
    * Stop this agent's turns within a deadline, while its services are open
    * (`shutdownGracefully` over the same runtime services `activity` reads):
@@ -478,10 +482,10 @@ const makeAgent = (config: AgentConfig): Effect.Effect<Agent, HarnessError, Scop
 
   // The probes are the runtime's alone, wherever this is read (a turn's own services hold others).
   const runtimeProbes = <A, E>(effect: Effect.Effect<A, E>) => effect.pipe(Effect.updateContext((current: Context.Context<never>) =>
-    Context.merge(Context.omit(TurnActivity, TaskActivity, TurnShutdown)(current), Context.pick(TurnActivity, TaskActivity, TurnShutdown)(runtime))))
+    Context.merge(Context.omit(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity)(current), Context.pick(TurnActivity, TaskActivity, TurnShutdown, WaitingInput, DrainActivity)(runtime))))
   const activity = runtimeProbes(processActivity)
   const shutdown = (options?: ShutdownOptions) => runtimeProbes(shutdownGracefully(options ?? config.shutdown ?? { deadline: DEFAULT_SHUTDOWN_DEADLINE })).pipe(
-    Effect.tap((report) => report.left.busy
+    Effect.tap((report) => report.left.inFlight
       ? Effect.logWarning(`the agent stopped with ${report.left.openTurns.length + report.left.beginningTurns} turns and ${report.left.runningTasks} tasks still in flight`)
       : Effect.void))
   // Added after the runtime's plugins were activated in this scope, so it runs before they close.

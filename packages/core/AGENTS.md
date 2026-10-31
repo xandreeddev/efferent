@@ -84,6 +84,14 @@ engine needs stays in core (`sessionAttributes` and `turnAttributes`, which
 the in-memory log and the sessions plugin use, are session functions; the
 turn's bus is a core adapter).
 
+`ImageResizer` is the host-neutral optional image fitting port. Its input,
+target and typed error live in `domain/image-resize.entity.ts`; `fitTarget`
+and `scaledSize` are pure. `imageResizerConformance` ships pure valid PNG
+fixtures and tests both provider limits, aspect, no upscaling and unsupported
+bytes, with careless-stub self-tests. Adapters belong in plugins; core adds
+no converter or native dependency. Reuse `imageSizeOf` and `mediaFromBytes`
+for output checks; header parsing stays in the media functions.
+
 Plugin and configuration contracts live in `src/harness`; service tags live in
 `src/ports`. Entity files contain schemas and derived types. Behavior belongs
 in paired `.functions.ts` modules. `definePlugin` bridges typed Layers at the
@@ -170,6 +178,14 @@ The step loop and its event vocabulary (`LoopEvent`) live in
 sessions in `@xandreed/plugin-sessions`, and the composable agent
 (`Agent.define`, `Agent.turn`) in `@xandreed/sdk`. Foundry is independent and
 supplies deterministic verification when a host chooses it.
+
+`Sessions.waiting` is a bounded broadcast with an initial post-subscription
+signal. `InboxRunner` executes exactly its borrowed writer and preserves
+outcomes/errors without beginning or ending it. `WaitingInput` reads durable
+queued user input only for owner-observed sessions, with typed storage
+failures and an infallible cache. `DrainActivity` counts active attempts.
+`ProcessActivity.busy` includes queued input; `inFlight` distinguishes work
+shutdown must wait for. `awaitIdle({ queued: false })` performs no queue I/O.
 
 Port contracts ship as conformance kits (`*.conformance.ts`, each exported
 from `src/conformance/index.ts`; the `ToolRegistry`'s is the sdk's,

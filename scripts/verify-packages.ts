@@ -115,6 +115,13 @@ const localKitFailures = (await Effect.runPromise(Effect.forEach(localKitChecks,
  Effect.map((result) => result._tag === "Failure" ? [check.name + ": " + result.failure.message] : []))))).flat()
 if (localKitFailures.length > 0) { console.error(localKitFailures.join("\\n")); process.exit(1) }
 console.log("The FileSystem and Bash kits passed over the packed local adapters on " + (typeof Bun === "undefined" ? "Node" : "Bun") + " (" + localKitChecks.length + " checks)")
+const imageCli = await Effect.runPromise(Effect.scoped(Effect.result(Layer.build(ImageResizerCliLive().pipe(Layer.provide(Layer.merge(FileSystemLive, BashLive())))))))
+if (imageCli._tag === "Failure" && !Option.contains(harnessCodeOf(imageCli.failure), "images.unavailable")) { console.error("The image CLI could not activate", imageCli.failure); process.exit(1) }
+if (imageCli._tag === "Success") {
+ const checks = imageResizerConformance({ open: () => Layer.build(ImageResizerCliLive().pipe(Layer.provide(Layer.merge(FileSystemLive, BashLive())))).pipe(Effect.map((context) => Context.get(context, ImageResizer))) })
+ await Effect.runPromise(Effect.forEach(checks, (check) => check.run, { concurrency: 1 }))
+ console.log("The image resize kit passed over the packed CLI on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
+} else console.log("The optional image CLI kit needs ImageMagick, libvips or sips")
 const skillsWorkspace = await mkdtemp(join(tmpdir(), "efferent-skills-"))
 await mkdir(join(skillsWorkspace, ".agents/skills/greet/references"), { recursive: true })
 await writeFile(join(skillsWorkspace, ".agents/skills/greet/SKILL.md"), "---\\nname: greet\\ndescription: Greet people.\\n---\\nSay hello.\\n")
@@ -143,7 +150,10 @@ const workspaceReference = join(workspaceReferences, "reference.txt")
 await writeFile(workspaceReference, "reference facts")
 await writeFile(join(workspaceRoot, "notes.md"), "- buy milk\\n")
 const workspacePixel = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=="
-await writeFile(join(workspaceRoot, "chart.png"), Buffer.from(workspacePixel, "base64"))
+const workspaceOriginal = new Uint8Array(Buffer.from(workspacePixel, "base64"))
+new DataView(workspaceOriginal.buffer).setUint32(16, 9000)
+new DataView(workspaceOriginal.buffer).setUint32(20, 6000)
+await writeFile(join(workspaceRoot, "chart.png"), workspaceOriginal)
 const workspaceUsage = { inputTokens: { total: 3 }, outputTokens: { total: 1 } }
 const workspaceCalls = [
  { name: "read", params: { path: "notes.md" } },
@@ -159,9 +169,11 @@ const workspaceScript = JSON.parse(JSON.stringify([
  [{ type: "text", text: "done" }, { type: "finish", reason: "stop", usage: workspaceUsage }],
 ]))
 const workspacePrompts = JSON.parse("[]")
+const workspaceRecorded = JSON.parse("[]")
 const workspaceTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
  const sessions = Context.get(yield* Layer.build(SessionsPluginLive({ ownership: { mode: "process" } }).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
  const agent = yield* Agent.define({
+  services: Context.make(ImageResizer, ImageResizer.of({ fit: () => Effect.succeed(Buffer.from(workspacePixel, "base64")) })),
   plugins: [memoryWindowPlugin, { plugin: toolDiscoveryPlugin, options: { grants: ["fs.write", "shell.exec"] } }, stepLoopPlugin,
    { plugin: localSystemPlugin, options: { parentEnv: { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: workspaceRoot, WORKSPACE_PARENT: "hidden" } } },
    { plugin: workspaceToolsPlugin, options: { roots: [{ path: workspaceReferences, access: "read" }], bashEnv: { WORKSPACE_PROBE: "probe" } } }],
@@ -172,8 +184,10 @@ const workspaceTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function*
   streamText: () => Stream.die("not scripted"),
  })
  const view = yield* sessions.create({ owner: "consumer" })
- return yield* agent.turn({ turn: { session: { id: view.header.id, owner: "consumer" }, userMessage: new UserMessage({ text: "make it oat milk" }), runId: RunId.make("workspace-1") }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
+ const result = yield* agent.turn({ turn: { session: { id: view.header.id, owner: "consumer" }, userMessage: new UserMessage({ text: "make it oat milk" }), runId: RunId.make("workspace-1") }, services: Context.merge(Context.make(LanguageModel.LanguageModel, model), Context.make(Sessions, sessions)) },
   (turn) => turn.tools.select(turn.userMessage).pipe(Effect.andThen(turn.run({})), Effect.map((result) => ({ outcome: result.outcome, reply: Option.some(result.text) }))))
+ workspaceRecorded.push(...(yield* sessions.read({ id: view.header.id, owner: "consumer" })))
+ return result
 })))
 const workspaceRg = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
  const rgCalls = JSON.parse("[]")
@@ -196,19 +210,21 @@ const workspaceRg = await Effect.runPromise(Effect.scoped(Effect.gen(function* (
 if (!workspaceRg) { console.error("The packed ripgrep adapter failed"); process.exit(1) }
 const workspaceNotes = await readFile(join(workspaceRoot, "notes.md"), "utf8")
 const workspaceReferenceAfter = await readFile(workspaceReference, "utf8")
+const workspaceImageAfter = await readFile(join(workspaceRoot, "chart.png"))
 await rm(workspaceRoot, { recursive: true, force: true })
 await rm(workspaceReferences, { recursive: true, force: true })
 const workspaceLast = String(workspacePrompts[workspacePrompts.length - 1] ?? "")
 // The image read's tool result: its text the one-line view (no base64), the image a file part of its modelOutput.
 const workspaceRead = [...JSON.parse(workspaceLast || "[]")].filter((message) => message.role === "tool").flatMap((message) => [...message.content])
- .find((part) => part.result === "[Image chart.png (image/png, 70 B).]")
+ .find((part) => part.result === "[Image chart.png (image/png, 70 B), scaled down from 9000x6000 (image/png, 70 B).]")
 const workspaceImageSent = workspaceRead !== undefined && [...(workspaceRead.modelOutput ?? [])].some((output) => output.type === "file" && output.mediaType === "image/png" && output.data === workspacePixel)
 if (workspaceTurn.outcome !== "completed" || workspaceNotes !== "- buy oat milk\\n" || !workspaceLast.includes("- buy oat milk\\\\nfrom stdin\\\\nprobe\\\\nparent=" + workspaceRoot + ":\\\\n[Exit code 0.]")
+ || !workspaceImageAfter.equals(Buffer.from(workspaceOriginal)) || JSON.stringify(workspaceRecorded).split(workspacePixel).length !== 2 || !JSON.stringify(workspaceRecorded).includes('"original":{"mediaType":"image/png","bytes":70,"width":9000,"height":6000}')
  || workspaceReferenceAfter !== "reference facts" || !workspaceLast.includes("reference facts") || !workspaceLast.includes("ReadOnly") || !workspaceImageSent) {
  console.error("The workspace tools journey failed: " + JSON.stringify({ outcome: workspaceTurn.outcome, notes: workspaceNotes, last: workspaceLast.slice(-600) }))
  process.exit(1)
 }
-console.log("The workspace tools read, edited and ran a command (stdin, host base environment), enforced an extra read root and read an image in an Agent.turn on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
+console.log("The workspace tools read, edited and ran a command (stdin, host base environment), enforced an extra read root and fitted an image in an Agent.turn on " + (typeof Bun === "undefined" ? "Node" : "Bun"))
 `
 await writeFile(join(consumer, "verify.ts"), `
 import { Context, Deferred, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
@@ -218,11 +234,11 @@ import { connect, createServer } from "node:net"
 import type { Socket } from "node:net"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Bash, Capabilities, FileSystem, makeMemoryFileSystem, TaskActivity, TaskExecutor, Tasks, TurnActivity } from "@xandreed/core"
-import { bashConformance, fileSystemConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
+import { Bash, Capabilities, FileSystem, harnessCodeOf, ImageResizer, makeMemoryFileSystem, TaskActivity, TaskExecutor, Tasks, TurnActivity } from "@xandreed/core"
+import { bashConformance, fileSystemConformance, imageResizerConformance, sessionLogRecoveryConformance } from "@xandreed/core/conformance"
 import type { TurnWriter } from "@xandreed/core"
 import { modelsPlugin } from "@xandreed/plugin-models"
-import { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceTools, workspaceToolsDefaults, GrepResult, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
+import { BashLive, FileSystemLive, ImageResizerCliLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceTools, workspaceToolsDefaults, GrepResult, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
 import { makeSessionLogSqlite, SessionLogSqliteLive } from "@xandreed/plugin-session-sqlite"
 import { SessionsPluginLive } from "@xandreed/plugin-sessions"
 import { InProcessTaskRunnerLive, TasksPluginLive } from "@xandreed/plugin-tasks"
@@ -448,7 +464,7 @@ const { runSteps, STEP_LOOP, stepLoopPlugin } = await import("@xandreed/plugin-a
 const { memoryWindowPlugin } = await import("@xandreed/plugin-memory-window")
 const { SessionsPluginLive } = await import("@xandreed/plugin-sessions")
 const { toolDiscoveryPlugin } = await import("@xandreed/plugin-tool-discovery")
-const { Agent, Sessions, SessionLog, SessionLogMemoryLive, TurnAdmissionOpen } = await import("@xandreed/sdk")
+const { Agent, agentInboxRunner, Sessions, SessionLog, SessionLogMemoryLive, TurnAdmissionOpen } = await import("@xandreed/sdk")
 // Run a kit's checks; any failure prints them all and fails the verification.
 const runKit = async (kit, checks) => {
   const failures = (await Effect.runPromise(Effect.forEach(checks, (check) => Effect.result(check.run).pipe(
@@ -494,9 +510,9 @@ const turn = await runKit("turn", turnConformance(agent, turnServices))
 const { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } = await import("node:fs/promises")
 const { tmpdir } = await import("node:os")
 const { join } = await import("node:path")
-const { Bash, Capabilities, FileSystem, RunId, SessionEnvironment, UserMessage } = await import("@xandreed/core")
-const { bashConformance } = await import("@xandreed/core/conformance")
-const { BashLive, FileSystemLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceTools, workspaceToolsDefaults, GrepResult, workspaceToolsPlugin } = await import("@xandreed/plugin-workspace")
+const { Bash, Capabilities, FileSystem, harnessCodeOf, ImageResizer, RunId, SessionEnvironment, UserMessage } = await import("@xandreed/core")
+const { bashConformance, imageResizerConformance } = await import("@xandreed/core/conformance")
+const { BashLive, FileSystemLive, ImageResizerCliLive, localSystemPlugin, SkillsDirectoryPluginLive, workspaceTools, workspaceToolsDefaults, GrepResult, workspaceToolsPlugin } = await import("@xandreed/plugin-workspace")
 // The busy signal on Node: an open turn and a running task count, and awaitIdle sees both settle.
 const { awaitIdle, processActivity, TaskRunner } = await import("@xandreed/core")
 const { InProcessTaskRunnerLive } = await import("@xandreed/plugin-tasks")
@@ -564,8 +580,8 @@ rmSync(kitCwd, { recursive: true, force: true })
 // The Sessions kit over the packed SessionsLive and in-memory log, each check under a TestClock of its own that the kit moves;
 // the TaskRunner, Tasks and ToolRegistry kits over InProcessTaskRunnerLive, TasksLive and the tool discovery plugin.
 const { TestClock } = await import("effect/testing")
-const { TaskActivity, TaskExecutor, Tasks, ToolRegistry, TurnActivity, TurnAdmission, TurnShutdown } = await import("@xandreed/core")
-const { sessionsConformance, taskRunnerConformance, tasksConformance } = await import("@xandreed/core/conformance")
+const { InboxRunner, TaskActivity, TaskExecutor, Tasks, ToolRegistry, TurnActivity, TurnAdmission, TurnShutdown, WaitingInput, zeroUsage } = await import("@xandreed/core")
+const { inboxRunnerConformance, sessionsConformance, taskRunnerConformance, tasksConformance } = await import("@xandreed/core/conformance")
 const { toolRegistryConformance } = await import("@xandreed/sdk/conformance")
 const { SessionsLive, sessionsDefaults } = await import("@xandreed/plugin-sessions")
 const { TasksLive, tasksDefaults } = await import("@xandreed/plugin-tasks")
@@ -573,7 +589,7 @@ const { ToolDiscoveryLive, toolDiscoveryDefaults } = await import("@xandreed/plu
 const sharedLog = await Effect.runPromise(Effect.service(SessionLog).pipe(Effect.provide(SessionLogMemoryLive)))
 const sessionsOver = (config, admission, liveness) => Layer.build(SessionsLive(config, liveness === undefined ? undefined : { liveness }).pipe(
   Layer.provide(Layer.merge(Layer.succeed(SessionLog, sharedLog), Layer.succeed(TurnAdmission, admission))))).pipe(
-  Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown) })))
+  Effect.map((context) => ({ sessions: Context.get(context, Sessions), activity: Context.getOption(context, TurnActivity), shutdown: Context.getOption(context, TurnShutdown), waitingInput: Context.getOption(context, WaitingInput) })))
 const sessionChecks = sessionsConformance({
   leased: ({ ttlMs, admission }) => sessionsOver({ ...sessionsDefaults, ownership: { mode: "lease", ttlMs, renew: "on-commit" } }, admission),
   processOwned: ({ self, running, admission }) => sessionsOver({ ...sessionsDefaults, ownership: { mode: "process" } }, admission,
@@ -581,6 +597,16 @@ const sessionChecks = sessionsConformance({
   advance: (millis) => TestClock.adjust(millis),
 }).map((check) => ({ name: check.name, run: check.run.pipe(Effect.provide(TestClock.layer())) }))
 const sessionsKit = await runKit("Sessions", sessionChecks)
+const inboxRunnerKit = await runKit("InboxRunner", inboxRunnerConformance({ open: ({ use }) => Effect.gen(function* () {
+  const admission = yield* Effect.service(TurnAdmission).pipe(Effect.provide(TurnAdmissionOpen))
+  const instance = yield* sessionsOver(sessionsDefaults, admission)
+  const runner = { turn: (input) => "admitted" in input.turn ? use(input.turn).pipe(
+    Effect.tap(() => Context.getUnsafe(input.services, Sessions) === instance.sessions ? Effect.void : Effect.die("wrong Sessions")),
+    Effect.map((outcome) => ({ ...outcome, usage: zeroUsage })),
+  ) : Effect.die("attempted a new turn") }
+  const context = yield* Layer.build(agentInboxRunner(runner, { services: Context.empty() }).pipe(Layer.provide(Layer.succeed(Sessions, instance.sessions))))
+  return Context.get(context, InboxRunner)
+}) }))
 const runnerKit = await runKit("TaskRunner", taskRunnerConformance(Layer.build(InProcessTaskRunnerLive()).pipe(
   Effect.map((context) => ({ runner: Context.get(context, TaskRunner), activity: Context.getOption(context, TaskActivity) })))))
 const tasksKit = await runKit("Tasks", tasksConformance(({ runner, executor }) => Layer.build(TasksLive(tasksDefaults).pipe(Layer.provideMerge(Layer.mergeAll(
@@ -589,7 +615,7 @@ const tasksKit = await runKit("Tasks", tasksConformance(({ runner, executor }) =
   Effect.map((context) => ({ sessions: Context.get(context, Sessions), tasks: Context.get(context, Tasks), shutdown: Context.getOption(context, TurnShutdown) })))))
 const registryKit = await runKit("ToolRegistry", toolRegistryConformance((capabilities, limits) => Layer.build(ToolDiscoveryLive({ ...toolDiscoveryDefaults, ...limits }).pipe(
   Layer.provide(Layer.succeed(Capabilities, capabilities)))).pipe(Effect.map((context) => Context.get(context, ToolRegistry)))))
-console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), both SessionLog kits over the file store in a directory (" + filesKit + " and " + filesRecovery + "), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + "), the Sessions kit over SessionsLive and the memory log (" + sessionsKit + "), the TaskRunner kit over InProcessTaskRunnerLive (" + runnerKit + "), the Tasks kit over TasksLive (" + tasksKit + ") and the ToolRegistry kit over the tool discovery plugin (" + registryKit + ")")
+console.log("${nodeReady.length} packages import on Node; plugin-render encodes, and on Node the SessionLog recovery kit passes over the memory log (" + recovery + " checks), both SessionLog kits over the file store in a directory (" + filesKit + " and " + filesRecovery + "), the FileSystem kit over the memory file system (" + fileSystem + "), the StepLoop kit over runSteps (" + stepLoop + "), the turn kit over Agent.turn (" + turn + "), the busy signal over SessionsPluginLive and InProcessTaskRunnerLive, the AuthStore, SettingsStore and ModelCatalog kits over plugin-models' adapters (" + stores + "), the Sessions kit over SessionsLive and the memory log (" + sessionsKit + "), the InboxRunner kit over agentInboxRunner (" + inboxRunnerKit + "), the TaskRunner kit over InProcessTaskRunnerLive (" + runnerKit + "), the Tasks kit over TasksLive (" + tasksKit + ") and the ToolRegistry kit over the tool discovery plugin (" + registryKit + ")")
 ${localKits}
 ${workspaceJourney}
 `)
@@ -638,6 +664,14 @@ console.log("On Node, the file store kept whole commits after a writer was kille
   const filesCrash = Bun.spawn(["node", "files-crash.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await filesCrash.exited !== 0) process.exit(1)
 } else console.log("node not on PATH: skipped the Node import check")
+// The same real agent restart journey runs on both packed runtimes: kill a
+// tool holder, and kill again after atomic steering take, before recovering
+// the original work and then its queued next input with no lease advance.
+await writeFile(join(consumer, "inbox-restart-consumer.mjs"), await readFile(join(root, "scripts/inbox-restart-consumer.fixture.mjs"), "utf8"))
+const inboxRestartNode = Bun.spawn(["node", "inbox-restart-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await inboxRestartNode.exited !== 0) process.exit(1)
+const inboxRestartBun = Bun.spawn(["bun", "inbox-restart-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
+if (await inboxRestartBun.exited !== 0) process.exit(1)
 registry.stop(true)
 await writeFile(join(consumer, "evaluation-consumer.mjs"), await readFile(join(root, "scripts/evaluation-consumer.fixture.mjs"), "utf8"))
 const evalNode = Bun.spawn(["node", "evaluation-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })

@@ -164,7 +164,10 @@ const agent = yield* Agent.define({
 ```
 
 `read` returns PNG, JPEG, GIF and WebP files as images the model sees
-(`readImages`, on by default). Paths stay inside the workspace (links
+(`readImages`, on by default). Add `imageResizerPlugin` from the same package
+to fit larger images through an installed ImageMagick, libvips or sips;
+`imageMaxSide` can lower the default 8000-pixel limit. Source files stay
+unchanged. Paths stay inside the workspace (links
 resolved), `write` and `edit` leave `.git` and `.efferent` alone, and
 commands get an allowlisted environment without the host's keys. This is a
 guardrail against mistakes, not a sandbox: `bash` can reach anything the
@@ -181,8 +184,10 @@ read and written through `@xandreed/plugin-sessions`, with an inbox and
 background tasks (`@xandreed/plugin-tasks`) the agent answers after the turn
 in flight. `Sessions.enqueue` saves user input durably; `delivery: "steer"`
 adds each message before a step's next request, with an atomic inbox
-acknowledgment. `agent.activity` (and `processActivity`, `awaitIdle`) says what
-the process still has in flight, for a `/ping`, and `agent.shutdown()`
+acknowledgment. `InboxDrainLive` with `agentInboxRunner` runs owner-scoped
+queued work and resumes interrupted roots. `agent.activity` (and
+`processActivity`, `awaitIdle`) reports running work and known queued input
+for a `/ping`, and `agent.shutdown()`
 stops its turns within a deadline on a SIGTERM, those still running ended
 resumable (`turn.shutdown`). See
 [the framework guide](docs/framework.md). Every event a turn
@@ -266,7 +271,7 @@ Bun, whose fetch applies a proxy from the environment by itself, only
 | `@xandreed/plugin-session-sqlite` | SQLite session store (Bun only) |
 | `@xandreed/plugin-tasks` | Background tasks |
 | `@xandreed/plugin-render` | Render surfaces, event feeds and streaming |
-| `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`), the workspace tools `read`, `write`, `edit`, `ls`, `find`, `grep` and `bash` (`workspaceToolsPlugin`), and skills from directories of `SKILL.md` files (`skillsDirectoryPlugin`); Linux and macOS |
+| `@xandreed/plugin-workspace` | The local file system and shell as `FileSystem` and `Bash` (`localSystemPlugin`), the workspace tools `read`, `write`, `edit`, `ls`, `find`, `grep` and `bash` (`workspaceToolsPlugin`), optional image fitting through installed host converters (`imageResizerPlugin`), and skills from directories of `SKILL.md` files (`skillsDirectoryPlugin`); Linux and macOS |
 | `@xandreed/plugin-telemetry` | Usage, cost and tool metrics per turn (`telemetryPlugin`) and OTLP/HTTP export of traces and metrics (`OtlpTelemetryLive`) |
 | `@xandreed/evals` | Tasks, trials, graders and suites; app adapters, local reports and retrieval metrics |
 | `@xandreed/evals-cli` | The `efferent-eval` command line (Node 24) |

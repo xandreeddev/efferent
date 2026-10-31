@@ -23,7 +23,7 @@ const jsonSchemaOf = (schema: Schema.Top) => {
 }
 /** Every first-party plugin the framework publishes, in host-graph order. */
 const firstParty: ReadonlyArray<Plugin> = [sessionFiles.sessionFilesPlugin, sessionFiles.sessionLogFilesPlugin, sessionSqlite.sessionSqlitePlugin, sessionSqlite.sessionLogSqlitePlugin, sessions.sessionsPlugin,
-  workspace.localSystemPlugin, workspace.skillsDirectoryPlugin, workspace.workspaceToolsPlugin, models.modelsPlugin, memoryWindow.memoryWindowPlugin, memorySummary.memorySummaryPlugin, memoryDigest.memoryDigestPlugin,
+  workspace.localSystemPlugin, workspace.imageResizerPlugin, workspace.skillsDirectoryPlugin, workspace.workspaceToolsPlugin, models.modelsPlugin, memoryWindow.memoryWindowPlugin, memorySummary.memorySummaryPlugin, memoryDigest.memoryDigestPlugin,
   toolDiscovery.toolDiscoveryPlugin, agentLoop.stepLoopPlugin, tasks.tasksPlugin, telemetry.telemetryPlugin, render.renderSurfacePlugin, render.renderFeedPlugin,
   render.uiOutputPlugin]
 /** A `definePlugin` result, as a package exports it. */

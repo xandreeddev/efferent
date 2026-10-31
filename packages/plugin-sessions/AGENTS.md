@@ -1,6 +1,6 @@
 # @xandreed/plugin-sessions
 
-Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time (`BeginTurn`'s direct User, Queued user input, Inbox notices or Task, told apart by `Match.valueTags` in `askedOf`), turns owned by a lease or by the process that began them, the inbox, forks, resumes, `TurnActivity` (the turns this instance holds open or is beginning) and `TurnShutdown` (how it stops). The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
+Core's `Sessions` port over the host's `SessionLog`: one event log per session, one open turn at a time (`BeginTurn`'s direct User, Queued user input, Inbox notices or Task, told apart by `Match.valueTags` in `askedOf`), turns owned by a lease or by the process that began them, the inbox, forks, resumes, `TurnActivity` (the turns this instance holds open or is beginning) and `TurnShutdown` (how it stops), plus owner-observed `WaitingInput`. The host admits every turn through `TurnAdmission`. Node 24 and Bun; layer `plugin-sessions` in `foundry.config.ts` (imports core only, no `node:`).
 
 ## Rules
 
@@ -30,8 +30,13 @@ Core's `Sessions` port over the host's `SessionLog`: one event log per session, 
 - Import no `node:` module: `processLiveness` reaches `node:os` through `process.getBuiltinModule` and works without a process.
 - Change behaviour by adding the check to core's `sessionsConformance` first, with a careless instance in `src/sessions.conformance.test.ts` that it catches.
 
+- `Sessions.waiting` broadcasts one initial signal after subscribing, then coalesced local commits through a scoped sliding-one hub. Keep per-session `changes` commit-only. Both hubs wake after a writer commit.
+- `WaitingInput` observes only successfully owner-checked addresses, refreshes their unclaimed delivery-marked slots, excludes notices and forgets removed sessions. Storage failures stay typed; cached knowledge is infallible and never resets on a failed read. Its idle wait polls foreign commits too (`inbox.pollIntervalMs`). No stored state is added for activity.
+- `InboxDrainLive` is an optional host-composed layer requiring Sessions and InboxRunner, with explicit owners, fixed scoped workers, per-session serialization, fair scheduling and bounded backoff. Wakes never reset retry deadlines; startup takeover authority is consumed once. Preserve input after partial/failed/interrupted attempts and intentionally cancelled resume branches.
+
 ## Public surface
 
+- `InboxDrainLive(options)`, `InboxDrainConfig`, `InboxDrainOptions`, `inboxDrainDefaults`; no owner or takeover authority is inferred.
 - `sessionsPlugin` (also the default export) and `SessionsPluginLive` (its `.live` layer); `SessionsLive(config, { liveness })` for hosts that compose layers; `processLiveness` (type `ProcessLiveness`).
 - Core contracts implemented here: `Sessions.enqueue`, `BeginTurn.Queued`, `QueuedInput`, `InputDelivery`, `TurnWriter.steers` and `take`; the core entry exports those schemas and `InputConflict`. `drain.take` defaults to all; reaction-only hosts select notices.
 - Config: `SessionsConfig`, `sessionsDefaults` (a 60 s lease, a keep-alive every 20 s, a turn time limit of 6 hours), `Ownership`; `HolderProcess`, where a process-owned turn's holder runs (what `ProcessLiveness.current` returns). The state the plugin keeps in the session head (`SessionsState`, `HeldTurn`, `InboxSlot`) is its own and stays inside the package.
@@ -40,14 +45,15 @@ The root names each export, and `quality/exports-have-consumers` checks each one
 
 | Plugin | Id | Scope | Provides | Contributes | Requires |
 |---|---|---|---|---|---|
-| `sessionsPlugin` | `@xandreed/plugin-sessions` | runtime | `efferent/Sessions`, `efferent/TurnActivity`, `@xandreed/core/TurnShutdown` | none | `efferent/SessionLog`, `efferent/TurnAdmission` |
+| `sessionsPlugin` | `@xandreed/plugin-sessions` | runtime | `efferent/Sessions`, `efferent/TurnActivity`, `@xandreed/core/TurnShutdown`, `@xandreed/core/WaitingInput` | none | `efferent/SessionLog`, `efferent/TurnAdmission` |
 
 ## Model-facing text
 
 | Text | Source | Pinned by |
 |---|---|---|
-| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:537` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
-| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:421` | exact, `src/sessions.adapter.test.ts:1314` |
+| An inbox turn's user message: the claimed items' contents, in delivery order, joined by a blank line | `src/sessions.adapter.ts:557` | exact, `src/sessions.adapter.test.ts:1332` (one item, `:1162`) |
+| `(inbox item <id>)`, for an item stored without content | `src/sessions.adapter.ts:441` | exact, `src/sessions.adapter.test.ts:1314` |
+| Default user message when the inbox drainer resumes interrupted work: `Continue.` (`resumeMessageOf`) | `src/inbox-drain.entity.functions.ts:17` | exact, `src/inbox-drain.entity.functions.test.ts:16` |
 
 ## Erasure files
 
@@ -57,6 +63,8 @@ None.
 
 | File | Role |
 |---|---|
+| `src/inbox-drain.adapter.ts` | scoped owner discovery, coalesced wakes, fixed workers and DrainActivity |
+| `src/inbox-drain.entity.ts`, `src/inbox-drain.entity.functions.ts` | checked host policy, journal projections and pure scheduling transitions |
 | `src/plugin.adapter.ts` | `sessionsPlugin`, `SessionsPluginLive` |
 | `src/sessions.adapter.ts` | `SessionsLive`: create, fork, begin, enqueue, deliver, selected drains, cancel, remove, reaping, change signals, `TurnActivity`, `TurnShutdown` |
 | `src/turn-writer.adapter.ts` | the open turn's writer: queued, batched commits, lease renewal and keep-alive |
@@ -69,6 +77,8 @@ None.
 
 ## Tests
 
+- `src/waiting-input.adapter.test.ts`: honest storage failures, cached shutdown backlog, raw reads with invalid state, and interrupted-ACK wakes for enqueue/create/fork/remove.
+- `src/inbox-drain.adapter.test.ts` and `.entity.functions.test.ts`: discovery, concurrency, backoff, startup takeover, shutdown and cancellation. The shared `scripts/inbox-restart-consumer.fixture.mjs` runs real killed-tool and killed-take recovery on source Bun and packed Node/Bun.
 - `src/sessions.adapter.test.ts`: one turn at a time, leases, activity, cancel and removal, check then append, contention and a broken log, the inbox, resuming, forks, admission, and the spans and log annotations, over the in-memory log.
 - `src/turn-writer.entity.functions.test.ts`: the writer's transitions, as tables, phase by phase. `src/sessions-state.entity.functions.test.ts` distinguishes bounded notice attempts from retained queued input and cancellation acknowledgments.
 - `src/durable-steering.adapter.test.ts`: read-only probes and false takes, CAS against concurrent enqueues/cancellation, lost take acknowledgments, reused ids and newer-format fencing.
