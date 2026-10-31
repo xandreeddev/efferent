@@ -1,9 +1,9 @@
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import type { Tool, Toolkit } from "effect/ai"
-import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Stream } from "effect"
+import { Array as Arr, Cause, Context, Effect, Exit, Formatter, Match, Metric, Option, Order, Ref, Result, Schema, Stream } from "effect"
 import { CurrentTraceContent, freezeModelRequest, replayableContext } from "@xandreed/core"
 import { foldStreamParts } from "@xandreed/core/internal"
-import { CurrentAgentStep } from "@xandreed/core"
+import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, MalformedLimit } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { AgentMessage, AgentResult, HarnessError, StepStatus } from "@xandreed/core"
 import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, zeroUsage } from "@xandreed/core"
@@ -125,6 +125,10 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
    * corrective turn asks for the missing actions (never after a paused reply,
    * which the next call continues); maxSteps still applies. */
   readonly requireCompletion?: boolean
+  /** Repeated-result protection; defaults to nudge after 3 stale steps and stop after 5. */
+  readonly degenerate?: DegeneratePolicy
+  /** Fail on this consecutive malformed response; default 3 permits two corrective requests. */
+  readonly malformedLimit?: number
   /** Run-pinned deterministic capability selection, refreshed between steps
    * and sent in the order returned (append new tools to keep the prefix stable).
    * A capability-expansion tool can update this selection for the next call.
@@ -304,11 +308,13 @@ const isImageRejection = (error: unknown): error is ImageRejection =>
   AiError.isAiError(error) && error.reason._tag === "InvalidRequestError" && /image/i.test(error.reason.message)
 
 /** Consecutive malformed responses tolerated before the run fails for real. */
-const MAX_MALFORMED = 3
+const DEFAULT_MALFORMED_LIMIT = 3
 
 /** Consecutive no-progress turns before the breaker nudges, then force-stops. */
 const REPEAT_NUDGE_AT = 3
 const REPEAT_BREAK_AT = 5
+const defaultDegenerate: DegeneratePolicy = { _tag: "Enabled", nudgeAfter: REPEAT_NUDGE_AT, breakAfter: REPEAT_BREAK_AT }
+const loopPolicy = Schema.Struct({ degenerate: DegeneratePolicy, malformedLimit: MalformedLimit })
 
 /** @public */
 export const DEGENERATE_REPEAT_NUDGE =
@@ -389,8 +395,8 @@ export type Phase = "continue" | "completed" | "step-cap" | "degenerate-loop"
 
 /**
  * The degenerate-loop breaker's fold over one turn's progress signature —
- * PURE, so the nudge-at-3 / break-at-5 policy is tested without a scripted
- * model. An empty signature (no tool calls, or only pollable ones) leaves
+ * PURE, so the default nudge-at-3 / break-at-5 and host policies are tested
+ * without a scripted model. An empty signature (no tool calls, or only pollable ones) leaves
  * the count untouched: a turn that did nothing is not a turn that repeated.
  *
  * @public
@@ -398,6 +404,7 @@ export type Phase = "continue" | "completed" | "step-cap" | "degenerate-loop"
 export const foldProgress = (
   state: { readonly seen: ReadonlySet<string>; readonly staleTurns: number },
   sig: string,
+  policy: DegeneratePolicy = defaultDegenerate,
 ): {
   readonly stale: number
   readonly seen: ReadonlySet<string>
@@ -409,8 +416,10 @@ export const foldProgress = (
   return {
     stale,
     seen,
-    nudge: sig !== "" && stale === REPEAT_NUDGE_AT,
-    broke: sig !== "" && stale >= REPEAT_BREAK_AT,
+    ...Match.valueTags(policy, {
+      Disabled: () => ({ nudge: false, broke: false }),
+      Enabled: (enabled) => ({ nudge: sig !== "" && stale === enabled.nudgeAfter, broke: sig !== "" && stale >= enabled.breakAfter }),
+    }),
   }
 }
 
@@ -527,10 +536,13 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
   Effect.gen(function* () {
     yield* Effect.annotateCurrentSpan({ "engine.input.messages": options.messages.length })
     const maxSteps = options.maxSteps ?? DEFAULT_MAX_STEPS
+    const policy = yield* Schema.decodeUnknownEffect(loopPolicy)({
+      degenerate: options.degenerate ?? defaultDegenerate, malformedLimit: options.malformedLimit ?? DEFAULT_MALFORMED_LIMIT,
+    }).pipe(Effect.mapError((cause) => harnessError("config.options", "Loop policy limits are invalid", cause)))
     const pollable: ReadonlySet<string> = new Set(options.pollableTools ?? [])
     const captureTraceContent = options.captureTraceContent ?? (yield* Effect.service(CurrentTraceContent))
     // The callbacks run with the caller's services except its step and tolerance (this loop's own win), under the span current where they are called.
-    const eventContext = Context.omit(CurrentAgentStep, CurrentEmptyResponseTolerance)(replayableContext(yield* Effect.context<R>()))
+    const eventContext = Context.omit(CurrentAgentRun, CurrentAgentStep, CurrentEmptyResponseTolerance)(replayableContext(yield* Effect.context<R>()))
     const onEvent = (event: LoopEvent) => (options.onEvent?.(event) ?? Effect.void).pipe(Effect.provide(eventContext))
     // Resolve the toolkit's handlers once — they're stable across turns.
     const toolkit = yield* options.toolkit
@@ -842,7 +854,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
     const recover = (state: LoopState, malformed: Malformed) => Effect.gen(function* () {
       yield* options.durableInput?.pending().pipe(Effect.provide(eventContext)) ?? Effect.succeed(false)
       const streak = state.malformedStreak + 1
-      if (streak >= MAX_MALFORMED) return yield* Effect.fail(malformed.err)
+      if (streak >= policy.malformedLimit) return yield* Effect.fail(malformed.err)
       // A corrective turn is a turn: the step cap counts it too, so a
       // malformed streak can never carry a run past its ceiling.
       const recoveredIndex = state.turnIndex + 1
@@ -996,7 +1008,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
       // A turn whose progress signature was already seen produced nothing
       // new; count consecutive stale turns, nudge once, then force-stop.
       const sig = progressSignature(content, pollable)
-      const progress = foldProgress(state, sig)
+      const progress = foldProgress(state, sig, policy.degenerate)
       const { stale, seen } = progress
 
       const completed = yield* options.isComplete?.(state.turnIndex) ?? Effect.succeed(false)
@@ -1138,4 +1150,4 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
       reason,
       usage: final.usage,
     } satisfies AgentResult
-  }).pipe(Effect.withSpan("engine.run"))
+  }).pipe(Effect.provideService(CurrentAgentRun, Option.fromNullishOr(options.run)), Effect.withSpan("engine.run"))

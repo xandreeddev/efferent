@@ -24,6 +24,17 @@ describe("the tool discovery plugin's registry conforms to the ToolRegistry cont
 })
 
 describe("the ToolRegistry kit catches careless registries", () => {
+  test("one that ignores per-tool host policy fails its four policy checks", async () => {
+    const careless = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => {
+      const { toolPolicy, ...rest } = limits
+      return plugin(capabilities, rest)
+    }
+    expect(await failedChecks(toolRegistryConformance(careless))).toEqual(["policy-breaker", "policy-concurrency", "policy-failures", "policy-run-limit"])
+  })
+  test("one that treats every tool as read-only fails the read-write lane check", async () => {
+    const careless = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities.map((capability) => ({ ...capability, tools: capability.tools.map((entry) => ({ ...entry, annotations: { ...entry.annotations, readOnly: true } })) })), limits)
+    expect(await failedChecks(toolRegistryConformance(careless))).toEqual(["nested-writer-priority", "read-write-lanes"])
+  })
   test("one that ignores the writer's flush fails only the started-durable check", async () => {
     const unflushed = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => plugin(capabilities, limits).pipe(Effect.map((registry) => ToolRegistry.of({
       ...registry,
@@ -46,11 +57,11 @@ describe("the ToolRegistry kit catches careless registries", () => {
         return [tool.name, handler]
       }))).pipe(Effect.map((handlers) => ({ ...tools, handlers }))))),
     })))
-    expect(await failedChecks(toolRegistryConformance(forgetful))).toEqual(["provider-call-id"])
+    expect(await failedChecks(toolRegistryConformance(forgetful))).toEqual(["policy-breaker", "provider-call-id"])
   })
 
   test("one that ignores the turn's call limit fails only the call-limit refusal", async () => {
-    const unlimited = (capabilities: ReadonlyArray<Capability>) => makeRegistry({ ...toolDiscoveryDefaults, maxCallsPerRun: 1_000 }, capabilities).pipe(
+    const unlimited = (capabilities: ReadonlyArray<Capability>, limits: ToolRegistryLimits) => makeRegistry({ ...toolDiscoveryDefaults, ...limits, maxCallsPerRun: 1_000 }, capabilities).pipe(
       Effect.map((registry) => ToolRegistry.of({ catalog: registry.catalog, open: registry.open })))
     expect(await failedChecks(toolRegistryConformance(unlimited))).toEqual(["refused-call-limit"])
   })
@@ -93,7 +104,7 @@ describe("the ToolRegistry kit catches careless registries", () => {
       }))).pipe(Effect.map((handlers) => ({ ...tools, handlers }))))),
     })))
     expect(await failedChecks(toolRegistryConformance(leaky))).toEqual([
-      "load-refusal", "refused-call-limit", "refused-denied", "refused-forbidden", "refused-inactive", "refused-tool-call-limit",
+      "load-refusal", "nested-writer-priority", "policy-breaker", "policy-failures", "policy-run-limit", "refused-call-limit", "refused-denied", "refused-forbidden", "refused-inactive", "refused-tool-call-limit",
     ])
   })
 

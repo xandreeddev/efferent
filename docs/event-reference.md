@@ -52,7 +52,7 @@ Published by the step loop as each step starts. `run` is the run of the turn the
 
 ### `tool.started`
 
-Published by the tool registry just before a tool's handler runs. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress` and `tool.completed`; `toolCallId`, when present, is the provider pairing key or the loop's deterministic id; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. A refused call (inactive, forbidden, denied, over a limit) publishes `tool.refused` instead, and no other `tool.*` event; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included.
+Published by the tool registry after admission, and flushed before waiting for execution permits or entering the handler. It proves durable admission, not handler execution: a queued call can still be refused after its breaker trips, or a nested call when permits are occupied. `invocationId` (`<runId>:call:<n>`) pairs it with its `tool.progress`, `tool.completed` or later `tool.refused`; `toolCallId`, when present, is the provider pairing key or the loop's deterministic id; `input` is the decoded parameters; `labels` and `stage` come from the tool's annotations. Initial admission refusals publish only `tool.refused`; `step.ended.results` lists every recorded result, refused calls included. Journaled as `tool.started`, input included.
 
 | Field | Type |
 | --- | --- |
@@ -66,7 +66,7 @@ Published by the tool registry just before a tool's handler runs. `invocationId`
 
 ### `tool.refused`
 
-Published by the tool registry when it refuses a call before the handler runs, in place of `tool.started`: the tool is not active (`inactive`: not loaded, or not available in this conversation), the turn lacks a permission it needs (`forbidden`), the host's `ActionPolicy` denied it (`denied`), the turn's call limit is reached (`call-limit`) or the tool's own (`tool-call-limit`). `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted for the call as for any other (the refused call takes its `<runId>:call:<n>`); `message` is what the model receives as the call's failed result, which `step.ended.results` lists as not ok. The model is offered only active tools, so `inactive` comes from a call made through the handlers directly (a host's, another tool's); `forbidden` also from a tool an earlier turn activated whose permission this turn lacks. Journaled as `tool.refused` without `input`.
+Published by the tool registry when it refuses a call before the handler runs: the tool is not active (`inactive`), the turn lacks a permission (`forbidden`), ActionPolicy denied it (`denied`), a legacy turn-wide budget is reached (`call-limit` or the annotation's `tool-call-limit`), the host's per-tool loop-run budget is reached (`run-call-limit`), the loop-run/tool breaker is open (`tripped`), or a nested call would wait on occupied permits (`concurrency`). Initial refusals replace tool.started; a queued breaker recheck or nested permit refusal may follow a durable tool.started admission, with no tool.completed. `toolCallId`, when present, is the provider pairing key or the loop's deterministic id. `invocationId` is minted before the checks and retained on every lifecycle event; `message` is the model's failed result, which step.ended.results lists as not ok. Journaled as tool.refused without input. Stored format 7 adds run-call-limit, tripped and concurrency; earlier journals still decode.
 
 | Field | Type |
 | --- | --- |
@@ -75,7 +75,7 @@ Published by the tool registry when it refuses a call before the handler runs, i
 | `toolCallId` | `string` (optional) |
 | `tool` | `string` |
 | `input` | `unknown` |
-| `reason` | `"inactive" \| "forbidden" \| "denied" \| "call-limit" \| "tool-call-limit"` |
+| `reason` | `"inactive" \| "forbidden" \| "denied" \| "call-limit" \| "tool-call-limit" \| "run-call-limit" \| "tripped" \| "concurrency"` |
 | `message` | `string` |
 
 ### `tool.progress`

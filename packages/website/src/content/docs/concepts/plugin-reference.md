@@ -1372,6 +1372,37 @@ Requires: `efferent/Capabilities`
       "type": "integer",
       "minimum": -9007199254740991,
       "maximum": 9007199254740991
+    },
+    "toolPolicy": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "concurrency": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1024
+          },
+          "maxCallsPerRun": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000
+          },
+          "breakAfter": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000
+          },
+          "breakOn": {
+            "type": "string",
+            "enum": [
+              "defects",
+              "failures"
+            ]
+          }
+        },
+        "additionalProperties": true
+      }
     }
   },
   "required": [

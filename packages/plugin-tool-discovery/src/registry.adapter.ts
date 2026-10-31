@@ -1,5 +1,5 @@
 import { Tool, Toolkit } from "effect/ai"
-import { Cause, Clock, Effect, Exit, Option, Ref, Schema, Semaphore, SynchronizedRef } from "effect"
+import { Cause, Clock, Context, Effect, Exit, Match, Option, Ref, Schema, Semaphore, SynchronizedRef } from "effect"
 import {
   ActionPolicy,
   activationsOf,
@@ -9,6 +9,7 @@ import {
   PermissionGrants,
   catalogOf,
   CurrentAgentStep,
+  CurrentAgentRun,
   CurrentToolInvocation,
   DecisionId,
   defineCapability,
@@ -29,6 +30,8 @@ import {
   RunContext,
   ToolCallId,
 } from "@xandreed/core"
+import { ToolPolicy } from "./tool-policy.entity.js"
+import { admitTool, breakerOf, concurrencyMessage, emptyToolAdmission, runCallLimitMessage, settleToolAdmission, trippedMessage } from "./tool-policy.entity.functions.js"
 import type {
   ActivationSource,
   CapabilityCatalog,
@@ -58,7 +61,12 @@ export interface DiscoveryConfig {
   readonly readConcurrency: number
   readonly matcherTimeoutMs: number
   readonly catalogVersion: string
+  readonly toolPolicy?: Readonly<Record<string, ToolPolicy>>
 }
+
+// Toolkit forks handlers into child fibers: logical ancestry must survive that fork.
+// Captured opener services never replace the ancestry of the actual caller.
+const HoldingToolGates = Context.Reference<boolean>("@xandreed/plugin-tool-discovery/HoldingToolGates", { defaultValue: () => false })
 
 const failure = (error: string, message: string) => ({ error, message })
 const firstLine = (text: string): string => text.split("\n", 1)[0] ?? ""
@@ -140,6 +148,9 @@ export const catalogText = (skills: ReadonlyArray<SkillDefinition>): Option.Opti
  * refusal, which the model reads as the call's result.
  */
 export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig, capabilities: ReadonlyArray<Capability>) {
+  const policies = yield* Schema.decodeUnknownEffect(Schema.Record(Schema.String, ToolPolicy))(config.toolPolicy ?? {}).pipe(
+    Effect.mapError((cause) => new HarnessError({ code: "config.options", message: "Tool policy limits are invalid", cause })),
+  )
   // Tier 3 exists only when some skill ships references; otherwise its schema is dead weight.
   const hasReferences = capabilities.some((capability) => capability.skills.some((skill) => skill.references.length > 0))
   const own: ReadonlyArray<RegisteredTool> = config.loadSkill ? [
@@ -147,6 +158,12 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
     ...(hasReferences ? [defineTool({ tool: ReadSkillReference, handler: () => Effect.die("bound per run"), annotations: { readOnly: true } })] : []),
   ] : []
   const registered = [...capabilities.flatMap((capability) => capability.tools), ...own]
+  const unknownPolicies = Object.keys(policies).filter((name) => !registered.some((entry) => entry.tool.name === name))
+  if (unknownPolicies.length > 0) return yield* Effect.fail(harness("config.options", `Tool policy names unregistered tools: ${unknownPolicies.join(", ")}`))
+  // Constructed once for this registry/agent, shared by every turn's open tools.
+  const toolGates = new Map(yield* Effect.forEach(Object.entries(policies), ([name, policy]) =>
+    policy.concurrency === undefined ? Effect.succeed([name, Option.none<Semaphore.Semaphore>()] as const)
+      : Semaphore.make(policy.concurrency).pipe(Effect.map((gate) => [name, Option.some(gate)] as const)), { concurrency: 1 }))
   const duplicateTool = registered.find((entry, index) => registered.findIndex((other) => other.tool.name === entry.tool.name) !== index)
   if (duplicateTool !== undefined) return yield* Effect.fail(harness("tools.duplicate", `Two capabilities define the tool ${duplicateTool.tool.name}`))
   const skills = capabilities.flatMap((capability) => capability.skills)
@@ -229,7 +246,7 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
     const run = yield* RunContext
     // What the handlers run with: everything where the tools are opened, but the span there:
     // a call's spans nest under the step that makes it, a handler's under its `tool.*` span.
-    const runServices = replayableContext(yield* Effect.context<never>())
+    const runServices = Context.omit(CurrentAgentRun, CurrentAgentStep, HoldingToolGates)(replayableContext(yield* Effect.context<never>()))
     // Every service a tool declares is here, or the run does not open: no handler finds one missing mid-turn.
     const missing = registered.flatMap((entry) => {
       const absent = (entry.requires ?? []).filter((key) => !runServices.mapUnsafe.has(key))
@@ -244,14 +261,15 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
     })
     // The skills and tools activated so far, each in activation order: one value, so one activation moves both.
     const activated = yield* SynchronizedRef.make(activationsOf(yield* session.entries))
-    const calls = yield* Ref.make(new Map<string, number>())
+    const admission = yield* Ref.make(emptyToolAdmission)
     const skillLoads = yield* Ref.make(0)
     const invocation = yield* Ref.make(0)
     // Each matcher decision, and each load_skill exchange seeded from one, takes the next number of the run.
     const decisions = yield* Ref.make(0)
     const seeds = yield* Ref.make(0)
     const readLane = yield* Semaphore.make(config.readConcurrency)
-    const writeLane = yield* Semaphore.make(1)
+    const turnstile = yield* Semaphore.make(1)
+    const pendingWriters = yield* Ref.make(0)
 
     /**
      * Activate skills in one step: what is new is computed from the held set,
@@ -298,6 +316,9 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
 
     const wrap = (entry: RegisteredTool, handler: RegisteredTool["handler"]) => (params: unknown, context: Toolkit.HandlerContext<Tool.Any>) => Effect.gen(function* () {
       const name = entry.tool.name
+      const toolPolicy = Object.hasOwn(policies, name) ? policies[name] ?? {} : {}
+      const agentRun = yield* Effect.service(CurrentAgentRun)
+      const runKey = Option.match(agentRun, { onNone: () => "direct", onSome: (current) => canonicalJson([current.id, current.turn, current.ordinal]) })
       const isOwn = own.includes(entry)
       // The call's id first: a refused call has one too, and its `tool.refused` carries it.
       const sequence = yield* Ref.getAndUpdate(invocation, (value) => value + 1)
@@ -321,13 +342,14 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       const authorized: Effect.Effect<void, HarnessError> = Option.match(policy, { onNone: () => Effect.void, onSome: (service) => service.authorize(name, params) })
       const denial = yield* authorized.pipe(Effect.match({ onFailure: Option.some, onSuccess: () => Option.none<HarnessError>() }))
       if (Option.isSome(denial)) return yield* refuse("denied", "PolicyDenied", denial.value.message)
-      const counts = yield* Ref.get(calls)
-      const total = [...counts.values()].reduce((sum, value) => sum + value, 0)
-      if (total >= config.maxCallsPerRun) return yield* refuse("call-limit", "CallLimit", `The turn's ${config.maxCallsPerRun}-call limit is reached; deliver with what you have`)
-      if (Option.isSome(entry.annotations.maxCallsPerRun) && (counts.get(name) ?? 0) >= entry.annotations.maxCallsPerRun.value) {
-        return yield* refuse("tool-call-limit", "ToolCallLimit", `${name} may be called at most ${entry.annotations.maxCallsPerRun.value === 1 ? "once" : `${entry.annotations.maxCallsPerRun.value} times`} per turn; use what its earlier calls returned`)
+      const denied = yield* Ref.modify(admission, (state) => admitTool(state, runKey, name, toolPolicy, config.maxCallsPerRun, entry.annotations.maxCallsPerRun))
+      if (Option.isSome(denied)) {
+        const reason = denied.value
+        if (reason === "call-limit") return yield* refuse(reason, "CallLimit", `The turn's ${config.maxCallsPerRun}-call limit is reached; deliver with what you have`)
+        if (reason === "tool-call-limit") return yield* refuse(reason, "ToolCallLimit", `${name} may be called at most ${Option.getOrElse(entry.annotations.maxCallsPerRun, () => 0) === 1 ? "once" : `${Option.getOrElse(entry.annotations.maxCallsPerRun, () => 0)} times`} per turn; use what its earlier calls returned`)
+        if (reason === "run-call-limit") return yield* refuse(reason, "ToolCallLimit", runCallLimitMessage(toolPolicy.maxCallsPerRun ?? 0))
+        return yield* refuse(reason, "ToolTripped", trippedMessage())
       }
-      yield* Ref.update(calls, (all) => new Map([...all, [name, (all.get(name) ?? 0) + 1]]))
       const labels = entry.annotations.labels
       const stage = entry.annotations.stage
       // A subscriber failure fails the turn, never the tool call (which the model would see).
@@ -335,10 +357,51 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
       // The call is durable before its handler can perform any externally visible action.
       yield* run.flush.pipe(Effect.orDie)
       const started = yield* Clock.currentTimeMillis
-      const lane = entry.annotations.readOnly ? readLane : writeLane
       // The invocation innermost: a handler sees its own call even when the run's services carry an outer one.
-      const call = handler(params).pipe(Effect.provideService(CurrentToolInvocation, Option.some({ invocationId, ...toolCall, tool: name, step })))
-      const exit = yield* lane.withPermits(1)(Effect.exit(call.pipe(Effect.provide(runServices))))
+      const call = Effect.suspend(() => handler(params)).pipe(Effect.provideService(CurrentToolInvocation, Option.some({ invocationId, ...toolCall, tool: name, step })))
+      const nested = yield* Effect.service(HoldingToolGates)
+      const take = (gate: Semaphore.Semaphore, permits: number) => nested ? gate.takeIfAvailable(permits) : gate.take(permits).pipe(Effect.as(true))
+      const acquire = (gate: Semaphore.Semaphore, permits: number) => Effect.acquireRelease(take(gate, permits), (taken) => taken ? gate.release(permits).pipe(Effect.asVoid) : Effect.void, { interruptible: true })
+      const guarded = Effect.scoped(Effect.gen(function* () {
+        const gate = toolGates.get(name) ?? Option.none<Semaphore.Semaphore>()
+        const toolTaken = yield* Option.match(gate, { onNone: () => Effect.succeed(true), onSome: (semaphore) => acquire(semaphore, 1) })
+        if (!toolTaken) return { _tag: "Busy" } as const
+        // Try-acquire ignores semaphore waiters. Keep writers' priority explicit
+        // across the free-before-wake gap, including nested synchronous fibers.
+        if (!entry.annotations.readOnly) yield* Effect.acquireRelease(
+          Ref.update(pendingWriters, (count) => count + 1), () => Ref.update(pendingWriters, (count) => count - 1),
+        )
+        const rwTaken = yield* entry.annotations.readOnly
+          ? Effect.acquireRelease(
+            (nested ? turnstile.withPermitsIfAvailable(1)(Ref.get(pendingWriters).pipe(Effect.flatMap((count) => count > 0 ? Effect.succeed(false) : readLane.takeIfAvailable(1)))).pipe(Effect.map((value) => Option.getOrElse(value, () => false)))
+              : turnstile.withPermits(1)(readLane.take(1)).pipe(Effect.as(true))),
+            (taken) => taken ? readLane.release(1).pipe(Effect.asVoid) : Effect.void,
+            { interruptible: true },
+          )
+          : acquire(turnstile, 1).pipe(Effect.flatMap((taken) => !taken ? Effect.succeed(false) : Ref.get(pendingWriters).pipe(
+            Effect.flatMap((count) => nested && count > 1 ? Effect.succeed(false) : acquire(readLane, config.readConcurrency)),
+          )))
+        if (!rwTaken) return { _tag: "Busy" } as const
+        if (breakerOf(yield* Ref.get(admission), runKey, name)._tag === "Tripped") return { _tag: "Tripped" } as const
+        const exit = yield* Effect.exit(call.pipe(
+          Effect.provide(runServices), Effect.provideService(HoldingToolGates, true),
+          // Finalize the actual handler exit before releasing execution permits.
+          // Cancellation after that exit cannot erase a defect or a success reset.
+          Effect.onExit((exit) => {
+            const outcome = Exit.isSuccess(exit) ? "success" : exit.cause.reasons.some((reason) => Cause.isDieReason(reason) && isTurnError(reason.defect))
+              || exit.cause.reasons.some(Cause.isInterruptReason) ? "unrelated" : exit.cause.reasons.some(Cause.isDieReason) ? "defect" : "failure"
+            return Ref.update(admission, (state) => settleToolAdmission(state, runKey, name, toolPolicy, outcome))
+          }),
+        ))
+        return { _tag: "Ran", exit } as const
+      }))
+      const execution = yield* guarded
+      const exit = yield* Match.valueTags(execution, {
+        Busy: () => refuse("concurrency", "ToolConcurrency", concurrencyMessage()),
+        Tripped: () => refuse("tripped", "ToolTripped", trippedMessage()),
+        Ran: ({ exit }) => Effect.succeed(exit),
+      })
+      if (Exit.isFailure(exit) && exit.cause.reasons.some(Cause.isInterruptReason)) return yield* Effect.failCause(exit.cause)
       const durationMs = (yield* Clock.currentTimeMillis) - started
       const ok = Exit.isSuccess(exit)
       // A defect reaches the model (and the journal, through `tool.completed`) as the first line of its message;
@@ -369,7 +432,9 @@ export const makeRegistry = Effect.fnUntraced(function* (config: DiscoveryConfig
           : entry.handler
 
     const toolkit: Toolkit.Toolkit<Record<string, Tool.Any>> = Toolkit.make(...registered.map((entry) => entry.tool))
-    const handlers = yield* toolkit.toHandlers(Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))])))
+    const handlers = yield* toolkit.toHandlers(Object.fromEntries(registered.map((entry) => [entry.tool.name, wrap(entry, handlerOf(entry))]))).pipe(
+      Effect.updateContext((context: Context.Context<never>) => Context.omit(CurrentAgentRun, CurrentAgentStep, HoldingToolGates)(context)),
+    )
 
     const always = skills.filter((skill) => skill.always).map((skill) => skill.id)
     const candidates = skills.filter((skill) => !skill.always)

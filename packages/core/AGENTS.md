@@ -5,7 +5,7 @@ dependencies are Effect and the provider-neutral effect/ai contracts only.
 No provider SDKs, filesystem IO, runtime graph, terminal, or host imports.
 
 `src/loop` holds the References a step reads (`CurrentPromptCacheKey`,
-`CurrentModelCallPolicy`, `CurrentAgentStep`, `CurrentTraceContent` with
+`CurrentModelCallPolicy`, `CurrentAgentStep`, `CurrentAgentRun`, `CurrentTraceContent` with
 `replayableContext`, `CurrentPromptProvenance`). `src/internal` holds what
 the agent loop, the models plugin and the sdk share with core: the provider
 mapping (`mapping.entity.functions.ts`), the stream fold, tool schemas, and

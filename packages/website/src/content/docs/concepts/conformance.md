@@ -529,7 +529,7 @@ The independent minimal loop passes the same kit.
 ## The ToolRegistry kit
 
 `toolRegistryConformance(make)` checks a `ToolRegistry`. `make` builds one
-over the kit's capabilities (five tools and three skills: an always-on one,
+over the kit's capabilities (seven tools and three skills: an always-on one,
 one needing the `kit.vault` permission, one loaded on demand; one tool
 declares the `SessionEnvironment` it reads) with at most `maxCallsPerRun`
 calls per turn and no permission granted by default. Each check runs a turn
@@ -583,6 +583,17 @@ const checks = toolRegistryConformance((capabilities, limits) =>
   where the tools were opened, not where it is called.
 - **grants**: the turn's `PermissionGrants` let a skill that needs them be
   activated and its tools run.
+- **policy-run-limit**: concurrent admissions share a host's exact loop-run
+  budget while annotation caps retain their per-turn scope.
+- **policy-breaker**, **policy-failures**: consecutive handler defects trip
+  the configured run/tool breaker, success resets it, optional failures
+  mode includes typed failures, and another concurrent run cannot reset it.
+- **policy-concurrency**: per-tool permits span opens of the same registry;
+  queued waits and active handlers release them on interruption.
+- **read-write-lanes**: a writer excludes readers and later readers do not
+  overtake the waiting writer.
+- **nested-writer-priority**: a synchronous toolkit child cannot overtake a
+  writer waiting behind an earlier reader's turnstile acquisition.
 - **refused-inactive**, **refused-forbidden**, **refused-denied**,
   **refused-call-limit**, **refused-tool-call-limit**: a call refused before
   its handler runs (a tool not loaded, a permission the turn lacks, an
