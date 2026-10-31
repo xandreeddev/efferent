@@ -74,7 +74,9 @@ export const MemoryRenderRecipe = Schema.Struct({
 export type MemoryRenderRecipe = typeof MemoryRenderRecipe.Type
 
 /**
- * Durable protocol, separate from diagnostic context/model events. Messages
+ * Full materialized request and historical durable version 1, separate from
+ * diagnostic context/model events. New version 2 headers reference reusable
+ * parts; resolution returns this full shape. Messages
  * remain in memory events: the request is rebuilt from the memory entries up
  * to `through`, the last one its build folded, with the saved `render`
  * recipe, so a memory write recorded after the build (a reaction to

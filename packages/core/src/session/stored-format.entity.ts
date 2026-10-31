@@ -19,4 +19,4 @@
  *
  * @public
  */
-export const STORED_FORMAT: number = 9
+export const STORED_FORMAT: number = 10

@@ -245,7 +245,7 @@ Published after the turn-owned model-call recorder durably appends and flushes o
 
 ## Journal kinds
 
-Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; `seq` is dense from 1 and is the cursor for `Sessions.read({ after })`. These are the kinds the framework writes. `journalSchemaOf(kind)` (from `@xandreed/core`) gives the schema of each kind's `data`. A host that exports, streams or redacts session events must treat the sensitive kinds like the conversation itself: `request.prepared`, `memory.system`, `memory.section` and `memory.step` hold the system prompt and the host's context.
+Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; `seq` is dense from 1 and is the cursor for `Sessions.read({ after })`. These are the kinds the framework writes. `journalSchemaOf(kind)` (from `@xandreed/core`) gives the schema of each kind's `data`. A host that exports, streams or redacts session events must treat the sensitive kinds like the conversation itself: `request.part`, historical `request.prepared`, `memory.system`, `memory.section` and `memory.step` hold the system prompt and the host's context.
 
 | Kind | Written by | Sensitive content | Fields |
 | --- | --- | --- | --- |
@@ -270,12 +270,13 @@ Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; 
 | `context.built` | The turn's bus (stored from `context.built`) | None: fingerprints, counts and tool names. | `step`, `turn`, `run`, `strategy`, `strategyVersion`, `fingerprint`, `systemFingerprint`, `estimatedTokens`, `reservedTokens`, `budgetTokens`, `compactions`, `activeTools` |
 | `decision.recorded` | The turn's bus (stored from `decision.recorded`) | Candidate descriptions; the context itself only as a hash. | `record` |
 | `stream.fallback` | The turn's bus (stored from `stream.fallback`) | The stream's error text, which may quote the provider's error. | `step`, `run`, `message` |
-| `request.prepared` | The turn, before each provider call (`TurnMemory.prepareRequest`) | The full system prompt text and every active tool declaration (and step context in `system` mode). | `version`, `runId`, `run`, `step`, `strategyVersion`, `system`, `render`, `through`, `contextFingerprint`, `stableMessages`, `tools`, `toolChoice`, `model`, `cacheKey`, `callPolicy` |
+| `request.prepared` | The turn, before each provider call (`TurnMemory.prepareRequest`) | Version 1 embeds system text and tool declarations; version 2 references preceding request.part records. Public model configuration and request controls remain in both. | `version`, `runId`, `run`, `step`, `strategyVersion`, `system`, `render`, `through`, `contextFingerprint`, `stableMessages`, `tools`, `toolChoice`, `model`, `cacheKey`, `callPolicy` |
 | `turn.ended` | plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap | Failure messages, which may quote errors. | `reason`, `failure` |
 | `inbox.queued` | plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input) | The item's content, user message, attachments and source. | `id`, `source`, `content`, `input` |
 | `inbox.dropped` | plugin-sessions: the end of the last turn that took the item and failed | None: the item id. | `id`, `reason` |
 | `inbox.taken` | plugin-sessions: `TurnWriter.take`, in the same commit as the exact user memory.message and removal of the pending steer | None: the input id and raw memory entry id; message and image bytes stay in memory.message. | `id`, `entry` |
 | `model.called` | The turn-owned model-call recorder, directly appended and flushed before notification | Actual model selection, usage precision/counts, outcome and correlation metadata; no prompts, credentials, endpoint settings or provider bodies. | `callId`, `attempt`, `purpose`, `method`, `model`, `runId`, `run`, `step`, `durationMs`, `usage`, `outcome` |
+| `request.part` | The turn, in the same append batch before a version 2 request header (`TurnMemory.prepareRequest`) | A system prompt (including system-mode step context) or one active tool declaration. Provider-tool argument values remain excluded. | `hash`, `part` |
 
 A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's id, run, step and time, and its body without the `_tag` (the kind names it). Memory is rebuilt from these events by `entriesOfEvents`.
 
@@ -326,6 +327,7 @@ inbox.queued
 inbox.dropped
 inbox.taken
 model.called
+request.part
 tool.progress
 skills.activated
 assistant.message
@@ -407,11 +409,11 @@ A failed turn's `turn.ended` carries in `failure.code` the code `harnessCodeOf` 
 | `model.timeout` | the step loop | The model request exceeded a request or call deadline, established by an explicit failure stamp. |
 | `model.unavailable` | the step loop | The model service or transport was temporarily unavailable. The original error or failed response is kept as cause. |
 | `loop.truncated` | the step loop, a run failing | The model's reply was cut short (its finish reason is not `stop`, `tool-calls` or `pause`; `unknown`, no finish reason given, cuts only a reply with tool calls the loop would run), and the run stops: a cut other than the output limit (`content-filter`, `error`, `other`, `unknown`), or more replies in a row cut at the output limit than the loop answers with correctives (2). The cut step is recorded, its status `truncated`, and none of its tool calls ran. `runLoop` fails with it as a `HarnessError`, and the step loop passes it on as it is. |
-| `request.encode` | the turn, before each provider call | The request header did not encode. |
-| `request.missing` | before each provider call | No stored `request.prepared` header for the step. |
-| `request.decode` | before each provider call | The step's stored `request.prepared` header did not decode. |
+| `request.encode` | the turn, before each provider call | The request header or its canonical parts did not encode as JSON. |
+| `request.missing` | before each provider call or during replay | No stored request header was found for the requested step or event identity. |
+| `request.decode` | before each provider call or during replay | The selected stored request header or a referenced part did not decode. |
 | `request.descriptor` | before each provider call | The model's descriptor (provider, model and settings) did not decode. |
-| `request.diverged` | before each provider call | The request about to be sent differs from the one rebuilt from its stored header and memory. |
+| `request.diverged` | before each provider call or during replay | The actual request differs from its stored reconstruction, or a selected part reference is missing, conflicting, has the wrong category or fails its content hash. |
 | `request.model` | `@xandreed/plugin-models` | The selected model could not be resolved or described. |
 | `request.memory` | `replayModelRequest` | The memory events before a stored request did not decode. |
 | `memory.log` | the turn | Stored memory events did not decode, or memory could not be stored. |

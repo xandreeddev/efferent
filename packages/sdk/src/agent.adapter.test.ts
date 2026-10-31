@@ -772,13 +772,13 @@ describe("Agent.turn", () => {
 
   test("a dispatch check reads from storage only the turn's events, each once", async () => {
     const { reads, started, stored } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const reads = yield* Ref.make<ReadonlyArray<{ readonly after: number; readonly count: number; readonly step: Option.Option<number>; readonly sequences: ReadonlyArray<number> }>>([])
+      const reads = yield* Ref.make<ReadonlyArray<{ readonly after: number; readonly count: number; readonly step: Option.Option<number>; readonly sequences: ReadonlyArray<number>; readonly headers: ReadonlyArray<number> }>>([])
       const counted = Layer.effect(SessionLog, Effect.gen(function* () {
         const inner = yield* SessionLog
         return SessionLog.of({
           ...inner,
           read: (id, query) => inner.read(id, query).pipe(Effect.tap((events) => query.kinds.includes("request.prepared")
-            ? CurrentAgentStep.pipe(Effect.flatMap((step) => Ref.update(reads, (all) => [...all, { after: query.after, count: events.length, step, sequences: events.map((event) => event.seq) }])))
+            ? CurrentAgentStep.pipe(Effect.flatMap((step) => Ref.update(reads, (all) => [...all, { after: query.after, count: events.length, step, sequences: events.map((event) => event.seq), headers: events.flatMap((event) => event.kind === "request.prepared" && typeof event.data.step === "number" ? [event.data.step] : []) }])))
             : Effect.void)),
         })
       })).pipe(Layer.provide(SessionLogMemoryLive))
@@ -791,12 +791,14 @@ describe("Agent.turn", () => {
       const second = (yield* journal.stored).filter((event) => Option.contains(event.turn, 2))
       return { reads: yield* Ref.get(reads), started: second[0]?.seq ?? 0, stored: second.length }
     })))
-    // The six dispatch/settlement reads retain their exact step correlation.
-    expect(reads.slice(0, 6).map((read) => read.step)).toEqual([0, 0, 1, 1, 2, 2].map(Option.some))
+    // Preparation refreshes dedup before writing, dispatch reads the new header,
+    // then settlement reads the tail: three incremental reads per step.
+    expect(reads.slice(0, 9).map((read) => read.step)).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2].map(Option.some))
+    expect(reads.slice(0, 9).map((read) => read.headers)).toEqual([[], [0], [], [], [1], [], [], [2], []])
     // Normal post-run maintenance takes one fresh snapshot with no active step.
-    expect(reads[6]?.step).toEqual(Option.none())
-    expect(reads[6]?.count).toBe(0)
-    expect(reads).toHaveLength(7)
+    expect(reads[9]?.step).toEqual(Option.none())
+    expect(reads[9]?.count).toBe(0)
+    expect(reads).toHaveLength(10)
     expect(reads[0]?.after).toBe(started - 1)
     expect(reads.every((read, index) => index === 0 || read.after >= reads[index - 1]!.after + reads[index - 1]!.count)).toBe(true)
     expect(reads.reduce((sum, read) => sum + read.count, 0)).toBeLessThanOrEqual(stored)
@@ -1025,7 +1027,7 @@ describe("Agent.turn", () => {
   })
 
   test("durable request replay refuses events that do not rebuild the request's context", async () => {
-    const { complete, partial } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const { complete, partial, missingParts } = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const agent = yield* define(memoryWindowPlugin)
       const journal = yield* inMemorySession
       const { model } = yield* scripted([...lookupThenDeliver, stop("later")])
@@ -1037,10 +1039,14 @@ describe("Agent.turn", () => {
       const own = events.filter((event) => Option.contains(event.turn, 2))
       return {
         complete: yield* Effect.result(replayModelRequest(events, RunId.make("run-2"), 0)),
-        partial: yield* Effect.result(replayModelRequest(own, RunId.make("run-2"), 0)),
+        missingParts: yield* Effect.result(replayModelRequest(own, RunId.make("run-2"), 0)),
+        // Supply visible shared parts but omit historical memory to keep this
+        // context-fingerprint refusal separate from missing-part refusal.
+        partial: yield* Effect.result(replayModelRequest(events.filter((event) => event.kind === "request.part" || Option.contains(event.turn, 2)), RunId.make("run-2"), 0)),
       }
     })))
     expect(complete._tag).toBe("Success")
+    expect(missingParts._tag === "Failure" ? [missingParts.failure.code, missingParts.failure.message.split(":")[0]] : "success").toEqual(["request.diverged", "system"])
     expect(partial._tag === "Failure" ? [partial.failure.code, partial.failure.message.split(":")[0]] : "success").toEqual(["request.diverged", "context"])
   })
 

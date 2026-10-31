@@ -1302,19 +1302,24 @@ as data, keeps them within `maxSourceChars`, and logs a call that fails or
 takes longer than `digestTimeoutMs` (30 s).
 
 **Durable model requests.** Before each real provider step, the turn writes
-and flushes `request.prepared`. This protocol record carries the complete
-active tool declarations, tool choice, system text, public requested model
+and flushes `request.prepared`. Version 2 headers reference reusable system
+text and active tool declarations in preceding `request.part` records. They keep
+tool choice, public requested model
 configuration, prompt cache key, call policy, the optional frozen stable-prefix
 message count, the memory strategy's render
 recipe/version and the build's memory cut (`through`, the last memory entry
-the build folded). Messages remain in their original memory events. Each
-header is self-contained, repeating the full system text and every active
-tool's declaration at every step: a deliberate storage trade-off, so that one
-header and the memory before it rebuild a request. A provider-defined tool's
+the build folded). Messages remain in their original memory events. Historical
+version 1 headers embed the full system text and tools and still replay.
+New parts contain tagged `System` or `Tool` data, hashed over canonical encoded
+JSON with SHA-256. System text and each tool are deduplicated independently;
+the order of tool references and repeated references stay exact. New dependencies and
+their header are appended in one ordered batch and flushed before dispatch.
+A reopened turn or fork reuses only parts in its visible durable history.
+A provider-defined tool's
 args are kept only as their key names and the SHA-256 of their canonical
 JSON, since they can carry credentials; a change of any value still
 diverges. A dispatch reads what storage holds (the history memory was opened
-over, then only the events stored since its last read, so a step's read
+over and its visible part history, then only its own events stored since its last read, so a step's read
 grows with that step, not the session), folds the memory entries up to the
 cut with the saved recipe, and compares the resulting prompt and header with
 the actual Effect AI request. A memory write after the build (a reaction to
@@ -1333,6 +1338,23 @@ frozen; a stream fallback checks the same contract again, and a failed check
 fails the step, streamed or not, instead of falling back. Host-planned
 batches make no provider request and create no request header.
 
+`ModelRequestHeader` remains the full materialized version 1 API for preparation
+and reconstruction. `ModelRequestHeaderV2` and `StoredModelRequestHeader` expose
+the stored reference form and union. `resolveRequestHeader(events, { session,
+seq })` selects that actual event and resolves only its preceding parts,
+returning the full compatibility view. Missing references, conflicting contents,
+parts of the wrong kind and content hashes that differ fail closed. Equal valid duplicates are
+idempotent; a later part cannot repair an earlier header. Hashes establish
+reference consistency, not authentication of a rewritten journal.
+
+Supply authorized visible history in lineage order, ancestor prefix before child
+rows. Sequence numbers belong to each session; globally sorting a fork by `seq`
+loses that order. SDK `RequestSnapshot.requestEvents` carries ordered parts and
+current headers; its existing `requests` stays raw headers only. V1-only custom
+adapters may omit the new field. The shipped `requestHeaderConformance` checks
+resolution and strict prefix behavior. Stored format 10 adds this protocol;
+old session and request formats remain readable.
+
 `replayModelRequest(events, runId, step, run?)` reconstructs one historical
 request, that of `step` in the run `run` of the turn (its ordinal: 0, the
 default, for a turn's first run and for every request stored before runs
@@ -1342,11 +1364,12 @@ recorded tool schemas and render options, so changing installed plugins does
 not rewrite historical requests, and fails with `request.diverged`
 (`context`) when the events do not rebuild the context the header was
 prepared from (a fork's own log without its parent's history). Retention must
-preserve `request.prepared` and the memory facts it references; removing
+preserve `request.prepared`, its preceding `request.part` dependencies and the
+memory facts it references; removing
 optional `context.built`, trace content or usage diagnostics does not affect
 this contract. A host that redacts memory, or exports or streams session
-events, handles `request.prepared` the same way: it holds the full system
-text (step context included in `"system"` mode) and the tool declarations.
+events, handles `request.part` and historical full headers the same way: they
+hold system text (step context included in `"system"` mode) and tool declarations.
 Earlier logs without a header remain readable but cannot reconstruct this
 additional metadata.
 
@@ -2756,7 +2779,8 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 | `turn.ended` (`reason`: completed, partial, failed, cancelled, interrupted; `failure`: the failing error's code; otherwise one of the framework's codes, `turn.failed`, `turn.defect`, `turn.interrupted`, `turn.unended`, `turn.lease`, or a code the closer passes to `end` itself, such as plugin-tasks' `task.turn` and `task.deadline`) | the writer's `end` (`turnEndingOf` the turn's exit), its scope, a cancel or a reap |
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.tool-presentation`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
 | `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.refused`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded`, `stream.fallback` | the turn's bus |
-| `request.prepared` (the request's header: system text, tool declarations, model, cache key) | the turn, before each provider call (`TurnMemory.prepareRequest`) |
+| `request.prepared` (V1 full header or V2 system/tool references, model and request controls) | the turn, before each provider call (`TurnMemory.prepareRequest`) |
+| `request.part` (canonical system text or one tool declaration and its hash) | the turn, in the same batch before a V2 header when not already visible |
 | `model.called` (terminal physical attempt, actual model, purpose, reported usage and outcome) | the turn's recorder, appended and flushed before its bus notification |
 | `inbox.queued`, `inbox.dropped` | `deliver` or `enqueue`; a notice claim that failed too often |
 | `inbox.taken` (`id`, `entry`) | `TurnWriter.take`, atomically with its user `memory.message` and queue removal |
@@ -3296,9 +3320,9 @@ writer committed before the turn was closed:
 - every whole step: a step's assistant message is recorded before its
   tools run, and each result as it returns (`memory.message`,
   `memory.tool-result`), beside its `step.*`, `tool.*`, `step.usage` and
-  `context.built` events and its `request.prepared`;
+  `context.built` events, its `request.prepared` and required `request.part` records;
 - of the step in flight, only what was already stored: its `step.started`,
-  `context.built` and `request.prepared` (flushed before the provider call),
+  `context.built`, `request.prepared` and its parts (flushed before the provider call),
   its assistant message once the complete response passed the gate, each
   `tool.started` before its handler runs, and every tool result already
   stored. Calls run one after another or concurrently (`toolConcurrency`),

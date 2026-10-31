@@ -360,6 +360,9 @@ export {
   ModelRequestTool,
   ProviderToolId,
 } from "./turn/model-request.entity.js"
+export { RequestPartHash, RequestPart, RequestPartData } from "./turn/request-part.entity.js"
+export { ModelRequestHeaderV2, StoredModelRequestHeader } from "./turn/model-request-header.entity.js"
+export { resolveRequestHeader } from "./turn/model-request-header.entity.functions.js"
 export {
   describeModel,
   freezeModelRequest,

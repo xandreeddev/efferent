@@ -6,7 +6,7 @@ import type { Tool } from "effect/ai"
 import {
   ConversationMemory, CurrentAgentRun, CurrentAgentStep, CurrentModelCallPolicy, CurrentPromptCacheKey,
   describeModel, HarnessError, ModelCallId, ModelCatalog, ModelId, ModelSelection, openLogSession, ProviderId,
-  recordCompletion, RunId, TurnEvents, TurnMemory, TurnPrompt, ToolRegistry, zeroUsage,
+  recordCompletion, resolveRequestHeader, RunId, TurnEvents, TurnMemory, TurnPrompt, ToolRegistry, zeroUsage,
 } from "@xandreed/core"
 import type { MaintainSignal, MemoryPolicy, ModelLimits, RunTools, StepPlan, StepRequest, ToolViews, TurnWriter } from "@xandreed/core"
 import { estimateTokens, modelRequestHeaderOf, reconstructModelRequest, toPromptMessages } from "@xandreed/core/internal"
@@ -62,7 +62,9 @@ test("overflow recovery freezes one smaller same-step request without reevaluati
     yield* dispatch(prepared.request, 0, second)
     const duplicate = yield* recover(prepared.request, 0)
     yield* prepared.afterRun
-    return { retried, duplicate, first, second, headers: (yield* memory.requestSnapshot).requests, entries: yield* memory.session.entries }
+    const snapshot = yield* memory.requestSnapshot
+    const materialized = yield* Effect.forEach(snapshot.requests, (header) => resolveRequestHeader(snapshot.requestEvents ?? snapshot.requests, header), { concurrency: 1 })
+    return { retried, duplicate, first, second, headers: snapshot.requests, materialized, entries: yield* memory.session.entries }
   })))
   expect(result.retried).toBe(true)
   expect(result.duplicate).toBe(false)
@@ -72,7 +74,8 @@ test("overflow recovery freezes one smaller same-step request without reevaluati
   expect(JSON.stringify(result.second.messages).length).toBeLessThan(JSON.stringify(result.first.messages).length)
   expect(signals.map((signal) => signal.phase)).toEqual(["turn-start", "step", "overflow", "turn-end"])
   expect(result.entries.filter((entry) => entry.body._tag === "StepContext")).toHaveLength(1)
-  const controls = result.headers.map(({ data }) => [data.system, data.model, data.cacheKey, data.callPolicy, data.tools, data.toolChoice])
+  expect(result.headers.map(({ data }) => data.version)).toEqual([2, 2])
+  const controls = result.materialized.map((header) => [header.system, Option.getOrNull(header.model), Option.getOrNull(header.cacheKey), Option.getOrNull(header.callPolicy), header.tools, header.toolChoice])
   expect(controls[0]).toEqual(["fixed base", { provider: "fixture", model: "primary", settings: {} }, "frozen-key", { effort: "low", maxOutputTokens: 200 }, [], "auto"])
   expect(controls[1]).toEqual(controls[0])
 })
@@ -380,7 +383,7 @@ test("lost retry-header ACK remains sticky after a reconciled dispatch without a
     yield* dispatch(request, 0, yield* request.plan(info(0)))
     const first = yield* recover(request, 0).pipe(Effect.result)
     const snapshot = yield* memory.requestSnapshot
-    const header = yield* modelRequestHeaderOf(snapshot.requests, request.run.id, 0, request.run.ordinal)
+    const header = yield* modelRequestHeaderOf(snapshot.requestEvents ?? snapshot.requests, request.run.id, 0, request.run.ordinal)
     const rebuilt = yield* reconstructModelRequest(header, snapshot.entries)
     yield* request.dispatch(0, { prompt: rebuilt.prompt, tools: [], toolChoice: rebuilt.toolChoice, model }).pipe(Effect.provideService(CurrentPromptCacheKey, request.cacheKey), Effect.provideService(CurrentModelCallPolicy, request.callPolicy))
     return [first, yield* recover(request, 0).pipe(Effect.result)]

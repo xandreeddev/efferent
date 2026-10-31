@@ -100,6 +100,19 @@ optionally for compatibility; reconstruction honors the saved value. Only
 `ENGINE_KEY`, and adapters consume it before provider serialization. Raw
 entries and context fingerprints never gain that outgoing marker.
 
+`ModelRequestHeader` remains the full materialized V1 host API. Stored V2
+headers reference preceding `request.part` records for system text and each
+tool declaration. `RequestPartHash` covers canonical schema-encoded tagged
+JSON, including encoded provider absence; it does not authenticate a journal.
+`resolveRequestHeader(events, at)` selects the actual session/sequence tuple
+within caller-supplied authorized lineage, verifies every visible occurrence
+of each referenced hash, and returns the full V1 compatibility representation.
+It never reads later parts or sorts per-session sequence numbers across a fork.
+Keep header lookup key-first: unrelated full bodies stay opaque and malformed
+lookup keys still fail. Parts are protocol facts, never memory entries.
+`requestHeaderConformance` ships V1/V2, integrity, prefix and lookup checks with
+careless resolver self-tests; the SDK owns atomic part/header writes and ACKs.
+
 Plugin and configuration contracts live in `src/harness`; service tags live in
 `src/ports`. Entity files contain schemas and derived types. Behavior belongs
 in paired `.functions.ts` modules. `definePlugin` bridges typed Layers at the

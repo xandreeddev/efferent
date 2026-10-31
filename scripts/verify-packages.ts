@@ -826,6 +826,25 @@ if (await overflowBun.exited !== 0 || !overflowBunReport.includes('context-overf
   console.error("the packed Bun context-overflow fixture lost bounded recovery, replay or accounting"); process.exit(1)
 }
 console.log(overflowBunReport.trim())
+// The default resolver kit verifies references independently of storage; the
+// files journey then proves deduplication, lineage order and committed ACK loss.
+await writeFile(join(consumer, "request-header-consumer.mjs"), await readFile(join(root, "scripts/request-header-consumer.fixture.mjs"), "utf8"))
+await writeFile(join(consumer, "request-parts-consumer.mjs"), await readFile(join(root, "scripts/request-parts-consumer.fixture.mjs"), "utf8"))
+for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+  const headerChild = Bun.spawn([binary, "request-header-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const headerReport = await new Response(headerChild.stdout).text()
+  if (await headerChild.exited !== 0 || !headerReport.includes(`request-header {"runtime":"${runtime}","checks":5,"hashVectors":9,"headerVerified":true}`)) {
+    console.error(`the packed ${runtime} request resolver or UTF-8 hash vectors failed`); process.exit(1)
+  }
+  console.log(headerReport.trim())
+  const partsChild = Bun.spawn([binary, "request-parts-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const partsReport = await new Response(partsChild.stdout).text()
+  const required = ["dedupVerified", "coldRestartVerified", "forkCutoffVerified", "coldForkVerified", "integrityVerified", "prefixVerified", "heldAckRestartVerified", "durableBeforeAck", "atomicDependencyBatch", "noWritesVerified"]
+  if (await partsChild.exited !== 0 || !partsReport.includes(`request-parts {"runtime":"${runtime}"`) || required.some((name) => !partsReport.includes(`"${name}":true`)) || (partsReport.match(/"noDispatchVerified":true/g) ?? []).length !== 2 || (partsReport.match(/"replayVerified":true/g) ?? []).length !== 6) {
+    console.error(`the packed ${runtime} request-parts journey lost replay, deduplication, fork visibility or durable ACK recovery`); process.exit(1)
+  }
+  console.log(partsReport.trim())
+}
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

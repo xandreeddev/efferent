@@ -45,7 +45,8 @@ const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensi
   "context.built": { writer: "The turn's bus (stored from `context.built`)", sensitive: "None: fingerprints, counts and tool names." },
   "decision.recorded": { writer: "The turn's bus (stored from `decision.recorded`)", sensitive: "Candidate descriptions; the context itself only as a hash." },
   "stream.fallback": { writer: "The turn's bus (stored from `stream.fallback`)", sensitive: "The stream's error text, which may quote the provider's error." },
-  "request.prepared": { writer: "The turn, before each provider call (`TurnMemory.prepareRequest`)", sensitive: "The full system prompt text and every active tool declaration (and step context in `system` mode)." },
+  "request.prepared": { writer: "The turn, before each provider call (`TurnMemory.prepareRequest`)", sensitive: "Version 1 embeds system text and tool declarations; version 2 references preceding request.part records. Public model configuration and request controls remain in both." },
+  "request.part": { writer: "The turn, in the same append batch before a version 2 request header (`TurnMemory.prepareRequest`)", sensitive: "A system prompt (including system-mode step context) or one active tool declaration. Provider-tool argument values remain excluded." },
   "turn.ended": { writer: "plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap", sensitive: "Failure messages, which may quote errors." },
   "inbox.queued": { writer: "plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input)", sensitive: "The item's content, user message, attachments and source." },
   "inbox.dropped": { writer: "plugin-sessions: the end of the last turn that took the item and failed", sensitive: "None: the item id." },
@@ -135,11 +136,11 @@ const ERROR_CODES: ReadonlyArray<ErrorCode> = [
   { code: "model.timeout", where: "the step loop", meaning: "The model request exceeded a request or call deadline, established by an explicit failure stamp." },
   { code: "model.unavailable", where: "the step loop", meaning: "The model service or transport was temporarily unavailable. The original error or failed response is kept as cause." },
   { code: "loop.truncated", where: "the step loop, a run failing", meaning: "The model's reply was cut short (its finish reason is not `stop`, `tool-calls` or `pause`; `unknown`, no finish reason given, cuts only a reply with tool calls the loop would run), and the run stops: a cut other than the output limit (`content-filter`, `error`, `other`, `unknown`), or more replies in a row cut at the output limit than the loop answers with correctives (2). The cut step is recorded, its status `truncated`, and none of its tool calls ran. `runLoop` fails with it as a `HarnessError`, and the step loop passes it on as it is." },
-  { code: "request.encode", where: "the turn, before each provider call", meaning: "The request header did not encode." },
-  { code: "request.missing", where: "before each provider call", meaning: "No stored `request.prepared` header for the step." },
-  { code: "request.decode", where: "before each provider call", meaning: "The step's stored `request.prepared` header did not decode." },
+  { code: "request.encode", where: "the turn, before each provider call", meaning: "The request header or its canonical parts did not encode as JSON." },
+  { code: "request.missing", where: "before each provider call or during replay", meaning: "No stored request header was found for the requested step or event identity." },
+  { code: "request.decode", where: "before each provider call or during replay", meaning: "The selected stored request header or a referenced part did not decode." },
   { code: "request.descriptor", where: "before each provider call", meaning: "The model's descriptor (provider, model and settings) did not decode." },
-  { code: "request.diverged", where: "before each provider call", meaning: "The request about to be sent differs from the one rebuilt from its stored header and memory." },
+  { code: "request.diverged", where: "before each provider call or during replay", meaning: "The actual request differs from its stored reconstruction, or a selected part reference is missing, conflicting, has the wrong category or fails its content hash." },
   { code: "request.model", where: "`@xandreed/plugin-models`", meaning: "The selected model could not be resolved or described." },
   { code: "request.memory", where: "`replayModelRequest`", meaning: "The memory events before a stored request did not decode." },
   { code: "memory.log", where: "the turn", meaning: "Stored memory events did not decode, or memory could not be stored." },
@@ -218,6 +219,18 @@ interface Field { readonly name: string; readonly type: string; readonly require
 
 const fieldsOf = (schema: Json): ReadonlyArray<Field> => {
   const definitions = isJson(schema.definitions) ? schema.definitions : {}
+  const variants = [...arrayOf(schema.anyOf), ...arrayOf(schema.oneOf)].filter(isJson)
+  if (variants.length > 0) {
+    const fields = variants.map((variant) => fieldsOf({ ...variant, definitions }))
+    return [...new Set(fields.flatMap((member) => member.map((field) => field.name)))].map((name) => {
+      const members = fields.flatMap((member) => member.filter((field) => field.name === name))
+      return {
+        name,
+        type: [...new Set(members.map((field) => field.type))].join(" | "),
+        required: members.length === variants.length && members.every((field) => field.required),
+      }
+    })
+  }
   const properties = isJson(schema.properties) ? schema.properties : {}
   const required = arrayOf(schema.required)
   return Object.entries(properties).filter(([name]) => name !== "_tag").map(([name, property]) => ({ name, type: typeOf(property, definitions), required: required.includes(name) }))
@@ -337,7 +350,7 @@ const body = (links: { readonly guide: string }) => [
   table(["Event", "Transient", "Stored as"], bus.map((event) => [code(event.name), event.transient ? "yes" : "no", storedText(event.stored)])),
   ...bus.flatMap((event) => [`### ${code(event.name)}`, event.description, fieldTable(event.fields)]),
   "## Journal kinds",
-  "Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; `seq` is dense from 1 and is the cursor for `Sessions.read({ after })`. These are the kinds the framework writes. `journalSchemaOf(kind)` (from `@xandreed/core`) gives the schema of each kind's `data`. A host that exports, streams or redacts session events must treat the sensitive kinds like the conversation itself: `request.prepared`, `memory.system`, `memory.section` and `memory.step` hold the system prompt and the host's context.",
+  "Every event of a session's journal is `{ session, seq, turn, kind, at, data }`; `seq` is dense from 1 and is the cursor for `Sessions.read({ after })`. These are the kinds the framework writes. `journalSchemaOf(kind)` (from `@xandreed/core`) gives the schema of each kind's `data`. A host that exports, streams or redacts session events must treat the sensitive kinds like the conversation itself: `request.part`, historical `request.prepared`, `memory.system`, `memory.section` and `memory.step` hold the system prompt and the host's context.",
   table(["Kind", "Written by", "Sensitive content", "Fields"], journal.map((entry) => [code(entry.kind), entry.writer, entry.sensitive, entry.fields.map((field) => code(field.name)).join(", ")])),
   "A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's id, run, step and time, and its body without the `_tag` (the kind names it). Memory is rebuilt from these events by `entriesOfEvents`.",
   table(["Kind", "Body fields"], journal.filter((entry) => entry.body.length > 0).map((entry) => [code(entry.kind), entry.body.map((field) => `${code(field.name)}: ${code(field.type)}`).join(", ")])),

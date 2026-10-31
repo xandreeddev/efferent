@@ -27,6 +27,7 @@
     "inbox.dropped",
     "inbox.taken",
     "model.called",
+    "request.part",
     "tool.progress",
     "skills.activated",
     "assistant.message",
@@ -5688,11 +5689,11 @@
     {
       "kind": "request.prepared",
       "writer": "The turn, before each provider call (`TurnMemory.prepareRequest`)",
-      "sensitive": "The full system prompt text and every active tool declaration (and step context in `system` mode).",
+      "sensitive": "Version 1 embeds system text and tool declarations; version 2 references preceding request.part records. Public model configuration and request controls remain in both.",
       "fields": [
         {
           "name": "version",
-          "type": "1",
+          "type": "1 | 2",
           "required": true
         },
         {
@@ -5742,7 +5743,7 @@
         },
         {
           "name": "tools",
-          "type": "Array<{ name, description, parameters, provider }>",
+          "type": "Array<{ name, description, parameters, provider }> | Array<string>",
           "required": true
         },
         {
@@ -5769,45 +5770,17 @@
       "body": [],
       "schema": {
         "$schema": "http://json-schema.org/draft-07/schema#",
-        "type": "object",
-        "properties": {
-          "version": {
-            "type": "number",
-            "enum": [
-              1
-            ]
-          },
-          "runId": {
-            "type": "string"
-          },
-          "run": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "step": {
-            "type": "integer",
-            "minimum": -9007199254740991,
-            "maximum": 9007199254740991
-          },
-          "strategyVersion": {
-            "type": "string"
-          },
-          "system": {
-            "type": "string"
-          },
-          "render": {
+        "anyOf": [
+          {
             "type": "object",
             "properties": {
-              "strategy": {
-                "type": "string"
+              "version": {
+                "type": "number",
+                "enum": [
+                  1
+                ]
               },
-              "currentTurn": {
-                "type": "integer",
-                "minimum": -9007199254740991,
-                "maximum": 9007199254740991
-              },
-              "currentRun": {
+              "runId": {
                 "type": "string"
               },
               "run": {
@@ -5815,242 +5788,508 @@
                 "minimum": 0,
                 "maximum": 9007199254740991
               },
-              "turnContext": {
-                "type": "string",
-                "enum": [
-                  "current",
-                  "all"
-                ]
+              "step": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
               },
-              "replies": {
-                "type": "boolean"
+              "strategyVersion": {
+                "type": "string"
               },
-              "stepContext": {
-                "type": "string",
-                "enum": [
-                  "tail",
-                  "none"
-                ]
+              "system": {
+                "type": "string"
               },
-              "digests": {
-                "type": "boolean"
-              },
-              "media": {
+              "render": {
                 "type": "object",
                 "properties": {
-                  "mode": {
+                  "strategy": {
+                    "type": "string"
+                  },
+                  "currentTurn": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "currentRun": {
+                    "type": "string"
+                  },
+                  "run": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "turnContext": {
                     "type": "string",
                     "enum": [
-                      "none",
-                      "inline"
+                      "current",
+                      "all"
                     ]
                   },
-                  "maxImages": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
+                  "replies": {
+                    "type": "boolean"
                   },
-                  "maxChars": {
-                    "type": "integer",
-                    "minimum": -9007199254740991,
-                    "maximum": 9007199254740991
+                  "stepContext": {
+                    "type": "string",
+                    "enum": [
+                      "tail",
+                      "none"
+                    ]
+                  },
+                  "digests": {
+                    "type": "boolean"
+                  },
+                  "media": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "inline"
+                        ]
+                      },
+                      "maxImages": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "maxChars": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      }
+                    },
+                    "required": [
+                      "mode",
+                      "maxImages"
+                    ],
+                    "additionalProperties": true
                   }
                 },
                 "required": [
-                  "mode",
-                  "maxImages"
+                  "strategy",
+                  "currentTurn",
+                  "currentRun",
+                  "turnContext",
+                  "replies",
+                  "stepContext",
+                  "digests",
+                  "media"
                 ],
                 "additionalProperties": true
+              },
+              "through": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contextFingerprint": {
+                "type": "string"
+              },
+              "stableMessages": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "description": {
+                      "type": "string"
+                    },
+                    "parameters": {},
+                    "provider": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "name": {
+                              "type": "string"
+                            },
+                            "argKeys": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "argsDigest": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "name",
+                            "argKeys",
+                            "argsDigest"
+                          ],
+                          "additionalProperties": true
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "name",
+                    "description",
+                    "parameters",
+                    "provider"
+                  ],
+                  "additionalProperties": true
+                }
+              },
+              "toolChoice": {},
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "settings": {
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "model",
+                      "settings"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cacheKey": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "callPolicy": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "effort": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "low",
+                          "medium",
+                          "high",
+                          "xhigh",
+                          "max"
+                        ]
+                      },
+                      "maxOutputTokens": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "Infinity",
+                              "-Infinity",
+                              "NaN"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "effort"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
             },
             "required": [
-              "strategy",
-              "currentTurn",
-              "currentRun",
-              "turnContext",
-              "replies",
-              "stepContext",
-              "digests",
-              "media"
+              "version",
+              "runId",
+              "step",
+              "strategyVersion",
+              "system",
+              "render",
+              "through",
+              "contextFingerprint",
+              "tools",
+              "toolChoice",
+              "model",
+              "cacheKey",
+              "callPolicy"
             ],
             "additionalProperties": true
           },
-          "through": {
-            "anyOf": [
-              {
-                "type": "string",
-                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
-                "minLength": 1
+          {
+            "type": "object",
+            "properties": {
+              "version": {
+                "type": "number",
+                "enum": [
+                  2
+                ]
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "contextFingerprint": {
-            "type": "string"
-          },
-          "stableMessages": {
-            "type": "integer",
-            "minimum": 0,
-            "maximum": 9007199254740991
-          },
-          "tools": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "properties": {
-                "name": {
-                  "type": "string"
-                },
-                "description": {
-                  "type": "string"
-                },
-                "parameters": {},
-                "provider": {
-                  "anyOf": [
-                    {
-                      "type": "object",
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "name": {
-                          "type": "string"
-                        },
-                        "argKeys": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "argsDigest": {
-                          "type": "string"
-                        }
-                      },
-                      "required": [
-                        "id",
-                        "name",
-                        "argKeys",
-                        "argsDigest"
-                      ],
-                      "additionalProperties": true
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
-                }
-              },
-              "required": [
-                "name",
-                "description",
-                "parameters",
-                "provider"
-              ],
-              "additionalProperties": true
-            }
-          },
-          "toolChoice": {},
-          "model": {
-            "anyOf": [
-              {
-                "type": "object",
-                "properties": {
-                  "provider": {
-                    "type": "string"
-                  },
-                  "model": {
-                    "type": "string"
-                  },
-                  "settings": {
-                    "type": "object"
-                  }
-                },
-                "required": [
-                  "provider",
-                  "model",
-                  "settings"
-                ],
-                "additionalProperties": true
-              },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "cacheKey": {
-            "anyOf": [
-              {
+              "runId": {
                 "type": "string"
               },
-              {
-                "type": "null"
-              }
-            ]
-          },
-          "callPolicy": {
-            "anyOf": [
-              {
+              "run": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "step": {
+                "type": "integer",
+                "minimum": -9007199254740991,
+                "maximum": 9007199254740991
+              },
+              "strategyVersion": {
+                "type": "string"
+              },
+              "system": {
+                "type": "string"
+              },
+              "render": {
                 "type": "object",
                 "properties": {
-                  "effort": {
+                  "strategy": {
+                    "type": "string"
+                  },
+                  "currentTurn": {
+                    "type": "integer",
+                    "minimum": -9007199254740991,
+                    "maximum": 9007199254740991
+                  },
+                  "currentRun": {
+                    "type": "string"
+                  },
+                  "run": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "turnContext": {
                     "type": "string",
                     "enum": [
-                      "none",
-                      "low",
-                      "medium",
-                      "high",
-                      "xhigh",
-                      "max"
+                      "current",
+                      "all"
                     ]
                   },
-                  "maxOutputTokens": {
-                    "anyOf": [
-                      {
-                        "type": "number"
-                      },
-                      {
+                  "replies": {
+                    "type": "boolean"
+                  },
+                  "stepContext": {
+                    "type": "string",
+                    "enum": [
+                      "tail",
+                      "none"
+                    ]
+                  },
+                  "digests": {
+                    "type": "boolean"
+                  },
+                  "media": {
+                    "type": "object",
+                    "properties": {
+                      "mode": {
                         "type": "string",
                         "enum": [
-                          "Infinity",
-                          "-Infinity",
-                          "NaN"
+                          "none",
+                          "inline"
                         ]
                       },
-                      {
-                        "type": "null"
+                      "maxImages": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
+                      },
+                      "maxChars": {
+                        "type": "integer",
+                        "minimum": -9007199254740991,
+                        "maximum": 9007199254740991
                       }
-                    ]
+                    },
+                    "required": [
+                      "mode",
+                      "maxImages"
+                    ],
+                    "additionalProperties": true
                   }
                 },
                 "required": [
-                  "effort"
+                  "strategy",
+                  "currentTurn",
+                  "currentRun",
+                  "turnContext",
+                  "replies",
+                  "stepContext",
+                  "digests",
+                  "media"
                 ],
                 "additionalProperties": true
               },
-              {
-                "type": "null"
+              "through": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                    "minLength": 1
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "contextFingerprint": {
+                "type": "string"
+              },
+              "stableMessages": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              "tools": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "toolChoice": {},
+              "model": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "provider": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "settings": {
+                        "type": "object"
+                      }
+                    },
+                    "required": [
+                      "provider",
+                      "model",
+                      "settings"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "cacheKey": {
+                "anyOf": [
+                  {
+                    "type": "string"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "callPolicy": {
+                "anyOf": [
+                  {
+                    "type": "object",
+                    "properties": {
+                      "effort": {
+                        "type": "string",
+                        "enum": [
+                          "none",
+                          "low",
+                          "medium",
+                          "high",
+                          "xhigh",
+                          "max"
+                        ]
+                      },
+                      "maxOutputTokens": {
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string",
+                            "enum": [
+                              "Infinity",
+                              "-Infinity",
+                              "NaN"
+                            ]
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "effort"
+                    ],
+                    "additionalProperties": true
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               }
-            ]
+            },
+            "required": [
+              "version",
+              "runId",
+              "step",
+              "strategyVersion",
+              "system",
+              "render",
+              "through",
+              "contextFingerprint",
+              "tools",
+              "toolChoice",
+              "model",
+              "cacheKey",
+              "callPolicy"
+            ],
+            "additionalProperties": true
           }
-        },
-        "required": [
-          "version",
-          "runId",
-          "step",
-          "strategyVersion",
-          "system",
-          "render",
-          "through",
-          "contextFingerprint",
-          "tools",
-          "toolChoice",
-          "model",
-          "cacheKey",
-          "callPolicy"
-        ],
-        "additionalProperties": true
+        ]
       }
     },
     {
@@ -6727,6 +6966,130 @@
           }
         }
       }
+    },
+    {
+      "kind": "request.part",
+      "writer": "The turn, in the same append batch before a version 2 request header (`TurnMemory.prepareRequest`)",
+      "sensitive": "A system prompt (including system-mode step context) or one active tool declaration. Provider-tool argument values remain excluded.",
+      "fields": [
+        {
+          "name": "hash",
+          "type": "string",
+          "required": true
+        },
+        {
+          "name": "part",
+          "type": "{ _tag, text } | { _tag, tool }",
+          "required": true
+        }
+      ],
+      "body": [],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "hash": {
+            "type": "string"
+          },
+          "part": {
+            "anyOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "System"
+                    ]
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "text"
+                ],
+                "additionalProperties": true
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "_tag": {
+                    "type": "string",
+                    "enum": [
+                      "Tool"
+                    ]
+                  },
+                  "tool": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "parameters": {},
+                      "provider": {
+                        "anyOf": [
+                          {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "argKeys": {
+                                "type": "array",
+                                "items": {
+                                  "type": "string"
+                                }
+                              },
+                              "argsDigest": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "name",
+                              "argKeys",
+                              "argsDigest"
+                            ],
+                            "additionalProperties": true
+                          },
+                          {
+                            "type": "null"
+                          }
+                        ]
+                      }
+                    },
+                    "required": [
+                      "name",
+                      "description",
+                      "parameters",
+                      "provider"
+                    ],
+                    "additionalProperties": true
+                  }
+                },
+                "required": [
+                  "_tag",
+                  "tool"
+                ],
+                "additionalProperties": true
+              }
+            ]
+          }
+        },
+        "required": [
+          "hash",
+          "part"
+        ],
+        "additionalProperties": true
+      }
     }
   ],
   "beginCodes": [
@@ -7041,17 +7404,17 @@
     {
       "code": "request.encode",
       "where": "the turn, before each provider call",
-      "meaning": "The request header did not encode."
+      "meaning": "The request header or its canonical parts did not encode as JSON."
     },
     {
       "code": "request.missing",
-      "where": "before each provider call",
-      "meaning": "No stored `request.prepared` header for the step."
+      "where": "before each provider call or during replay",
+      "meaning": "No stored request header was found for the requested step or event identity."
     },
     {
       "code": "request.decode",
-      "where": "before each provider call",
-      "meaning": "The step's stored `request.prepared` header did not decode."
+      "where": "before each provider call or during replay",
+      "meaning": "The selected stored request header or a referenced part did not decode."
     },
     {
       "code": "request.descriptor",
@@ -7060,8 +7423,8 @@
     },
     {
       "code": "request.diverged",
-      "where": "before each provider call",
-      "meaning": "The request about to be sent differs from the one rebuilt from its stored header and memory."
+      "where": "before each provider call or during replay",
+      "meaning": "The actual request differs from its stored reconstruction, or a selected part reference is missing, conflicting, has the wrong category or fails its content hash."
     },
     {
       "code": "request.model",

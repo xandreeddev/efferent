@@ -10,6 +10,7 @@ const memoryConformance
 const modelCallRecorderConformance
 const modelCatalogConformance
 const probeCall
+const requestHeaderConformance
 const sessionLogConformance
 const sessionLogRecoveryConformance
 const sessionsConformance
@@ -27,6 +28,7 @@ interface ImageResizerSubject
 interface InboxRunnerSubject
 interface ModelCallRecorderFixture
 interface ModelCallRecorderSubject
+interface RequestHeaderSubject
 interface SessionLogSubject
 interface SessionsInstance
 interface SessionsProcess

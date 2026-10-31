@@ -134,6 +134,14 @@ repeat the answer. Failed attempts and summary helpers stay in billed usage;
 selected usage includes accepted responses only. Custom loops honor the optional
 `StepRequest.onContextOverflow` hook and rerun `stepLoopConformance`.
 
+Stored format 10 writes request headers with references to reusable `request.part`
+records for system text and tool declarations. New parts and their header commit
+together before dispatch; reopened turns and forks reuse only visible history.
+Public replay still returns complete requests and reads earlier version 1 headers.
+Retention and export must preserve the referenced parts and treat them as sensitive
+prompt content. The framework guide describes the resolver and its strict prefix
+and hash checks; `requestHeaderConformance` verifies custom resolvers.
+
 Accepted positive input counts can raise message estimates through
 `scaledTokens`, using the exact prepared message estimate and system/tool reserve.
 The SDK matches the actual selected model and run; helpers, discarded responses
