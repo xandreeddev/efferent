@@ -93,6 +93,20 @@ export interface StepRequest {
   readonly onMediaRejected: (reason: string) => Effect.Effect<boolean, TurnError>
   /** The host's verdict after a step that settled with a whole response (not after a malformed or a truncated one); its failure fails the run, not the step. */
   readonly completion: (step: StepInfo) => Effect.Effect<CompletionVerdict, HarnessError>
+  /**
+   * Fresh durable steering probe after each settled step and after the
+   * host's completion verdict, including final replies. An empty final
+   * probe leaves later arrivals for the next turn. Pending input requests
+   * continuation when the hard limits allow it; a capped run consumes none.
+   */
+  readonly pendingSteers: Effect.Effect<boolean, TurnError>
+  /**
+   * Take and durably record waiting steers as separate user messages after
+   * this step.started and before its plan/dispatch, including step zero.
+   * Returned messages are already stored: never record them a second time.
+   */
+  readonly steer: (step: number) => Effect.Effect<ReadonlyArray<AgentMessage>, TurnError>
+  /** Nondurable host text, consumed only on the existing continuing path. */
   readonly steering: Effect.Effect<Option.Option<string>, HarnessError>
   readonly correctives: Option.Option<Correctives>
   readonly events: TurnEventsService

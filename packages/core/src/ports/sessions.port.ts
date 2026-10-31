@@ -2,6 +2,7 @@ import { Context } from "effect"
 import type { Effect, Option, Scope, Stream } from "effect"
 import type { AttachmentRejected } from "../domain/media.entity.js"
 import type { ConversationId } from "../domain/message.entity.js"
+import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
 import type { JsonObject, SessionExists, SessionListCursor, SessionLogError, SessionLogEvent, SessionMissing } from "../session/session-log.entity.js"
 import type {
@@ -69,6 +70,19 @@ export interface TurnWriter {
    * With `after`, only this session's own events stored after that seq: the inherited history precedes them all.
    */
   readonly snapshot: (kinds: ReadonlyArray<string>, after?: number) => Effect.Effect<ReadonlyArray<SessionLogEvent>, TurnError>
+  /** Fresh pending delivery:steer inputs in delivery order; never claims one or records a notice attempt. */
+  readonly steers: Effect.Effect<ReadonlyArray<QueuedInput>, TurnError>
+  /**
+   * Atomically record the prepared inbox-marked user messages and one
+   * inbox.taken receipt per input, removing those waiting steer slots in
+   * the same durable commit. Every message must match its immutable input
+   * and this turn. True means the whole batch committed; false means a
+   * stale or ineligible selection and no entries committed. A false take
+   * must not advance the caller's memory ids. Duplicate/invalid entries
+   * fail as a TurnError. A taken steer is acknowledged even if this turn
+   * later fails; replay already has its user message.
+   */
+  readonly take: (entries: ReadonlyArray<LogEntry>) => Effect.Effect<boolean, TurnError>
   /** Queue events; returns once queued. */
   readonly append: (drafts: ReadonlyArray<TurnDraft>) => Effect.Effect<void, TurnError>
   /**

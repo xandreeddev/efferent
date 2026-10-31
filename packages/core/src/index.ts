@@ -109,6 +109,7 @@ export { SessionLog } from "./ports/session-log.port.js"
 export { SessionLogMemoryLive } from "./session/session-log.memory.adapter.js"
 export {
   InboxDroppedData,
+  InboxTakenData,
   InboxQueuedData,
   MEMORY_KINDS,
   MemoryKindOf,
@@ -123,6 +124,7 @@ export {
 export { JOURNAL_KINDS } from "./session/session-event.entity.js"
 export { STORED_FORMAT } from "./session/stored-format.entity.js"
 export {
+  draftsOfEntries,
   entriesOfEvents,
   frameworkDraft,
   journalSchemaOf,
@@ -306,7 +308,7 @@ export type { RunTools, SkillMatch, ToolHandlers } from "./ports/tool-registry.p
 
 // the host-composed turn: the user's message, typed events, background tasks, the step loop and the turn
 export { UserMessage } from "./turn/user-message.entity.js"
-export { attachmentsOf, normalizeUserMessage, sameUserMessage, userMessageText } from "./turn/user-message.entity.functions.js"
+export { attachmentsOf, normalizeUserMessage, sameUserMessage, userMessageText, userRoleMessageOf, userMessageOf } from "./turn/user-message.entity.functions.js"
 export {
   AssistantDeltaEvent,
   AssistantMessageEvent,

@@ -22,15 +22,18 @@ import {
   TurnPrompt,
   TurnTasks,
   TurnToolbox,
+  userRoleMessageOf,
   zeroUsage,
 } from "@xandreed/core"
 import type {
   Capability,
+  LogBody,
   LogEntry,
   LogHandle,
   PromptContext,
   PromptSection,
   RequestSnapshot,
+  RunOrdinal,
   RunTools,
   SessionLogEvent,
   TurnContextBody,
@@ -222,10 +225,37 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   }))
 
   const recordContext = (bodies: ReadonlyArray<TurnContextBody>) => bodies.length === 0 ? Effect.void : session.record(bodies, 0).pipe(Effect.asVoid)
+  const acceptingSteers = Ref.get(phase).pipe(Effect.flatMap((current) => Match.valueTags(current, {
+    Waiting: () => Effect.fail(failure("turn.unstarted", "The user's message is not persisted yet")),
+    Taking: () => Effect.fail(failure("turn.unstarted", "The user's message is not persisted yet")),
+    Taken: () => Effect.void,
+    Replied: () => Effect.fail(failure("turn.closed", "The turn's reply is recorded: no steering is accepted after it")),
+  })))
   const turnMemory = TurnMemory.of({
     ...reader,
     strategy: session.strategy,
     session,
+    pendingSteers: acceptingSteers.pipe(Effect.andThen(writer.steers), Effect.map((inputs) => inputs.length > 0)),
+    steer: Effect.fnUntraced(function* (step: number, ordinal: RunOrdinal) {
+      yield* acceptingSteers
+      const inputs = yield* writer.steers
+      const bodies: ReadonlyArray<LogBody> = inputs.map((input) => ({
+        _tag: "Message", inbox: input.id, run: ordinal, message: userRoleMessageOf(input.userMessage),
+      }))
+      const gateFailure = yield* Ref.make(Option.none<HarnessError>())
+      // Keep memory's writing -> holding lock order. The alternate commit must obey
+      // the reply gate without entering log.append or re-entering the writer queue.
+      const recorded = yield* session.record(bodies, step, (entries) => holding.withPermits(1)(
+        acceptingSteers.pipe(Effect.result, Effect.flatMap((result): Effect.Effect<boolean, TurnError> => Result.match(result, {
+          // This refusal proves no write was attempted. Reject it without storage
+          // reconciliation, which must not discard an already accepted held reply.
+          onFailure: (error) => Ref.set(gateFailure, Option.some(error)).pipe(Effect.as(false)),
+          onSuccess: () => writer.take(entries),
+        }))),
+      ))
+      yield* Option.match(yield* Ref.get(gateFailure), { onNone: () => Effect.void, onSome: Effect.fail })
+      return recorded.flatMap((entry) => entry.body._tag === "Message" ? [entry.body.message] : [])
+    }),
     prepareRequest: (header) => Schema.encodeEffect(ModelRequestHeader)(header).pipe(
       Effect.flatMap(storedJson),
       Effect.mapError((error) => failure("request.encode", error.message)),

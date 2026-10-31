@@ -101,6 +101,10 @@ export const InboxDroppedData = Schema.Struct({
 })
 export type InboxDroppedData = typeof InboxDroppedData.Type
 
+/** One queued steer acknowledged with its durable memory.message, in the same turn commit. @public */
+export const InboxTakenData = Schema.Struct({ id: StoredInboxItemId, entry: EntryId })
+export type InboxTakenData = typeof InboxTakenData.Type
+
 /**
  * One step's provider response as stored (`step.usage`): its step, run (a
  * record written before runs were counted reads 0), model, token usage and
@@ -155,7 +159,7 @@ export const RECORDED_ELSEWHERE: ReadonlySet<TurnEventName> = new Set<TurnEventN
  *
  * @public
  */
-export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued", "inbox.dropped"]
+export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued", "inbox.dropped", "inbox.taken"]
 
 /**
  * Every kind the framework writes to a session's journal: memory's, the

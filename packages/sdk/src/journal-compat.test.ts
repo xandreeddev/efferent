@@ -83,7 +83,8 @@ fixtures.forEach(({ fixture }) => describe(`a ${fixture.version} session journal
     const kinds = Object.keys(StoredData).filter((kind): kind is StoredKind => kind in StoredData)
     const read = await Effect.runPromise(Effect.forEach(kinds, (kind) => readStored(kind, events).pipe(Effect.map((stored) => [kind, stored.length] as const)), { concurrency: 1 }))
     expect(read).toEqual(kinds.map((kind) => [kind, events.filter((event) => event.kind === kind).length] as const))
-    expect(read.filter(([, count]) => count === 0).map(([kind]) => kind)).toEqual([])
+    // A later release may add a reader for a kind this fixture did not reserve.
+    expect(read.filter(([kind, count]) => fixture.reserved.includes(kind) && count === 0).map(([kind]) => kind)).toEqual([])
     const starts = await Effect.runPromise(readStoredKeys("turn.started", events))
     const headers = await Effect.runPromise(readStoredKeys("request.prepared", events))
     expect([starts.length, headers.length]).toEqual([events.filter((event) => event.kind === "turn.started").length, events.filter((event) => event.kind === "request.prepared").length])

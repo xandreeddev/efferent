@@ -10,6 +10,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A custom `TurnWriter` supplies fresh `steers` and an atomic `take` that
+  stores user messages, `inbox.taken` receipts and queue removal together.
+  A custom `MemorySession.record` honors its optional commit callback:
+  `false` leaves entries and ids unchanged; a failed uncertain write
+  reconciles from storage. `TurnMemory` and `StepRequest` add
+  `pendingSteers` and `steer`. Rerun the Sessions, memory and step loop
+  conformance kits. Stored format 6 adds steering receipts and the optional
+  `memory.message` inbox id; earlier journals still decode.
 - A custom `Sessions` implements `enqueue`, `BeginTurn.Queued` and
   `drain({ take })`, and reruns `sessionsConformance`. A queued input runs
   as its own user turn; `AdmittedTurn.input` holds its provenance while
@@ -956,6 +964,17 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- Durable in-turn steering: each pending `delivery: "steer"` input is
+  taken as its own normalized user message at a started step, before
+  planning its request. A final reply or a host completion verdict still
+  checks for new input; hard limits leave untaken input queued. An empty
+  final probe leaves later arrivals for the next turn. Taken inputs are
+  acknowledged by their durable message and receipt, so interruption
+  replays them without redelivery. Attachments follow normal image budgets
+  and omission, and steering intent survives transcripts, ledgers and
+  digests. Child task turns receive the same writer steering;
+  `agentTaskExecutor` also forwards optional in-memory `steering` to child
+  and reaction turns.
 - `QueuedInput` and `Sessions.enqueue` persist normalized user messages,
   attachments, source metadata and delivery (`steer` or `next`) once per
   input id. A changed payload under that id fails with `InputConflict`

@@ -140,14 +140,30 @@ from `begin`, which refuses a busy session. An input id is immutable across comp
 namespace. `BeginTurn.Queued` claims one input as a user turn; its
 `AdmittedTurn.input` retains the full input while `turn.started.input`
 and `TurnToAdmit.input` carry only its id. `claimed` stays notice-only.
-A queued input survives failed, partial and interrupted turns without an
+Untaken queued input survives failed, partial and interrupted turns without an
 attempt ceiling; completion or explicit cancellation acknowledges it.
 An explicit user resume reclaims its pending input in the opening commit.
 `drain.take` selects all work, inputs or notices; the tasks plugin's
 reaction executor selects notices. Keep these distinctions in
 `sessionsConformance`, including careless wrappers that lose provenance,
-accept conflicting ids or ignore the selection. `steer` is stored but
-currently drains as its own queued user turn.
+accept conflicting ids or ignore the selection. `TurnWriter.steers` reads
+fresh pending steering without recording an attempt. `take(entries)`
+validates exact inbox-marked user messages and atomically stores them with
+`inbox.taken` receipts and removal of their slots. Stale selections return
+false without writing; consumed steers stay acknowledged across failure,
+and their receipt anchors a later queued begin's duplicate. Inputs marked
+next and notices stay untouched. The step loop probes after settlement,
+including final completion, and takes only after an actual step starts,
+before its plan (step zero too); a cap leaves steering queued. An empty
+final probe leaves later arrivals for the next turn. The old in-memory
+`TurnInput.steering` remains nondurable.
+
+`MemorySession.record`'s optional alternate commit runs under the same
+allocation semaphore: true commits all prepared entries, false changes no
+cache or id, and uncertain acknowledgments use the normal fresh-snapshot
+reconciliation before another allocation. Keep that contract in
+`memoryConformance`; never consume queue state and append the messages in
+separate commits, or call memory from inside a queued writer decision.
 
 The step loop and its event vocabulary (`LoopEvent`) live in
 `@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,
@@ -193,7 +209,12 @@ Images are `Media` values (`src/domain/media.entity.ts`): base64 inline,
 checked from their bytes by `mediaFromBytes` / `mediaFromBase64` (the only
 image sniffing and header parsing in the repository), within `MEDIA_LIMITS`.
 A user's message carries them as `attachments`; `normalizeUserMessage` is
-what `Sessions.begin` stores. A tool returns them inside its result: the
+what `Sessions.begin` and `enqueue` store. A taken steer keeps them once in
+its raw inbox-marked `Message`; the receipt holds only ids. Render its
+images through the same media plan and omission rules, and include its
+actual user intent in reference/digest transcripts, ledgers and the latest
+message passed to result digesters. `userMessageIn` excludes host
+correctives; text transcripts use labels rather than image data. A tool returns them inside its result: the
 `ToolResult` entry keeps the encoded result whole and `MediaSlot`s into it
 (an image is stored once), checked once by `toolResultMedia` when
 `recordTail` writes it, and `renderLog` alone decides which images a request
@@ -260,11 +281,13 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | The clip marker, `[… N characters clipped]`, and the cut that leaves it (`clippedMarker`, `clipTo`) | `src/turn/model-text.ts:19`, `:40-45` | exact, `src/turn/model-text.test.ts:7`, `:22-27` |
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |
 | The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/internal/mapping.entity.functions.ts:47-54` | exact, `src/internal/mapping.entity.functions.test.ts:378` |
-| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:76` | exact, `src/memory/memory-log.entity.test.ts:388` |
-| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:497-512` | exact, `src/memory/memory-log.entity.test.ts:360`, `:371`, `:388` |
-| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:460-489` | exact, `src/memory/memory-log.entity.test.ts:293`, `:307`, `:326` |
-| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:137-147` | exact, `src/memory/memory-log.entity.test.ts:405-407` |
+| Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:76` | exact, `src/memory/memory-log.entity.test.ts:390` |
+| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:501-517` | exact, `src/memory/memory-log.entity.test.ts:362`, `:373`, `:390` |
+| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:461-493` | exact, `src/memory/memory-log.entity.test.ts:295`, `:309`, `:328` |
+| A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:137-147` | exact, `src/memory/memory-log.entity.test.ts:407-409` |
 | An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:163-164` | exact, `src/domain/media.entity.test.ts:148-150` |
-| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:514-517` | exact, `src/memory/memory-log.entity.test.ts:423` |
+| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:519-522` | exact, `src/memory/memory-log.entity.test.ts:425` |
+| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:501-516` | exact, `src/memory/memory-log.entity.test.ts:597` |
+| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:386`, `:400`, `:461-475` | exact, `src/memory/memory-log.entity.test.ts:586`, `:587`, `:588`, `:598` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

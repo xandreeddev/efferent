@@ -7,6 +7,8 @@ import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { ResultDigester } from "../ports/memory.port.js"
 import type { LogHandle, ToolViews } from "../ports/memory.port.js"
 import { HarnessError } from "../harness/plugin.entity.js"
+import { InboxItemId } from "../session/sessions.entity.js"
+import { userRoleMessageOf } from "../turn/user-message.entity.functions.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import type { LogEntry } from "./memory-log.entity.js"
 import { openLogSession } from "./memory-session.js"
@@ -249,4 +251,56 @@ describe("view and digest input correlation", () => {
   test("older requests without run ordinals correlate by preceding turn, step, tool and id", async () => {
     expect(await Effect.runPromise(checkInputs(false))).toEqual({ views: [{ value: "first" }, { value: "second" }], digests: [{ value: "first" }, { value: "second" }] })
   })
+})
+
+test("an alternate commit serializes prepared ids with ordinary appends and rejects a whole batch without consuming ids", async () => {
+  const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+    const log: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) }
+    const session = yield* openLogSession(log, policy, { runId: RunId.make("run-1") })
+    yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "first" }) }], 0)
+    const messages = ["steer one", "steer two"].map((text) => ({ _tag: "Message" as const, message: { role: "user" as const, content: text } }))
+    const rejected = yield* session.record(messages, 1, () => Effect.succeed(false))
+    const committing = yield* Deferred.make<void>()
+    const release = yield* Deferred.make<void>()
+    const alternative = yield* Effect.forkChild(session.record(messages, 1, (prepared) => Deferred.succeed(committing, undefined).pipe(
+      Effect.andThen(Deferred.await(release)), Effect.andThen(log.append(prepared)), Effect.as(true),
+    )))
+    yield* Deferred.await(committing)
+    const ordinary = yield* Effect.forkChild(session.record([{ _tag: "Message", message: { role: "user", content: "host note" } }], 1))
+    const pending = yield* Effect.gen(function* () {
+      const beforeCommit = yield* session.entries
+      yield* Deferred.succeed(release, undefined)
+      return { beforeCommit, alternate: yield* Fiber.join(alternative), ordinary: yield* Fiber.join(ordinary) }
+    }).pipe(Effect.ensuring(Deferred.succeed(release, undefined)))
+    return { rejected, ...pending, stored: yield* log.read, cache: yield* session.entries }
+  })).pipe(Effect.timeout("3 seconds")))
+  expect(observed.rejected).toEqual([])
+  expect(observed.beforeCommit).toHaveLength(1)
+  expect(observed.alternate.map((entry) => String(entry.id))).toEqual(["run-1:1", "run-1:2"])
+  expect(observed.ordinary.map((entry) => String(entry.id))).toEqual(["run-1:3"])
+  expect(observed.cache).toEqual(observed.stored)
+  expect(observed.stored).toHaveLength(4)
+})
+
+test("write and compaction digests serve the newest actual inbox user intent, including images, while correctives remain host text", async () => {
+  const observed = await Effect.runPromise(Effect.gen(function* () {
+    const stored = yield* Ref.make<ReadonlyArray<LogEntry>>([])
+    const log: LogHandle = { read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]) }
+    const seen = yield* Ref.make<ReadonlyArray<UserMessage>>([])
+    const ownPolicy: MemoryPolicy = { ...policy, maintain: ({ entries }) => Effect.succeed({ actions: [], digest: entries.filter((entry) => entry.body._tag === "ToolResult").map((entry) => entry.id) }) }
+    const session = yield* openLogSession(log, ownPolicy, { runId: RunId.make("run-1") }).pipe(Effect.provideService(ResultDigester, ResultDigester.of({
+      id: "intent", version: "1", digest: (task) => Ref.update(seen, (all) => [...all, task.userMessage]).pipe(Effect.as({ keep: [], summary: Option.some("digest") })),
+    })))
+    const pixel = yield* mediaFromBase64("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")
+    const intent = new UserMessage({ text: "focus on this image", attachments: [pixel] })
+    yield* session.record([{ _tag: "TurnStarted", userMessage: new UserMessage({ text: "first request" }) }], 0)
+    yield* session.record([{ _tag: "Message", inbox: InboxItemId.make("steer"), run: RunOrdinal.make(0), message: userRoleMessageOf(intent) }], 1)
+    yield* session.recordTail([{ role: "user", content: "host corrective" }], views, 1)
+    yield* session.recordTail([results(["found"])], views, 1)
+    yield* session.recordTail([{ role: "user", content: "another corrective" }], views, 2)
+    yield* session.maintain({ phase: "step", lastUsage: Option.none(), budgetTokens: 100_000, views })
+    return { intent, seen: yield* Ref.get(seen) }
+  }))
+  expect(observed.seen).toEqual([observed.intent, observed.intent])
 })

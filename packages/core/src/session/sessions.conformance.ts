@@ -3,16 +3,19 @@ import type { Context } from "effect"
 import type { ConformanceCheck } from "../conformance.entity.js"
 import { check, eventually, expect, failureCode, freshId, kindsOf, pixelPng, settles } from "../conformance.functions.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
-import { RunId } from "../domain/run.entity.js"
+import { RunId, RunOrdinal } from "../domain/run.entity.js"
+import { EntryId } from "../memory/memory-log.entity.js"
+import type { LogEntry } from "../memory/memory-log.entity.js"
 import type { TurnEnding } from "../domain/turn-vocabulary.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import type { TurnActivity, TurnShutdown } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
 import { TurnAdmission } from "../ports/turn-admission.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
+import { userRoleMessageOf } from "../turn/user-message.entity.functions.js"
 import { TurnEndedData } from "./session-event.entity.js"
 import { readStored } from "./session-event.entity.functions.js"
-import { frameworkDraft } from "./session-event.entity.functions.js"
+import { entriesOfEvents, frameworkDraft } from "./session-event.entity.functions.js"
 import type { JsonObject, SessionLogEvent } from "./session-log.entity.js"
 import { InboxItemId, TurnRefused } from "./sessions.entity.js"
 import type { AdmittedTurn, BeginTurn, InboxItem, QueuedInput, SessionAddress, TurnError } from "./sessions.entity.js"
@@ -95,6 +98,11 @@ const item = (id: string): InboxItem => ({ id: InboxItemId.make(id), source: { k
 
 const queued = (id: string, delivery: QueuedInput["delivery"] = "next"): QueuedInput => ({ id: InboxItemId.make(id), userMessage: new UserMessage({ text: `queued message ${id}` }), delivery, source: { kind: "conformance", id } })
 const fromQueue = (input: string, runId: string): BeginTurn => ({ _tag: "Queued", input: InboxItemId.make(input), runId: RunId.make(runId) })
+
+const steerEntry = (writer: TurnWriter, input: QueuedInput, index: number): LogEntry => ({
+  id: EntryId.make(`${writer.admitted.runId}:${index}`), runId: writer.admitted.runId, turn: writer.admitted.turn, step: 0, at: 0,
+  body: { _tag: "Message", message: userRoleMessageOf(input.userMessage), run: RunOrdinal.make(0), inbox: input.id },
+})
 
 const turnOf = (event: SessionLogEvent): number => Option.getOrElse(event.turn, () => 0)
 const decodeEnded = Schema.decodeUnknownOption(TurnEndedData)
@@ -862,6 +870,108 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
       yield* Ref.set(refuse, true)
       const refused = yield* refusal(sessions, address, fromQueue("admitted-input", "admitted-refused"))
       yield* expect("queued-admission", refused === "TurnRefused" && (yield* sessions.get(address)).pending === 1, `admission refused as ${refused} and consumed input`)
+    })),
+
+    scoped("a writer reads fresh waiting steers in order without writing, excluding next input, notices and its already claimed input", "steering-pending", (owner) => Effect.gen(function* () {
+      const [holder, sender] = [yield* leased(), yield* leased()]
+      const address = yield* created(holder.sessions, owner)
+      yield* holder.sessions.enqueue(address, queued("claimed-steer", "steer"))
+      const writer = yield* holder.sessions.begin(address, fromQueue("claimed-steer", "steering-pending"))
+      yield* sender.sessions.enqueue(address, queued("next-only"))
+      yield* sender.sessions.deliver(address, item("notice-only"))
+      yield* sender.sessions.enqueue(address, queued("steer-one", "steer"))
+      const image = yield* mediaFromBase64(pixelPng)
+      const second: QueuedInput = { ...queued("steer-two", "steer"), userMessage: new UserMessage({ text: "inspect this steer", attachments: [image] }) }
+      yield* sender.sessions.enqueue(address, second)
+      const before = (yield* holder.sessions.read(address)).length
+      const waiting = yield* writer.steers
+      yield* expect("steering-pending", waiting.map((input) => input.id).join() === "steer-one,steer-two" && canonicalJson(waiting[1]) === canonicalJson(second), "the writer missed another instance's steer or included non-steering/claimed input")
+      yield* expect("steering-pending", (yield* holder.sessions.read(address)).length === before, "reading waiting steers wrote a journal event")
+      yield* sender.sessions.enqueue(address, queued("steer-later", "steer"))
+      yield* expect("steering-pending", (yield* writer.steers).map((input) => input.id).join() === "steer-one,steer-two,steer-later", "the next read reused a stale waiting snapshot")
+      const notices = yield* created(holder.sessions, owner)
+      yield* holder.sessions.deliver(notices, item("only-probed"))
+      yield* Effect.forEach(Array.from({ length: 12 }, (_, index) => index), (index) => Effect.scoped(Effect.gen(function* () {
+        const untried = yield* holder.sessions.begin(notices, { _tag: "Inbox", runId: RunId.make(`only-probed-${index}`) })
+        yield* untried.steers
+        yield* untried.end({ reason: "interrupted", failure: Option.none() })
+      })), { concurrency: 1 })
+      yield* expect("steering-pending", (yield* holder.sessions.get(notices)).pending === 1 && (yield* holder.sessions.read(notices, { kinds: ["inbox.dropped"] })).length === 0,
+        "a steering probe counted an untouched notice as tried")
+    })),
+
+    scoped("taking steers records exact user messages and receipts, acknowledges them once and leaves other pending work", "steering-take", (owner) => Effect.gen(function* () {
+      const [holder, sender] = [yield* leased(), yield* leased()]
+      const address = yield* created(holder.sessions, owner)
+      const writer = yield* holder.sessions.begin(address, say("the turn being steered", "steering-take"))
+      const one = queued("take-one", "steer")
+      const image = yield* mediaFromBase64(pixelPng)
+      const two: QueuedInput = { ...queued("take-two", "steer"), userMessage: new UserMessage({ text: "second exact steer", attachments: [image] }) }
+      yield* sender.sessions.enqueue(address, one)
+      yield* sender.sessions.enqueue(address, two)
+      yield* sender.sessions.enqueue(address, queued("next-left"))
+      yield* sender.sessions.deliver(address, item("notice-left"))
+      const entries = [steerEntry(writer, one, 1), steerEntry(writer, two, 2)]
+      const taken = yield* writer.take(entries)
+      const events = yield* holder.sessions.read(address)
+      const memory = yield* entriesOfEvents(events)
+      const receipts = yield* readStored("inbox.taken", events)
+      const messages = memory.filter((entry) => entry.body._tag === "Message" && entry.body.inbox !== undefined)
+      yield* expect("steering-take", taken && canonicalJson(messages) === canonicalJson(entries)
+        && receipts.map(({ data }) => `${data.id}:${data.entry}`).join() === entries.map((entry) => `${entry.body._tag === "Message" ? entry.body.inbox : ""}:${entry.id}`).join()
+        && receipts.every(({ event }) => Option.contains(event.turn, writer.admitted.turn)), "take lost a user message, attachment or its receipt identity")
+      yield* expect("steering-take", (yield* writer.steers).length === 0 && (yield* holder.sessions.get(address)).pending === 2, "take left a steer pending or consumed next input/notices")
+      yield* expect("steering-take", !(yield* writer.take(entries)), "taking the same inputs twice succeeded")
+      yield* writer.end(completed)
+      const duplicate = yield* refusal(holder.sessions, address, fromQueue("take-one", "fresh-after-take"))
+      const sameRun = yield* refusal(holder.sessions, address, fromQueue("take-one", writer.admitted.runId))
+      const again = yield* sender.sessions.enqueue(address, one)
+      yield* expect("steering-take", duplicate === "TurnDuplicate" && sameRun === "TurnDuplicate" && !again.enqueued && again.pending === 2, `a taken input was not acknowledged: new run ${duplicate}, same run ${sameRun}, enqueue ${canonicalJson(again)}`)
+    })),
+
+    scoped("racing takes consume one whole selected batch once, and stale or non-steering selections record nothing", "steering-race", (owner) => Effect.gen(function* () {
+      const [holder, sender] = [yield* leased(), yield* leased()]
+      const address = yield* created(holder.sessions, owner)
+      const writer = yield* holder.sessions.begin(address, say("race the steering takes", "steering-race"))
+      const one = queued("race-steer-one", "steer")
+      const two = queued("race-steer-two", "steer")
+      yield* sender.sessions.enqueue(address, one)
+      yield* sender.sessions.enqueue(address, two)
+      yield* sender.sessions.enqueue(address, queued("race-next"))
+      const invalid: ReadonlyArray<ReadonlyArray<LogEntry>> = [
+        [{ ...steerEntry(writer, one, 1), body: { _tag: "Message", run: RunOrdinal.make(0), inbox: one.id, message: { role: "user", content: "changed after enqueue" } } }],
+        [steerEntry(writer, one, 1), steerEntry(writer, one, 2)],
+      ]
+      const beforeInvalid = (yield* holder.sessions.read(address)).length
+      const refused = yield* Effect.forEach(invalid, (entries) => Effect.result(writer.take(entries)), { concurrency: 1 })
+      yield* expect("steering-race", refused.every((result) => result._tag === "Failure") && (yield* holder.sessions.read(address)).length === beforeInvalid,
+        "take accepted changed input text or duplicate input ids, or wrote part of an invalid selection")
+      const selections = [[steerEntry(writer, one, 1), steerEntry(writer, two, 2)], [steerEntry(writer, one, 3), steerEntry(writer, two, 4)]]
+      const outcomes = yield* Effect.forEach(selections, (entries) => writer.take(entries), { concurrency: 2 })
+      yield* expect("steering-race", outcomes.filter(Boolean).length === 1, `racing whole-batch takes returned ${outcomes.join()}`)
+      const before = (yield* holder.sessions.read(address)).length
+      const stale = yield* writer.take(selections[0]!)
+      const wrongDelivery = yield* writer.take([steerEntry(writer, queued("race-next"), 5)])
+      yield* expect("steering-race", !stale && !wrongDelivery && (yield* holder.sessions.read(address)).length === before, "a rejected selection wrote an entry or took non-steering input")
+      yield* sender.sessions.enqueue(address, queued("race-newer", "steer"))
+      const receipts = yield* readStored("inbox.taken", yield* holder.sessions.read(address))
+      const memory = yield* entriesOfEvents(yield* holder.sessions.read(address))
+      const messages = memory.filter((entry) => entry.body._tag === "Message" && entry.body.inbox !== undefined)
+      yield* expect("steering-race", receipts.length === 2 && messages.length === 2 && new Set(receipts.map(({ data }) => data.entry)).size === 2
+        && (yield* writer.steers).map((input) => input.id).join() === "race-newer" && (yield* holder.sessions.get(address)).pending === 2, "racing take lost an input, duplicated a receipt or consumed an unselected arrival")
+    })),
+
+    scoped("a closed writer cannot read or take steers and leaves untaken user input pending", "steering-closed", (owner) => Effect.gen(function* () {
+      const [holder, closer] = [yield* leased(), yield* leased()]
+      const address = yield* created(holder.sessions, owner)
+      const writer = yield* holder.sessions.begin(address, say("cancel before taking steering", "steering-closed"))
+      const input = queued("not-taken", "steer")
+      yield* closer.sessions.enqueue(address, input)
+      yield* closer.sessions.cancel(address, writer.admitted.turn)
+      const reading = yield* writer.steers.pipe(Effect.match({ onFailure: refusalOf, onSuccess: () => "read" }))
+      const taking = yield* writer.take([steerEntry(writer, input, 1)]).pipe(Effect.match({ onFailure: refusalOf, onSuccess: () => "taken" }))
+      yield* expect("steering-closed", reading === "TurnClosed:cancelled" && taking === "TurnClosed:cancelled", `closed writer read ${reading} and take ${taking}`)
+      yield* expect("steering-closed", (yield* closer.sessions.get(address)).pending === 1 && (yield* closer.sessions.read(address, { kinds: ["inbox.taken", "memory.message"] })).length === 0, "a cancelled writer acknowledged input or recorded steering")
     })),
 
     scoped("a turn whose lease ran out is shown closed, left alone by a drain with nothing waiting, reaped as interrupted by the next begin, and its writer refused", "lease", (owner) => Effect.gen(function* () {

@@ -190,6 +190,8 @@ const memoryWriter = Effect.gen(function* () {
     history: () => Effect.succeed([]),
     snapshot: (kinds, after) => Ref.get(stored).pipe(Effect.map((events) => events.filter((event) =>
       (after === undefined || event.seq > after) && (kinds.length === 0 || kinds.includes(event.kind))))),
+    steers: Effect.succeed([]),
+    take: () => Effect.succeed(false),
     append,
     write: (op) => op,
     transact: (decide) => decide([]).pipe(Effect.flatMap((decision) => append(decision.drafts).pipe(Effect.as({ result: decision.result, events: [] })))),

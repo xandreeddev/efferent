@@ -11,6 +11,7 @@ import type { TurnEvent as TurnEventType } from "../turn/turn-event.entity.js"
 import {
   InboxDroppedData,
   InboxQueuedData,
+  InboxTakenData,
   MemoryKindOf,
   RECORDED_ELSEWHERE,
   RESERVED_KINDS,
@@ -93,6 +94,7 @@ export const StoredData = {
   "turn.started": TurnStartedData,
   "turn.ended": TurnEndedData,
   "inbox.queued": InboxQueuedData,
+  "inbox.taken": InboxTakenData,
   "inbox.dropped": InboxDroppedData,
   "step.usage": StepUsageData,
   "request.prepared": ModelRequestHeader,
@@ -114,6 +116,7 @@ const storedDecoders: { readonly [K in StoredKind]: (data: unknown) => Effect.Ef
   "turn.started": Schema.decodeUnknownEffect(TurnStartedData),
   "turn.ended": Schema.decodeUnknownEffect(TurnEndedData),
   "inbox.queued": Schema.decodeUnknownEffect(InboxQueuedData),
+  "inbox.taken": Schema.decodeUnknownEffect(InboxTakenData),
   "inbox.dropped": Schema.decodeUnknownEffect(InboxDroppedData),
   "step.usage": Schema.decodeUnknownEffect(StepUsageData),
   "request.prepared": Schema.decodeUnknownEffect(ModelRequestHeader),

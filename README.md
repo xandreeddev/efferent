@@ -179,7 +179,9 @@ composition of them, and
 sessions: one event log each, in storage the host provides (`SessionLog`),
 read and written through `@xandreed/plugin-sessions`, with an inbox and
 background tasks (`@xandreed/plugin-tasks`) the agent answers after the turn
-in flight. `agent.activity` (and `processActivity`, `awaitIdle`) says what
+in flight. `Sessions.enqueue` saves user input durably; `delivery: "steer"`
+adds each message before a step's next request, with an atomic inbox
+acknowledgment. `agent.activity` (and `processActivity`, `awaitIdle`) says what
 the process still has in flight, for a `/ping`, and `agent.shutdown()`
 stops its turns within a deadline on a SIGTERM, those still running ended
 resumable (`turn.shutdown`). See

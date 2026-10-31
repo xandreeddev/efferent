@@ -115,7 +115,14 @@ export interface MemorySession extends MemoryReader {
    * version-independent replay.
    */
   readonly renderRecipe: (stepContext: "tail" | "none", run: RunOrdinal) => Effect.Effect<MemoryRenderRecipe>
-  readonly record: (bodies: ReadonlyArray<LogBody>, step: number) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
+  /**
+   * Allocate and record bodies in order. An alternate atomic commit sees
+   * the prepared entries under the same allocation lock: true commits the
+   * whole batch, false records nothing and consumes no ids. A failed
+   * acknowledgement reconciles from the durable snapshot before another
+   * allocation, preserving the original error.
+   */
+  readonly record: (bodies: ReadonlyArray<LogBody>, step: number, commit?: (entries: ReadonlyArray<LogEntry>) => Effect.Effect<boolean, TurnError>) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /** Store raw messages/results before host views, then append presentation metadata and optional digests. The optional run ordinal disambiguates concurrent runs. */
   readonly recordTail: (tail: ReadonlyArray<AgentMessage>, views: ToolViews, step: number, run?: RunOrdinal) => Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
   /** The only place compaction is decided; the decision is recorded before it applies. */

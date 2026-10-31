@@ -16,6 +16,8 @@ const writerWith = (meta: JsonObject, resumes?: number): TurnWriter => ({
   started: { session, seq: 1, turn: Option.some(3), kind: "turn.started", at: 0, data: {} },
   history: () => Effect.die("unused"),
   snapshot: () => Effect.die("unused"),
+  steers: Effect.succeed([]),
+  take: () => Effect.succeed(false),
   append: () => Effect.die("unused"),
   write: () => Effect.die("unused"),
   transact: () => Effect.die("unused"),

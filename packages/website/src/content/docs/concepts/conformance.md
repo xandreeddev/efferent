@@ -27,12 +27,12 @@ transports (see [render kits](#render-kits)).
 | --- | --- | --- |
 | `sessionLogConformance(log)` | dense sequence numbers, one revision per commit, compare-and-swap, the `notAfter` clock check, JSON kept by value (an `undefined` field dropped, not refused), an event as large as a message's images at their limit (`MEDIA_LIMITS.requestChars` base64 characters), reads by position and kind, listing order, children and their removal | a `SessionLog` |
 | `sessionLogRecoveryConformance(subject)` | reopening, several open handles, interrupted commits, a handle whose scope never closed, the exact `notAfter` boundary | a way to open a `SessionLog` |
-| `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; a reused run id (`RunIdReused`) opening nothing; `meta` stored and admitted; every `NotResumable` reason; a task's turn (origin `task`, its `TaskRef`) admitted, stored, keyed and never resumed; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds, refused to a turn's writer too unless the framework's turn wrote them; cancel and removal, and a turn nobody holds reaped alike by a cancel or a delivery; the inbox; queued input stored once with immutable ids and exact messages, indefinite retries, resume reclamation, selected drains, concurrent claims and actual admission keys; a write renewing a lease, a lease that ran out and a dead process holder reaped; a turn judged as it was taken, not by the reader's ownership; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
+| `sessionsConformance(subject)` | create, get, list and fork; one open turn per session on every instance and one winner of a race; key retries (`TurnDuplicate`, whatever the `meta`) and `KeyConflict`; a reused run id (`RunIdReused`) opening nothing; `meta` stored and admitted; every `NotResumable` reason; a task's turn (origin `task`, its `TaskRef`) admitted, stored, keyed and never resumed; `AttachmentRejected` and `NothingPending` opening nothing; the writer's order and endings; `transact` and the reserved kinds, refused to a turn's writer too unless the framework's turn wrote them; cancel and removal, and a turn nobody holds reaped alike by a cancel or a delivery; the inbox; queued input stored once with immutable ids and exact messages, indefinite retries, resume reclamation, selected drains, concurrent claims and actual admission keys; fresh steering probes, atomic take/receipts, racing takes and closed-writer fencing; a write renewing a lease, a lease that ran out and a dead process holder reaped; a turn judged as it was taken, not by the reader's ownership; `TurnActivity`, when the instance has one, agreeing with what is open | a way to open `Sessions` instances over one store, and to move its clock |
 | `taskRunnerConformance(make, { interruptsOnClose? })` | `run` hands the work over and returns, the work runs once, outlives its caller, is told a deadline not in the past and runs without the caller's services; `TaskActivity` counts it from the hand-over; closing the runner's scope interrupts it | a way to make a `TaskRunner` (and its `TaskActivity`) |
 | `tasksConformance(make)` | a task runs as one turn of a child session (spawn empty, fork with the parent's closed turns), its result reaches the parent's inbox once and the parent reacts once, after the turn in flight; `task.started` once per task, a second start runs nothing, the same id with other instructions `TaskConflict` and an id naming another session `SessionExists`; the child's turn a task's (origin `task`); a failed task says why; cancel; the executor's turns run with the backend's `Tasks` (the child finds its task running, the reaction finds it finished); no task starts tasks, a host's fork may; `reconcile` starting a task that never ran and delivering a result whose delivery was lost | a way to build `Sessions` and `Tasks` over the kit's runner and executor |
 | `toolRegistryConformance(make)` | the catalog, activation (always-on, on demand, unknown, ungranted, only growing), `load_skill`'s refusals under PascalCase names, concurrent `load_skill` calls each leaving their tools active, activated once, one invocation id per call minted before the checks, `CurrentToolInvocation` and the opener's services in the handler, the services a tool declares (`requires.missing` when the run lacks one, the opener's when it has them), events published on the run's bus only (never written to the journal by the registry), `PermissionGrants`, a `tool.refused` for each reason (`inactive`, `forbidden`, `denied`, `call-limit`, `tool-call-limit`), its result under a PascalCase name | a way to build a `ToolRegistry` over the kit's capabilities |
-| `memoryConformance(memory, services)` | own entry ids, a log that reads back exactly after a reopen, raw results stored before views (`raw-result-durable`), run ordinals preserved (`run-ordinal`), views and artifacts kept, a pure build, the step context only when asked and only its own run's, append-only maintenance, a message's images through a reopen (the current turn's built as image parts, an earlier turn's as image parts or label lines), a tool result's images stored once and the current turn's built as the result's images | a memory strategy |
-| `stepLoopConformance(loop)` | assistant content and usage before handlers (`assistant-first`), each result stored while a sibling is held (`incremental-results`), failed writes preventing later handlers (`record-failure`), failed steps still listing durable results (`recorded-results`), per-step event order, each step ended once with nothing recorded under it after its `step.ended` (correctives, nudges and steers are the next step's), nothing recorded under a step that never starts (the step cap or a complete verdict ending the run with a corrective or a nudge due), a step whose completion fails afterwards still `completed`, a malformed step ended `malformed` with no `completion.evaluated`, a reply cut short (a finish reason but `stop`, `tool-calls` and `pause`; `unknown` only in a reply with tool calls to run) running none of its tool calls, settled (`cut`) or streamed one part at a time (`cut-stream`), each answered by a recorded failure that `step.ended` lists as not ok, its step ended `truncated` with no `completion.evaluated`, a reply cut at the output limit answered with a corrective of the loop's, after its calls' results in the next request and recorded under the next step, at most twice in a row: a third, or a reply cut for any other reason (one of text alone included), fails the run with `loop.truncated` (`cut-fail`), a malformed or a whole step between replies cut at the output limit restarting their count in a row, and a cut step the count of malformed steps (`cut-reset`), a reply calling a tool with no finish reason (no finish part, or `unknown`) failing the run the same way while a text reply without one, or the empty reply after a tool call, completes it (`cut-unknown`), a reply of text alone cut at the output limit ending its step `truncated` and answered with the corrective to go on from it, its text the start of the run's, the next reply's following it, and the run's text when the step cap ends the run there (`cut-text`), a paused reply going on to the next step, its text the start of the run's (`pause`), every `assistant.message` carrying its response's finish reason (`finish`), validation before dispatch, planned batches, forced tool choices, no call after completion, the run's usage (the sum of its `assistant.message` usage), the step cap, each of `StepLoopReferences` provided whatever the caller's, around the run or in the request's `handlers` (the request's `captureTraceContent` reaching its model calls as `CurrentTraceContent`, its `cacheKey` and `callPolicy` reaching its dispatch checks and model calls as `CurrentPromptCacheKey` and `CurrentModelCallPolicy`, `CurrentEmptyResponseTolerance` false until the run has executed a tool call and true after, the current step reaching its tool handlers and model calls as `CurrentAgentStep`, its step events numbered alike), a request refused over an image planned again and sent once more when `onMediaRejected` answers true (failing when it answers false), a streamed step's reasoning reaching the next request with its provider metadata (signed and redacted thinking) as a non-streamed one's does, planned and id-less tool calls given ids distinct across two runs of a turn and two turns, with the request's run ordinal on every step event | a `StepLoop` |
+| `memoryConformance(memory, services)` | own entry ids, alternate atomic commits and id recovery (`alternate-commit`), durable steer intent and media (`inbox-intent`), a log that reads back exactly after a reopen, raw results stored before views (`raw-result-durable`), run ordinals preserved (`run-ordinal`), views and artifacts kept, a pure build, the step context only when asked and only its own run's, append-only maintenance, a message's images through a reopen (the current turn's built as image parts, an earlier turn's as image parts or label lines), a tool result's images stored once and the current turn's built as the result's images | a memory strategy |
+| `stepLoopConformance(loop)` | assistant content and usage before handlers (`assistant-first`), each result stored while a sibling is held (`incremental-results`), failed writes preventing later handlers (`record-failure`), failed steps still listing durable results (`recorded-results`), durable steering at step zero and after final completion, caps, empty-probe completion and failed takes, per-step event order, each step ended once with nothing recorded under it after its `step.ended` (correctives, nudges and steers are the next step's), nothing recorded under a step that never starts (the step cap or a complete verdict ending the run with a corrective or a nudge due), a step whose completion fails afterwards still `completed`, a malformed step ended `malformed` with no `completion.evaluated`, a reply cut short (a finish reason but `stop`, `tool-calls` and `pause`; `unknown` only in a reply with tool calls to run) running none of its tool calls, settled (`cut`) or streamed one part at a time (`cut-stream`), each answered by a recorded failure that `step.ended` lists as not ok, its step ended `truncated` with no `completion.evaluated`, a reply cut at the output limit answered with a corrective of the loop's, after its calls' results in the next request and recorded under the next step, at most twice in a row: a third, or a reply cut for any other reason (one of text alone included), fails the run with `loop.truncated` (`cut-fail`), a malformed or a whole step between replies cut at the output limit restarting their count in a row, and a cut step the count of malformed steps (`cut-reset`), a reply calling a tool with no finish reason (no finish part, or `unknown`) failing the run the same way while a text reply without one, or the empty reply after a tool call, completes it (`cut-unknown`), a reply of text alone cut at the output limit ending its step `truncated` and answered with the corrective to go on from it, its text the start of the run's, the next reply's following it, and the run's text when the step cap ends the run there (`cut-text`), a paused reply going on to the next step, its text the start of the run's (`pause`), every `assistant.message` carrying its response's finish reason (`finish`), validation before dispatch, planned batches, forced tool choices, no call after completion, the run's usage (the sum of its `assistant.message` usage), the step cap, each of `StepLoopReferences` provided whatever the caller's, around the run or in the request's `handlers` (the request's `captureTraceContent` reaching its model calls as `CurrentTraceContent`, its `cacheKey` and `callPolicy` reaching its dispatch checks and model calls as `CurrentPromptCacheKey` and `CurrentModelCallPolicy`, `CurrentEmptyResponseTolerance` false until the run has executed a tool call and true after, the current step reaching its tool handlers and model calls as `CurrentAgentStep`, its step events numbered alike), a request refused over an image planned again and sent once more when `onMediaRejected` answers true (failing when it answers false), a streamed step's reasoning reaching the next request with its provider metadata (signed and redacted thinking) as a non-streamed one's does, planned and id-less tool calls given ids distinct across two runs of a turn and two turns, with the request's run ordinal on every step event | a `StepLoop` |
 | `turnConformance(runner, services)` | the writer first, the message before the matcher's history, the reply and the end exactly once, tasks joined before the reply, a model-driven turn's usage equal to its stored `step.usage` records (`turnUsageOf`), the user's attachments stored with the turn and reaching the first request as image parts, two runs of one turn each rebuilding their own request from the stored events (the second never with the first's step context), the host layer seeing only earlier turns, a turn it begins returning the inbox items left waiting (`pending`), a turn that cannot begin failing with the refusal itself (`SessionBusy`) and running nothing, an interrupted turn ending at once while a background reaction to its reply is stuck, a background reaction publishing past its queue's size not hanging the turn | a turn composition |
 | `fileSystemConformance(subject)` | round trips, `createParents`, byte ranges, append, rename, `stat` and links, sorted listings, `glob`, `mkdir`, `realPath`, the `remove` rules, the `reason` of every failure | a way to open a `FileSystem` over an empty directory |
 | `bashConformance(subject)` | exit codes as results, separate streams, output before exit, stdin, the inherited-environment allowlist, timeouts and interrupts that kill the process group, `cwd`, signals, UTF-8 | a way to open a `Bash` adapter |
@@ -317,6 +317,18 @@ The checks:
 - **queued-admission**: the host sees the actual initial and retry keys
   and input id; changing turn metadata preserves input identity, and
   refused admission leaves it pending.
+- **steering-pending**: a fresh writer probe sees other instances' steers
+  in order, with exact messages/images; next input, notices and claimed
+  initial input are excluded. Probes write nothing and never count a notice
+  attempt.
+- **steering-take**: a take records exact user messages and reference-only
+  receipts, acknowledges inputs once, leaves other work pending, and
+  anchors later duplicate begins to the receipt's consuming turn.
+- **steering-race**: one of two competing takes commits the whole batch;
+  stale/ineligible selections record nothing, invalid/duplicate input
+  selections fail, and newer unselected inputs survive.
+- **steering-closed**: cancelled writers fail probe/take with tagged
+  `TurnClosed` and cannot acknowledge untaken input.
 - **lease**: a turn within its lease is open and busy; past it, it is shown
   closed, a drain with nothing waiting stores nothing (only a turn that
   opens reaps), the next begin reaps it (`interrupted`, `turn.lease`) and the
@@ -349,10 +361,16 @@ The kit's own tests run it against careless wrappers of `SessionsLive`: a
 `transact`; a `begin` that opens a reused run id's turn under a new one
 fails `run-id`; a `begin` that opens a task's turn as a user's fails
 `task`. An enqueue that acknowledges without storing fails all seven
-queued-input checks. Silently accepting conflicting payloads fails
+queued-input checks and all four steering checks. Silently accepting conflicting payloads fails
 `input-conflict`; losing admitted input provenance fails `queued-input`,
 `queued-resume` and `queued-retry` (losing it only on explicit user resumes
 fails `queued-resume`); ignoring the drain selection fails `drain-take`.
+A writer blind to pending steers fails `steering-pending`, `steering-race`
+and `steering-closed`; a take that reports success without storing fails
+`steering-take`, `steering-race` and `steering-closed`; recording messages
+without consuming input and receipts fails `steering-take` and
+`steering-race`. Flattening new writer refusals into codes is caught by
+`steering-closed` too.
 
 ## The task kits
 
@@ -470,6 +488,43 @@ The memory kit also checks that a raw encoded result remains durable while
 its host view is blocked, and that messages and results retain their run
 ordinal across a reopen. Presentation metadata is appended separately; the
 raw log stays append-only while queries, resolution and rendering apply it.
+
+The memory checks also include:
+
+- **alternate-commit**: an alternate callback commits the prepared batch
+  itself; false changes no cache or id, a refusal consumes no id, and a
+  commit whose acknowledgment fails is reconciled without changing the
+  error or reusing its entry id.
+- **inbox-intent**: an inbox-marked user message retains exact text, images
+  and provenance across reopening. Reference transcripts include that real
+  user intent, exclude host correctives, and show labels rather than image
+  bytes; the raw image occurs once in its memory entry.
+
+A memory adapter that ignores the alternate callback fails
+`alternate-commit`; erasing the inbox identity fails `inbox-intent`.
+
+## Durable steering in the StepLoop kit
+
+The step-loop contract includes five checks, in addition to the response
+and durability checks in the table above:
+
+- **steering-first**: already queued input is consumed once after
+  `step.started` and before the first step's plan/provider request.
+- **durable-steering**: input arriving with a true final completion verdict
+  forces another step; separate exact user messages and images reach it
+  once.
+- **steering-cap**: a final capped step still probes, leaves input queued
+  and records nothing under a step that never starts, including malformed,
+  cut and host-planned steps.
+- **steering-empty-poll**: an input committed after the final empty probe
+  stays queued for the next turn, without another provider call.
+- **steering-error**: a failed atomic take prevents dispatch, leaves the
+  input waiting and fails its started step.
+
+The adapter's careless self-tests skip final probes or atomic take,
+record already committed messages twice, or consume input during the probe
+under an unstarted step. Each fails the checks for the behavior it loses.
+The independent minimal loop passes the same kit.
 
 ## The ToolRegistry kit
 

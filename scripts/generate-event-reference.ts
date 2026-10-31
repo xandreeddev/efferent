@@ -28,7 +28,7 @@ const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensi
   "memory.system": { writer: "Memory, when the turn's system prompt (or a variant) changes", sensitive: "The full system prompt text." },
   "memory.section": { writer: "Memory: `turn.context(…)` and turn-tier prompt sections", sensitive: "Turn sections: the host's context for this turn, as the model sees it." },
   "memory.step": { writer: "Memory: the step policy's step context", sensitive: "Step context text." },
-  "memory.message": { writer: "Memory: the step loop's recorded messages", sensitive: "User and assistant text, reasoning, tool call inputs." },
+  "memory.message": { writer: "Memory: the step loop's recorded messages; `TurnWriter.take` for queued steering, atomically with its receipt", sensitive: "User and assistant text, reasoning, tool call inputs, and a steer's images inline as base64." },
   "memory.tool-result": { writer: "Memory: the step loop's recorded tool results", sensitive: "Tool output, encoded (a tool's images, inline as base64, included) and as the model saw it." },
   "memory.tool-presentation": { writer: "Memory, after a durable raw tool result's view is prepared", sensitive: "Tool output rendered as text, subjects and artifact references; encoded output and image bytes stay only in memory.tool-result." },
   "memory.digest": { writer: "Memory: a digester (`plugin-memory-digest`)", sensitive: "Tool output, digested." },
@@ -49,6 +49,7 @@ const JOURNAL: Readonly<Record<string, { readonly writer: string; readonly sensi
   "turn.ended": { writer: "plugin-sessions: the turn writer's `end` (`Agent.turn` and `Sessions.drain` end with `turnEndingOf` the turn's exit), the writer's scope, `Sessions.cancel`, or a reap", sensitive: "Failure messages, which may quote errors." },
   "inbox.queued": { writer: "plugin-sessions: `Sessions.deliver` (a notice) or `Sessions.enqueue` (user input)", sensitive: "The item's content, user message, attachments and source." },
   "inbox.dropped": { writer: "plugin-sessions: the end of the last turn that took the item and failed", sensitive: "None: the item id." },
+  "inbox.taken": { writer: "plugin-sessions: `TurnWriter.take`, in the same commit as the exact user memory.message and removal of the pending steer", sensitive: "None: the input id and raw memory entry id; message and image bytes stay in memory.message." },
 }
 
 /** Where a bus event recorded elsewhere ends up. */

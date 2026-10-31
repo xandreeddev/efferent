@@ -141,6 +141,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
     isComplete,
     onStepSettled: settle,
     pendingInput: () => request.steering,
+    durableInput: { pending: () => request.pendingSteers, take: request.steer },
     onTail: (messages, step) => request.record(step, messages).pipe(Effect.as([])),
     onEvent,
   })

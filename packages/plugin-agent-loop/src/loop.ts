@@ -188,6 +188,12 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
    * `onTail` like every other appended message.
    */
   readonly pendingInput?: () => Effect.Effect<Option.Option<string>, E, R>
+  /** A fresh probe after settlement and an atomic take after the next step starts.
+   * Taken messages are already durable and never passed through onTail again. */
+  readonly durableInput?: {
+    readonly pending: () => Effect.Effect<boolean, E, R>
+    readonly take: (step: number) => Effect.Effect<ReadonlyArray<AgentMessage>, E, R>
+  }
 }
 
 /**
@@ -534,10 +540,19 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
      * it. Its exit is the step's status (`onStepSettled`); a response that
      * does not decode comes back `Malformed`, for the loop to answer.
      */
-    const execute = (state: LoopState) =>
+    const beginStep = (state: LoopState) => Effect.gen(function* () {
+      yield* onEvent({ type: "turn_start", turnIndex: state.turnIndex })
+      const active: ReadonlyArray<string> = options.activeTools === undefined ? Object.keys(toolkit.tools)
+        : (yield* options.activeTools().pipe(Effect.provide(eventContext))).map(String)
+      const steering = options.durableInput === undefined ? [] : yield* options.durableInput.take(state.turnIndex).pipe(Effect.provide(eventContext))
+      return {
+        active,
+        state: steering.length === 0 ? state : { ...state, messages: [...state.messages, ...steering], newTail: [...state.newTail, ...steering] },
+      }
+    })
+
+    const execute = (state: LoopState, active: ReadonlyArray<string>) =>
       Effect.gen(function* () {
-        yield* onEvent({ type: "turn_start", turnIndex: state.turnIndex })
-        const active: ReadonlyArray<string> = options.activeTools === undefined ? Object.keys(toolkit.tools) : (yield* options.activeTools().pipe(Effect.provide(eventContext))).map(String)
         // Activation order, not registration order: a newly activated tool is
         // appended, so the declared tool list only ever grows at its end.
         const selectedTools = Object.fromEntries(active.flatMap((name) => Object.hasOwn(toolkit.tools, name) ? [[name, toolkit.tools[name]] as const] : [])) as Tools
@@ -825,6 +840,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
      * malformed response is no cut one: the count of cuts in a row restarts.
      */
     const recover = (state: LoopState, malformed: Malformed) => Effect.gen(function* () {
+      yield* options.durableInput?.pending().pipe(Effect.provide(eventContext)) ?? Effect.succeed(false)
       const streak = state.malformedStreak + 1
       if (streak >= MAX_MALFORMED) return yield* Effect.fail(malformed.err)
       // A corrective turn is a turn: the step cap counts it too, so a
@@ -924,6 +940,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
      * replied to anew.
      */
     const recut = (state: LoopState, responded: Responded, reason: CutReason) => Effect.gen(function* () {
+      yield* options.durableInput?.pending().pipe(Effect.provide(eventContext)) ?? Effect.succeed(false)
       const streak = state.cutStreak + 1
       if (reason !== "length" || streak > MAX_CUT_CORRECTIVES) {
         return yield* Effect.fail(harnessError("loop.truncated", truncatedMessage(reason, state.turnIndex, streak)))
@@ -983,9 +1000,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
       const { stale, seen } = progress
 
       const completed = yield* options.isComplete?.(state.turnIndex) ?? Effect.succeed(false)
+      const steered = options.durableInput === undefined ? false : yield* options.durableInput.pending().pipe(Effect.provide(eventContext))
       const requireMore = !completed && options.requireCompletion === true
       // `pause`: the provider paused a long reply, to be continued by the next call.
-      const wantsMore = !completed && (requireMore || (responded.finishReason === "tool-calls" && toolCalls.length > 0) || responded.finishReason === "pause")
+      const wantsMore = steered || (!completed && (requireMore || (responded.finishReason === "tool-calls" && toolCalls.length > 0) || responded.finishReason === "pause"))
       const broke = progress.broke
       const phase = nextPhase({ broke, wantsMore, turnIndex, maxSteps })
       yield* broke
@@ -1040,13 +1058,14 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
      * follows. A failure in the decision fails the run, not the step.
      */
     const step = (state: LoopState) =>
-      execute(state).pipe(
-        Effect.onExit((exit) => settle(state.turnIndex, statusOf(exit))),
-        Effect.flatMap((executed): Effect.Effect<LoopState, AiError.AiError | HarnessError | E, R> => Match.valueTags(executed, {
-          Malformed: (malformed) => recover(state, malformed),
+      beginStep(state).pipe(
+        Effect.flatMap((begun) => execute(begun.state, begun.active).pipe(Effect.map((executed) => ({ state: begun.state, executed })))),
+        Effect.onExit((exit) => settle(state.turnIndex, statusOf(Exit.map(exit, ({ executed }) => executed)))),
+        Effect.flatMap(({ state: input, executed }): Effect.Effect<LoopState, AiError.AiError | HarnessError | E, R> => Match.valueTags(executed, {
+          Malformed: (malformed) => recover(input, malformed),
           Responded: (responded) => Option.match(responded.cut, {
-            onNone: () => decide(state, responded),
-            onSome: (reason) => recut(state, responded, reason),
+            onNone: () => decide(input, responded),
+            onSome: (reason) => recut(input, responded, reason),
           }),
         })),
         Effect.provideService(CurrentAgentStep, Option.some(state.turnIndex)),

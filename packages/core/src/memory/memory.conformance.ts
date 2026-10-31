@@ -12,9 +12,11 @@ import { HarnessError } from "../harness/plugin.entity.js"
 import type { ConversationMemory, LogHandle, MemorySession, ToolViews } from "../ports/memory.port.js"
 import { draftOfEntry, entriesOfEvents, turnStartedDraft } from "../session/session-event.entity.functions.js"
 import type { SessionDraft, SessionLogEvent } from "../session/session-log.entity.js"
+import { InboxItemId } from "../session/sessions.entity.js"
 import type { TurnError } from "../session/sessions.entity.js"
 import { storedJson } from "../session/session-log.entity.functions.js"
 import { UserMessage } from "../turn/user-message.entity.js"
+import { userRoleMessageOf } from "../turn/user-message.entity.functions.js"
 import { canonicalJson } from "./memory-log.entity.functions.js"
 import { ArtifactId, LogEntry, SectionId } from "./memory-log.entity.js"
 
@@ -114,6 +116,26 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
       const ids = [...a, ...b, ...c].map((entry) => String(entry.id))
       yield* expect("ids", ids.join() === "run-1:0,run-1:1,run-1:2,run-2:0", `ids were ${ids.join()}`)
     })),
+    check("an alternate commit controls persistence and ids, including rejected and uncertain acknowledgements", "alternate-commit", (open, log) => Effect.gen(function* () {
+      const normal = yield* Ref.make(0)
+      const calls = yield* Ref.make(0)
+      const session = yield* open({ ...log, append: (entries) => Ref.update(normal, (n) => n + 1).pipe(Effect.andThen(log.append(entries))) }, "run-1")
+      yield* session.record([said("one")], 0)
+      const body = { _tag: "StepContext" as const, step: 0, run: firstRun, text: "steer" }
+      const rejected = yield* session.record([body], 0, () => Ref.update(calls, (n) => n + 1).pipe(Effect.as(false)))
+      yield* expect("alternate-commit", rejected.length === 0 && (yield* session.entries).length === 1 && (yield* log.read).length === 1, "a rejected alternate commit appended entries or changed the cache")
+      const accepted = yield* session.record([body], 0, (entries) => Ref.update(calls, (n) => n + 1).pipe(Effect.andThen(log.append(entries)), Effect.as(true)))
+      yield* expect("alternate-commit", accepted[0]?.id === "run-1:1" && (yield* Ref.get(normal)) === 1 && (yield* Ref.get(calls)) === 2, "the alternate callback was bypassed, called twice, or consumed an id on rejection")
+      const refused = new HarnessError({ code: "memory.log", message: "the alternate commit was refused" })
+      const refusal = yield* Effect.result(session.record([body], 0, () => Effect.fail(refused)))
+      const afterRefusal = yield* session.record([body], 0)
+      yield* expect("alternate-commit", refusal._tag === "Failure" && refusal.failure === refused && afterRefusal[0]?.id === "run-1:2", "a refused alternate commit changed its error or consumed an id")
+      const lost = new HarnessError({ code: "memory.log", message: "the alternate commit acknowledgement was lost" })
+      const uncertain = yield* Effect.result(session.record([body], 0, (entries) => log.append(entries).pipe(Effect.andThen(Effect.fail(lost)))))
+      const afterUncertain = yield* session.record([body], 0)
+      yield* expect("alternate-commit", uncertain._tag === "Failure" && uncertain.failure === lost && afterUncertain[0]?.id === "run-1:4", "a committed alternate append lost its error or reused its entry id")
+      yield* expect("alternate-commit", (yield* encodeEntries("alternate-commit", yield* session.entries)) === (yield* encodeEntries("alternate-commit", yield* log.read)), "an uncertain alternate acknowledgement left the session cache behind storage")
+    })),
     check("a reopened session reads back exactly what was recorded, and builds the same context", "reopen", (open, log) => Effect.gen(function* () {
       const session = yield* open(log, "run-1")
       yield* recordTurn(session, "find alpha", "found record-alpha")
@@ -204,6 +226,24 @@ export const memoryConformance = (memory: Memory, services: Context.Context<neve
         onSome: (message) => typeof message.content === "string" ? message.content : message.content.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n"),
       })
       yield* expect("attachments", firstText.includes("what is this?"), "the first message lost its text")
+    })),
+    check("an inbox user message keeps its images and real intent through reopening and transcripts", "inbox-intent", (open, log) => Effect.gen(function* () {
+      const image = yield* mediaFromBase64(pixelPng, { name: "steer.png" }).pipe(Effect.mapError((error) => new ConformanceFailure({ check: "inbox-intent", message: error.message })))
+      const session = yield* open(log, "run-1")
+      yield* session.record([said("first request")], 0)
+      yield* session.record([
+        { _tag: "Message", inbox: InboxItemId.make("steer-1"), run: firstRun, message: userRoleMessageOf(new UserMessage({ text: "steered request", attachments: [image] })) },
+        { _tag: "Message", message: { role: "user", content: "host corrective" } },
+      ], 1)
+      const reopened = yield* open(log, "run-1")
+      const entries = yield* reopened.entries
+      const encoded = yield* encodeEntries("inbox-intent", entries)
+      yield* expect("inbox-intent", entries.some((entry) => entry.body._tag === "Message" && entry.body.inbox === "steer-1") && encoded.split(image.data).length - 1 === 1, "the inbox identity or raw image was lost or duplicated")
+      const messages = (yield* reopened.build({ stepContext: "tail", run: firstRun })).messages
+      yield* expect("inbox-intent", messages.some((message) => message.role === "user" && typeof message.content !== "string" && message.content.some((part) => part.type === "media" && part.data === image.data)), "the current steer image was not sent")
+      const reference = canonicalJson(yield* reopened.transcript("reference"))
+      const raw = canonicalJson(yield* reopened.transcript("raw"))
+      yield* expect("inbox-intent", reference.includes("steered request") && reference.includes(mediaLabel(image)) && !reference.includes("host corrective") && !reference.includes(image.data) && !raw.includes(image.data), "transcripts lost the steer, included a corrective as intent, or leaked image bytes")
     })),
     check("a tool result's images survive a reopen, stored once, and the current turn's reach the build as the result's images", "tool-media", (open, log) => Effect.gen(function* () {
       const image: Media = yield* mediaFromBase64(pixelPng, { name: "shot.png" }).pipe(

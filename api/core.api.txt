@@ -123,6 +123,7 @@ const InboxDroppedData
 const InboxItem
 const InboxItemId
 const InboxQueuedData
+const InboxTakenData
 const InputDelivery
 const InvocationId
 const JOURNAL_KINDS
@@ -273,6 +274,7 @@ const defineSkill
 const defineTool
 const describeModel
 const digestTranscript
+const draftsOfEntries
 const elideMediaData
 const emptyQuery
 const entriesOfEvents
@@ -366,7 +368,9 @@ const turnUsageOf
 const uncachedInputTokens
 const unmarkedReservedDraft
 const usageBreakdown
+const userMessageOf
 const userMessageText
+const userRoleMessageOf
 const walkGlob
 const zeroUsage
 interface Capability
@@ -481,6 +485,7 @@ type InboxDroppedData
 type InboxItem
 type InboxItemId
 type InboxQueuedData
+type InboxTakenData
 type InputDelivery
 type InvocationId
 type JsonObject
