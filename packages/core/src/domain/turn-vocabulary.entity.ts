@@ -6,7 +6,7 @@ import { Schema } from "effect"
  * Sessions, memory, the bus, tasks and the step loop take them from here.
  */
 
-const OUTCOMES = ["completed", "partial", "failed"] as const
+const OUTCOMES = ["completed", "partial", "failed", "waiting"] as const
 
 /**
  * Who began a turn: a user's message, the inbox's pending items, or a

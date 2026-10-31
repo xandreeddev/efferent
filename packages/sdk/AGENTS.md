@@ -46,10 +46,11 @@ The composable agent: `Agent.define` builds an agent's plugin graph once (throug
 
 ## Model-facing text
 
-None of its own: the system prompt prefix is the host's (`AgentConfig.system`, a turn's `system`). The sdk owns the pin of what a composed agent sends:
+The system prompt prefix is the host's (`AgentConfig.system`, a turn's `system`). The sdk pins its fixed bridge failure messages and what a composed agent sends:
 
 | Pinned text | Source | Pinned by |
 |---|---|---|
+| Fixed task inbox bridge failures: `The inbox session is unavailable.` and `The task session has no parent.` | `src/task-inbox-runner.adapter.ts` | exact, `src/task-inbox-runner.adapter.test.ts:43` |
 | Every model request of the golden conversation: system prompts with the tool-discovery catalogue, tool descriptions and schemas (`load_skill`, `recall_context`, the host's), memory renderings (a `CompactViews` compaction, a digested result), seeded `load_skill` exchanges | `golden/agent-turn.model.json` | exact text, `src/agent.golden.test.ts:318`; over three storage backends, `src/agent.backends.test.ts` |
 | Every model request of a streamed conversation: signed and redacted thinking sent back with its provider metadata, by the next request, the journal's rebuild of it and a second agent | `golden/agent-stream.model.json` | exact text, `src/agent.stream-golden.test.ts` |
 | Every model and summarizer request of two compacting conversations: the window strategy's spill preview, the `recall_context` page that reads it back, and the host note and ledger of dropped turns; the summary strategy's summarizer prompt (default instructions, the data rule, the `<earlier-summary>` and `<conversation-transcript>` frames, a clipped tool result) and its handoff | `golden/agent-compaction.model.json` | exact text, `src/agent.compaction-golden.test.ts`; the journal's rebuild of each conversation's last request |
@@ -64,6 +65,7 @@ None.
 |---|---|
 | `src/agent.adapter.ts` | `Agent.define`, `agent.turn`, the turn metrics |
 | `src/task-executor.adapter.ts` | `agentTaskExecutor`: core's `TaskExecutor` over `Agent.turn` |
+| `src/task-inbox-runner.adapter.ts` | `taskInboxRunner`: borrowed child follow-ups and post-ACK parent delivery repair |
 | `src/turn/turn.adapter.ts` | `TurnLive`: the turn as services over its writer |
 | `src/turn/turn-phase.entity.ts`, `src/turn/turn-phase.entity.functions.ts` | where one turn stands in `TurnLive`, and its transitions |
 | `src/turn/model-call-recorder.adapter.ts`, its entity pair | durable terminal call recording, sticky ACKs and turn-owned billing observation |

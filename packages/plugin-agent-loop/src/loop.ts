@@ -119,6 +119,8 @@ export interface RunLoopOptions<Tools extends Record<string, Tool.Any>, E, R> {
    * Avoids a paid final prose call when a tool already delivered the
    * complete result. */
   readonly isComplete?: (step: number) => Effect.Effect<boolean, E, R>
+  /** Yield before the first step or after successful settled work, before completion, compaction or further input. */
+  readonly waiting?: Effect.Effect<boolean, E, R>
   /**
    * Called exactly once per step, after its tail went through `onTail` and
    * before anything is decided (completion, nudges, compaction, steering),
@@ -407,7 +409,7 @@ const progressSignature = (
 }
 
 /** @public */
-export type Phase = "continue" | "completed" | "step-cap" | "degenerate-loop"
+export type Phase = "continue" | "completed" | "step-cap" | "degenerate-loop" | "waiting"
 
 /**
  * The degenerate-loop breaker's fold over one turn's progress signature —
@@ -1052,6 +1054,21 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
       const { content, usage, tail, text, toolCalls, toolResults } = responded
       const turnIndex = state.turnIndex + 1
 
+      if (yield* options.waiting?.pipe(Effect.provide(eventContext)) ?? Effect.succeed(false)) return {
+        ...state,
+        messages: [...state.messages, ...tail],
+        newTail: [...state.newTail, ...tail],
+        finalText: "",
+        carried: "",
+        turnIndex,
+        usage: addUsage(state.usage, usage),
+        lastUsage: responded.planned ? state.lastUsage : Option.some(usage),
+        toolCalls: state.toolCalls + toolCalls.length,
+        toolFailures: state.toolFailures + toolResults.filter((result) => !result.ok).length,
+        streamingHealthy: responded.streamingHealthy,
+        phase: "waiting",
+      } satisfies LoopState
+
       // --- Degenerate-loop circuit breaker ---
       // A turn whose progress signature was already seen produced nothing
       // new; count consecutive stale turns, nudge once, then force-stop.
@@ -1138,7 +1155,10 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
     const runSteps = (
       state: LoopState,
     ): Effect.Effect<Settled, Effect.Error<ReturnType<typeof step>>, Effect.Services<ReturnType<typeof step>>> =>
-      state.phase === "continue" ? Effect.flatMap(step(state), runSteps) : Effect.succeed(state as Settled)
+      state.phase === "continue" ? Effect.gen(function* () {
+        if (yield* options.waiting?.pipe(Effect.provide(eventContext)) ?? Effect.succeed(false)) return { ...state, finalText: "", phase: "waiting" } as Settled
+        return yield* Effect.flatMap(step(state), runSteps)
+      }) : Effect.succeed(state as Settled)
     const initial: LoopState = {
         messages: options.messages,
         newTail: [],
@@ -1162,6 +1182,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
 
     const { outcome, reason } = Match.value(final.phase).pipe(
       Match.when("completed", () => ({ outcome: "ok" as const, reason: "completed" as const })),
+      Match.when("waiting", () => ({ outcome: "waiting" as const, reason: "waiting" as const })),
       Match.when("step-cap", () => ({
         outcome: "partial" as const,
         reason: "step-cap" as const,
@@ -1188,7 +1209,7 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
       "engine.tool_calls": final.toolCalls,
       "engine.tool_calls.failed": final.toolFailures,
       "engine.corrections": final.corrections,
-      error: outcome !== "ok",
+      error: outcome === "partial",
     })
     return {
       finalText: final.finalText,

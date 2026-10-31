@@ -5,10 +5,11 @@ import { TasksConfig, tasksDefaults } from "./task-records.entity.js"
 import { TasksLive } from "./tasks.adapter.js"
 
 /**
- * Background tasks: a task is one turn of a child session, run by the
- * host's TaskRunner and TaskExecutor, its result delivered to the parent's
- * inbox for the turn after the one in flight. With `tools`, the model gets
- * `start_task` and `task_status`.
+ * Background tasks over child sessions, run by the host's TaskRunner and
+ * TaskExecutor. A question yields waiting and its answer starts a queued
+ * follow-up turn. The final result reaches the parent's inbox after its
+ * current turn. With `tools`, the model can start, inspect, steer, answer
+ * and cancel tasks, and a helper can ask its parent.
  *
  * @public
  */

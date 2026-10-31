@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Option, Ref } from "effect"
-import { ConversationId, RunContext, SessionLogError, SessionMissing, TaskMissing, TaskRefused, Tasks } from "@xandreed/core"
+import { ConversationId, RunContext, SessionLogError, SessionMissing, TaskMissing, TaskRefused, TaskConflict, TaskQuestionId, Tasks } from "@xandreed/core"
 import type { TaskView } from "@xandreed/core"
 import { tasksCapability } from "./tasks-capability.adapter.js"
 
@@ -9,7 +9,18 @@ const [startTask, taskStatus] = tasksCapability.tools
 describe("the model's task tools", () => {
   test("start_task says what a fork sees, that instructions carry the rest, and that tasks do not nest", () => {
     expect(startTask!.tool.description).toBe("Start a background task: another run of you works on the instructions while this conversation goes on, and its result comes back here when it finishes, for you to answer then. Use it for long work the user need not wait for, and say that you started it. Put everything the task needs in instructions: with mode spawn it sees only them; with mode fork it also sees this conversation up to the user's latest message, but not that message or anything you did since. A background task cannot start another.")
-    expect(taskStatus!.tool.description).toBe("Check a background task this conversation started: whether it is still running, and its result once it has one.")
+    expect(taskStatus!.tool.description).toBe("Check a background task this conversation started: whether it is running, needs an answer, or has finished. When it needs an answer, use its question id with answer_task.")
+  })
+
+  test("helper controls describe waiting, durable answers, steering and cancellation exactly", () => {
+    expect(tasksCapability.version).toBe("2")
+    expect(tasksCapability.tools.slice(2).map((entry) => entry.tool.description)).toEqual([
+      "Ask the conversation that started this background task for information you need. Returns a question id and ends this turn while you wait; the answer arrives in a later turn. Ask one question per turn. Use this only from a background task, and include everything needed to answer.",
+      "Send a course correction to a background task this conversation started. Returns whether the message was queued and how many inputs are pending. The task reads it at its next step or turn. If the task needs an answer, use answer_task instead.",
+      "Answer a question from a background task this conversation started. Give the question id from its notice or task_status. Returns accepted once the answer is stored and enqueued when it reached the task's inbox; an accepted answer waits for space automatically. The task continues in a later turn. Use steer_task for a course correction when no question is pending.",
+      "Cancel a background task this conversation started. Returns whether it was cancelled. A task that already finished stays finished; a cancelled task does no more work and sends no result.",
+    ])
+    expect(tasksCapability.tools.slice(2).map((entry) => entry.requires)).toEqual(Array.from({ length: 4 }, () => [RunContext.key, Tasks.key]))
   })
 
   test("both tools declare the run and the tasks they read, so a run without them does not open its tools", () => {
@@ -80,4 +91,24 @@ describe("the model's task tools", () => {
       { error: "TasksUnavailable", message: "Background tasks are unavailable right now; try again later, or do the work in this conversation" },
     ])
   })
+})
+
+
+test("helper control failures preserve safe exact context and conflict guidance", async () => {
+  const parent = ConversationId.make("00000000-0000-4000-8000-0000000007d1")
+  const taskId = ConversationId.make("00000000-0000-4000-8000-0000000007d2")
+  const run = RunContext.of({ session: { id: parent, owner: "owner-1" }, admitted: {} } as never)
+  const tasks = Tasks.of({ answer: () => Effect.fail(new TaskConflict({ session: parent, taskId })) } as never)
+  const answers = await Effect.runPromise(Effect.gen(function* () {
+    const ask = tasksCapability.tools.find((entry) => entry.tool.name === "ask_parent")!
+    const answer = tasksCapability.tools.find((entry) => entry.tool.name === "answer_task")!
+    return [
+      yield* Effect.flip(ask.handler({ text: "Question" }).pipe(Effect.provideService(Tasks, tasks), Effect.provideService(RunContext, run))),
+      yield* Effect.flip(answer.handler({ taskId, questionId: TaskQuestionId.make("q"), text: "Answer" }).pipe(Effect.provideService(Tasks, tasks), Effect.provideService(RunContext, run))),
+    ]
+  }))
+  expect(answers).toEqual([
+    { error: "TaskContextRequired", message: "Use this control from a running step of the conversation or its background task" },
+    { error: "TaskConflict", message: "This task control was already stored with different content; check task_status before trying again" },
+  ])
 })

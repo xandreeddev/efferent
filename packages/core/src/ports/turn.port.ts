@@ -206,6 +206,8 @@ export interface TurnInput<A = never, E = never> {
   readonly cacheKey?: string
   /** A mid-run user message, consulted between steps. */
   readonly steering?: Effect.Effect<Option.Option<string>, HarnessError>
+  /** Yield this turn after settled work, before completion or another step. A later queued input starts a separate turn. */
+  readonly waiting?: Effect.Effect<boolean, TurnError>
   /** The host's per-turn services; its requirements are met by the turn's services. */
   readonly layer?: Layer.Layer<A, E, unknown>
 }

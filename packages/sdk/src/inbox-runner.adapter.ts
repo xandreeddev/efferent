@@ -21,7 +21,7 @@ export const agentInboxRunner = (agent: TurnRunner, options: {
   const services = Context.add(options.services, Sessions, sessions)
   const use = options.use ?? ((turn: Turn) => turn.tools.select(turn.userMessage).pipe(
     Effect.andThen(turn.run({})),
-    Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: Option.some(result.text) })),
+    Effect.map((result): TurnOutcome => ({ outcome: result.outcome, reply: result.outcome === "waiting" ? Option.none() : Option.some(result.text) })),
   ))
   return InboxRunner.of({
     run: Effect.fn("inbox_runner.run")((writer: TurnWriter) => agent.turn({ turn: writer, services }, use).pipe(

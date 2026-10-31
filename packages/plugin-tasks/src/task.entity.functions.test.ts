@@ -22,7 +22,7 @@ test("the inbox ids delivered are the inbox.queued records' ids; one that does n
 describe("the notice of a task that ends without a reply", () => {
   const taskId = ConversationId.make("00000000-0000-4000-8000-00000000b4b5")
   /** The notice the parent's model reads for a task whose turn ended so. */
-  const noticeAfter = (exit: Exit.Exit<Option.Option<TurnOutcome>, TurnError>): string => {
+  const noticeAfter = (exit: Exit.Exit<Option.Option<Omit<TurnOutcome, "outcome"> & { readonly outcome: "completed" | "partial" | "failed" }>, TurnError>): string => {
     const result = resultOf(taskId, exit)
     const task: TaskView = {
       taskId, parent: session, child: taskId, instructions: "look it up", mode: "spawn",
@@ -53,11 +53,11 @@ describe("the notice of a task that ends without a reply", () => {
   })
 
   test("says where the task stands in words, never the status's name", () => {
-    const statuses = ["pending", "running", "completed", "partial", "failed", "cancelled", "interrupted"] as const
+    const statuses = ["pending", "running", "waiting", "completed", "partial", "failed", "cancelled", "interrupted"] as const
     expect(statuses.map((status) => noticeOf({
       taskId, parent: session, child: taskId, instructions: "look it up", mode: "spawn", status, reply: Option.none(), failure: Option.none(), delivered: false,
     }, tasksDefaults.replyChars))).toEqual([
-      "has not started yet", "is still running", "completed", "stopped before it finished", "failed", "was cancelled", "was interrupted",
+      "has not started yet", "is still running", "needs your answer", "completed", "stopped before it finished", "failed", "was cancelled", "was interrupted",
     ].map((words) => frame(words, "(no reply)")))
   })
 })

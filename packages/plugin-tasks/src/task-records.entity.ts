@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { ConversationId, JsonObject, RunId, TaskMode, TurnEndReason, TurnFailure } from "@xandreed/core"
+import { ConversationId, InboxItem, InboxItemId, JsonObject, QueuedInput, RunId, TaskMode, TaskQuestion, TaskQuestionId, TurnEndReason, TurnFailure } from "@xandreed/core"
 
 /*
  * What the tasks plugin records. In the parent: `task.started` (the outbox
@@ -11,6 +11,28 @@ import { ConversationId, JsonObject, RunId, TaskMode, TurnEndReason, TurnFailure
 export const TASK_STARTED = "task.started"
 export const TASK_RESULT = "task.result"
 export const TASK_CANCELLED = "task.cancelled"
+/** @public */
+export const TASK_QUESTIONED = "task.questioned"
+/** @public */
+export const TASK_ANSWERED = "task.answered"
+
+/** The accepted question and the exact notice to deliver to its parent. @public */
+export const TaskQuestioned = Schema.Struct({
+  taskId: ConversationId,
+  question: TaskQuestion,
+  input: Schema.optionalKey(InboxItemId),
+  notice: InboxItem,
+})
+export type TaskQuestioned = typeof TaskQuestioned.Type
+
+/** An accepted answer and its exact normalized child input, retained after consumption. @public */
+export const TaskAnswered = Schema.Struct({
+  taskId: ConversationId,
+  questionId: TaskQuestionId,
+  text: Schema.String,
+  input: QueuedInput,
+})
+export type TaskAnswered = typeof TaskAnswered.Type
 
 /**
  * The turn whose run started a task (the model's `start_task`): its run id and number.

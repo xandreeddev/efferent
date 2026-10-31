@@ -132,6 +132,7 @@ interface Scenario {
   readonly initial?: InitialBatch
   readonly toolChoice?: ToolChoice
   readonly maxSteps?: number
+  readonly waiting?: Effect.Effect<boolean, TurnError>
   readonly completion?: (step: number, tasks: TurnTasksService) => Effect.Effect<CompletionVerdict, HarnessError>
   readonly before?: (tasks: TurnTasksService) => Effect.Effect<void>
   readonly dispatch?: (step: number) => Effect.Effect<void, HarnessError>
@@ -379,6 +380,7 @@ const observeRun = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scen
     onMediaRejected: scenario.onMediaRejected ?? (() => Effect.succeed(false)),
     ...(scenario.overflow === undefined ? {} : { onContextOverflow: (step: number, evidence?: ModelOverflowEvidence) => Ref.update(overflows, (all) => [...all, { step, evidence: Option.fromNullishOr(evidence) }]).pipe(Effect.andThen(scenario.overflow?.(step, evidence) ?? Effect.succeed(false))) }),
     completion: (info) => (scenario.completion?.(info.stepIndex, tasks) ?? Effect.succeed(incomplete)).pipe(Effect.tap(() => scenario.durableSteering?.at === "completion" ? deliverSteers : Effect.void)),
+    ...(scenario.waiting === undefined ? {} : { waiting: scenario.waiting }),
     pendingSteers: Ref.update(steerProbes, (count) => count + 1).pipe(Effect.andThen(Ref.get(waitingSteers)), Effect.flatMap((waiting) =>
       waiting.length === 0 && scenario.durableSteering?.at === "empty-probe"
         ? Ref.get(calls).pipe(Effect.flatMap((called) => called.length > 0 ? deliverSteers : Effect.void), Effect.as(false))
@@ -553,6 +555,64 @@ const expectCut = (check: string, observed: Observed) => Effect.gen(function* ()
  * and turns of a session, with the request's run ordinal on every step event.
  */
 export const stepLoopConformance = (loop: Context.Service.Shape<typeof StepLoop>): ReadonlyArray<ConformanceCheck> => [
+  {
+    name: "waiting at entry yields before planning, provider work, step events or taking queued input",
+    run: Effect.gen(function* () {
+      const check = "waiting-initial"
+      const plans = yield* Ref.make(0)
+      const observed = yield* observeRun(loop, {
+        script: [textReply("must not run")], waiting: Effect.succeed(true),
+        planned: () => Ref.update(plans, (count) => count + 1),
+        durableSteering: { at: "initial", messages: [{ role: "user", content: "a later answer" }] },
+      })
+      yield* expect(check, Result.isSuccess(observed.result) && observed.result.success.outcome === "waiting"
+        && observed.result.success.reason === "waiting" && observed.result.success.text === "" && observed.result.success.steps === 0,
+        "an already-waiting request did not yield an empty waiting result")
+      yield* expect(check, observed.providerCalls.length === 0 && (yield* Ref.get(plans)) === 0 && observed.events.length === 0
+        && observed.recorded.length === 0 && observed.durable.taken.length === 0 && observed.durable.pending.length === 1,
+        "an already-waiting request planned, called the provider, started a step or consumed later input")
+      const hard = new HarnessError({ code: "conformance.waiting", message: "the waiting state could not be read" })
+      const failed = yield* observeRun(loop, { script: [], waiting: Effect.fail(hard) })
+      yield* expect(check, Result.isFailure(failed.result) && failed.result.failure === hard && failed.providerCalls.length === 0,
+        "a waiting-probe failure changed identity or allowed provider work")
+    }),
+  },
+  {
+    name: "waiting after a settled tool step yields before completion, task joins or taking the next input",
+    run: Effect.gen(function* () {
+      const check = "waiting-settled"
+      const paused = yield* Ref.make(false)
+      const observed = yield* observeRun(loop, {
+        script: [probeCall("ask", 1), textReply("must not run")], maxSteps: 1,
+        waiting: Ref.get(paused), handle: () => Ref.set(paused, true),
+        completion: () => Effect.fail(new HarnessError({ code: "conformance.waiting", message: "completion ran after a question" })),
+        durableSteering: { at: "settled", messages: [{ role: "user", content: "an early answer" }] },
+      })
+      yield* expect(check, Result.isSuccess(observed.result) && observed.result.success.outcome === "waiting"
+        && observed.result.success.reason === "waiting" && observed.result.success.text === "" && observed.result.success.steps === 1,
+        "the asking step continued, hit its step cap or returned a final reply instead of waiting")
+      yield* expect(check, observed.providerCalls.length === 1 && statusesOf(observed.events).join() === "completed"
+        && !observed.events.some((event) => event._tag === "completion.evaluated") && observed.durable.taken.length === 0
+        && observed.durable.pending.length === 1 && observed.steps.handled.length === 1,
+        "waiting failed to settle its step once, ran completion, or consumed the early answer")
+    }),
+  },
+  {
+    name: "a step failure remains its original failure when a question has already requested waiting",
+    run: Effect.gen(function* () {
+      const check = "waiting-failure"
+      const paused = yield* Ref.make(false)
+      const hard = new HarnessError({ code: "conformance.waiting", message: "the question result could not be recorded" })
+      const observed = yield* observeRun(loop, {
+        script: [probeCall("ask-failed", 1)], waiting: Ref.get(paused),
+        recording: (_step, tail) => tail.some((message) => message.role === "tool")
+          ? Ref.set(paused, true).pipe(Effect.andThen(Effect.fail(hard))) : Effect.void,
+      })
+      yield* expect(check, Result.isFailure(observed.result) && observed.result.failure === hard
+        && statusesOf(observed.events).join() === "failed" && observed.providerCalls.length === 1,
+        "an accepted question masked an execution failure with a waiting outcome")
+    }),
+  },
   {
     name: "recovers explicit context overflow once within a step before recording or running rejected calls",
     run: Effect.gen(function* () {

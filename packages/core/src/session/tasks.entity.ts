@@ -1,12 +1,14 @@
 import { Schema } from "effect"
 import { ConversationId } from "../domain/message.entity.js"
 import { TurnEndReason, TurnFailure } from "../domain/turn-vocabulary.entity.js"
+import { TaskQuestion } from "./task-question.entity.js"
 
 /*
- * Background tasks: a turn starts a task, the task runs as one turn of a
+ * Background tasks: a turn starts a task, the task runs in a
  * child session (a fork of the conversation, or a fresh spawn), and its
  * result is delivered to the parent's inbox, so the parent reacts after
- * whatever answer is in flight.
+ * whatever answer is in flight. Questions suspend a child until an answer
+ * reaches its durable inbox for a later turn.
  */
 
 export const TaskMode = Schema.Literals(["fork", "spawn"])
@@ -37,6 +39,8 @@ export const TaskView = Schema.Struct({
   failure: Schema.OptionFromNullOr(TurnFailure),
   /** Whether the result reached the parent's inbox. */
   delivered: Schema.Boolean,
+  /** The outstanding question, omitted when the task has no question waiting for an answer. */
+  question: Schema.optionalKey(TaskQuestion),
 })
 export type TaskView = typeof TaskView.Type
 
@@ -56,4 +60,12 @@ export class TaskConflict extends Schema.TaggedError<TaskConflict>()("TaskConfli
 export class TaskMissing extends Schema.TaggedError<TaskMissing>()("TaskMissing", {
   session: ConversationId,
   taskId: ConversationId,
+}) {}
+
+/** A task control which its current state or the supplied asking context cannot accept. */
+export class TaskControlRefused extends Schema.TaggedError<TaskControlRefused>()("TaskControlRefused", {
+  session: ConversationId,
+  taskId: ConversationId,
+  reason: Schema.Literals(["inactive", "waiting", "question", "context"]),
+  message: Schema.String,
 }) {}

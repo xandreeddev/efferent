@@ -889,6 +889,17 @@ for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
   }
   console.log(interceptorReport.trim())
 }
+// A helper yields durably, then executes its exact queued answer on a borrowed writer after restart.
+await writeFile(join(consumer, "helper-executor-consumer.mjs"), await readFile(join(root, "scripts/helper-executor-consumer.fixture.mjs"), "utf8"))
+for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+  const helperChild = Bun.spawn([binary, "helper-executor-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const helperReport = await new Response(helperChild.stdout).text()
+  const required = ["durableWitness", "liveHolderPreserved", "bookkeepingWithoutExecutor", "repeatedKillRepair", "uniqueRecoveryKeys", "abandonedTurnKeysVerified", "exactOutboxRepaired", "answerOnce", "borrowedTaskRoute", "lostEndAckRecovered", "terminalResultOnce", "sigkillRecoveryVerified"]
+  if (await helperChild.exited !== 0 || !helperReport.includes(`helper-executor {"runtime":"${runtime}"`) || required.some((name) => !helperReport.includes(`"${name}":true`))) {
+    console.error(`the packed ${runtime} helper executor lost durable questions, exact answers or restart recovery`); process.exit(1)
+  }
+  console.log(helperReport.trim())
+}
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

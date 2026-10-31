@@ -1,7 +1,7 @@
 import { Clock, Context, Deferred, Effect, Exit, Fiber, FiberSet, Option, Ref, Scope } from "effect"
 import type { ConformanceCheck, ConformanceFailure } from "../conformance.entity.js"
 import { check, eventually, expect, fail, freshId, kindsOf, settles } from "../conformance.functions.js"
-import { RunId } from "../domain/run.entity.js"
+import { RunId, RunOrdinal } from "../domain/run.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { TaskActivity, TurnShutdown } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
@@ -10,7 +10,9 @@ import type { TurnOutcome } from "../ports/turn.port.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import type { SessionLogError, SessionLogEvent, SessionMissing } from "./session-log.entity.js"
 import { InboxItemId } from "./sessions.entity.js"
-import type { AdmittedTurn, SessionAddress, SessionContended } from "./sessions.entity.js"
+import type { AdmittedTurn, SessionAddress, SessionContended, TurnError } from "./sessions.entity.js"
+import { TaskQuestionId } from "./task-question.entity.js"
+import type { TaskQuestion } from "./task-question.entity.js"
 import type { TaskView } from "./tasks.entity.js"
 
 type Runner = Context.Service.Shape<typeof TaskRunner>
@@ -200,6 +202,13 @@ const inTasks = <E extends { readonly _tag: string }>(look: (tasks: Context.Serv
 /** The most items the kit delivers to fill a parent's inbox. */
 const FILL = 256
 
+const questionOf = (writer: TurnWriter): TaskQuestion => ({
+  questionId: TaskQuestionId.make("helper-question"), text: "Which source should I inspect?",
+  askedBy: { run: { id: writer.admitted.runId, turn: writer.admitted.turn, ordinal: RunOrdinal.make(0) }, step: 0 },
+})
+
+type ChildBody = (writer: TurnWriter, task: TaskView, controls: Parameters<Executor["turn"]>[2], tasks: Context.Service.Shape<typeof Tasks>) => Effect.Effect<TurnOutcome, TurnError, Tasks>
+
 /**
  * Deliver items to `parent` until its inbox refuses one (`InboxFull`): true
  * once it is full, false when it took `FILL` items without refusing any.
@@ -244,7 +253,7 @@ const fillInbox = (sessions: Context.Service.Shape<typeof Sessions>, parent: Ses
  * clock for background work to end, so run the kit on the live clock.
  */
 export const tasksConformance = (make: (dependencies: TasksDependencies) => Effect.Effect<TasksFixture, unknown, Scope.Scope>): ReadonlyArray<ConformanceCheck> => {
-  const harness = (owner: string, childTurn: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, HarnessError> =
+  const harness = (owner: string, childTurn: ChildBody =
     (_writer, task) => Effect.succeed({ outcome: "completed", reply: Option.some(`found: ${task.instructions}`) })) => Effect.gen(function* () {
     const fibers = yield* FiberSet.make<void>()
     // Each piece of work runs with the services there were when the harness was built, not its caller's, as on a conforming runner.
@@ -254,18 +263,22 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
     const reactions = yield* Ref.make<ReadonlyArray<AdmittedTurn>>([])
     // The statuses each reaction the backend ran found in the Tasks it ran with (the kit's own drains call `react` directly).
     const reactionsFound = yield* Ref.make<ReadonlyArray<string>>([])
+    const exposed = yield* Ref.make(Option.none<Context.Service.Shape<typeof Tasks>>())
     const runner = TaskRunner.of({
       run: (work) => Ref.get(dropping).pipe(Effect.flatMap((drop) => drop ? Effect.void
         : FiberSet.run(fibers, work(Option.none()).pipe(Effect.updateContext((_: Context.Context<never>) => built))).pipe(Effect.asVoid))),
     })
     const react = (writer: TurnWriter) => Ref.update(reactions, (all) => [...all, writer.admitted])
     const executor = TaskExecutor.of({
-      turn: (writer, task) => Effect.all([
+      turn: (writer, task, controls) => Effect.all([
         writer.history([]),
         inTasks((tasks) => tasks.status({ id: task.parent, owner: writer.admitted.session.owner }, task.taskId).pipe(Effect.map((seen) => seen.status))),
       ], { concurrency: 1 }).pipe(
         Effect.flatMap(([history, found]) => Ref.update(turns, (all) => [...all, { admitted: writer.admitted, task, history: kindsOf(history), found }])),
-        Effect.andThen(childTurn(writer, task)),
+        Effect.andThen(Ref.get(exposed).pipe(Effect.flatMap(Option.match({
+          onNone: () => Effect.die(new Error("the task kit's executor ran before its fixture was exposed")),
+          onSome: (tasks) => childTurn(writer, task, controls, tasks),
+        })))),
       ),
       react: (writer) => inTasks((tasks) => tasks.list(writer.admitted.session).pipe(Effect.map((listed) => listed.map((task) => task.status).join()))).pipe(
         Effect.flatMap((found) => Ref.update(reactionsFound, (all) => [...all, found])),
@@ -273,6 +286,7 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
       ),
     })
     const fixture = yield* make({ runner, executor })
+    yield* Ref.set(exposed, Option.some(fixture.tasks))
     const parent = yield* fixture.sessions.create({ owner }).pipe(Effect.map((view): SessionAddress => ({ id: view.header.id, owner })))
     return {
       ...fixture,
@@ -292,6 +306,105 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
   const done = { reason: "completed", failure: Option.none() } as const
 
   return [
+    scoped("a durable question ends waiting without a final result, and repeated or conflicting questions are decided once", "question", (owner) => Effect.gen(function* () {
+      const seen = yield* Ref.make(Option.none<TaskQuestion>())
+      const refusals = yield* Ref.make<ReadonlyArray<string>>([])
+      const paused = yield* Ref.make(false)
+      const h = yield* harness(owner, (writer, _task, controls, tasks) => Effect.gen(function* () {
+        const question = questionOf(writer)
+        yield* tasks.ask(writer, question).pipe(Effect.orDie)
+        const repeated = yield* tasks.ask(writer, question).pipe(Effect.orDie)
+        const changed = yield* Effect.result(tasks.ask(writer, { ...question, text: "A different question" }))
+        const another = yield* Effect.result(tasks.ask(writer, { ...question, questionId: TaskQuestionId.make("another-question") }))
+        yield* Ref.set(seen, Option.some(repeated))
+        yield* Ref.set(refusals, [changed, another].map((result) => result._tag === "Failure" ? result.failure._tag : "accepted"))
+        yield* Ref.set(paused, controls === undefined ? false : yield* controls.waiting)
+        return { outcome: "waiting", reply: Option.none() }
+      }))
+      const started = yield* h.tasks.start(h.parent, { instructions: "inspect a source", mode: "spawn" })
+      yield* h.idle("question")
+      const task = yield* h.tasks.status(h.parent, started.taskId)
+      const child = { id: started.child, owner }
+      const events = yield* h.read(child)
+      yield* expect("question", task.status === "waiting" && task.question?.questionId === TaskQuestionId.make("helper-question")
+        && Option.isNone(task.reply) && Option.isNone(task.failure) && !task.delivered && Option.isSome(yield* Ref.get(seen)),
+      `the question was not discoverable as a nonterminal waiting task: ${JSON.stringify(task)}`)
+      yield* expect("question", (yield* Ref.get(refusals)).join() === "TaskConflict,TaskControlRefused" && (yield* Ref.get(paused)),
+        "question identity conflicts, the one-question limit or the waiting control were lost")
+      yield* expect("question", Option.isNone((yield* h.sessions.get(child)).open) && ofKind(events, "task.result").length === 0 && reasons(events) === "waiting",
+        "waiting retained the writer, recorded a terminal task result or ended differently")
+    })),
+
+    scoped("an early answer cannot clear its asking writer's wait or permit a second new question", "question-sticky", (owner) => Effect.gen(function* () {
+      const observed = yield* Ref.make({ paused: false, refused: false })
+      const h = yield* harness(owner, (writer, task, controls, tasks) => Effect.gen(function* () {
+        const question = questionOf(writer)
+        yield* tasks.ask(writer, question).pipe(Effect.orDie)
+        yield* tasks.answer({ id: task.parent, owner }, task.taskId, { questionId: question.questionId, text: "Use the primary source." }).pipe(Effect.orDie)
+        const another = yield* Effect.result(tasks.ask(writer, { ...question, questionId: TaskQuestionId.make("early-second") }))
+        yield* Ref.set(observed, { paused: controls === undefined ? false : yield* controls.waiting,
+          refused: another._tag === "Failure" && another.failure._tag === "TaskControlRefused" })
+        return { outcome: "waiting", reply: Option.none() }
+      }))
+      const task = yield* h.tasks.start(h.parent, { instructions: "ask then wait", mode: "spawn" })
+      yield* h.idle("question-sticky")
+      const seen = yield* Ref.get(observed)
+      yield* expect("question-sticky", seen.paused && seen.refused && (yield* h.sessions.get({ id: task.child, owner })).pending === 1,
+        "the early answer removed waiting from its old writer, allowed another question or was consumed by the asking turn")
+    })),
+
+    scoped("an answer queues one follow-up on a borrowed writer and stays idempotent after the task completes", "answer", (owner) => Effect.gen(function* () {
+      const seen = yield* Ref.make(Option.none<TurnWriter>())
+      const h = yield* harness(owner, (writer, _task, _controls, tasks) => writer.admitted.origin === "task"
+        ? tasks.ask(writer, questionOf(writer)).pipe(Effect.orDie, Effect.as({ outcome: "waiting" as const, reply: Option.none() }))
+        : Ref.set(seen, Option.some(writer)).pipe(Effect.as({ outcome: "completed" as const, reply: Option.some("resolved") })))
+      const task = yield* h.tasks.start(h.parent, { instructions: "ask before resolving", mode: "spawn" })
+      yield* h.idle("answer")
+      const input = { questionId: TaskQuestionId.make("helper-question"), text: "Use the primary source." }
+      const first = yield* h.tasks.answer(h.parent, task.taskId, input)
+      const duplicate = yield* h.tasks.answer(h.parent, task.taskId, input)
+      const conflict = yield* Effect.result(h.tasks.answer(h.parent, task.taskId, { ...input, text: "Use another source." }))
+      yield* expect("answer", first.accepted && first.enqueued && duplicate.accepted && !duplicate.enqueued
+        && conflict._tag === "Failure" && conflict.failure._tag === "TaskConflict", "answer retries were duplicated or accepted another payload")
+      const child = { id: task.child, owner }
+      const supplied = yield* Ref.make(Option.none<TurnWriter>())
+      const drained = yield* h.sessions.drain(child, (writer) => Ref.set(supplied, Option.some(writer)).pipe(
+        Effect.andThen(h.tasks.execute(writer)),
+        Effect.flatMap((result) => writer.end({ reason: result.outcome, failure: Option.none() })),
+      ), { take: "inputs", maxTurns: 1 })
+      const ran = yield* Ref.get(seen)
+      yield* expect("answer", drained.turns === 1 && Option.isSome(ran) && Option.contains(yield* Ref.get(supplied), ran.value)
+        && ran.value.admitted.origin === "user" && ran.value.admitted.input?.delivery === "next"
+        && ran.value.admitted.userMessage.text.includes(input.text), "the executor did not run exactly the borrowed queued answer writer")
+      yield* h.tasks.reconcile(h.parent)
+      const completed = yield* h.tasks.status(h.parent, task.taskId)
+      const after = yield* h.tasks.answer(h.parent, task.taskId, input)
+      const again = yield* h.sessions.drain(child, (writer) => h.tasks.execute(writer).pipe(Effect.asVoid), { take: "inputs" })
+      yield* expect("answer", completed.status === "completed" && Option.contains(completed.reply, "resolved")
+        && after.accepted && !after.enqueued && again.turns === 0 && ofKind(yield* h.read(child), "task.result").length === 1,
+        "completion or an old duplicate answer restarted the task or duplicated its final result")
+    })),
+
+    scoped("steering an active task stores one immutable durable steer in its child inbox", "steer", (owner) => Effect.gen(function* () {
+      const entered = yield* Deferred.make<void>()
+      const release = yield* Deferred.make<void>()
+      const h = yield* harness(owner, () => Deferred.succeed(entered, undefined).pipe(
+        Effect.andThen(Deferred.await(release)), Effect.as({ outcome: "completed" as const, reply: Option.none() }),
+      ))
+      const task = yield* h.tasks.start(h.parent, { instructions: "follow host input", mode: "spawn" })
+      yield* Deferred.await(entered).pipe(within("steer", "the task did not enter its running turn"))
+      const input = { id: InboxItemId.make("task-steer"), userMessage: new UserMessage({ text: "Inspect the primary source first." }), source: { kind: "conformance" } }
+      const first = yield* h.tasks.steer(h.parent, task.taskId, input)
+      const duplicate = yield* h.tasks.steer(h.parent, task.taskId, input)
+      const conflict = yield* Effect.result(h.tasks.steer(h.parent, task.taskId, { ...input, userMessage: new UserMessage({ text: "Different intent" }) }))
+      yield* Deferred.succeed(release, undefined)
+      yield* h.idle("steer")
+      const records = ofKind(yield* h.read({ id: task.child, owner }), "inbox.queued")
+      yield* expect("steer", first.enqueued && !duplicate.enqueued && first.pending === 1 && duplicate.pending === 1
+        && conflict._tag === "Failure" && conflict.failure._tag === "InputConflict" && records.length === 1,
+        "task steering was not queued once with immutable input identity")
+    })),
+
     scoped("a task runs as one turn of a child session, its result reaches the parent's inbox once, and the parent reacts once", "run", (owner) => Effect.gen(function* () {
       const h = yield* harness(owner)
       const view = yield* h.tasks.start(h.parent, { instructions: "look it up", mode: "spawn" })

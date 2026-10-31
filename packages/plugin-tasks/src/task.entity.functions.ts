@@ -3,6 +3,7 @@ import { clipTo, framed, harnessCodeOf, InboxItemId, isTurnError, readStored, Se
 import type { SessionLogEvent, SessionView, TaskStatus, TaskView, TurnClosed, TurnError, TurnFailure, TurnOutcome } from "@xandreed/core"
 import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskOutcome, TaskResult, TaskStarted } from "./task-records.entity.js"
 import type { TaskResult as Result, TaskStarted as Started } from "./task-records.entity.js"
+import { initialStarted, latestQuestionOf, outstandingOf } from "./task-controls.entity.functions.js"
 
 const decodeStarted = Schema.decodeUnknownOption(TaskStarted)
 const decodeResult = Schema.decodeUnknownOption(TaskResult)
@@ -16,7 +17,7 @@ const FINISHED: ReadonlyArray<TaskStatus> = TaskOutcome.literals
 export const isFinished = (status: TaskStatus): boolean => FINISHED.includes(status)
 
 /** Waiting to run, or running. */
-export const isActive = (status: TaskStatus): boolean => status === "pending" || status === "running"
+export const isActive = (status: TaskStatus): boolean => status === "pending" || status === "running" || status === "waiting"
 
 /** The tasks a parent started, in order; a record that does not decode is skipped. */
 export const startedOf = (events: ReadonlyArray<SessionLogEvent>): ReadonlyArray<Started> =>
@@ -31,6 +32,7 @@ export interface TaskEnd {
   readonly status: TaskStatus
   readonly reply: Option.Option<string>
   readonly failure: Option.Option<TurnFailure>
+  readonly question?: NonNullable<TaskView["question"]>
 }
 
 const began = (view: SessionView): boolean =>
@@ -47,7 +49,11 @@ export const endOf = (view: SessionView, records: ReadonlyArray<SessionLogEvent>
   if (first?.kind === TASK_CANCELLED) return { status: "cancelled", reply: Option.none(), failure: Option.none() }
   const result = first === undefined ? Option.none<Result>() : decodeResult(first.data)
   if (Option.isSome(result)) return { status: result.value.outcome, reply: result.value.reply, failure: result.value.failure }
+  const question = outstandingOf(records)
+  if (Option.isSome(question)) return { status: "waiting", reply: Option.none(), failure: Option.none(), question: question.value }
   if (Option.isSome(view.open)) return { status: "running", reply: Option.none(), failure: Option.none() }
+  if (Option.isSome(latestQuestionOf(records)) || view.pending > 0) return { status: "pending", reply: Option.none(), failure: Option.none() }
+  if (records.some((event) => event.kind === "turn.started") && !initialStarted(records, view.header.id)) return { status: "pending", reply: Option.none(), failure: Option.none() }
   return began(view)
     ? { status: "interrupted", reply: Option.none(), failure: Option.some({ code: "task.lost", message: "the task's turn stopped without a result" }) }
     : { status: "pending", reply: Option.none(), failure: Option.none() }
@@ -91,7 +97,7 @@ const failureText = (error: TurnError): string => Match.valueTags(error, {
  * the code a tag such as `TurnClosed` stands for), else `task.turn`, and
  * what went wrong in words (`failureText`).
  */
-export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option<TurnOutcome>, TurnError>): Result => Exit.match(exit, {
+export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option<Omit<TurnOutcome, "outcome"> & { readonly outcome: Result["outcome"] }>, TurnError>): Result => Exit.match(exit, {
   onSuccess: (outcome) => Option.match(outcome, {
     onNone: () => ({ taskId, outcome: "interrupted", reply: Option.none(), failure: Option.some({ code: "task.deadline", message: "the task ran out of time" }) }),
     onSome: (done) => ({
@@ -115,6 +121,7 @@ export const resultOf = (taskId: Result["taskId"], exit: Exit.Exit<Option.Option
 const statusText: Readonly<Record<TaskStatus, string>> = {
   pending: "has not started yet",
   running: "is still running",
+  waiting: "needs your answer",
   completed: "completed",
   partial: "stopped before it finished",
   failed: "failed",

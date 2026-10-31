@@ -28,6 +28,7 @@ import {
   TurnPrompt,
   TurnTasks,
   TurnToolbox,
+  zeroUsage,
 } from "@xandreed/core"
 import type {
   AcceptedModelInput,
@@ -434,6 +435,7 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     }),
     completion: (info) => policy.completion === undefined ? Effect.succeed(incomplete) : inRun(policy.completion(info), Option.some(info.stepIndex)).pipe(Effect.map(normalVerdict)),
     steering: options.steering ?? Effect.succeed(Option.none()),
+    ...(options.waiting === undefined ? {} : { waiting: inRun(options.waiting) }),
     correctives: Option.fromNullishOr(policy.correctives),
     events,
     tasks,
@@ -474,9 +476,13 @@ export const stepRequestOf = <P = never>(policy: TurnPolicy<P>, options: TurnRun
   prepareRun(policy, options).pipe(Effect.map((prepared) => prepared.request))
 
 /**
- * One run of the turn: prepare, StepLoop, then cached maintenance on success.
+ * One run of the turn: yield first when waiting; otherwise prepare, StepLoop,
+ * then cached maintenance on successful completed/partial work. Waiting skips
+ * normal end maintenance, so yielding cannot trigger another helper model call.
  *
  * @public
  */
 export const runTurnLoop = <P = never>(policy: TurnPolicy<P>, options: TurnRunOptions = {}): Effect.Effect<RunResult, TurnError, P | TurnRunServices | StepLoop> =>
-  prepareRun(policy, options).pipe(Effect.flatMap(({ request, afterRun }) => StepLoop.pipe(Effect.flatMap((loop) => loop.run(request).pipe(Effect.tap(() => afterRun))))))
+  (options.waiting ?? Effect.succeed(false)).pipe(Effect.flatMap((waiting) => waiting
+    ? Effect.succeed<RunResult>({ outcome: "waiting", reason: "waiting", text: "", steps: 0, usage: zeroUsage })
+    : prepareRun(policy, options).pipe(Effect.flatMap(({ request, afterRun }) => StepLoop.pipe(Effect.flatMap((loop) => loop.run(request).pipe(Effect.tap((result) => result.outcome === "waiting" ? Effect.void : afterRun))))))))

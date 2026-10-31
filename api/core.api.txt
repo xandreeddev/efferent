@@ -40,6 +40,7 @@ class Sessions
 class StepLoop
 class TaskActivity
 class TaskConflict
+class TaskControlRefused
 class TaskExecutor
 class TaskMissing
 class TaskRefused
@@ -265,6 +266,8 @@ const TAGGED_CODES
 const TURN_EVENT_KINDS
 const TURN_EVENT_NAMES
 const TaskMode
+const TaskQuestion
+const TaskQuestionId
 const TaskRef
 const TaskStatus
 const TaskView
@@ -679,6 +682,8 @@ type Subject
 type SubjectId
 type Subscription
 type TaskMode
+type TaskQuestion
+type TaskQuestionId
 type TaskRef
 type TaskStatus
 type TaskView

@@ -213,7 +213,7 @@ Published once when the turn's reply is recorded (`TurnMemory.persistReply`, fro
 | --- | --- |
 | `runId` | `string` |
 | `turn` | `integer` |
-| `outcome` | `"completed" \| "partial" \| "failed"` |
+| `outcome` | `"completed" \| "partial" \| "failed" \| "waiting"` |
 | `reply` | `string \| null` |
 | `usage` | `{ inputTokens, outputTokens, totalTokens, cacheReadTokens, cacheWriteTokens, reasoningTokens }` |
 
@@ -307,7 +307,7 @@ A memory kind's `data` is `{ entry, runId, step, at, body }`: the memory entry's
 | `memory.digest` | `entry`: `string`, `version`: `string`, `mode`: `"select" \| "summarize"`, `keep`: `Array<string>`, `text`: `string`, `digester`: `string`, `trigger`: `"write" \| "compaction"` |
 | `memory.skills` | `skills`: `Array<string>`, `tools`: `Array<string>`, `source`: `"always" \| "matcher" \| "load_skill" \| "host"`, `decision`: `string \| null` |
 | `memory.compaction` | `strategy`: `string`, `version`: `string`, `action`: `{ _tag, entries, texts } \| { _tag, entry, preview } \| { _tag, throughTurn, ledger } \| { _tag, keepFromTurn, summary } \| { _tag, entries, reason }` |
-| `turn.reply` | `outcome`: `"completed" \| "partial" \| "failed"`, `reply`: `string \| null` |
+| `turn.reply` | `outcome`: `"completed" \| "partial" \| "failed" \| "waiting"`, `reply`: `string \| null` |
 | `memory.tool-presentation` | `entry`: `string`, `view`: `string`, `viewVersion`: `string`, `subjects`: `Array<{ kind, id, label, data }>`, `artifacts`: `Array<{ id, kind, mediaType, url, alt }>`, `pinned`: `boolean`, `media`: `Array<{ path, fingerprint, mediaType, bytes }>`, `mediaNotes`: `Array<string>` |
 
 Any other kind is a host's or a plugin's own record (`defineHostEvent`, `Sessions.transact`, the tasks plugin's `task.*`).

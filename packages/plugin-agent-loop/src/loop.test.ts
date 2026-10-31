@@ -1789,3 +1789,31 @@ test("a whole response with duplicate tool-call ids runs none of its calls and a
   expect(recorded[0]).toEqual({ role: "user", content: "[Host note: your previous reply reused one id for multiple tool calls, so none ran. Reply again with a separate call for each action. The tools you can call are: echo.]" })
   expect(result.finalText).toBe("done")
 })
+
+describe("runLoop waiting", () => {
+  test.each(["settled", "streamed", "planned"] as const)("waiting after a settled %s step precedes completion, caps and more input", async (mode) => {
+    const events: LoopEvent[] = []
+    const pending = await Effect.runPromise(Ref.make(false))
+    const scripted = () => [{ type: "tool-call", id: "wait-call", name: "echo", params: { value: "ask" } }, finish("tool-calls")]
+    const result = await Effect.runPromise(runLoop({
+      system: "sys", messages: [user("go")], toolkit: kit, streaming: mode === "streamed", maxSteps: 1,
+      ...(mode === "planned" ? { initialStep: [{ name: "echo" as const, params: { value: "ask" } }] } : {}),
+      waiting: Ref.get(pending),
+      onStepSettled: (_step, status) => status === "completed" ? Ref.set(pending, true) : Effect.void,
+      isComplete: () => Effect.die("waiting must precede completion"),
+      requireCompletion: true,
+      durableInput: { pending: () => Effect.die("waiting must precede the next steering probe"), take: () => Effect.succeed([]) },
+      compact: () => Effect.die("waiting must precede compaction"),
+      onEvent: (event) => Effect.sync(() => void events.push(event)),
+    }).pipe(Effect.provide(handlers), Effect.provideServiceEffect(LanguageModel.LanguageModel,
+      mode === "streamed" ? streamingModel(scripted) : mode === "planned"
+        ? LanguageModel.make({ generateText: () => Effect.die("planned step must not call the model"), streamText: () => Stream.die("not scripted") })
+        : scriptedModel(scripted)),
+    ))
+    expect([result.outcome, result.reason, result.finalText]).toEqual(["waiting", "waiting", ""])
+    expect(result.newTail.map((message) => message.role)).toEqual(["assistant", "tool"])
+    expect(events.filter((event) => event.type === "turn_end")).toEqual([{ type: "turn_end", turnIndex: 0, status: "completed" }])
+    expect(events.at(-1)).toEqual({ type: "agent_end", outcome: "waiting", reason: "waiting", finalText: "" })
+  })
+
+})

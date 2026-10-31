@@ -124,8 +124,8 @@ const openTurnOf = (held: HeldTurn): OpenTurn => ({
 /** Inbox items waiting for a turn. */
 export const pendingOf = (state: State): ReadonlyArray<InboxSlot> => state.inbox.filter((slot) => Option.isNone(slot.claimedBy))
 
-/** Legacy notices acknowledge partial replies too; queued input needs completion or an explicit cancellation. */
-const finished = (reason: TurnEndReason): boolean => reason === "completed" || reason === "partial" || reason === "cancelled"
+/** Waiting consumes the asking input; legacy notices acknowledge partial replies too. */
+const finished = (reason: TurnEndReason): boolean => reason === "completed" || reason === "partial" || reason === "cancelled" || reason === "waiting"
 
 /**
  * Close the open turn. Returns the state after it and the legacy notices it
@@ -138,7 +138,7 @@ export const closedState = (state: State, reason: TurnEndReason, maxAttempts: nu
   const turn = Option.map(state.open, (open) => open.turn)
   const taken = (slot: InboxSlot): boolean => Option.isSome(slot.claimedBy) && Option.contains(turn, slot.claimedBy.value)
   const counted = tried || reason !== "interrupted"
-  const done = (slot: InboxSlot): boolean => slot.delivery === undefined ? finished(reason) : reason === "completed" || reason === "cancelled"
+  const done = (slot: InboxSlot): boolean => slot.delivery === undefined ? finished(reason) : reason === "completed" || reason === "cancelled" || reason === "waiting"
   const exhausted = (slot: InboxSlot): boolean => slot.delivery === undefined && counted && slot.attempts + 1 >= maxAttempts
   return {
     state: {

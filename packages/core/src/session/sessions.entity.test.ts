@@ -24,6 +24,7 @@ describe("turnEndingOf", () => {
     expect(turnEndingOf(Exit.succeed({ outcome: "completed" }))).toEqual({ reason: "completed", failure: Option.none() })
     expect(turnEndingOf(Exit.succeed({ outcome: "partial" }))).toEqual({ reason: "partial", failure: Option.none() })
     expect(turnEndingOf(Exit.succeed({ outcome: "failed" }))).toEqual({ reason: "failed", failure: Option.none() })
+    expect(turnEndingOf(Exit.succeed({ outcome: "waiting" }))).toEqual({ reason: "waiting", failure: Option.none() })
   })
 
   test("an error with a code keeps its code and message", () => {
@@ -132,6 +133,7 @@ describe("resumeRefusal", () => {
     expect(resumeRefusal(1, [user(1, "completed")])).toEqual(Option.some("finished"))
     expect(resumeRefusal(1, [user(1, "partial")])).toEqual(Option.some("finished"))
     expect(resumeRefusal(1, [user(1, "failed")])).toEqual(Option.some("finished"))
+    expect(resumeRefusal(1, [user(1, "waiting")])).toEqual(Option.some("finished"))
     expect(resumeRefusal(1, [user(1)])).toEqual(Option.some("finished"))
   })
 })

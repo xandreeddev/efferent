@@ -109,8 +109,14 @@ export const InboxDrainLive = (options: InboxDrainOptions): Layer.Layer<DrainAct
     ))
     const ending = turnEndingOf(exit)
     yield* writer.end(ending)
+    // The writer's successful end ACK is the authority. A handoff may fail or
+    // be skipped on process death; it cannot make consumed input run again.
+    if (runner.afterEnd !== undefined) yield* runner.afterEnd(writer, ending).pipe(
+      Effect.interruptible,
+      Effect.catchCause((cause) => Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.logWarning("an inbox-drain post-end handoff failed", cause)),
+    )
     yield* Option.match(ending.failure, { onNone: () => Effect.void, onSome: (error) => Effect.logWarning("an inbox-drain turn did not complete", error) })
-    return ending.reason === "completed" || ending.reason === "cancelled" ? { _tag: "Done" } : { _tag: "Retry", target }
+    return ending.reason === "completed" || ending.reason === "cancelled" || ending.reason === "waiting" ? { _tag: "Done" } : { _tag: "Retry", target }
   }, (effect, job) => Effect.annotateLogs(effect, sessionAttributes(job.address.id)))
 
   const run = (job: DrainJob): Effect.Effect<DrainAttempt> => Effect.scoped(attempt(job)).pipe(

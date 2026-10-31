@@ -240,7 +240,9 @@ namespace. `BeginTurn.Queued` claims one input as a user turn; its
 `AdmittedTurn.input` retains the full input while `turn.started.input`
 and `TurnToAdmit.input` carry only its id. `claimed` stays notice-only.
 Untaken queued input survives failed, partial and interrupted turns without an
-attempt ceiling; completion or explicit cancellation acknowledges it.
+attempt ceiling; completion, waiting for an answer or explicit cancellation
+acknowledges the input claimed by that turn. An early answer remains queued
+for its own later turn.
 An explicit user resume reclaims its pending input in the opening commit.
 `drain.take` selects all work, inputs or notices; the tasks plugin's
 reaction executor selects notices. Keep these distinctions in
@@ -334,7 +336,10 @@ kit and corruption, literal JSON, copy, cache and ACK regressions are in
 
 `Sessions.waiting` is a bounded broadcast with an initial post-subscription
 signal. `InboxRunner` executes exactly its borrowed writer and preserves
-outcomes/errors without beginning or ending it. `WaitingInput` reads durable
+outcomes/errors, waiting included, without beginning or ending it. Its optional
+`afterEnd` runs interruptibly after an end ACK and is advisory: durable outboxes
+and reconciliation repair work skipped by a lost ACK or process death.
+`WaitingInput` reads durable
 queued user input only for owner-observed sessions, with typed storage
 failures and an infallible cache. `DrainActivity` counts active attempts.
 `ProcessActivity.busy` includes queued input; `inFlight` distinguishes work

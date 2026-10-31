@@ -1,18 +1,21 @@
 import { Context } from "effect"
 import type { Effect, Option } from "effect"
+import type { AttachmentRejected } from "../domain/media.entity.js"
 import type { ConversationId } from "../domain/message.entity.js"
 import type { RunId } from "../domain/run.entity.js"
 import type { JsonObject, SessionExists, SessionLogError, SessionMissing } from "../session/session-log.entity.js"
-import type { SessionAddress, SessionContended, TurnError } from "../session/sessions.entity.js"
-import type { TaskConflict, TaskMissing, TaskMode, TaskRefused, TaskView } from "../session/tasks.entity.js"
+import type { InboxFull, InputConflict, QueuedInput, SessionAddress, SessionContended, TurnError } from "../session/sessions.entity.js"
+import type { TaskQuestion, TaskQuestionId } from "../session/task-question.entity.js"
+import type { TaskConflict, TaskControlRefused, TaskMissing, TaskMode, TaskRefused, TaskView } from "../session/tasks.entity.js"
 import type { TurnWriter } from "./sessions.port.js"
 import type { TurnOutcome } from "./turn.port.js"
 
 /**
- * Background tasks of a session. A task is one turn of a child session: a
+ * Background tasks of a session. A task runs in a child session: a
  * fork (its history is the conversation so far) or a spawn (it starts
- * empty); the child's id is the task's, and its turn's origin is `task`
- * (`BeginTurn.Task`). A task's session starts no task (`TaskRefused`
+ * empty); the child's id is the task's, and its initial turn's origin is
+ * `task` (`BeginTurn.Task`). Questions end a turn waiting, with answers
+ * admitted as later queued user turns in the same child. A task's session starts no task (`TaskRefused`
  * `depth`); any other session may, a host's own fork included. Starting records `task.started` in
  * the parent and hands the work to the host's TaskRunner; when the child's
  * turn ends, its result is delivered to the parent's inbox (once) and the
@@ -46,10 +49,33 @@ export class Tasks extends Context.Service<Tasks, {
   }) => Effect.Effect<TaskView, TaskRefused | TaskConflict | SessionExists | SessionMissing | SessionContended | SessionLogError>
   readonly status: (parent: SessionAddress, taskId: ConversationId) => Effect.Effect<TaskView, TaskMissing | SessionMissing | SessionLogError>
   readonly list: (parent: SessionAddress) => Effect.Effect<ReadonlyArray<TaskView>, SessionMissing | SessionLogError>
+  /** Durably steer an active child; a waiting child needs an answer to its question instead. */
+  readonly steer: (parent: SessionAddress, taskId: ConversationId, input: Omit<QueuedInput, "delivery">) =>
+    Effect.Effect<{ readonly enqueued: boolean; readonly pending: number }, TaskMissing | SessionMissing | SessionContended | SessionLogError | TaskControlRefused | TaskConflict | InboxFull | InputConflict | AttachmentRejected>
+  /**
+   * Accept a question from this task's current writer. Exact retries are
+   * idempotent; another payload under its id conflicts. At most one new
+   * question is accepted per writer turn, even after an early answer. Its
+   * asking turn ends waiting without a final task result.
+   */
+  readonly ask: (writer: TurnWriter, input: TaskQuestion) => Effect.Effect<TaskQuestion, TurnError | TaskControlRefused | TaskConflict>
+  /**
+   * Store the answer and enqueue its exact next-turn input. A full inbox
+   * leaves an accepted durable answer for reconcile, with enqueued false.
+   * Exact duplicate answers never execute the child again.
+   */
+  readonly answer: (parent: SessionAddress, taskId: ConversationId, input: { readonly questionId: TaskQuestionId; readonly text: string }) =>
+    Effect.Effect<{ readonly accepted: true; readonly enqueued: boolean }, TaskMissing | SessionMissing | SessionContended | SessionLogError | TaskControlRefused | TaskConflict>
+  /**
+   * Execute an already-begun task follow-up on exactly this borrowed writer.
+   * The caller owns its scope and end; no turn is begun or ended here.
+   * Failed, partial or interrupted follow-ups retain their queued input.
+   */
+  readonly execute: (writer: TurnWriter) => Effect.Effect<TurnOutcome, TurnError>
   /** Stop a task: its child's turn is cancelled and nothing is delivered. */
   readonly cancel: (parent: SessionAddress, taskId: ConversationId) => Effect.Effect<boolean, TaskMissing | SessionMissing | SessionContended | SessionLogError>
-  /** Deliver finished results a runner lost, and start tasks that never ran. */
-  readonly reconcile: (parent: SessionAddress) =>
+  /** Repair durable delivery and start unrun tasks; react explicitly schedules a notices-only parent drain. */
+  readonly reconcile: (parent: SessionAddress, options?: { readonly takeOver?: boolean; readonly react?: boolean }) =>
     Effect.Effect<{ readonly delivered: number; readonly started: number }, SessionMissing | SessionContended | SessionLogError>
 }>()("efferent/Tasks") {}
 
@@ -68,7 +94,7 @@ export class TaskRunner extends Context.Service<TaskRunner, {
 }>()("efferent/TaskRunner") {}
 
 /**
- * How the host runs the turns tasks need: the child's one turn, and the
+ * How the host runs the turns tasks need: the child's initial and follow-up turns, and the
  * parent's reaction to results. Both run with `Tasks` in context, the
  * `Tasks` whose work they are (the tasks plugin provides its own around the
  * turns it hands over; a host that calls `react` itself, to drain a parent,
@@ -78,7 +104,10 @@ export class TaskRunner extends Context.Service<TaskRunner, {
  */
 export class TaskExecutor extends Context.Service<TaskExecutor, {
   /** Run the child's turn on its writer (the tasks plugin ends it). */
-  readonly turn: (writer: TurnWriter, task: TaskView) => Effect.Effect<TurnOutcome, TurnError, Tasks>
+  readonly turn: (writer: TurnWriter, task: TaskView, controls?: {
+    /** Sticky to an accepted question of this writer, including an early-answered question and trusted resume ancestry. */
+    readonly waiting: Effect.Effect<boolean, TurnError>
+  }) => Effect.Effect<TurnOutcome, TurnError, Tasks>
   /** Run the parent's inbox turn on its writer. */
   readonly react: (writer: TurnWriter) => Effect.Effect<void, TurnError, Tasks>
 }>()("efferent/TaskExecutor") {}

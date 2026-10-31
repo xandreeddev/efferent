@@ -145,6 +145,7 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
       Effect.tap((retry) => retry ? Ref.update(ledger, replanned) : Effect.void),
     ) }),
     isComplete,
+    ...(request.waiting === undefined ? {} : { waiting: request.waiting }),
     onStepSettled: settle,
     pendingInput: () => request.steering,
     durableInput: { pending: () => request.pendingSteers, take: request.steer },
@@ -167,9 +168,11 @@ export const runSteps = Effect.fnUntraced(function* (request: StepRequest): Effe
   ))
   // The loop's sum of the usage each `assistant.message` carried.
   const totals = { text: result.finalText, steps: (yield* Ref.get(ledger)).steps, usage: result.usage }
-  return result.reason === "completed"
-    ? { outcome: "completed", reason: "completed", ...totals }
-    : { outcome: "partial", reason: result.reason, ...totals }
+  return Match.value(result.reason).pipe(
+    Match.when("completed", () => ({ outcome: "completed" as const, reason: "completed" as const, ...totals })),
+    Match.when("waiting", () => ({ outcome: "waiting" as const, reason: "waiting" as const, ...totals })),
+    Match.orElse((reason) => ({ outcome: "partial" as const, reason, ...totals })),
+  )
 })
 
 export const StepLoopLive = Layer.succeed(StepLoop, StepLoop.of({ ...STEP_LOOP, run: runSteps }))

@@ -131,10 +131,10 @@ export const AgentResult = Schema.Struct({
   finalText: Schema.String,
   messages: Schema.Array(AgentMessage),
   newTail: Schema.Array(AgentMessage),
-  /** "ok" — the model finished on its own; "partial" — the step cap or the
-   *  degenerate-loop breaker stopped it, so `finalText` is NOT a deliverable. */
-  outcome: Schema.Literals(["ok", "partial"]),
-  reason: Schema.Literals(["completed", "step-cap", "degenerate-loop"]),
+  /** "ok": the model finished; "partial": a hard limit stopped it;
+   * "waiting": it yielded for a later turn, with no deliverable final text. */
+  outcome: Schema.Literals(["ok", "partial", "waiting"]),
+  reason: Schema.Literals(["completed", "step-cap", "degenerate-loop", "waiting"]),
   /** The run's provider calls summed (its assistant messages' usage). */
   usage: TokenUsage,
 })

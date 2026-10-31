@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { Effect, Option, Schema } from "effect"
 import { entriesOfEvents, JOURNAL_KINDS, journalSchemaOf, MEMORY_KINDS, readStored, readStoredKeys, replayModelRequest, RESERVED_KINDS, RunId, SessionHeader, SessionLogEvent, STORED_FORMAT, StoredData } from "@xandreed/core"
 import type { StoredKind } from "@xandreed/core"
-import { TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
+import { TASK_ANSWERED, TASK_QUESTIONED, TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskAnswered, TaskQuestioned, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 
 /*
  * What a release stored must stay readable. Each `fixtures/journal-<version>.json`
@@ -31,6 +31,7 @@ const Fixture = Schema.Struct({
 /** The tasks plugin's own records: not the framework's, decoded with the plugin's schemas. */
 const taskSchemas: ReadonlyMap<string, Schema.Codec<unknown, unknown>> = new Map<string, Schema.Codec<unknown, unknown>>([
   [TASK_STARTED, TaskStarted], [TASK_RESULT, TaskResult], [TASK_CANCELLED, TaskCancelled],
+  [TASK_QUESTIONED, TaskQuestioned], [TASK_ANSWERED, TaskAnswered],
 ])
 
 const directory = join(import.meta.dir, "../fixtures")
