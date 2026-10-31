@@ -6,7 +6,7 @@ import { CurrentModelCallPolicy, CurrentPromptCacheKey, mediaFromBase64, mediaLa
 import { foldStreamParts, responseToAgentMessages, toPromptMessages } from "@xandreed/core/internal"
 import type { AgentMessage, ModelCallPolicy } from "@xandreed/core"
 import type { Credential } from "../ports/auth-store.port.js"
-import { buildProvider, chatCompletionsUrl, OPENCODE_RESPONSES_API_URL, prependClaudeCode, usesOpenCodeResponses, withAnthropicCacheBreakpoints } from "./providers.js"
+import { buildProvider, chatCompletionsUrl, OPENCODE_RESPONSES_API_URL, prependClaudeCode, usesOpenCodeResponses } from "./providers.js"
 import type { BuiltProvider } from "./providers.js"
 import { CurrentModelEndpoints } from "../ports/model-endpoints.port.js"
 import { ModelsTransport } from "../ports/models-transport.port.js"
@@ -287,25 +287,6 @@ describe("reasoning effort on the wire", () => {
 })
 
 describe("call options", () => {
-  it("cache breakpoints mark the last system message and the last two others, keep the other options and leave an explicit cacheControl alone", () => {
-    const shaped = withAnthropicCacheBreakpoints({
-      prompt: [
-        { role: "system", content: "rules" },
-        { role: "user", content: "one" },
-        { role: "assistant", content: "two" },
-        { role: "user", content: "three", options: { anthropic: { cacheControl: { type: "ephemeral", ttl: "1h" } } } },
-      ],
-      toolChoice: "none" as const,
-    })
-    expect(shaped.toolChoice).toBe("none")
-    expect(shaped.prompt.content.map((message) => message.options["anthropic"] ?? null)).toEqual([
-      { cacheControl: { type: "ephemeral" } },
-      null,
-      { cacheControl: { type: "ephemeral" } },
-      { cacheControl: { type: "ephemeral", ttl: "1h" } },
-    ])
-  })
-
   it("the Claude Code block goes first and the other options are kept", () => {
     const shaped = prependClaudeCode({ prompt: [{ role: "system", content: "rules" }, { role: "user", content: "hi" }], toolChoice: "auto" as const })
     expect(shaped.toolChoice).toBe("auto")
@@ -437,12 +418,12 @@ describe("thinking on the wire", () => {
     const on = await exchange("anthropic:claude-opus-5-5", { mismatch: "drop_block", reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
     expect(on.sent[0]?.body["thinking"]).toEqual({ type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } })
     expect(on.sent[0]?.beta.split(",")).toContain(THINKING_BINDING_BETA)
-    expect(Option.map(on.descriptor, (value) => value.settings)).toEqual(Option.some({ model: "claude-opus-5-5", max_tokens: 128_000, output_config: { effort: "medium" }, thinking: { type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } }, systemPrelude: null, thinkingPrefixMismatch: "drop_block" }))
+    expect(Option.map(on.descriptor, (value) => value.settings)).toEqual(Option.some({ model: "claude-opus-5-5", max_tokens: 128_000, output_config: { effort: "medium" }, thinking: { type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } }, systemPrelude: null, thinkingPrefixMismatch: "drop_block", promptCache: { _tag: "Auto", ttl: "5m" }, cacheControl: true }))
     const refusing = await exchange("anthropic:claude-sonnet-5-5", { mismatch: "error", reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
     expect(blockBinding(refusing.sent[0]!)).toEqual({ prefix_mismatch_behavior: "error" })
     const older = await exchange("anthropic:claude-opus-4-8", { mismatch: "drop_block", reply: settled([{ type: "text", text: "ok" }]), call: (svc) => svc.generateText({ prompt: "hi" }) })
     expect([older.sent[0]?.body["thinking"], older.sent[0]?.beta.includes(THINKING_BINDING_BETA)]).toEqual([{ type: "disabled" }, false])
-    expect(Option.map(older.descriptor, (value) => value.settings)).toEqual(Option.some({ model: "claude-opus-4-8", max_tokens: 128_000, output_config: { effort: "high" }, thinking: { type: "disabled" }, systemPrelude: null }))
+    expect(Option.map(older.descriptor, (value) => value.settings)).toEqual(Option.some({ model: "claude-opus-4-8", max_tokens: 128_000, output_config: { effort: "high" }, thinking: { type: "disabled" }, systemPrelude: null, promptCache: { _tag: "Auto", ttl: "5m" }, cacheControl: true }))
   })
 
   it("the subscription route adds its betas to the client's own, the binding's included, instead of replacing them", async () => {

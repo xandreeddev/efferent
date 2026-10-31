@@ -221,12 +221,14 @@ export type LogEntry = typeof LogEntry.Type
  */
 export const BuiltContext = Schema.Struct({
   messages: Schema.Array(AgentMessage),
+  /** The rendered prefix before the selected run's step-context tail; all messages when there is no tail. */
+  stableMessages: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   fingerprint: Schema.String,
   estimatedTokens: Schema.Int,
   compactions: Schema.Array(EntryId),
   /** The last entry folded: what a rebuild must stop at. */
   through: Schema.OptionFromNullOr(EntryId),
-})
+}).check(Schema.makeFilter((context) => context.stableMessages <= context.messages.length || "stableMessages must not exceed the rendered message count"))
 export type BuiltContext = typeof BuiltContext.Type
 
 /**

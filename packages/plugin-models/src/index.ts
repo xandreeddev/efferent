@@ -33,4 +33,5 @@ export type { ModelsFetch, WebSocketProxy } from "./ports/models-transport.port.
 export { ModelsTransportLive } from "./transport/models-transport.adapter.js"
 export { HttpProxyOptions, ProxyInvalid, ProxyUnsupported, ProxyUrlOption } from "./transport/http-proxy.entity.js"
 export { ModelThinking, ModelSettings, ModelSettingsMap, ModelSettingsError } from "./llm/model-settings.entity.js"
+export { PromptCacheSettings } from "./llm/prompt-cache.entity.js"
 export { CurrentModelSettings } from "./ports/model-settings.port.js"

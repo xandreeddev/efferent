@@ -1,6 +1,6 @@
 {
-  "format": 7,
-  "fingerprint": "42822c8da0a0713f0ed626bd4e81350e3c5ae80096d11375bad3605095e6b00b",
+  "format": 8,
+  "fingerprint": "282bcaabb858b559ed177bd182b35f16b355d3518ff1b00c54557272bf6c46d1",
   "shapes": {
     "SessionHeader": "79de8009cc2069d1fa6a1bf3a2d5c787b81b41f13163cf56cc90fc5164a5d42a",
     "SessionLogEvent": "8e1dc3ebb1b0e954accf1631e128bce5c4a874845bbbedfae8a58acb970332ad",
@@ -20,7 +20,7 @@
     "journal memory.system": "82e793d5ae8e7a0a6cb19cc8b61d719be5d868f9eb33e383d77ae23acdd838e0",
     "journal memory.tool-presentation": "dda56026f79b2528cfa86981b5d76751c871eed04d2b31ab48f70a5ca51dbf4a",
     "journal memory.tool-result": "6ae7e5a35582af6a4b7bd42f489bc95712e01ab40778d4bef9a54972722f4264",
-    "journal request.prepared": "5108ae6efcd6cbdc074e353068ff8a1f3d65f1ac39db84fbb59ba43a57938fba",
+    "journal request.prepared": "0ae9c8bfcc318235eea12667846fd79cfe527dff5229f646acdc60d0cd59e3b9",
     "journal step.ended": "154e06b2fea0339b1ece1259b3c387cf268b20954eca36aaf3c275734b0df1cd",
     "journal step.started": "16e48fd396fce5174bcc84a1a9f8b8e25729331a79bbc5a08c385e51b4e4515b",
     "journal step.usage": "1e13adffdf0e739803565455c25ba80f8e381dc0b5cab2c72f55d489ffd1b287",
@@ -63,6 +63,10 @@
     {
       "format": 7,
       "fingerprint": "42822c8da0a0713f0ed626bd4e81350e3c5ae80096d11375bad3605095e6b00b"
+    },
+    {
+      "format": 8,
+      "fingerprint": "282bcaabb858b559ed177bd182b35f16b355d3518ff1b00c54557272bf6c46d1"
     }
   ]
 }

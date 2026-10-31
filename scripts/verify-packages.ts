@@ -719,17 +719,18 @@ if ((await readdir(freshHome)).length > 0 || (await readdir(freshCwd)).length > 
 await rm(freshHome, { recursive: true, force: true })
 await rm(freshCwd, { recursive: true, force: true })
 // Real Agent turns through a local Messages server, settled and SSE, preserve
-// opaque thinking signatures, native controls and durable tool-call identity.
+// opaque thinking signatures, native controls, durable tool-call identity and
+// cache policies over a frozen stable-prefix/volatile-tail boundary.
 await writeFile(join(consumer, "anthropic-messages-consumer.mjs"), await readFile(join(root, "scripts/anthropic-messages-consumer.fixture.mjs"), "utf8"))
-const messagesNode = Bun.spawn(["node", "anthropic-messages-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const messagesNode = Bun.spawn(["node", "anthropic-messages-consumer.mjs", "--prompt-cache"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const messagesNodeReport = await new Response(messagesNode.stdout).text()
-if (await messagesNode.exited !== 0 || !messagesNodeReport.includes('anthropic-messages {"runtime":"Node"')) {
+if (await messagesNode.exited !== 0 || !messagesNodeReport.includes('anthropic-messages {"runtime":"Node"') || (messagesNodeReport.match(/"cacheVerified":true/g) ?? []).length !== 7) {
   console.error("the packed Node Messages fixture did not complete its real HTTP turns"); process.exit(1)
 }
 console.log(messagesNodeReport.trim())
-const messagesBun = Bun.spawn(["bun", "anthropic-messages-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const messagesBun = Bun.spawn(["bun", "anthropic-messages-consumer.mjs", "--prompt-cache"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const messagesBunReport = await new Response(messagesBun.stdout).text()
-if (await messagesBun.exited !== 0 || !messagesBunReport.includes('anthropic-messages {"runtime":"Bun"')) {
+if (await messagesBun.exited !== 0 || !messagesBunReport.includes('anthropic-messages {"runtime":"Bun"') || (messagesBunReport.match(/"cacheVerified":true/g) ?? []).length !== 7) {
   console.error("the packed Bun Messages fixture did not complete its real HTTP turns"); process.exit(1)
 }
 console.log(messagesBunReport.trim())

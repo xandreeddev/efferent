@@ -57,7 +57,8 @@ describe("a routed Messages model's durable descriptor", () => {
     expect(result._tag === "Failure" ? String(result.failure) : "Success").toBe("Success")
     expect(result._tag === "Success" ? result.success : Option.none()).toEqual(Option.some({ provider: "gateway", model: "claude-haiku-5-5", settings: {
       fallback: null, policy: null, model: "claude-haiku-5-5", max_tokens: 512, output_config: { effort: "high" }, thinking: { type: "disabled" },
-      endpoint: { api: "anthropic-messages", url: "https://gateway.example/proxy", auth: "bearer", apiVersion: "2026-10-21", betas: ["fixture-beta"] },
+      promptCache: { _tag: "Auto", ttl: "5m" }, cacheControl: true,
+      endpoint: { api: "anthropic-messages", url: "https://gateway.example/proxy", auth: "bearer", apiVersion: "2026-10-21", betas: ["fixture-beta"], cacheControl: true },
     } }))
     expect(reads).toEqual([])
     expect(JSON.stringify(result)).not.toContain("descriptor-placeholder")
@@ -71,7 +72,8 @@ describe("a routed Messages model's durable descriptor", () => {
     expect(result._tag === "Success" ? Option.map(result.success, (value) => value.settings) : Option.none()).toEqual(Option.some({
       fallback: null, policy: { effort: "max", maxOutputTokens: 321 }, model: "claude-fable-5-1", max_tokens: 321, output_config: { effort: "max" },
       thinking: { type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } }, thinkingPrefixMismatch: "drop_block",
-      endpoint: { api: "anthropic-messages", url: "https://gateway.example", auth: "x-api-key", apiVersion: "2023-06-01", betas: [] },
+      promptCache: { _tag: "Auto", ttl: "5m" }, cacheControl: true,
+      endpoint: { api: "anthropic-messages", url: "https://gateway.example", auth: "x-api-key", apiVersion: "2023-06-01", betas: [], cacheControl: true },
     }))
   })
 
@@ -87,7 +89,7 @@ describe("a routed Messages model's durable descriptor", () => {
     const result = await inspect({ selection: "anthropic:claude-opus-5-5" })
     expect(result._tag === "Success" ? Option.map(result.success, (value) => value.settings["messagesProfile"]) : Option.none()).toEqual(Option.some({
       kind: "requested", apiVersion: "2023-06-01", settings: { model: "claude-opus-5-5", max_tokens: 128_000, output_config: { effort: "medium" },
-        thinking: { type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } }, thinkingPrefixMismatch: "drop_block" },
+        thinking: { type: "adaptive", display: "summarized", block_binding: { prefix_mismatch_behavior: "drop_block" } }, thinkingPrefixMismatch: "drop_block", promptCache: { _tag: "Auto", ttl: "5m" }, cacheControl: true },
     }))
   })
 

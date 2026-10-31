@@ -262,7 +262,11 @@
             "content": "TURN active: load_skill, lookup, recall_context"
           },
           {
-            "options": {},
+            "options": {
+              "engine": {
+                "requestVolatile": true
+              }
+            },
             "role": "user",
             "content": "STEP 0"
           }
@@ -392,7 +396,11 @@
             ]
           },
           {
-            "options": {},
+            "options": {
+              "engine": {
+                "requestVolatile": true
+              }
+            },
             "role": "user",
             "content": "STEP 1"
           }
@@ -555,7 +563,11 @@
             ]
           },
           {
-            "options": {},
+            "options": {
+              "engine": {
+                "requestVolatile": true
+              }
+            },
             "role": "user",
             "content": "STEP 2"
           }

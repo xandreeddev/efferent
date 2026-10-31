@@ -133,6 +133,44 @@ setting `apiVersion` changes the header. A host transport can add a required
 workspace header. Fake-server tests verify bytes and control flow; live
 provider acceptance requires configured credentials and versioned evidence.
 
+**Messages prompt caching.** Set `modelSettings[selection].promptCache` to
+`{ _tag: "Auto", ttl: "5m" | "1h" }`,
+`{ _tag: "TopLevel", ttl: "5m" | "1h" }`, or `{ _tag: "Off" }`.
+The default is Auto with five minutes. Auto considers the latest two stable
+non-system messages and the last stable system message, preferring recent
+history when caller controls leave fewer slots. It excludes the selected
+run's volatile step-context tail. A volatile system suffix, which the SDK may
+relocate, disables framework Auto additions conservatively.
+
+Caller controls count toward the four effective breakpoints, including
+emitted part and nested tool-result controls and the API's top-level control.
+The planner runs after the pinned SDK converts the prompt, so shadowed or
+skipped markers are not counted twice. One-hour controls must precede
+five-minute controls. Auto fills only slots that preserve that order; it
+never changes a caller's lifetime or upgrades its own five-minute default.
+Invalid caller controls, a fifth effective caller breakpoint, or conflicting
+lifetimes fail locally before HTTP. Controls must be plain own enumerable
+data; accessors, inherited fields and custom serializers are refused because
+they can serialize a different value from the one validated.
+
+TopLevel selects the API's automatic last-block control, including a volatile
+last block when the host chooses this mode. It does not select the earlier
+stable cut. An existing caller top-level control takes precedence; a matching
+explicit final-block lifetime shares its slot, while a different lifetime is
+refused. Off adds nothing and still preserves and validates caller controls.
+For a Messages gateway that cannot accept cache fields, set endpoint
+`cacheControl: false`: it overrides framework caching, refuses non-null
+caller controls and omits SDK-generated null cache fields. Application data
+and tool-schema properties named `cache_control` are preserved.
+
+Helper completions use the same per-model policy. These controls and tests
+establish request behavior, not cache hits: live hits require a sufficiently
+large identical prefix and positive provider cache-read usage. Aggregate
+usage does not distinguish write lifetimes, so mixed-lifetime cost estimates
+remain approximate. The slot and lifetime rules follow the
+[provider caching documentation](https://platform.claude.com/docs/en/build-with-claude/prompt-caching)
+checked on 2026-10-31.
+
 When a proxy applies, every call the models plugin makes (the provider SDKs,
 the OpenAI-compatible client, OAuth token refreshes, the OpenAI subscription's
 WebSocket) goes through one `ModelsTransport`, built from the plugin's `proxy`
@@ -1049,7 +1087,8 @@ takes longer than `digestTimeoutMs` (30 s).
 **Durable model requests.** Before each real provider step, the turn writes
 and flushes `request.prepared`. This protocol record carries the complete
 active tool declarations, tool choice, system text, public requested model
-configuration, prompt cache key, call policy, the memory strategy's render
+configuration, prompt cache key, call policy, the optional frozen stable-prefix
+message count, the memory strategy's render
 recipe/version and the build's memory cut (`through`, the last memory entry
 the build folded). Messages remain in their original memory events. Each
 header is self-contained, repeating the full system text and every active
@@ -1094,6 +1133,15 @@ text (step context included in `"system"` mode) and the tool declarations.
 Earlier logs without a header remain readable but cannot reconstruct this
 additional metadata.
 
+`BuiltContext.stableMessages` is the rendered prefix length before the
+selected run's step-context tail, or the whole message count without that
+tail. It is bounded by `messages.length` and is computed from the same render,
+including interrupted-call repair and tool-message merging. New headers
+freeze that count and mark only an outgoing copy; raw durable messages and
+context fingerprints stay unchanged. Reconstruction uses the saved count,
+while earlier headers without it replay without the marker. Stored format 8
+adds this optional header field.
+
 A streamed step stores the assistant message a non-streamed one stores: its
 text and reasoning parts keep their provider metadata (Anthropic's thinking
 signature and redacted thinking, the `itemId` and `encryptedContent` of an
@@ -1111,7 +1159,11 @@ drop that block and the later ones for the request, counted as
 or BetweenTools modes, add neither binding nor its beta automatically. Explicit
 endpoint beta flags are preserved. That metadata is stored
 as JSON in `providerOptions` (`ProviderOptions`, keyed by provider), less
-core's own `engine` key (`ENGINE_KEY`), which no request carries. A model
+core's own `engine` key (`ENGINE_KEY`). Stored usage and model bookkeeping
+stay out of requests. The recognized `requestVolatile` marker crosses the
+in-memory Effect prompt boundary, then framework model adapters consume it
+before provider serialization. Custom adapters that serialize prompt options
+consume engine bookkeeping likewise. A model
 that sends each call on to another, such as the settings-backed router,
 stamps the model it resolved on the response's finish part under that key
 (`stampResponseModel`, `stampPartModel` for a stream); `responseModelOf`

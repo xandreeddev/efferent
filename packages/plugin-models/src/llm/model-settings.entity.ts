@@ -1,5 +1,6 @@
 import { Option, Schema } from "effect"
 import { ModelLimits, ReasoningEffort, parseModelSelection } from "@xandreed/core"
+import { PromptCacheSettings } from "./prompt-cache.entity.js"
 
 /** The public reasoning summary returned with adaptive or manual thinking. @public */
 export const ThinkingDisplay = Schema.Literals(["summarized", "omitted"])
@@ -19,6 +20,7 @@ export const ModelSettings = Schema.Struct({
   thinking: Schema.optionalKey(ModelThinking),
   effort: Schema.optionalKey(ReasoningEffort),
   limits: Schema.optionalKey(ModelLimits),
+  promptCache: Schema.optionalKey(PromptCacheSettings),
 })
 export type ModelSettings = typeof ModelSettings.Type
 
@@ -42,6 +44,7 @@ export const ResolvedAnthropicSettings = Schema.Struct({
   thinking: Schema.OptionFromNullOr(ModelThinking),
   effort: Schema.OptionFromNullOr(AnthropicEffort),
   maxOutputTokens: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  promptCache: PromptCacheSettings,
   limits: Schema.optionalKey(ModelLimits),
 })
 export type ResolvedAnthropicSettings = typeof ResolvedAnthropicSettings.Type

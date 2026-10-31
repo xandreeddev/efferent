@@ -14,7 +14,7 @@ import {
   artifactLines, buildContext, canonicalJson, digestTranscript, emptyQuery, entriesSendingMedia, entryId, estimateMessageTokens, fingerprintOf, latestRunOf, ledgerOf, queryLog,
   presentedEntries, rawTranscript, referenceTranscript, renderLog, subjectsOf,
 } from "./memory-log.entity.functions.js"
-import { ArtifactId, ArtifactRef, LogBody, LogEntry, Subject, SubjectId } from "./memory-log.entity.js"
+import { ArtifactId, ArtifactRef, BuiltContext, LogBody, LogEntry, Subject, SubjectId } from "./memory-log.entity.js"
 
 /** The run of turn `turn`, as these logs name it. */
 const runOf = (turn: number) => RunId.make(`run-${turn}`)
@@ -79,6 +79,25 @@ describe("a step context", () => {
   test("stored before runs were counted, it reads as the turn's first run's", () => {
     const decoded = Schema.decodeUnknownOption(LogBody)({ _tag: "StepContext", step: 2, text: "old" })
     expect(decoded).toEqual(Option.some({ _tag: "StepContext", step: 2, run: first, text: "old" }))
+  })
+
+  test("even an empty selected tail is volatile, while no selected tail leaves every message stable", () => {
+    const render = options(1, { mode: "none", maxImages: 0, maxChars: 0 })
+    const entries = [...turn, stepContext(2, first, "")]
+    const selected = buildContext(entries, render)
+    expect([selected.messages, selected.stableMessages]).toEqual([[{ role: "user", content: "go" }, { role: "user", content: "" }], 1])
+    expect(buildContext(entries, { ...render, stepContext: "none" }).stableMessages).toBe(1)
+    expect(buildContext(entries, { ...render, run: second }).stableMessages).toBe(1)
+    expect(buildContext([], render).stableMessages).toBe(0)
+    expect(selected.fingerprint).toBe(fingerprintOf(canonicalJson(renderLog(entries, render))))
+  })
+
+  test("the built context schema requires an integer stable prefix bounded by its message count", () => {
+    const built = buildContext(turn, options(1, { mode: "none", maxImages: 0, maxChars: 0 }))
+    const { stableMessages: _stable, ...missing } = built
+    expect(Schema.is(BuiltContext)(missing)).toBe(false)
+    expect([-1, 0.5, built.messages.length + 1].map((stableMessages) => Schema.is(BuiltContext)({ ...built, stableMessages }))).toEqual([false, false, false])
+    expect([0, built.messages.length].map((stableMessages) => Schema.is(BuiltContext)({ ...built, stableMessages }))).toEqual([true, true])
   })
 })
 

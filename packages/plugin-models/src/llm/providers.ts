@@ -5,6 +5,12 @@ import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http"
 import { Config, Effect, Match, Metric, Option, Predicate, Redacted, Ref, Result, Stream } from "effect"
 import type { Context, Schema, Scope } from "effect"
 import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, formatModelSelection, modelRequestDescriptorOf } from "@xandreed/core"
+import { isVolatileContext, stripVolatileContext } from "@xandreed/core/internal"
+import { CurrentPromptCacheFrame } from "../ports/prompt-cache-frame.port.js"
+import { PromptCacheError } from "./prompt-cache.entity.js"
+import type { CachePosition, PromptCacheControl, PromptCacheSettings } from "./prompt-cache.entity.js"
+import type { PromptCacheFrame } from "./prompt-cache-frame.entity.js"
+import { planBreakpoints } from "./prompt-cache.entity.functions.js"
 import { AuthError } from "../ports/auth-store.port.js"
 import type { ModelCallPolicy, ModelSelection } from "@xandreed/core"
 import type { Credential } from "../ports/auth-store.port.js"
@@ -82,6 +88,14 @@ const withImageLabels = (model: LanguageModel.LanguageModel): LanguageModel.Lang
   }
 }
 
+/** Other protocols consume the same request bookkeeping before their serializers run. */
+const withStrippedVolatileContext = (model: LanguageModel.LanguageModel): LanguageModel.LanguageModel => ({
+  ...model,
+  generateText: ((options: PromptOptions) => model.generateText(withoutVolatilePrompt(options) as never)) as never,
+  generateObject: ((options: PromptOptions) => model.generateObject(withoutVolatilePrompt(options) as never)) as never,
+  streamText: ((options: PromptOptions) => model.streamText(withoutVolatilePrompt(options) as never)) as never,
+})
+
 /**
  * Every request with `betas` added to its `anthropic-beta` header, after
  * the ones the client set itself (`mergeBetas`): a beta is never sent by
@@ -158,42 +172,121 @@ const claudeCodePrompt = Prompt.make([{ role: "system", content: CLAUDE_CODE_SYS
 export const prependClaudeCode = <O extends PromptOptions>(options: O) =>
   withPrompt(options, (prompt) => Prompt.concat(claudeCodePrompt, prompt))
 
-/**
- * Anthropic prompt caching is OPT-IN per request: stamp ephemeral
- * `cache_control` breakpoints on the last system message + the last two
- * non-system messages. Marker placement is not part of Anthropic's content
- * hash, so the markers moving forward each turn never invalidates earlier
- * prefixes. Messages already carrying an explicit `cacheControl` are left
- * alone.
- */
-export const withAnthropicCacheBreakpoints = <O extends PromptOptions>(options: O) =>
-  withPrompt(options, (prompt) => {
-    const messages = prompt.content
-    const lastSystem = messages.reduce(
-      (acc: number, m, i) => (m.role === "system" ? i : acc),
-      -1,
-    )
-    const nonSystem = messages.flatMap((m, i) => (m.role === "system" ? [] : [i]))
-    const stampIdx = new Set([
-      ...(lastSystem >= 0 ? [lastSystem] : []),
-      ...nonSystem.slice(-2),
-    ])
+/** Remove recognized request bookkeeping without changing provider options. */
+const withoutVolatilePrompt = <O extends PromptOptions>(options: O) => withPrompt(options, (prompt) => Prompt.fromMessages(prompt.content.map((message) => {
+  const cleaned = stripVolatileContext(message.options)
+  return cleaned === message.options ? message : Prompt.makeMessage(message.role, { ...message, options: cleaned } as never)
+})))
 
-    const stamped = messages.map((msg, i) => {
-      if (!stampIdx.has(i)) return msg
-      const own = msg.options["anthropic"]
-      const anthropic: { readonly [key: string]: unknown } = Predicate.isObject(own) ? own : {}
-      if (anthropic["cacheControl"] !== undefined) return msg
-      return Prompt.makeMessage(msg.role, {
-        ...msg,
-        options: {
-          ...msg.options,
-          anthropic: { ...anthropic, cacheControl: { type: "ephemeral" } },
-        },
-      } as never)
+/** Mint call-local candidates before the SDK places them on actual cacheable blocks. */
+const prepareCachePrompt = (options: PromptOptions, policy: PromptCacheSettings, capability: boolean) => {
+  const prompt = Prompt.make(options.prompt)
+  const firstVolatile = prompt.content.findIndex((message) => isVolatileContext(message.options))
+  const cut = firstVolatile < 0 ? prompt.content.length : firstVolatile
+  const relocatedVolatile = prompt.content.slice(cut).some((message) => message.role === "system")
+  const ttl = capability && !relocatedVolatile ? Match.valueTags(policy, {
+    Auto: (value) => Option.some(value.ttl), TopLevel: () => Option.none(), Off: () => Option.none(),
+  }) : Option.none()
+  const stable = prompt.content.slice(0, cut)
+  const lastSystem = stable.findLastIndex((message) => message.role === "system")
+  const recent = stable.flatMap((message, index) => message.role === "system" ? [] : [index]).slice(-2).toReversed()
+  const targets = [...recent.map((index, priority) => ({ index, priority })), ...(lastSystem < 0 ? [] : [{ index: lastSystem, priority: 2 }])]
+  const prepared = prompt.content.reduce<{ readonly messages: ReadonlyArray<Prompt.Message>; readonly candidates: PromptCacheFrame["candidates"] }>((state, message, index) => {
+    const target = targets.find((value) => value.index === index)
+    const own = message.options["anthropic"]
+    const cache = Predicate.hasProperty(own, "cacheControl") ? own.cacheControl : undefined
+    const candidate = target !== undefined && cache === undefined && (own == null || Predicate.isObject(own))
+      ? Option.map(ttl, (value): PromptCacheFrame["candidates"][number] => ({ priority: target.priority, control: value === "5m" ? { type: "ephemeral" } : { type: "ephemeral", ttl: value } })) : Option.none()
+    const cleaned = stripVolatileContext(message.options)
+    const next = Option.match(candidate, {
+      onNone: () => cleaned === message.options ? message : Prompt.makeMessage(message.role, { ...message, options: cleaned } as never),
+      onSome: ({ control }) => Prompt.makeMessage(message.role, { ...message, options: { ...cleaned, anthropic: { ...(Predicate.isObject(own) ? own : {}), cacheControl: control } } } as never),
     })
-    return Prompt.fromMessages(stamped)
-  })
+    return { messages: [...state.messages, next], candidates: [...state.candidates, ...Option.toArray(candidate)] }
+  }, { messages: [], candidates: [] })
+  return { options: { ...options, prompt: Prompt.fromMessages(prepared.messages) }, frame: { candidates: prepared.candidates, policy, capability } satisfies PromptCacheFrame }
+}
+
+type CachePath = ReadonlyArray<string | number>
+interface PreparedCacheSlot {
+  readonly path: CachePath
+  readonly control: unknown
+  readonly cacheable: boolean
+}
+const cacheField = (value: unknown, key: string): unknown => Predicate.hasProperty(value, key) ? value[key] : undefined
+const cachePathKey = (path: CachePath): string => path.join("/")
+const cacheableBlock = (block: unknown): boolean => {
+  const type = cacheField(block, "type")
+  return type !== "thinking" && type !== "redacted_thinking" && (type !== "text" || (typeof cacheField(block, "text") === "string" && cacheField(block, "text") !== ""))
+}
+/** Nested content ends before its enclosing tool-result block ends. Business JSON is never walked. */
+const cacheSlotsInBlocks = (blocks: unknown, path: CachePath): ReadonlyArray<PreparedCacheSlot> => Array.isArray(blocks) ? blocks.flatMap((block: unknown, index) => {
+  const at = [...path, index]
+  return [
+    ...(cacheField(block, "type") === "tool_result" ? cacheSlotsInBlocks(cacheField(block, "content"), [...at, "content"]) : []),
+    { path: at, control: cacheField(block, "cache_control"), cacheable: cacheableBlock(block) },
+  ]
+}) : []
+const preparedCacheSlots = (payload: unknown): ReadonlyArray<PreparedCacheSlot> => [
+  ...cacheSlotsInBlocks(cacheField(payload, "tools"), ["tools"]),
+  ...cacheSlotsInBlocks(cacheField(payload, "system"), ["system"]),
+  ...Option.match(Option.filter(Option.fromNullishOr(cacheField(payload, "messages")), Array.isArray), {
+    onNone: () => [], onSome: (messages) => messages.flatMap((message: unknown, index) => cacheSlotsInBlocks(cacheField(message, "content"), ["messages", index, "content"])),
+  }),
+]
+const cacheFailure = (error: PromptCacheError): AiError.AiError => AiError.make({
+  module: "Models", method: "promptCache", reason: new AiError.InvalidRequestError({ description: error.message }),
+})
+const withoutCacheField = <A extends object>(value: A): Omit<A, "cache_control"> => Object.fromEntries(Object.entries(value).filter(([key]) => key !== "cache_control")) as Omit<A, "cache_control">
+
+/** Copy only protocol branches; never interpret a tool's input or schema as cache metadata. */
+const rewriteCachePayload = <A extends object>(payload: A, patches: ReadonlyMap<string, Option.Option<PromptCacheControl>>, topLevel: Option.Option<PromptCacheControl>, capability: boolean): A => {
+  const blocks = (value: unknown, path: CachePath): unknown => Array.isArray(value) ? value.map((block: unknown, index) => {
+    if (!Predicate.isObject(block)) return block
+    const at = [...path, index]
+    const nested = cacheField(block, "type") === "tool_result" && Array.isArray(cacheField(block, "content"))
+      ? { ...block, content: blocks(cacheField(block, "content"), [...at, "content"]) } : block
+    const patch = patches.get(cachePathKey(at))
+    return patch === undefined ? nested : { ...withoutCacheField(nested), ...Option.match(patch, { onNone: () => ({}), onSome: (control) => ({ cache_control: control }) }) }
+  }) : value
+  const messages = cacheField(payload, "messages")
+  return {
+    ...withoutCacheField(payload),
+    ...(cacheField(payload, "tools") === undefined ? {} : { tools: blocks(cacheField(payload, "tools"), ["tools"]) }),
+    ...(cacheField(payload, "system") === undefined ? {} : { system: blocks(cacheField(payload, "system"), ["system"]) }),
+    ...(Array.isArray(messages) ? { messages: messages.map((message: unknown, index) => Predicate.isObject(message)
+      ? { ...message, content: blocks(cacheField(message, "content"), ["messages", index, "content"]) } : message) } : {}),
+    ...Option.match(topLevel, { onNone: () => capability && cacheField(payload, "cache_control") === null ? { cache_control: null } : {}, onSome: (control) => ({ cache_control: control }) }),
+  } as A
+}
+
+/** Validate the actual SDK payload once for settled, object and streamed calls. */
+const finalizeCachePayload = <A extends object>(payload: A): Effect.Effect<A, AiError.AiError> => Effect.gen(function* () {
+  const frame = yield* CurrentPromptCacheFrame
+  const slots = preparedCacheSlots(payload)
+  const origin = (slot: PreparedCacheSlot) => Option.fromNullishOr(frame.candidates.find((candidate) => candidate.control === slot.control))
+  const invalid = slots.some((slot) => !slot.cacheable && slot.control != null && Option.isNone(origin(slot)))
+  if (invalid) return yield* Effect.fail(cacheFailure(new PromptCacheError({ reason: "Control", message: "a prompt cache control needs a nonempty cacheable content block" })))
+  const eligible = slots.filter((slot) => slot.cacheable)
+  const plan = yield* Effect.fromResult(planBreakpoints({
+    positions: eligible.map((slot): CachePosition => Option.match(origin(slot), {
+      onSome: ({ priority }) => ({ _tag: "Auto", priority }),
+      onNone: () => slot.control == null ? { _tag: "Unmarked" } : { _tag: "Caller", control: slot.control },
+    })),
+    policy: frame.policy, capability: frame.capability, callerTopLevel: cacheField(payload, "cache_control"),
+  })).pipe(Effect.mapError(cacheFailure))
+  const selected = new Set(eligible.flatMap((slot, index) => plan.selectedAuto.includes(index) ? [cachePathKey(slot.path)] : []))
+  const patches = new Map(slots.flatMap((slot): ReadonlyArray<readonly [string, Option.Option<PromptCacheControl>]> =>
+    Option.isSome(origin(slot)) ? [[cachePathKey(slot.path), selected.has(cachePathKey(slot.path)) ? Option.map(origin(slot), (candidate) => candidate.control) : Option.none()]]
+      : !frame.capability ? [[cachePathKey(slot.path), Option.none()]] : [],
+  ))
+  return rewriteCachePayload(payload, patches, plan.topLevel, frame.capability)
+})
+const withCachePlanning = (client: AnthropicClient.Service): AnthropicClient.Service => ({
+  ...client,
+  createMessage: (options) => finalizeCachePayload(options.payload).pipe(Effect.flatMap((payload) => client.createMessage({ ...options, payload }))),
+  createMessageStream: (options) => finalizeCachePayload(options.payload).pipe(Effect.flatMap((payload) => client.createMessageStream({ ...options, payload }))),
+})
 
 const missingKey = (selection: ModelSelection): AuthError =>
   new AuthError({
@@ -409,7 +502,7 @@ const pinnedAnthropicNativeJson = (model: Schema.Json | undefined): boolean =>
   !["claude-sonnet-4-0", "claude-sonnet-4-20250514", "claude-opus-4-0", "claude-opus-4-20250514", "claude-3-"].some((id) => model.includes(id))
 
 /** Validate request-dependent controls before the SDK can send a request. Owned model fields keep their resolved precedence. */
-const withAnthropicSettings = (model: LanguageModel.LanguageModel, resolved: ResolvedAnthropicSettings, wire: Schema.JsonObject, binding: boolean): LanguageModel.LanguageModel => {
+const withAnthropicSettings = (model: LanguageModel.LanguageModel, resolved: ResolvedAnthropicSettings, wire: Schema.JsonObject, binding: boolean, capability: boolean): LanguageModel.LanguageModel => {
   const prepare = (options: PromptOptions, object = false) => Effect.flatMap(Effect.serviceOption(AnthropicLanguageModel.Config), (ambient) => {
     // Absence is owned too: unsupported effort and unconfigured unknown
     // thinking must not reappear through the SDK's later context merge.
@@ -417,14 +510,14 @@ const withAnthropicSettings = (model: LanguageModel.LanguageModel, resolved: Res
     const nativeJson = unowned.structuredOutputs ?? pinnedAnthropicNativeJson(wire["model"])
     return Effect.fromResult(validateAnthropicRequest(resolved, { forcedTool: forcedTool(options.toolChoice) || (object && !nativeJson), binding })).pipe(
       Effect.mapError(modelSettingsFailure),
-      Effect.map(() => ({ ...unowned, ...wire })),
+      Effect.map(() => ({ config: { ...unowned, ...wire }, ...prepareCachePrompt(options, resolved.promptCache, capability) })),
     )
   })
   return {
     ...model,
-    generateText: ((options: PromptOptions) => prepare(options).pipe(Effect.flatMap((config) => model.generateText(options as never).pipe(Effect.provideService(AnthropicLanguageModel.Config, config as never))))) as never,
-    generateObject: ((options: PromptOptions) => prepare(options, true).pipe(Effect.flatMap((config) => model.generateObject(options as never).pipe(Effect.provideService(AnthropicLanguageModel.Config, config as never))))) as never,
-    streamText: ((options: PromptOptions) => Stream.unwrap(prepare(options).pipe(Effect.map((config) => model.streamText(options as never).pipe(Stream.provideService(AnthropicLanguageModel.Config, config as never)))))) as never,
+    generateText: ((options: PromptOptions) => prepare(options).pipe(Effect.flatMap(({ config, options: shaped, frame }) => model.generateText(shaped as never).pipe(Effect.provideService(AnthropicLanguageModel.Config, config as never), Effect.provideService(CurrentPromptCacheFrame, frame))))) as never,
+    generateObject: ((options: PromptOptions) => prepare(options, true).pipe(Effect.flatMap(({ config, options: shaped, frame }) => model.generateObject(shaped as never).pipe(Effect.provideService(AnthropicLanguageModel.Config, config as never), Effect.provideService(CurrentPromptCacheFrame, frame))))) as never,
+    streamText: ((options: PromptOptions) => Stream.unwrap(prepare(options).pipe(Effect.map(({ config, options: shaped, frame }) => model.streamText(shaped as never).pipe(Stream.provideService(AnthropicLanguageModel.Config, config as never), Stream.provideService(CurrentPromptCacheFrame, frame)))))) as never,
   }
 }
 
@@ -449,8 +542,8 @@ export const resolveMessagesConfiguration = (
         Off: () => ({ type: "disabled" }),
       }) }) }),
     }
-    const settings: Schema.JsonObject = { ...wire,
-      ...Option.match(endpoint, { onNone: () => ({}), onSome: (value) => ({ endpoint: { api: value.api, url: anthropicBaseUrl(value.url), auth: value.auth ?? "x-api-key", apiVersion: value.apiVersion ?? "2023-06-01", betas: value.betas ?? [] } }) }),
+    const settings: Schema.JsonObject = { ...wire, promptCache: resolved.promptCache, cacheControl: Option.match(endpoint, { onNone: () => true, onSome: (value) => value.cacheControl ?? true }),
+      ...Option.match(endpoint, { onNone: () => ({}), onSome: (value) => ({ endpoint: { api: value.api, url: anthropicBaseUrl(value.url), auth: value.auth ?? "x-api-key", apiVersion: value.apiVersion ?? "2023-06-01", betas: value.betas ?? [], cacheControl: value.cacheControl ?? true } }) }),
       ...Option.match(binding, { onNone: () => ({}), onSome: (behavior) => ({ thinkingPrefixMismatch: behavior }) }),
     }
     return { resolved, binding, wire, settings }
@@ -482,11 +575,11 @@ const anthropicModel = (
       },
     }),
   })
-  const client = yield* AnthropicClient.make(options)
+  const client = withCachePlanning(yield* AnthropicClient.make(options))
   const service = yield* AnthropicLanguageModel.make({ model: selection.modelId, config: wire as never }).pipe(Effect.provideService(AnthropicClient.AnthropicClient, client))
   const oauth = authentication._tag === "Subscription"
   return {
-    svc: withAnthropicSettings(service, resolved, wire, Option.isSome(binding)),
+    svc: withAnthropicSettings(service, resolved, wire, Option.isSome(binding), Option.match(endpoint, { onNone: () => true, onSome: (value) => value.cacheControl ?? true })),
     settings: Option.some({ ...wire, systemPrelude: oauth ? CLAUDE_CODE_SYSTEM : null, ...settings }),
     prependClaudeCode: oauth,
   }
@@ -597,7 +690,7 @@ export const buildProviderOver = (services: ProviderServices) => (
   key: Redacted.Redacted<string> | undefined,
 ): Effect.Effect<BuiltProvider, AuthError | ModelSettingsError, HttpClient.HttpClient | Scope.Scope> => buildProviderService(selection, credential, key, services).pipe(
   Effect.map((built) => ({
-    svc: describeModel(built.images ? built.svc : withImageLabels(built.svc), descriptorOf(selection, built)),
+    svc: describeModel(built.route === "anthropic" ? (built.images ? built.svc : withImageLabels(built.svc)) : withStrippedVolatileContext(built.images ? built.svc : withImageLabels(built.svc)), descriptorOf(selection, built)),
     prependClaudeCode: built.prependClaudeCode,
     images: built.images,
     route: built.route,

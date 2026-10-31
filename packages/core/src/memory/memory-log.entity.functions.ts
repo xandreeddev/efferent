@@ -266,7 +266,7 @@ const toolResultPart = (entry: LogEntry, body: Extract<LogBody, { readonly _tag:
   }
 }
 
-export const renderLog = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<AgentMessage> => {
+const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): Pick<BuiltContext, "messages" | "stableMessages"> => {
   const entries = presentedEntries(stored)
   const { applied, digests, kept, inline } = mediaPlan(entries, options)
   const exchanges = toolExchangesOf(entries)
@@ -308,8 +308,13 @@ export const renderLog = (stored: ReadonlyArray<LogEntry>, options: RenderOption
     }),
   }), initial).out
   const tail: ReadonlyArray<AgentMessage> = stepContext.flatMap((entry) => entry.body._tag === "StepContext" ? [userRoleMessage(entry.body.text)] : [])
-  return mergeToolMessages(answerInterruptedCalls([...Option.toArray(applied.preamble), ...body, ...tail]))
+  const messages = mergeToolMessages(answerInterruptedCalls([...Option.toArray(applied.preamble), ...body, ...tail]))
+  // The selected tail is one user message: repairs precede it and only tool messages merge.
+  return { messages, stableMessages: messages.length - tail.length }
 }
+
+export const renderLog = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<AgentMessage> =>
+  renderedContext(stored, options).messages
 
 /**
  * The entries whose images a render sends as images (a user's attachments,
@@ -328,9 +333,10 @@ export const entriesSendingMedia = (entries: ReadonlyArray<LogEntry>, options: R
  * (`elideMediaData`), so a text-only context hashes as it always did.
  */
 export const buildContext = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): BuiltContext => {
-  const messages = renderLog(entries, options)
+  const { messages, stableMessages } = renderedContext(entries, options)
   return {
     messages,
+    stableMessages,
     fingerprint: fingerprintOf(canonicalJson(messages.map(elideMediaData))),
     estimatedTokens: estimateMessageTokens(messages),
     compactions: appliedCompactions(entries, options.strategy).ids,

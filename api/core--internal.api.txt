@@ -6,6 +6,8 @@ const estimateTokens
 const extractUsage
 const foldStreamParts
 const handoffToMessage
+const isVolatileContext
+const markVolatileContext
 const modelRequestHeaderOf
 const modelRequestTools
 const randomUuid
@@ -18,6 +20,7 @@ const responseToAgentMessages
 const responseToolCalls
 const responseToolResults
 const strictJsonSchema
+const stripVolatileContext
 const toPromptMessages
 const toolParametersSchema
 const withToolCallIds

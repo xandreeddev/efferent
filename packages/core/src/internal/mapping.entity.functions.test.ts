@@ -114,6 +114,12 @@ describe("responseToAgentMessages ↔ toPromptMessages", () => {
     })
   })
 
+  test("response metadata cannot persist the neutral request marker", () => {
+    expect(responseToAgentMessages([
+      textPart("answer", { engine: { requestVolatile: true, model: "fixture" }, custom: { exact: "keep" } }),
+    ])).toEqual([{ role: "assistant", content: [{ type: "text", text: "answer", providerOptions: { custom: { exact: "keep" } } }] }])
+  })
+
   test("a result of a tool the provider ran stays in the assistant message, in arrival order, and is replayed as the provider's", () => {
     const sources = [{ url: "https://effect.website" }]
     const messages = responseToAgentMessages([

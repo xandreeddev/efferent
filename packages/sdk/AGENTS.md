@@ -77,3 +77,9 @@ None.
 - Run: `bun test packages/sdk`.
 
 See the root AGENTS.md for the enforced rules and the definition of done.
+
+A turn freezes `BuiltContext.stableMessages` in each new request header and
+marks the outgoing copy with core's recognized volatile-context marker.
+Refused-image replans freeze their own boundary; old headers replay unmarked.
+The Messages and cache journeys share the HTTP fixture with packed Node/Bun
+verification, retaining signatures, durable tool results and application JSON.

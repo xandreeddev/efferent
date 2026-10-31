@@ -16,6 +16,7 @@ import type {
 import { TokenUsage } from "../domain/token-usage.entity.js"
 import { tokenUsage } from "../domain/token-usage.entity.functions.js"
 import { framed, hostNote } from "../turn/model-text.js"
+import { isVolatileContext } from "./volatile-context.entity.functions.js"
 
 /**
  * Bridges the persisted `AgentMessage` with `@effect/ai`'s `Prompt`/`Response`
@@ -94,9 +95,9 @@ const withoutEngine = (blob: ProviderOptions): ProviderOptions => {
   return rest
 }
 
-/** A stored blob as prompt `options`, the engine's stamp left out, keys sorted (`sortedJson`); none when nothing else is in it. */
+/** A stored blob as prompt options: only recognized request bookkeeping survives the engine namespace. */
 const withOptions = (blob: ProviderOptions | undefined): { readonly options?: ProviderOptions } => {
-  const sent = blob === undefined ? {} : withoutEngine(blob)
+  const sent = blob === undefined ? {} : { ...withoutEngine(blob), ...(isVolatileContext(blob) ? { [ENGINE_KEY]: { requestVolatile: true } } : {}) }
   return hasKeys(sent)
     ? { options: Object.fromEntries(Arr.sort(Object.entries(sent), byKey).map(([key, value]) => [key, sortedJson(value)])) }
     : {}
@@ -178,8 +179,8 @@ const assistantPromptPart = (p: AssistantPart): Prompt.AssistantMessagePartEncod
 
 /**
  * `AgentMessage[]` → `@effect/ai` encoded prompt messages (`Prompt.make`
- * takes them). A text-only user message stays a string. The engine's stamp
- * is left out of every blob, so it never reaches a provider. Params,
+ * takes them). A text-only user message stays a string. Only the recognized
+ * request marker survives engine bookkeeping until the adapter consumes it. Params,
  * results and blobs go out in core's canonical key order, so a message
  * sends the same bytes whatever order memory holds them in.
  */
@@ -187,9 +188,9 @@ export const toPromptMessages = (
   messages: ReadonlyArray<AgentMessage>,
 ): ReadonlyArray<Prompt.MessageEncoded> =>
   messages.map((m): Prompt.MessageEncoded => Match.value(m).pipe(Match.discriminatorsExhaustive("role")({
-    user: (user): Prompt.MessageEncoded => ({ role: "user", content: typeof user.content === "string" ? user.content : userPromptParts(user.content) }),
+    user: (user): Prompt.MessageEncoded => ({ role: "user", content: typeof user.content === "string" ? user.content : userPromptParts(user.content), ...withOptions(user.providerOptions) }),
     assistant: (assistant): Prompt.MessageEncoded => ({ role: "assistant", content: assistant.content.map(assistantPromptPart), ...withOptions(assistant.providerOptions) }),
-    tool: (tool): Prompt.MessageEncoded => ({ role: "tool", content: tool.content.map(toolResultPromptPart) }),
+    tool: (tool): Prompt.MessageEncoded => ({ role: "tool", content: tool.content.map(toolResultPromptPart), ...withOptions(tool.providerOptions) }),
   })))
 
 /**

@@ -130,6 +130,7 @@ export interface MemorySession extends MemoryReader {
   /**
    * A pure fold of the log: what the next request of run `run` of the turn
    * sends, its step context that run's latest (never an earlier run's).
+   * `stableMessages` counts the rendered prefix before that optional tail.
    */
   readonly build: (request: { readonly stepContext: "tail" | "none"; readonly run: RunOrdinal }) => Effect.Effect<BuiltContext, HarnessError>
 }
