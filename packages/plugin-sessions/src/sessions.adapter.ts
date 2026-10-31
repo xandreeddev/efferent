@@ -328,7 +328,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   })
 
   /** A session's own `turn.started` events. */
-  const startsOf = (id: ConversationId) => log.read(id, { after: 0, limit: Option.none(), kinds: ["turn.started"] })
+  const startsOf = (id: ConversationId, through?: number) => log.read(id, { after: 0, ...(through === undefined ? {} : { through }), limit: Option.none(), kinds: ["turn.started"] })
 
   /** Of these `turn.started` events (their keys decoded, never the message), the turn begun with `key`, and what it was begun with. */
   const keyIn = (starts: ReadonlyArray<SessionLogEvent>, key: string) => readStoredKeys("turn.started", starts).pipe(
@@ -353,7 +353,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
     )
     const inherited = (lineage: SessionHead["header"]["parent"]): Effect.Effect<Option.Option<number>, SessionMissing | SessionLogError> => Option.match(lineage, {
       onNone: () => Effect.succeed(Option.none()),
-      onSome: (parent) => parent.through <= 0 ? Effect.succeed(Option.none()) : startsOf(parent.id).pipe(
+      onSome: (parent) => parent.through <= 0 ? Effect.succeed(Option.none()) : startsOf(parent.id, parent.through).pipe(
         Effect.flatMap((events) => begunIn(events, parent.through)),
         Effect.flatMap(Option.match({
           onSome: (turn) => Effect.succeed(Option.some(turn)),
@@ -388,7 +388,7 @@ export const SessionsLive = (config: SessionsConfig, options?: { readonly livene
   )
 
   /** A consumed steer is acknowledged by its receipt's outer turn, not a fabricated queued begin. */
-  const takenInputOf = (id: ConversationId, wanted: InboxItemId, through: number) => log.read(id, { after: 0, limit: Option.none(), kinds: ["inbox.taken"] }).pipe(
+  const takenInputOf = (id: ConversationId, wanted: InboxItemId, through: number) => log.read(id, { after: 0, through, limit: Option.none(), kinds: ["inbox.taken"] }).pipe(
     Effect.flatMap((events) => readStored("inbox.taken", events.filter((event) => event.seq <= through)).pipe(Effect.mapError(storage("session.decode")))),
     Effect.flatMap((taken) => {
       const receipt = taken.find(({ data }) => data.id === wanted)

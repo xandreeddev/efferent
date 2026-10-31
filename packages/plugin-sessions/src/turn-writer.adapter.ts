@@ -233,7 +233,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
     const format = yield* storedFormatOf(head).pipe(Effect.mapError((error) => new SessionLogError({ code: "session.state", message: error.message, cause: error })))
     if (isNewerFormat(format)) return yield* Effect.fail(new SessionLogError({ code: "session.version", message: `the session holds stored format ${format}, written by a newer release; this release reads up to ${STORED_FORMAT}` }))
     const state = yield* stateOf(head).pipe(Effect.mapError((error) => harnessError("session.state", error.message, error)))
-    const since = log.read(id, { after: seen.seq, limit: Option.none(), kinds: [] }).pipe(
+    const since = log.read(id, { after: seen.seq, through: head.seq, limit: Option.none(), kinds: [] }).pipe(
       Effect.catchTag("SessionMissing", removed),
       Effect.map((events) => events.filter((event) => event.seq <= head.seq)),
     )
@@ -461,7 +461,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
   const waitingSteers = (at: Position): Effect.Effect<ReadonlyArray<QueuedInput>, TurnError> => Effect.gen(function* () {
     const slots = pendingOf(at.state).filter((slot) => slot.delivery === "steer")
     if (slots.length === 0) return []
-    const events = yield* log.read(id, { after: 0, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(Effect.catchTag("SessionMissing", removed))
+    const events = yield* log.read(id, { after: 0, through: at.seq, limit: Option.none(), kinds: ["inbox.queued"] }).pipe(Effect.catchTag("SessionMissing", removed))
     const queued = yield* readStored("inbox.queued", events.filter((event) => event.seq <= at.seq)).pipe(
       Effect.mapError((error) => new SessionLogError({ code: "session.decode", message: error.message, cause: error })),
     )
@@ -504,7 +504,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       if (selected.some(({ id, message }) => !queued.some((input) => input.id === id && canonicalJson(message) === canonicalJson(userRoleMessageOf(input.userMessage))))) {
         return yield* Effect.fail(invalidTake("a steering message must exactly match its immutable queued input"))
       }
-      const previous = yield* log.read(id, { after: Math.max(0, input.started.seq - 1), limit: Option.none(), kinds: MEMORY_KINDS }).pipe(Effect.catchTag("SessionMissing", removed))
+      const previous = yield* log.read(id, { after: Math.max(0, input.started.seq - 1), through: at.seq, limit: Option.none(), kinds: MEMORY_KINDS }).pipe(Effect.catchTag("SessionMissing", removed))
       const stored = yield* entriesOfEvents(previous.filter((event) => event.seq <= at.seq)).pipe(
         Effect.mapError((error) => new SessionLogError({ code: "session.decode", message: error.message, cause: error })),
       )
@@ -574,13 +574,13 @@ const historyOf = (log: Log, header: SessionHeader, started: SessionLogEvent, ki
     onSome: (parent) => parent.through <= 0 ? Effect.succeed([]) : Effect.gen(function* () {
       const head = yield* log.head(parent.id)
       const earlier = yield* ancestors(head.header.parent)
-      const events = yield* log.read(parent.id, { after: 0, limit: Option.none(), kinds })
+      const events = yield* log.read(parent.id, { after: 0, through: parent.through, limit: Option.none(), kinds })
       return [...earlier, ...events.filter((event) => event.seq <= parent.through)]
     }),
   })
   return Effect.gen(function* () {
     const inherited = yield* ancestors(header.parent)
-    const own = yield* log.read(header.id, { after: 0, limit: Option.none(), kinds })
+    const own = yield* log.read(header.id, { after: 0, ...(includeCurrent ? {} : { through: started.seq - 1 }), limit: Option.none(), kinds })
     return [...inherited, ...own.filter((event) => includeCurrent || event.seq < started.seq)]
   })
 }

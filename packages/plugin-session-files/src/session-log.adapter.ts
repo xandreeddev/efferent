@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto"
 import { join } from "node:path"
-import { Cause, Clock, Effect, Layer, Match, Option, Ref, Result, Schema, Semaphore } from "effect"
+import { Cause, Clock, Effect, Layer, Match, Option, Ref, Result, Schema } from "effect"
 import type { Scope } from "effect"
 import {
   ConversationId,
@@ -16,12 +16,11 @@ import {
 } from "@xandreed/core"
 import type { JsonObject, SessionCommit, SessionCommitted, SessionHead, SessionHeader, SessionListQuery, SessionLogEvent, SessionReadQuery } from "@xandreed/core"
 import { nodeFilesIo } from "./files-io.adapter.js"
+import { makeBoundedFilesCall } from "./bounded-call.adapter.js"
 import type { FilesIo } from "./files-io.adapter.js"
-import { FILES_LAYOUT, FileStoreIo, FileStoreStalled, PublishNonce, sessionFilesDefaults } from "./session-files.entity.js"
-import type { CommitEvent, CommitMeta, CommitRecord, HeaderRecord, StoreHealth } from "./session-files.entity.js"
+import { FILES_LAYOUT, PublishNonce, sessionFilesDefaults } from "./session-files.entity.js"
+import type { CommitEvent, CommitMeta, CommitRecord, FileStoreIo, FileStoreStalled, HeaderRecord } from "./session-files.entity.js"
 import {
-  admitCall,
-  afterCall,
   decodeCommit,
   encodeCommit,
   headerOfText,
@@ -76,15 +75,6 @@ const sessionIdOf = (name: string): Option.Option<ConversationId> =>
   isSessionDirectory(name) ? Schema.decodeUnknownOption(ConversationId)(name) : Option.none()
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
-
-/** A promise that settles within `ms`: its own outcome, or `stalled` once the time is up (the call itself may still finish later). */
-const withinDeadline = <A>(promise: Promise<A>, ms: number, stalled: unknown): Promise<A> => new Promise<A>((resolve, reject) => {
-  const timer = setTimeout(() => reject(stalled), ms)
-  promise.then(
-    (value) => { clearTimeout(timer); resolve(value) },
-    (error: unknown) => { clearTimeout(timer); reject(error) },
-  )
-})
 
 const isCode = (error: Failed, ...codes: ReadonlyArray<string>): boolean =>
   error._tag === "FileStoreIo" && Option.exists(errorCodeOf(error.cause), (code) => codes.includes(code))
@@ -141,8 +131,6 @@ const decodeError = (what: string, detail: string) => new SessionLogError({ code
 export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, options?: SessionLogFilesOptions): Effect.fn.Return<SessionLog["Service"], SessionLogError, Scope.Scope> {
   const io = options?.io ?? nodeFilesIo
   const stallMs = options?.stallMs ?? sessionFilesDefaults.stallMs
-  const permits = yield* Semaphore.make(2)
-  const health = yield* Ref.make<StoreHealth>({ _tag: "Healthy" })
   const known = yield* Ref.make<ReadonlyMap<string, Known>>(new Map())
   /** The sessions whose temporary files this handle swept, at its first commit to each. */
   const swept = yield* Ref.make<ReadonlySet<string>>(new Set())
@@ -154,20 +142,7 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
   const commitPath = (id: string, revision: number) => join(commitsDir(id), revisionFile(revision))
   const nonce = () => PublishNonce.make(randomUUID())
 
-  /** One file system call: admitted by the store's health, one of two in flight, settled within `stallMs`. */
-  const call = <A>(op: string, path: string, run: () => Promise<A>): Effect.Effect<A, Failed> => Effect.gen(function* () {
-    const admitted = yield* Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Ref.modify(health, (current) => admitCall(current, now, stallMs))))
-    if (!admitted) return yield* Effect.fail(new FileStoreStalled({ op, path, ms: stallMs }))
-    const stalled = new FileStoreStalled({ op, path, ms: stallMs })
-    const settle = (answered: boolean) => Clock.currentTimeMillis.pipe(Effect.flatMap((now) => Ref.update(health, (current) => afterCall(current, answered, now))))
-    return yield* permits.withPermits(1)(Effect.tryPromise({
-      try: () => withinDeadline(run(), stallMs, stalled),
-      catch: (error): Failed => error === stalled ? stalled : new FileStoreIo({ op, path, cause: error }),
-    })).pipe(
-      Effect.tap(() => settle(true)),
-      Effect.tapError((error) => settle(error._tag === "FileStoreIo")),
-    )
-  })
+  const call = yield* makeBoundedFilesCall(stallMs)
 
   /** A call whose failure is not the caller's to handle: logged, then let go. */
   const bestEffort = (op: string, path: string, run: () => Promise<void>) => call(op, path, run).pipe(
@@ -473,11 +448,11 @@ export const makeSessionLogFiles = Effect.fnUntraced(function* (root: string, op
       return yield* Effect.reduce(revisions, (): ReadonlyArray<SessionLogEvent> => [], (events, revision) => {
         if (events.length >= limit) return Effect.succeed(events)
         return metaOf(id, header.nonce, revision).pipe(Effect.flatMap((meta) =>
-          meta.last <= query.after || meta.first > meta.last || !meta.kinds.some(wanted)
+          meta.last <= query.after || (query.through !== undefined && meta.first > query.through) || meta.first > meta.last || !meta.kinds.some(wanted)
             ? Effect.succeed(events)
             : wholeCommit(id, revision).pipe(Effect.map((record) => [
               ...events,
-              ...record.events.filter((event) => event.seq > query.after && wanted(event.kind)).map(eventOf(id, record.meta.at)),
+              ...record.events.filter((event) => event.seq > query.after && (query.through === undefined || event.seq <= query.through) && wanted(event.kind)).map(eventOf(id, record.meta.at)),
             ].slice(0, limit)))))
       })
     }, onSession),

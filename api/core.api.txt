@@ -16,6 +16,8 @@ class InputConflict
 class IntentMatcher
 class KeyConflict
 class LeaseExpired
+class MediaStore
+class MediaStoreError
 class ModelCatalog
 class ModelSelection
 class NotResumable
@@ -146,8 +148,13 @@ const MEDIA_LIMITS
 const MEMORY_KINDS
 const MalformedLimit
 const Media
+const MediaEnvelope
 const MediaFingerprint
+const MediaHash
+const MediaReference
 const MediaSlot
+const MediaStoreBytes
+const MediaStoreMemoryLive
 const MemoryKindOf
 const MemoryObservation
 const MemoryRenderRecipe
@@ -339,6 +346,7 @@ const makeTurnEvents
 const makeTurnTasks
 const mediaFromBase64
 const mediaFromBytes
+const mediaHashOf
 const mediaLabel
 const mediaSlotsOf
 const mergeOptions
@@ -419,6 +427,7 @@ const userMessageOf
 const userMessageText
 const userRoleMessageOf
 const walkGlob
+const withMediaStore
 const zeroUsage
 function awaitIdle
 interface Capability
@@ -548,8 +557,12 @@ type KeyedKind
 type LogBody
 type LogEntry
 type Media
+type MediaEnvelope
 type MediaFingerprint
+type MediaHash
+type MediaReference
 type MediaSlot
+type MediaStoreBytes
 type MemoryFileSystem
 type MemoryObservation
 type MemoryRenderRecipe

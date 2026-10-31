@@ -2,7 +2,8 @@
  * The version of the shapes the framework stores in a session log: the
  * journal's payloads (every kind of `JOURNAL_KINDS`), the log's own rows
  * (`SessionHeader`, `SessionLogEvent`), the plugins' records (the tasks
- * plugin's `task.*`) and the sessions plugin's state in a session's head.
+ * plugin's `task.*`), optional physical media envelopes and the sessions
+ * plugin's state in a session's head.
  * It is bumped by one on every change to one of them that a reader can
  * tell (a key, a type, an optionality, a check; not a description):
  * `bun run docs:generate` fingerprints them (`scripts/stored-format.ts`)
@@ -19,4 +20,4 @@
  *
  * @public
  */
-export const STORED_FORMAT: number = 10
+export const STORED_FORMAT: number = 11

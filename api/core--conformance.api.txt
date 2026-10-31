@@ -6,6 +6,7 @@ const imageResizerConformance
 const imageResizerPng
 const inMemoryLog
 const inboxRunnerConformance
+const mediaStoreConformance
 const memoryConformance
 const modelCallRecorderConformance
 const modelCatalogConformance
@@ -26,6 +27,7 @@ interface FileSystemFixture
 interface FileSystemSubject
 interface ImageResizerSubject
 interface InboxRunnerSubject
+interface MediaStoreSubject
 interface ModelCallRecorderFixture
 interface ModelCallRecorderSubject
 interface RequestHeaderSubject

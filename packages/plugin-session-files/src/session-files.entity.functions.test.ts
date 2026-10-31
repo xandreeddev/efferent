@@ -5,7 +5,7 @@ import { ConversationId } from "@xandreed/core"
 import type { SessionHead, SessionListQuery } from "@xandreed/core"
 import { PublishNonce } from "./session-files.entity.js"
 import type { CommitRecord, StoreHealth } from "./session-files.entity.js"
-import { admitCall, afterCall, crc32Of, decodeCommit, encodeCommit, isSessionDirectory, page, revisionFile, revisionOfFile, revisionOfTemporary, tailVerdict } from "./session-files.entity.functions.js"
+import { abandonCall, admitCall, afterCall, crc32Of, decodeCommit, encodeCommit, isSessionDirectory, page, revisionFile, revisionOfFile, revisionOfTemporary, tailVerdict } from "./session-files.entity.functions.js"
 
 const session = ConversationId.make("00000000-0000-4000-8000-0000000000a1")
 const record = (events: number, data: Record<string, unknown> = {}): CommitRecord => ({
@@ -84,6 +84,17 @@ describe("page", () => {
 })
 
 describe("the store's health", () => {
+  test("cancellation abandons only its own probe and preserves healthy or newer claims", () => {
+    const healthy: StoreHealth = { _tag: "Healthy" }
+    const stalled = afterCall(healthy, false, 1000)
+    const [, first] = admitCall(stalled, 1500, 500)
+    expect(abandonCall(first, first)).toEqual(stalled)
+    expect(abandonCall(healthy, first)).toBe(healthy)
+    const [, newer] = admitCall(afterCall(first, false, 1600), 2100, 500)
+    expect(abandonCall(newer, first)).toBe(newer)
+    expect(admitCall(abandonCall(newer, first), 2200, 500)[0]).toBe(false)
+  })
+
   test("a stall fails every call at once, until one is let through a stallMs later; an answer heals it", () => {
     const healthy: StoreHealth = { _tag: "Healthy" }
     const stalled = afterCall(healthy, false, 1_000)

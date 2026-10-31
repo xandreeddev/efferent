@@ -273,6 +273,39 @@ sessions in `@xandreed/plugin-sessions`, and the composable agent
 (`Agent.define`, `Agent.turn`) in `@xandreed/sdk`. Foundry is independent and
 supplies deterministic verification when a host chooses it.
 
+`MediaStore` holds immutable decoded bytes under `MediaHash`, their exact
+SHA-256, independently of labels and the existing noncryptographic media
+fingerprint. `mediaHashOf` hashes arbitrary byte windows; store operations
+accept only 1 through `MEDIA_LIMITS.imageBytes` bytes. `put` copies before
+waiting, repeated equal bytes reuse their key, and `get` returns a fresh
+copy or `None` for a missing blob. Invalid inputs, unavailable storage and
+corrupt content are distinct `MediaStoreError.reason` values. Hashes grant
+no authorization. `MediaStoreMemoryLive` owns its state per layer instance.
+`mediaStoreConformance` checks hash vectors, roundtrip, idempotence, missing
+values, both copy boundaries and byte bounds; careless self-tests cover each
+storage/copy promise. This port does not choose reference envelopes or remove
+blobs when a session is removed.
+
+`withMediaStore(inner, options?)` decorates a `SessionLog` using the supplied
+`MediaStore`. It offloads canonical Media only inside known framework event
+data. Exact `MediaEnvelope` roots contain a manifest of own data paths, with
+`MediaReference` values at those paths; unlisted nested lookalikes remain
+ordinary JSON. All metadata and extras survive, so hydration restores request
+part hashes exactly. Invalid/noncanonical media-looking values stay inline.
+Unknown event kinds, session headers, metadata and state pass through. Copy
+the whole incoming commit before blob I/O, put every blob before committing,
+preserve inner failures and uncertain ACKs, and verify physical commit echoes
+against immutable expected bytes. Echoes use the operation's logical snapshot
+without fresh blob reads. Apply `through` before hydration, including a
+defensive clip for older backends. Missing/corrupt selected references fail
+with `store.decode`; unavailable blob I/O uses `store.io`. The per-wrapper LRU
+owns byte copies, bounded by both `cacheEntries` (default 32) and `cacheBytes`
+(default 32 MiB); either zero disables caching. Options outside finite
+nonnegative safe integers fail with `store.encode`. A warm cache can mask later
+external blob corruption until eviction or reopen. The decorated SessionLog
+kit and corruption, literal JSON, copy, cache and ACK regressions are in
+`src/session/session-log-media.adapter.test.ts`.
+
 `Sessions.waiting` is a bounded broadcast with an initial post-subscription
 signal. `InboxRunner` executes exactly its borrowed writer and preserves
 outcomes/errors without beginning or ending it. `WaitingInput` reads durable

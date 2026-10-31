@@ -1355,6 +1355,12 @@ adapters may omit the new field. The shipped `requestHeaderConformance` checks
 resolution and strict prefix behavior. Stored format 10 adds this protocol;
 old session and request formats remain readable.
 
+When using `withMediaStore`, hydrate physical event data before resolving parts
+or reconstructing a request. Request-part hashes continue to cover the original
+logical inline values. A bounded history read uses `SessionReadQuery.through`
+before hydration; clipping an already hydrated result can fetch invisible
+post-fork blobs and fail an otherwise valid inherited prefix.
+
 `replayModelRequest(events, runId, step, run?)` reconstructs one historical
 request, that of `step` in the run `run` of the turn (its ordinal: 0, the
 default, for a turn's first run and for every request stored before runs
@@ -2463,7 +2469,7 @@ image is an `InvalidRequestError` there too.
 summaries read a message as `userMessageText`: its text, then one label line
 per image; the raw transcript shows a tool result's images with their data
 elided. `queryLog` searches with each image's data elided
-(`elideMediaData`). The bus and stored `turn.started` carry a user's images'
+(`elideMediaData`). The bus and logical `turn.started` carry a user's images'
 base64; a taken steer keeps its images in the inbox-marked
 `memory.message`, with the receipt holding only ids. The bus's `tool.completed` (the stored one leaves the result out) and
 the stored `memory.tool-result` (its `encoded` result) a tool's: elide them
@@ -2479,6 +2485,60 @@ result's `media` slots included), fails on a message without text and on an
 (`request.diverged`).
 
 An `ArtifactRef` stays a reference by URL, a reference line in both modes.
+
+**Optional media storage.** `MediaStore` stores immutable bytes by their SHA-256
+`MediaHash`. Its `put` returns the content hash, and `get` returns an `Option`
+of copied bytes; absence is `None`, while invalid input, unavailable storage and
+corrupt content are typed `MediaStoreError`s. Both adapters accept one through
+`MEDIA_LIMITS.imageBytes` bytes. `MediaStoreMemoryLive` keeps them in memory;
+`MediaStoreDirectoryLive` from the files plugin publishes private immutable
+`blobs/<hash>.bin` files in a separate root with its own layout marker.
+
+Compose the decorator below the sessions layer:
+
+```ts
+import { Effect, Layer } from "effect"
+import { SessionLog, withMediaStore } from "@xandreed/core"
+import { MediaStoreDirectoryLive, SessionLogFilesLive } from "@xandreed/plugin-session-files"
+
+const storedLog = Layer.effect(SessionLog, Effect.gen(function* () {
+  return yield* withMediaStore(yield* SessionLog)
+})).pipe(
+  Layer.provide(SessionLogFilesLive(".efferent/runtime/sessions")),
+  Layer.provide(MediaStoreDirectoryLive(".efferent/runtime/media")),
+)
+```
+
+`withMediaStore(inner, { cacheEntries?, cacheBytes? })` stores every selected blob
+before calling `inner.commit`; failed CAS or uncertain acknowledgments can leave
+safe orphan blobs. Reads and successful commit echoes expose the original inline
+values, before typed journal decoders, memory rendering and request hash checks.
+The per-wrapper LRU defaults to 32 entries and 32 MiB of decoded bytes. Both
+budgets are finite nonnegative integers; zero disables caching. A warm cache can
+serve previously verified immutable bytes despite later external file damage;
+a cold read or miss verifies the stored content again.
+
+The physical codec recursively covers known framework journal payloads, including
+attachments, queued input, command JSON, encoded tool values at any depth,
+provider-executed results and tool-schema request parts. Only canonical supported
+images with matching type, size and fingerprint are offloaded; malformed or
+noncanonical media-looking JSON remains inline. All occurrence metadata and extra
+business fields survive unchanged. Opaque host/plugin event kinds, session head
+state and header metadata pass through unchanged.
+
+Physical data uses an exact versioned `$efferent.media` root envelope with a
+manifest of transformed data paths. Only those paths hydrate: an unlisted nested
+reference-shaped JSON value stays ordinary data. References have no inline data
+and never pass `isMediaValue`. Missing or corrupt selected blobs fail with
+`store.decode`, before model or tool dispatch. Hashes establish content
+consistency, not authorization or authentication of a rewritten journal.
+
+Stored format 11 registers this physical codec. Existing inline records stay
+readable; enabling the decorator does not rewrite them. Older unwrapped typed
+readers cannot decode physical attachment references and need a hydrated export
+or an updated reader. Backups and physical exports include the media root.
+Removing a session never deletes shared blobs; automatic garbage collection is
+outside this interface. The session files layout remains unchanged.
 
 ## Sessions: one log per session
 
@@ -2548,10 +2608,13 @@ background tasks. Two layers split the work:
   file ends with its length and CRC-32: one at a session's tail that is not
   whole is moved to `quarantine/` with its bytes kept and the commit before it
   is the head; damage before the tail fails with `store.decode`. At most two
-  file system calls are in flight per handle, each bounded by `stallMs`
-  (10 s): one that does not answer fails with `store.stalled`, and so does
+  underlying file system promises are in flight per handle. Queued admission
+  and each native await have separate `stallMs` deadlines (10 s): one that
+  does not answer fails with `store.stalled`, and so does
   every call after it until one, let through a `stallMs` later, answers (a
-  stalled commit's outcome is known once the head is read again). Like the
+  stalled commit's outcome is known once the head is read again). A timed-out
+  operation retains its physical slot until its original promise settles, so
+  cooldown probes cannot accumulate further pending work. Like the
   SQLite log it stamps time with the caller's `Clock`. A directory whose
   layout a newer release wrote fails to open with `store.version`; one
   without hard links (some SMB mounts), with `store.open`.

@@ -140,3 +140,7 @@ export const admitCall = (health: StoreHealth, now: number, stallMs: number): re
 /** A call's outcome on the store's health: one that answered heals it; one that stalled marks it stalled from now. */
 export const afterCall = (health: StoreHealth, answered: boolean, now: number): StoreHealth =>
   answered ? { _tag: "Healthy" } : { _tag: "Stalled", since: now, probing: false }
+
+/** Cancellation abandons a probe without turning an answered healthy mount into a stalled one. */
+export const abandonCall = (health: StoreHealth, claimed: StoreHealth): StoreHealth =>
+  health !== claimed || health._tag === "Healthy" ? health : { ...health, probing: false }
