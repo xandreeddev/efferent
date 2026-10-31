@@ -200,7 +200,7 @@ const overridden = []
 const hostFetch = Object.assign(async (input) => {
   const url = String(input)
   overridden.push(url)
-  return url.endsWith("/messages")
+  return new URL(url).pathname.endsWith("/messages")
     ? Response.json({ id: "msg_host_fetch", type: "message", role: "assistant", model: "claude-opus-4-8", content: [{ type: "text", text: "host messages" }], stop_reason: "end_turn", stop_sequence: null, usage: { input_tokens: 1, output_tokens: 1 } })
     : Response.json({ choices: [{ finish_reason: "stop", message: { content: "host compat" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
 }, { preconnect: () => undefined })
