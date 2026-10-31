@@ -4,7 +4,7 @@ import { JsonSchema, Option, Schema, SchemaAST } from "effect"
 import { HARNESS_CODES, JOURNAL_KINDS, journalSchemaOf, RECORDED_ELSEWHERE, RESERVED_KINDS, TransientTurnEvents, turnBeginCodes, TurnEvent } from "@xandreed/core"
 import type { TurnEventName } from "@xandreed/core"
 import { encodeSocketFrame, encodeSse, FeedHeartbeat, FeedReady, FeedRecord, renderFeedDefaults, sseHeaders, ssePreamble } from "@xandreed/plugin-render"
-import { deliveryId, TASK_CANCELLED, TASK_RESULT, TASK_STARTED, TaskCancelled, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
+import { deliveryId, TASK_ANSWERED, TASK_CANCELLED, TASK_QUESTIONED, TASK_RESULT, TASK_STARTED, TaskAnswered, TaskCancelled, TaskQuestioned, TaskResult, TaskStarted } from "@xandreed/plugin-tasks"
 import { codeListProblems, raisedCodes } from "./error-codes.js"
 
 /*
@@ -332,9 +332,11 @@ const feed = {
 }
 
 const tasks = [
-  { kind: TASK_STARTED, where: "the parent session", when: "`Tasks.start`: the task's instructions, mode, the starter's `meta` and, when given, the turn that started it (`startedBy`); its child session is created with it.", schema: jsonSchemaOf(TaskStarted) },
-  { kind: TASK_RESULT, where: "the child session", when: "Before the child's turn ends (or outside a turn when the host refused it): the outcome, reply and failure.", schema: jsonSchemaOf(TaskResult) },
+  { kind: TASK_STARTED, where: "the parent session", when: "`Tasks.start`: the task's instructions, mode, starter metadata and optional starting turn and trace parent. Exact retries retain their first committed ancestry; the child session is created with this start.", schema: jsonSchemaOf(TaskStarted) },
+  { kind: TASK_RESULT, where: "the child session", when: "A terminal task result, before its turn closes or outside a turn when admission refused execution. Waiting and retryable follow-ups produce no final result.", schema: jsonSchemaOf(TaskResult) },
   { kind: TASK_CANCELLED, where: "the child, then the parent", when: "`Tasks.cancel`, while the task is pending or running; the first of a result and a cancellation ends the task.", schema: jsonSchemaOf(TaskCancelled) },
+  { kind: TASK_QUESTIONED, where: "the child session", when: "`Tasks.ask`: the accepted question, its admitted input when present, and the exact notice outbox for the parent. The asking turn yields waiting; the task remains nonterminal.", schema: jsonSchemaOf(TaskQuestioned) },
+  { kind: TASK_ANSWERED, where: "the child session", when: "`Tasks.answer`: the immutable accepted answer and exact normalized queued input for a later child turn. A full inbox can defer delivery; reconciliation retries this outbox.", schema: jsonSchemaOf(TaskAnswered) },
 ].map((record) => ({ ...record, fields: fieldsOf(record.schema) }))
 
 if (failures.length > 0) {

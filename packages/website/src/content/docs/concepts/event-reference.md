@@ -523,9 +523,11 @@ Feed defaults (`renderFeedDefaults`, in milliseconds):
 
 | Kind | Recorded in | When |
 | --- | --- | --- |
-| `task.started` | the parent session | `Tasks.start`: the task's instructions, mode, the starter's `meta` and, when given, the turn that started it (`startedBy`); its child session is created with it. |
-| `task.result` | the child session | Before the child's turn ends (or outside a turn when the host refused it): the outcome, reply and failure. |
+| `task.started` | the parent session | `Tasks.start`: the task's instructions, mode, starter metadata and optional starting turn and trace parent. Exact retries retain their first committed ancestry; the child session is created with this start. |
+| `task.result` | the child session | A terminal task result, before its turn closes or outside a turn when admission refused execution. Waiting and retryable follow-ups produce no final result. |
 | `task.cancelled` | the child, then the parent | `Tasks.cancel`, while the task is pending or running; the first of a result and a cancellation ends the task. |
+| `task.questioned` | the child session | `Tasks.ask`: the accepted question, its admitted input when present, and the exact notice outbox for the parent. The asking turn yields waiting; the task remains nonterminal. |
+| `task.answered` | the child session | `Tasks.answer`: the immutable accepted answer and exact normalized queued input for a later child turn. A full inbox can defer delivery; reconciliation retries this outbox. |
 
 ### `task.started`
 
@@ -552,6 +554,24 @@ Feed defaults (`renderFeedDefaults`, in milliseconds):
 | Field | Type |
 | --- | --- |
 | `taskId` | `string` |
+
+### `task.questioned`
+
+| Field | Type |
+| --- | --- |
+| `taskId` | `string` |
+| `question` | `{ questionId, text, askedBy }` |
+| `input` | `string` (optional) |
+| `notice` | `{ id, source, content }` |
+
+### `task.answered`
+
+| Field | Type |
+| --- | --- |
+| `taskId` | `string` |
+| `questionId` | `string` |
+| `text` | `string` |
+| `input` | `{ id, userMessage, delivery, source }` |
 
 ### Task failure codes
 

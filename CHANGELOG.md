@@ -1117,6 +1117,11 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- A connected durable-agent guide and updated framework roadmap cover storage,
+  takeover, queues, steering, helper answers, shutdown and the process host.
+  Framework and website examples now leave waiting turns without a final
+  reply and skip normal end maintenance while a helper awaits an answer.
+
 - `@xandreed/process-host` binds a host-supplied agent and services to protocol
   version 1 over bounded stdio NDJSON. It supports begin, durable send/steer,
   helper answers, exact-turn cancellation, activity and graceful shutdown;

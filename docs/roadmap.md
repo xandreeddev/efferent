@@ -1,160 +1,115 @@
-# Roadmap — the agent line
+# Framework roadmap
 
-> **Historical (2026-10-28).** The coding CLI (`cli`, `tui`, `smith`), the
-> reference applications and their plugins moved out of this repository, which
-> now holds the agent framework only. Mentions of them below are historical.
+The 33-step framework plan is complete in this source checkout. The work below
+provides the storage, execution and host bindings for agents that accept input
+while running and recover after a process restart. Hosts choose their model,
+tools, policy and application interface.
 
-Living backlog of what's **not yet built** in efferent — rewritten 2026-07-09
-for the agent line (engine / providers / surface / foundry + smith / math /
-canvas / social + scenarios). The previous revision of this file described
-the OLD line (`packages/cli`, `agentLoop.ts`, the fleet/daemon) — deleted in
-THE DROP (2026-07-07); its still-relevant items are carried over below, its
-obsolete ones are recorded at the bottom so they stop reading as open.
+These are source capabilities for the next release. Workspace manifests still
+share version `0.14.0`; the [Unreleased changelog](../CHANGELOG.md#unreleased)
+records the changes. This page does not announce a package release.
 
-For *what's shipped*, see the package `CLAUDE.md`s and `docs/foundry.md`.
+## Completed milestones
 
----
+### M0 — Compatibility and thinking
 
-## Recently closed (was on this roadmap; now on main)
+| Item | Completed work | Contract |
+| --- | --- | --- |
+| 1 | Stored-format versioning, compatibility checks and retained journal fixtures | [Sessions](framework.md#sessions-one-log-per-session) |
+| 2 | Thinking-prefix binding, configurable mismatch behavior and reported drops | [Model settings](framework.md#runtime-model) |
 
-| was | shipped as |
-|---|---|
-| Compaction (unimplemented hook) | within-attempt fold (engine `CompactionPolicy`, #163) + attempt-boundary fold (#159/#160) |
-| Two-tier model selection | THREE roles (general/code/fast), config + flags + `:model`, role-scoped views |
-| Per-turn persistence flush | incremental tail persistence + incremental run artifacts (#106, #61) |
-| MCP — consume ("wait until needed") | engine `McpClient` port + progressive-disclosure bridge (`mcp_describe`/`mcp_call`, #168/#171) |
-| Memory directory | memory v2 — curated JSONL ledger + brief injection (#164) + skills distill (#173) |
-| Evals — independent judge | the judge GATE (default-ON, code tier, fail-closed, #165) + the trajectory critic (manual) |
-| Extensions (as a concept) | SKILLS — file-based instructions, 3-tier progressive disclosure (#167); behavior stays build-in-code |
-| Sandboxing | bubblewrap coder Bash, default ON (#169) |
-| Post-accept git workflow | `:ship` — branch → commit → push → PR (#162) |
+### M1 — Durable sessions and lifecycle
 
-## Tier 1 — next up
+| Item | Completed work | Contract |
+| --- | --- | --- |
+| 3 | Node 24/Bun directory session store with revision CAS and bounded I/O | [Session stores](framework.md#sessions-one-log-per-session) |
+| 4 | Crash, torn-tail and multiprocess storage recovery coverage | [Recovery suite](../packages/plugin-session-files/src/session-recovery.test.ts) |
+| 5 | Explicit known-dead takeover and resumable interrupted turns | [Resume and takeover](framework.md#resuming-a-turn) |
+| 6 | Graceful shutdown, turn refusal and durable interruption within a deadline | [Shutdown](framework.md#busy-signal-and-graceful-shutdown) |
+| 7 | Separate active-work and backlog signals, plus per-turn time limits | [Activity](framework.md#busy-signal-and-graceful-shutdown) |
 
-### Token-level streaming
-The engine loop is `generateText` per turn (one round-trip → one append);
-providers' compat client is v1 non-streaming. Map `streamText` parts onto
-new LoopEvents so the TUI shows text/reasoning as it forms and tool-arg
-deltas can drive a "call forming" state. Touches: engine `loop.ts`/
-`LoopEvent`, providers `compat.ts`, the conversation-pane assistant block.
-The biggest visible-latency win on slow thinking models.
+### M2 — Honest steps
 
-### Non-model settings in `:settings`
-The settings menu (#176) edits the model roles only because the
-`SettingsStore` port exposes `load` + `setRole` and nothing else. Extend the
-port with a generic keyed setter (validated per key), then grow the menu:
-`sandbox`, `maxAttempts`, `budgetMillis`, thinking mode. The menu UI already
-composes the select overlay — this is a port + adapter change.
+| Item | Completed work | Contract |
+| --- | --- | --- |
+| 8 | Whole, cut and malformed response handling before tool execution | [Step outcomes](framework.md#host-planned-initial-tool-batch) |
+| 9 | Provider tool-call identity alongside framework invocation identity | [Events](events.md) |
+| 10 | Durable tool admission/results and exact interrupted-call recovery state | [Resuming a turn](framework.md#resuming-a-turn) |
 
-### TodoWrite + plan visibility
-A `todo_write` tool in the coder toolkit + a side-panel section rendering
-the live list. Cheap; keeps long forge attempts legible and feeds the
-trajectory metrics (plan-adherence is measurable once the plan is data).
+### M3 — Durable input
 
-### Cost tracking
-Usage (input/output/cache tokens) is already counted per turn and shown in
-the gauge; multiply by per-model pricing for a session $ readout in the
-frame footer. Needs a small `pricing` table (constant defaults, config
-override) — informational, no budgeting.
+| Item | Completed work | Contract |
+| --- | --- | --- |
+| 11 | Immutable queued user input and idempotent enqueue | [Sessions and inboxes](framework.md#sessions-one-log-per-session) |
+| 12 | Durable steering between settled steps, with late input retained | [Durable agents](framework.md#durable-and-steerable-agents) |
+| 13 | Owner-scoped inbox drainer, startup recovery and bounded retry/backoff | [Sessions and inboxes](framework.md#sessions-one-log-per-session) |
 
-### fallbackModel
-The provider-outage ladder retries patiently but there is still no
-cross-provider failover (`fallbackModel` is designed but unset). One
-settings key + a router fallback rung.
+### M4 — Model calls
 
-## Tier 2 — capability depth
+| Item | Completed work | Contract |
+| --- | --- | --- |
+| 14 | Messages endpoints and per-model thinking, effort and output settings | [Model settings](framework.md#runtime-model) |
+| 15 | Cache breakpoint limits, TTL ordering and stable-prefix planning | [Prompt caching](framework.md#runtime-model) |
+| 16 | Typed provider failures and context-overflow classification | [Model failures](framework.md#runtime-model) |
+| 17 | One bounded request retry policy with Retry-After handling | [Request policy](framework.md#runtime-model) |
+| 18 | Terminal usage facts for physical model attempts, including helper calls | [Token usage](framework.md#token-usage) |
+| 19 | Memory maintenance after the final reply | [Memory lifecycle](framework.md#composable-agents-the-host-composes-the-turn) |
+| 20 | Bounded context-overflow recovery under a tighter budget | [Memory lifecycle](framework.md#composable-agents-the-host-composes-the-turn) |
 
-### TUI parity with the old line (deliberately re-earned, not ported)
-The old TUI had: per-pane `/` search with highlight, turn/tool folding, a
-fold cursor, vi-modal navigation, tree-sitter code highlighting, Ctrl-R
-tool-output expand, ↑ prompt-history recall. The smith TUI re-built the
-chassis lean; these come back one at a time as usage demands them. Next
-candidates by live-session friction: **tool-output expand** (agy's
-`ctrl+o`), **↑ history recall**, **vi mode** (deferred by user call
-2026-07-09; the old `viMode` reducer survives in git history).
+### M5 — Replay and media
 
-### `@`-file references in the composer
-`@path` in a refine/task message expands to the file's content (bounded) in
-the turn. Trivial parse; decide globs/binary policy.
+| Item | Completed work | Contract |
+| --- | --- | --- |
+| 21 | Content-addressed request parts with the existing replay API | [Durable requests](framework.md#composable-agents-the-host-composes-the-turn) |
+| 22 | Optional immutable media storage and logical-log hydration | [Media storage](framework.md#images-and-multi-part-messages) |
+| 23 | Opt-in render snapshots with fork-aware publication pointers | [Render snapshots](framework.md#composable-agents-the-host-composes-the-turn) |
 
-### MCP — expose
-`effect/ai`'s `McpServer.toolkit()` bridges our toolkits to an MCP server:
-other agents (Claude Desktop/Code, Cursor) could drive smith's tools. Low
-effort, good build-in-public artifact.
+### M6 — Host policy and workspace tools
 
-### Judge calibration
-The judge gate runs default-ON but has never been calibrated: build a small
-labeled set (sound/unsound workspaces from real runs), measure
-agreement/false-block rate, tune the prompt. Do before trusting the judge
-on anything beyond intent/honesty.
+| Item | Completed work | Contract |
+| --- | --- | --- |
+| 24 | Host-controlled command environment and workspace root access | [Workspace tools](framework.md#workspace-tools) |
+| 25 | Per-tool call limits, concurrency, breakers and loop limits | [Tool policy](framework.md#composable-agents-the-host-composes-the-turn) |
+| 26 | Optional ripgrep execution with a timeout and explicit ignore-file policy | [Workspace tools](framework.md#workspace-tools) |
+| 27 | ImageResizer port and external-CLI adapter for image reads | [Image resizing](framework.md#workspace-tools) |
 
-### Foundry gate growth
-- Mutation-testing gate (StrykerJS incremental) — the anti-"tests that
-  assert nothing" meta-gate.
-- fast-check property gate.
-- Promote smith's command/test gate into foundry's built-ins.
+### M7 — Hooks, helpers and traces
 
-### Scenarios v3 remainder
-Config-matrix A/Bs, sharding, cost budgets, bootstrap change tests, and a
-scheduled live trajectory-critic run. Sampling, pass@k/pass^k estimates,
-Wilson intervals, judge-backed live packs, and raw-evidence baselines ship.
+| Item | Completed work | Contract |
+| --- | --- | --- |
+| 28 | Per-call model request hook with durable dispatch evidence | [Host composition](framework.md#composable-agents-the-host-composes-the-turn) |
+| 29 | Validated tool interception before and after handler execution | [Host composition](framework.md#composable-agents-the-host-composes-the-turn) |
+| 30 | Multi-turn helpers, waiting questions, durable answers and reconciliation | [Durable agents](framework.md#durable-and-steerable-agents) |
+| 31 | Neutral GenAI trace attributes, LangSmith OTLP binding and durable task ancestry | [Traces](framework.md#traces-and-metrics) |
 
-### Provider-level cache tightening
-Per-conversation OpenAI `prompt_cache_key`; explicit Gemini `cachedContent`
-once Gemini is reachable beyond its OpenAI-compatible endpoint (Effect v4
-ships no Google provider). Cost, not correctness.
+### M8 — Process host and guide
 
-## Tier 3 — later
+| Item | Completed work | Contract |
+| --- | --- | --- |
+| 32 | Versioned bounded stdio peer, command dispatch, signals and restart journeys | [Process protocol](process-protocol.md) |
+| 33 | This roadmap and a connected durable-agent composition guide | [Durable and steerable agents](framework.md#durable-and-steerable-agents) |
 
-- **Session branching** — fork a conversation from any message; the
-  checkpoint model already supports the data shape, the UI is the work.
-- **More media** — a user's images and the images tools return ship
-  (stored inline, once; image parts on every route that reads them, label
-  lines elsewhere), and the workspace `read` returns image files. Still to
-  come: images an MCP tool returns (the MCP bridge keeps text and
-  structured content only), resizing an image over the limits instead of
-  refusing it, PDFs and other documents, and a `MediaStore` port for
-  sessions too large to keep images inline.
-- **`.gitignore` in the workspace tools** — `find` and `grep` prune only
-  their `exclude` names; honouring ignore files (or calling `rg`/`fd` when
-  installed) is the next step for large repositories.
-- **A sandboxed `Bash`** — the workspace tools are a guardrail, not a
-  sandbox; a container or bubblewrap `Bash` and `FileSystem` pair (passing
-  both kits) would confine commands as well.
-- **Bounded `grep` matching** — the workspace `grep` runs the model's
-  regular expression synchronously in the host process; nested repetition
-  is refused, but other backtracking patterns (`(a|a)*`) can still hold the
-  process. Matching off the main thread under a time budget, or with a
-  linear-time engine, would bound it.
-- **LSP tool** — park until a concrete need; naturally skill-shaped.
-- **Wider code-highlight coverage** — the new TUI has NO syntax
-  highlighting yet; if/when it returns, `@opentui/core` bundles only
-  JS/TS/markdown/zig grammars.
+## Verification and limits
 
-## Known rough edges
+The default checks are key-free. Scripted journeys exercise source and packed
+Node/Bun packages, durable acknowledgments, process death and restart. Local
+OTLP collectors check emitted attributes and task ancestry. These checks do not
+establish live provider acceptance, an exact provider bill, live LangSmith
+ingestion or behavior on every network filesystem. Provider-backed evidence
+needs the actual endpoint/model and versioned request configuration.
 
-- `--cwd` outside the repo dies on the Solid preload (bunfig is
-  cwd-relative) — error message should say so.
-- `Bash.exec` / `collectBashResult` keep a command's whole output: no cap or
-  truncation in the port (the workspace `bash` tool folds `Bash.stream` into
-  a tail and a spill file instead).
-- Fast input bursts: Enter in the same terminal chunk as text can land as a
-  newline instead of running a `:` command.
+The directory store requires the documented filesystem operations, including
+exclusive hard links. Workspace root rules do not confine Bash commands, and
+the builtin JavaScript grep engine remains without a matching time limit; the
+ripgrep path supplies its own timeout. See the linked contracts for these
+limits and the optional external image tools.
 
-## Dropped with the old line (recorded so they stop reading as open)
+## Deferred follow-ups
 
-- **Channels & triggers / daemon / fleet cockpit** — the new line has no
-  fleet; agents are packages. Revisit only if a product needs a daemon.
-- **Approval beyond bash** — replaced by the doctrine: gates outside,
-  sandbox around the coder, no in-loop approval judge.
-- **`:tree` resume/branch** — no fleet tree; smith has `:resume` over
-  conversations.
-- **Old web UI follow-ups** — the web package was deleted; canvas is the
-  UI-builder now.
-- **Extensions-as-Layers marketplace framing** — superseded by
-  skills (instructions) + MCP (external tools); behavior stays in code.
+The original plan leaves these outside the completed sequence:
 
-## Consciously skipped (unchanged)
-
-Plugins marketplace · out-of-process coordinator · ToolSearch ·
-output styles · full keybindings editor.
+- A session-store mode without hard links, for filesystems such as SMB.
+- Optimization of begin's sequence-zero history scans.
+- Append-only rendering.
+- Live Models API limits.
+- sharp and WASM image-resizer adapters.

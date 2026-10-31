@@ -95,7 +95,7 @@ export const streamTo = (push: Push) => (turn: Turn): Effect.Effect<TurnOutcome,
   yield* turn.events.subscribe(progressOf, (frame) => push({ event: frame.event, data: { turn: turn.turn, ...frame.data } }), { mode: "background" })
   yield* turn.tools.select(turn.userMessage) // the always-on skills, and the matcher's choice
   const result = yield* turn.run({}) // streamed by default (limits.streaming)
-  return { outcome: result.outcome, reply: Option.some(result.text) }
+  return { outcome: result.outcome, reply: result.outcome === "waiting" ? Option.none() : Option.some(result.text) }
 })
 ```
 
