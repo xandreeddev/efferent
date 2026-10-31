@@ -2,6 +2,7 @@ const CurrentModelCallNotifications
 const checkModelRequest
 const draftOfTurnEvent
 const draftsOfEntries
+const encodeRequestPart
 const entriesSendingMedia
 const estimateTokens
 const extractUsage
@@ -11,6 +12,7 @@ const isVolatileContext
 const markVolatileContext
 const modelRequestHeaderOf
 const modelRequestTools
+const prepareRequestParts
 const randomUuid
 const readerOf
 const reconstructModelRequest
@@ -20,6 +22,7 @@ const responseText
 const responseToAgentMessages
 const responseToolCalls
 const responseToolResults
+const sha256Of
 const strictJsonSchema
 const stripVolatileContext
 const toPromptMessages

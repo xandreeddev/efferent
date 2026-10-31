@@ -1,6 +1,7 @@
 import { Context, Effect, Layer, Match, Option, Ref, Result, Schema, Scope, Semaphore } from "effect"
 import {
   addUsage,
+  canonicalJson,
   Capabilities,
   ConversationMemory,
   CurrentAgentRun,
@@ -13,7 +14,8 @@ import {
   makeTurnEvents,
   makeTurnTasks,
   MEMORY_KINDS,
-  ModelRequestHeader,
+  RequestPartData,
+  RequestPartHash,
   readStoredKeys,
   RESERVED_KINDS,
   RunContext,
@@ -33,6 +35,7 @@ import type {
   LogBody,
   LogEntry,
   LogHandle,
+  ModelRequestHeader,
   PromptContext,
   PromptSection,
   RequestSnapshot,
@@ -46,7 +49,7 @@ import type {
   TurnEvent,
   TurnLiveInput,
 } from "@xandreed/core"
-import { draftOfTurnEvent, draftsOfEntries, readerOf, renderSections } from "@xandreed/core/internal"
+import { draftOfTurnEvent, draftsOfEntries, encodeRequestPart, prepareRequestParts, readerOf, renderSections } from "@xandreed/core/internal"
 import { ReplyStep } from "./turn-phase.entity.js"
 import type { TurnPhase } from "./turn-phase.entity.js"
 import { addContext, claim, heldWith, hold, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
@@ -216,27 +219,68 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
 
   // The request snapshot: the history memory was opened over, then the turn's stored events,
   // each read taking only what was stored after the last event it saw.
-  const requestKinds = [...MEMORY_KINDS, "request.prepared"]
+  const requestKinds = [...MEMORY_KINDS, "request.part", "request.prepared"]
   const snapshots = yield* Semaphore.make(1)
-  const snapshot = yield* Ref.make(Option.none<RequestSnapshot & { readonly cursor: number }>())
-  const requestSnapshot: Effect.Effect<RequestSnapshot, TurnError> = snapshots.withPermits(1)(Effect.gen(function* () {
+  const snapshot = yield* Ref.make(Option.none<RequestSnapshot & { readonly requestEvents: ReadonlyArray<SessionLogEvent>; readonly cursor: number }>())
+  // Called only while snapshots is held. Preparation uses this directly so it
+  // cannot re-enter its own gate while refreshing dedup and visibility facts.
+  const refreshRequests = Effect.gen(function* () {
     const known = yield* Option.match(yield* Ref.get(snapshot), {
-      onNone: () => Ref.get(history).pipe(
-        Effect.flatMap(Option.match({ onNone: () => readHistory, onSome: Effect.succeed })),
-        Effect.map((entries) => ({ entries, requests: [], cursor: writer.started.seq - 1 })),
-      ),
+      onNone: () => Effect.gen(function* () {
+        const entries = yield* Ref.get(history).pipe(Effect.flatMap(Option.match({ onNone: () => readHistory, onSome: Effect.succeed })))
+        const requestEvents = yield* writer.history(["request.part"])
+        return { entries, requests: [], requestEvents, cursor: writer.started.seq - 1 }
+      }),
       onSome: Effect.succeed,
     })
-    const stored = yield* writer.snapshot(requestKinds, known.cursor)
+    const stored = (yield* writer.snapshot(requestKinds, known.cursor)).filter((event) => event.session === writer.started.session && event.seq > known.cursor)
     const headers = yield* readStoredKeys("request.prepared", stored).pipe(Effect.mapError((error) => failure("request.decode", error.message)))
+    const ownHeaders = headers.flatMap((header) => header.keys.runId === admitted.runId ? [header.event] : [])
+    const selected = new Set(ownHeaders)
     const next = {
       entries: [...known.entries, ...(yield* decoded(stored.filter((event) => MEMORY_KINDS.includes(event.kind))))],
-      requests: [...known.requests, ...headers.flatMap((header) => header.keys.runId === admitted.runId ? [header.event] : [])],
+      requests: [...known.requests, ...ownHeaders],
+      requestEvents: [...known.requestEvents, ...stored.filter((event) => event.kind === "request.part" || selected.has(event))],
       cursor: stored.reduce((last, event) => Math.max(last, event.seq), known.cursor),
     }
     yield* Ref.set(snapshot, Option.some(next))
-    return { entries: next.entries, requests: next.requests }
-  }))
+    return next
+  })
+  const requestSnapshot: Effect.Effect<RequestSnapshot, TurnError> = snapshots.withPermits(1)(refreshRequests).pipe(
+    Effect.map(({ entries, requests, requestEvents }) => ({ entries, requests, requestEvents })),
+  )
+  const partKey = Schema.Struct({ hash: RequestPartHash })
+  const prepareRequest = Effect.fnUntraced(function* (header: ModelRequestHeader) {
+    // These codecs detach all caller data before any storage or admission wait.
+    const encoded = yield* prepareRequestParts(header).pipe(Effect.flatMap((prepared) => Effect.all({
+      header: storedJson(prepared.header),
+      parts: Effect.forEach(prepared.parts, (expected) => storedJson(expected).pipe(Effect.map((data) => ({ expected, data }))), { concurrency: 1 }),
+    }, { concurrency: 1 })), Effect.mapError((cause) => new HarnessError({ code: "request.encode", message: "request parts did not encode", cause })))
+    yield* snapshots.withPermits(1)(Effect.gen(function* () {
+      const visible = (yield* refreshRequests).requestEvents.filter((event) => event.kind === "request.part")
+      const keyed = yield* Effect.forEach(visible, (event) => Schema.decodeUnknownEffect(partKey)(event.data).pipe(
+        Effect.map((keys) => ({ keys, event })),
+        Effect.mapError((cause) => new HarnessError({ code: "request.decode", message: "request part lookup keys did not decode", cause })),
+      ), { concurrency: 1 })
+      const missing = yield* Effect.forEach(encoded.parts, ({ expected, data }) => Effect.gen(function* () {
+        const category = Match.valueTags(expected.part, { System: () => "system", Tool: () => "tools" })
+        const prior = keyed.filter(({ keys }) => keys.hash === expected.hash)
+        yield* Effect.forEach(prior, ({ event }) => Schema.decodeUnknownEffect(RequestPartData)(event.data).pipe(
+          Effect.mapError((cause) => new HarnessError({ code: "request.diverged", message: `${category}: stored request part did not decode`, cause })),
+          Effect.flatMap((part) => encodeRequestPart(part.part).pipe(
+            Effect.mapError((cause) => new HarnessError({ code: "request.diverged", message: `${category}: stored request part did not encode`, cause })),
+          )),
+          Effect.flatMap((part) => part.hash === expected.hash && canonicalJson(part.part) === canonicalJson(expected.part)
+            ? Effect.void : Effect.fail(new HarnessError({ code: "request.diverged", message: `${category}: stored request part content does not match its hash` }))),
+        ), { concurrency: 1, discard: true })
+        return prior.length === 0 ? [frameworkDraft("request.part", data)] : []
+      }), { concurrency: 1 })
+      yield* writer.append([...missing.flat(), frameworkDraft("request.prepared", encoded.header)])
+      yield* writer.flush
+      // The next refresh learns actual committed row identities/order. Never
+      // synthesize rows from the newly accepted hashes or guess their seqs.
+    }))
+  })
 
   const recordContext = (bodies: ReadonlyArray<TurnContextBody>) => bodies.length === 0 ? Effect.void : session.record(bodies, 0).pipe(Effect.asVoid)
   const acceptingSteers = Ref.get(phase).pipe(Effect.flatMap((current) => Match.valueTags(current, {
@@ -270,12 +314,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       yield* Option.match(yield* Ref.get(gateFailure), { onNone: () => Effect.void, onSome: Effect.fail })
       return recorded.flatMap((entry) => entry.body._tag === "Message" ? [entry.body.message] : [])
     }),
-    prepareRequest: (header) => Schema.encodeEffect(ModelRequestHeader)(header).pipe(
-      Effect.flatMap(storedJson),
-      Effect.mapError((error) => failure("request.encode", error.message)),
-      Effect.flatMap((data) => writer.append([frameworkDraft("request.prepared", data)])),
-      Effect.andThen(writer.flush),
-    ),
+    prepareRequest,
     requestSnapshot,
     number: Ref.get(phase).pipe(Effect.flatMap((current) => Option.match(numberOf(current), {
       onNone: () => Effect.fail(failure("turn.unstarted", "The user's message is not persisted yet")),

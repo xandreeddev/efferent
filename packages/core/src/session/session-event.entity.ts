@@ -164,12 +164,13 @@ export const SESSION_KINDS: ReadonlyArray<string> = ["turn.ended", "inbox.queued
 /**
  * Every kind the framework writes to a session's journal: memory's, the
  * bus events it stores, and the session's own. `journalSchemaOf(kind)` has
- * the schema of each. `request.prepared` holds each request's full system
- * text and tool declarations (and step context in "system" mode), next to
+ * the schema of each. `request.prepared` holds each request's system text
+ * and tool declarations directly or references preceding `request.part`
+ * records (and step context in "system" mode), next to
  * the memory events: a host that redacts memory, or exports or streams
  * session events, handles it the same way.
  */
-export const JOURNAL_KINDS: ReadonlyArray<string> = [...MEMORY_KINDS, ...TURN_EVENT_KINDS, ...SESSION_KINDS, "model.called"]
+export const JOURNAL_KINDS: ReadonlyArray<string> = [...MEMORY_KINDS, ...TURN_EVENT_KINDS, ...SESSION_KINDS, "model.called", "request.part"]
 
 /**
  * Names only Efferent uses: a host event or a host record under one of

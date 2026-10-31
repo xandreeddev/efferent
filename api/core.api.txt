@@ -169,6 +169,7 @@ const ModelOverflowEvidence
 const ModelPrice
 const ModelRequestDescriptor
 const ModelRequestHeader
+const ModelRequestHeaderV2
 const ModelRequestTool
 const OpenTurn
 const PLUGIN_API_VERSION
@@ -188,6 +189,9 @@ const ReadRange
 const ReasoningEffort
 const ReasoningPart
 const RecursiveOptions
+const RequestPart
+const RequestPartData
+const RequestPartHash
 const RequestPreparedKeys
 const ResolvedCapabilities
 const ResponseStamp
@@ -234,6 +238,7 @@ const StepUsageData
 const StoredData
 const StoredKeys
 const StoredMemoryData
+const StoredModelRequestHeader
 const StreamFallbackEvent
 const StreamPartId
 const Subject
@@ -368,6 +373,7 @@ const replyEndingOf
 const resolveBashEnv
 const resolveCapabilities
 const resolveModelRequest
+const resolveRequestHeader
 const resolvingModel
 const responseModelOf
 const resumeRefusal
@@ -567,6 +573,7 @@ type ModelOverflowEvidence
 type ModelPrice
 type ModelRequestDescriptor
 type ModelRequestHeader
+type ModelRequestHeaderV2
 type ModelRequestTool
 type OpenTurn
 type PartialOptions
@@ -584,6 +591,9 @@ type ReasoningEffort
 type ReasoningEffortType
 type ReasoningPart
 type RecursiveOptions
+type RequestPart
+type RequestPartData
+type RequestPartHash
 type ResolvedCapabilities
 type ResponseStamp
 type RunId
@@ -621,6 +631,7 @@ type StepResult
 type StepStatus
 type StepUsageData
 type StoredKind
+type StoredModelRequestHeader
 type StreamPartId
 type Subject
 type SubjectId

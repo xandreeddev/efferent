@@ -10,6 +10,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Stored format 10 adds reusable `request.part` records and version 2 request
+  headers referencing canonical system/tool hashes. Retention, export and
+  redaction include these sensitive parts and preserve header dependencies.
+  Readers still accept version 1; `ModelRequestHeader` remains the full
+  materialized view, and public replay signatures are unchanged. Code reading
+  raw `request.prepared` data handles both versions or calls
+  `resolveRequestHeader` before using system text and tool declarations. Custom
+  `TurnMemory` snapshots may supply ordered `requestEvents` for V2 headers;
+  existing V1-only adapters can omit it. `requestHeaderConformance` verifies
+  selected-prefix resolution and reference integrity.
+
 - Custom step loops honor optional `StepRequest.onContextOverflow(step, evidence)`
   when supplied; rerun `stepLoopConformance`. The SDK compacts to a strictly
   smaller request and permits one context resend per step, with a shrinking

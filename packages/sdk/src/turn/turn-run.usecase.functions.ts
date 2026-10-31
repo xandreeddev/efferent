@@ -294,7 +294,7 @@ export const prepareRun = Effect.fnUntraced(function* <P = never>(policy: TurnPo
     plan,
     dispatch: Effect.fnUntraced(function* (step, actual) {
       const stored = yield* memory.requestSnapshot
-      const header = yield* modelRequestHeaderOf(stored.requests, run.id, step, run.ordinal)
+      const header = yield* modelRequestHeaderOf(stored.requestEvents ?? stored.requests, run.id, step, run.ordinal)
       const expected = yield* reconstructModelRequest(header, stored.entries)
       yield* checkModelRequest(expected, {
         prompt: actual.prompt,

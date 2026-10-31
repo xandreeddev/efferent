@@ -43,6 +43,8 @@ export interface RequestSnapshot {
   readonly entries: ReadonlyArray<LogEntry>
   /** This run's stored request headers (`request.prepared`), in log order. */
   readonly requests: ReadonlyArray<SessionLogEvent>
+  /** Visible request parts and this writer's headers in original logical order; V1-only adapters may omit it. */
+  readonly requestEvents?: ReadonlyArray<SessionLogEvent>
 }
 
 /** The turn's memory session, and the records that open and close the turn. */
@@ -53,13 +55,14 @@ export class TurnMemory extends Context.Service<TurnMemory, MemoryReader & {
   readonly pendingSteers: Effect.Effect<boolean, TurnError>
   /** Atomically consume waiting steers as exact user messages under this started step before planning its request. */
   readonly steer: (step: number, run: RunOrdinal) => Effect.Effect<ReadonlyArray<AgentMessage>, TurnError>
-  /** Record and flush a request's reconstruction header before dispatch. */
+  /** Record a full materialized header with its required stored parts, then flush before dispatch. */
   readonly prepareRequest: (header: ModelRequestHeader) => Effect.Effect<void, TurnError>
   /**
    * Flush, then read what storage holds, never the memory session's state:
-   * the history memory was opened over (read once, at open), and this
-   * turn's events from its start, each read taking only the events stored
-   * after the last one read.
+   * the history memory was opened over (read once, at open), visible historical
+   * request parts, and this turn's events from its start. Own-tail reads take
+   * only events stored after the last one read; inherited sequence numbers do
+   * not advance that cursor.
    */
   readonly requestSnapshot: Effect.Effect<RequestSnapshot, TurnError>
   /** The turn's number; fails with `turn.unstarted` before `persistMessage`. */

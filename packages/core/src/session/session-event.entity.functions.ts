@@ -7,6 +7,8 @@ import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { EntryId, LogBody, LogEntry } from "../memory/memory-log.entity.js"
 import { ModelRequestHeader } from "../turn/model-request.entity.js"
+import { StoredModelRequestHeader } from "../turn/model-request-header.entity.js"
+import { RequestPartData } from "../turn/request-part.entity.js"
 import { ContextBuiltEvent, ToolCompletedEvent, ToolRefusedEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
 import type { TurnEvent as TurnEventType } from "../turn/turn-event.entity.js"
 import {
@@ -98,8 +100,9 @@ export const StoredData = {
   "inbox.taken": InboxTakenData,
   "inbox.dropped": InboxDroppedData,
   "step.usage": StepUsageData,
-  "request.prepared": ModelRequestHeader,
+  "request.prepared": StoredModelRequestHeader,
   "model.called": ModelCallData,
+  "request.part": RequestPartData,
 } as const
 export type StoredKind = keyof typeof StoredData
 
@@ -121,8 +124,9 @@ const storedDecoders: { readonly [K in StoredKind]: (data: unknown) => Effect.Ef
   "inbox.taken": Schema.decodeUnknownEffect(InboxTakenData),
   "inbox.dropped": Schema.decodeUnknownEffect(InboxDroppedData),
   "step.usage": Schema.decodeUnknownEffect(StepUsageData),
-  "request.prepared": Schema.decodeUnknownEffect(ModelRequestHeader),
+  "request.prepared": Schema.decodeUnknownEffect(StoredModelRequestHeader),
   "model.called": Schema.decodeUnknownEffect(ModelCallData),
+  "request.part": Schema.decodeUnknownEffect(RequestPartData),
 }
 
 /** One event's data decoded as `kind`'s, read with sorted keys (`canonical`), whatever its own kind. */
