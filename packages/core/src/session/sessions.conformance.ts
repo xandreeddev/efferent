@@ -215,6 +215,48 @@ export const sessionsConformance = (subject: SessionsSubject): ReadonlyArray<Con
   const leased = (ttlMs = LONG, admission: Admission = admitAll) => subject.leased({ ttlMs, admission })
 
   return [
+    scoped("an advertised memory snapshot capability reopens the exact pointed publication after ordinary lifecycle writes", "memory-snapshot", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      const first = yield* sessions.begin(address, say("snapshot-first"))
+      if (first.memorySnapshot === undefined) return
+      const draft = frameworkDraft("memory.snapshot", {
+        version: 1, strategy: { id: "conformance", version: "1" },
+        anchor: { session: address.id, seq: first.started.seq }, through: { session: address.id, seq: first.started.seq }, entries: [],
+      })
+      yield* first.append([{ kind: "conformance.snapshot-prefix", data: {} }, draft])
+      yield* first.flush
+      const published = yield* sessions.read(address, { kinds: ["memory.snapshot"] })
+      yield* first.end(completed)
+      yield* sessions.deliver(address, item("snapshot-notice"))
+      const reopened = yield* sessions.begin(address, say("snapshot-next"))
+      const selected = yield* (reopened.memorySnapshot ?? Effect.succeed(Option.none<SessionLogEvent>()))
+      yield* expect("memory-snapshot", published.length === 1 && Option.isSome(selected)
+        && selected.value.session === address.id && selected.value.seq === first.started.seq + 2
+        && canonicalJson(selected.value.data) === canonicalJson(published[0]!.data), "the snapshot pointer was not atomically assigned or survived neither end, delivery nor begin")
+    })),
+    scoped("an advertised memory snapshot capability ignores a parent's latest publication beyond the child's fork ceiling", "memory-snapshot-fork", (owner) => Effect.gen(function* () {
+      const { sessions } = yield* leased()
+      const address = yield* created(sessions, owner)
+      const first = yield* sessions.begin(address, say("snapshot-root"))
+      if (first.memorySnapshot === undefined) return
+      const draft = (writer: TurnWriter) => frameworkDraft("memory.snapshot", {
+        version: 1, strategy: { id: "conformance", version: "1" },
+        anchor: { session: address.id, seq: writer.started.seq }, through: { session: address.id, seq: writer.started.seq }, entries: [],
+      })
+      yield* first.append([draft(first)])
+      yield* first.end(completed)
+      const child = yield* sessions.fork(address, { origin: "conformance", inherit: true })
+      const visible = yield* sessions.begin({ owner, id: child.header.id }, say("snapshot-child"))
+      const selected = yield* (visible.memorySnapshot ?? Effect.succeed(Option.none<SessionLogEvent>()))
+      yield* expect("memory-snapshot-fork", Option.isSome(selected) && selected.value.session === address.id, "the child lost its visible ancestor snapshot")
+      yield* visible.end(completed)
+      const later = yield* sessions.begin(address, say("snapshot-future"))
+      yield* later.append([draft(later)])
+      yield* later.end(completed)
+      const reopened = yield* sessions.begin({ owner, id: child.header.id }, say("snapshot-child-next"))
+      yield* expect("memory-snapshot-fork", Option.isNone(yield* (reopened.memorySnapshot ?? Effect.succeed(Option.none<SessionLogEvent>()))), "the child selected its parent's future publication")
+    })),
     scoped("a session is created empty, read back by its owner only, and its id is created once", "create", (owner) => Effect.gen(function* () {
       const { sessions } = yield* leased()
       const view = yield* sessions.create({ owner, origin: "conformance", meta: { purpose: "kit", nested: { list: [1, "two", null] } } })

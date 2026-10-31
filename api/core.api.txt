@@ -141,6 +141,7 @@ const InboxTakenData
 const InputDelivery
 const InvocationId
 const JOURNAL_KINDS
+const JournalCursor
 const JsonObject
 const LogBody
 const LogEntry
@@ -158,6 +159,9 @@ const MediaStoreMemoryLive
 const MemoryKindOf
 const MemoryObservation
 const MemoryRenderRecipe
+const MemorySnapshotCandidate
+const MemorySnapshotData
+const MemoryStrategyId
 const ModelCallData
 const ModelCallId
 const ModelCallLegacyUsage
@@ -552,6 +556,7 @@ type InboxQueuedData
 type InboxTakenData
 type InputDelivery
 type InvocationId
+type JournalCursor
 type JsonObject
 type KeyedKind
 type LogBody
@@ -567,6 +572,9 @@ type MemoryFileSystem
 type MemoryObservation
 type MemoryRenderRecipe
 type MemorySeed
+type MemorySnapshotCandidate
+type MemorySnapshotData
+type MemoryStrategyId
 type ModelCallData
 type ModelCallId
 type ModelCallLegacyUsage

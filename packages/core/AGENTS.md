@@ -267,6 +267,19 @@ that new phases preserve history and current results without requiring every
 strategy to summarize; its careless phase check is in
 `src/memory/memory-maintenance.conformance.test.ts`.
 
+`MemorySnapshotData` records a raw render prefix and actual lineage cursors;
+`MemorySnapshotCandidate` resolves those cursors to memory entry IDs. The optional
+`LogHandle.checkpoint` and `TurnWriter.memorySnapshot` capabilities accelerate
+rendering only: keep the full archive, reader, maintenance input and replay path.
+`memory.snapshot` is a reserved protocol row, never a `LogBody` or a new `EntryId`.
+The shared renderer plan retains exact request dependencies, raw presentation and
+digest facts, applicable compactions and scoped step contexts in original order.
+`memorySnapshotConformance` checks selection, encoded-prefix integrity, render and
+media metadata, and safe full-history fallback; its self-tests exercise careless
+implementations. Selected corruption fails with `session.decode`; compatible
+snapshots project only after authoritative verification, while other strategies
+and newly needed omitted dependencies use the complete archive.
+
 The step loop and its event vocabulary (`LoopEvent`) live in
 `@xandreed/plugin-agent-loop`, plugin activation in `@xandreed/runtime`,
 sessions in `@xandreed/plugin-sessions`, and the composable agent
@@ -427,12 +440,12 @@ the bus's included, and `openLogSession`, which `TurnLive` runs between
 | A frame around untrusted text, `<tag>…</tag>`, with the tag made inert inside it (`framed`, `escapeFrame`) | `src/turn/model-text.ts:33`, `:29-30` | exact, `src/turn/model-text.test.ts:11-17` |
 | The summary handoff: a host note, then the summary framed as `conversation-summary` (`handoffToMessage`) | `src/internal/mapping.entity.functions.ts:49-56` | exact, `src/internal/mapping.entity.functions.test.ts:384` |
 | Dropped turns' preamble: `[Host note: earlier turns were condensed to free context.]`, then the ledger (a `DropTurns` compaction) | `src/memory/memory-log.entity.functions.ts:76` | exact, `src/memory/memory-log.entity.test.ts:409` |
-| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:507-523` | exact, `src/memory/memory-log.entity.test.ts:381`, `:392`, `:409` |
-| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:467-499` | exact, `src/memory/memory-log.entity.test.ts:314`, `:328`, `:347` |
+| The ledger of condensed turns: `Earlier in this conversation:`, a `- Asked: … — replied: …` line per turn, each clipped with a counted marker, then the subjects the tools reported, framed as `known-subjects` (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:555-571` | exact, `src/memory/memory-log.entity.test.ts:381`, `:392`, `:409` |
+| The summarizer's transcript: `User`, `Assistant`, `Tool <name>` and `Reply` entries (a reply that repeats its turn's last assistant text left out), clipped and counted (`digestTranscript`) | `src/memory/memory-log.entity.functions.ts:515-547` | exact, `src/memory/memory-log.entity.test.ts:314`, `:328`, `:347` |
 | A result's artifact lines: `Artifacts:`, then `- <kind> <id> (<type>): <alt>` and `- … N more` (`artifactLines`) | `src/memory/memory-log.entity.functions.ts:137-147` | exact, `src/memory/memory-log.entity.test.ts:426-428` |
 | An image's label line, `[image omitted: …]` (`mediaLabel`) | `src/domain/media.entity.functions.ts:163-164` | exact, `src/domain/media.entity.test.ts:148-150` |
-| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:525-528` | exact, `src/memory/memory-log.entity.test.ts:439-447` |
-| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:507-522` | exact, `src/memory/memory-log.entity.test.ts:616` |
-| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:392`, `:406`, `:467-481` | exact, `src/memory/memory-log.entity.test.ts:605`, `:606`, `:607`, `:617` |
+| A missing tool result's `ToolInterrupted` failure: no recorded result, possible side effects, check the current state before calling again (`interruptedToolResult`) | `src/memory/memory-log.entity.functions.ts:573-576` | exact, `src/memory/memory-log.entity.test.ts:439-447` |
+| A condensed turn's actual user instructions: initial request then each inbox-marked steer, continuation lines indented, host correctives excluded (`ledgerOf`) | `src/memory/memory-log.entity.functions.ts:555-570` | exact, `src/memory/memory-log.entity.test.ts:616` |
+| Actual steers in the summary transcript: a separate `User` entry with indented continuation lines; image labels in raw, reference and digest transcripts, no host corrective as user intent | `src/memory/memory-log.entity.functions.ts:440`, `:454`, `:515-529` | exact, `src/memory/memory-log.entity.test.ts:605`, `:606`, `:607`, `:617` |
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks.

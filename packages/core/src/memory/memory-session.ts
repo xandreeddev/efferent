@@ -8,6 +8,9 @@ import type { LogHandle, MaintainSignal, MemoryReader, MemorySession, ToolViews 
 import type { TurnError } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { CompactionAction, EntryId, LogBody, LogEntry } from "./memory-log.entity.js"
+import { MemoryStrategyId } from "./memory-snapshot.entity.js"
+import type { MemoryProjection } from "./memory-snapshot.entity.js"
+import { prepareMemorySnapshot, projectMemorySnapshot, validateMemorySnapshot } from "./memory-snapshot.entity.functions.js"
 import type { RenderOptions } from "./memory-log.entity.functions.js"
 import {
   buildContext,
@@ -42,6 +45,8 @@ export const noMaintenance: MaintainDecision = { actions: [], digest: [] }
 /** What distinguishes one memory strategy from another. */
 export interface MemoryPolicy {
   readonly strategy: { readonly id: string; readonly version: string }
+  /** Opt in to durable render acceleration; full archive and maintenance semantics remain unchanged. */
+  readonly checkpoint?: "render"
   readonly render: Pick<RenderOptions, "turnContext" | "replies" | "digests" | "media">
   /** Digest a result as it is written; None never digests at write time. */
   readonly digestOnWrite: Option.Option<(result: { readonly tool: string; readonly chars: number }) => boolean>
@@ -107,6 +112,14 @@ export const openLogSession = Effect.fnUntraced(function* (
   const renderOptions = (all: ReadonlyArray<LogEntry>, stepContext: "tail" | "none", run: RunOrdinal = latestRunOf(all, runId)): RenderOptions => ({
     ...policy.render, stepContext, strategy: policy.strategy.id, currentTurn: currentTurnOf(all), currentRun: runId, run,
   })
+  const strategy = { ...policy.strategy, id: MemoryStrategyId.make(policy.strategy.id) }
+  const loaded = policy.checkpoint === "render" && log.checkpoint !== undefined ? yield* log.checkpoint.load : Option.none()
+  const projection = yield* Ref.make<MemoryProjection>(Option.isNone(loaded) ? { _tag: "Full" }
+    : yield* validateMemorySnapshot(stored, loaded.value, strategy, renderOptions(stored, "tail")))
+  const projected = (all: ReadonlyArray<LogEntry>, options: RenderOptions) => Ref.modify(projection, (phase) => {
+    const selected = projectMemorySnapshot(all, phase, options)
+    return [selected.entries, selected.phase] as const
+  })
   // One record at a time: ids, the stored order and the session's order agree (a request is
   // rebuilt from the stored entries up to its build's last one). A failed acknowledgement
   // is reconciled from storage; a proven refusal takes no id, an uncertain write reserves it.
@@ -116,12 +129,12 @@ export const openLogSession = Effect.fnUntraced(function* (
     const at = yield* Clock.currentTimeMillis
     const start = yield* Ref.get(counter)
     const appended = bodies.map((body, index): LogEntry => ({ id: entryId(runId, start + index), runId, turn, step, at, body }))
-    const accepted = yield* (commit === undefined ? log.append(appended).pipe(Effect.as(true)) : commit(appended)).pipe(Effect.onError(() => (log.snapshot ?? log.read).pipe(
+    const accepted = yield* (commit === undefined ? log.append(appended).pipe(Effect.as(true)) : commit(appended)).pipe(Effect.onError(() => Ref.set(projection, { _tag: "Full" }).pipe(Effect.andThen((log.snapshot ?? log.read).pipe(
       Effect.flatMap((actual) => Ref.set(entries, actual).pipe(Effect.andThen(Ref.set(counter, nextIndex(actual))))),
       Effect.catchCause((cause) => Effect.logWarning("the memory append failed and its durable snapshot could not be read", cause).pipe(
         Effect.andThen(Ref.update(counter, (next) => Math.max(next, start + bodies.length))),
       )),
-    )))
+    )))))
     if (!accepted) return []
     yield* Ref.set(counter, start + bodies.length)
     yield* Ref.update(entries, (all) => [...all, ...appended])
@@ -194,7 +207,9 @@ export const openLogSession = Effect.fnUntraced(function* (
     return [...shown, ...presented, ...digests]
   })
   const maintain = (signal: MaintainSignal) => Effect.gen(function* () {
-    const all = presentedEntries(yield* Ref.get(entries))
+    const original = yield* Ref.get(entries)
+    const all = presentedEntries(original)
+    const options = renderOptions(original, signal.phase === "turn-end" ? "none" : signal.render?.stepContext ?? "tail", signal.render?.run ?? latestRunOf(all, runId))
     const decision = yield* policy.maintain({
       entries: all, signal, turn: currentTurnOf(all), runId,
       render: (candidate) => renderLog(candidate, renderOptions(candidate,
@@ -204,6 +219,14 @@ export const openLogSession = Effect.fnUntraced(function* (
     const compactions = yield* record(decision.actions.map((action) => ({ _tag: "Compaction" as const, strategy: policy.strategy.id, version: policy.strategy.version, action })), 0)
     const wanted = new Set(decision.digest.map(String))
     const digests = yield* digest(all.filter((entry) => wanted.has(String(entry.id))), signal.views, "compaction", 0)
+    if (policy.checkpoint === "render" && log.checkpoint !== undefined && compactions.some((entry) => entry.body._tag === "Compaction" && entry.body.action._tag === "Summarize")) {
+      const actual = yield* Ref.get(entries)
+      if (buildContext(actual, options).estimatedTokens < buildContext(original, options).estimatedTokens) {
+        const candidate = yield* prepareMemorySnapshot(actual, strategy)
+        // record/digest have released the allocation permit before this callback.
+        if (Option.isSome(candidate)) yield* log.checkpoint.save(candidate.value)
+      }
+    }
     return [...compactions, ...digests]
   })
   return {
@@ -214,11 +237,11 @@ export const openLogSession = Effect.fnUntraced(function* (
     query: (query) => Ref.get(entries).pipe(Effect.map((all) => queryLog(all, query))),
     subjects: (kinds) => Ref.get(entries).pipe(Effect.map((all) => subjectsOf(all, kinds))),
     resolve: (id) => Ref.get(entries).pipe(Effect.map((all) => Option.fromNullishOr(presentedEntries(all).find((entry) => entry.id === id)))),
-    transcript: (fidelity) => Ref.get(entries).pipe(Effect.map((all) => fidelity === "raw" ? rawTranscript(all)
-      : fidelity === "reference" ? referenceTranscript(all) : renderLog(all, renderOptions(all, "tail")))),
+    transcript: (fidelity) => Ref.get(entries).pipe(Effect.flatMap((all) => fidelity === "raw" ? Effect.succeed(rawTranscript(all))
+      : fidelity === "reference" ? Effect.succeed(referenceTranscript(all)) : projected(all, renderOptions(all, "tail")).pipe(Effect.map((selected) => renderLog(selected, renderOptions(all, "tail")))))),
     record,
     recordTail,
     maintain,
-    build: ({ stepContext, run }) => Ref.get(entries).pipe(Effect.map((all) => buildContext(all, renderOptions(all, stepContext, run)))),
+    build: ({ stepContext, run }) => Ref.get(entries).pipe(Effect.flatMap((all) => projected(all, renderOptions(all, stepContext, run)).pipe(Effect.map((selected) => buildContext(selected, renderOptions(all, stepContext, run)))))),
   } satisfies MemorySession
 })

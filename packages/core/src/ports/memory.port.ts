@@ -10,6 +10,7 @@ import type { TurnError } from "../session/sessions.entity.js"
 import type { UserMessage } from "../turn/user-message.entity.js"
 import type { MemoryRenderRecipe } from "../turn/model-request.entity.js"
 import type { MemoryObservation } from "../memory/memory-maintenance.entity.js"
+import type { MemorySnapshotCandidate } from "../memory/memory-snapshot.entity.js"
 
 /** A conversation's memory log for one turn: the entries stored before it, and one atomic append. */
 export interface LogHandle {
@@ -17,6 +18,11 @@ export interface LogHandle {
   readonly append: (entries: ReadonlyArray<LogEntry>) => Effect.Effect<void, TurnError>
   /** Fresh durable entries after a write's outcome is uncertain; `read` supplies this for logs whose initial read is already current. */
   readonly snapshot?: Effect.Effect<ReadonlyArray<LogEntry>, TurnError>
+  /** Optional durable render projection; archive reads and uncertain-ACK snapshots remain full. */
+  readonly checkpoint?: {
+    readonly load: Effect.Effect<Option.Option<MemorySnapshotCandidate>, TurnError>
+    readonly save: (candidate: MemorySnapshotCandidate) => Effect.Effect<void, TurnError>
+  }
 }
 
 /** One tool result as the model sees it, supplied by whoever owns the tools. */

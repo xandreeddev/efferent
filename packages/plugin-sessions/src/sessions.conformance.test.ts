@@ -60,6 +60,13 @@ describe("SessionsLive over the in-memory log conforms to the Sessions contract"
 })
 
 describe("the Sessions kit catches careless backends", () => {
+  test("one that advertises snapshots but always returns None fails both checkpoint checks", async () => {
+    const blind = (instance: SessionsInstance): SessionsInstance => ({ ...instance, sessions: Sessions.of({
+      ...instance.sessions,
+      begin: (address, input) => instance.sessions.begin(address, input).pipe(Effect.map((writer) => ({ ...writer, memorySnapshot: Effect.succeed(Option.none()) }))),
+    }) })
+    expect(await failedChecks(sessionsConformance(subjectOver(memoryLog, blind)).filter((check) => check.name.startsWith("an advertised memory snapshot capability")))).toEqual(["memory-snapshot", "memory-snapshot-fork"])
+  })
   test("one whose begin cancels the open turn instead of refusing it fails the checks that hold a turn open against a begin", async () => {
     const lastWins = (instance: SessionsInstance): SessionsInstance => ({
       ...instance,

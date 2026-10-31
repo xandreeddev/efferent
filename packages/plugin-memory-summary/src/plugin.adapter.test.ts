@@ -24,6 +24,28 @@ const maintain = (summarize: (prompt: string) => Effect.Effect<string, HarnessEr
   return policy.maintain({ entries: log, signal, turn: 4, runId: RunId.make("run-4"), render })
 }
 
+test("the built-in summary publishes one render checkpoint without another helper call", async () => {
+  const snapshots: unknown[] = []
+  const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const calls = yield* Ref.make(0)
+    const stored = yield* Ref.make(log)
+    const utility = UtilityLlm.of({ complete: () => Ref.update(calls, (count) => count + 1).pipe(Effect.as(new UtilityCompletion({ text: "SUMMARY", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } }))) })
+    const built = yield* memorySummaryPlugin.build(config, Context.empty())
+    const memory = Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
+    const session = yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-000000000523"), runId: RunId.make("run-4"), log: {
+      read: Ref.get(stored), append: (entries) => Ref.update(stored, (all) => [...all, ...entries]), checkpoint: {
+        load: Effect.succeed(Option.none()), save: (candidate) => Effect.sync(() => { snapshots.push(candidate) }),
+      },
+    } }).pipe(Effect.provideService(UtilityLlm, utility))
+    yield* session.maintain(signal)
+    yield* session.maintain(signal)
+    return yield* Ref.get(calls)
+  })))
+  expect(result).toBe(1)
+  expect(snapshots).toHaveLength(1)
+  expect(snapshots[0]).toMatchObject({ strategy: SUMMARY_STRATEGY })
+})
+
 /** Run with the test clock, collecting what is logged. */
 const run = <A, E>(body: (logged: Array<string>) => Effect.Effect<A, E>) => {
   const logged: Array<string> = []

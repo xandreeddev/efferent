@@ -49,6 +49,7 @@ export { MediaHash, MediaStoreBytes, MediaStoreError } from "./domain/media-stor
 export { mediaHashOf } from "./domain/media-store.entity.functions.js"
 export { MediaStore } from "./ports/media-store.port.js"
 export { MediaStoreMemoryLive } from "./media/media-store.memory.adapter.js"
+export { MemoryStrategyId, JournalCursor, MemorySnapshotData, MemorySnapshotCandidate } from "./memory/memory-snapshot.entity.js"
 export { Failure } from "./domain/failure.entity.js"
 export { errorCodeOf, messagesOf, reasonOf } from "./domain/failure.entity.functions.js"
 export { BudgetTokens, ModelPrice, TokenUsage, UsageBreakdown } from "./domain/token-usage.entity.js"

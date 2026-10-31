@@ -27,6 +27,7 @@ import type { SessionsConfig, SessionsState } from "./sessions-state.entity.js"
 import { admit, beginEnd, close, endPlanOf, endSettled, hold, latch, markTried, opened, scopeEnding, stopped, unended, withdrawEnd } from "./turn-writer.entity.functions.js"
 import { EndStep, WriterPhase } from "./turn-writer.entity.js"
 import type { ClosedBy, WriterStopped } from "./turn-writer.entity.js"
+import { readMemorySnapshot, snapshotState } from "./memory-snapshot.adapter.js"
 
 type Log = Context.Service.Shape<typeof SessionLog>
 
@@ -262,11 +263,12 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
       if (decided.skipCommit === true) return { result: decided.result, events: [] }
       const now = yield* storageNow
       // In this release's stored format: raised once when another instance, of an earlier release, wrote the state since.
-      const next = withFormat(options.renew ? renewed(decided.next, now, false) : decided.next)
+      const drafts = stamped(decided.drafts)
+      const next = withFormat(yield* snapshotState(log, input.header, at.seq, options.renew ? renewed(decided.next, now, false) : decided.next, drafts).pipe(Effect.catchTag("SessionMissing", removed)))
       const notAfter = ownership.mode === "lease" ? Option.flatMap(at.state.open, (open) => open.expiresAt) : Option.none()
       const state = next === at.state ? Option.none() : Option.some(yield* stateJson(next).pipe(Effect.mapError((error) => harnessError("session.encode", error.message, error))))
       const store = Effect.gen(function* () {
-        const committed = yield* log.commit(id, { expect: at.revision, notAfter, events: stamped(decided.drafts), state })
+        const committed = yield* log.commit(id, { expect: at.revision, notAfter, events: drafts, state })
         const localAt = yield* Clock.currentTimeMillis
         yield* Ref.update(cursor, (current) => ({ ...current, position: { revision: committed.revision, seq: committed.seq, state: next, storageAt: committed.at, localAt } }))
         if (options.tried === true) yield* Ref.update(phase, (current) => ({ ...current, phase: markTried(current.phase) }))
@@ -522,6 +524,7 @@ export const makeTurnWriter = Effect.fnUntraced(function* (input: TurnWriterInpu
   const writer: TurnWriter = {
     admitted,
     started: input.started,
+    memorySnapshot: readMemorySnapshot(log, input.header, input.started, input.position.state).pipe(Effect.catchTag("SessionMissing", removed)),
     history: (kinds) => historyOf(log, input.header, input.started, kinds).pipe(Effect.catchTag("SessionMissing", removed)),
     snapshot: (kinds, after) => flush.pipe(Effect.andThen(after === undefined
       ? historyOf(log, input.header, input.started, kinds, true)

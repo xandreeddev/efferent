@@ -28,6 +28,7 @@
     "inbox.taken",
     "model.called",
     "request.part",
+    "memory.snapshot",
     "tool.progress",
     "skills.activated",
     "assistant.message",
@@ -7090,6 +7091,1464 @@
         ],
         "additionalProperties": true
       }
+    },
+    {
+      "kind": "memory.snapshot",
+      "writer": "Opted-in memory after a reducing summary and digest acknowledgments; the turn writer publishes its head pointer in the same commit",
+      "sensitive": "Copies of retained raw memory, including tool output, reasoning, host context, image values and compaction facts. Treat these copies like their original records and retain referenced media.",
+      "fields": [
+        {
+          "name": "version",
+          "type": "1",
+          "required": true
+        },
+        {
+          "name": "strategy",
+          "type": "{ id, version }",
+          "required": true
+        },
+        {
+          "name": "anchor",
+          "type": "{ session, seq }",
+          "required": true
+        },
+        {
+          "name": "through",
+          "type": "{ session, seq }",
+          "required": true
+        },
+        {
+          "name": "entries",
+          "type": "Array<{ id, runId, turn, step, at, body }>",
+          "required": true
+        }
+      ],
+      "body": [],
+      "schema": {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "number",
+            "enum": [
+              1
+            ]
+          },
+          "strategy": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "version"
+            ],
+            "additionalProperties": true
+          },
+          "anchor": {
+            "type": "object",
+            "properties": {
+              "session": {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              "seq": {
+                "type": "integer",
+                "maximum": 9007199254740991,
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "session",
+              "seq"
+            ],
+            "additionalProperties": true
+          },
+          "through": {
+            "type": "object",
+            "properties": {
+              "session": {
+                "type": "string",
+                "pattern": "^([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}|00000000-0000-0000-0000-000000000000|[fF]{8}-[fF]{4}-[fF]{4}-[fF]{4}-[fF]{12})$",
+                "format": "uuid"
+              },
+              "seq": {
+                "type": "integer",
+                "maximum": 9007199254740991,
+                "exclusiveMinimum": 0
+              }
+            },
+            "required": [
+              "session",
+              "seq"
+            ],
+            "additionalProperties": true
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                  "minLength": 1
+                },
+                "runId": {
+                  "type": "string"
+                },
+                "turn": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "step": {
+                  "type": "integer",
+                  "minimum": -9007199254740991,
+                  "maximum": 9007199254740991
+                },
+                "at": {
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string",
+                      "enum": [
+                        "Infinity",
+                        "-Infinity",
+                        "NaN"
+                      ]
+                    }
+                  ]
+                },
+                "body": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "SystemPrepared"
+                          ]
+                        },
+                        "fingerprint": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "sections": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "version": {
+                                "type": "string"
+                              },
+                              "fingerprint": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "version",
+                              "fingerprint"
+                            ],
+                            "additionalProperties": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "fingerprint",
+                        "text",
+                        "sections"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "TurnStarted"
+                          ]
+                        },
+                        "prompt": {
+                          "type": "string"
+                        },
+                        "attachments": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "type": {
+                                "type": "string",
+                                "enum": [
+                                  "media"
+                                ]
+                              },
+                              "mediaType": {
+                                "type": "string",
+                                "enum": [
+                                  "image/png",
+                                  "image/jpeg",
+                                  "image/gif",
+                                  "image/webp"
+                                ]
+                              },
+                              "data": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 5242880,
+                                "pattern": "^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$"
+                              },
+                              "fingerprint": {
+                                "type": "string"
+                              },
+                              "bytes": {
+                                "type": "integer",
+                                "maximum": 3932160,
+                                "exclusiveMinimum": 0
+                              },
+                              "name": {
+                                "type": "string"
+                              },
+                              "alt": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "type",
+                              "mediaType",
+                              "data",
+                              "fingerprint",
+                              "bytes"
+                            ],
+                            "additionalProperties": true
+                          }
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "prompt"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "TurnContext"
+                          ]
+                        },
+                        "sectionId": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "sectionId",
+                        "version",
+                        "text"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "Message"
+                          ]
+                        },
+                        "message": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "role": {
+                                  "type": "string",
+                                  "enum": [
+                                    "user"
+                                  ]
+                                },
+                                "content": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "array",
+                                      "items": {
+                                        "anyOf": [
+                                          {
+                                            "type": "object",
+                                            "properties": {
+                                              "type": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "text"
+                                                ]
+                                              },
+                                              "text": {
+                                                "type": "string"
+                                              },
+                                              "providerOptions": {
+                                                "type": "object"
+                                              }
+                                            },
+                                            "required": [
+                                              "type",
+                                              "text"
+                                            ],
+                                            "additionalProperties": true
+                                          },
+                                          {
+                                            "type": "object",
+                                            "properties": {
+                                              "type": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "media"
+                                                ]
+                                              },
+                                              "mediaType": {
+                                                "type": "string",
+                                                "enum": [
+                                                  "image/png",
+                                                  "image/jpeg",
+                                                  "image/gif",
+                                                  "image/webp"
+                                                ]
+                                              },
+                                              "data": {
+                                                "type": "string",
+                                                "minLength": 1,
+                                                "maxLength": 5242880,
+                                                "pattern": "^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$"
+                                              },
+                                              "fingerprint": {
+                                                "type": "string"
+                                              },
+                                              "bytes": {
+                                                "type": "integer",
+                                                "maximum": 3932160,
+                                                "exclusiveMinimum": 0
+                                              },
+                                              "name": {
+                                                "type": "string"
+                                              },
+                                              "alt": {
+                                                "type": "string"
+                                              }
+                                            },
+                                            "required": [
+                                              "type",
+                                              "mediaType",
+                                              "data",
+                                              "fingerprint",
+                                              "bytes"
+                                            ],
+                                            "additionalProperties": true
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                },
+                                "providerOptions": {
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "role",
+                                "content"
+                              ],
+                              "additionalProperties": true
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "role": {
+                                  "type": "string",
+                                  "enum": [
+                                    "assistant"
+                                  ]
+                                },
+                                "content": {
+                                  "type": "array",
+                                  "items": {
+                                    "anyOf": [
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "type": {
+                                            "type": "string",
+                                            "enum": [
+                                              "text"
+                                            ]
+                                          },
+                                          "text": {
+                                            "type": "string"
+                                          },
+                                          "providerOptions": {
+                                            "type": "object"
+                                          }
+                                        },
+                                        "required": [
+                                          "type",
+                                          "text"
+                                        ],
+                                        "additionalProperties": true
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "type": {
+                                            "type": "string",
+                                            "enum": [
+                                              "reasoning"
+                                            ]
+                                          },
+                                          "text": {
+                                            "type": "string"
+                                          },
+                                          "providerOptions": {
+                                            "type": "object"
+                                          }
+                                        },
+                                        "required": [
+                                          "type",
+                                          "text"
+                                        ],
+                                        "additionalProperties": true
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "type": {
+                                            "type": "string",
+                                            "enum": [
+                                              "tool-call"
+                                            ]
+                                          },
+                                          "toolCallId": {
+                                            "type": "string"
+                                          },
+                                          "toolName": {
+                                            "type": "string"
+                                          },
+                                          "input": {},
+                                          "providerOptions": {
+                                            "type": "object"
+                                          },
+                                          "providerExecuted": {
+                                            "anyOf": [
+                                              {
+                                                "type": "boolean"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          }
+                                        },
+                                        "required": [
+                                          "type",
+                                          "toolCallId",
+                                          "toolName",
+                                          "input"
+                                        ],
+                                        "additionalProperties": true
+                                      },
+                                      {
+                                        "type": "object",
+                                        "properties": {
+                                          "type": {
+                                            "type": "string",
+                                            "enum": [
+                                              "tool-result"
+                                            ]
+                                          },
+                                          "toolCallId": {
+                                            "type": "string"
+                                          },
+                                          "toolName": {
+                                            "type": "string"
+                                          },
+                                          "output": {},
+                                          "providerOptions": {
+                                            "type": "object"
+                                          },
+                                          "isError": {
+                                            "anyOf": [
+                                              {
+                                                "type": "boolean"
+                                              },
+                                              {
+                                                "type": "null"
+                                              }
+                                            ]
+                                          },
+                                          "providerExecuted": {
+                                            "type": "boolean"
+                                          },
+                                          "media": {
+                                            "type": "array",
+                                            "items": {
+                                              "type": "object",
+                                              "properties": {
+                                                "type": {
+                                                  "type": "string",
+                                                  "enum": [
+                                                    "media"
+                                                  ]
+                                                },
+                                                "mediaType": {
+                                                  "type": "string",
+                                                  "enum": [
+                                                    "image/png",
+                                                    "image/jpeg",
+                                                    "image/gif",
+                                                    "image/webp"
+                                                  ]
+                                                },
+                                                "data": {
+                                                  "type": "string",
+                                                  "minLength": 1,
+                                                  "maxLength": 5242880,
+                                                  "pattern": "^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$"
+                                                },
+                                                "fingerprint": {
+                                                  "type": "string"
+                                                },
+                                                "bytes": {
+                                                  "type": "integer",
+                                                  "maximum": 3932160,
+                                                  "exclusiveMinimum": 0
+                                                },
+                                                "name": {
+                                                  "type": "string"
+                                                },
+                                                "alt": {
+                                                  "type": "string"
+                                                }
+                                              },
+                                              "required": [
+                                                "type",
+                                                "mediaType",
+                                                "data",
+                                                "fingerprint",
+                                                "bytes"
+                                              ],
+                                              "additionalProperties": true
+                                            }
+                                          }
+                                        },
+                                        "required": [
+                                          "type",
+                                          "toolCallId",
+                                          "toolName",
+                                          "output"
+                                        ],
+                                        "additionalProperties": true
+                                      }
+                                    ]
+                                  }
+                                },
+                                "providerOptions": {
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "role",
+                                "content"
+                              ],
+                              "additionalProperties": true
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "role": {
+                                  "type": "string",
+                                  "enum": [
+                                    "tool"
+                                  ]
+                                },
+                                "content": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "object",
+                                    "properties": {
+                                      "type": {
+                                        "type": "string",
+                                        "enum": [
+                                          "tool-result"
+                                        ]
+                                      },
+                                      "toolCallId": {
+                                        "type": "string"
+                                      },
+                                      "toolName": {
+                                        "type": "string"
+                                      },
+                                      "output": {},
+                                      "providerOptions": {
+                                        "type": "object"
+                                      },
+                                      "isError": {
+                                        "anyOf": [
+                                          {
+                                            "type": "boolean"
+                                          },
+                                          {
+                                            "type": "null"
+                                          }
+                                        ]
+                                      },
+                                      "providerExecuted": {
+                                        "type": "boolean"
+                                      },
+                                      "media": {
+                                        "type": "array",
+                                        "items": {
+                                          "type": "object",
+                                          "properties": {
+                                            "type": {
+                                              "type": "string",
+                                              "enum": [
+                                                "media"
+                                              ]
+                                            },
+                                            "mediaType": {
+                                              "type": "string",
+                                              "enum": [
+                                                "image/png",
+                                                "image/jpeg",
+                                                "image/gif",
+                                                "image/webp"
+                                              ]
+                                            },
+                                            "data": {
+                                              "type": "string",
+                                              "minLength": 1,
+                                              "maxLength": 5242880,
+                                              "pattern": "^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$"
+                                            },
+                                            "fingerprint": {
+                                              "type": "string"
+                                            },
+                                            "bytes": {
+                                              "type": "integer",
+                                              "maximum": 3932160,
+                                              "exclusiveMinimum": 0
+                                            },
+                                            "name": {
+                                              "type": "string"
+                                            },
+                                            "alt": {
+                                              "type": "string"
+                                            }
+                                          },
+                                          "required": [
+                                            "type",
+                                            "mediaType",
+                                            "data",
+                                            "fingerprint",
+                                            "bytes"
+                                          ],
+                                          "additionalProperties": true
+                                        }
+                                      }
+                                    },
+                                    "required": [
+                                      "type",
+                                      "toolCallId",
+                                      "toolName",
+                                      "output"
+                                    ],
+                                    "additionalProperties": true
+                                  }
+                                },
+                                "providerOptions": {
+                                  "type": "object"
+                                }
+                              },
+                              "required": [
+                                "role",
+                                "content"
+                              ],
+                              "additionalProperties": true
+                            }
+                          ]
+                        },
+                        "run": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "inbox": {
+                          "type": "string",
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "message"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "ToolResult"
+                          ]
+                        },
+                        "toolCallId": {
+                          "type": "string"
+                        },
+                        "run": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "toolName": {
+                          "type": "string"
+                        },
+                        "isError": {
+                          "type": "boolean"
+                        },
+                        "encoded": {},
+                        "view": {
+                          "type": "string"
+                        },
+                        "viewVersion": {
+                          "type": "string"
+                        },
+                        "subjects": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                "minLength": 1
+                              },
+                              "id": {
+                                "type": "string",
+                                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "data": {
+                                "anyOf": [
+                                  {},
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "id",
+                              "label",
+                              "data"
+                            ],
+                            "additionalProperties": true
+                          }
+                        },
+                        "artifacts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                "minLength": 1
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "image",
+                                  "file"
+                                ]
+                              },
+                              "mediaType": {
+                                "type": "string",
+                                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                "minLength": 1
+                              },
+                              "url": {
+                                "type": "string"
+                              },
+                              "alt": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "kind",
+                              "mediaType",
+                              "url",
+                              "alt"
+                            ],
+                            "additionalProperties": true
+                          }
+                        },
+                        "pinned": {
+                          "type": "boolean"
+                        },
+                        "media": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  ]
+                                }
+                              },
+                              "fingerprint": {
+                                "type": "string"
+                              },
+                              "mediaType": {
+                                "type": "string",
+                                "enum": [
+                                  "image/png",
+                                  "image/jpeg",
+                                  "image/gif",
+                                  "image/webp"
+                                ]
+                              },
+                              "bytes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "fingerprint",
+                              "mediaType",
+                              "bytes"
+                            ],
+                            "additionalProperties": true
+                          }
+                        },
+                        "mediaNotes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "toolCallId",
+                        "toolName",
+                        "isError",
+                        "encoded",
+                        "view",
+                        "viewVersion",
+                        "subjects",
+                        "artifacts",
+                        "pinned"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "ToolDigest"
+                          ]
+                        },
+                        "entry": {
+                          "type": "string",
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "minLength": 1
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "mode": {
+                          "type": "string",
+                          "enum": [
+                            "select",
+                            "summarize"
+                          ]
+                        },
+                        "keep": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "text": {
+                          "type": "string"
+                        },
+                        "digester": {
+                          "type": "string"
+                        },
+                        "trigger": {
+                          "type": "string",
+                          "enum": [
+                            "write",
+                            "compaction"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "entry",
+                        "version",
+                        "mode",
+                        "keep",
+                        "text",
+                        "digester",
+                        "trigger"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "StepContext"
+                          ]
+                        },
+                        "step": {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        "run": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "text": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "step",
+                        "text"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "ToolsActivated"
+                          ]
+                        },
+                        "skills": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "tools": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "source": {
+                          "type": "string",
+                          "enum": [
+                            "always",
+                            "matcher",
+                            "load_skill",
+                            "host"
+                          ]
+                        },
+                        "decision": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                              "minLength": 1
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "skills",
+                        "tools",
+                        "source",
+                        "decision"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "Compaction"
+                          ]
+                        },
+                        "strategy": {
+                          "type": "string"
+                        },
+                        "version": {
+                          "type": "string"
+                        },
+                        "action": {
+                          "anyOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "_tag": {
+                                  "type": "string",
+                                  "enum": [
+                                    "CompactViews"
+                                  ]
+                                },
+                                "entries": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                    "minLength": 1
+                                  }
+                                },
+                                "texts": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "_tag",
+                                "entries",
+                                "texts"
+                              ],
+                              "additionalProperties": true
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "_tag": {
+                                  "type": "string",
+                                  "enum": [
+                                    "Spill"
+                                  ]
+                                },
+                                "entry": {
+                                  "type": "string",
+                                  "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                  "minLength": 1
+                                },
+                                "preview": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "_tag",
+                                "entry",
+                                "preview"
+                              ],
+                              "additionalProperties": true
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "_tag": {
+                                  "type": "string",
+                                  "enum": [
+                                    "DropTurns"
+                                  ]
+                                },
+                                "throughTurn": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "ledger": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "_tag",
+                                "throughTurn",
+                                "ledger"
+                              ],
+                              "additionalProperties": true
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "_tag": {
+                                  "type": "string",
+                                  "enum": [
+                                    "Summarize"
+                                  ]
+                                },
+                                "keepFromTurn": {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                "summary": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "_tag",
+                                "keepFromTurn",
+                                "summary"
+                              ],
+                              "additionalProperties": true
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "_tag": {
+                                  "type": "string",
+                                  "enum": [
+                                    "OmitMedia"
+                                  ]
+                                },
+                                "entries": {
+                                  "type": "array",
+                                  "items": {
+                                    "type": "string",
+                                    "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                    "minLength": 1
+                                  }
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "_tag",
+                                "entries",
+                                "reason"
+                              ],
+                              "additionalProperties": true
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "strategy",
+                        "version",
+                        "action"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "TurnEnded"
+                          ]
+                        },
+                        "outcome": {
+                          "type": "string",
+                          "enum": [
+                            "completed",
+                            "partial",
+                            "failed"
+                          ]
+                        },
+                        "reply": {
+                          "anyOf": [
+                            {
+                              "type": "string"
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "outcome",
+                        "reply"
+                      ],
+                      "additionalProperties": true
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "_tag": {
+                          "type": "string",
+                          "enum": [
+                            "ToolPresentation"
+                          ]
+                        },
+                        "entry": {
+                          "type": "string",
+                          "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                          "minLength": 1
+                        },
+                        "view": {
+                          "type": "string"
+                        },
+                        "viewVersion": {
+                          "type": "string"
+                        },
+                        "subjects": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                "minLength": 1
+                              },
+                              "id": {
+                                "type": "string",
+                                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                "minLength": 1
+                              },
+                              "label": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "data": {
+                                "anyOf": [
+                                  {},
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "id",
+                              "label",
+                              "data"
+                            ],
+                            "additionalProperties": true
+                          }
+                        },
+                        "artifacts": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                "minLength": 1
+                              },
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "image",
+                                  "file"
+                                ]
+                              },
+                              "mediaType": {
+                                "type": "string",
+                                "pattern": "^\\S[\\s\\S]*\\S$|^\\S$|^$",
+                                "minLength": 1
+                              },
+                              "url": {
+                                "type": "string"
+                              },
+                              "alt": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "kind",
+                              "mediaType",
+                              "url",
+                              "alt"
+                            ],
+                            "additionalProperties": true
+                          }
+                        },
+                        "pinned": {
+                          "type": "boolean"
+                        },
+                        "media": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "array",
+                                "items": {
+                                  "anyOf": [
+                                    {
+                                      "type": "string"
+                                    },
+                                    {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    }
+                                  ]
+                                }
+                              },
+                              "fingerprint": {
+                                "type": "string"
+                              },
+                              "mediaType": {
+                                "type": "string",
+                                "enum": [
+                                  "image/png",
+                                  "image/jpeg",
+                                  "image/gif",
+                                  "image/webp"
+                                ]
+                              },
+                              "bytes": {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "fingerprint",
+                              "mediaType",
+                              "bytes"
+                            ],
+                            "additionalProperties": true
+                          }
+                        },
+                        "mediaNotes": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      },
+                      "required": [
+                        "_tag",
+                        "entry",
+                        "view",
+                        "viewVersion",
+                        "subjects",
+                        "artifacts",
+                        "pinned",
+                        "media",
+                        "mediaNotes"
+                      ],
+                      "additionalProperties": true
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "runId",
+                "turn",
+                "step",
+                "at",
+                "body"
+              ],
+              "additionalProperties": true
+            }
+          }
+        },
+        "required": [
+          "version",
+          "strategy",
+          "anchor",
+          "through",
+          "entries"
+        ],
+        "additionalProperties": true
+      }
     }
   ],
   "beginCodes": [
@@ -7483,8 +8942,8 @@
     },
     {
       "code": "session.decode",
-      "where": "`Sessions.begin` (a `SessionLogError`)",
-      "meaning": "A stored `turn.started` or `turn.ended` did not decode when the begin checked its key or the turn it resumes."
+      "where": "`Sessions.begin` and selected memory checkpoint validation (a `SessionLogError`)",
+      "meaning": "A stored turn did not decode during key/resume checks, or a selected memory snapshot has invalid identity, schema, frontier or retained contents. The pointed-record reader reports that the stored memory snapshot is invalid; other checkpoint decoders name the failed invariant. Malformed overall head state retains session.state."
     },
     {
       "code": "turn.shutdown",

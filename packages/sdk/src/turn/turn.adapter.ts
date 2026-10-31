@@ -54,6 +54,7 @@ import { ReplyStep } from "./turn-phase.entity.js"
 import type { TurnPhase } from "./turn-phase.entity.js"
 import { addContext, claim, heldWith, hold, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
 import { makeTurnModelCallRecorder } from "./model-call-recorder.adapter.js"
+import { makeMemoryCheckpoint } from "./memory-checkpoint.adapter.js"
 import type { Transition } from "./turn-phase.entity.functions.js"
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
@@ -142,9 +143,15 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
     })).pipe(Effect.flatMap(Effect.fromResult))
   // What memory was opened over, as stored: the base of every request snapshot.
   const history = yield* Ref.make(Option.none<ReadonlyArray<LogEntry>>())
+  const rawHistory = yield* Ref.make(Option.none<ReadonlyArray<SessionLogEvent>>())
   const decoded = (stored: ReadonlyArray<SessionLogEvent>) =>
     entriesOfEvents(stored).pipe(Effect.mapError((error) => failure("memory.log", `undecodable memory events: ${error.message}`)))
-  const readHistory = writer.history(MEMORY_KINDS).pipe(Effect.flatMap(decoded))
+  const historicalRows = Ref.get(rawHistory).pipe(Effect.flatMap(Option.match({
+    onNone: () => writer.history(MEMORY_KINDS).pipe(Effect.tap((rows) => Ref.set(rawHistory, Option.some(rows)))),
+    onSome: Effect.succeed,
+  })))
+  const readHistory = historicalRows.pipe(Effect.flatMap(decoded))
+  const checkpoint = writer.memorySnapshot === undefined ? undefined : yield* makeMemoryCheckpoint(writer, historicalRows)
   /** The memory entry the session stored the turn's message as: its `turn.started`'s keys. */
   const storedEntry = readStoredKeys("turn.started", [writer.started]).pipe(
     Effect.map((starts) => starts.map((started) => started.keys.entry)),
@@ -164,6 +171,7 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   // (`TurnWriter.closing`). Its TurnStarted is the turn's own `turn.started`, stored when the turn began.
   const log: LogHandle = {
     read: readHistory.pipe(Effect.tap((entries) => Ref.set(history, Option.some(entries)))),
+    ...(checkpoint === undefined ? {} : { checkpoint }),
     snapshot: writer.snapshot(MEMORY_KINDS).pipe(Effect.flatMap(decoded), Effect.flatMap((entries) => Ref.get(phase).pipe(
       Effect.map((current) => Option.isNone(numberOf(current))
         ? entries.filter((entry) => entry.body._tag !== "TurnStarted" || entry.runId !== admitted.runId)

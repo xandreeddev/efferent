@@ -7,6 +7,7 @@ import { TurnOutcomeKind } from "../domain/turn-vocabulary.entity.js"
 import { canonicalJson } from "../memory/memory-log.entity.functions.js"
 import { EntryId, LogBody, LogEntry } from "../memory/memory-log.entity.js"
 import { ModelRequestHeader } from "../turn/model-request.entity.js"
+import { MemorySnapshotData } from "../memory/memory-snapshot.entity.js"
 import { StoredModelRequestHeader } from "../turn/model-request-header.entity.js"
 import { RequestPartData } from "../turn/request-part.entity.js"
 import { ContextBuiltEvent, ToolCompletedEvent, ToolRefusedEvent, TransientTurnEvents, TurnEvent } from "../turn/turn-event.entity.js"
@@ -103,6 +104,7 @@ export const StoredData = {
   "request.prepared": StoredModelRequestHeader,
   "model.called": ModelCallData,
   "request.part": RequestPartData,
+  "memory.snapshot": MemorySnapshotData,
 } as const
 export type StoredKind = keyof typeof StoredData
 
@@ -127,6 +129,7 @@ const storedDecoders: { readonly [K in StoredKind]: (data: unknown) => Effect.Ef
   "request.prepared": Schema.decodeUnknownEffect(StoredModelRequestHeader),
   "model.called": Schema.decodeUnknownEffect(ModelCallData),
   "request.part": Schema.decodeUnknownEffect(RequestPartData),
+  "memory.snapshot": Schema.decodeUnknownEffect(MemorySnapshotData),
 }
 
 /** One event's data decoded as `kind`'s, read with sorted keys (`canonical`), whatever its own kind. */

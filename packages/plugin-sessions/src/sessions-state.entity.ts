@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import type { Effect, Option } from "effect"
-import { InboxQueuedData, InputDelivery, OpenTurn } from "@xandreed/core"
+import { InboxQueuedData, InputDelivery, JournalCursor, OpenTurn } from "@xandreed/core"
 
 /*
  * The sessions plugin's own state, kept in the session head's `state` under
@@ -48,6 +48,8 @@ export const SessionsState = Schema.Struct({
   open: Schema.OptionFromNullOr(HeldTurn),
   title: Schema.OptionFromNullOr(Schema.String),
   inbox: Schema.Array(InboxSlot),
+  /** The own-session publication row of the latest durable render snapshot. Absent in earlier states. */
+  memorySnapshot: Schema.optionalKey(JournalCursor),
 })
 export type SessionsState = typeof SessionsState.Type
 

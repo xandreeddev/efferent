@@ -8,6 +8,7 @@ const inMemoryLog
 const inboxRunnerConformance
 const mediaStoreConformance
 const memoryConformance
+const memorySnapshotConformance
 const modelCallRecorderConformance
 const modelCatalogConformance
 const probeCall
@@ -28,6 +29,7 @@ interface FileSystemSubject
 interface ImageResizerSubject
 interface InboxRunnerSubject
 interface MediaStoreSubject
+interface MemorySnapshotSubject
 interface ModelCallRecorderFixture
 interface ModelCallRecorderSubject
 interface RequestHeaderSubject

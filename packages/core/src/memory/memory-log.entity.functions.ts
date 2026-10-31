@@ -190,6 +190,58 @@ interface MediaPlan {
   readonly inline: ReadonlySet<string>
 }
 
+/** One authoritative render decision, shared with durable prefix retention. */
+interface RenderPlan {
+  readonly entries: ReadonlyArray<LogEntry>
+  readonly applied: Applied
+  readonly exchanges: ReturnType<typeof toolExchangesOf>
+  readonly kept: (entry: LogEntry) => boolean
+  readonly messageVisible: (entry: LogEntry) => boolean
+  readonly resultVisible: (entry: LogEntry) => boolean
+}
+
+const renderPlanOf = (stored: ReadonlyArray<LogEntry>, strategy: string): RenderPlan => {
+  const entries = presentedEntries(stored)
+  const applied = appliedCompactions(entries, strategy)
+  const exchanges = toolExchangesOf(entries)
+  const kept = (entry: LogEntry): boolean => entry.turn > applied.cutTurn
+  const messageVisible = (entry: LogEntry): boolean => {
+    if (kept(entry)) return true
+    if (entry.body._tag !== "Message") return false
+    const calls = toolCallIds(entry.body.message)
+    return calls.length > 0 && calls.every((id) => (exchanges.results.get(entry.id) ?? []).some((result) =>
+      result.body._tag === "ToolResult" && result.body.toolCallId === id && result.body.pinned))
+  }
+  const resultVisible = (entry: LogEntry): boolean => entry.body._tag === "ToolResult" && (kept(entry) || entry.body.pinned)
+  return { entries, applied, exchanges, kept, messageVisible, resultVisible }
+}
+
+/**
+ * Raw facts before the first kept turn that the renderer still depends on.
+ * The request dependency includes hidden mixed-pinning exchanges: it controls
+ * result ordering even when the assistant message itself is not rendered.
+ */
+export const retainedMemoryPrefix = (stored: ReadonlyArray<LogEntry>, strategy: string): Option.Option<{
+  readonly entries: ReadonlyArray<LogEntry>; readonly anchorIndex: number; readonly cutTurn: number
+}> => {
+  const plan = renderPlanOf(stored, strategy)
+  const anchorIndex = stored.findIndex((entry) => entry.body._tag === "TurnStarted" && plan.kept(entry))
+  if (anchorIndex <= 0) return Option.none()
+  const results = plan.entries.filter(plan.resultVisible)
+  const dependencies = results.flatMap((entry) => Option.toArray(Option.map(requestForResult(plan.entries, entry), (request) => request.entry.id)))
+  const latestContexts = stored.slice(0, anchorIndex).reduce<ReadonlyMap<string, EntryId>>((all, entry) =>
+    entry.body._tag === "StepContext" ? new Map([...all, [canonicalJson([entry.runId, entry.body.run]), entry.id]]) : all, new Map())
+  const ids = new Set([...results.map((entry) => entry.id), ...dependencies, ...plan.applied.ids, ...latestContexts.values(),
+    ...plan.entries.filter((entry) => entry.body._tag === "Message" && plan.messageVisible(entry)).map((entry) => entry.id)])
+  const retained = stored.slice(0, anchorIndex).filter((entry) => ids.has(entry.id) || plan.kept(entry) ||
+    ((entry.body._tag === "ToolPresentation" || entry.body._tag === "ToolDigest") && ids.has(entry.body.entry)))
+  return retained.length < anchorIndex ? Option.some({ entries: retained, anchorIndex, cutTurn: plan.applied.cutTurn }) : Option.none()
+}
+
+/** The exact preceding request whose identity orders this result in the render. */
+export const requestEntryOfResult = (entries: ReadonlyArray<LogEntry>, result: LogEntry): Option.Option<LogEntry> =>
+  Option.map(requestForResult(entries, result), (request) => request.entry)
+
 /**
  * The images a render sends as images: the current turn's attachments, in
  * order, each while it fits; its tool results' images, newest result first,
@@ -200,10 +252,9 @@ interface MediaPlan {
  * request that carries many), within `maxChars`. Earlier turns' images
  * change only when a turn starts or the current turn's no longer leave room.
  */
-const mediaPlan = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): MediaPlan => {
-  const applied = appliedCompactions(entries, options.strategy)
+const mediaPlan = (plan: RenderPlan, options: RenderOptions): MediaPlan => {
+  const { entries, applied, kept } = plan
   const digests = options.digests ? digestsOf(entries) : new Map<string, string>()
-  const kept = (entry: LogEntry): boolean => entry.turn > applied.cutTurn
   const imagesOf = (entry: LogEntry): ReadonlyArray<LogImage> => {
     const body = entry.body
     if (!kept(entry) || applied.omitted.has(entry.id)) return []
@@ -266,10 +317,10 @@ const toolResultPart = (entry: LogEntry, body: Extract<LogBody, { readonly _tag:
   }
 }
 
-const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): Pick<BuiltContext, "messages" | "stableMessages"> => {
-  const entries = presentedEntries(stored)
-  const { applied, digests, kept, inline } = mediaPlan(entries, options)
-  const exchanges = toolExchangesOf(entries)
+const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): Pick<BuiltContext, "messages" | "stableMessages" | "compactions"> => {
+  const plan = renderPlanOf(stored, options.strategy)
+  const { entries, exchanges } = plan
+  const { applied, digests, kept, inline } = mediaPlan(plan, options)
   const stepContext = options.stepContext === "none" ? [] : entries.filter((entry) =>
     entry.body._tag === "StepContext" && entry.runId === options.currentRun && entry.body.run === options.run).slice(-1)
   const initial: RenderState = { out: [], lastText: new Map() }
@@ -280,10 +331,7 @@ const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions
     TurnContext: (b) => kept(entry) && (options.turnContext === "all" || entry.turn === options.currentTurn)
       ? { ...state, out: [...state.out, userRoleMessage(b.text)] } : state,
     Message: (b): RenderState => {
-      const calls = toolCallIds(b.message)
-      const pinnedExchange = calls.length > 0 && calls.every((id) => (exchanges.results.get(entry.id) ?? []).some((result) =>
-        result.body._tag === "ToolResult" && result.body.toolCallId === id && result.body.pinned))
-      if (!kept(entry) && !pinnedExchange) return state
+      if (!plan.messageVisible(entry)) return state
       const text = assistantText(b.message)
       return {
         out: [...state.out, Option.match(userMessageIn(entry), { onNone: () => b.message, onSome: (message) => userMessageContent(entry, message, inline) })],
@@ -291,7 +339,7 @@ const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions
       }
     },
     ToolResult: (b): RenderState => {
-      if (!kept(entry) && !b.pinned) return state
+      if (!plan.resultVisible(entry)) return state
       const text = applied.views.get(entry.id) ?? digests.get(entry.id) ?? b.view
       const message: AgentMessage = { role: "tool", content: [toolResultPart(entry, b, text, options, inline)] }
       return { ...state, out: [...state.out, message] }
@@ -310,7 +358,7 @@ const renderedContext = (stored: ReadonlyArray<LogEntry>, options: RenderOptions
   const tail: ReadonlyArray<AgentMessage> = stepContext.flatMap((entry) => entry.body._tag === "StepContext" ? [userRoleMessage(entry.body.text)] : [])
   const messages = mergeToolMessages(answerInterruptedCalls([...Option.toArray(applied.preamble), ...body, ...tail]))
   // The selected tail is one user message: repairs precede it and only tool messages merge.
-  return { messages, stableMessages: messages.length - tail.length }
+  return { messages, stableMessages: messages.length - tail.length, compactions: applied.ids }
 }
 
 export const renderLog = (stored: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<AgentMessage> =>
@@ -322,9 +370,9 @@ export const renderLog = (stored: ReadonlyArray<LogEntry>, options: RenderOption
  * refused that request. Empty when the render sends no image.
  */
 export const entriesSendingMedia = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): ReadonlyArray<EntryId> => {
-  const shown = presentedEntries(entries)
-  const { imagesOf, inline } = mediaPlan(shown, options)
-  return shown.flatMap((entry) => imagesOf(entry).some((image) => inline.has(image.key)) ? [entry.id] : [])
+  const plan = renderPlanOf(entries, options.strategy)
+  const { imagesOf, inline } = mediaPlan(plan, options)
+  return plan.entries.flatMap((entry) => imagesOf(entry).some((image) => inline.has(image.key)) ? [entry.id] : [])
 }
 
 /**
@@ -333,13 +381,13 @@ export const entriesSendingMedia = (entries: ReadonlyArray<LogEntry>, options: R
  * (`elideMediaData`), so a text-only context hashes as it always did.
  */
 export const buildContext = (entries: ReadonlyArray<LogEntry>, options: RenderOptions): BuiltContext => {
-  const { messages, stableMessages } = renderedContext(entries, options)
+  const { messages, stableMessages, compactions } = renderedContext(entries, options)
   return {
     messages,
     stableMessages,
     fingerprint: fingerprintOf(canonicalJson(messages.map(elideMediaData))),
     estimatedTokens: estimateMessageTokens(messages),
-    compactions: appliedCompactions(entries, options.strategy).ids,
+    compactions,
     through: Option.fromNullishOr(entries.at(-1)?.id),
   }
 }
