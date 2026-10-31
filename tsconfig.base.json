@@ -58,6 +58,9 @@
       "@xandreed/website": [
         "packages/website/src/index.ts"
       ],
+      "@xandreed/process-host": [
+        "packages/process-host/src/index.ts"
+      ],
       "@xandreed/sdk": [
         "packages/sdk/src/index.ts"
       ],

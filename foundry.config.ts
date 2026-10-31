@@ -43,6 +43,7 @@ const CHECKED = [
   "packages/plugin-agent-loop/src/**",
   "packages/runtime/src/**",
   "packages/sdk/src/**",
+  "packages/process-host/src/**",
   "packages/plugin-memory-window/src/**",
   "packages/plugin-memory-summary/src/**",
   "packages/plugin-memory-digest/src/**",
@@ -154,6 +155,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/plugin-tasks/src/index.ts",
   "packages/plugin-workspace/src/index.ts",
   "packages/plugin-telemetry/src/index.ts",
+  "packages/process-host/src/index.ts",
   "packages/sdk/src/index.ts",
   "packages/sdk/src/conformance/index.ts",
 ]
@@ -539,6 +541,8 @@ const config: typeof GateSuiteConfig.Encoded = {
         ],
         ["effect", "effect/ai", "effect/testing", "node:", "bun:test"],
       ),
+      ...testLayer("process-host", ["process-host", "core", "sdk", "plugin-agent-loop", "plugin-memory-window", "plugin-session-files", "plugin-sessions", "plugin-tasks", "plugin-tool-discovery"], ["effect", "effect/ai", "fast-check", "node:", "bun:test"]),
+      { name: "process-host", path: src("process-host"), canImport: ["core"], externals: ["effect", "node:"] },
       { name: "sdk", path: src("sdk"), canImport: ["core", "core/internal", "runtime"], externals: ["effect", "effect/ai"] },
       // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
       ...testLayer("plugin-render", ["plugin-render", "core", "core/internal"], ["effect", "node:", "bun:test"]),

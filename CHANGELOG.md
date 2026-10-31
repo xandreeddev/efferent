@@ -1117,6 +1117,14 @@ stays inside its package, with nothing deprecated first:
 
 ### Added
 
+- `@xandreed/process-host` binds a host-supplied agent and services to protocol
+  version 1 over bounded stdio NDJSON. It supports begin, durable send/steer,
+  helper answers, exact-turn cancellation, activity and graceful shutdown;
+  journal acknowledgments supply lifecycle events. Progress is projected by
+  default, with explicit full export. The native entry handles signals and
+  an independent hard deadline. Peer conformance, real child-process restart
+  journeys and a retained protocol fixture cover Node and Bun.
+
 - `LangSmithTelemetryLive` and `LangSmithTelemetryHttpLive` export traces over
   Effect's OTLP exporter to one project or registered agent/environment, with
   redacted credentials and one shared flusher. Native model operations own

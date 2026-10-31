@@ -90,6 +90,18 @@ interface ErrorCode { readonly code: string; readonly where: string; readonly me
  * meaning.
  */
 const ERROR_CODES: ReadonlyArray<ErrorCode> = [
+  { code: "protocol.handshake", where: "`@xandreed/process-host`", meaning: "The connection did not begin with hello before EOF or the handshake deadline. Setup has not run." },
+  { code: "protocol.version", where: "`@xandreed/process-host`", meaning: "The parent's hello requested an unsupported process protocol version. Setup has not run." },
+  { code: "protocol.sequence", where: "`@xandreed/process-host`", meaning: "A second hello or a duplicate outstanding request ID makes command ownership ambiguous; the connection stops." },
+  { code: "protocol.invalid", where: "`@xandreed/process-host`", meaning: "A command frame has invalid JSON, schema, UTF-8, framing or size; the connection stops." },
+  { code: "host.busy", where: "`@xandreed/process-host` command response", meaning: "The configured begin, short-command or control lane is full. This command performed no service operation and may be retried." },
+  { code: "host.owner", where: "`@xandreed/process-host` command response", meaning: "The addressed owner is outside the process host's configured owners; the command touched no session service." },
+  { code: "host.stopping", where: "`@xandreed/process-host` command response", meaning: "The process is stopping and refuses new command work." },
+  { code: "host.unsupported", where: "`@xandreed/process-host` command response", meaning: "The command needs an optional service the binding does not supply, such as Tasks for an answer." },
+  { code: "host.command", where: "`@xandreed/process-host` command response", meaning: "The addressed service refused the command. An optional frameworkCode preserves its classified framework failure without exporting raw error text." },
+  { code: "host.setup", where: "`@xandreed/process-host`", meaning: "The host-supplied setup factory failed after version negotiation; the connection stops." },
+  { code: "host.runtime", where: "`@xandreed/process-host`", meaning: "Host configuration, storage, lifecycle observation, command execution or shutdown failed. The original successful storage receipt remains successful if later observation fails." },
+  { code: "host.peer", where: "`@xandreed/process-host`", meaning: "The peer could not read, encode, write or flush the connection. The native hard deadline bounds stuck asynchronous teardown." },
   { code: "images.unavailable", where: "imageResizerPlugin activation", meaning: "No configured image conversion tool is available through Bash. Install ImageMagick, libvips or sips, or provide another ImageResizer adapter." },
   { code: "turn.closed", where: "`Agent.turn`, the turn writer (`TurnClosed`); a run started after the reply (`TurnMemory.startRun`)", meaning: "The turn takes no more writes: someone else closed it (`cancelled`; `interrupted`, reaped; `removed`, its session removed), or it `ended` (its own end stored or under way, or its scope closed). The writer and `Agent.turn` fail with `TurnClosed`, whose `reason` says which; this is the code it stands for. A run of the step loop started once the turn's reply is recorded fails with a `HarnessError` of this code: the reply ends the turn's runs." },
   { code: "turn.failed", where: "stored `turn.ended` failure (`turnEndingOf`)", meaning: "The turn failed with an error `harnessCodeOf` gives no code for (a tagged error without a `code`, or an untagged value, even one carrying a `code` such as a Node error's); the message is `<_tag>: <message>`, or the error as text (reason failed)." },

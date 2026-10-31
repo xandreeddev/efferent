@@ -201,6 +201,23 @@
         "@xandreed/sdk": "workspace:*",
       },
     },
+    "packages/process-host": {
+      "name": "@xandreed/process-host",
+      "version": "0.14.0",
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "effect": "4.0.7",
+      },
+      "devDependencies": {
+        "@xandreed/plugin-agent-loop": "workspace:*",
+        "@xandreed/plugin-memory-window": "workspace:*",
+        "@xandreed/plugin-session-files": "workspace:*",
+        "@xandreed/plugin-sessions": "workspace:*",
+        "@xandreed/plugin-tasks": "workspace:*",
+        "@xandreed/plugin-tool-discovery": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
+      },
+    },
     "packages/runtime": {
       "name": "@xandreed/runtime",
       "version": "0.14.0",
@@ -553,6 +570,8 @@
     "@xandreed/plugin-tool-discovery": ["@xandreed/plugin-tool-discovery@workspace:packages/plugin-tool-discovery"],
 
     "@xandreed/plugin-workspace": ["@xandreed/plugin-workspace@workspace:packages/plugin-workspace"],
+
+    "@xandreed/process-host": ["@xandreed/process-host@workspace:packages/process-host"],
 
     "@xandreed/runtime": ["@xandreed/runtime@workspace:packages/runtime"],
 

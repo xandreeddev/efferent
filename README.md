@@ -23,9 +23,9 @@ versions still install one copy of `effect` and of `@xandreed/core`, and
 versions that cannot share one are a peer conflict when you install, not a
 second copy.
 
-Every package below is published at `0.14.0` under npm's `latest` tag (npm's
-older `@xandreed/plugin-telemetry` versions, 0.3.0 and 0.4.0, are an earlier,
-unrelated plugin). `@xandreed/plugin-models` needs Node 24.5 or newer.
+Workspace packages share version `0.14.0`. The [Unreleased changelog](CHANGELOG.md#unreleased)
+describes changes in this checkout for the next release.
+`@xandreed/plugin-models` needs Node 24.5 or newer.
 The historical `efferent` npm package is a different release line.
 
 ## Compose
@@ -267,6 +267,7 @@ Bun, whose fetch applies a proxy from the environment by itself, only
 | `@xandreed/core` | Shared schemas, ports, messages and protocol helpers; the conformance kits in `@xandreed/core/conformance` |
 | `@xandreed/runtime` | Plugin graph validation and scoped activation |
 | `@xandreed/sdk` | `Agent.define` and `Agent.turn`: the agent's plugin graph and its turns, over durable sessions; the turn engine; core's names a host writes beside them |
+| `@xandreed/process-host` | Versioned stdio NDJSON binding for a host-supplied agent, durable input, steering and process lifecycle on Node and Bun |
 | `@xandreed/plugin-agent-loop` | The agent step loop |
 | `@xandreed/plugin-models` | Model routing and provider adapters |
 | `@xandreed/plugin-memory-window`, `-memory-summary`, `-memory-digest` | Conversation memory strategies and tool-result digests |

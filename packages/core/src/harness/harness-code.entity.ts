@@ -2,7 +2,7 @@ import { Schema } from "effect"
 import { turnBeginCodes } from "../session/sessions.entity.js"
 
 /**
- * Every code the framework's packages raise, or store in a `turn.ended`
+ * Every code the framework's packages raise, emit in a protocol error, or store in a `turn.ended`
  * failure, a task's result or its status: a `HarnessError`'s, a
  * `SessionLogError`'s, the codes the tags of `TAGGED_CODES` stand for, and
  * the tagged errors' own (the models plugin's `AuthError` and
@@ -26,6 +26,14 @@ export const HARNESS_CODES = [
   "events.depth",
   "events.encode",
   "events.reserved",
+  "host.busy",
+  "host.command",
+  "host.owner",
+  "host.peer",
+  "host.runtime",
+  "host.setup",
+  "host.stopping",
+  "host.unsupported",
   "images.unavailable",
   "inbox.input-conflict",
   "loop.failed",
@@ -47,6 +55,10 @@ export const HARNESS_CODES = [
   "module.closed",
   "plugin.activation",
   "plugin.defect",
+  "protocol.handshake",
+  "protocol.invalid",
+  "protocol.sequence",
+  "protocol.version",
   "request.decode",
   "request.descriptor",
   "request.diverged",
