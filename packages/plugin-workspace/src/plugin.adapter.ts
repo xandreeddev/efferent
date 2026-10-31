@@ -1,8 +1,10 @@
 import { Effect, Layer } from "effect"
-import { Bash, Capabilities, definePlugin, FileSystem, SessionEnvironment } from "@xandreed/core"
+import { Bash, Capabilities, definePlugin, FileSystem, ImageResizer, SessionEnvironment } from "@xandreed/core"
 import { BashLive } from "./bash.adapter.js"
 import { FileSystemLive } from "./file-system.adapter.js"
 import { LocalSystemConfig, localSystemDefaults } from "./local-system.entity.js"
+import { ImageResizerCliLive } from "./image-resizer.adapter.js"
+import { ImageResizerConfig, imageResizerDefaults } from "./image-resizer.entity.js"
 import { workspaceTools } from "./workspace-tools.adapter.js"
 import { WorkspaceToolsConfig, workspaceToolsDefaults } from "./workspace-tools.entity.js"
 
@@ -39,7 +41,7 @@ export const workspaceToolsPlugin = definePlugin({
   id: "@xandreed/plugin-workspace/tools", version: "0.14.0", scope: "runtime",
   config: WorkspaceToolsConfig, defaults: workspaceToolsDefaults,
   requires: [FileSystem, SessionEnvironment],
-  optional: [Bash],
+  optional: [Bash, ImageResizer],
   provides: [],
   contributes: [Capabilities],
   layer: (config) => Layer.effect(Capabilities, workspaceTools(config).pipe(Effect.map((capability) => [capability]))),
@@ -50,3 +52,13 @@ export const workspaceToolsPlugin = definePlugin({
  * @public
  */
 export const WorkspaceToolsPluginLive = workspaceToolsPlugin.live
+
+/** Optional CLI image fitting on the host's matching Bash and FileSystem. @public */
+export const imageResizerPlugin = definePlugin({
+  id: "@xandreed/plugin-workspace/images", version: "0.14.0", scope: "runtime",
+  config: ImageResizerConfig, defaults: imageResizerDefaults,
+  requires: [FileSystem, Bash], provides: [ImageResizer],
+  layer: (config) => ImageResizerCliLive(config),
+})
+/** @public */
+export const ImageResizerPluginLive = imageResizerPlugin.live

@@ -1,7 +1,7 @@
 import { Tool } from "effect/ai"
 import { Effect, Option, Result } from "effect"
 import type { Path, RcMap, Semaphore } from "effect"
-import { Bash, defineTool, Failure, FileSystem, SessionEnvironment, SubjectId } from "@xandreed/core"
+import { Bash, defineTool, Failure, FileSystem, ImageResizer, SessionEnvironment, SubjectId } from "@xandreed/core"
 import type { RegisteredTool, Subject } from "@xandreed/core"
 import { searchRipgrep } from "./ripgrep.adapter.js"
 import { compilePattern, searchText } from "./text-search.entity.functions.js"
@@ -19,6 +19,7 @@ export interface WorkspaceToolContext {
   readonly path: Path.Path
   readonly protect: ReadonlyArray<ProtectRule>
   readonly locks: RcMap.RcMap<string, Semaphore.Semaphore>
+  readonly resizesImages: boolean
 }
 
 /** The services every workspace tool reads on each call, and the `workspace.environment` section on each render: the file system, and the session's workspace on it (`bash` reads `Bash` too). */
@@ -38,8 +39,8 @@ const walkExcludes = (access: WorkspaceAccess, target: WorkspaceTarget, excludes
 export const fileSubjects = (path: string): ReadonlyArray<Subject> =>
   path.length > 0 && path.trim() === path ? [{ kind: "file", id: SubjectId.make(path), label: Option.none(), data: Option.none() }] : []
 
-const ReadTool = (config: WorkspaceToolsConfig) =>
-  Tool.make("read", { description: toolDescriptions(config).read, parameters: toolParameters(config).read, success: ReadResult, failure: Failure, failureMode: "return" })
+const ReadTool = (config: WorkspaceToolsConfig, resizesImages: boolean) =>
+  Tool.make("read", { description: toolDescriptions(config, resizesImages).read, parameters: toolParameters(config).read, success: ReadResult, failure: Failure, failureMode: "return" })
 const LsTool = (config: WorkspaceToolsConfig) =>
   Tool.make("ls", { description: toolDescriptions(config).ls, parameters: toolParameters(config).ls, success: LsResult, failure: Failure, failureMode: "return" })
 const FindTool = (config: WorkspaceToolsConfig) =>
@@ -48,9 +49,9 @@ const GrepTool = (config: WorkspaceToolsConfig) =>
   Tool.make("grep", { description: toolDescriptions(config).grep, parameters: toolParameters(config).grep, success: GrepResult, failure: Failure, failureMode: "return" })
 
 /** `read`: a window of a text file's lines, an image (`readImages`), or what a binary file is. */
-export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool => defineTool({
-  tool: ReadTool(config),
-  requires: WORKSPACE_SERVICES,
+export const readTool = ({ config, path, resizesImages }: WorkspaceToolContext): RegisteredTool => defineTool({
+  tool: ReadTool(config, resizesImages),
+  requires: resizesImages ? [...WORKSPACE_SERVICES, ImageResizer] : WORKSPACE_SERVICES,
   handler: (params) => Effect.gen(function* () {
     const access = yield* openWorkspace(path, config)
     const target = yield* resolveTarget(access, params.path, { confine: config.confine })
@@ -61,7 +62,7 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
       return yield* Effect.fail(failure("FileTooLarge", `${target.display} is ${formatBytes(info.size)}, more than the ${formatBytes(config.maxFileBytes)} read loads; ${fileTooLargeHint(target.display, config.readImages)}`))
     }
     const bytes = yield* access.fs.readBytes(target.path).pipe(Effect.mapError(fsFailure(target.display)))
-    if (looksBinary(bytes)) return yield* binaryRead(target.display, bytes, config.readImages, Option.getOrNull(mediaTypeOf(target.display)))
+    if (looksBinary(bytes)) return yield* binaryRead(target.display, bytes, config.readImages, Option.getOrNull(mediaTypeOf(target.display)), resizesImages ? Option.map(yield* Effect.serviceOption(ImageResizer), (resizer) => resizer.fit) : Option.none(), config.imageMaxSide)
     const decoded = decodeText(bytes)
     const window = lineWindow(decoded.text, { offset: params.offset ?? 1, limit: params.limit ?? config.maxLines, maxBytes: config.maxBytes })
     return yield* Result.match(window, {
@@ -72,7 +73,7 @@ export const readTool = ({ config, path }: WorkspaceToolContext): RegisteredTool
       }),
     })
   }),
-  view: { version: "2", render: renderRead, compact: compactRead, subjects: (result) => fileSubjects(result.path), media: readMedia },
+  view: { version: "3", render: renderRead, compact: compactRead, subjects: (result) => fileSubjects(result.path), media: readMedia },
   annotations: { readOnly: true },
 })
 

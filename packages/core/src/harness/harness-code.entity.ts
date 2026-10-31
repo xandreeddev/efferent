@@ -26,6 +26,7 @@ export const HARNESS_CODES = [
   "events.depth",
   "events.encode",
   "events.reserved",
+  "images.unavailable",
   "inbox.input-conflict",
   "loop.failed",
   "loop.model",

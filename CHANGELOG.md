@@ -10,6 +10,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- A whole `WorkspaceToolsConfig` adds `imageMaxSide: 8000` (or spreads its
+  defaults). It applies when an optional `ImageResizer` is present. The
+  `read` result view advances to version 3; fitted images may carry scalar
+  `original` metadata, while earlier image results still decode.
 - A custom `TurnWriter` supplies fresh `steers` and an atomic `take` that
   stores user messages, `inbox.taken` receipts and queue removal together.
   A custom `MemorySession.record` honors its optional commit callback:
@@ -963,6 +967,14 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- Optional workspace image fitting through the new `ImageResizer` port and
+  `imageResizerPlugin`, backed by installed ImageMagick, libvips or sips.
+  Larger reads fit provider byte/pixel limits and an optional host side
+  limit, preserve source files and expose scalar original-image metadata.
+  The CLI has bounded attempts, scoped cleanup and `images.unavailable`
+  activation failures; the portable conformance kit includes valid PNG
+  fixtures and careless-adapter checks.
 
 - Durable in-turn steering: each pending `delivery: "steer"` input is
   taken as its own normalized user message at a started step, before

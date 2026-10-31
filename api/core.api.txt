@@ -7,6 +7,8 @@ class ConversationMemory
 class FileSystem
 class FsError
 class HarnessError
+class ImageResizeError
+class ImageResizer
 class InboxFull
 class InputConflict
 class IntentMatcher
@@ -118,7 +120,10 @@ const HarnessCode
 const HarnessConfig
 const HostEvent
 const IMAGE_TOKEN_ESTIMATE
+const ImageFitTarget
+const ImageInput
 const ImageMediaType
+const ImageResizeReason
 const InboxDroppedData
 const InboxItem
 const InboxItemId
@@ -283,6 +288,7 @@ const errorCodeOf
 const escapeFrame
 const estimateMessageTokens
 const fingerprintOf
+const fitTarget
 const formatModelSelection
 const framed
 const frameworkDraft
@@ -291,6 +297,7 @@ const harnessCodeOf
 const harnessDefectsAsFailures
 const harnessError
 const hostNote
+const imageSizeOf
 const isBudgetTokens
 const isHarnessError
 const isMediaValue
@@ -339,6 +346,7 @@ const responseModelOf
 const resumeRefusal
 const rewrittenBy
 const sameUserMessage
+const scaledSize
 const sessionAttributes
 const shutdownGracefully
 const shutdownRefusal
@@ -480,7 +488,10 @@ type GlobOptions
 type GlobResult
 type HarnessCode
 type HarnessConfig
+type ImageFitTarget
+type ImageInput
 type ImageMediaType
+type ImageResizeReason
 type InboxDroppedData
 type InboxItem
 type InboxItemId

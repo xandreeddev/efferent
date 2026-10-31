@@ -34,3 +34,7 @@ export {
   WriteParams,
   WriteResult,
 } from "./workspace-tools.entity.js"
+
+export { ImageResizerCliLive } from "./image-resizer.adapter.js"
+export { ImageResizeTool, ImageResizerConfig, imageResizerDefaults } from "./image-resizer.entity.js"
+export { imageResizerPlugin, ImageResizerPluginLive } from "./plugin.adapter.js"

@@ -24,3 +24,6 @@ export { inMemoryLog, memoryConformance } from "../memory/memory.conformance.js"
 export { turnConformance } from "../turn/turn.conformance.js"
 // the model catalog
 export { modelCatalogConformance } from "../domain/model-catalog.conformance.js"
+
+export { imageResizerConformance, imageResizerPng } from "../workspace/image-resizer.conformance.js"
+export type { ImageResizerSubject } from "../workspace/image-resizer.conformance.js"

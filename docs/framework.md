@@ -1556,6 +1556,48 @@ limits. With `readImages: false` an image is `Binary` like any other binary
 file. A host whose models read text only (routes that send a label line in
 an image's place, or memory with `maxMediaChars: 0`) sets it: the model
 would get a label line, and the session would still store the bytes.
+Add `imageResizerPlugin` from `@xandreed/plugin-workspace` to fit larger
+images automatically, or supply core's `ImageResizer` in `Agent.define.services`.
+The service is optional at runtime activation: without it, the behavior and
+`read` description above stay unchanged. With it, `imageMaxSide` (64–8000,
+default 8000) sets the side limit; the byte limit remains
+`MEDIA_LIMITS.imageBytes`. `maxFileBytes` still refuses a file before reading
+or converting it. Fitting also works over read-only workspace roots: the
+source file is only read. A successful result adds `original` with the
+source's `mediaType`, byte count, width and height; the fitted image can
+have another type. Its version-3 view says, for example,
+`[Image chart.png (image/jpeg, 1.2 MB), scaled down from 9000x6000 (image/png, 14 MB).]`.
+Only the fitted bytes are sent and stored. A fit failure logs a warning and
+returns an `ImageRejected` note with the existing smaller-copy guidance.
+
+The opt-in CLI plugin provides `ImageResizer` over the same `Bash` and
+`FileSystem` tree. `ImageResizerConfig` has `tool` (`auto`, `magick`,
+`convert`, `vips` or `sips`), `tempDir` (`null`, or an existing absolute
+POSIX directory) and `timeoutMs` (30 000, up to 600 000). Auto probes once,
+in that order (`vips` invokes `vipsthumbnail`); an explicit missing tool or
+no available tool fails activation with `images.unavailable`. It adds no
+native npm dependency. A null `tempDir` uses the Bash environment's
+`TMPDIR`, falling back to `/tmp`. Each fit uses its own scoped directory,
+removed after success, failure or interruption; the deadline covers the
+conversion attempts and cleanup follows interruption. Commands use
+`bashEnvironment`'s default allowlist over the host's `parentEnv` and run
+with fixed relative filenames. Four bounded shrink attempts preserve
+aspect and never upscale; JPEG inputs keep JPEG compression, GIF/WebP
+conversion takes the first frame, and an opaque PNG may fall back to JPEG
+when the backend can establish opacity. Results are checked again with
+`mediaFromBytes`. This uses the host's converters with the shell's access;
+file-tool confinement remains a guardrail, not a sandbox.
+
+```ts
+import { imageResizerPlugin, localSystemPlugin, workspaceToolsPlugin } from "@xandreed/plugin-workspace"
+
+const plugins = [
+  localSystemPlugin,
+  { plugin: imageResizerPlugin, options: { tool: "auto", timeoutMs: 30_000 } },
+  { plugin: workspaceToolsPlugin, options: { imageMaxSide: 1568 } },
+]
+```
+
 `bash` keeps the tail of a command's output (stdout and stderr in the
 order they came) within the same `maxLines` and `maxBytes`; once the
 output is longer, it is written to `spillDir`
@@ -1596,6 +1638,7 @@ per-file lock, so two sessions editing one file wait for each other.
 `exclude`, `maxLines`, `maxBytes`, `lsEntries`, `findResults`,
 `grepMatches`, `grepLineChars`, `grepEngine` (`auto`), `grepTimeoutMs`
 (30 000), `grepIgnoreFiles` (`false`), `maxFileBytes`, `readImages` (`true`),
+`imageMaxSide` (8000; used only with `ImageResizer`),
 `fuzzyEdit`, `bashTimeoutMs`, `bashMaxTimeoutMs`, `bashEnv`,
 `bashInheritEnv` (`false`), `bashEnvAllow`, `bashSessionEnv`, `spillDir`
 (relative to the root; `null` saves nothing), `spillKeep`, `progressMs`,
@@ -1633,14 +1676,15 @@ defaults and its layer:
 | `@xandreed/plugin-tool-discovery` | `ToolDiscoveryLive` | `ToolRegistry`, `Capabilities` (catalogue) | `Capabilities` |
 | `@xandreed/plugin-agent-loop` | `StepLoopLive` | `StepLoop` | — |
 | `@xandreed/plugin-workspace` | `LocalSystemPluginLive` | `FileSystem`, `Bash` | — (fails with `ShellMissing` when the shell is not installed) |
+| `@xandreed/plugin-workspace` | `ImageResizerPluginLive` | `ImageResizer` | `FileSystem`, `Bash` on the same file tree |
 | `@xandreed/plugin-workspace` | `SkillsDirectoryPluginLive` | `Capabilities` (the directory's skills) | `FileSystem` (and `SessionEnvironment` when present) |
-| `@xandreed/plugin-workspace` | `WorkspaceToolsPluginLive` | `Capabilities` (the workspace tools) | — at build (`Bash` used when there); each call needs `FileSystem` and `SessionEnvironment`, `bash` also `Bash` |
+| `@xandreed/plugin-workspace` | `WorkspaceToolsPluginLive` | `Capabilities` (the workspace tools) | — at build (`Bash` and `ImageResizer` used when there); each call needs `FileSystem` and `SessionEnvironment`, `bash` also `Bash`, fitted `read` also `ImageResizer` |
 | `@xandreed/plugin-telemetry` | `TelemetryPluginLive` | — (records metrics and span events) | `RunContext`, `TurnEvents` (build it per turn) |
 
 The schemas are `SessionsConfig`, `TasksConfig`, `MemoryWindowConfig`,
 `MemorySummaryConfig`, `MemoryDigestConfig`, `ToolDiscoveryConfig`,
-`LocalSystemConfig`, `SkillsDirectoryConfig`, `WorkspaceToolsConfig` and
-`TelemetryOptions`, with `sessionsDefaults`, `localSystemDefaults`,
+`LocalSystemConfig`, `ImageResizerConfig`, `SkillsDirectoryConfig`, `WorkspaceToolsConfig` and
+`TelemetryOptions`, with `sessionsDefaults`, `localSystemDefaults`, `imageResizerDefaults`,
 `skillsDirectoryDefaults`, `workspaceToolsDefaults`, `telemetryDefaults` and
 so on; plugin-render exports `renderSurfaceDefaults` and `renderFeedDefaults`.
 
