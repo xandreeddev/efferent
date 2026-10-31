@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { AiError, LanguageModel, Tool, Toolkit } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Effect, Option, Ref, Schema, Stream } from "effect"
-import { modelFailureCodeOf, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
+import { HarnessError, harnessDefectsAsFailures, modelFailureCodeOf, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
 import type { AgentMessage, ModelFailureKind, StepStatus } from "@xandreed/core"
 import type { LoopEvent } from "./loop-event.entity.js"
 import { runLoop } from "./loop.js"
@@ -63,6 +63,27 @@ const failures: ReadonlyArray<readonly [ModelFailureKind, string]> = [
 ]
 
 describe("semantic model failures before the response gate", () => {
+  test("a recorder TurnError before the first streamed part fails without a settled fallback", async () => {
+    const failure = new HarnessError({ code: "events.encode", message: "the model call could not be recorded" })
+    const observed = await Effect.runPromise(Effect.gen(function* () {
+      const settled = yield* Ref.make(0)
+      const events = yield* Ref.make<ReadonlyArray<LoopEvent>>([])
+      const model = yield* LanguageModel.make({
+        generateText: () => Ref.update(settled, (count) => count + 1).pipe(Effect.as([...done])),
+        streamText: () => Stream.die(failure),
+      })
+      const result = yield* Effect.result(harnessDefectsAsFailures(runLoop({
+        system: "fixture", messages: [{ role: "user", content: "go" }],
+        toolkit: Toolkit.make(), maxSteps: 2, streaming: true,
+        onEvent: (event) => Ref.update(events, (all) => [...all, event]),
+      }).pipe(Effect.provideService(LanguageModel.LanguageModel, model))))
+      return { result, settled: yield* Ref.get(settled), events: yield* Ref.get(events) }
+    }))
+    expect(observed.result._tag === "Failure" ? observed.result.failure : undefined).toBe(failure)
+    expect(observed.settled).toBe(0)
+    expect(observed.events.some((event) => event.type === "stream_fallback" || event.type === "assistant_message")).toBe(false)
+  })
+
   failures.map(([kind, message]) => test(`${kind} in an otherwise executable response fails before recording or tools`, async () => {
     const content: ReadonlyArray<Response.PartEncoded> = [
       { type: "tool-call", id: "", name: Probe.name, params: { n: 1 }, providerExecuted: false },

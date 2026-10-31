@@ -1,6 +1,6 @@
 import { AnthropicClient } from "@effect/ai-anthropic"
 import { OpenAiClient } from "@effect/ai-openai"
-import { Effect, Match, Option, Predicate, Schema, Stream } from "effect"
+import { Effect, Exit, Match, Option, Predicate, Schema, Stream } from "effect"
 import { AiError } from "effect/ai"
 import type { HttpClientResponse } from "effect/http"
 import { modelFailureMessageOf, stampAiErrorFailure } from "@xandreed/core"
@@ -8,6 +8,7 @@ import type { ModelFailureKind } from "@xandreed/core"
 import { classifyProviderFailure } from "./provider-failure.entity.functions.js"
 import { ProviderFailureEvidence } from "./provider-failure.entity.js"
 import type { ProviderFailureProtocol } from "./provider-failure.entity.js"
+import { completeSdkResponseAttempt, modelOutcomeOfExit, observeResponseUsage } from "./model-completion.adapter.js"
 
 const encodeBody = Schema.encodeUnknownEffect(Schema.fromJsonString(Schema.Json))
 const jsonObject = Schema.decodeUnknownOption(Schema.JsonObject)
@@ -49,7 +50,9 @@ const nativeFailure = Effect.fnUntraced(function* (
     Match.when("Unknown", () => new AiError.UnknownError({ description, metadata, http })),
     Match.orElse(() => new AiError.InvalidRequestError({ description, metadata, http })),
   )
-  return stampAiErrorFailure(AiError.make({ module: "Models", method, reason }), kind)
+  const error = stampAiErrorFailure(AiError.make({ module: "Models", method, reason }), kind)
+  yield* completeSdkResponseAttempt(response, { _tag: "Failed", failure: Option.some(kind) })
+  return error
 })
 
 const requestIdOf = (response: HttpClientResponse.HttpClientResponse): string | null =>
@@ -58,10 +61,10 @@ const requestIdOf = (response: HttpClientResponse.HttpClientResponse): string | 
 /** Inspect decoded raw data before the SDK merges context overflow into a length cut. */
 export const withAnthropicFailures = (client: AnthropicClient.Service): AnthropicClient.Service => ({
   ...client,
-  createMessage: (options) => client.createMessage(options).pipe(Effect.flatMap(([body, response]) =>
+  createMessage: (options) => client.createMessage(options).pipe(Effect.tap(([body, response]) => observeResponseUsage(response, body.usage, true)), Effect.flatMap(([body, response]) =>
     body.stop_reason === "model_context_window_exceeded"
       ? nativeFailure("createMessage", { protocol: "anthropic", status: response.status, stopReason: body.stop_reason }, response, body, requestIdOf(response)).pipe(Effect.flatMap(Effect.fail))
-      : Effect.succeed([body, response] as [typeof body, typeof response]),
+      : completeSdkResponseAttempt(response, { _tag: "Completed" }).pipe(Effect.as([body, response] as [typeof body, typeof response])),
   )),
   createMessageStream: (options) => client.createMessageStream(options).pipe(Effect.map(([response, stream]) => [response,
     stream.pipe(Stream.mapAccumEffect(() => emptyUsage, (before, event) => Match.value(event).pipe(
@@ -70,18 +73,21 @@ export const withAnthropicFailures = (client: AnthropicClient.Service): Anthropi
       }, response, { event: value, usage: before }, value.request_id ?? requestIdOf(response)).pipe(Effect.flatMap(Effect.fail))),
       Match.when({ type: "message_start" }, (value) => {
         const usage = ofUsage(value.message.usage)
-        return value.message.stop_reason === "model_context_window_exceeded"
+        const observed = observeResponseUsage(response, value.message.usage, false)
+        return observed.pipe(Effect.andThen(value.message.stop_reason === "model_context_window_exceeded"
           ? nativeFailure("createMessageStream", { protocol: "anthropic", status: response.status, stopReason: value.message.stop_reason }, response, { event: value, usage }, requestIdOf(response)).pipe(Effect.flatMap(Effect.fail))
-          : Effect.succeed([usage, [event]] as const)
+          : Effect.succeed([usage, [event]] as const)))
       }),
       Match.when({ type: "message_delta" }, (value) => {
         const usage = { ...before, ...Object.fromEntries(Object.entries(ofUsage(value.usage)).filter(([, count]) => count !== null)) }
-        return value.delta.stop_reason === "model_context_window_exceeded"
+        const observed = observeResponseUsage(response, value.usage, value.delta.stop_reason != null)
+        return observed.pipe(Effect.andThen(value.delta.stop_reason === "model_context_window_exceeded"
           ? nativeFailure("createMessageStream", { protocol: "anthropic", status: response.status, stopReason: value.delta.stop_reason }, response, { event: value, usage }, requestIdOf(response)).pipe(Effect.flatMap(Effect.fail))
-          : Effect.succeed([usage, [event]] as const)
+          : Effect.succeed([usage, [event]] as const)))
       }),
+      Match.when({ type: "message_stop" }, () => completeSdkResponseAttempt(response, { _tag: "Completed" }).pipe(Effect.as([before, [event]] as const))),
       Match.orElse(() => Effect.succeed([before, [event]] as const)),
-    ))),
+    )), Stream.onEnd(completeSdkResponseAttempt(response, { _tag: "Completed" })), Stream.onExit((exit) => completeSdkResponseAttempt(response, Exit.isSuccess(exit) ? { _tag: "Interrupted" } : modelOutcomeOfExit(exit)))),
   ] as [typeof response, typeof stream])),
 })
 
@@ -94,26 +100,27 @@ const openAiFailure = (method: string, body: OpenAiBody, response: HttpClientRes
 /** The same raw error interception serves native Responses and its Codex transport. */
 export const withOpenAiFailures = (client: OpenAiClient.Service): OpenAiClient.Service => ({
   ...client,
-  createResponse: (options) => client.createResponse(options).pipe(Effect.flatMap(([body, response]) =>
+  createResponse: (options) => client.createResponse(options).pipe(Effect.tap(([body, response]) => observeResponseUsage(response, body.usage, true)), Effect.flatMap(([body, response]) =>
     body.error != null
       ? openAiFailure("createResponse", body, response).pipe(Effect.flatMap(Effect.fail))
-      : Effect.succeed([body, response] as const),
+      : completeSdkResponseAttempt(response, { _tag: "Completed" }).pipe(Effect.as([body, response] as const)),
   )),
   createResponseStream: (options) => client.createResponseStream(options).pipe(Effect.map(([response, stream]) => [response,
     stream.pipe(Stream.mapAccumEffect(() => emptyUsage, (before, event) => {
       const observed = Predicate.hasProperty(event, "response") && Predicate.hasProperty(event.response, "usage") ? ofUsage(event.response.usage) : emptyUsage
       const usage = { ...before, ...Object.fromEntries(Object.entries(observed).filter(([, count]) => count !== null)) }
       const raw = { event, usage }
-      return Match.value(event).pipe(
+      const final = event.type === "response.completed" || event.type === "response.failed" || event.type === "response.incomplete"
+      return observeResponseUsage(response, observed, final).pipe(Effect.andThen(Match.value(event).pipe(
         Match.when({ type: "error" }, (value) => nativeFailure("createResponseStream", {
           protocol: "openai", status: Schema.is(ProviderFailureEvidence.fields.status)(value.status) ? value.status : response.status,
           ...(value.code == null ? {} : { code: value.code }), message: value.message,
         }, response, raw, requestIdOf(response)).pipe(Effect.flatMap(Effect.fail))),
         Match.when({ type: "response.failed" }, (value) => openAiFailure("createResponseStream", value.response, response, raw).pipe(Effect.flatMap(Effect.fail))),
         Match.when({ response: { error: (error: unknown) => error != null } }, (value) => openAiFailure("createResponseStream", value.response, response, raw).pipe(Effect.flatMap(Effect.fail))),
-        Match.orElse(() => Effect.succeed([usage, [event]] as const)),
-      )
-    })),
+        Match.orElse(() => (final ? completeSdkResponseAttempt(response, { _tag: "Completed" }) : Effect.void).pipe(Effect.as([usage, [event]] as const))),
+      )))
+    }), Stream.onEnd(completeSdkResponseAttempt(response, { _tag: "Completed" })), Stream.onExit((exit) => completeSdkResponseAttempt(response, Exit.isSuccess(exit) ? { _tag: "Interrupted" } : modelOutcomeOfExit(exit)))),
   ] as const)),
 })
 

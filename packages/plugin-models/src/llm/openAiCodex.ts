@@ -3,7 +3,7 @@ import { OpenAiClient, OpenAiLanguageModel } from "@effect/ai-openai"
 import { HttpClient, HttpClientRequest } from "effect/http"
 import type { HttpClientError, HttpClientResponse } from "effect/http"
 import { Effect, Option, Predicate, Redacted, Schema, Stream } from "effect"
-import { CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ENGINE_KEY, ModelFailureStamp, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
+import { isTurnError, ModelId, ModelSelection, ProviderId, CurrentModelCallPolicy, CurrentPromptCacheKey, describeModel, ENGINE_KEY, ModelFailureStamp, modelFailureOf, stampAiErrorFailure } from "@xandreed/core"
 import { foldStreamParts } from "@xandreed/core/internal"
 import type { ReasoningEffortType } from "@xandreed/core"
 import { CurrentOpenAiCodexSessions, makeOpenAiCodexSessions, makeOpenAiCodexWebSocketHttpClient } from "./openAiCodexWebSocket.js"
@@ -11,7 +11,7 @@ import type { WebSocketProxy } from "../ports/models-transport.port.js"
 import { OPENAI_CODEX_ORIGINATOR } from "../auth/openAiCodexOAuth.js"
 import { classifyAiError } from "./provider-failure.entity.functions.js"
 import { withOpenAiFailures } from "./provider-client.adapter.js"
-import { resilientHttpClient } from "../transport/resilient-http-client.adapter.js"
+import { resilientHttpClient, withModelRequestCall, withModelRequestStream } from "../transport/resilient-http-client.adapter.js"
 
 export const OPENAI_CODEX_API_URL = "https://chatgpt.com/backend-api/codex"
 
@@ -208,16 +208,19 @@ export const makeOpenAiCodexLanguageModel = (args: {
         // LanguageModel port by deriving settled calls from that same stream,
         // so non-streaming use cases do not accidentally send stream:false.
         Effect.map((streaming) => {
+          const selection = new ModelSelection({ provider: ProviderId.make("openai-codex"), modelId: ModelId.make(args.model) })
           const streamText = ((options: unknown) =>
-            streaming.streamText(options as never).pipe(
-              Stream.mapError((error) => mapOpenAiCodexError(args.model, error)),
+            withModelRequestStream("Stream", selection, streaming.streamText(options as never)).pipe(
+              Stream.catch((error) => isTurnError(error) ? Stream.die(error) : Stream.fail(mapOpenAiCodexError(args.model, error))),
             )) as LanguageModel.LanguageModel["streamText"]
           const model = {
             ...streaming,
             streamText,
+            generateObject: ((options: unknown) => withModelRequestCall("Object", selection, streaming.generateObject(options as never)).pipe(Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.fail(error)))) as never,
             generateText: ((options: unknown) =>
-              foldStreamParts(streamText(options as never), () => Effect.void).pipe(
+              withModelRequestCall("Text", selection, foldStreamParts(streamText(options as never), () => Effect.void)).pipe(
                 Effect.map((turn) => new LanguageModel.GenerateTextResponse(turn.content as never)),
+                Effect.catch((error) => isTurnError(error) ? Effect.die(error) : Effect.fail(error)),
               )) as never,
           } satisfies LanguageModel.LanguageModel
           return describeModel(model, {

@@ -1761,7 +1761,9 @@
       "efferent/RunContext",
       "efferent/TurnEvents"
     ],
-    "optional": [],
+    "optional": [
+      "@xandreed/core/CurrentModelCallRecorder"
+    ],
     "provides": [],
     "contributes": [],
     "defaults": {

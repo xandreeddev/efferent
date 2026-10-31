@@ -6,6 +6,8 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
 import {
   ConversationId,
+  CurrentAgentRun,
+  CurrentAgentStep,
   defineCapability,
   defineHostEvent,
   defineSkill,
@@ -14,8 +16,10 @@ import {
   HarnessError,
   InboxItemId,
   IntentMatcher,
+  ModelCallId,
   onTool,
   RESERVED_KINDS,
+  recordCompletion,
   RunId,
   SessionHeader,
   SessionLogEvent,
@@ -32,7 +36,7 @@ import {
   UtilityCompletion,
   UtilityLlm,
 } from "@xandreed/core"
-import type { JsonObject, SessionAddress, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
+import type { JsonObject, ModelCallPurpose, SessionAddress, TokenUsage, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -170,16 +174,35 @@ type Part = ReadonlyArray<unknown>
 const call = (id: string, name: string, params: unknown): Part => [{ type: "tool-call", id, name, params }, { type: "finish", reason: "tool-calls", usage }]
 const stop = (text: string): Part => [{ type: "text", text }, { type: "finish", reason: "stop", usage }]
 
+/** Scripted dispatches exercise the same public recorder custom host models use. */
+const fixtureCompletion = (purpose: ModelCallPurpose, counts: TokenUsage) => Effect.gen(function* () {
+  const run = yield* CurrentAgentRun
+  const step = yield* CurrentAgentStep
+  yield* recordCompletion({
+    callId: ModelCallId.make(yield* Effect.sync(() => crypto.randomUUID())),
+    attempt: 1, purpose, method: "Text", model: Option.none(),
+    runId: Option.map(run, (value) => value.id),
+    run: Option.map(run, (value) => value.ordinal),
+    step: Option.isSome(run) ? step : Option.none(),
+    durationMs: 0, usage: { _tag: "Known", usage: counts }, outcome: { _tag: "Completed" },
+  })
+}).pipe(Effect.catch((error) => Effect.die(error)))
+
 const scripted = (script: ReadonlyArray<Part>) => Effect.gen(function* () {
   const served = yield* Ref.make(0)
   return yield* LanguageModel.make({
-    generateText: () => Ref.getAndUpdate(served, (value) => value + 1).pipe(Effect.map((index) => (script[index] ?? stop("done")) as never)),
+    generateText: () => Ref.getAndUpdate(served, (value) => value + 1).pipe(
+      Effect.tap(() => fixtureCompletion("Loop", { inputTokens: 100, outputTokens: 10, totalTokens: 110, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 })),
+      Effect.map((index) => (script[index] ?? stop("done")) as never),
+    ),
     streamText: () => Stream.die("not scripted") as never,
   })
 })
 
 const digester = Context.make(UtilityLlm, UtilityLlm.of({
-  complete: () => Effect.succeed(new UtilityCompletion({ text: "- record-alpha-b\nrecord-unknown", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } })),
+  complete: () => fixtureCompletion("Helper", { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }).pipe(
+    Effect.as(new UtilityCompletion({ text: "- record-alpha-b\nrecord-unknown", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } })),
+  ),
 }))
 const matcher = Context.make(IntentMatcher, IntentMatcher.of({
   id: "keyword", version: "1",

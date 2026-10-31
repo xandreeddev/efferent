@@ -418,7 +418,7 @@ const observe = (loop: Context.Service.Shape<typeof StepLoop>, scenario: Scenari
 const expect = (check: string, holds: boolean, message: string): Effect.Effect<void, ConformanceFailure> =>
   holds ? Effect.void : Effect.fail(new ConformanceFailure({ check, message }))
 
-const stepOf = (event: TurnEvent): Option.Option<number> => "step" in event ? Option.some(event.step) : Option.none()
+const stepOf = (event: TurnEvent): Option.Option<number> => event._tag === "model.called" ? event.step : "step" in event ? Option.some(event.step) : Option.none()
 const indexOf = (events: ReadonlyArray<TurnEvent>, tag: TurnEvent["_tag"], step: number) =>
   events.findIndex((event) => event._tag === tag && Option.contains(stepOf(event), step))
 /** The status of each `step.ended`, in order. */

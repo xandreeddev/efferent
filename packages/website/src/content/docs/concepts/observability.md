@@ -211,7 +211,7 @@ carries what it records.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `prices` | `{}` | a `ModelPrice` (per million tokens) per model, keyed as responses name it: the models plugin's `"<provider>:<modelId>"` selection |
+| `prices` | `{}` | a `ModelPrice` (per million tokens) per actual invoked selection, keyed as `"<provider>:<modelId>"` |
 | `metricAttributes` | `{}` | constant attributes on every metric it records; keep them few and bounded |
 | `spanEvents` | `true` | write the turn's ids, response and refusal events and the running cost on the span where it is built |
 
@@ -220,8 +220,9 @@ spans), so series stay few:
 
 | Metric | Attributes | Counts |
 | --- | --- | --- |
-| `efferent.llm.tokens` | `efferent.model`, `efferent.token.kind` | each response's tokens by billed kind: `input` (uncached), `cache_read`, `cache_write`, `reasoning`, `output` (without reasoning); they sum to the response's `totalTokens` |
-| `efferent.llm.cost` | `efferent.model` | each priced response's cost, in the prices' currency |
+| `efferent.llm.calls` | `efferent.model`, `efferent.call.purpose`, `efferent.call.outcome`, `efferent.usage.coverage`, `efferent.cost.priced` | terminal physical attempts, including calls with unknown usage or no applicable price |
+| `efferent.llm.tokens` | `efferent.model`, `efferent.token.kind` | recorded calls' reported tokens by billed kind: `input` (uncached), `cache_read`, `cache_write`, `reasoning`, `output` (without reasoning); helpers and discarded attempts included |
+| `efferent.llm.cost` | `efferent.model` | recorded calls' priced reported usage, in the prices' currency |
 | `efferent.steps` | `efferent.step.status` | steps of the step loop, by how they ended: `completed`, `failed`, `cancelled`, `malformed` (a response the model could not form, answered with a corrective turn), or `truncated` (a response cut short, none of whose tool calls ran) |
 | `efferent.tool.calls` | `efferent.tool`, `efferent.ok` | tool calls whose handler ran |
 | `efferent.tool.duration` | `efferent.tool`, `efferent.ok` | those calls' time, in milliseconds |
@@ -236,7 +237,8 @@ naming them in dashboards. The framework's own metrics ride the same export:
 `llm.usage.*_tokens` (the models plugin, utility calls included).
 
 **Span events.** On `agent.turn`, with `spanEvents`: an
-`efferent.step.usage` event per response (its step, model, usage and cost),
+`efferent.step.usage` event per selected response (its step, model, usage and
+individual cost estimate),
 `efferent.tool.refused` per refused call (its step, tool, invocation id and
 `efferent.refusal.reason`), `efferent.stream.fallback` per fallback (its
 step and the stream's error, cut to 300 characters), and the attribute
@@ -244,23 +246,39 @@ step and the stream's error, cut to 300 characters), and the attribute
 `efferent.step`, is the step loop's zero-based index: the step whose
 `engine.turn` span carries `engine.step` one higher. A response with no
 usage (a host-planned step 0) records nothing.
+`efferent.model.called` describes each recorded physical attempt. Turn attributes
+`efferent.model.calls`, `efferent.model.calls.unknown`,
+`efferent.model.calls.partial` and `efferent.model.calls.unpriced` expose
+coverage. Selected step estimates are narrative and do not add a second charge.
 
-**Cost.** A response's cost is core's `costOf(usage, price)`: each billed
-kind at its price, reasoning at `price.reasoning` or else the output price,
-all cache writes at one rate. A response is priced only when its model has a
-price: one with no model, from a `LanguageModel` the models plugin did not
-route, is counted under `efferent.model: "unknown"` and has no cost. A turn's
-own total is `costOf(result.usage, price)` over the `TurnResult` `Agent.turn`
-returns.
+**Cost.** Core's `costOf(usage, price)` prices each billed kind, reasoning
+at `price.reasoning` or else the output price, and all cache writes at one
+rate. Telemetry uses each `model.called` fact's actual provider alias/model,
+including helper calls, retries and discarded responses. A missing model or
+price remains unpriced; unknown usage is not evidence of a free call. Partial
+reported counts contribute an incomplete subtotal. Cache-write lifetimes share
+one rate, so mixed-lifetime cost is approximate.
 
-**What it does not see.** The plugin closes with the turn's other
-turn-dependent plugins, before the turn's reply is recorded, so it never sees
-`turn.ended`; the turn's total is on `agent.turn` and in the `TurnResult`.
-Like the turn's usage, it counts only responses the step loop received: not
-a memory strategy's utility calls (the models plugin's `llm.usage.*`
-counters do include them), a malformed response the loop corrected, or a
-failed attempt. A response cut short is counted: its step publishes its
-`assistant.message`.
+`TurnResult.usage` and selected step/run span totals keep their existing
+meaning: the responses received by the step loop. The billed ledger is read
+with `turnModelCallsOf(events, turn)` and `turnBilledUsageOf(events, turn)`.
+The latter sums reported `Known` and `Partial` usage. Any ledger fact,
+including `Unknown` or known zero, suppresses legacy selected-usage fallback.
+Only a turn without any call facts uses its `step.usage` records for billing.
+
+**Lifetime and coverage.** `TurnLive` owns billing observation through memory
+bootstrap, tools and late helper/finalizer work, even after the telemetry
+plugin's ordinary subscriptions close. Existing resumed facts can contribute
+to the turn span without incrementing global counters again. Custom models
+use `recordCompletion` to supply terminal facts; outside a turn its default
+recorder does nothing. A custom composition without recorder observation keeps
+the ordinary caller-scoped legacy telemetry behavior.
+
+The recorder flushes each fact before its `model.called` notification. A
+storage failure stops further dispatch and preserves its original `TurnError`;
+telemetry itself stays soft. Terminal records cannot account for a process
+killed between sending a request and recording its outcome. The observed
+subtotal may therefore differ from a provider invoice.
 
 **A host's own turn.** `TurnTelemetryLive(options)` is the plugin's layer.
 A host composing its own turn builds it over the turn's `RunContext` and

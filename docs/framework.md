@@ -495,6 +495,11 @@ No metric carries a session, run or turn id: those are on the spans.
 `output`, summing to each response's total), `efferent.llm.cost`,
 `efferent.steps`, `efferent.tool.calls`, `efferent.tool.duration`,
 `efferent.tool.refused` and `efferent.stream.fallbacks` (`TelemetryMetrics`).
+`efferent.llm.calls` counts terminal attempts by actual model, purpose,
+outcome, usage coverage and pricing availability. Unknown, partial and unpriced
+call counts also appear on the turn span; token/cost metrics use reported call
+subtotals, including helpers. Resumed historical facts contribute to the span
+without incrementing global counters again.
 
 **Trace content.** Prompts and responses stay out of spans unless a run
 captures them: `engine.step.input` (the exact prompt and the active tools)
@@ -577,6 +582,13 @@ Where the counts appear:
   stored events, the turn's `step.usage` records summed. `turnConformance`
   checks that it equals `TurnResult.usage`. The stored `turn.ended` record
   carries no usage.
+- `turnModelCallsOf(events, turn)`: terminal facts for every recorded physical
+  model attempt, including helpers and discarded or failed calls, in journal
+  order. Malformed facts and duplicate `(callId, attempt)` keys fail decoding.
+- `turnBilledUsageOf(events, turn)`: the sum of reported `Known` and `Partial`
+  call usage. Any `model.called` fact selects this ledger, even if all usage
+  is `Unknown` or an explicitly reported zero. Only turns with no call facts
+  fall back to `turnUsageOf`; the two sources are never added together.
 - Spans: the `engine.turn` span of each provider step carries the call's
   usage under the OpenTelemetry GenAI names: `gen_ai.usage.input_tokens`,
   `gen_ai.usage.output_tokens`, `gen_ai.usage.cache_read.input_tokens`,
@@ -597,15 +609,42 @@ Where the counts appear:
   is a `models.utility` span around it. Logs written during a call carry
   `llm.model` as an annotation, not in their text.
 
-A turn's usage counts what the step loop received. It does not count calls
-outside the loop: a memory digester's or summarizer's `UtilityLlm` calls
-(their `UtilityCompletion.usage` goes to their caller; the models plugin's
-counters do include them). Nor does it count a provider attempt the loop
-did not take as its step's response: a malformed response the loop
-corrects, or an attempt that failed (one the models plugin retried, a
-stream cut off after its first part). A provider may bill those, so a
-turn's usage can be below the provider's invoice. A response cut short is
-counted: its step publishes its `assistant.message`.
+A turn's selected usage counts the responses the step loop received. Helper
+calls, retries and responses discarded before an accepted step have separate
+`model.called` facts. The models plugin records one terminal fact per actual
+dispatch before a retry and, in `Agent.turn`, before tool admission. Direct
+SDK streaming consumers retain their SDK's consumption policy. Configuring a provider,
+refreshing credentials, preparing a request header, or expiring a deadline
+before another send creates no model-call fact. Retries share a logical
+`callId` and increasing `attempt`; an explicit stream-to-settled invocation
+has a new logical id and retains the prepared step.
+
+Each fact keeps its actual invoked `ModelSelection`, purpose (`Loop` or
+`Helper`), method, optional run/step correlation, duration, outcome and usage.
+The model is the invoked provider alias and model id; a requested fallback
+candidate or a provider-returned name does not replace it. An opaque custom
+model has no inferred selection. `UtilityCompletion.model` optionally returns
+the actual selection, preserving older helper stubs that return text and usage.
+The ledger contains no prompts, credentials, endpoint settings or raw bodies,
+and does not participate in message rendering or request fingerprints.
+
+Usage distinguishes `Unknown`, final reported `Known` counts (including real
+zero), and `Partial` cumulative subtotals with the fields actually reported.
+Missing or null counters do not become known zero, and stream snapshots replace
+reported counters rather than adding them repeatedly. New ledger counts are
+finite nonnegative integers with the normalized token invariants; historical
+usage schemas keep their existing compatibility rules. `Completed` means
+provider completion before downstream schema, empty-response or tool validation;
+failed and interrupted attempts can also retain reported usage.
+
+`CurrentModelCallRecorder` defaults to a no-op outside a turn. Custom models
+can call `recordCompletion(data)` at their own terminal dispatch boundary.
+`TurnLive` supplies the durable recorder during memory bootstrap and through
+helper/finalizer work: it appends and flushes before publishing `model.called`.
+A recording failure stops the turn and keeps its original `TurnError`; it does
+not trigger another provider call. These terminal facts cannot establish the
+bill for a process killed between dispatch and recording. Unknown or partial
+usage also makes the billed reader an observed subtotal, not an invoice.
 
 Records written before 0.14.0 have no `cacheWriteTokens` or
 `reasoningTokens`; they decode with 0 (`step.usage`, the usage stamp on a
@@ -2634,6 +2673,7 @@ included (`assistant.message`, `assistant.delta`, `tool.progress`,
 | `memory.system`, `memory.section`, `memory.step`, `memory.message`, `memory.tool-result`, `memory.tool-presentation`, `memory.digest`, `memory.skills`, `memory.compaction` | memory (`{ entry, runId, step, at, body }`) |
 | `step.started`, `step.ended`, `step.usage`, `tool.started`, `tool.refused`, `tool.completed`, `completion.evaluated`, `context.built`, `decision.recorded`, `stream.fallback` | the turn's bus |
 | `request.prepared` (the request's header: system text, tool declarations, model, cache key) | the turn, before each provider call (`TurnMemory.prepareRequest`) |
+| `model.called` (terminal physical attempt, actual model, purpose, reported usage and outcome) | the turn's recorder, appended and flushed before its bus notification |
 | `inbox.queued`, `inbox.dropped` | `deliver` or `enqueue`; a notice claim that failed too often |
 | `inbox.taken` (`id`, `entry`) | `TurnWriter.take`, atomically with its user `memory.message` and queue removal |
 | `task.started`, `task.cancelled`, `task.result` | `@xandreed/plugin-tasks` |
@@ -2648,7 +2688,7 @@ SQLite and key-reordering stores against the golden requests.
 A record is read by its fields only once decoded. `readStored(kind, events)`
 decodes the events of one of the kinds in `StoredData` (`turn.started`,
 `turn.ended`, `inbox.queued`, `inbox.dropped`, `inbox.taken`, `step.usage`,
-`request.prepared`) with that kind's schema and fails with the first
+`request.prepared`, `model.called`) with that kind's schema and fails with the first
 `SchemaError`; a lookup by key goes through `readStoredKeys`, which decodes
 a `turn.started`'s `runId`, `key`, `entry` and optional `input` and `resumes`
 (`TurnStartedKeys`) or a `request.prepared`'s `runId`, `run` and `step` (`RequestPreparedKeys`), never a

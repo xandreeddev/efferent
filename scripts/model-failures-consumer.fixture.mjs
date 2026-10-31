@@ -9,7 +9,7 @@ import { Tool } from "effect/ai"
 import {
   ConversationId, defineCapability, defineSkill, defineTool, entriesOfEvents,
   Failure, harnessCodeOf, journalSchemaOf, readStored, replayModelRequest,
-  RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage,
+  RunId, SessionLogMemoryLive, Sessions, turnBilledUsageOf, turnModelCallsOf, TurnAdmissionOpen, UserMessage,
 } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -169,6 +169,17 @@ const runCase = async (scenario, index) => {
       assert.equal(ended[0].data.failure.code, scenario.code, `${scenario.name}: the durable failure code changed`)
       const requests = yield* readStored("request.prepared", events)
       const expectedCalls = scenario.kind === "cut" ? 3 : 1
+      const calls = yield* turnModelCallsOf(events, 1)
+      const billed = yield* turnBilledUsageOf(events, 1)
+      assert.equal(calls.length, expectedCalls, `${scenario.name}: a discarded or failed attempt lost its call fact`)
+      assert.equal(new Set(calls.map((call) => `${call.callId}:${call.attempt}`)).size, expectedCalls, "a failed attempt was recorded twice")
+      assert.ok(calls.every((call) => call.purpose === "Loop" && Option.exists(call.model, (selection) => selection.provider === "gateway" && selection.modelId === model)), "a failure lost its actual invoked model")
+      assert.ok(calls.every((call) => call.outcome._tag === (scenario.kind === "cut" ? "Completed" : "Failed")), "consumer acceptance replaced the physical provider outcome")
+      const reportedInput = scenario.kind === "stream" && scenario.events.some((event) => event.type === "message_start")
+      const finalUsage = scenario.kind === "settled" || scenario.kind === "cut" || scenario.name === "stream-delta-overflow-after-tool-args"
+      const expectedUsage = finalUsage ? "Known" : reportedInput ? "Partial" : "Unknown"
+      assert.ok(calls.every((call) => call.usage._tag === expectedUsage), `${scenario.name}: unknown/partial/final usage precision was lost`)
+      assert.equal(billed.totalTokens, finalUsage ? expectedCalls * 108 : reportedInput ? 101 : 0, `${scenario.name}: failed raw usage was lost or counted twice`)
       assert.equal(requests.length, expectedCalls, `${scenario.name}: request evidence was lost or a corrective request was added`)
       yield* Effect.forEach(requests, ({ data }) => replayModelRequest(events, runId, data.step, data.run).pipe(Effect.tap((request) => Effect.sync(() => {
         assert.ok(Option.exists(request.model, (descriptor) => descriptor.provider === "gateway" && descriptor.model === model), "replay lost requested model identity")
@@ -186,7 +197,7 @@ const runCase = async (scenario, index) => {
       assert.equal(server.requests.length, expectedCalls, `${scenario.name}: a permanent failure retried or fell back`)
       assert.equal(server.requests.filter((request) => request.fallback).length, 0, `${scenario.name}: a fallback provider was called`)
       assert.ok(!JSON.stringify(events).includes(placeholder), "a credential entered the durable journal")
-      return { name: scenario.name, code, calls: server.requests.length, handlers: yield* Ref.get(handlers), headers: requests.length, failureVerified: true }
+      return { name: scenario.name, code, calls: server.requests.length, handlers: yield* Ref.get(handlers), headers: requests.length, failureVerified: true, accountingVerified: true }
     })))
     assert.deepEqual(await readdir(workspace), [], "memory configuration wrote fixture files")
     return report

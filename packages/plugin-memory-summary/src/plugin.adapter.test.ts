@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Context, Effect, Fiber, Logger, Option, Ref, Tracer } from "effect"
 import { TestClock } from "effect/testing"
-import { ConversationId, ConversationMemory, entryId, HarnessError, renderLog, RunId, RunOrdinal, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
+import { ConversationId, ConversationMemory, entryId, HarnessError, harnessDefectsAsFailures, renderLog, RunId, RunOrdinal, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
 import type { LogBody, LogEntry, LogHandle, ToolViews } from "@xandreed/core"
 import { memorySummaryDefaults, memorySummaryPlugin, SUMMARY_STRATEGY, summaryPolicy, summaryPrompt } from "./plugin.adapter.js"
 
@@ -119,6 +119,21 @@ describe("a summarizer that fails or stalls", () => {
       return { recorded: yield* session.maintain(signal), logged }
     })))
     expect(outcome).toEqual({ recorded: [], logged: ["summary left out: the model is unavailable"] })
+  })
+
+  test("a recorder failure retains its identity through the soft summary boundary", async () => {
+    const failure = new HarnessError({ code: "events.encode", message: "the model call could not be recorded" })
+    const outcome = await run((logged) => Effect.scoped(Effect.gen(function* () {
+      const utility = UtilityLlm.of({ complete: () => Effect.die(failure) })
+      const handle: LogHandle = { read: Effect.succeed(log), append: () => Effect.void }
+      const built = yield* memorySummaryPlugin.build(config, Context.empty())
+      const memory = Context.get(built as Context.Context<ConversationMemory>, ConversationMemory)
+      const session = yield* memory.open({ conversation: ConversationId.make("00000000-0000-4000-8000-0000000005b4"), runId: RunId.make("run-4"), log: handle }).pipe(
+        Effect.provideService(UtilityLlm, utility))
+      return { result: yield* Effect.result(harnessDefectsAsFailures(session.maintain(signal))), logged }
+    })))
+    expect(outcome.result._tag === "Failure" ? outcome.result.failure : undefined).toBe(failure)
+    expect(outcome.logged).toEqual([])
   })
 
   test("in the plugin, an answer is recorded as the summary", async () => {

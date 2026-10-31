@@ -5,6 +5,8 @@
 export { ConformanceFailure } from "../conformance.entity.js"
 export type { ConformanceCheck } from "../conformance.entity.js"
 export { check } from "../conformance.functions.js"
+export { modelCallRecorderConformance } from "../turn/model-call-recorder.conformance.js"
+export type { ModelCallRecorderSubject, ModelCallRecorderFixture } from "../turn/model-call-recorder.conformance.js"
 // the FileSystem and Bash contracts
 export { fileSystemConformance } from "../workspace/file-system.conformance.js"
 export type { FileSystemFixture, FileSystemSubject } from "../workspace/file-system.conformance.js"

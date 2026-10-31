@@ -1,7 +1,10 @@
 import { AiError } from "effect/ai"
 import type { Response } from "effect/ai"
-import { Cause, Effect, Match, Option, Result, Schema, Stream } from "effect"
-import { reasonOf } from "@xandreed/core"
+import { Cause, Effect, Exit, Match, Option, Result, Schema, Stream } from "effect"
+import { isTurnError, reasonOf } from "@xandreed/core"
+import type { TurnError } from "@xandreed/core"
+import { completeModelAttempt, modelOutcomeOfExit, observeModelAttempt } from "./model-completion.adapter.js"
+import type { ModelAttempt } from "./model-completion.adapter.js"
 import type { CompletionUsage, StreamChunk, StreamToolCall } from "./chat-wire.entity.js"
 import { chunkErrorOf, decodeStreamChunk, decodeToolArguments, isQuotaExhausted } from "./chat-wire.entity.functions.js"
 import { redactCredentials } from "../transport/http-proxy.entity.functions.js"
@@ -319,22 +322,27 @@ const step = (
   reading: UsageReading,
   state: SseState,
   payload: string,
-): Effect.Effect<Emit, AiError.AiError> =>
+  attempt: Option.Option<ModelAttempt>,
+): Effect.Effect<Emit, AiError.AiError | TurnError> =>
   payload === DONE
-    ? flush(moduleName, reading, state)
-    : decodeStreamChunk(moduleName, payload).pipe(Effect.flatMap((chunk) => applyChunk(moduleName, state, chunk)))
+    ? Option.match(attempt, { onNone: () => Effect.void, onSome: (value) => completeModelAttempt(value, { _tag: "Completed" }) }).pipe(Effect.andThen(flush(moduleName, reading, state)))
+    : decodeStreamChunk(moduleName, payload).pipe(
+      Effect.tap((chunk) => Option.match(attempt, { onNone: () => Effect.void, onSome: (value) => observeModelAttempt(value, chunk.usage, Option.isSome(state.finishReason) || (chunk.choices ?? []).some((choice) => choice.finish_reason != null), reading.reasoning ?? true) })),
+      Effect.flatMap((chunk) => applyChunk(moduleName, state, chunk)),
+    )
 
 /** Parse a streaming chat-completions body into encoded stream parts. */
 export const sseStreamParts = (options: {
   readonly moduleName: string
   readonly body: ReadableStream<Uint8Array>
+  readonly attempt?: Option.Option<ModelAttempt>
   /** How the final chunk's usage is read (see `usageFromCompletion`). */
   readonly usage?: UsageReading
 }): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> =>
   Stream.fromReadableStream({
     evaluate: () => options.body,
     onError: (cause) =>
-      AiError.isAiError(cause) ? cause : AiError.make({
+      AiError.isAiError(cause) || isTurnError(cause) ? cause : AiError.make({
         module: options.moduleName,
         method: "streamText",
         reason: new AiError.UnknownError({ description: `the response body stream failed: ${redactCredentials(reasonOf(Cause.die(cause)))}` }),
@@ -351,6 +359,9 @@ export const sseStreamParts = (options: {
     Stream.concat(Stream.succeed(DONE)),
     // Each step's parts are emitted one by one.
     Stream.mapAccumEffect(() => initialState, (state, payload: string) =>
-      step(options.moduleName, options.usage ?? {}, state, payload),
+      step(options.moduleName, options.usage ?? {}, state, payload, options.attempt ?? Option.none()),
     ),
+    Stream.onExit((exit) => Option.match(options.attempt ?? Option.none(), { onNone: () => Effect.void, onSome: (attempt) => completeModelAttempt(attempt, Exit.isSuccess(exit) ? { _tag: "Interrupted" } : modelOutcomeOfExit(exit)).pipe(Effect.catch((error) => Effect.die(error))) })),
+    // Fixed SDK stream parts keep their AiError signature; the original recorder TurnError crosses as a defect.
+    Stream.catch((error) => isTurnError(error) ? Stream.die(error) : Stream.fail(error)),
   )

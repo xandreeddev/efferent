@@ -6,7 +6,7 @@ import { foldStreamParts } from "@xandreed/core/internal"
 import { CurrentAgentRun, CurrentAgentStep, DegeneratePolicy, MalformedLimit } from "@xandreed/core"
 import { CurrentEmptyResponseTolerance } from "@xandreed/core"
 import type { AgentMessage, AgentResult, HarnessError, ModelFailureKind, StepStatus } from "@xandreed/core"
-import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, zeroUsage } from "@xandreed/core"
+import { addUsage, clipTo, elideMediaData, framed, harnessError, hostNote, isMediaValue, isTurnError, zeroUsage } from "@xandreed/core"
 import type { TokenUsage } from "@xandreed/core"
 import type { ModelDispatch } from "@xandreed/core"
 import { plannedCallIdOf, responseModelOf } from "@xandreed/core"
@@ -699,14 +699,14 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
               Effect.catch((err) =>
                 Ref.get(partSeen).pipe(
                   Effect.flatMap((armed) =>
-                    armed || isImageRejection(err) || isPermanentModelFailure(err) ? Effect.fail(err) : Effect.succeed(Result.fail(failureText(err))),
+                    armed || isTurnError(err) || isImageRejection(err) || isPermanentModelFailure(err) ? Effect.fail(err) : Effect.succeed(Result.fail(failureText(err))),
                   ),
                 ),
               ),
               Effect.catchDefect((defect) =>
                 Ref.get(partSeen).pipe(
                   Effect.flatMap((armed) =>
-                    armed ? Effect.die(defect) : Effect.succeed(Result.fail(failureText(defect))),
+                    armed || isTurnError(defect) ? Effect.die(defect) : Effect.succeed(Result.fail(failureText(defect))),
                   ),
                 ),
               ),

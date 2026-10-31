@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Context, Effect, Fiber, Logger, Option, Tracer } from "effect"
 import type { Scope } from "effect"
 import { TestClock } from "effect/testing"
-import { ResultDigester, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
+import { HarnessError, harnessDefectsAsFailures, ResultDigester, UserMessage, UtilityCompletion, UtilityError, UtilityLlm } from "@xandreed/core"
 import type { DigestTask } from "@xandreed/core"
 import { digestPrompt, keysOf, memoryDigestDefaults, memoryDigestPlugin, outcomeOf } from "./plugin.adapter.js"
 
@@ -94,6 +94,16 @@ describe("a digester that fails or stalls", () => {
     }))
     expect([value.code, value.message]).toEqual(["memory.digest", "lookup: the model is unavailable"])
     expect(logged).toEqual(["digest left out: lookup: the model is unavailable"])
+  })
+
+  test("a recorder failure retains its identity through the soft digest boundary", async () => {
+    const failure = new HarnessError({ code: "events.encode", message: "the model call could not be recorded" })
+    const { value, logged } = await run(Effect.gen(function* () {
+      const digester = yield* digesterWith(() => Effect.die(failure))
+      return yield* Effect.result(harnessDefectsAsFailures(digester.digest(keyed(["a"]))))
+    }))
+    expect(value._tag === "Failure" ? value.failure : undefined).toBe(failure)
+    expect(logged).toEqual([])
   })
 
   test("an answer in time is the outcome", async () => {

@@ -3,6 +3,9 @@ import {
   addUsage,
   Capabilities,
   ConversationMemory,
+  CurrentAgentRun,
+  CurrentAgentStep,
+  CurrentModelCallRecorder,
   entriesOfEvents,
   fingerprintOf,
   frameworkDraft,
@@ -47,6 +50,7 @@ import { draftOfTurnEvent, draftsOfEntries, readerOf, renderSections } from "@xa
 import { ReplyStep } from "./turn-phase.entity.js"
 import type { TurnPhase } from "./turn-phase.entity.js"
 import { addContext, claim, heldWith, hold, numberOf, release, reply, sectionsDue, startRun, take } from "./turn-phase.entity.functions.js"
+import { makeTurnModelCallRecorder } from "./model-call-recorder.adapter.js"
 import type { Transition } from "./turn-phase.entity.functions.js"
 
 const failure = (code: string, message: string) => new HarnessError({ code, message })
@@ -109,6 +113,10 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   const writer = input.turn
   const admitted = writer.admitted
   const events = yield* makeTurnEvents({ maxDepth: input.maxEventDepth ?? 8 })
+  const modelCalls = yield* makeTurnModelCallRecorder(writer, (data) => events.publish({ _tag: "model.called", ...data }))
+  // Registered before the turn's tasks/subscriptions: their teardown finishes
+  // first, then billing closes while the writer and turn span are still open.
+  yield* Effect.addFinalizer(() => modelCalls.close)
   const tasks = yield* makeTurnTasks(scope)
   // The writer is the first subscriber: every stored event is queued before any reaction runs.
   yield* events.subscribe(Option.some, (event: TurnEvent) => storedDraft(admitted.turn)(event).pipe(
@@ -117,8 +125,10 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   // The turn's usage: what its stored `step.usage` records hold, summed as they are queued.
   const usage = yield* Ref.make(zeroUsage)
   yield* events.subscribe(
-    (event) => event._tag === "assistant.message" ? Option.some(event.usage) : Option.none(),
-    (step) => Ref.update(usage, (total) => addUsage(total, step)),
+    (event) => event._tag === "assistant.message" ? Option.some(event) : Option.none(),
+    (step) => Ref.update(usage, (total) => addUsage(total, step.usage)).pipe(
+      Effect.andThen(modelCalls.legacy({ model: step.model, usage: step.usage, replayed: false })),
+    ),
   )
   const phase = yield* Ref.make<TurnPhase>({ _tag: "Waiting", early: [] })
   /** Apply a transition: the phase moves and what it returns is returned; a refusal fails, the phase as it was. */
@@ -175,7 +185,11 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
       }))))
     }),
   }
-  const session = yield* memory.open({ conversation: admitted.session.id, runId: admitted.runId, log })
+  const session = yield* memory.open({ conversation: admitted.session.id, runId: admitted.runId, log }).pipe(
+    Effect.provideService(CurrentModelCallRecorder, modelCalls.recorder),
+    Effect.provideService(CurrentAgentRun, Option.none()),
+    Effect.provideService(CurrentAgentStep, Option.none()),
+  )
   const reader = readerOf(session)
 
   const slot = yield* Ref.make<ToolSlot>({ _tag: "Closed" })
@@ -343,6 +357,9 @@ export const TurnLive = (input: TurnLiveInput): Layer.Layer<
   })
 
   return Context.make(RunContext, run).pipe(
+    Context.add(CurrentModelCallRecorder, modelCalls.recorder),
+    Context.add(CurrentAgentRun, Option.none()),
+    Context.add(CurrentAgentStep, Option.none()),
     Context.add(TurnEvents, events),
     Context.add(TurnTasks, tasks),
     Context.add(TurnMemory, turnMemory),

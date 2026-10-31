@@ -10,6 +10,7 @@ import type { LogBody } from "../memory/memory-log.entity.js"
 import { UserMessage } from "../turn/user-message.entity.js"
 import { StreamPartId, TransientTurnEvents, TURN_EVENT_NAMES, TurnEvent } from "../turn/turn-event.entity.js"
 import { zeroUsage } from "../domain/token-usage.entity.functions.js"
+import { ModelCallId } from "../domain/model-call.entity.js"
 import { mediaFromBase64 } from "../domain/media.entity.functions.js"
 import { draftOfEntry, draftOfTurnEvent, entriesOfEvents, journalSchemaOf, readStored, readStoredKeys, replyEndingOf, StoredData, turnStartedDraft, turnUsageOf } from "./session-event.entity.functions.js"
 import { JOURNAL_KINDS, MEMORY_KINDS, RECORDED_ELSEWHERE, RESERVED_KINDS } from "./session-event.entity.js"
@@ -223,7 +224,7 @@ describe("the reserved names", () => {
     expect(TURN_EVENT_NAMES).toEqual([
       "turn.started", "step.started", "tool.started", "tool.refused", "tool.progress", "tool.completed",
       "step.ended", "completion.evaluated", "skills.activated", "context.built", "decision.recorded",
-      "assistant.message", "assistant.delta", "stream.fallback", "turn.ended", "host",
+      "assistant.message", "assistant.delta", "stream.fallback", "turn.ended", "host", "model.called",
     ])
   })
   test("are the journal's kinds and every bus event's name, each once", () => {
@@ -286,11 +287,13 @@ describe("the journal's schemas", () => {
     expect(decodes("inbox.dropped", { id: "a" })).toBe(false)
   })
   test("the events recorded elsewhere are not stored from the bus", () => {
-    expect([...RECORDED_ELSEWHERE]).toEqual(["turn.started", "turn.ended", "skills.activated"])
+    expect([...RECORDED_ELSEWHERE]).toEqual(["turn.started", "turn.ended", "skills.activated", "model.called"])
     const recordedElsewhere: ReadonlyArray<TurnEvent> = [
       { _tag: "turn.started", runId: RunId.make("r"), turn: 1, userMessage: new UserMessage({ text: "hello" }), meta: {} },
       { _tag: "turn.ended", runId: RunId.make("r"), turn: 1, outcome: "completed", reply: Option.some("hi"), usage: zeroUsage },
       { _tag: "skills.activated", skills: ["s"], tools: ["t"], source: "host" },
+      { _tag: "model.called", callId: ModelCallId.make("called"), attempt: 1, purpose: "Loop", method: "Text", model: Option.none(),
+        runId: Option.none(), run: Option.none(), step: Option.none(), durationMs: 0, usage: { _tag: "Unknown" }, outcome: { _tag: "Completed" } },
     ]
     expect(recordedElsewhere.map((event) => event._tag)).toEqual([...RECORDED_ELSEWHERE])
     expect(recordedElsewhere.map((event) => storedOf(1, event)).every(Option.isNone)).toBe(true)
@@ -387,7 +390,7 @@ describe("stored events read by their kind", () => {
   const failed = <A, E>(effect: Effect.Effect<A, E>) => Effect.runPromise(Effect.result(effect)).then((result) => result._tag === "Failure")
 
   test("the kinds read back by their fields are the journal's, with the same schemas", () => {
-    expect(Object.keys(StoredData)).toEqual(["turn.started", "turn.ended", "inbox.queued", "inbox.taken", "inbox.dropped", "step.usage", "request.prepared"])
+    expect(Object.keys(StoredData)).toEqual(["turn.started", "turn.ended", "inbox.queued", "inbox.taken", "inbox.dropped", "step.usage", "request.prepared", "model.called"])
     expect(Object.entries(StoredData).every(([kind, schema]) => Option.contains(journalSchemaOf(kind), schema))).toBe(true)
   })
 

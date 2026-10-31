@@ -741,13 +741,13 @@ console.log(messagesBunReport.trim())
 await writeFile(join(consumer, "model-failures-consumer.mjs"), await readFile(join(root, "scripts/model-failures-consumer.fixture.mjs"), "utf8"))
 const failuresNode = Bun.spawn(["node", "model-failures-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const failuresNodeReport = await new Response(failuresNode.stdout).text()
-if (await failuresNode.exited !== 0 || !failuresNodeReport.includes('model-failures {"runtime":"Node"') || (failuresNodeReport.match(/"failureVerified":true/g) ?? []).length !== 13) {
+if (await failuresNode.exited !== 0 || !failuresNodeReport.includes('model-failures {"runtime":"Node"') || (failuresNodeReport.match(/"failureVerified":true/g) ?? []).length !== 13 || (failuresNodeReport.match(/"accountingVerified":true/g) ?? []).length !== 13) {
   console.error("the packed Node model-failure fixture did not preserve permanent failure behavior"); process.exit(1)
 }
 console.log(failuresNodeReport.trim())
 const failuresBun = Bun.spawn(["bun", "model-failures-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const failuresBunReport = await new Response(failuresBun.stdout).text()
-if (await failuresBun.exited !== 0 || !failuresBunReport.includes('model-failures {"runtime":"Bun"') || (failuresBunReport.match(/"failureVerified":true/g) ?? []).length !== 13) {
+if (await failuresBun.exited !== 0 || !failuresBunReport.includes('model-failures {"runtime":"Bun"') || (failuresBunReport.match(/"failureVerified":true/g) ?? []).length !== 13 || (failuresBunReport.match(/"accountingVerified":true/g) ?? []).length !== 13) {
   console.error("the packed Bun model-failure fixture did not preserve permanent failure behavior"); process.exit(1)
 }
 console.log(failuresBunReport.trim())
@@ -756,16 +756,46 @@ console.log(failuresBunReport.trim())
 await writeFile(join(consumer, "model-retry-consumer.mjs"), await readFile(join(root, "scripts/model-retry-consumer.fixture.mjs"), "utf8"))
 const retryNode = Bun.spawn(["node", "model-retry-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const retryNodeReport = await new Response(retryNode.stdout).text()
-if (await retryNode.exited !== 0 || !retryNodeReport.includes('model-retry {"runtime":"Node"') || (retryNodeReport.match(/"retryVerified":true/g) ?? []).length !== 16) {
+if (await retryNode.exited !== 0 || !retryNodeReport.includes('model-retry {"runtime":"Node"') || (retryNodeReport.match(/"retryVerified":true/g) ?? []).length !== 16 || (retryNodeReport.match(/"accountingVerified":true/g) ?? []).length !== 16) {
   console.error("the packed Node request-policy fixture did not preserve bounded attempts and reads"); process.exit(1)
 }
 console.log(retryNodeReport.trim())
 const retryBun = Bun.spawn(["bun", "model-retry-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
 const retryBunReport = await new Response(retryBun.stdout).text()
-if (await retryBun.exited !== 0 || !retryBunReport.includes('model-retry {"runtime":"Bun"') || (retryBunReport.match(/"retryVerified":true/g) ?? []).length !== 16) {
+if (await retryBun.exited !== 0 || !retryBunReport.includes('model-retry {"runtime":"Bun"') || (retryBunReport.match(/"retryVerified":true/g) ?? []).length !== 16 || (retryBunReport.match(/"accountingVerified":true/g) ?? []).length !== 16) {
   console.error("the packed Bun request-policy fixture did not preserve bounded attempts and reads"); process.exit(1)
 }
 console.log(retryBunReport.trim())
+// Billed calls include helpers and late plugin finalizers while selected
+// turn usage remains the loop's own response usage.
+await writeFile(join(consumer, "model-call-consumer.mjs"), await readFile(join(root, "scripts/model-call-consumer.fixture.mjs"), "utf8"))
+const callNode = Bun.spawn(["node", "model-call-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const callNodeReport = await new Response(callNode.stdout).text()
+if (await callNode.exited !== 0 || !callNodeReport.includes('model-call {"runtime":"Node"') || !callNodeReport.includes('"accountingVerified":true')) {
+  console.error("the packed Node call-accounting fixture lost helper usage or double counted selected usage"); process.exit(1)
+}
+console.log(callNodeReport.trim())
+const callBun = Bun.spawn(["bun", "model-call-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const callBunReport = await new Response(callBun.stdout).text()
+if (await callBun.exited !== 0 || !callBunReport.includes('model-call {"runtime":"Bun"') || !callBunReport.includes('"accountingVerified":true')) {
+  console.error("the packed Bun call-accounting fixture lost helper usage or double counted selected usage"); process.exit(1)
+}
+console.log(callBunReport.trim())
+// A public durable-recorder kit proves terminal ACK and observer lifetime
+// contracts over packed SDK composition and the real session writer.
+await writeFile(join(consumer, "model-call-recorder-consumer.mjs"), await readFile(join(root, "scripts/model-call-recorder-consumer.fixture.mjs"), "utf8"))
+const recorderNode = Bun.spawn(["node", "model-call-recorder-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const recorderNodeReport = await new Response(recorderNode.stdout).text()
+if (await recorderNode.exited !== 0 || !recorderNodeReport.includes('model-call-recorder {"runtime":"Node","checks":6,"recorderVerified":true}')) {
+  console.error("the packed Node model-call recorder failed its public conformance kit"); process.exit(1)
+}
+console.log(recorderNodeReport.trim())
+const recorderBun = Bun.spawn(["bun", "model-call-recorder-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+const recorderBunReport = await new Response(recorderBun.stdout).text()
+if (await recorderBun.exited !== 0 || !recorderBunReport.includes('model-call-recorder {"runtime":"Bun","checks":6,"recorderVerified":true}')) {
+  console.error("the packed Bun model-call recorder failed its public conformance kit"); process.exit(1)
+}
+console.log(recorderBunReport.trim())
 // The models plugin's proxy transport on Node (undici, the WebSocket agent), with NODE_USE_ENV_PROXY on and the
 // environment proxies pointing at a port nothing listens on, which Node's own fetch would send everything to.
 await writeFile(join(consumer, "proxy-consumer.mjs"), await readFile(join(root, "scripts/proxy-consumer.fixture.mjs"), "utf8"))

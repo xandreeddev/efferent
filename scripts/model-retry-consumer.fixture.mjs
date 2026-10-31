@@ -1,4 +1,4 @@
-/** Local HTTP only: request-policy behavior over source and packed packages. */
+/** Local HTTP only: request-policy and call-accounting behavior over source and packed packages. */
 import assert from "node:assert/strict"
 import { createServer } from "node:http"
 import { mkdtemp, readdir, rm } from "node:fs/promises"
@@ -10,7 +10,7 @@ import { FetchHttpClient } from "effect/http"
 import {
   ConversationId, defineCapability, defineSkill, defineTool, entriesOfEvents,
   Failure, harnessCodeOf, journalSchemaOf, readStored, replayModelRequest,
-  RunId, SessionLogMemoryLive, Sessions, TurnAdmissionOpen, UserMessage,
+  RunId, SessionLogMemoryLive, Sessions, turnBilledUsageOf, turnModelCallsOf, TurnAdmissionOpen, UserMessage,
 } from "@xandreed/core"
 import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
@@ -229,8 +229,10 @@ const runCase = async (scenario, index) => {
           onSome: (schema) => Schema.decodeUnknownEffect(schema)(event.data),
         }), { concurrency: 1, discard: true })
         const headers = yield* readStored("request.prepared", stored)
+        const calls = yield* turnModelCallsOf(stored, 1)
+        const billed = yield* turnBilledUsageOf(stored, 1)
         assert.ok(!JSON.stringify(stored).includes(placeholder), "request credentials entered the journal")
-        return { result, stored, headers, published, modelDecisions, stepDecisions, runId }
+        return { result, stored, headers, calls, billed, published, modelDecisions, stepDecisions, runId }
       })
       const outcomes = scenario.mode === "concurrent"
         ? yield* Effect.all([run(0, { maxAttempts: 1 }), run(1, { maxAttempts: 4 })], { concurrency: 2 })
@@ -240,6 +242,31 @@ const runCase = async (scenario, index) => {
       assert.equal(server.requests.length, scenario.calls, `${scenario.name}: physical send count changed (${terminal.join("; ")})`)
       assert.equal(yield* Ref.get(handlers), scenario.handlers ?? 0, `${scenario.name}: an incomplete/retried response ran a tool`)
       for (const [position, outcome] of outcomes.entries()) {
+        const expectedCalls = scenario.mode === "concurrent" ? position === 0 ? 1 : 4 : scenario.calls
+        assert.equal(outcome.calls.length, expectedCalls, `${scenario.name}: a dispatched attempt was lost or recorded twice`)
+        assert.equal(new Set(outcome.calls.map((call) => `${call.callId}:${call.attempt}`)).size, expectedCalls, "duplicate model-call terminal facts")
+        const callGroups = Map.groupBy(outcome.calls, (call) => call.callId)
+        for (const attempts of callGroups.values()) assert.deepEqual(attempts.map((call) => call.attempt), attempts.map((_, ordinal) => ordinal + 1), "one logical call lost its attempt sequence")
+        for (const call of outcome.calls) {
+          assert.equal(call.purpose, "Loop")
+          assert.equal(Option.getOrElse(call.runId, () => ""), outcome.runId, "model-call correlation lost its admitted run")
+          assert.equal(Option.getOrElse(call.run, () => -1), outcome.headers[0].data.run)
+          assert.ok(Option.isSome(call.step), "a loop attempt lost its step")
+          assert.ok(call.durationMs >= 0 && Number.isFinite(call.durationMs))
+          assert.ok(Option.exists(call.model, (selection) => selection.modelId === model), "actual invoked model was not retained")
+          assert.equal(Option.getOrElse(Option.map(call.model, (selection) => selection.provider), () => ""),
+            (scenario.mode === "mixed-tool" || scenario.mode === "reserved-fallback") && call.attempt === 4 ? "backup" : "gateway",
+            "request candidates replaced the actual invoked provider")
+        }
+        const notifications = outcome.published.filter((event) => event._tag === "model.called").length
+        // Cancellation can close this caller-scoped subscription before the
+        // terminal cleanup notification. Durable facts remain mandatory above.
+        if (scenario.cancel) assert.ok(notifications <= expectedCalls, "terminal notifications were duplicated")
+        else assert.equal(notifications, expectedCalls, `${scenario.name}: terminal notifications were duplicated or omitted`)
+        const expectedBilled = scenario.mode === "mixed-tool" ? 76
+          : scenario.mode === "sse-idle" ? 31
+          : scenario.cancel || scenario.code || (scenario.mode === "concurrent" && position === 0) ? 0 : 38
+        assert.equal(outcome.billed.totalTokens, expectedBilled, `${scenario.name}: selected and billed usage were mixed or reported usage was lost`)
         const expectedCode = scenario.mode === "concurrent" ? position === 0 ? "model.unavailable" : undefined : scenario.code
         if (scenario.cancel) assert.equal(outcome.result._tag, "Interrupted")
         else if (expectedCode) {
@@ -284,7 +311,7 @@ const runCase = async (scenario, index) => {
         assert.deepEqual(withoutStream(server.requests[0].body), withoutStream(server.requests[1].body), "stream fallback changed the frozen step request")
       }
       if (scenario.mode === "concurrent") assert.deepEqual(Object.fromEntries(server.groups), { one: 1, four: 4 })
-      return { name: scenario.name, calls: server.requests.length, handlers: yield* Ref.get(handlers), headers: outcomes.map((outcome) => outcome.headers.length), retryVerified: true }
+      return { name: scenario.name, calls: server.requests.length, handlers: yield* Ref.get(handlers), headers: outcomes.map((outcome) => outcome.headers.length), retryVerified: true, accountingVerified: true }
     })).pipe(Effect.timeout("8 seconds")))
     assert.deepEqual(await readdir(workspace), [], "memory configuration wrote fixture files")
     return report
