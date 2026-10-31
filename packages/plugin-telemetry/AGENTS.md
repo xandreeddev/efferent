@@ -60,6 +60,50 @@ on Node and Bun in `bun run verify:packages`).
   value elsewhere never fails a host that exports nothing. The export is a
   Layer around the host's program, not a plugin: the `Tracer` and the
   metric registry are fiber references a plugin's `provides` cannot reach.
+- LangSmith (`langsmith-telemetry.adapter.ts`): `LangSmithTelemetryHttpLive`
+  installs the same Effect OTLP tracer over a host HttpClient, with
+  `langSmithTracer` mapping run types before the original span's end exports
+  it; `LangSmithTelemetryLive` adds FetchHttpClient. It exports traces only,
+  shares the existing `OtlpExporter.layerFlusher` by reference, and uses
+  `flushTelemetry`. It adds no LangSmith/provider/OpenTelemetry SDK.
+  `LangSmithTelemetryOptions` requires a Redacted API key and one exclusive
+  `LangSmithTarget`: Project, or Agent plus one `LangSmithEnvironment`.
+  The full `tracesUrl` is used verbatim, defaulting to the US SaaS
+  `/otel/v1/traces` endpoint. Target, key, URL and timing validation fail with
+  the fixed secret-free `config.options` message; parse inputs and causes are
+  never attached. Actual native Headers validation at the transport boundary
+  rejects NUL and non-ByteString values before an exporter exists, retaining
+  valid ASCII/Latin-1 values and discarding native secret-bearing errors.
+  Unknown/raw-header options and mixed addressing are rejected.
+  Generic OTLP export and environment behavior stay unchanged.
+- LangSmith inference ownership: native `LanguageModel.generateText`,
+  `generateObject` and `streamText` spans are LLM runs unless their exact
+  span is marked `efferent.inference.synthetic`. Explicit supported host
+  run types are preserved on host spans; inherited non-inference types never
+  erase a native operation's LLM identity. An explicit parent inference boundary suppresses
+  its native descendants even if the explicit kind was inherited. For nested
+  host boundaries, an authored neutral inference operation also owns its native
+  descendants; an explicit non-inference host kind takes precedence over that
+  host operation. For nested
+  automatic native wrappers, the innermost operation owns inference. Framework
+  engine/agent/provider/task wrappers remain chains with backend usage/cost/
+  operation aliases removed before export. Registry `tool.<name>` owns tool
+  classification; `loop.tool_call` stays a chain. State is weak, per tracer,
+  and bounded by span objects rather than a global ID registry. The decorator
+  preserves span identity, getters, events, links, context, Exit, end time and
+  idempotent end. Invalid external parent IDs are omitted using core's shared
+  `traceParentOf`; valid sampled:false remains false.
+- Native provider SDKs annotate their actual inference span. Plain custom
+  LanguageModel.make returns usage without automatically annotating it:
+  missing usage stays absent, never inferred from engine/turn/ledger totals
+  and never invented as Known0. Hosts may annotate their actual options.span.
+  No global SpanTransformer, response accumulator or wrapping model is added.
+  Current cache-write spelling wins; deprecated cache_creation maps only when
+  current cache_write is absent. The provider-name compatibility alias is
+  destination-specific. Already-gated engine step input/output may map to
+  chain input.value/output.value, with existing clipping; the exporter does
+  not read payloads or override content consent. Tests use scripted models
+  and local collectors. Live LangSmith ingestion remains UNVERIFIED.
 - Public surface: the root names each export, and
   `quality/exports-have-consumers` checks each one. The scripts and other
   packages' tests import `telemetryPlugin`, `OtlpTelemetryLive` and
@@ -68,7 +112,9 @@ on Node and Bun in `bun run verify:packages`).
   options (`TelemetryOptions`, `telemetryDefaults`), `TelemetryMetrics`,
   the export's layers (`OtlpTelemetryHttpLive`, `OtlpTelemetryHttpFromEnv`,
   `OtlpTelemetryFromEnv`) and their options (`OtlpTelemetryOptions`,
-  `OtlpProtocol`, `OtlpCompression`, `OtlpTemporality`). How a usage splits
+  `OtlpProtocol`, `OtlpCompression`, `OtlpTemporality`), plus the LangSmith
+  layers, `LangSmithTelemetryOptions`, `LangSmithTarget`, `LangSmithAgentId`
+  and `LangSmithEnvironment`. How a usage splits
   into token kinds (`tokenCounts`, `TokenKind`) stays inside the package.
 
 See the root AGENTS.md for the enforced zero-baseline rules and checks, and

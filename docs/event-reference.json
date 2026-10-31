@@ -9812,6 +9812,27 @@
                 "turn"
               ],
               "additionalProperties": true
+            },
+            "traceParent": {
+              "type": "object",
+              "properties": {
+                "traceId": {
+                  "type": "string",
+                  "maxLength": 32
+                },
+                "spanId": {
+                  "type": "string",
+                  "maxLength": 16
+                },
+                "sampled": {
+                  "type": "boolean"
+                }
+              },
+              "required": [
+                "traceId",
+                "spanId"
+              ],
+              "additionalProperties": true
             }
           },
           "required": [
@@ -9846,6 +9867,11 @@
           {
             "name": "startedBy",
             "type": "{ runId, turn }",
+            "required": false
+          },
+          {
+            "name": "traceParent",
+            "type": "{ traceId, spanId, sampled }",
             "required": false
           }
         ]

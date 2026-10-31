@@ -10,6 +10,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Migration
 
+- Stored format 16 adds optional `TaskStarted.traceParent`. Task execution and
+  queued follow-ups restore this recorded parent across runner contexts and
+  process restarts. Identical start retries keep their first parent; old rows
+  retain their previous ancestry. Custom Tasks rerun the extended conformance
+  checks. Trace IDs use valid nonzero hexadecimal IDs; invalid or disabled
+  tracing is omitted without failing task admission.
+
 - Stored format 15 adds helper question and answer outboxes and the `waiting`
   turn outcome. Exhaustive outcome/status matches handle `waiting`; it consumes
   its admitted input and never produces a final `task.result`. Custom `Tasks`
@@ -1109,6 +1116,14 @@ stays inside its package, with nothing deprecated first:
 - `@xandreed/plugin-workspace`: `applyTextEdits`, `normalizeLine`.
 
 ### Added
+
+- `LangSmithTelemetryLive` and `LangSmithTelemetryHttpLive` export traces over
+  Effect's OTLP exporter to one project or registered agent/environment, with
+  redacted credentials and one shared flusher. Native model operations own
+  inference usage; framework wrappers remain chains and planned tool batches
+  add no billed model run. Existing content-capture controls remain in force.
+  Local collector and fresh-process tests verify emitted protocol and ancestry;
+  live LangSmith ingestion has not been verified.
 
 - Helpers can ask their parent without keeping a turn or worker open.
   `ask_parent` yields a waiting turn; `answer_task` stores an immutable answer

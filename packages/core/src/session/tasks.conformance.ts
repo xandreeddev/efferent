@@ -1,7 +1,8 @@
-import { Clock, Context, Deferred, Effect, Exit, Fiber, FiberSet, Option, Ref, Scope } from "effect"
+import { Clock, Context, Deferred, Effect, Exit, Fiber, FiberSet, Option, Ref, Schema, Scope, Tracer } from "effect"
 import type { ConformanceCheck, ConformanceFailure } from "../conformance.entity.js"
 import { check, eventually, expect, fail, freshId, kindsOf, settles } from "../conformance.functions.js"
 import { RunId, RunOrdinal } from "../domain/run.entity.js"
+import { TraceParent } from "../domain/trace-parent.entity.js"
 import { HarnessError } from "../harness/plugin.entity.js"
 import type { TaskActivity, TurnShutdown } from "../ports/activity.port.js"
 import type { Sessions, TurnWriter } from "../ports/sessions.port.js"
@@ -202,6 +203,14 @@ const inTasks = <E extends { readonly _tag: string }>(look: (tasks: Context.Serv
 /** The most items the kit delivers to fill a parent's inbox. */
 const FILL = 256
 
+const traceParentIn = Schema.decodeUnknownOption(Schema.Struct({ traceParent: TraceParent }))
+const remoteTrace = (digit: string, sampled = true): Tracer.ExternalSpan => Tracer.externalSpan({ traceId: digit.repeat(32), spanId: digit.repeat(16), sampled })
+const tracing = (spans: Array<Tracer.NativeSpan>) => Tracer.make({ span: (options) => {
+  const span = new Tracer.NativeSpan(options)
+  spans.push(span)
+  return span
+} })
+
 const questionOf = (writer: TurnWriter): TaskQuestion => ({
   questionId: TaskQuestionId.make("helper-question"), text: "Which source should I inspect?",
   askedBy: { run: { id: writer.admitted.runId, turn: writer.admitted.turn, ordinal: RunOrdinal.make(0) }, step: 0 },
@@ -306,6 +315,73 @@ export const tasksConformance = (make: (dependencies: TasksDependencies) => Effe
   const done = { reason: "completed", failure: Option.none() } as const
 
   return [
+    scoped("task execution uses the first start's durable trace parent and preserves its sampling decision", "trace-parent", (owner) => Effect.forEach([true, false], (sampled) => {
+      const spans: Array<Tracer.NativeSpan> = []
+      return Effect.gen(function* () {
+        const h = yield* harness(owner).pipe(Effect.withParentSpan(remoteTrace("a")))
+        const input = { instructions: "trace the task", mode: "spawn" as const }
+        const task = yield* h.tasks.start(h.parent, input).pipe(Effect.withParentSpan(remoteTrace("b", sampled)))
+        yield* h.idle("trace-parent")
+        const starts = ofKind(yield* h.read(h.parent), "task.started")
+        const saved = traceParentIn(starts[0]?.data)
+        const starting = spans.find((span) => span.name === "tasks.start")
+        const executing = spans.filter((span) => span.name === "task.run")
+        yield* expect("trace-parent", Option.isSome(saved) && starting !== undefined
+          && saved.value.traceParent.traceId === "b".repeat(32) && saved.value.traceParent.spanId === starting.spanId
+          && saved.value.traceParent.sampled === sampled, "the first start did not store its own valid trace identity and actual sampling decision")
+        yield* expect("trace-parent", Option.isSome(saved) && executing.length === 1 && executing[0]?.traceId === saved.value.traceParent.traceId
+          && executing[0]?.sampled === sampled && Option.exists(executing[0].parent, (parent) => parent.spanId === saved.value.traceParent.spanId),
+        "task.run used the runner's where-built ancestry or lost the stored sampling decision")
+        yield* h.tasks.start(h.parent, { ...input, taskId: task.taskId }).pipe(Effect.withParentSpan(remoteTrace("c")))
+        yield* h.idle("trace-parent")
+        const retried = ofKind(yield* h.read(h.parent), "task.started")
+        yield* expect("trace-parent", retried.length === 1 && JSON.stringify(retried[0]?.data) === JSON.stringify(starts[0]?.data)
+          && spans.filter((span) => span.name === "task.run").length === 1, "an identical retry changed committed trace ancestry or ran the task again")
+      }).pipe(Effect.withTracer(tracing(spans)))
+    }, { concurrency: 1, discard: true })),
+
+    scoped("a fresh task backend restores a lost handoff's parent from the stored start under an unrelated trace", "trace-parent-reconcile", (owner) => {
+      const spans: Array<Tracer.NativeSpan> = []
+      return Effect.gen(function* () {
+        const first = yield* harness(owner).pipe(Effect.withParentSpan(remoteTrace("a")))
+        yield* Ref.set(first.dropping, true)
+        const task = yield* first.tasks.start(first.parent, { instructions: "restart the traced task", mode: "spawn" }).pipe(Effect.withParentSpan(remoteTrace("b", false)))
+        const saved = traceParentIn(ofKind(yield* first.read(first.parent), "task.started")[0]?.data)
+        const fresh = yield* harness(owner).pipe(Effect.withParentSpan(remoteTrace("c")))
+        yield* fresh.tasks.reconcile(first.parent).pipe(Effect.withParentSpan(remoteTrace("d")))
+        yield* fresh.idle("trace-parent-reconcile")
+        const executing = spans.filter((span) => span.name === "task.run")
+        yield* expect("trace-parent-reconcile", (yield* fresh.tasks.status(first.parent, task.taskId)).status === "completed"
+          && Option.isSome(saved) && executing.length === 1 && executing[0]?.traceId === saved.value.traceParent.traceId
+          && executing[0]?.sampled === false && Option.exists(executing[0].parent, (parent) => parent.spanId === saved.value.traceParent.spanId),
+        "reconcile used a captured recovery context instead of the first process's serialized parent")
+      }).pipe(Effect.withTracer(tracing(spans)))
+    }),
+
+    scoped("invalid or disabled tracing omits durable ancestry without stopping a task, and old starts still reconcile", "trace-parent-legacy", (owner) => {
+      const spans: Array<Tracer.NativeSpan> = []
+      return Effect.gen(function* () {
+        const first = yield* harness(owner)
+        yield* Ref.set(first.dropping, true)
+        const task = yield* first.tasks.start(first.parent, { instructions: "an old untraced task", mode: "spawn" }).pipe(Effect.withTracerEnabled(false))
+        yield* expect("trace-parent-legacy", ofKind(yield* first.read(first.parent), "task.started").every((event) => !Object.hasOwn(event.data, "traceParent")),
+          "disabled tracing stored a noop parent")
+        const fresh = yield* harness(owner).pipe(Effect.withParentSpan(remoteTrace("c")))
+        yield* fresh.tasks.reconcile(first.parent)
+        yield* fresh.idle("trace-parent-legacy")
+        yield* expect("trace-parent-legacy", (yield* fresh.tasks.status(first.parent, task.taskId)).status === "completed",
+          "an old start without traceParent did not reconcile")
+        const invalid = yield* harness(owner)
+        const custom = yield* invalid.tasks.start(invalid.parent, { instructions: "invalid custom tracing remains optional", mode: "spawn" }).pipe(
+          Effect.withParentSpan(Tracer.externalSpan({ traceId: "custom-trace", spanId: "custom-span" })),
+        )
+        yield* invalid.idle("trace-parent-legacy")
+        yield* expect("trace-parent-legacy", (yield* invalid.tasks.status(invalid.parent, custom.taskId)).status === "completed"
+          && ofKind(yield* invalid.read(invalid.parent), "task.started").every((event) => !Object.hasOwn(event.data, "traceParent")),
+        "an invalid custom trace parent failed execution or was stored")
+      }).pipe(Effect.withTracer(tracing(spans)))
+    }),
+
     scoped("a durable question ends waiting without a final result, and repeated or conflicting questions are decided once", "question", (owner) => Effect.gen(function* () {
       const seen = yield* Ref.make(Option.none<TaskQuestion>())
       const refusals = yield* Ref.make<ReadonlyArray<string>>([])

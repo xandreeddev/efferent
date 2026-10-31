@@ -700,6 +700,18 @@ const telemetryNode = Bun.spawn(["node", "telemetry-consumer.mjs"], { cwd: consu
 if (await telemetryNode.exited !== 0) process.exit(1)
 const telemetryBun = Bun.spawn(["bun", "telemetry-consumer.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await telemetryBun.exited !== 0) process.exit(1)
+// The LangSmith binding uses a local OTLP collector and restores task parents
+// across fresh OS processes. No external service or provider key is involved.
+await writeFile(join(consumer, "langsmith-telemetry-consumer.mjs"), await readFile(join(root, "scripts/langsmith-telemetry-consumer.fixture.mjs"), "utf8"))
+for (const [binary, runtime] of [["node", "Node"], ["bun", "Bun"]] as const) {
+  const tracingChild = Bun.spawn([binary, "langsmith-telemetry-consumer.mjs"], { cwd: consumer, stdout: "pipe", stderr: "inherit" })
+  const tracingReport = await new Response(tracingChild.stdout).text()
+  const required = ["localCollectorVerified", "nativeTextObjectStreamOnce", "opaqueUsageUnknown", "explicitBoundaryOnce", "contentConsentVerified", "plannedToolNotInference", "streamFallbackNoDoubleUsage", "routedHelperNoDoubleUsage", "routedCompatReportedUsage", "freshProcessTaskAncestry", "sampledTrueAndFalsePreserved", "firstCommittedParentWins", "actualChildAgentAncestry", "initialAndFollowupOnce", "bookkeepingNoExecutionSpan"]
+  if (await tracingChild.exited !== 0 || !tracingReport.includes(`result {"runtime":"${runtime} `) || !tracingReport.includes('"liveLangSmithIngestionVerified":false') || required.some((name) => !tracingReport.includes(`"${name}":true`))) {
+    console.error(`the packed ${runtime} LangSmith binding lost inference ownership, content controls or durable task ancestry`); process.exit(1)
+  }
+  console.log(tracingReport.trim())
+}
 // The events guide's HTTP recipe (events-recipe.ts, compiled above) serves a streamed turn, its retry and its
 // journal over SSE through the packed packages: on Node, which runs the recipe's TypeScript by stripping its types, then on Bun.
 await writeFile(join(consumer, "events-consumer.mjs"), await readFile(join(root, "scripts/events-consumer.fixture.mjs"), "utf8"))

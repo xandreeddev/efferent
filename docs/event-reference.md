@@ -521,6 +521,7 @@ Feed defaults (`renderFeedDefaults`, in milliseconds):
 | `mode` | `"fork" \| "spawn"` |
 | `meta` | `object` |
 | `startedBy` | `{ runId, turn }` (optional) |
+| `traceParent` | `{ traceId, spanId, sampled }` (optional) |
 
 ### `task.result`
 

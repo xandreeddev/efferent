@@ -88,6 +88,7 @@ Steering text (`pendingInput`) is the host's and is nondurable; queued durable i
 - `src/context-overflow.test.ts` and `src/request-attempt.entity.functions.test.ts`: bounded mixed media/overflow retries, settled mode and frozen choices, silent/empty/visible streamed errors, and callback error provenance. Core's new overflow checks run against the built-in and independent minimal loops; an adapter that drops the optional hook fails both. Actual provider-boundary/Agent journeys in the SDK cover new durable recovery headers and per-attempt billing.
 - Durable steering: the shared kit checks first-step take, final completion, caps, late arrivals after an empty probe and failed commits. The adapter self-tests catch skipped probes/takes, duplicate recording and taking under an unstarted step.
 - Waiting: the shared kit checks entry without paid work, successful settled-step priority over completion and input, and original failure identity. Both loops pass; ignoring the probe fails its initial and settled checks. The standalone loop covers settled, streamed and planned asks.
+- Planned batches mark only their artificial native `LanguageModel` span with `efferent.inference.synthetic`; the marker is not inherited by tools or the following real inference. The exact span test lives in `src/loop.test.ts`.
 - The sdk golden composes `stepLoopPlugin`.
 - Run: `bun test packages/plugin-agent-loop packages/sdk/src/agent.golden.test.ts`.
 

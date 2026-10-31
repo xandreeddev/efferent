@@ -102,6 +102,8 @@ export type { MemoryFileSystem, MemorySeed } from "./workspace/file-system.memor
 // loop
 export { CurrentPromptCacheKey } from "./loop/cacheKey.js"
 export { CurrentTraceContent, replayableContext } from "./loop/traceContent.js"
+export { SpanId, TraceId, TraceParent } from "./domain/trace-parent.entity.js"
+export { externalSpanOf, traceParentOf } from "./domain/trace-parent.entity.functions.js"
 
 // the session log: the storage a host provides, its in-memory backend and its contract
 export {

@@ -1,3 +1,8 @@
+const LangSmithAgentId
+const LangSmithEnvironment
+const LangSmithTarget
+const LangSmithTelemetryHttpLive
+const LangSmithTelemetryLive
 const OtlpCompression
 const OtlpProtocol
 const OtlpTelemetryFromEnv
@@ -12,7 +17,11 @@ const TurnTelemetryLive
 const flushTelemetry
 const telemetryDefaults
 const telemetryPlugin
+interface LangSmithTelemetryOptions
 interface OtlpTelemetryOptions
+type LangSmithAgentId
+type LangSmithEnvironment
+type LangSmithTarget
 type OtlpCompression
 type OtlpProtocol
 type OtlpTemporality

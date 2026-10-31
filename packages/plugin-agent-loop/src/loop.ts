@@ -743,10 +743,13 @@ export const runLoop = <Tools extends Record<string, Tool.Any>, E = never, R = n
 
           const initial = Effect.gen(function* () {
             const provider = yield* LanguageModel.make({
-              generateText: () => Effect.succeed([...(options.initialStep ?? []).map((call, index) => ({
+              generateText: ({ span }) => Effect.sync(() => {
+                span.attribute("efferent.inference.synthetic", true)
+                return [...(options.initialStep ?? []).map((call, index) => ({
                 type: "tool-call" as const, id: options.run === undefined ? `planned:0:${index}` : plannedCallIdOf(options.run, index), name: call.name,
                 params: call.params, providerExecuted: false,
-              })), { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: {}, outputTokens: {} } }]),
+              })), { type: "finish" as const, reason: "tool-calls" as const, usage: { inputTokens: {}, outputTokens: {} } }]
+              }),
               streamText: () => Stream.empty,
             })
             yield* Effect.annotateCurrentSpan("engine.step.host_planned", true)

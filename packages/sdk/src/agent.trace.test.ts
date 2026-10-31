@@ -314,6 +314,19 @@ describe("a turn's trace", () => {
 })
 
 describe("a turn's refused calls", () => {
+  test("neutral tool tracing identifies each admitted or refused invocation without capturing arguments", async () => {
+    const { spans } = await Effect.runPromise(traced())
+    const tools = spans.filter((span) => span.name.startsWith("tool."))
+    expect(tools.map((span) => read(span, ["gen_ai.operation.name", "gen_ai.tool.name", "efferent.tool.call.id", "efferent.invocation.id"]))).toEqual([
+      ["execute_tool", "lookup", "c1", "run-1:call:0"],
+      ["execute_tool", "archive", "c2", "run-1:call:1"],
+      ["execute_tool", "archive", "c3", "run-1:call:2"],
+    ])
+    expect(tools.flatMap((span) => [...span.attributes.keys()].filter((key) => key === "tool_arguments" || key.startsWith("gen_ai.prompt")))).toEqual([])
+    expect(named(spans, "loop.tool_call").map((span) => span.attributes.has("gen_ai.tool.name"))).toEqual([false, false, false])
+    expect(tools.map((span) => span.attributes.has("gen_ai.tool.call.id"))).toEqual([false, false, false])
+  })
+
   test("a call over the tool's limit is journaled as tool.refused without its input, and listed in step.ended as not ok", async () => {
     const { spans, stored } = await Effect.runPromise(traced())
     const refused = stored.filter((event) => event.kind === "tool.refused")

@@ -1,4 +1,4 @@
-import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream } from "effect"
+import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream, Tracer } from "effect"
 import type { Scope } from "effect"
 import { LanguageModel, Tool } from "effect/ai"
 import { existsSync } from "node:fs"
@@ -46,7 +46,7 @@ import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
 import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
 import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
 import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
-import { TASK_ANSWERED, TaskAnswered, TasksLive, tasksDefaults } from "@xandreed/plugin-tasks"
+import { TASK_ANSWERED, TASK_STARTED, TaskAnswered, TaskStarted, TasksLive, tasksDefaults } from "@xandreed/plugin-tasks"
 import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
 import { Agent } from "@xandreed/sdk"
 
@@ -241,6 +241,15 @@ const executor = Layer.succeed(TaskExecutor, TaskExecutor.of({
 const conversation = ConversationId.make(fixedId(0x601d))
 const completedTask = ConversationId.make(fixedId(0x7a51))
 const cancelledTask = ConversationId.make(fixedId(0x7a52))
+
+// Tracing is disabled for the existing journal scenarios. A separate traced
+// task uses stable IDs without changing the native span's behavior or shape.
+const fixtureTraceId = "1234567890abcdef1234567890abcdef"
+class FixtureSpan extends Tracer.NativeSpan {
+  constructor(options: ConstructorParameters<typeof Tracer.NativeSpan>[0], readonly fixedSpanId: string) { super(options) }
+  override get traceId() { return Option.match(this.parent, { onNone: () => fixtureTraceId, onSome: (parent) => parent.traceId }) }
+  override get spanId() { return this.fixedSpanId }
+}
 
 const record = Effect.gen(function* () {
   const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
@@ -446,13 +455,38 @@ const record = Effect.gen(function* () {
   yield* answerWriter.end({ reason: followed.outcome, failure: Option.none() })
   yield* helperTasks.reconcile(questionParent)
 
+  const fixtureSpans: Tracer.Span[] = []
+  const traceSessions = yield* Effect.gen(function* () {
+    const parent: SessionAddress = { id: ConversationId.make(fixedId(0x6024)), owner: address.owner }
+    const child: SessionAddress = { id: ConversationId.make(fixedId(0x7a54)), owner: address.owner }
+    yield* sessions.create(parent)
+    const tracedTasks = Context.get(yield* Layer.build(TasksLive(tasksDefaults).pipe(Layer.provide(Layer.mergeAll(Layer.succeed(Sessions, sessions), runner, executor)))), Tasks)
+    yield* tracedTasks.start(parent, { taskId: child.id, instructions: "Inspect the traced record.", mode: "spawn" })
+    yield* runQueued
+    const row = (yield* sessions.read(parent, { kinds: [TASK_STARTED] }))[0]
+    if (row === undefined) return yield* Effect.die("the fixture did not store its traced task start")
+    const started = yield* Schema.decodeUnknownEffect(TaskStarted)(row.data)
+    if (started.traceParent === undefined || started.traceParent.traceId !== fixtureTraceId || started.traceParent.sampled !== true) {
+      return yield* Effect.die("the fixture did not retain its task's trace parent")
+    }
+    return [parent, child]
+  }).pipe(
+    Effect.withParentSpan(Tracer.externalSpan({ traceId: fixtureTraceId, spanId: "abcdef1234567890", sampled: true })),
+    Effect.withTracer(Tracer.make({ span: (options) => {
+      const span = new FixtureSpan(options, (fixtureSpans.length + 1).toString(16).padStart(16, "0"))
+      fixtureSpans.push(span)
+      return span
+    } })),
+    Effect.withTracerEnabled(true),
+  )
+
   const journal = (session: SessionAddress) => Effect.gen(function* () {
     const view = yield* sessions.get(session)
     const events = yield* sessions.read(session)
     return { header: Schema.encodeSync(SessionHeader)(view.header), events: Schema.encodeSync(Schema.Array(SessionLogEvent))(events) }
   })
-  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress, interceptedAddress, questionParent, questionChild], journal)
-}).pipe(Effect.scoped, Effect.provideService(Clock.Clock, fixedClock))
+  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress, interceptedAddress, questionParent, questionChild, ...traceSessions], journal)
+}).pipe(Effect.scoped, Effect.provideService(Clock.Clock, fixedClock), Effect.withTracerEnabled(false))
 
 const sessions = await Effect.runPromise(record)
 const fixture = {

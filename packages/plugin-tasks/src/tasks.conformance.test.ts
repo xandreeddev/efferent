@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Option } from "effect"
+import { Context, Effect, Layer, Option, Tracer } from "effect"
 import { SessionLog, SessionLogMemoryLive, Sessions, TaskActivity, TaskExecutor, TaskRefused, TaskRunner, Tasks, TurnAdmissionOpen, TurnRefused, TurnShutdown } from "@xandreed/core"
 import { taskRunnerConformance, tasksConformance } from "@xandreed/core/conformance"
 import type { ConformanceCheck, TasksDependencies, TasksFixture } from "@xandreed/core/conformance"
@@ -58,7 +58,43 @@ describe("TasksLive conforms to the Tasks contract", () => {
 const careless = (change: (tasks: TasksFixture["tasks"], sessions: TasksFixture["sessions"]) => Partial<TasksFixture["tasks"]>) => (dependencies: TasksDependencies) =>
   tasksOver(dependencies).pipe(Effect.map((fixture): TasksFixture => ({ ...fixture, tasks: Tasks.of({ ...fixture.tasks, ...change(fixture.tasks, fixture.sessions) }) })))
 
+type SpanOptions = Parameters<Tracer.Tracer["span"]>[0]
+const carelessTrace = (change: (options: SpanOptions) => SpanOptions) => (dependencies: TasksDependencies) => Effect.gen(function* () {
+  const current = yield* Effect.tracer
+  const tracer = Tracer.make({ span: (options) => current.span(options.name === "task.run" ? change(options) : options) })
+  return yield* tasksOver({ ...dependencies, runner: TaskRunner.of({
+    run: (work) => dependencies.runner.run((deadline) => work(deadline).pipe(Effect.withTracer(tracer))),
+  }) })
+})
+
 describe("the Tasks kit catches careless backends", () => {
+  test("one that omits durable trace parents fails the trace capture check", async () => {
+    const untraced = (sessions: SessionsService): SessionsService => Sessions.of({ ...sessions,
+      transact: (address, decide) => sessions.transact(address, (view) => decide(view).pipe(Effect.map((decision) => ({ ...decision,
+        drafts: decision.drafts.map((draft) => {
+          if (draft.kind !== "task.started") return draft
+          const { traceParent: _parent, ...data } = draft.data
+          return { ...draft, data }
+        }),
+      })))),
+    })
+    const checks = tasksConformance((dependencies) => tasksOver(dependencies, untraced)).filter((check) => check.name.startsWith("task execution uses"))
+    expect(await failedChecks(checks)).toEqual(["trace-parent"])
+  }, 30_000)
+
+  test("one that replaces the saved parent with its runner context fails both ancestry checks", async () => {
+    const wrong = Tracer.externalSpan({ traceId: "a".repeat(32), spanId: "a".repeat(16) })
+    const checks = tasksConformance(carelessTrace((options) => ({ ...options, parent: Option.some(wrong) })))
+      .filter((check) => check.name.startsWith("task execution uses") || check.name.startsWith("a fresh task backend"))
+    expect(await failedChecks(checks)).toEqual(["trace-parent", "trace-parent-reconcile"])
+  }, 30_000)
+
+  test("one that loses the saved unsampled flag fails the sampling check", async () => {
+    const checks = tasksConformance(carelessTrace((options) => ({ ...options, sampled: true })))
+      .filter((check) => check.name.startsWith("task execution uses"))
+    expect(await failedChecks(checks)).toEqual(["trace-parent"])
+  }, 30_000)
+
   test("one whose ask returns without a durable question fails the question check", async () => {
     const checks = tasksConformance(careless(() => ({ ask: (_writer, input) => Effect.succeed(input) })))
       .filter((check) => check.name.startsWith("a durable question"))
@@ -92,7 +128,7 @@ describe("the Tasks kit catches careless backends", () => {
   test("one that starts a new task whatever id it is given fails only the checks that start a task by its id", async () => {
     expect(await failedChecks(tasksConformance(careless((tasks) => ({
       start: (parent, input) => tasks.start(parent, { instructions: input.instructions, mode: input.mode }),
-    }))))).toEqual(["start-once", "task-id"])
+    }))))).toEqual(["start-once", "task-id", "trace-parent"])
   }, 30_000)
 
   test("one that judges depth by a session's lineage, refusing a host's fork, fails only the depth check", async () => {
@@ -103,19 +139,19 @@ describe("the Tasks kit catches careless backends", () => {
     }))))).toEqual(["depth"])
   }, 30_000)
 
-  test("one whose child turns begin as a user's, the task in their command, fails the run and answer checks", async () => {
+  test("one whose child turns begin as a user's fails admission and execution ancestry checks", async () => {
     const asUser = (sessions: SessionsService): SessionsService => Sessions.of({
       ...sessions,
       begin: (address, input) => sessions.begin(address, input._tag === "Task"
         ? { _tag: "User", userMessage: input.userMessage, runId: input.runId, key: input.key, command: { task: input.task.taskId }, ...(input.meta === undefined ? {} : { meta: input.meta }) }
         : input),
     })
-    expect(await failedChecks(tasksConformance((dependencies) => tasksOver(dependencies, asUser)))).toEqual(["answer", "run"])
+    expect(await failedChecks(tasksConformance((dependencies) => tasksOver(dependencies, asUser)))).toEqual(["answer", "run", "trace-parent", "trace-parent-reconcile"])
   }, 30_000)
 
   test("one whose reconcile does nothing fails only the reconcile checks", async () => {
     expect(await failedChecks(tasksConformance(careless(() => ({ reconcile: () => Effect.succeed({ delivered: 0, started: 0 }) })))))
-      .toEqual(["reconcile", "reconcile-delivery"])
+      .toEqual(["reconcile", "reconcile-delivery", "trace-parent-legacy", "trace-parent-reconcile"])
   }, 30_000)
 
   test("one whose reconcile leaves a result whose delivery was lost undelivered fails only the reconcile-delivery check", async () => {

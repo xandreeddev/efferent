@@ -17,6 +17,7 @@ import { completeModelAttempt, modelAttemptOf, observeModelAttempt, retainModelA
 import { ProviderUsageBody } from "./model-usage.entity.js"
 import { resilientRequest, withModelRequestCall, withModelRequestStream } from "../transport/resilient-http-client.adapter.js"
 import { classifyAiError } from "./provider-failure.entity.functions.js"
+import { annotateCompatRequest, observeCompatUsage } from "./compat-telemetry.adapter.js"
 
 /**
  * A generic OpenAI-compatible `/chat/completions` `LanguageModel` over raw
@@ -451,6 +452,7 @@ const postChat = (
   method: string,
   body: Json,
   buffered = false,
+  observeUsage?: (usage: unknown, final: boolean) => Effect.Effect<void>,
 ): Effect.Effect<Response, AiError.AiError> => {
   const selected: { response?: Response } = {}
   const send = Effect.gen(function* () {
@@ -475,7 +477,9 @@ const postChat = (
     const content = buffered ? yield* response.arrayBuffer : yield* Stream.toReadableStreamEffect(response.stream)
     if (buffered && content instanceof ArrayBuffer) {
       const body = Schema.decodeUnknownOption(Schema.fromJsonString(ProviderUsageBody))(new TextDecoder().decode(content))
-      yield* Option.match(body, { onNone: () => Effect.void, onSome: (value) => observeModelAttempt(response.modelAttempt.completion, value.usage, true, config.usage?.reasoning ?? true) })
+      yield* Option.match(body, { onNone: () => Effect.void, onSome: (value) => observeModelAttempt(response.modelAttempt.completion, value.usage, true, config.usage?.reasoning ?? true).pipe(
+        Effect.andThen(observeUsage?.(value.usage, true) ?? Effect.void),
+      ) })
       yield* completeModelAttempt(response.modelAttempt.completion, { _tag: "Completed" })
     }
     const { statusText } = yield* Ref.get(metadata)
@@ -529,11 +533,13 @@ export const makeCompatLanguageModel = (
   return LanguageModel.make({
     generateText: (options) =>
       withModelRequestCall(options.responseFormat.type === "json" ? "Object" : "Text", selection, Effect.gen(function* () {
+        yield* annotateCompatRequest(options.span, config.moduleName, config.model)
         const res = yield* postChat(
           config,
           "generateText",
           yield* chatRequestBody(config, options, false),
           true,
+          (usage, final) => observeCompatUsage(options.span, usage, final, config.usage?.reasoning ?? true),
         )
         if (!res.ok) {
           return yield* failStatus(config, "generateText", res)
@@ -548,6 +554,7 @@ export const makeCompatLanguageModel = (
     streamText: (options) =>
       withModelRequestStream("Stream", selection, Stream.unwrap(
         Effect.gen(function* () {
+          yield* annotateCompatRequest(options.span, config.moduleName, config.model)
           const res = yield* postChat(
             config,
             "streamText",
@@ -560,7 +567,9 @@ export const makeCompatLanguageModel = (
           if (body === null) {
             return yield* Effect.fail(invalidResponse(config.moduleName, "streamText", "the streaming response carried no body"))
           }
-          return sseStreamParts({ moduleName: config.moduleName, body, attempt: modelAttemptOf(res), ...(config.usage === undefined ? {} : { usage: config.usage }) })
+          return sseStreamParts({ moduleName: config.moduleName, body, attempt: modelAttemptOf(res), ...(config.usage === undefined ? {} : { usage: config.usage }),
+            observeUsage: (usage, final) => observeCompatUsage(options.span, usage, final, config.usage?.reasoning ?? true),
+          })
         }),
       )).pipe(Stream.catch((error) => isTurnError(error) ? Stream.die(error) : Stream.fail(classifyAiError(error, "compat")))) as never,
   }).pipe(Effect.map((model) => describeModel(model,

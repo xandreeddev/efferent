@@ -4,6 +4,13 @@ Shared schemas, service ports, message codecs and protocol helpers. Runtime
 dependencies are Effect and the provider-neutral effect/ai contracts only.
 No provider SDKs, filesystem IO, runtime graph, terminal, or host imports.
 
+`domain/trace-parent.entity.ts` holds the branded nonzero 32/16-hex trace and
+span identities and optional sampling decision of `TraceParent`. Its pure
+`traceParentOf` normalizes valid span IDs to lowercase and omits invalid/custom
+or tracing-disabled ancestry; `externalSpanOf` restores an external parent,
+preserving explicit sampled false and Effect's default when it is absent. No
+mutable span, annotations or captured Context is stored in this data.
+
 `src/loop` holds the References a step reads (`CurrentPromptCacheKey`,
 `CurrentModelCallPolicy`, `CurrentAgentStep`, `CurrentAgentRun`, `CurrentTraceContent` with
 `replayableContext`, `CurrentPromptProvenance`). `src/internal` holds what
